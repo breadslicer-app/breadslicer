@@ -8,15 +8,15 @@ use glam::{Mat4, Vec3};
 const PITCH_EPSILON: f32 = 1e-3;
 const MIN_DISTANCE_FACTOR: f32 = 0.05;
 const MAX_DISTANCE_FACTOR: f32 = 50.0;
-/// Floor on the zoom-in distance expressed as a fraction of
-/// `view_radius`. Keeps the camera ahead of the renderer's near plane
+/// Floor on the zoom-in distance expressed as a fraction of `view_radius`.
+/// Keeps the camera ahead of the renderer's near plane
 /// (`frame::NEAR_MULT = 0.01` on a framing diagonal of at most
-/// `2 * view_radius` gives `0.02 * view_radius`; this leaves headroom
-/// for unions that exceed the envelope on one axis).
+/// `2 * view_radius` gives `0.02 * view_radius`; this leaves headroom for
+/// unions that exceed the envelope on one axis).
 const NEAR_PLANE_SAFETY_FACTOR: f32 = 0.03;
-/// Azimuth the workspace opens at. Lands in the `-X`, `-Y` quadrant so
-/// the first thing on screen is the machine's front, the side the
-/// operator stands at and the one [`AxisView::Front`] looks from.
+/// Azimuth the workspace opens at. Lands in the `-X`, `-Y` quadrant so the
+/// first thing on screen is the machine's front, the side the operator stands
+/// at and the one [`AxisView::Front`] looks from.
 const DEFAULT_YAW: f32 = 0.6749 - std::f32::consts::PI;
 const DEFAULT_PITCH: f32 = 0.6669;
 pub(crate) const DEFAULT_DISTANCE_FACTOR: f32 = 3.0;
@@ -40,38 +40,36 @@ pub struct OrbitCamera {
     pub up: Vec3,
 
     scene_center: Vec3,
-    /// Drives the initial framing distance and the zoom-OUT limit.
-    /// Anchored to the build envelope (or the union of envelope and
-    /// scene) so the user can always pull back to see the plate.
+    /// Drives the initial framing distance and the zoom-OUT limit. Anchored to
+    /// the build envelope (or the union of envelope and scene) so the user can
+    /// always pull back to see the plate.
     view_radius: f32,
-    /// Drives the zoom-IN limit. Anchored to the scene's own AABB so
-    /// a user can zoom closer than `view_radius * MIN_DISTANCE_FACTOR`
-    /// on a model much smaller than the envelope. Equal to
-    /// `view_radius` for the single-radius constructor.
+    /// Drives the zoom-IN limit. Anchored to the scene's own AABB so a user can
+    /// zoom closer than `view_radius * MIN_DISTANCE_FACTOR` on a model much
+    /// smaller than the envelope. Equal to `view_radius` for the single-radius
+    /// constructor.
     detail_radius: f32,
 }
 
 impl OrbitCamera {
-    /// Single-radius constructor: `radius` is used as both the framing
-    /// radius (zoom-out / initial distance) and the detail radius
-    /// (zoom-in). Equivalent to
-    /// `with_detail_radius(scene_center, radius, radius)`. Test-only
-    /// for now since production call sites all have a separate
+    /// Single-radius constructor: `radius` is used as both the framing radius
+    /// (zoom-out / initial distance) and the detail radius (zoom-in).
+    /// Equivalent to `with_detail_radius(scene_center, radius, radius)`.
+    /// Test-only for now since production call sites all have a separate
     /// `view_radius` and `detail_radius` to plumb in.
     #[cfg(test)]
     pub fn new(scene_center: Vec3, scene_radius: f32) -> Self {
         Self::with_detail_radius(scene_center, scene_radius, scene_radius)
     }
 
-    /// Two-radius constructor. `view_radius` drives the initial
-    /// framing distance and the zoom-OUT limit; `detail_radius`
-    /// drives the zoom-IN limit only. Both are clamped to a minimum
-    /// of `1e-3` mm to keep arithmetic well-defined for degenerate
-    /// inputs.
+    /// Two-radius constructor. `view_radius` drives the initial framing
+    /// distance and the zoom-OUT limit; `detail_radius` drives the zoom-IN
+    /// limit only. Both are clamped to a minimum of `1e-3` mm to keep
+    /// arithmetic well-defined for degenerate inputs.
     ///
-    /// Used by the scene-import path so the camera anchors to the
-    /// build envelope at first sight (zoom-out / orbit centre) while
-    /// still letting the user dolly in close to a small model.
+    /// Used by the scene-import path so the camera anchors to the build
+    /// envelope at first sight (zoom-out / orbit centre) while still letting
+    /// the user dolly in close to a small model.
     pub fn with_detail_radius(scene_center: Vec3, view_radius: f32, detail_radius: f32) -> Self {
         let view_radius = view_radius.max(1e-3);
         let detail_radius = detail_radius.max(1e-3);
@@ -162,14 +160,13 @@ impl OrbitCamera {
 
     fn right_and_up(&self) -> (Vec3, Vec3) {
         let forward = (self.target - self.eye()).normalize_or_zero();
-        // When `forward` is nearly parallel to `self.up`, the cross
-        // product `forward.cross(self.up)` collapses toward zero;
-        // its sign is then dominated by f32 round-off in
-        // `cos(pitch)` near +/- pi/2, which silently flips the
-        // basis from the well-behaved orientation just below the
-        // `clamp_pitch` limit. Substitute a perpendicular world
-        // axis as the cross-product reference so the basis stays
-        // continuous through the pole.
+        // When `forward` is nearly parallel to `self.up`, the cross product
+        // `forward.cross(self.up)` collapses toward zero; its sign is then
+        // dominated by f32 round-off in `cos(pitch)` near +/- pi/2, which
+        // silently flips the basis from the well-behaved orientation just below
+        // the `clamp_pitch` limit. Substitute a perpendicular world axis as the
+        // cross-product reference so the basis stays continuous through the
+        // pole.
         let up_ref = if forward.dot(self.up).abs() > 0.99 {
             Vec3::Y
         } else {
@@ -180,21 +177,27 @@ impl OrbitCamera {
         (right, cam_up)
     }
 
-    /// World-space units per logical pixel at the camera's current
-    /// distance. Used by the camera's own pan/zoom code, by
-    /// `gizmo::gizmo_scale`/`hit_radius_world`, and by the controller
-    /// to derive world-space sizes for the gizmo's cube and arc
-    /// handles from their screen-pixel constants.
+    /// Returns the world-space size of one logical pixel on the plane that
+    /// holds `target` and faces the camera. The size is different for points
+    /// off that plane: see [`Self::world_per_pixel_at`].
     pub fn world_per_pixel(&self, fov_y: f32, viewport_height: f32) -> f32 {
-        let h = viewport_height.max(1.0);
-        2.0 * self.distance * (fov_y * 0.5).tan() / h
+        world_per_pixel_at_depth(self.distance, fov_y, viewport_height)
+    }
+
+    /// Returns the world-space size of one logical pixel at the distance of
+    /// `point` from the eye along the view direction. Returns `None` when
+    /// `point` is not in front of the eye.
+    pub fn world_per_pixel_at(&self, point: Vec3, fov_y: f32, viewport_height: f32) -> Option<f32> {
+        let forward = (self.target - self.eye()).normalize_or_zero();
+        let depth = (point - self.eye()).dot(forward);
+        (depth > 0.0).then(|| world_per_pixel_at_depth(depth, fov_y, viewport_height))
     }
 
     fn min_distance(&self) -> f32 {
-        // Scene-derived floor: lets the user dolly close on a small
-        // model. Bounded below by a fraction of `view_radius` so the
-        // camera doesn't slide inside the renderer's near plane
-        // (which scales with the framing AABB; see `frame::NEAR_MULT`).
+        // Scene-derived floor: lets the user dolly close on a small model.
+        // Bounded below by a fraction of `view_radius` so the camera doesn't
+        // slide inside the renderer's near plane (which scales with the framing
+        // AABB; see `frame::NEAR_MULT`).
         let scene_floor = self.detail_radius * MIN_DISTANCE_FACTOR;
         let near_safety = self.view_radius * NEAR_PLANE_SAFETY_FACTOR;
         scene_floor.max(near_safety)
@@ -208,6 +211,10 @@ impl OrbitCamera {
 fn clamp_pitch(pitch: f32) -> f32 {
     let limit = std::f32::consts::FRAC_PI_2 - PITCH_EPSILON;
     pitch.clamp(-limit, limit)
+}
+
+fn world_per_pixel_at_depth(depth: f32, fov_y: f32, viewport_height: f32) -> f32 {
+    2.0 * depth * (fov_y * 0.5).tan() / viewport_height.max(1.0)
 }
 
 #[cfg(test)]
@@ -301,8 +308,8 @@ mod tests {
     #[test]
     fn with_detail_radius_uses_view_radius_for_initial_distance() {
         // Initial framing distance is `view_radius * DEFAULT_DISTANCE_FACTOR`
-        // regardless of `detail_radius`, so the user always opens onto
-        // a view sized by the envelope.
+        // regardless of `detail_radius`, so the user always opens onto a view
+        // sized by the envelope.
         let cam = OrbitCamera::with_detail_radius(Vec3::ZERO, 100.0, 1.0);
         assert_approx_eq!(f32, cam.distance, 100.0 * DEFAULT_DISTANCE_FACTOR);
     }
@@ -310,8 +317,7 @@ mod tests {
     #[test]
     fn with_detail_radius_uses_view_radius_for_max_distance() {
         // Pushing zoom out beyond the max clamps to
-        // `view_radius * MAX_DISTANCE_FACTOR`, irrespective of
-        // `detail_radius`.
+        // `view_radius * MAX_DISTANCE_FACTOR`, irrespective of `detail_radius`.
         let mut cam = OrbitCamera::with_detail_radius(Vec3::ZERO, 100.0, 1.0);
         for _ in 0..50 {
             cam.zoom_at(1.5, 100.0, 100.0, 1.0, 200.0, 200.0);
@@ -326,8 +332,8 @@ mod tests {
 
     #[test]
     fn small_detail_radius_lets_zoom_in_below_view_radius_factor() {
-        // With a tiny `detail_radius` relative to `view_radius`, the
-        // zoom-in floor drops below the single-radius
+        // With a tiny `detail_radius` relative to `view_radius`, the zoom-in
+        // floor drops below the single-radius
         // `view_radius * MIN_DISTANCE_FACTOR` and bottoms out at the
         // near-plane-safety floor `view_radius * NEAR_PLANE_SAFETY_FACTOR`.
         let mut cam = OrbitCamera::with_detail_radius(Vec3::ZERO, 150.0, 0.1);
@@ -349,8 +355,8 @@ mod tests {
     #[test]
     fn detail_radius_floors_at_near_plane_safety() {
         // A `detail_radius * MIN_DISTANCE_FACTOR` smaller than the
-        // near-plane-safety floor must be lifted to that floor; the
-        // camera never lands inside the renderer's near plane.
+        // near-plane-safety floor must be lifted to that floor; the camera
+        // never lands inside the renderer's near plane.
         let mut cam = OrbitCamera::with_detail_radius(Vec3::ZERO, 100.0, 0.001);
         for _ in 0..50 {
             cam.zoom_at(0.5, 100.0, 100.0, 1.0, 200.0, 200.0);
@@ -361,16 +367,14 @@ mod tests {
 
     #[test]
     fn pan_at_top_pole_matches_pan_just_below_clamp() {
-        // `clamp_pitch` keeps `pitch` strictly below `FRAC_PI_2`,
-        // so production code paths land just below the pole. If a
-        // future caller bypasses the clamp (or `set_axis_view`
-        // ever stops clamping for `AxisView::Top`), the basis must
-        // stay consistent with the just-below-clamp orientation:
-        // f32 rounding makes `cos(FRAC_PI_2)` slightly NEGATIVE,
-        // which silently flips the sign of `forward.cross(Z)` and
-        // therefore the pan direction. The reference orientation
-        // below pans in `-X`; the pole orientation must pan in the
-        // same half-space.
+        // `clamp_pitch` keeps `pitch` strictly below `FRAC_PI_2`, so production
+        // code paths land just below the pole. If a future caller bypasses the
+        // clamp (or `set_axis_view` ever stops clamping for `AxisView::Top`),
+        // the basis must stay consistent with the just-below-clamp orientation:
+        // f32 rounding makes `cos(FRAC_PI_2)` slightly NEGATIVE, which silently
+        // flips the sign of `forward.cross(Z)` and therefore the pan direction.
+        // The reference orientation below pans in `-X`; the pole orientation
+        // must pan in the same half-space.
         let fov_y = std::f32::consts::FRAC_PI_4;
         let viewport_h = 720.0;
         let yaw = -std::f32::consts::FRAC_PI_2;
@@ -426,14 +430,53 @@ mod tests {
     #[test]
     fn single_radius_constructor_keeps_view_radius_eq_detail_radius() {
         // The convenience constructor's zoom limits mirror the prior
-        // single-radius behaviour: zoom floor is
-        // `radius * MIN_DISTANCE_FACTOR` (above the near-plane safety
-        // floor for any radius the prior code path produced).
+        // single-radius behaviour: zoom floor is `radius * MIN_DISTANCE_FACTOR`
+        // (above the near-plane safety floor for any radius the prior code path
+        // produced).
         let mut cam = OrbitCamera::new(Vec3::ZERO, 100.0);
         for _ in 0..50 {
             cam.zoom_at(0.5, 100.0, 100.0, 1.0, 200.0, 200.0);
         }
         let expected = 100.0 * MIN_DISTANCE_FACTOR;
         assert_approx_eq!(f32, cam.distance, expected, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn world_per_pixel_at_target_matches_world_per_pixel() {
+        let cam = OrbitCamera::new(Vec3::new(1.0, 2.0, 3.0), 10.0);
+        let at_target = cam.world_per_pixel_at(cam.target, 0.8, 720.0).unwrap();
+        assert_approx_eq!(
+            f32,
+            at_target,
+            cam.world_per_pixel(0.8, 720.0),
+            epsilon = 1e-5
+        );
+    }
+
+    #[test]
+    fn world_per_pixel_at_scales_with_depth_along_the_view_direction() {
+        let cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        let forward = (cam.target - cam.eye()).normalize();
+        let (right, _) = cam.right_and_up();
+        let at_target = cam.world_per_pixel(0.8, 720.0);
+
+        let twice_as_deep = cam.eye() + forward * (2.0 * cam.distance);
+        let deep = cam.world_per_pixel_at(twice_as_deep, 0.8, 720.0).unwrap();
+        assert_approx_eq!(f32, deep, 2.0 * at_target, epsilon = 1e-5);
+
+        // A sideways offset keeps the depth, so the size stays the same.
+        let sideways = cam.world_per_pixel_at(right * 7.0, 0.8, 720.0).unwrap();
+        assert_approx_eq!(f32, sideways, at_target, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn world_per_pixel_at_is_none_at_or_behind_the_eye() {
+        let cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        let backward = cam.eye() - cam.target;
+        assert!(cam.world_per_pixel_at(cam.eye(), 0.8, 720.0).is_none());
+        assert!(
+            cam.world_per_pixel_at(cam.eye() + backward, 0.8, 720.0)
+                .is_none()
+        );
     }
 }

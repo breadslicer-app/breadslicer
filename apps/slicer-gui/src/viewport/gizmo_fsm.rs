@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Owner of the gizmo drag FSM cell. Drives the press → drag-update →
-//! release → abort lifecycle by hit-testing on press, applying the
-//! per-op delta on move, and reverting the captured original on
-//! abort. The pure-data types (`GizmoState`, `DragOp`, `HandleHit`,
-//! `ReanchorCtx`) plus the per-frame compose helpers
-//! (`apply_drag_move`, `re_anchor_scale_axis`) live in
+//! Owner of the gizmo drag FSM cell. Drives the press → drag-update → release →
+//! abort lifecycle by hit-testing on press, applying the per-op delta on move,
+//! and reverting the captured original on abort. The pure-data types
+//! (`GizmoState`, `DragOp`, `HandleHit`, `ReanchorCtx`) plus the per-frame
+//! compose helpers (`apply_drag_move`, `re_anchor_scale_axis`) live in
 //! `viewport::gizmo_drag`; this module hosts only the cell and the
 //! controller-side coordination glue.
 
@@ -49,14 +48,14 @@ pub(super) struct MoveCtx<'a> {
     pub(super) viewport: Option<ViewportSize>,
     pub(super) cursor: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
-    /// Build envelope used by the post-move clamp on translate
-    /// drags (rotate / scale drags ignore it). Carried by value
-    /// since `BuildVolume` is `Copy` and small.
+    /// Build envelope used by the post-move clamp on translate drags (rotate /
+    /// scale drags ignore it). Carried by value since `BuildVolume` is `Copy`
+    /// and small.
     pub(super) build_volume: BuildVolume,
 }
 
-/// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same
-/// shape as `StartCtx` minus the modifier (hover doesn't need it).
+/// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same shape as
+/// `StartCtx` minus the modifier (hover doesn't need it).
 pub(super) struct HoverCtx<'a> {
     pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
@@ -86,20 +85,19 @@ impl GizmoFsm {
         self.hover.get()
     }
 
-    /// Force the FSM back to `Idle` without reverting any in-flight
-    /// transform. Used by the scene-close path (the object is gone,
-    /// so reversion is moot). The drag-end path goes through
-    /// `commit_drag` so the gesture lands on the undo stack.
+    /// Force the FSM back to `Idle` without reverting any in-flight transform.
+    /// Used by the scene-close path (the object is gone, so reversion is moot).
+    /// The drag-end path goes through `commit_drag` so the gesture lands on the
+    /// undo stack.
     pub(super) fn set_idle(&self) {
         self.state.set(GizmoState::Idle);
     }
 
-    /// Drag-end commit: if a drag is in flight, push the
-    /// `before → after` pair onto the document's undo stack and
-    /// transition to `Idle`. No-op edits (object's transform unchanged
-    /// since press, or the object got removed mid-drag) are filtered
-    /// inside `SceneDocument::push_edit`. Returns `true` if a drag was
-    /// in flight when called.
+    /// Drag-end commit: if a drag is in flight, push the `before → after` pair
+    /// onto the document's undo stack and transition to `Idle`. No-op edits
+    /// (object's transform unchanged since press, or the object got removed
+    /// mid-drag) are filtered inside `SceneDocument::push_edit`. Returns `true`
+    /// if a drag was in flight when called.
     pub(super) fn commit_drag(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
             original, node_id, ..
@@ -120,32 +118,31 @@ impl GizmoFsm {
         true
     }
 
-    /// Drop any cached hover. Returns `true` if the cell was set.
-    /// Used when the pointer leaves the viewport or selection clears.
+    /// Drop any cached hover. Returns `true` if the cell was set. Used when the
+    /// pointer leaves the viewport or selection clears.
     pub(super) fn clear_hover(&self) -> bool {
         self.hover.replace(None).is_some()
     }
 
-    /// Test-only setter used by the integration tests in `controller.rs`
-    /// to drive the FSM directly into specific drag states without
-    /// going through `try_start_drag`.
+    /// Test-only setter used by the integration tests in `controller.rs` to
+    /// drive the FSM directly into specific drag states without going through
+    /// `try_start_drag`.
     #[cfg(test)]
     pub(super) fn force_set(&self, state: GizmoState) {
         self.state.set(state);
     }
 
-    /// Runs the three gizmo hit tests against the current camera +
-    /// cursor ray and, if a handle is grabbed, transitions the FSM
-    /// into `Drag`. The front-most candidate (smallest positive `t`
-    /// along the press ray) wins across translate cones, rotate arcs,
-    /// and scale midpoint cubes. Bails on missing camera / scene /
-    /// no selection / zero viewport, in which case the press behaves
-    /// like a plain click candidate.
+    /// Runs the three gizmo hit tests against the current camera + cursor ray
+    /// and, if a handle is grabbed, transitions the FSM into `Drag`. The
+    /// front-most candidate (smallest positive `t` along the press ray) wins
+    /// across translate cones, rotate arcs, and scale midpoint cubes. Bails on
+    /// missing camera / scene / no selection / zero viewport, in which case the
+    /// press behaves like a plain click candidate.
     ///
     /// `modifiers.shift` at press time captures into the resulting
-    /// `ScaleAxis.proportional` flag: a press on the per-axis cube
-    /// with Shift held starts uniformly; subsequent toggles
-    /// re-anchor through the move path.
+    /// `ScaleAxis.proportional` flag: a press on the per-axis cube with Shift
+    /// held starts uniformly; subsequent toggles re-anchor through the move
+    /// path.
     pub(super) fn try_start_drag(&self, ctx: StartCtx<'_>) {
         let Some(sel_id) = ctx.selection_id else {
             return;
@@ -158,8 +155,8 @@ impl GizmoFsm {
         let x = ctx.press.x;
         let y = ctx.press.y;
 
-        // Compute the drag-start under both borrows; both drop at the
-        // closure's end, so `state.set` below can run without overlap.
+        // Compute the drag-start under both borrows; both drop at the closure's
+        // end, so `state.set` below can run without overlap.
         let computed: Option<(DragOp, Transform3D, glam::Vec3)> = ctx
             .document
             .with_scene(|spatial| {
@@ -182,8 +179,8 @@ impl GizmoFsm {
                     HandleHit::Rotate(axis) => {
                         // `rotate_drag_angle` returns `None` only inside the
                         // arc lock-out, which `rotate_hit_test` already
-                        // rejected; but bail defensively if it slips
-                        // through, leaving the press as a click candidate.
+                        // rejected; but bail defensively if it slips through,
+                        // leaving the press as a click candidate.
                         let start_angle = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)?;
                         DragOp::Rotate {
                             axis,
@@ -196,11 +193,10 @@ impl GizmoFsm {
                         let start_anchor =
                             gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis)?;
                         // The uniform-branch anchors are captured at press as
-                        // well, even when `proportional` starts false; that
-                        // way a mid-drag Shift press flips the formula
-                        // through the same `re_anchor_scale_axis` path
-                        // either direction without needing a "first-toggle"
-                        // special case.
+                        // well, even when `proportional` starts false; that way
+                        // a mid-drag Shift press flips the formula through the
+                        // same `re_anchor_scale_axis` path either direction
+                        // without needing a "first-toggle" special case.
                         let pivot_screen =
                             picking::project_world_to_screen(camera, fov_y, w, h, pivot)?;
                         DragOp::ScaleAxis {
@@ -229,15 +225,15 @@ impl GizmoFsm {
     }
 
     /// Pointer-move drag-update step. Branches on the active `DragOp`,
-    /// recomputes the per-op delta from the current cursor ray, and
-    /// composes the resulting transform onto the captured original.
-    /// If a `ScaleAxis` drag is live and the live Shift state has
-    /// flipped since the last frame, re-anchors the drag (current
-    /// transform → new `original`, current cursor → new anchors) so
-    /// the per-axis ↔ uniform formula switch is visually snap-free.
+    /// recomputes the per-op delta from the current cursor ray, and composes
+    /// the resulting transform onto the captured original. If a `ScaleAxis`
+    /// drag is live and the live Shift state has flipped since the last frame,
+    /// re-anchors the drag (current transform → new `original`, current cursor
+    /// → new anchors) so the per-axis ↔ uniform formula switch is visually
+    /// snap-free.
     ///
-    /// Returns `true` if the scene's transform was updated. Callers
-    /// mark the controller dirty on `true`.
+    /// Returns `true` if the scene's transform was updated. Callers mark the
+    /// controller dirty on `true`.
     pub(super) fn on_move(&self, ctx: MoveCtx<'_>) -> bool {
         let GizmoState::Drag {
             mut op,
@@ -255,19 +251,19 @@ impl GizmoFsm {
         let x = ctx.cursor.x;
         let y = ctx.cursor.y;
 
-        // Compute the new transform and the (possibly mutated) op
-        // state inside the document's read borrow + camera borrow.
-        // Both drop at the closure's end before the scene write below.
+        // Compute the new transform and the (possibly mutated) op state inside
+        // the document's read borrow + camera borrow. Both drop at the
+        // closure's end before the scene write below.
         let result: Option<(Transform3D, DragOp)> = ctx
             .document
             .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                // Live Shift toggle on a `ScaleAxis` drag re-anchors before
-                // the move's delta is computed: the running transform
-                // becomes the new `original`, the current cursor becomes
-                // the new press, so the per-axis ↔ uniform formula switch
-                // does not snap the object.
+                // Live Shift toggle on a `ScaleAxis` drag re-anchors before the
+                // move's delta is computed: the running transform becomes the
+                // new `original`, the current cursor becomes the new press, so
+                // the per-axis ↔ uniform formula switch does not snap the
+                // object.
                 if let DragOp::ScaleAxis { proportional, .. } = op
                     && proportional != ctx.modifiers.shift
                     && let Some(running) = spatial.leaf(node_id).map(|q| q.local_transform())
@@ -300,13 +296,12 @@ impl GizmoFsm {
             return false;
         };
 
-        // Translate drags are clamped against the build envelope so
-        // the object's transformed AABB cannot leave it. Other op
-        // kinds (rotate, scale) compose translation as a pivot side
-        // effect and are not clamped. The clamp re-opens the
-        // document's read borrow; `with_scene` returns `None` if the
-        // scene was cleared between the move computation and now,
-        // in which case we keep the unclamped transform (the next
+        // Translate drags are clamped against the build envelope so the
+        // object's transformed AABB cannot leave it. Other op kinds (rotate,
+        // scale) compose translation as a pivot side effect and are not
+        // clamped. The clamp re-opens the document's read borrow; `with_scene`
+        // returns `None` if the scene was cleared between the move computation
+        // and now, in which case we keep the unclamped transform (the next
         // frame will redo the work against a fresh scene).
         let new_transform = if matches!(new_op, DragOp::Translate { .. }) {
             ctx.document
@@ -324,10 +319,10 @@ impl GizmoFsm {
             new_transform
         };
 
-        // Persist the (possibly updated) drag state: Rotate's
-        // unwrap counter mutates per move; the others' state is
-        // captured at press and stays put. `original` may also have
-        // been reset by a Shift re-anchor on this frame.
+        // Persist the (possibly updated) drag state: Rotate's unwrap counter
+        // mutates per move; the others' state is captured at press and stays
+        // put. `original` may also have been reset by a Shift re-anchor on this
+        // frame.
         self.state.set(GizmoState::Drag {
             op: new_op,
             original,
@@ -344,10 +339,10 @@ impl GizmoFsm {
             .is_ok()
     }
 
-    /// Aborts any in-progress drag and reverts the affected object's
-    /// transform to its captured original. Returns `true` if a drag
-    /// was in flight (caller clears the input phase; the `Mutated`
-    /// event from `apply_edit` drives the redraw).
+    /// Aborts any in-progress drag and reverts the affected object's transform
+    /// to its captured original. Returns `true` if a drag was in flight (caller
+    /// clears the input phase; the `Mutated` event from `apply_edit` drives the
+    /// redraw).
     pub(super) fn abort(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
             original, node_id, ..
@@ -356,15 +351,15 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        // The current transform on the leaf is whatever the last
-        // drag tick wrote; we need it as the `before` so the edit
-        // describes "from current, back to original."
+        // The current transform on the leaf is whatever the last drag tick
+        // wrote; we need it as the `before` so the edit describes "from
+        // current, back to original."
         let current = document
             .with_scene(|spatial| spatial.leaf(node_id).map(|q| q.local_transform()))
             .flatten()
             .unwrap_or(original);
-        // A rejected revert means the tick did not land; the abort
-        // still ends the drag either way.
+        // A rejected revert means the tick did not land; the abort still ends
+        // the drag either way.
         let _ = document.apply_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: current,
@@ -373,12 +368,11 @@ impl GizmoFsm {
         true
     }
 
-    /// Recomputes the hover-handle under the cursor and stores it on
-    /// the FSM. No-op while a drag is in progress (the dragged handle
-    /// is already at full brightness, and hover would just race with
-    /// the drag state). Returns `true` if the cached hover changed,
-    /// the caller marks the renderer dirty so the new tint takes
-    /// effect on the next frame.
+    /// Recomputes the hover-handle under the cursor and stores it on the FSM.
+    /// No-op while a drag is in progress (the dragged handle is already at full
+    /// brightness, and hover would just race with the drag state). Returns
+    /// `true` if the cached hover changed, the caller marks the renderer dirty
+    /// so the new tint takes effect on the next frame.
     pub(super) fn update_hover(&self, ctx: HoverCtx<'_>) -> bool {
         if matches!(self.state.get(), GizmoState::Drag { .. }) {
             return false;
@@ -392,11 +386,10 @@ impl GizmoFsm {
     }
 }
 
-/// Runs the three gizmo hit-tests (translate cones, rotate cones,
-/// scale midpoint cubes) against `ray` and returns the front-most
-/// candidate. Shared by `try_start_drag` (which converts the winner
-/// to a `DragOp`) and the hover path (which converts it to a
-/// `GizmoHover`).
+/// Runs the three gizmo hit-tests (translate cones, rotate cones, scale
+/// midpoint cubes) against `ray` and returns the front-most candidate. Shared
+/// by `try_start_drag` (which converts the winner to a `DragOp`) and the hover
+/// path (which converts it to a `GizmoHover`).
 fn front_most_handle(
     ray: &picking::Ray,
     camera: &OrbitCamera,
@@ -404,15 +397,14 @@ fn front_most_handle(
     fov_y: f32,
     h: f32,
 ) -> Option<(HandleHit, f32)> {
-    let scale = gizmo::gizmo_scale(camera, fov_y, h);
-    let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
+    let scale = gizmo::gizmo_scale(camera, pivot, fov_y, h)?;
+    let cyl_radius = gizmo::hit_radius_world(camera, pivot, fov_y, h)?;
     let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-    // Rotate cones and scale cubes scale with the gizmo: handle-local
-    // sizes (in `gizmo` constants) map to world space via the
-    // per-frame shaft length.
+    // Rotate cones and scale cubes scale with the gizmo: handle-local sizes (in
+    // `gizmo` constants) map to world space via the per-frame shaft length.
     let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
     let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
-    let world_per_pixel = camera.world_per_pixel(fov_y, h);
+    let world_per_pixel = camera.world_per_pixel_at(pivot, fov_y, h)?;
     let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
 
     let mut best: Option<(HandleHit, f32)> = None;
@@ -438,10 +430,9 @@ fn front_most_handle(
     best
 }
 
-/// Pure-data hover computation: derives the front-most handle under
-/// the cursor without touching FSM state. `None` whenever the prereqs
-/// (selection / scene / camera / viewport / pivot) are missing or
-/// the cursor isn't over any handle.
+/// Pure-data hover computation: derives the front-most handle under the cursor
+/// without touching FSM state. `None` whenever the prereqs (selection / scene /
+/// camera / viewport / pivot) are missing or the cursor isn't over any handle.
 fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
     let sel_id = ctx.selection_id?;
     let vp = ctx.viewport?;
@@ -462,13 +453,12 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
         .flatten()
 }
 
-/// Returns `false` when the cursor is far enough from the gizmo's
-/// projected centre that no handle can be hit, allowing
-/// `compute_hover` to skip the three handle ray-tests. The radius
-/// covers the rotate arc (the outermost handle) plus
-/// `HANDLE_PIXEL_LENGTH` of slack so handles at the rim stay hit-able.
-/// Returns `true` when the projection fails (point behind camera) so
-/// the existing hit-test path runs and produces its own `None`.
+/// Returns `false` when the cursor is far enough from the gizmo's projected
+/// centre that no handle can be hit, allowing `compute_hover` to skip the three
+/// handle ray-tests. The radius covers the rotate arc (the outermost handle)
+/// plus `HANDLE_PIXEL_LENGTH` of slack so handles at the rim stay hit-able.
+/// Returns `true` when the projection fails (point behind camera) so the
+/// existing hit-test path runs and produces its own `None`.
 fn cursor_within_gizmo_screen_radius(
     camera: &OrbitCamera,
     fov_y: f32,
@@ -482,10 +472,9 @@ fn cursor_within_gizmo_screen_radius(
     else {
         return true;
     };
-    let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h);
-    let world_per_pixel = camera.world_per_pixel(fov_y, viewport_h);
-    let radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-    let radius_px = radius_world / world_per_pixel + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    let arc_radius_px =
+        gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION * gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    let radius_px = arc_radius_px + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
     let dx = cursor.x - px;
     let dy = cursor.y - py;
     dx * dx + dy * dy <= radius_px * radius_px
@@ -536,10 +525,9 @@ mod hover_pre_check_tests {
         let camera = camera_at_origin(10.0);
         let fov_y = default_fov_y();
         let (w, h) = (1024.0, 768.0);
-        // A cursor in the corner of a 1024×768 viewport sits ~640 px from
-        // the centre, well outside the rotate-arc radius (~ a few dozen
-        // px at this distance) plus the HANDLE_PIXEL_LENGTH slack
-        // (120 px).
+        // A cursor in the corner of a 1024x768 viewport sits ~640 px from the
+        // centre, well outside the rotate-arc radius (~ a few dozen px at this
+        // distance) plus the HANDLE_PIXEL_LENGTH slack (120 px).
         let cursor = ScreenPoint { x: 0.0, y: 0.0 };
         assert!(!cursor_within_gizmo_screen_radius(
             &camera,
@@ -556,9 +544,8 @@ mod hover_pre_check_tests {
         let camera = camera_at_origin(10.0);
         let fov_y = default_fov_y();
         let (w, h) = (1024.0, 768.0);
-        let scale = gizmo::gizmo_scale(&camera, fov_y, h);
-        let world_per_pixel = camera.world_per_pixel(fov_y, h);
-        let radius_px = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION / world_per_pixel
+        let radius_px = gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION
+            * gizmo::dimensions::HANDLE_PIXEL_LENGTH
             + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
         let (px, py) = pivot_screen(&camera, fov_y, w, h);
         // 1 pixel past the inflated radius along +x.
@@ -581,9 +568,8 @@ mod hover_pre_check_tests {
         let camera = camera_at_origin(10.0);
         let fov_y = default_fov_y();
         let (w, h) = (1024.0, 768.0);
-        let scale = gizmo::gizmo_scale(&camera, fov_y, h);
-        let world_per_pixel = camera.world_per_pixel(fov_y, h);
-        let radius_px = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION / world_per_pixel
+        let radius_px = gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION
+            * gizmo::dimensions::HANDLE_PIXEL_LENGTH
             + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
         let (px, py) = pivot_screen(&camera, fov_y, w, h);
         // Halfway out along +x: comfortably inside the radius.
@@ -599,5 +585,33 @@ mod hover_pre_check_tests {
             Vec3::ZERO,
             cursor,
         ));
+    }
+}
+
+#[cfg(test)]
+mod front_most_handle_tests {
+    use super::*;
+    use crate::camera::AxisView;
+    use crate::gizmo::axis::Axis;
+    use crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    use glam::Vec3;
+
+    #[test]
+    fn x_cone_is_hit_where_it_is_drawn_off_the_orbit_target_plane() {
+        // Front view from (0, -3, 0). The X cone spans 1.0 to 1.18 shaft
+        // lengths along screen +x from the projected pivot. Pivots at y = -1
+        // and y = +1 are in front of and behind the plane through the orbit
+        // target.
+        let (w, h) = (1024.0, 768.0);
+        let fov_y = default_fov_y();
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.set_axis_view(AxisView::Front);
+        for pivot in [Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0)] {
+            let (px, py) = picking::project_world_to_screen(&camera, fov_y, w, h, pivot).unwrap();
+            let ray =
+                picking::ray_from_pixel(&camera, fov_y, w, h, px + 1.1 * HANDLE_PIXEL_LENGTH, py);
+            let hit = front_most_handle(&ray, &camera, pivot, fov_y, h).map(|(hit, _)| hit);
+            assert_eq!(hit, Some(HandleHit::Translate(Axis::X)), "pivot {pivot}");
+        }
     }
 }

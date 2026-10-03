@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Pure-CPU helpers for the translate gizmo: pivot, world-aligned
-//! axes, screen-constant scale, ray-vs-axis-handle hit test, and the
-//! drag-time closest-point math. Renderer-agnostic so it can be
-//! unit-tested without a `wgpu::Device`.
+//! Pure-CPU helpers for the translate gizmo: pivot, world-aligned axes,
+//! screen-constant scale, ray-vs-axis-handle hit test, and the drag-time
+//! closest-point math. Renderer-agnostic so it can be unit-tested without a
+//! `wgpu::Device`.
 
 pub(crate) mod axis;
 pub(crate) mod dimensions;
@@ -24,13 +24,12 @@ use crate::camera::OrbitCamera;
 
 use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 
-/// World-space pivot for the gizmo: the local-AABB centre of the
-/// leaf, transformed by the leaf's world transform. Returns `None`
-/// when the leaf has no vertices, an out-of-bounds resource
-/// reference, `node_id` does not name a reachable leaf, or the
-/// resulting pivot has any non-finite component (a NaN/Inf vertex
-/// in the mesh, or a transform that overflows to infinity); all of
-/// which render the gizmo unattachable.
+/// World-space pivot for the gizmo: the local-AABB centre of the leaf,
+/// transformed by the leaf's world transform. Returns `None` when the leaf has
+/// no vertices, an out-of-bounds resource reference, `node_id` does not name a
+/// reachable leaf, or the resulting pivot has any non-finite component (a
+/// NaN/Inf vertex in the mesh, or a transform that overflows to infinity); all
+/// of which render the gizmo unattachable.
 pub(crate) fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
     let query = spatial.leaf(node_id)?;
     let aabb = query.local_aabb()?;
@@ -54,23 +53,32 @@ pub(crate) fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<
     pivot.is_finite().then_some(pivot)
 }
 
-/// World-units-per-pixel × the handle's screen-pixel length, so that
-/// every handle subtends `HANDLE_PIXEL_LENGTH` pixels regardless of
-/// camera distance. Uses the same `world_per_pixel` formula as the
-/// camera's pan code path.
-pub(crate) fn gizmo_scale(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
-    let h = viewport_h.max(1.0);
-    let world_per_pixel = 2.0 * camera.distance * (fov_y * 0.5).tan() / h;
-    world_per_pixel * HANDLE_PIXEL_LENGTH
+/// Returns the world-space shaft length that makes the gizmo at `pivot` span
+/// `HANDLE_PIXEL_LENGTH` pixels on screen. Returns `None` when `pivot` is not
+/// in front of the eye.
+pub(crate) fn gizmo_scale(
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    fov_y: f32,
+    viewport_h: f32,
+) -> Option<f32> {
+    camera
+        .world_per_pixel_at(pivot, fov_y, viewport_h)
+        .map(|world_per_pixel| world_per_pixel * HANDLE_PIXEL_LENGTH)
 }
 
-/// World-unit radius of the hit cylinder, derived the same way as
-/// `gizmo_scale` so the hit volume keeps its ~6 px screen radius
-/// regardless of camera distance.
-pub(crate) fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
-    let h = viewport_h.max(1.0);
-    let world_per_pixel = 2.0 * camera.distance * (fov_y * 0.5).tan() / h;
-    world_per_pixel * HANDLE_PIXEL_RADIUS
+/// Returns the world-space radius of the translate hit cylinder that spans
+/// `HANDLE_PIXEL_RADIUS` pixels on screen at `pivot`. Returns `None` when
+/// `pivot` is not in front of the eye.
+pub(crate) fn hit_radius_world(
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    fov_y: f32,
+    viewport_h: f32,
+) -> Option<f32> {
+    camera
+        .world_per_pixel_at(pivot, fov_y, viewport_h)
+        .map(|world_per_pixel| world_per_pixel * HANDLE_PIXEL_RADIUS)
 }
 
 #[cfg(test)]
@@ -95,9 +103,9 @@ mod pivot_tests {
         )
     }
 
-    /// Single-leaf scene under a Group root, mirroring the shape the
-    /// loader pipeline produces (one inline-mesh leaf attached under
-    /// an identity-Group root).
+    /// Single-leaf scene under a Group root, mirroring the shape the loader
+    /// pipeline produces (one inline-mesh leaf attached under an identity-Group
+    /// root).
     fn spatial_with_one_leaf(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -152,9 +160,9 @@ mod pivot_tests {
 
     #[test]
     fn pivot_for_non_leaf_node_is_none() {
-        // The Group root introduced by `spatial_with_one_leaf` is not
-        // a leaf; SceneSpatial::leaf rejects it, and pivot_for_leaf
-        // inherits that rejection.
+        // The Group root introduced by `spatial_with_one_leaf` is not a leaf;
+        // SceneSpatial::leaf rejects it, and pivot_for_leaf inherits that
+        // rejection.
         let spatial = spatial_with_one_leaf(
             triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
             Transform3D::Identity,
@@ -165,10 +173,10 @@ mod pivot_tests {
 
     #[test]
     fn pivot_for_mesh_with_nan_vertex_is_none() {
-        // Every vertex carries NaN on the same axis so the AABB on
-        // that axis stays NaN (f32::min / f32::max silently drop a
-        // NaN operand when paired with a finite one, so a single bad
-        // vertex would not reach the pivot).
+        // Every vertex carries NaN on the same axis so the AABB on that axis
+        // stays NaN (f32::min / f32::max silently drop a NaN operand when
+        // paired with a finite one, so a single bad vertex would not reach the
+        // pivot).
         let spatial = spatial_with_one_leaf(
             triangle_mesh(
                 [f32::NAN, 0.0, 0.0],
@@ -204,9 +212,9 @@ mod pivot_tests {
 
     #[test]
     fn pivot_for_finite_mesh_with_non_finite_transform_is_none() {
-        // The local AABB centre is finite, but the affine transform
-        // pushes the result to non-finite. The guard has to catch the
-        // post-transform value, not just the local one.
+        // The local AABB centre is finite, but the affine transform pushes the
+        // result to non-finite. The guard has to catch the post-transform
+        // value, not just the local one.
         let non_finite_translation = AffineTransform3D::from_translation([f64::INFINITY, 0.0, 0.0]);
         let spatial = spatial_with_one_leaf(
             triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
@@ -219,6 +227,10 @@ mod pivot_tests {
 #[cfg(test)]
 mod scale_tests {
     use super::*;
+    use float_cmp::assert_approx_eq;
+
+    use crate::camera::AxisView;
+    use crate::picking;
 
     fn cam_at_distance(d: f32) -> OrbitCamera {
         let mut c = OrbitCamera::new(Vec3::ZERO, 1.0);
@@ -228,16 +240,40 @@ mod scale_tests {
 
     #[test]
     fn gizmo_scale_grows_with_camera_distance() {
-        let near = gizmo_scale(&cam_at_distance(2.0), 1.0, 480.0);
-        let far = gizmo_scale(&cam_at_distance(20.0), 1.0, 480.0);
+        let near = gizmo_scale(&cam_at_distance(2.0), Vec3::ZERO, 1.0, 480.0).unwrap();
+        let far = gizmo_scale(&cam_at_distance(20.0), Vec3::ZERO, 1.0, 480.0).unwrap();
         // 10× farther → 10× larger world units per pixel → 10× scale.
         assert!(far > near * 9.0 && far < near * 11.0);
     }
 
     #[test]
     fn gizmo_scale_shrinks_with_viewport_height() {
-        let small_h = gizmo_scale(&cam_at_distance(5.0), 1.0, 240.0);
-        let big_h = gizmo_scale(&cam_at_distance(5.0), 1.0, 1080.0);
+        let small_h = gizmo_scale(&cam_at_distance(5.0), Vec3::ZERO, 1.0, 240.0).unwrap();
+        let big_h = gizmo_scale(&cam_at_distance(5.0), Vec3::ZERO, 1.0, 1080.0).unwrap();
         assert!(big_h < small_h);
+    }
+
+    #[test]
+    fn hit_radius_spans_handle_pixel_radius_off_the_orbit_target_plane() {
+        // Front view from (0, -3, 0). The pivot is 1 unit in front of the plane
+        // through the orbit target.
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.set_axis_view(AxisView::Front);
+        let (w, h) = (1024.0, 768.0);
+        let pivot = Vec3::new(0.0, -1.0, 0.0);
+        let radius = hit_radius_world(&camera, pivot, 0.8, h).unwrap();
+
+        let (x0, _) = picking::project_world_to_screen(&camera, 0.8, w, h, pivot).unwrap();
+        let rim = pivot + Vec3::X * radius;
+        let (x1, _) = picking::project_world_to_screen(&camera, 0.8, w, h, rim).unwrap();
+        assert_approx_eq!(f32, x1 - x0, HANDLE_PIXEL_RADIUS, epsilon = 1e-2);
+    }
+
+    #[test]
+    fn scale_and_hit_radius_are_none_for_a_pivot_behind_the_eye() {
+        let camera = cam_at_distance(5.0);
+        let behind = camera.eye() + (camera.eye() - camera.target);
+        assert!(gizmo_scale(&camera, behind, 1.0, 480.0).is_none());
+        assert!(hit_radius_world(&camera, behind, 1.0, 480.0).is_none());
     }
 }

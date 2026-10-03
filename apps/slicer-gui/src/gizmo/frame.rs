@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-frame `GizmoFrame` assembly for the renderer. Bridges the
-//! controller's per-frame state (pivot, scale, visibility,
-//! lock-out mask) into the renderer's struct.
+//! Per-frame `GizmoFrame` assembly for the renderer. Bridges the controller's
+//! per-frame state (pivot, scale, visibility, lock-out mask) into the
+//! renderer's struct.
 
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
@@ -18,14 +18,14 @@ use super::axis::ALL_AXES;
 use super::hit_test::{arc_pickable, axis_pickable};
 use super::{gizmo_scale, pivot_for_leaf};
 
-/// Builds the per-frame `GizmoFrame` for the renderer when a single
-/// leaf is selected. Returns `None` if the leaf has no geometry (no
-/// pivot to attach to) or `selection` does not name a reachable
-/// leaf. The locked-axes mask uses the camera's forward direction as
-/// a single representative ray: for a small gizmo near the screen
-/// centre, all rays through the gizmo region are within a degree or
-/// so of the camera forward, so a per-frame "is this axis grabbable
-/// from this view" check is uniform across the handle.
+/// Builds the per-frame `GizmoFrame` for the renderer when a single leaf is
+/// selected. Returns `None` if the leaf has no geometry (no pivot to attach
+/// to), `selection` does not name a reachable leaf, or the pivot is not in
+/// front of the eye. The locked-axes mask uses the camera's forward direction
+/// as a single representative ray: for a small gizmo near the screen centre,
+/// all rays through the gizmo region are within a degree or so of the camera
+/// forward, so a per-frame "is this axis grabbable from this view" check is
+/// uniform across the handle.
 pub(crate) fn build_gizmo_frame(
     spatial: &SceneSpatial,
     camera: &OrbitCamera,
@@ -37,7 +37,7 @@ pub(crate) fn build_gizmo_frame(
 ) -> Option<GizmoFrame> {
     let pivot = pivot_for_leaf(spatial, selection)?;
     let fov_y = default_fov_y();
-    let scale = gizmo_scale(camera, fov_y, viewport_h_logical);
+    let scale = gizmo_scale(camera, pivot, fov_y, viewport_h_logical)?;
     let forward = (camera.target - camera.eye()).normalize_or_zero();
     let view_ray = picking::Ray {
         origin: camera.eye(),
@@ -71,6 +71,7 @@ mod build_gizmo_frame_tests {
     use crate::camera::{AxisView, OrbitCamera};
 
     use super::super::axis::Axis;
+    use super::super::dimensions::HANDLE_PIXEL_LENGTH;
     use super::*;
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
@@ -114,9 +115,8 @@ mod build_gizmo_frame_tests {
 
     #[test]
     fn returns_none_when_selection_is_not_a_leaf() {
-        // The Group root introduced by spatial_with_one_leaf is not a
-        // leaf, so pivot_for_leaf returns None and build_gizmo_frame
-        // propagates that.
+        // The Group root introduced by spatial_with_one_leaf is not a leaf, so
+        // pivot_for_leaf returns None and build_gizmo_frame propagates that.
         let spatial = unit_triangle_spatial();
         let root_id = spatial.graph().roots()[0];
 
@@ -179,12 +179,13 @@ mod build_gizmo_frame_tests {
     #[test]
     fn scale_matches_gizmo_scale_at_default_fov_y() {
         // build_gizmo_frame must call gizmo_scale with the renderer's
-        // default_fov_y so the on-screen pixel length stays constant
-        // across cameras. Pin the wiring by reproducing the same call.
+        // default_fov_y so the on-screen pixel length stays constant across
+        // cameras. Pin the wiring by reproducing the same call.
         let spatial = unit_triangle_spatial();
         let camera = default_camera();
         let viewport_h = 720.0;
-        let expected = gizmo_scale(&camera, default_fov_y(), viewport_h);
+        let pivot = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
+        let expected = gizmo_scale(&camera, pivot, default_fov_y(), viewport_h).unwrap();
 
         let frame = build_gizmo_frame(
             &spatial,
@@ -200,6 +201,76 @@ mod build_gizmo_frame_tests {
         assert_approx_eq!(f32, frame.scale, expected, epsilon = 1e-6);
     }
 
+    /// Leaf whose local AABB is centred on the origin, translated so that its
+    /// pivot lands on `pivot`.
+    fn spatial_with_pivot_at(pivot: [f64; 3]) -> SceneSpatial {
+        spatial_with_one_leaf(
+            triangle_mesh([-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [0.0, 0.0, 1.0]),
+            Transform3D::Affine(AffineTransform3D::from_translation(pivot)),
+        )
+    }
+
+    /// Eye on the -Y axis, looking along +Y at the origin.
+    fn front_camera_at_distance(distance: f32) -> OrbitCamera {
+        let mut camera = default_camera();
+        camera.set_axis_view(AxisView::Front);
+        camera.distance = distance;
+        camera
+    }
+
+    #[test]
+    fn shaft_spans_handle_pixel_length_off_the_orbit_target_plane() {
+        // The X shaft is parallel to the image plane, so its projected length
+        // is exact. Pivots at y = -1 and y = +1 are in front of and behind the
+        // plane through the orbit target.
+        let (w, h) = (1024.0, 768.0);
+        let fov_y = default_fov_y();
+        for pivot_y in [-1.0, 1.0] {
+            let spatial = spatial_with_pivot_at([0.0, pivot_y, 0.0]);
+            for distance in [3.0, 1.5] {
+                let camera = front_camera_at_distance(distance);
+                let frame = build_gizmo_frame(
+                    &spatial,
+                    &camera,
+                    first_leaf(&spatial),
+                    h,
+                    GizmoVisibility::Idle,
+                    None,
+                    None,
+                )
+                .expect("pivot is in front of the eye");
+
+                let (x0, y0) =
+                    picking::project_world_to_screen(&camera, fov_y, w, h, frame.pivot).unwrap();
+                let tip = frame.pivot + Vec3::X * frame.scale;
+                let (x1, y1) = picking::project_world_to_screen(&camera, fov_y, w, h, tip).unwrap();
+                assert_approx_eq!(
+                    f32,
+                    (x1 - x0).hypot(y1 - y0),
+                    HANDLE_PIXEL_LENGTH,
+                    epsilon = 0.05
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn returns_none_when_pivot_is_behind_the_eye() {
+        // The eye is at y = -3.
+        let spatial = spatial_with_pivot_at([0.0, -4.0, 0.0]);
+
+        let frame = build_gizmo_frame(
+            &spatial,
+            &front_camera_at_distance(3.0),
+            first_leaf(&spatial),
+            600.0,
+            GizmoVisibility::Idle,
+            None,
+            None,
+        );
+        assert!(frame.is_none());
+    }
+
     fn camera_looking_down_x() -> OrbitCamera {
         let mut camera = default_camera();
         camera.set_axis_view(AxisView::Right);
@@ -209,8 +280,8 @@ mod build_gizmo_frame_tests {
     #[test]
     fn locked_translate_marks_axis_parallel_to_view_ray() {
         // Right view: yaw=0, pitch=0 -> eye at (+d, 0, 0), forward = -X.
-        // axis_pickable rejects X (|X . -X| = 1, above LOCKOUT_COS);
-        // Y and Z stay grabbable.
+        // axis_pickable rejects X (|X . -X| = 1, above LOCKOUT_COS); Y and Z
+        // stay grabbable.
         let spatial = unit_triangle_spatial();
         let camera = camera_looking_down_x();
 
@@ -230,9 +301,9 @@ mod build_gizmo_frame_tests {
 
     #[test]
     fn locked_rotate_marks_axes_perpendicular_to_view_ray() {
-        // Same Right-view camera. arc_pickable demands |axis . forward|
-        // >= ROTATE_LOCKOUT_COS; only X meets that (axis parallel to
-        // ray), so Y and Z arcs are locked (edge-on).
+        // Same Right-view camera. arc_pickable demands |axis . forward| >=
+        // ROTATE_LOCKOUT_COS; only X meets that (axis parallel to ray), so Y
+        // and Z arcs are locked (edge-on).
         let spatial = unit_triangle_spatial();
         let camera = camera_looking_down_x();
 
@@ -273,8 +344,8 @@ mod build_gizmo_frame_tests {
 
         assert_eq!(frame.visibility, visibility);
         assert_eq!(frame.hover, hover);
-        // GizmoDragVisual has no PartialEq; destructure to check the
-        // payload survived the round trip.
+        // GizmoDragVisual has no PartialEq; destructure to check the payload
+        // survived the round trip.
         match frame.drag_visual {
             Some(GizmoDragVisual::Rotate { axis, angle }) => {
                 assert_eq!(axis, Axis::X);

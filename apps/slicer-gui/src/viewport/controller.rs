@@ -4,18 +4,16 @@
  */
 
 //! Coordinator for the per-viewport sub-controllers (`SessionState`,
-//! `CameraController`, `RenderHost`, `InputDispatch`). Most public
-//! methods are thin delegations to one of those.
+//! `CameraController`, `RenderHost`, `InputDispatch`). Most public methods are
+//! thin delegations to one of those.
 //!
-//! `handle_rendering_setup` is the exception: it is genuinely
-//! cross-concern (it touches both `SessionState`, to publish the GPU
-//! device into the loader and drain any queued pending load, and
-//! `RenderHost`, to install the renderer and flag a redraw). The wgpu
-//! types live at this seam because Slint hands them to whichever
-//! method is registered as the `rendering-setup` callback, and
-//! coordinating across session and render is exactly what the
-//! coordinator exists for, so the wgpu import below is not an
-//! abstraction leak.
+//! `handle_rendering_setup` is the exception: it is genuinely cross-concern (it
+//! touches both `SessionState`, to publish the GPU device into the loader and
+//! drain any queued pending load, and `RenderHost`, to install the renderer and
+//! flag a redraw). The wgpu types live at this seam because Slint hands them to
+//! whichever method is registered as the `rendering-setup` callback, and
+//! coordinating across session and render is exactly what the coordinator
+//! exists for, so the wgpu import below is not an abstraction leak.
 
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
@@ -67,11 +65,11 @@ pub(crate) struct ViewportController {
     camera: CameraController,
     render: RenderHost,
     input: InputDispatch,
-    /// Last cap key pushed to the slice-view panel image, so the paint
-    /// path only rebuilds and re-uploads the cross-section when the
-    /// selected layer or the slice generation actually changes. `None`
-    /// means the panel currently shows an empty image. Shares the cap
-    /// key space with the 3D cut so the two stay in lockstep.
+    /// Last cap key pushed to the slice-view panel image, so the paint path
+    /// only rebuilds and re-uploads the cross-section when the selected layer
+    /// or the slice generation actually changes. `None` means the panel
+    /// currently shows an empty image. Shares the cap key space with the 3D cut
+    /// so the two stay in lockstep.
     slice_view_key: Cell<Option<u64>>,
 }
 
@@ -103,12 +101,11 @@ impl ViewportController {
         }
     }
 
-    /// Constructor for selection-FSM unit tests. The stored `Weak` is
-    /// dangling, so every `ui.upgrade()` returns `None` and the
-    /// UI-mirroring side effects (`set_selected_object_index`,
-    /// `set_object_list`, `request_redraw`) silently skip, leaving the
-    /// in-Rust selection cell and dirty flag as the only observable
-    /// state. This matches `SceneLoader::new_for_test`.
+    /// Constructor for selection-FSM unit tests. The stored `Weak` is dangling,
+    /// so every `ui.upgrade()` returns `None` and the UI-mirroring side effects
+    /// (`set_selected_object_index`, `set_object_list`, `request_redraw`)
+    /// silently skip, leaving the in-Rust selection cell and dirty flag as the
+    /// only observable state. This matches `SceneLoader::new_for_test`.
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
         let dialogs = DialogManager::new();
@@ -131,18 +128,18 @@ impl ViewportController {
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
         };
-        // Most viewport tests exercise the Transform-section tooling
-        // (gizmo drag, keyboard drive, delete, paste); default the
-        // fixture to Transform so the section gate does not silence
-        // them. Production starts in Prepare (SessionState::new) and the
-        // load pipeline picks the initial section from mesh health.
-        // Section-gating tests set the section they need explicitly.
+        // Most viewport tests exercise the Transform-section tooling (gizmo
+        // drag, keyboard drive, delete, paste); default the fixture to
+        // Transform so the section gate does not silence them. Production
+        // starts in Prepare (SessionState::new) and the load pipeline picks the
+        // initial section from mesh health. Section-gating tests set the
+        // section they need explicitly.
         controller.session.set_section(WorkspaceSection::Transform);
         controller
     }
 
-    /// Install a pre-built `Box<dyn MeshRenderer>` into the
-    /// render-host's renderer slot. Used by tests that need to drive
+    /// Install a pre-built `Box<dyn MeshRenderer>` into the render-host's
+    /// renderer slot. Used by tests that need to drive
     /// `handle_before_rendering` and the lifecycle hooks against a
     /// `MockRenderer` instead of the wgpu-backed `Renderer`.
     #[cfg(test)]
@@ -153,10 +150,10 @@ impl ViewportController {
         *self.render.renderer_cell().borrow_mut() = Some(renderer);
     }
 
-    /// Set the per-frame flag set to an arbitrary [`FrameState`].
-    /// Used by `handle_before_rendering` phase tests that need the
-    /// upload-owed / redraw-owed combinations the production code
-    /// reaches through document events.
+    /// Set the per-frame flag set to an arbitrary [`FrameState`]. Used by
+    /// `handle_before_rendering` phase tests that need the upload-owed /
+    /// redraw-owed combinations the production code reaches through document
+    /// events.
     #[cfg(test)]
     pub(super) fn set_frame_state_for_test(&self, state: FrameState) {
         self.render.set_frame(state);
@@ -164,10 +161,10 @@ impl ViewportController {
 
     #[cfg(test)]
     pub(crate) fn install_graph_for_test(&self, graph: sc_scene::Scene) {
-        // Tests don't care about the source path; populate the slot
-        // with a sentinel so the document's invariant ("scene present
-        // <=> path present") holds and any future test assertion on
-        // `source_path` is explicit about its synthetic origin.
+        // Tests don't care about the source path; populate the slot with a
+        // sentinel so the document's invariant ("scene present <=> path
+        // present") holds and any future test assertion on `source_path` is
+        // explicit about its synthetic origin.
         self.session
             .document()
             .install_graph(graph, std::path::PathBuf::from("<test>"));
@@ -222,31 +219,30 @@ impl ViewportController {
     }
 
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
-    /// handshake (begin/end, stamp, slot) against the loader directly
-    /// rather than through delegating methods on the controller.
+    /// handshake (begin/end, stamp, slot) against the loader directly rather
+    /// than through delegating methods on the controller.
     pub(crate) fn loader(&self) -> Rc<SceneLoader> {
         self.session.loader().clone()
     }
 
-    /// Access to the slot holding a load request that arrived before
-    /// the window had a graphics device. `wiring.rs` parks the menu's
-    /// picked path here when the viewport has not started yet;
-    /// `post_renderer_install` drains it.
+    /// Access to the slot holding a load request that arrived before the window
+    /// had a graphics device. `wiring.rs` parks the menu's picked path here
+    /// when the viewport has not started yet; `post_renderer_install` drains
+    /// it.
     pub(crate) fn pending_load(&self) -> Rc<PendingLoad> {
         self.session.pending_load().clone()
     }
 
-    /// Access to the document. Used by `wiring.rs` to drive the
-    /// `Export As` flow (read scene + source path) without going
-    /// through delegating methods on the controller.
+    /// Access to the document. Used by `wiring.rs` to drive the `Export As`
+    /// flow (read scene + source path) without going through delegating methods
+    /// on the controller.
     pub(crate) fn document(&self) -> Rc<SceneDocument> {
         self.session.document().clone()
     }
 
-    /// Access to the dialog manager. Used by `wiring.rs` to surface
-    /// errors that don't originate from a controller call (e.g. an
-    /// async file-save dialog flow whose result needs an error
-    /// dialog).
+    /// Access to the dialog manager. Used by `wiring.rs` to surface errors that
+    /// don't originate from a controller call (e.g. an async file-save dialog
+    /// flow whose result needs an error dialog).
     pub(crate) fn dialogs(&self) -> Rc<DialogManager> {
         self.session.dialogs().clone()
     }
@@ -260,10 +256,9 @@ impl ViewportController {
         self.session.export_progress().clone()
     }
 
-    /// Subscribes the controller to its document. Called from
-    /// `app_state` once the controller is wrapped in `Rc`. The
-    /// listener captures a `Weak<Self>` to avoid an `Rc` cycle through
-    /// the document.
+    /// Subscribes the controller to its document. Called from `app_state` once
+    /// the controller is wrapped in `Rc`. The listener captures a `Weak<Self>`
+    /// to avoid an `Rc` cycle through the document.
     pub(crate) fn register_document_listener(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         let sub = self.session.document().subscribe(move |event| {
@@ -274,10 +269,10 @@ impl ViewportController {
         self.session.install_subscription(sub);
     }
 
-    /// Translates a `SceneEvent` into the viewport-state reset that
-    /// used to live inline in the lifecycle methods. Intended only as
-    /// a listener body, public callers should drive the document
-    /// directly and let the listener react.
+    /// Translates a `SceneEvent` into the viewport-state reset that used to
+    /// live inline in the lifecycle methods. Intended only as a listener body,
+    /// public callers should drive the document directly and let the listener
+    /// react.
     fn handle_scene_event(&self, event: SceneEvent) {
         match event {
             SceneEvent::Installed => self.on_scene_installed(),
@@ -287,22 +282,21 @@ impl ViewportController {
                 self.mark_dirty();
             }
             SceneEvent::Mutated => {
-                // Every non-structural scene mutation routes
-                // through `apply_edit`, so this is the single place
-                // that schedules a redraw for them. The per-frame
-                // model-matrix upload reads the live graph each
-                // frame, so a transform tick needs no extra upload.
+                // Every non-structural scene mutation routes through
+                // `apply_edit`, so this is the single place that schedules a
+                // redraw for them. The per-frame model-matrix upload reads the
+                // live graph each frame, so a transform tick needs no extra
+                // upload.
                 self.mark_dirty();
             }
             SceneEvent::Restructured => {
-                // A structural edit (leaf added or removed, mesh
-                // resource added, removed, or replaced) just landed.
-                // The renderer's GpuScene mirrors the arena one-to-one,
-                // so it needs a fresh upload before the next draw
-                // or the leaf-count assertion at the top of `render`
-                // will trip. The object-list side panel also mirrors
-                // the arena and needs the same refresh. `mark_dirty`
-                // flips redraw-owed for the redraw.
+                // A structural edit (leaf added or removed, mesh resource
+                // added, removed, or replaced) just landed. The renderer's
+                // GpuScene mirrors the arena one-to-one, so it needs a fresh
+                // upload before the next draw or the leaf-count assertion at
+                // the top of `render` will trip. The object-list side panel
+                // also mirrors the arena and needs the same refresh.
+                // `mark_dirty` flips redraw-owed for the redraw.
                 self.render.update_frame(FrameState::with_upload_owed);
                 if let Some(ui) = self.ui.upgrade() {
                     self.refresh_object_list_on(&ui);
@@ -322,20 +316,19 @@ impl ViewportController {
         }
     }
 
-    /// Pushes the unsaved-changes state to the UI, which prefixes
-    /// the window title with `*` while it holds.
+    /// Pushes the unsaved-changes state to the UI, which prefixes the window
+    /// title with `*` while it holds.
     fn mirror_dirty_state_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_scene_dirty(self.session.document().is_dirty());
         }
     }
 
-    /// Pushes the held slice's layer count to the UI, sizing and
-    /// enabling the height slider, and parks the selected layer at the
-    /// top. No held slice reports a zero count, which
-    /// disables the slider. Runs on scene install and clear, where the
-    /// document has just dropped any slice; the slice driver pushes the
-    /// same values itself when a run completes.
+    /// Pushes the held slice's layer count to the UI, sizing and enabling the
+    /// height slider, and parks the selected layer at the top. No held slice
+    /// reports a zero count, which disables the slider. Runs on scene install
+    /// and clear, where the document has just dropped any slice; the slice
+    /// driver pushes the same values itself when a run completes.
     fn mirror_slice_layer_count_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let count = self.session.document().slice_layer_count().unwrap_or(0);
@@ -344,11 +337,10 @@ impl ViewportController {
         }
     }
 
-    /// Pushes the open file's name to the UI, which shows it as the
-    /// window title. Empty while no scene is loaded. Runs on scene
-    /// install and clear; the save flow calls
-    /// [`Self::refresh_document_title`] after a "Save As" moves the
-    /// document to a new path.
+    /// Pushes the open file's name to the UI, which shows it as the window
+    /// title. Empty while no scene is loaded. Runs on scene install and clear;
+    /// the save flow calls [`Self::refresh_document_title`] after a "Save As"
+    /// moves the document to a new path.
     fn mirror_title_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let name = self
@@ -360,18 +352,18 @@ impl ViewportController {
         }
     }
 
-    /// Re-reads the document's source path and updates the window
-    /// title. Called from the save wiring after a successful "Save As"
-    /// (or a first "Save" that fell back to it), which relocates the
-    /// document without emitting a scene event.
+    /// Re-reads the document's source path and updates the window title. Called
+    /// from the save wiring after a successful "Save As" (or a first "Save"
+    /// that fell back to it), which relocates the document without emitting a
+    /// scene event.
     pub(crate) fn refresh_document_title(&self) {
         self.mirror_title_to_ui();
     }
 
-    /// Reset that follows a fresh scene install. Camera reset to
-    /// `None` so the renderer-bounds framing branch in
-    /// `on_scene_load_finished` can populate it; UI mirrors the new
-    /// scene's object list and the freshly-cleared selection.
+    /// Reset that follows a fresh scene install. Camera reset to `None` so the
+    /// renderer-bounds framing branch in `on_scene_load_finished` can populate
+    /// it; UI mirrors the new scene's object list and the freshly-cleared
+    /// selection.
     fn on_scene_installed(&self) {
         self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
@@ -387,12 +379,11 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Rebuild the object-list panel from the live graph and push
-    /// it to `ui`. Called on scene install (initial population) and
-    /// after every structural mutation (paste, undo of paste, future
-    /// add / remove flows) so the side panel stays in sync with
-    /// the arena. Non-structural edits (gizmo drag, keyboard nudge)
-    /// don't grow or shrink the list, so they skip this.
+    /// Rebuild the object-list panel from the live graph and push it to `ui`.
+    /// Called on scene install (initial population) and after every structural
+    /// mutation (paste, undo of paste, future add / remove flows) so the side
+    /// panel stays in sync with the arena. Non-structural edits (gizmo drag,
+    /// keyboard nudge) don't grow or shrink the list, so they skip this.
     fn refresh_object_list_on(&self, ui: &MainWindow) {
         let names = self
             .session
@@ -402,12 +393,11 @@ impl ViewportController {
         push_object_list(ui, names);
     }
 
-    /// Full viewport reset on scene close. Mirror of the inline body
-    /// the close path used to carry. The drag's captured `object_idx`
-    /// becomes meaningless once the scene is gone, so the FSM is
-    /// reset without trying to revert the (now-missing) object's
-    /// transform; same for the keyboard integrator's focus and
-    /// held-arrow bitset.
+    /// Full viewport reset on scene close. Mirror of the inline body the close
+    /// path used to carry. The drag's captured `object_idx` becomes meaningless
+    /// once the scene is gone, so the FSM is reset without trying to revert the
+    /// (now-missing) object's transform; same for the keyboard integrator's
+    /// focus and held-arrow bitset.
     fn on_scene_cleared(&self) {
         self.camera.reset();
         self.render.set_frame(FrameState::default());
@@ -430,34 +420,34 @@ impl ViewportController {
         self.render.request_redraw();
     }
 
-    /// Replace the active build volume and trigger a redraw. The
-    /// renderer's plate-buffer cache keys off the `BuildVolume`, so
-    /// the next render rebuilds the floor + cage geometry against
-    /// the new envelope automatically. Camera position is preserved
-    /// (mid-session edits leave the user's view alone).
+    /// Replace the active build volume and trigger a redraw. The renderer's
+    /// plate-buffer cache keys off the `BuildVolume`, so the next render
+    /// rebuilds the floor + cage geometry against the new envelope
+    /// automatically. Camera position is preserved (mid-session edits leave the
+    /// user's view alone).
     ///
     /// Uses `mark_dirty`, not just `request_redraw`: the render path
-    /// early-returns when `frame.redraw_owed` is false, so a bare
-    /// window-poke isn't enough on its own.
-    /// Current build envelope. Read by the load pipeline at dispatch
-    /// time so the worker can drop the parsed scene onto the plate.
+    /// early-returns when `frame.redraw_owed` is false, so a bare window-poke
+    /// isn't enough on its own.
+    /// Current build envelope. Read by the load pipeline at dispatch time so
+    /// the worker can drop the parsed scene onto the plate.
     pub(crate) fn build_volume(&self) -> BuildVolume {
         self.session.build_volume()
     }
 
-    /// Draw the previews a printer file of `format` carries, framed
-    /// on the models rather than on wherever the viewport's camera
-    /// happens to be pointing.
+    /// Draw the previews a printer file of `format` carries, framed on the
+    /// models rather than on wherever the viewport's camera happens to be
+    /// pointing.
     ///
-    /// `None` when the format carries no previews, when no scene is
-    /// loaded, or when the device cannot draw them.
+    /// `None` when the format carries no previews, when no scene is loaded, or
+    /// when the device cannot draw them.
     pub(crate) fn print_file_previews(&self, format: PrinterFileFormat) -> Option<PrintPreviews> {
-        // TODO: this draws 2 frames and waits for the GPU to hand
-        // them back, all on the UI thread, so the window stops
-        // repainting for as long as that takes. Doing it on a worker
-        // needs a second renderer on the same device, and today that
-        // would upload the scene's geometry all over again; letting 2
-        // renderers share the installed buffers is the missing piece.
+        // TODO: this draws 2 frames and waits for the GPU to hand them back,
+        // all on the UI thread, so the window stops repainting for as long as
+        // that takes. Doing it on a worker needs a second renderer on the same
+        // device, and today that would upload the scene's geometry all over
+        // again; letting 2 renderers share the installed buffers is the missing
+        // piece.
         let sizes = format.preview_sizes()?;
         let build_volume = self.build_volume();
         let mut cell = self.render.renderer_cell().borrow_mut();
@@ -478,12 +468,11 @@ impl ViewportController {
         }
     }
 
-    /// Switches the active workspace section, mirrors it into the UI
-    /// pill, and schedules a redraw. No-op when unchanged. Driven both
-    /// by the pill switcher and by the load pipeline, which picks the
-    /// initial section from mesh health. Leaving Transform cancels any
-    /// in-flight gizmo gesture so a half-finished transform cannot
-    /// linger in a section that forbids editing.
+    /// Switches the active workspace section, mirrors it into the UI pill, and
+    /// schedules a redraw. No-op when unchanged. Driven both by the pill
+    /// switcher and by the load pipeline, which picks the initial section from
+    /// mesh health. Leaving Transform cancels any in-flight gizmo gesture so a
+    /// half-finished transform cannot linger in a section that forbids editing.
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
         if !self.session.set_section(section) {
             return;
@@ -497,23 +486,23 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Whether the active section permits the layout tools (gizmo,
-    /// delete, copy, paste). The gating across the input paths reads
-    /// this; selection and camera navigation ignore it.
+    /// Whether the active section permits the layout tools (gizmo, delete,
+    /// copy, paste). The gating across the input paths reads this; selection
+    /// and camera navigation ignore it.
     pub(crate) fn allows_layout_tools(&self) -> bool {
         crate::workspace_section::allows_layout_tools(self.session.section())
     }
 
-    /// Whether the active section permits undo/redo. Wider than the
-    /// layout gate: history stays reachable in Prepare (mesh repair
-    /// is undoable there) and is blocked only in Slice.
+    /// Whether the active section permits undo/redo. Wider than the layout
+    /// gate: history stays reachable in Prepare (mesh repair is undoable there)
+    /// and is blocked only in Slice.
     pub(crate) fn allows_undo_redo(&self) -> bool {
         crate::workspace_section::allows_undo_redo(self.session.section())
     }
 
-    /// Reverts an in-progress gizmo drag and drops keyboard gizmo
-    /// focus, leaving the selection intact. Called when the section
-    /// changes to one that forbids transforms.
+    /// Reverts an in-progress gizmo drag and drops keyboard gizmo focus,
+    /// leaving the selection intact. Called when the section changes to one
+    /// that forbids transforms.
     fn cancel_transform_gestures(&self) {
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
             self.input.abort_gizmo_drag(self.session.document());
@@ -527,9 +516,9 @@ impl ViewportController {
         self.render.mark_dirty();
     }
 
-    /// The slice height slider moved: repaint so the mesh clip follows
-    /// the new layer. The clip height is recomputed from the current UI
-    /// value at paint time.
+    /// The slice height slider moved: repaint so the mesh clip follows the new
+    /// layer. The clip height is recomputed from the current UI value at paint
+    /// time.
     pub(crate) fn on_selected_layer_changed(&self) {
         self.mark_dirty();
     }
@@ -540,8 +529,8 @@ impl ViewportController {
 
     /// Called once `viewport-resized` has stayed quiet for `RESIZE_SETTLE`.
     /// Drops the bucketed MSAA / target allocations so the next frame
-    /// reallocates at the exact logical size, eliminating the `image-fit:
-    /// fill` stretch that persisted during the drag.
+    /// reallocates at the exact logical size, eliminating the `image-fit: fill`
+    /// stretch that persisted during the drag.
     pub(crate) fn on_resize_settled(&self) {
         self.render.on_resize_settled();
     }
@@ -580,12 +569,11 @@ impl ViewportController {
     }
 
     pub(crate) fn on_close_scene(&self) {
-        // Loader-side invalidation is not driven by the document's
-        // listener, it's coupled to the close *gesture*, not to the
-        // scene state itself. The `clear_scene` call below fires
-        // `SceneEvent::Cleared`, and the controller's listener
-        // handles the full viewport-state reset (camera, frame,
-        // gizmo, kbd, renderer, UI).
+        // Loader-side invalidation is not driven by the document's listener,
+        // it's coupled to the close *gesture*, not to the scene state itself.
+        // The `clear_scene` call below fires `SceneEvent::Cleared`, and the
+        // controller's listener handles the full viewport-state reset (camera,
+        // frame, gizmo, kbd, renderer, UI).
         self.session.loader().invalidate_and_clear();
         self.session.document().clear_scene();
     }
@@ -604,13 +592,11 @@ impl ViewportController {
             ..
         } = prepared;
 
-        // Try to install the worker-built buffers directly. Falls
-        // through to the UI-thread upload path if the renderer is
-        // gone (post-teardown) or has rotated to a different device
-        // since the worker started (mid-load device loss); the
-        // `device_token` carried by `gpu_scene` is what tells
-        // `install_scene` whether the worker's snapshot still
-        // matches.
+        // Try to install the worker-built buffers directly. Falls through to
+        // the UI-thread upload path if the renderer is gone (post-teardown) or
+        // has rotated to a different device since the worker started (mid-load
+        // device loss); the `device_token` carried by `gpu_scene` is what tells
+        // `install_scene` whether the worker's snapshot still matches.
         let scene_installed = self
             .render
             .renderer_cell()
@@ -619,18 +605,17 @@ impl ViewportController {
             .map(|r| r.install_scene(gpu_scene))
             .unwrap_or(false);
 
-        // Fires `SceneEvent::Installed`; the listener resets the
-        // camera to `None` (so the bounds-based framing below sees a
-        // fresh slot), pushes the new object list, and rearms the UI
-        // mirror.
+        // Fires `SceneEvent::Installed`; the listener resets the camera to
+        // `None` (so the bounds-based framing below sees a fresh slot), pushes
+        // the new object list, and rearms the UI mirror.
         self.session
             .document()
             .install_spatial(spatial, source_path, project_payload);
 
-        // A reopened project's revalidated slices become the held result
-        // now, after install has cleared any previous one, so the viewer
-        // opens on them without a re-slice. The fresh scene's revision is
-        // the in-sync baseline the write guard compares against.
+        // A reopened project's revalidated slices become the held result now,
+        // after install has cleared any previous one, so the viewer opens on
+        // them without a re-slice. The fresh scene's revision is the in-sync
+        // baseline the write guard compares against.
         if let Some(reloaded) = reloaded_slices {
             let geometry = self.session.document().scene_revision();
             self.session
@@ -638,20 +623,20 @@ impl ViewportController {
                 .set_slice_result(reloaded.into_slice_result(geometry));
         }
 
-        // A freshly loaded scene opens in Transform when its meshes are
-        // all clean manifolds, otherwise in Prepare (the home of the
-        // future repair tooling). Set after install so the pill, which
-        // is gated on a scene being present, is already showing.
+        // A freshly loaded scene opens in Transform when its meshes are all
+        // clean manifolds, otherwise in Prepare (the home of the future repair
+        // tooling). Set after install so the pill, which is gated on a scene
+        // being present, is already showing.
         self.set_section(initial_section(mesh_health));
 
         if scene_installed {
             self.session.loader().note_upload_success();
-            // Frame on the union of the scene's world AABB and the
-            // build envelope, so the plate is always inside the view
-            // and the orbit centre / zoom limits are anchored to the
-            // printer's coordinate frame regardless of how big or
-            // small the imported model is. Mirrors the framing the
-            // pre-first-paint path uses when the camera slot is empty.
+            // Frame on the union of the scene's world AABB and the build
+            // envelope, so the plate is always inside the view and the orbit
+            // centre / zoom limits are anchored to the printer's coordinate
+            // frame regardless of how big or small the imported model is.
+            // Mirrors the framing the pre-first-paint path uses when the camera
+            // slot is empty.
             let scene_bounds = self
                 .render
                 .renderer_cell()
@@ -666,8 +651,8 @@ impl ViewportController {
         }
     }
 
-    /// Selection, resolved to its pre-order leaf index against the
-    /// live graph. Test-only; the document's authoritative form is
+    /// Selection, resolved to its pre-order leaf index against the live graph.
+    /// Test-only; the document's authoritative form is
     /// [`SceneDocument::selection_primary_node_id`].
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
@@ -677,17 +662,16 @@ impl ViewportController {
             .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten())
     }
 
-    /// Slint-side selection-changed callback. Out-of-bounds indices map
-    /// to `None` (defensive, the UI shouldn't normally hand us one,
-    /// but a stale callback can race with a scene reload). The Cell
-    /// guard short-circuits the round-trip so the mirror-back to the UI
-    /// doesn't fire `selection-changed` again.
+    /// Slint-side selection-changed callback. Out-of-bounds indices map to
+    /// `None` (defensive, the UI shouldn't normally hand us one, but a stale
+    /// callback can race with a scene reload). The Cell guard short-circuits
+    /// the round-trip so the mirror-back to the UI doesn't fire
+    /// `selection-changed` again.
     pub(crate) fn on_select_by_index(&self, idx: usize) {
-        // Resolve the legacy pre-order index against the live graph
-        // and store the resulting NodeId in the selection. An
-        // out-of-range index degrades to `Selection::None`, the same
-        // defensive behaviour as before; `leaf_id_at_index` returns
-        // `None` past the last reachable leaf.
+        // Resolve the legacy pre-order index against the live graph and store
+        // the resulting NodeId in the selection. An out-of-range index degrades
+        // to `Selection::None`, the same defensive behaviour as before;
+        // `leaf_id_at_index` returns `None` past the last reachable leaf.
         let new_sel = self
             .session
             .document()
@@ -695,30 +679,29 @@ impl ViewportController {
             .flatten()
             .map_or(Selection::None, Selection::One);
         // `set_selection` short-circuits on no-change and fires
-        // `SceneEvent::SelectionChanged` only on actual transitions;
-        // the listener takes care of mirror-to-UI + mark-dirty.
+        // `SceneEvent::SelectionChanged` only on actual transitions; the
+        // listener takes care of mirror-to-UI + mark-dirty.
         self.session.document().set_selection(new_sel);
     }
 
     /// Tab / Shift+Tab selection cycling.
     ///
-    /// - `delta == 1` advances forward (Tab); `delta == -1` advances
-    ///   backward (Shift+Tab). Other deltas are clamped to ±1 so a
-    ///   stale Slint binding can't drive larger jumps.
-    /// - With no selection, either direction selects
-    ///   `scene.objects[0]`, the same key thus serves "select the
-    ///   first thing" and "advance to the next".
+    /// - `delta == 1` advances forward (Tab); `delta == -1` advances backward
+    ///   (Shift+Tab). Other deltas are clamped to ±1 so a stale Slint binding
+    ///   can't drive larger jumps.
+    /// - With no selection, either direction selects `scene.objects[0]`, the
+    ///   same key thus serves "select the first thing" and "advance to the
+    ///   next".
     /// - With a selection, the index wraps modulo `len`.
     /// - On an empty / missing scene, nothing happens.
     ///
-    /// A side-effect of changing the selection through this path is
-    /// that any in-progress mouse drag aborts (because the abort runs
-    /// out of the same `on_clear_selection` cascade, but we don't
-    /// invoke it here, since Tab on a different object should pick
-    /// up the new selection cleanly without touching the running
-    /// transform). The current implementation does not abort an
-    /// in-progress drag on Tab; if that turns out to be wrong, the
-    /// fix is to call `abort_gizmo_drag` here.
+    /// A side-effect of changing the selection through this path is that any
+    /// in-progress mouse drag aborts (because the abort runs out of the same
+    /// `on_clear_selection` cascade, but we don't invoke it here, since Tab on
+    /// a different object should pick up the new selection cleanly without
+    /// touching the running transform). The current implementation does not
+    /// abort an in-progress drag on Tab; if that turns out to be wrong, the fix
+    /// is to call `abort_gizmo_drag` here.
     pub(crate) fn on_selection_cycle(&self, delta: i32) {
         let scene_len = self
             .session
@@ -743,23 +726,22 @@ impl ViewportController {
         self.on_select_by_index(next);
     }
 
-    /// Esc / "click on empty space" path. Cascades through the
-    /// gesture stack one level per call:
+    /// Esc / "click on empty space" path. Cascades through the gesture stack
+    /// one level per call:
     ///
-    /// 1. If a gizmo drag is in progress -> abort it (transform reverts
-    ///    to the captured original), keep selection / focus.
-    /// 2. Else if keyboard gizmo focus is active -> drop focus only,
-    ///    keep selection.
+    /// 1. If a gizmo drag is in progress -> abort it (transform reverts to the
+    ///    captured original), keep selection / focus.
+    /// 2. Else if keyboard gizmo focus is active -> drop focus only, keep
+    ///    selection.
     /// 3. Else -> clear the selection.
     ///
-    /// "Click on empty space" enters at level 3 (the picker has
-    /// already dispatched here from `on_pointer_up` after determining
-    /// no object was hit); Esc enters at level 1 and naturally
-    /// cascades through repeated presses.
-    /// Edit -> Undo handler. Bounced if no edit is on the stack
-    /// (which is what `can-undo` already gates in the menu, but the
-    /// shortcut can race a freshly-emptied stack, the document's
-    /// own check is the source of truth).
+    /// "Click on empty space" enters at level 3 (the picker has already
+    /// dispatched here from `on_pointer_up` after determining no object was
+    /// hit); Esc enters at level 1 and naturally cascades through repeated
+    /// presses.
+    /// Edit -> Undo handler. Bounced if no edit is on the stack (which is what
+    /// `can-undo` already gates in the menu, but the shortcut can race a
+    /// freshly-emptied stack, the document's own check is the source of truth).
     pub(crate) fn on_undo_requested(&self) {
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
@@ -779,10 +761,9 @@ impl ViewportController {
         }
     }
 
-    /// Surface a scene-rejected edit through the error dialog. The
-    /// GUI builds its edits against the live scene, so a rejection
-    /// indicates a programming bug; the dialog beats silently
-    /// dropping the user's gesture.
+    /// Surface a scene-rejected edit through the error dialog. The GUI builds
+    /// its edits against the live scene, so a rejection indicates a programming
+    /// bug; the dialog beats silently dropping the user's gesture.
     fn show_edit_rejected(&self, error: SceneError) {
         self.session.dialogs().show_error(
             &ctr!("ErrorDialog", "Edit failed"),
@@ -796,21 +777,19 @@ impl ViewportController {
         );
     }
 
-    /// Whether a repair worker is running. Undo/redo is silenced for
-    /// the duration: an edit landing mid-run would invalidate the
-    /// result the worker is computing (its revision guard would then
-    /// discard it, but the user's keystroke should not be the thing
-    /// that wastes the run).
+    /// Whether a repair worker is running. Undo/redo is silenced for the
+    /// duration: an edit landing mid-run would invalidate the result the worker
+    /// is computing (its revision guard would then discard it, but the user's
+    /// keystroke should not be the thing that wastes the run).
     fn repair_in_flight(&self) -> bool {
         self.ui
             .upgrade()
             .is_some_and(|ui| ui.get_repairing_in_progress())
     }
 
-    /// Delete handler shared by the viewport Delete key, the
-    /// right-click context menu, and the Edit > Delete menu item.
-    /// No-op when no scene is loaded, nothing is selected, or the
-    /// selection is not a leaf.
+    /// Delete handler shared by the viewport Delete key, the right-click
+    /// context menu, and the Edit > Delete menu item. No-op when no scene is
+    /// loaded, nothing is selected, or the selection is not a leaf.
     pub(crate) fn on_delete_requested(&self) {
         if !self.allows_layout_tools() {
             return;
@@ -832,20 +811,19 @@ impl ViewportController {
         if matches!(self.session.document().selection(), Selection::None) {
             return;
         }
-        // Selection going away kills the gizmo, so any cached hover
-        // tint targets a handle that no longer renders. Clearing
-        // before the document mutation keeps the order matching the
-        // pre-listener implementation; `set_selection` then fires
-        // `SelectionChanged` and the listener mirrors UI + dirty.
+        // Selection going away kills the gizmo, so any cached hover tint
+        // targets a handle that no longer renders. Clearing before the document
+        // mutation keeps the order matching the pre-listener implementation;
+        // `set_selection` then fires `SelectionChanged` and the listener
+        // mirrors UI + dirty.
         self.input.gizmo_fsm().clear_hover();
         self.session.document().set_selection(Selection::None);
     }
 
-    /// `T`/`R`/`S` keyboard handlers. Each requires a selection to
-    /// exist; without one, the press is a no-op (the user has to
-    /// pick something to focus on first). Pressing the same focus
-    /// type twice is a no-op so the integrator's tick clock isn't
-    /// reset by autorepeat.
+    /// `T`/`R`/`S` keyboard handlers. Each requires a selection to exist;
+    /// without one, the press is a no-op (the user has to pick something to
+    /// focus on first). Pressing the same focus type twice is a no-op so the
+    /// integrator's tick clock isn't reset by autorepeat.
     pub(crate) fn on_gizmo_focus_translate(&self) {
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
@@ -858,15 +836,15 @@ impl ViewportController {
         self.apply_keyboard_focus(KbdFocus::Scale);
     }
 
-    /// Sets the keyboard focus on the input concern, then mirrors
-    /// the activation state to the UI property and marks dirty on
-    /// any actual change. The mirror + dirty step is the cross-
-    /// concern part of the cascade: InputDispatch owns the focus
-    /// cell, the coordinator owns the UI handle.
+    /// Sets the keyboard focus on the input concern, then mirrors the
+    /// activation state to the UI property and marks dirty on any actual
+    /// change. The mirror + dirty step is the cross-concern part of the
+    /// cascade: InputDispatch owns the focus cell, the coordinator owns the UI
+    /// handle.
     fn apply_keyboard_focus(&self, focus: KbdFocus) {
-        // Arming a focus (Translate / Rotate / Scale) is a transform
-        // tool and is gated to the Transform section; dropping focus
-        // (`None`) must always work so leaving Transform can clear it.
+        // Arming a focus (Translate / Rotate / Scale) is a transform tool and
+        // is gated to the Transform section; dropping focus (`None`) must
+        // always work so leaving Transform can clear it.
         if focus != KbdFocus::None && !self.allows_layout_tools() {
             return;
         }
@@ -912,8 +890,8 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        // Track the cursor in every section so a later paste anchors on
-        // it; the gizmo drag / hover only runs in the Transform section.
+        // Track the cursor in every section so a later paste anchors on it; the
+        // gizmo drag / hover only runs in the Transform section.
         self.input.note_hover_cursor(cursor);
         if !self.allows_layout_tools() {
             return;
@@ -938,39 +916,35 @@ impl ViewportController {
         }
     }
 
-    /// Cursor left the viewport. Clears the dispatcher's cached
-    /// hover-cursor so the paste path falls back to the
-    /// viewport-centre placement instead of anchoring on a stale
-    /// last-known pixel.
+    /// Cursor left the viewport. Clears the dispatcher's cached hover-cursor so
+    /// the paste path falls back to the viewport-centre placement instead of
+    /// anchoring on a stale last-known pixel.
     pub(crate) fn on_pointer_leave(&self) {
         self.input.on_pointer_leave();
     }
 
-    /// Latch a right-button press position. The release path
-    /// classifies the gesture as click (context menu) or drag
-    /// (camera orbit) by comparing displacement against the
-    /// click threshold.
+    /// Latch a right-button press position. The release path classifies the
+    /// gesture as click (context menu) or drag (camera orbit) by comparing
+    /// displacement against the click threshold.
     pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
         self.input.on_right_pointer_down(ScreenPoint { x, y });
     }
 
-    /// Classify a right-button release. `Some(press_origin)` when
-    /// the gesture stayed within the click threshold (caller opens
-    /// the context menu at that pixel); `None` for a drag the
-    /// orbit gesture already consumed or a release without a
-    /// matching press.
+    /// Classify a right-button release. `Some(press_origin)` when the gesture
+    /// stayed within the click threshold (caller opens the context menu at that
+    /// pixel); `None` for a drag the orbit gesture already consumed or a
+    /// release without a matching press.
     pub(crate) fn on_right_pointer_up(&self, x: f32, y: f32) -> Option<(f32, f32)> {
         self.input
             .on_right_pointer_up(ScreenPoint { x, y })
             .map(|p| (p.x, p.y))
     }
 
-    /// Run the picker at `(x, y)` without mutating the document's
-    /// selection. Returns the hit leaf's `NodeId` on success, or
-    /// `None` on a miss / no scene loaded / no camera ready.
-    /// Context-menu orchestration uses this to decide whether to
-    /// move the selection to the right-clicked object and whether
-    /// to surface the Copy item.
+    /// Run the picker at `(x, y)` without mutating the document's selection.
+    /// Returns the hit leaf's `NodeId` on success, or `None` on a miss / no
+    /// scene loaded / no camera ready. Context-menu orchestration uses this to
+    /// decide whether to move the selection to the right-clicked object and
+    /// whether to surface the Copy item.
     pub(crate) fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_scene::NodeId> {
         self.input
             .pick_at(
@@ -982,11 +956,10 @@ impl ViewportController {
             .flatten()
     }
 
-    /// Picker dispatch: hand the pixel coordinates to InputDispatch
-    /// (which builds the ray and runs `pick_object`) and apply the
-    /// pick result through the document's selection setters. The
-    /// picker carries `NodeId` directly; the document stores the
-    /// stable handle without a pre-order-index detour.
+    /// Picker dispatch: hand the pixel coordinates to InputDispatch (which
+    /// builds the ray and runs `pick_object`) and apply the pick result through
+    /// the document's selection setters. The picker carries `NodeId` directly;
+    /// the document stores the stable handle without a pre-order-index detour.
     fn run_pick_at(&self, cursor: ScreenPoint) {
         let Some(pick) = self.input.pick_at(
             self.session.document(),
@@ -1005,18 +978,16 @@ impl ViewportController {
         }
     }
 
-    /// Paste the clipboard's fragment into the current scene near
-    /// the cursor's projection on the build plate. Returns `true`
-    /// on success so the caller (AppState) can bump the cascade
-    /// counter, `false` when any precondition fails (no scene
-    /// loaded, no camera or viewport ready, fragment empty, the
+    /// Paste the clipboard's fragment into the current scene near the cursor's
+    /// projection on the build plate. Returns `true` on success so the caller
+    /// (AppState) can bump the cascade counter, `false` when any precondition
+    /// fails (no scene loaded, no camera or viewport ready, fragment empty, the
     /// cursor ray misses the Z=0 plane).
     ///
-    /// Cursor anchor: the last cached pointer-move position if the
-    /// cursor still hovers the viewport; otherwise the viewport
-    /// centre. The world ray is built from that pixel, intersected
-    /// with `Z = 0`, and the result feeds the cascade-aware
-    /// collision-avoidance placement search.
+    /// Cursor anchor: the last cached pointer-move position if the cursor still
+    /// hovers the viewport; otherwise the viewport centre. The world ray is
+    /// built from that pixel, intersected with `Z = 0`, and the result feeds
+    /// the cascade-aware collision-avoidance placement search.
     pub(crate) fn paste_clipboard_at_cursor(&self, clipboard: &Clipboard) -> bool {
         let Some(viewport) = self.render.viewport() else {
             return false;
@@ -1028,10 +999,10 @@ impl ViewportController {
         self.paste_clipboard_with_anchor(clipboard, anchor, viewport)
     }
 
-    /// Paste anchored on an explicit logical-pixel position. The
-    /// context-menu path remembers the right-click pixel and pipes
-    /// it back here so the paste lands where the user clicked, not
-    /// where the cursor drifted to while moving to the menu entry.
+    /// Paste anchored on an explicit logical-pixel position. The context-menu
+    /// path remembers the right-click pixel and pipes it back here so the paste
+    /// lands where the user clicked, not where the cursor drifted to while
+    /// moving to the menu entry.
     pub(crate) fn paste_clipboard_at_pixel(&self, clipboard: &Clipboard, x: f32, y: f32) -> bool {
         let Some(viewport) = self.render.viewport() else {
             return false;
@@ -1039,11 +1010,10 @@ impl ViewportController {
         self.paste_clipboard_with_anchor(clipboard, ScreenPoint { x, y }, viewport)
     }
 
-    /// Shared paste implementation: build the ray from `anchor`,
-    /// project onto `Z = 0`, compute the placement against the
-    /// destination scene's obstacles, and push the resulting
-    /// compound through the document. Returns `true` only when
-    /// the paste landed.
+    /// Shared paste implementation: build the ray from `anchor`, project onto
+    /// `Z = 0`, compute the placement against the destination scene's
+    /// obstacles, and push the resulting compound through the document. Returns
+    /// `true` only when the paste landed.
     fn paste_clipboard_with_anchor(
         &self,
         clipboard: &Clipboard,
@@ -1068,8 +1038,8 @@ impl ViewportController {
         let Some((world_x, world_y)) = picking::ray_z_plane_intersection(&ray, 0.0) else {
             return false;
         };
-        // The camera borrow ends here; the spatial walk below needs
-        // its own borrow chain on the document.
+        // The camera borrow ends here; the spatial walk below needs its own
+        // borrow chain on the document.
         drop(camera_slot);
         let Some(fragment_aabb) = clipboard::fragment_world_aabb(clipboard.fragment()) else {
             return false;
@@ -1116,12 +1086,11 @@ impl ViewportController {
     }
 
     pub(crate) fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
-        // Mint a fresh token for this setup edition. Both the loader
-        // snapshot (consumed by the worker-side `GpuScene::build`) and
-        // the renderer (built below) carry it. The two values match
-        // for the entire lifetime of this setup; the next
-        // teardown -> setup cycle mints a different token, which is
-        // how `Renderer::install_scene` detects an out-of-date
+        // Mint a fresh token for this setup edition. Both the loader snapshot
+        // (consumed by the worker-side `GpuScene::build`) and the renderer
+        // (built below) carry it. The two values match for the entire lifetime
+        // of this setup; the next teardown -> setup cycle mints a different
+        // token, which is how `Renderer::install_scene` detects an out-of-date
         // worker-built scene.
         let device_token = crate::mesh_render::DeviceToken::next();
         let device_loss = self.session.loader().device_loss();
@@ -1129,8 +1098,8 @@ impl ViewportController {
             self.session.loader().note_device_lost();
             return;
         }
-        // The renderer is built before the device is published, so a
-        // refused renderer leaves the window with no device to load into.
+        // The renderer is built before the device is published, so a refused
+        // renderer leaves the window with no device to load into.
         match self.render.handle_rendering_setup(
             device.clone(),
             device_token,
@@ -1145,18 +1114,18 @@ impl ViewportController {
         }
     }
 
-    /// `RenderingSetup` handler for the case the viewport cannot use:
-    /// the window is rendering through a graphics API other than the
-    /// wgpu one this build draws with, so no device will be published
-    /// for it and the viewport stays empty. Records which API arrived
-    /// so anything that needs a device can explain the absence.
+    /// `RenderingSetup` handler for the case the viewport cannot use: the
+    /// window is rendering through a graphics API other than the wgpu one this
+    /// build draws with, so no device will be published for it and the viewport
+    /// stays empty. Records which API arrived so anything that needs a device
+    /// can explain the absence.
     pub(crate) fn handle_unsupported_graphics_api(&self, api: String) {
         self.session.loader().note_unsupported_graphics_api(api);
     }
 
-    /// Records the refusal as the window's reason for having no
-    /// device, shows it once, and lets a load parked for this setup
-    /// report itself against that reason.
+    /// Records the refusal as the window's reason for having no device, shows
+    /// it once, and lets a load parked for this setup report itself against
+    /// that reason.
     pub(super) fn post_renderer_refused(&self, err: RendererInitError) {
         self.session.loader().note_renderer_refused(err.to_string());
         self.session.dialogs().show_error_deferred(
@@ -1177,25 +1146,24 @@ impl ViewportController {
         }
     }
 
-    /// Rearms the loader's failure gates, flags an upload when a scene
-    /// is loaded, requests a redraw, and starts any load that was
-    /// queued while no device was available.
+    /// Rearms the loader's failure gates, flags an upload when a scene is
+    /// loaded, requests a redraw, and starts any load that was queued while no
+    /// device was available.
     pub(super) fn post_renderer_install(&self) {
         self.session.loader().reset_upload_failures();
         self.session.loader().reset_render_failures();
         if self.session.document().is_loaded() {
             self.render.update_frame(FrameState::with_upload_owed);
         }
-        // Always request a redraw after RenderingSetup: even with no
-        // scene, the plate is part of the steady-state output.
+        // Always request a redraw after RenderingSetup: even with no scene, the
+        // plate is part of the steady-state output.
         self.request_redraw();
-        // The device is now snapshottable; drain any path that was
-        // queued before this point (argv at startup, etc.).
-        // `begin_load` returning `None` means a load is somehow already
-        // in flight on this fresh setup, extremely unusual but
-        // possible after a teardown->setup cycle that races a click on
-        // Open; in that case the queued path is dropped, matching the
-        // "drop while busy" decision for drag-and-drop.
+        // The device is now snapshottable; drain any path that was queued
+        // before this point (argv at startup, etc.). `begin_load` returning
+        // `None` means a load is somehow already in flight on this fresh setup,
+        // extremely unusual but possible after a teardown->setup cycle that
+        // races a click on Open; in that case the queued path is dropped,
+        // matching the "drop while busy" decision for drag-and-drop.
         if let Some(path) = self.session.pending_load().take()
             && let Some(ticket) = self.session.loader().begin_load()
         {
@@ -1208,35 +1176,33 @@ impl ViewportController {
         }
     }
 
-    // Release GPU-owning state before the graphics context goes away. The
-    // scene (CPU-side) and the camera stay in the controller, so the next
+    // Release GPU-owning state before the graphics context goes away. The scene
+    // (CPU-side) and the camera stay in the controller, so the next
     // `RenderingSetup` can re-upload without losing the user's view,
-    // `handle_rendering_setup` flips the upload flag on its own when a
-    // scene is present, so we don't set it here. The loader's gpu slot
-    // is cleared too, so a click on Open between teardown and the next
-    // setup is bounced by `begin_load` instead of leaving a worker to
-    // build buffers against an unowned device.
+    // `handle_rendering_setup` flips the upload flag on its own when a scene is
+    // present, so we don't set it here. The loader's gpu slot is cleared too,
+    // so a click on Open between teardown and the next setup is bounced by
+    // `begin_load` instead of leaving a worker to build buffers against an
+    // unowned device.
     pub(crate) fn handle_rendering_teardown(&self) {
         self.session.loader().clear_gpu();
         self.render.handle_rendering_teardown();
     }
 
-    /// Steps the keyboard-focus integrator (which can mutate the
-    /// scene transform), drains any pending GPU upload, and lazily
-    /// initialises the orbit camera the first time a renderer is
-    /// available. Runs before the paint work in
-    /// [`Self::handle_before_rendering`] so the paint reads a
+    /// Steps the keyboard-focus integrator (which can mutate the scene
+    /// transform), drains any pending GPU upload, and lazily initialises the
+    /// orbit camera the first time a renderer is available. Runs before the
+    /// paint work in [`Self::handle_before_rendering`] so the paint reads a
     /// consistent view of the scene.
     ///
-    /// Returns `false` when paint should be skipped, which is only the
-    /// case when the renderer is absent (the device is gone). A failed
-    /// upload does not skip the paint: it drops the renderer's scene
-    /// and lets the frame fall back to the plate.
+    /// Returns `false` when paint should be skipped, which is only the case
+    /// when the renderer is absent (the device is gone). A failed upload does
+    /// not skip the paint: it drops the renderer's scene and lets the frame
+    /// fall back to the plate.
     fn on_scene_change(&self) -> bool {
-        // Step the keyboard-focus integrator first, the integrator
-        // mutates the scene's transform and marks dirty, which is
-        // exactly the input the paint pass below needs to read in
-        // this same frame.
+        // Step the keyboard-focus integrator first, the integrator mutates the
+        // scene's transform and marks dirty, which is exactly the input the
+        // paint pass below needs to read in this same frame.
         self.input.integrate_keyboard_arrows(
             self.session.document(),
             self.camera.camera_cell(),
@@ -1267,23 +1233,21 @@ impl ViewportController {
                     self.session.loader().note_upload_success();
                 }
                 Some(Err(err)) => {
-                    // The upload failed, so whatever scene the renderer
-                    // still holds no longer mirrors the live graph.
-                    // Drop it and carry on with the frame: the paint
-                    // falls back to the bare plate, which keeps the
-                    // camera and the rest of the window responsive
-                    // instead of freezing the viewport on its last
+                    // The upload failed, so whatever scene the renderer still
+                    // holds no longer mirrors the live graph. Drop it and carry
+                    // on with the frame: the paint falls back to the bare
+                    // plate, which keeps the camera and the rest of the window
+                    // responsive instead of freezing the viewport on its last
                     // texture until a reload or a device cycle.
                     renderer.clear_scene();
-                    // Clearing the flag rather than leaving it set:
-                    // with the frame no longer abandoned, a standing
-                    // flag would re-run the failing build and this
-                    // scene drop on every later dirty event, churning
-                    // the render-target allocations for as long as the
-                    // failure lasts. Nothing is lost, because every
-                    // path that changes what needs uploading sets the
-                    // flag itself: `post_renderer_install`, the
-                    // scene-install fallback, and each structural edit.
+                    // Clearing the flag rather than leaving it set: with the
+                    // frame no longer abandoned, a standing flag would re-run
+                    // the failing build and this scene drop on every later
+                    // dirty event, churning the render-target allocations for
+                    // as long as the failure lasts. Nothing is lost, because
+                    // every path that changes what needs uploading sets the
+                    // flag itself: `post_renderer_install`, the scene-install
+                    // fallback, and each structural edit.
                     self.render.update_frame(FrameState::upload_cleared);
                     self.session.loader().note_upload_failure(&err);
                 }
@@ -1294,11 +1258,11 @@ impl ViewportController {
             }
         }
 
-        // Initialise the orbit camera if it isn't yet. With the plate
-        // visible at first paint, framing comes from the union of the
-        // scene's world AABB (when uploaded) and the build envelope.
-        // Skipped if a camera already exists (re-upload across a
-        // RenderingTeardown -> Setup cycle preserves the user's view).
+        // Initialise the orbit camera if it isn't yet. With the plate visible
+        // at first paint, framing comes from the union of the scene's world
+        // AABB (when uploaded) and the build envelope. Skipped if a camera
+        // already exists (re-upload across a RenderingTeardown -> Setup cycle
+        // preserves the user's view).
         if !self.camera.is_initialised() {
             let scene_bounds = renderer.scene_bounds();
             self.camera
@@ -1308,20 +1272,19 @@ impl ViewportController {
         true
     }
 
-    /// Paints the current frame: snapshots the viewport size, builds
-    /// the gizmo frame against the live scene, renders, and hands the
-    /// resulting texture to Slint via `set_mesh_rendering`. Bails
-    /// early when no paint is owed, when any of the required pieces
-    /// are missing (renderer, UI handle, viewport, or camera), or
-    /// when the effective render-target size collapses to zero.
-    /// Reconcile the slice-view panel image with the current cap key.
-    /// `cap_key` is `Some` exactly when the 3D cut is active (Slice
-    /// section, held slice, a layer with a top edge). When it differs
-    /// from the last pushed key, rebuild the cross-section image, or push
-    /// an empty one when the key is `None`; an unchanged key skips the
-    /// rebuild so repeated frames do not re-upload the image. The image
-    /// is kept current whenever a slice is held, so the View-menu toggle
-    /// shows it instantly without a refresh of its own.
+    /// Paints the current frame: snapshots the viewport size, builds the gizmo
+    /// frame against the live scene, renders, and hands the resulting texture
+    /// to Slint via `set_mesh_rendering`. Bails early when no paint is owed,
+    /// when any of the required pieces are missing (renderer, UI handle,
+    /// viewport, or camera), or when the effective render-target size collapses
+    /// to zero.
+    /// Reconcile the slice-view panel image with the current cap key. `cap_key`
+    /// is `Some` exactly when the 3D cut is active (Slice section, held slice,
+    /// a layer with a top edge). When it differs from the last pushed key,
+    /// rebuild the cross-section image, or push an empty one when the key is
+    /// `None`; an unchanged key skips the rebuild so repeated frames do not
+    /// re-upload the image. The image is kept current whenever a slice is held,
+    /// so the View-menu toggle shows it instantly without a refresh of its own.
     fn reconcile_slice_view_image(
         &self,
         ui: &MainWindow,
@@ -1383,20 +1346,20 @@ impl ViewportController {
 
         let build_volume = self.session.build_volume();
 
-        // Slice-view clip height. The slider's layer top clips the mesh,
-        // but only in the Slice section with a held slice. The slider
-        // value is read here on the paint thread; it holds whole layer
-        // numbers as a float, so round it to the layer index.
+        // Slice-view clip height. The slider's layer top clips the mesh, but
+        // only in the Slice section with a held slice. The slider value is read
+        // here on the paint thread; it holds whole layer numbers as a float, so
+        // round it to the layer index.
         let selected_layer = ui.get_selected_layer_index().round().max(0.0) as u32;
         let clip_z = crate::workspace_section::clip_z_from(
             self.session.section(),
             self.session.document().slice_layer_top_z(selected_layer),
         );
 
-        // Slice-view cap: fill the cut with the selected layer's
-        // coverage so it reads solid. Keyed on the slice generation plus
-        // the layer, so a camera orbit reuses the texture and a re-slice
-        // rebuilds it; `None` (nothing clipped) clears the cap.
+        // Slice-view cap: fill the cut with the selected layer's coverage so it
+        // reads solid. Keyed on the slice generation plus the layer, so a
+        // camera orbit reuses the texture and a re-slice rebuilds it; `None`
+        // (nothing clipped) clears the cap.
         let cap_key = clip_z.map(|_| {
             (self.session.document().slice_generation() << 20) ^ u64::from(selected_layer)
         });
@@ -1413,8 +1376,8 @@ impl ViewportController {
             Err(err) => self.session.loader().note_render_failure(&err),
         }
 
-        // The word on the plate's front tab, keyed on the text so a
-        // language change rebuilds it and an orbit does not.
+        // The word on the plate's front tab, keyed on the text so a language
+        // change rebuilds it and an orbit does not.
         let front_word = ctr!("MeshViewer", "FRONT");
         let mut hasher = DefaultHasher::new();
         front_word.as_str().hash(&mut hasher);
@@ -1424,12 +1387,11 @@ impl ViewportController {
             Err(err) => self.session.loader().note_render_failure(&err),
         }
 
-        // Slice-view panel: mirror the same cut into the 2D panel image,
-        // keyed on the same cap key so it rebuilds only when the layer or
-        // the slice generation changes, not on every frame. Riding this
-        // paint pass means every trigger that repaints (slider, section,
-        // scene, slice completion) refreshes the panel with no extra
-        // wiring.
+        // Slice-view panel: mirror the same cut into the 2D panel image, keyed
+        // on the same cap key so it rebuilds only when the layer or the slice
+        // generation changes, not on every frame. Riding this paint pass means
+        // every trigger that repaints (slider, section, scene, slice
+        // completion) refreshes the panel with no extra wiring.
         self.reconcile_slice_view_image(&ui, cap_key, selected_layer, &build_volume);
 
         if self.render.is_refused_size((eff_w, eff_h)) {
@@ -1437,21 +1399,21 @@ impl ViewportController {
             return;
         }
 
-        // Render path. With a scene installed, the closure inside
-        // `with_scene` composes the gizmo frame against the live scene
-        // and renders the union (plate + objects). With no scene,
-        // `with_scene` returns `None` and the fallback below renders
-        // the plate alone with neither selection nor gizmo.
+        // Render path. With a scene installed, the closure inside `with_scene`
+        // composes the gizmo frame against the live scene and renders the union
+        // (plate + objects). With no scene, `with_scene` returns `None` and the
+        // fallback below renders the plate alone with neither selection nor
+        // gizmo.
         let texture = self
             .session
             .document()
             .with_scene(|spatial_for_render| {
                 let selection_node_id = self.session.document().selection_primary_node_id();
                 // The selection highlight stays visible in every section
-                // (selection is live everywhere). The gizmo is a
-                // transform tool, so its handles only compose in the
-                // Transform section: gate the selection handed to the
-                // composer, not the one that drives the object tint.
+                // (selection is live everywhere). The gizmo is a transform
+                // tool, so its handles only compose in the Transform section:
+                // gate the selection handed to the composer, not the one that
+                // drives the object tint.
                 let gizmo_selection = if self.allows_layout_tools() {
                     selection_node_id
                 } else {
@@ -1542,9 +1504,8 @@ mod selection_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
-    /// `PointerModifiers::default()` with all flags off. The selection
-    /// tests don't exercise modifier-driven branches, so every press
-    /// uses this.
+    /// `PointerModifiers::default()` with all flags off. The selection tests
+    /// don't exercise modifier-driven branches, so every press uses this.
     fn no_mods() -> PointerModifiers {
         PointerModifiers::default()
     }
@@ -1557,8 +1518,8 @@ mod selection_tests {
         }
     }
 
-    /// Loader-faithful multi-object graph: all `n` leaves land under
-    /// a single identity-Group root.
+    /// Loader-faithful multi-object graph: all `n` leaves land under a single
+    /// identity-Group root.
     fn graph_with_n_objects(n: usize) -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -1632,8 +1593,8 @@ mod selection_tests {
         assert_eq!(ctrl.selection(), Some(2));
         ctrl.on_close_scene();
         assert_eq!(ctrl.selection(), None);
-        // The scene cell is cleared too, a follow-up select must not
-        // resurrect a prior index against a missing scene.
+        // The scene cell is cleared too, a follow-up select must not resurrect
+        // a prior index against a missing scene.
         ctrl.on_select_by_index(2);
         assert_eq!(ctrl.selection(), None);
     }
@@ -1653,9 +1614,9 @@ mod selection_tests {
 
     #[test]
     fn viewport_click_with_no_camera_is_a_no_op() {
-        // The picker requires a camera. If a click runs before the
-        // first `RenderingSetup` (or after a teardown that dropped
-        // the camera), we expect no panic and no selection change.
+        // The picker requires a camera. If a click runs before the first
+        // `RenderingSetup` (or after a teardown that dropped the camera), we
+        // expect no panic and no selection change.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         // No camera installed.
@@ -1666,8 +1627,8 @@ mod selection_tests {
 
     #[test]
     fn viewport_click_with_zero_viewport_is_a_no_op() {
-        // Width/height of zero means we have no projection to build a
-        // ray from. Bail rather than divide-by-zeroing.
+        // Width/height of zero means we have no projection to build a ray from.
+        // Bail rather than divide-by-zeroing.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         // viewport defaults to (0.0, 0.0)
@@ -1678,9 +1639,9 @@ mod selection_tests {
 
     #[test]
     fn pointer_up_without_matching_down_is_ignored() {
-        // Defensive: if Slint somehow sends an up without a down (a
-        // press captured elsewhere, or our state out of sync), the
-        // controller must not run the picker against an unset press.
+        // Defensive: if Slint somehow sends an up without a down (a press
+        // captured elsewhere, or our state out of sync), the controller must
+        // not run the picker against an unset press.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         ctrl.on_pointer_up(ScreenPoint::new(50.0, 50.0), no_mods());
@@ -1689,9 +1650,9 @@ mod selection_tests {
 
     #[test]
     fn cycle_with_no_selection_picks_first_object() {
-        // Tab from "nothing selected" doubles as "select the first
-        // thing". Both directions land on index 0, the user's
-        // mental model is "advance to the first item that exists".
+        // Tab from "nothing selected" doubles as "select the first thing". Both
+        // directions land on index 0, the user's mental model is "advance to
+        // the first item that exists".
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_selection_cycle(1);
@@ -1745,9 +1706,8 @@ mod selection_tests {
 
     #[test]
     fn cycle_with_single_object_stays_on_it() {
-        // One-object scene -> cycling either direction lands on
-        // index 0 every time. Mod-N arithmetic with N=1 collapses
-        // to 0 cleanly.
+        // One-object scene -> cycling either direction lands on index 0 every
+        // time. Mod-N arithmetic with N=1 collapses to 0 cleanly.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         ctrl.on_selection_cycle(1);
@@ -1760,9 +1720,9 @@ mod selection_tests {
 
     #[test]
     fn cycle_clamps_non_unit_deltas() {
-        // A delta != ±1 from a stale Slint binding should still
-        // advance by exactly one step (or none for delta == 0)
-        // rather than indexing past the array.
+        // A delta != ±1 from a stale Slint binding should still advance by
+        // exactly one step (or none for delta == 0) rather than indexing past
+        // the array.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(0);
@@ -1818,8 +1778,8 @@ mod viewport_click_tests {
         (g, root)
     }
 
-    /// CCW-from-+Z triangle at `translation`, attached as a leaf
-    /// under `parent` (the loader-shape Group root).
+    /// CCW-from-+Z triangle at `translation`, attached as a leaf under `parent`
+    /// (the loader-shape Group root).
     fn add_front_facing_triangle(g: &mut Scene, parent: NodeId, translation: [f32; 3]) {
         let mesh = IndexedMesh {
             meta: None,
@@ -1844,11 +1804,10 @@ mod viewport_click_tests {
         g.add_child(parent, leaf).expect("attach leaf");
     }
 
-    /// Camera looking at a target along `-Z` from `+Z` so the centre
-    /// of the viewport projects onto the world-space line `x = tx,
-    /// y = ty, z ∈ R`. Picking a triangle on that line via the centre
-    /// pixel is the cleanest way to exercise the ray pipeline
-    /// end-to-end.
+    /// Camera looking at a target along `-Z` from `+Z` so the centre of the
+    /// viewport projects onto the world-space line `x = tx, y = ty, z ∈ R`.
+    /// Picking a triangle on that line via the centre pixel is the cleanest way
+    /// to exercise the ray pipeline end-to-end.
     fn camera_looking_down_minus_z_at(target: Vec3, distance: f32) -> OrbitCamera {
         let mut cam = OrbitCamera::new(target, distance);
         cam.set_axis_view(AxisView::Top);
@@ -1863,8 +1822,8 @@ mod viewport_click_tests {
         add_front_facing_triangle(&mut g, root, [10.0, 0.0, 0.0]);
         ctrl.install_graph_for_test(g);
 
-        // Camera framed on the first triangle, looking down -Z.
-        // Centre pixel of the viewport casts a ray straight at it.
+        // Camera framed on the first triangle, looking down -Z. Centre pixel of
+        // the viewport casts a ray straight at it.
         *ctrl.camera.camera_cell().borrow_mut() =
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
@@ -1882,12 +1841,11 @@ mod viewport_click_tests {
         ctrl.install_graph_for_test(g);
         *ctrl.camera.camera_cell().borrow_mut() =
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        // A 200×100 viewport with the default gizmo size leaves no
-        // truly-empty pixel: HANDLE_PIXEL_LENGTH is 120 px, so the
-        // rotate-cone bounding volumes (perspective-projected close
-        // to the camera in Top view) span most of the screen. Use a
-        // larger viewport so the gizmo occupies its usual ~15% and
-        // the corner is unambiguously empty.
+        // A 200x100 viewport with the default gizmo size leaves no truly-empty
+        // pixel: HANDLE_PIXEL_LENGTH is 120 px, so the rotate-cone bounding
+        // volumes (perspective-projected close to the camera in Top view) span
+        // most of the screen. Use a larger viewport so the gizmo occupies its
+        // usual ~15% and the corner is unambiguously empty.
         ctrl.set_viewport_for_test(800.0, 600.0);
 
         // Pre-seed a selection so we can observe the clear.
@@ -1902,11 +1860,10 @@ mod viewport_click_tests {
 
     #[test]
     fn drag_does_not_run_the_picker() {
-        // A press -> release with movement larger than the click
-        // threshold is a drag, which is currently dropped on the
-        // floor (the gizmo FSM will consume it once wired). It must
-        // not hand off to the picker, that would let large pointer
-        // moves change the selection.
+        // A press -> release with movement larger than the click threshold is a
+        // drag, which is currently dropped on the floor (the gizmo FSM will
+        // consume it once wired). It must not hand off to the picker, that
+        // would let large pointer moves change the selection.
         let ctrl = ViewportController::new_for_test();
         let (mut g, root) = graph_with_group_root();
         add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
@@ -1921,23 +1878,21 @@ mod viewport_click_tests {
         assert_eq!(ctrl.selection(), None);
     }
 
-    /// Camera looking along +Y from `(0, -3, 0)` toward the origin
-    /// with up = +Z. The world axes project as: +X = screen-right,
-    /// +Z = screen-up, +Y = into the screen. With the gizmo pivot
-    /// at the origin, the X handle lies along the centre horizontal
-    /// of the viewport, clicks at `(centre_x + Δ, centre_y)` land on
-    /// the X handle.
+    /// Camera looking along +Y from `(0, -3, 0)` toward the origin with up =
+    /// +Z. The world axes project as: +X = screen-right, +Z = screen-up, +Y =
+    /// into the screen. With the gizmo pivot at the origin, the X handle lies
+    /// along the centre horizontal of the viewport, clicks at
+    /// `(centre_x + Δ, centre_y)` land on the X handle.
     fn front_camera() -> OrbitCamera {
         let mut c = OrbitCamera::new(Vec3::ZERO, 1.0);
         c.set_axis_view(AxisView::Front);
         c
     }
 
-    /// Width / height of the viewport used by the gizmo-drag tests.
-    /// 400×200 is wide enough that the X-axis cone tip
-    /// (`gizmo_scale × 1.18 ≈ 1.89` world units along +X with the
-    /// front camera at distance 3) lands well inside the viewport.
-    /// Smaller viewports clip the cone off-screen and make
+    /// Width / height of the viewport used by the gizmo-drag tests. 400x200 is
+    /// wide enough that the X-axis cone tip (`gizmo_scale * 1.18 ≈ 1.89` world
+    /// units along +X with the front camera at distance 3) lands well inside
+    /// the viewport. Smaller viewports clip the cone off-screen and make
     /// cone-tip presses impossible.
     const GIZMO_TEST_VIEWPORT: (f32, f32) = (400.0, 200.0);
 
@@ -1951,11 +1906,10 @@ mod viewport_click_tests {
         ctrl.on_select_by_index(0);
     }
 
-    /// Logical-pixel position of a click on the X-axis cone tip.
-    /// Computed for the gizmo test setup (front camera, 400×200
-    /// viewport, default FOV, scene radius 1.0): the cone occupies
-    /// `screen-x ∈ [320, 350]`, screen-y ≈ 100. `(335, 100)` lands
-    /// safely inside.
+    /// Logical-pixel position of a click on the X-axis cone tip. Computed for
+    /// the gizmo test setup (front camera, 400x200 viewport, default FOV, scene
+    /// radius 1.0): the cone occupies `screen-x ∈ [320, 350]`, screen-y ≈ 100.
+    /// `(335, 100)` lands safely inside.
     const X_CONE_PRESS: (f32, f32) = (335.0, 100.0);
 
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
@@ -1992,25 +1946,25 @@ mod viewport_click_tests {
             .unwrap()
     }
 
-    /// Project the X-axis midpoint cube's centre to logical-pixel
-    /// coords for the standard test setup. The cube sits at
-    /// `pivot + axis_world * (scale * MIDPOINT_FRACTION)`; with the
-    /// front camera, that lands on screen-y = viewport-centre.
+    /// Project the X-axis midpoint cube's centre to logical-pixel coords for
+    /// the standard test setup. The cube sits at
+    /// `pivot + axis_world * (scale * MIDPOINT_FRACTION)`; with the front
+    /// camera, that lands on screen-y = viewport-centre.
     fn x_midpoint_press_screen(ctrl: &ViewportController) -> (f32, f32) {
         let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
         let (vw, vh) = ctrl.viewport_for_test().unwrap();
         let fov_y = default_fov_y();
-        let scale = gizmo::gizmo_scale(&cam, fov_y, vh);
+        let scale = gizmo::gizmo_scale(&cam, Vec3::ZERO, fov_y, vh).unwrap();
         let midpoint = Vec3::new(scale * gizmo::dimensions::MIDPOINT_FRACTION, 0.0, 0.0);
         picking::project_world_to_screen(&cam, fov_y, vw, vh, midpoint).unwrap()
     }
 
     #[test]
     fn pointer_down_on_x_handle_enters_drag_state() {
-        // The X cone in the front-camera + 400×200 setup lives at
-        // screen-x ∈ [320, 350] / screen-y = 100. `X_CONE_PRESS` is
-        // a press inside that region; only the cone tip is the
-        // active translate handle (the shaft line is decorative).
+        // The X cone in the front-camera + 400x200 setup lives at screen-x ∈
+        // [320, 350] / screen-y = 100. `X_CONE_PRESS` is a press inside that
+        // region; only the cone tip is the active translate handle (the shaft
+        // line is decorative).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
@@ -2025,8 +1979,8 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_down_off_handle_does_not_enter_drag_state() {
-        // A press far from any handle lands as a plain click
-        // candidate, the FSM stays Idle.
+        // A press far from any handle lands as a plain click candidate, the FSM
+        // stays Idle.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(0.0, 0.0), no_mods());
@@ -2035,8 +1989,8 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_down_on_handle_does_not_drag_outside_transform() {
-        // The same press that grabs the X handle in Transform must not
-        // start a drag while parked in a non-Transform section.
+        // The same press that grabs the X handle in Transform must not start a
+        // drag while parked in a non-Transform section.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.set_section(WorkspaceSection::Prepare);
@@ -2049,9 +2003,9 @@ mod viewport_click_tests {
 
     #[test]
     fn leaving_transform_aborts_an_active_drag_and_reverts_it() {
-        // Start a real drag in Transform, move it, then switch section:
-        // the drag must abort and the transform revert to the captured
-        // original (translation back to zero).
+        // Start a real drag in Transform, move it, then switch section: the
+        // drag must abort and the transform revert to the captured original
+        // (translation back to zero).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
@@ -2076,9 +2030,9 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        // Press lands on the X cone tip; release stays on the cone
-        // (close enough that the closest-point-on-axis delta is the
-        // controller's only output to verify).
+        // Press lands on the X cone tip; release stays on the cone (close
+        // enough that the closest-point-on-axis delta is the controller's only
+        // output to verify).
         let press = X_CONE_PRESS;
         let release = (X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
@@ -2108,12 +2062,11 @@ mod viewport_click_tests {
 
     #[test]
     fn second_drag_move_recomposes_from_original_not_running_transform() {
-        // Two pointer-moves during the same drag: the final transform
-        // must reflect the absolute cursor position relative to the
-        // press, *not* the cumulative sum of per-frame deltas. The
-        // distinction matters once rotation and scale ride the same
-        // drag pipeline; pinning it here means a bug in that
-        // direction trips this test loudly.
+        // Two pointer-moves during the same drag: the final transform must
+        // reflect the absolute cursor position relative to the press, *not* the
+        // cumulative sum of per-frame deltas. The distinction matters once
+        // rotation and scale ride the same drag pipeline; pinning it here means
+        // a bug in that direction trips this test loudly.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -2170,9 +2123,9 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_up_after_drag_pushes_one_undo_entry() {
-        // A complete press -> move -> release gesture lands as one
-        // entry on the document's undo stack, with the pre-press
-        // transform as the `before`. A subsequent undo restores it.
+        // A complete press -> move -> release gesture lands as one entry on the
+        // document's undo stack, with the pre-press transform as the `before`.
+        // A subsequent undo restores it.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -2205,9 +2158,8 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_up_with_no_movement_pushes_no_undo_entry() {
-        // Press -> release without a move tick: the transform is
-        // unchanged, `push_edit` filters the no-op, the stack stays
-        // empty.
+        // Press -> release without a move tick: the transform is unchanged,
+        // `push_edit` filters the no-op, the stack stays empty.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -2219,9 +2171,8 @@ mod viewport_click_tests {
 
     #[test]
     fn esc_mid_drag_pushes_no_undo_entry() {
-        // Esc-to-cancel is not undoable, the user explicitly
-        // cancelled the gesture, so nothing should land on the
-        // history stack.
+        // Esc-to-cancel is not undoable, the user explicitly cancelled the
+        // gesture, so nothing should land on the history stack.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -2248,9 +2199,9 @@ mod viewport_click_tests {
         // Object has moved.
         assert!(read_translation(&ctrl).x.abs() > 1e-4);
 
-        // First Esc cascades into the drag-abort: transform reverts,
-        // FSM returns to Idle, but the selection survives (Esc only
-        // drops one level per press).
+        // First Esc cascades into the drag-abort: transform reverts, FSM
+        // returns to Idle, but the selection survives (Esc only drops one level
+        // per press).
         ctrl.on_clear_selection();
         let reverted = read_translation(&ctrl);
         assert_approx_eq!(f32, reverted.x, 0.0, epsilon = 1e-6);
@@ -2263,20 +2214,19 @@ mod viewport_click_tests {
             "first Esc only aborts the drag, selection is the next level of the cascade"
         );
 
-        // A second Esc, with no drag and no keyboard focus, clears
-        // the selection.
+        // A second Esc, with no drag and no keyboard focus, clears the
+        // selection.
         ctrl.on_clear_selection();
         assert_eq!(ctrl.selection(), None);
     }
 
     #[test]
     fn close_scene_mid_drag_does_not_panic() {
-        // The drag captures `object_idx`, which becomes invalid when
-        // the scene is dropped. `on_close_scene` must clear FSM
-        // state without trying to revert through the missing scene.
-        // Wrap in `Rc` and register the document listener so the
-        // close-driven viewport reset (which now lives in the
-        // listener body) actually runs in the test.
+        // The drag captures `object_idx`, which becomes invalid when the scene
+        // is dropped. `on_close_scene` must clear FSM state without trying to
+        // revert through the missing scene. Wrap in `Rc` and register the
+        // document listener so the close-driven viewport reset (which now lives
+        // in the listener body) actually runs in the test.
         let ctrl = Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
         install_single_object_at_origin(&ctrl);
@@ -2294,9 +2244,9 @@ mod viewport_click_tests {
 
     #[test]
     fn jitter_within_threshold_still_counts_as_a_click() {
-        // A press -> release that moves only a few subpixels
-        // (trackpad jitter, debounced finger lift) must still be
-        // treated as a click. Threshold is 4 logical pixels.
+        // A press -> release that moves only a few subpixels (trackpad jitter,
+        // debounced finger lift) must still be treated as a click. Threshold is
+        // 4 logical pixels.
         let ctrl = ViewportController::new_for_test();
         let (mut g, root) = graph_with_group_root();
         add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
@@ -2312,9 +2262,9 @@ mod viewport_click_tests {
 
     #[test]
     fn pressing_axis_cube_with_shift_held_starts_proportional_drag() {
-        // Pressing the per-axis midpoint cube while Shift is already
-        // held captures `proportional = true` immediately, the very
-        // first move applies the uniform formula, no toggle needed.
+        // Pressing the per-axis midpoint cube while Shift is already held
+        // captures `proportional = true` immediately, the very first move
+        // applies the uniform formula, no toggle needed.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
@@ -2338,9 +2288,9 @@ mod viewport_click_tests {
 
     #[test]
     fn pressing_axis_cube_without_shift_starts_per_axis_drag() {
-        // Sanity check the inverse: no Shift -> per-axis (proportional
-        // = false). Pins the default so a future regression that
-        // captures stale modifier state surfaces here.
+        // Sanity check the inverse: no Shift -> per-axis (proportional =
+        // false). Pins the default so a future regression that captures stale
+        // modifier state surfaces here.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
@@ -2359,14 +2309,12 @@ mod viewport_click_tests {
 
     #[test]
     fn shift_toggle_during_axis_scale_flips_to_uniform_formula() {
-        // Press without Shift -> per-axis drag, move to grow X. Then
-        // press Shift on a subsequent move: re-anchor (running
-        // transform preserved). A *further* move with Shift held
-        // exercises the uniform formula, its `diag(f, f, f)`
-        // composes onto the captured running transform, so Y and Z
-        // both pick up the same `f` factor while X picks up an extra
-        // `f` on top of the per-axis stretch baked in by the first
-        // move.
+        // Press without Shift -> per-axis drag, move to grow X. Then press
+        // Shift on a subsequent move: re-anchor (running transform preserved).
+        // A *further* move with Shift held exercises the uniform formula, its
+        // `diag(f, f, f)` composes onto the captured running transform, so Y
+        // and Z both pick up the same `f` factor while X picks up an extra `f`
+        // on top of the per-axis stretch baked in by the first move.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
@@ -2386,13 +2334,13 @@ mod viewport_click_tests {
         assert_approx_eq!(f64, m_axis[1][1], 1.0, epsilon = 1e-6);
         assert_approx_eq!(f64, m_axis[2][2], 1.0, epsilon = 1e-6);
 
-        // Shift toggles on at the same cursor position, re-anchors
-        // without changing the running transform.
+        // Shift toggles on at the same cursor position, re-anchors without
+        // changing the running transform.
         let toggle = (move_no_shift.0, move_no_shift.1);
         ctrl.on_pointer_move(ScreenPoint::new(toggle.0, toggle.1), shift_held());
 
-        // Move further with Shift held, uniform formula runs against
-        // the re-anchored press at `toggle`.
+        // Move further with Shift held, uniform formula runs against the
+        // re-anchored press at `toggle`.
         let further = (toggle.0 + 20.0, toggle.1);
         ctrl.on_pointer_move(ScreenPoint::new(further.0, further.1), shift_held());
         let m_uniform = read_linear(&ctrl);
@@ -2405,8 +2353,8 @@ mod viewport_click_tests {
             "Y should have scaled under uniform formula, got m[1][1]={}",
             m_uniform[1][1]
         );
-        // X carries the per-axis stretch on top of the uniform factor,
-        // so it differs from Y/Z.
+        // X carries the per-axis stretch on top of the uniform factor, so it
+        // differs from Y/Z.
         assert!(
             (m_uniform[0][0] - m_uniform[1][1]).abs() > 1e-3,
             "X should differ from Y under uniform-after-per-axis: m[0][0]={} m[1][1]={}",
@@ -2417,10 +2365,9 @@ mod viewport_click_tests {
 
     #[test]
     fn shift_toggle_does_not_snap_running_transform() {
-        // Re-anchoring on a Shift toggle must preserve the running
-        // transform on the toggling frame: the scene's transform
-        // immediately after the toggle move equals the running
-        // transform from immediately before.
+        // Re-anchoring on a Shift toggle must preserve the running transform on
+        // the toggling frame: the scene's transform immediately after the
+        // toggle move equals the running transform from immediately before.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
@@ -2431,9 +2378,9 @@ mod viewport_click_tests {
         let before_toggle = read_linear(&ctrl);
         let translation_before = read_translation(&ctrl);
 
-        // Same cursor position, Shift toggles on. Re-anchor must
-        // preserve the running transform, a "toggle without cursor
-        // motion" is the easiest snap-bug to write a test for.
+        // Same cursor position, Shift toggles on. Re-anchor must preserve the
+        // running transform, a "toggle without cursor motion" is the easiest
+        // snap-bug to write a test for.
         ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), shift_held());
         let after_toggle = read_linear(&ctrl);
         let translation_after = read_translation(&ctrl);
@@ -2465,11 +2412,10 @@ mod viewport_click_tests {
 
     #[test]
     fn shift_toggle_off_returns_to_per_axis_formula() {
-        // Press with Shift held -> uniform. Move once. Release Shift on
-        // the next move (re-anchor again) -> per-axis formula should
-        // resume on subsequent moves: only X scales relative to the
-        // new anchor, while Y and Z stay at the value frozen at the
-        // toggle.
+        // Press with Shift held -> uniform. Move once. Release Shift on the
+        // next move (re-anchor again) -> per-axis formula should resume on
+        // subsequent moves: only X scales relative to the new anchor, while Y
+        // and Z stay at the value frozen at the toggle.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
@@ -2498,8 +2444,8 @@ mod viewport_click_tests {
         assert_approx_eq!(f64, after[2][2], frozen[2][2], epsilon = 1e-4);
     }
 
-    /// Subscribes to the document and counts only `Mutated` events.
-    /// Used by the routing tests below to filter out the
+    /// Subscribes to the document and counts only `Mutated` events. Used by the
+    /// routing tests below to filter out the
     /// `Installed`/`Cleared`/`SelectionChanged` traffic that
     /// `install_single_object_at_origin` and friends generate.
     fn subscribe_mutated_counter(doc: &Rc<SceneDocument>) -> (Rc<Cell<usize>>, SceneSubscription) {
@@ -2515,10 +2461,10 @@ mod viewport_click_tests {
 
     #[test]
     fn drag_move_fires_one_mutated_event_per_pointer_move() {
-        // Press the X cone to enter Drag, then a single move tick
-        // that mutates the object's transform must fire exactly one
-        // Mutated. Subscribing after the press skips the
-        // SelectionChanged from `install_single_object_at_origin`.
+        // Press the X cone to enter Drag, then a single move tick that mutates
+        // the object's transform must fire exactly one Mutated. Subscribing
+        // after the press skips the SelectionChanged from
+        // `install_single_object_at_origin`.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
@@ -2533,11 +2479,10 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_hover_without_drag_fires_no_mutated_event() {
-        // No press, no drag, just pointer moves. Hover state can
-        // change but the scene is not mutated, so no Mutated must
-        // fire. Regression test for the `on_pointer_move`
-        // simplification that split the gizmo and hover dirty
-        // paths.
+        // Pointer moves without a press can change the hover state, but they do
+        // not mutate the scene, so no Mutated must fire. Regression test for
+        // the `on_pointer_move` simplification that split the gizmo and hover
+        // dirty paths.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -2552,9 +2497,8 @@ mod viewport_click_tests {
 
     #[test]
     fn gizmo_abort_with_drag_in_flight_fires_one_mutated_event() {
-        // Press into Drag, subscribe, then abort the drag. The
-        // revert routes through `apply_command`, which fires
-        // Mutated exactly once.
+        // Press into Drag, subscribe, then abort the drag. The revert routes
+        // through `apply_command`, which fires Mutated exactly once.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
@@ -2571,8 +2515,8 @@ mod viewport_click_tests {
 
     #[test]
     fn gizmo_abort_with_no_drag_fires_no_mutated_event() {
-        // No drag in flight, abort short-circuits before touching
-        // the document, so no Mutated must fire.
+        // No drag in flight, abort short-circuits before touching the document,
+        // so no Mutated must fire.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
@@ -2585,11 +2529,10 @@ mod viewport_click_tests {
 
     #[test]
     fn drag_move_marks_redraw_owed_via_mutated_listener() {
-        // End-to-end: with `register_document_listener` installed,
-        // a drag move fires Mutated and the controller's listener
-        // marks the controller dirty. This is the chain that
-        // replaced the manual `mark_dirty` calls under each former
-        // `with_scene_mut`.
+        // End-to-end: with `register_document_listener` installed, a drag move
+        // fires Mutated and the controller's listener marks the controller
+        // dirty. This is the chain that replaced the manual `mark_dirty` calls
+        // under each former `with_scene_mut`.
         let ctrl = Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
         install_single_object_at_origin(&ctrl);
@@ -2606,10 +2549,10 @@ mod viewport_click_tests {
 
     #[test]
     fn set_build_volume_updates_field_and_marks_redraw_owed() {
-        // The render path gates on `frame.redraw_owed`; without the
-        // dirty flag the next `before-rendering` tick early-returns
-        // and the new envelope only paints when something else
-        // (camera rotate, pointer move) happens to mark the frame.
+        // The render path gates on `frame.redraw_owed`; without the dirty flag
+        // the next `before-rendering` tick early-returns and the new envelope
+        // only paints when something else (camera rotate, pointer move) happens
+        // to mark the frame.
         let ctrl = ViewportController::new_for_test();
         let initial = ctrl.session.build_volume();
         let new_bv = BuildVolume::new(50.0, 50.0, 50.0);
@@ -2625,8 +2568,8 @@ mod viewport_click_tests {
 
     #[test]
     fn set_build_volume_is_idempotent_for_equal_values() {
-        // Same value twice: the second call is a no-op, the frame
-        // stays clean. A subsequent real change re-marks dirty.
+        // Same value twice: the second call is a no-op, the frame stays clean.
+        // A subsequent real change re-marks dirty.
         let ctrl = ViewportController::new_for_test();
         let bv = BuildVolume::new(80.0, 80.0, 120.0);
         ctrl.set_build_volume(bv);
@@ -2644,12 +2587,12 @@ mod viewport_click_tests {
 
     #[test]
     fn gizmo_translate_drag_clamps_at_plus_x_wall() {
-        // The fixture's triangle has world.max.x = 0.5 with the
-        // installed transform (Affine zero). Setting a build envelope
-        // whose env.max.x = 0.5 leaves zero room on +X: any positive
-        // drag delta must clamp to zero. Without the clamp wiring,
-        // the same press + move would translate the object along +X
-        // (covered by `drag_translates_object_along_world_axis`).
+        // The fixture's triangle has world.max.x = 0.5 with the installed
+        // transform (Affine zero). Setting a build envelope whose env.max.x =
+        // 0.5 leaves zero room on +X: any positive drag delta must clamp to
+        // zero. Without the clamp wiring, the same press + move would translate
+        // the object along +X (covered by
+        // `drag_translates_object_along_world_axis`).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.session
@@ -2683,8 +2626,8 @@ mod keyboard_focus_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
-    /// Loader-shape one-object graph: a single inline-mesh leaf
-    /// attached under an identity-Group root.
+    /// Loader-shape one-object graph: a single inline-mesh leaf attached under
+    /// an identity-Group root.
     fn one_object_graph() -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -2707,9 +2650,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn focus_requires_an_existing_selection() {
-        // No selection -> T is a no-op. Pinning this matters because
-        // the integrator dereferences `selection`; a focus without a
-        // selection would crash.
+        // No selection -> T is a no-op. Pinning this matters because the
+        // integrator dereferences `selection`; a focus without a selection
+        // would crash.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_gizmo_focus_translate();
@@ -2731,9 +2674,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn switching_focus_resets_held_arrow_bitset() {
-        // Holding +X under translate focus, then switching to rotate
-        // focus must clear the held bit, the user's mental model
-        // is "release on mode switch".
+        // Holding +X under translate focus, then switching to rotate focus must
+        // clear the held bit, the user's mental model is "release on mode
+        // switch".
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2751,10 +2694,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn arrow_press_without_focus_is_a_no_op() {
-        // Without focus, an arrow code is silently ignored, the
-        // FocusScope on the Slint side filters them out, but the
-        // Rust handler still has to be defensive in case the
-        // contract is ever violated.
+        // Without focus, an arrow code is silently ignored, the FocusScope on
+        // the Slint side filters them out, but the Rust handler still has to be
+        // defensive in case the contract is ever violated.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2764,9 +2706,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn arrow_release_clears_bit_even_with_focus_dropped() {
-        // A release that arrives after focus was dropped (race with
-        // Esc) must still clear the bit, otherwise the next focus
-        // session would inherit a phantom held key.
+        // A release that arrives after focus was dropped (race with Esc) must
+        // still clear the bit, otherwise the next focus session would inherit a
+        // phantom held key.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2787,9 +2729,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_release_pushes_one_undo_entry() {
-        // First arrow arms the burst; intervening transform mutation
-        // simulates one or more integrator ticks; release flushes
-        // the burst as a single undo entry.
+        // First arrow arms the burst; intervening transform mutation simulates
+        // one or more integrator ticks; release flushes the burst as a single
+        // undo entry.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2822,9 +2764,8 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_with_no_motion_pushes_no_entry() {
-        // Press -> release without any integration tick: scene
-        // transform never changed, push_edit's no-op filter drops
-        // the entry.
+        // Press -> release without any integration tick: scene transform never
+        // changed, push_edit's no-op filter drops the entry.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2838,9 +2779,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_focus_change_flushes_pending_burst() {
-        // Switching from translate to rotate mid-burst commits the
-        // current run as one undo entry rather than discarding it;
-        // the user's translate work is preserved.
+        // Switching from translate to rotate mid-burst commits the current run
+        // as one undo entry rather than discarding it; the user's translate
+        // work is preserved.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2874,9 +2815,9 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_two_keys_held_is_a_single_undo_entry() {
-        // Two arrows pressed then released independently is still
-        // one burst, only the first-press transition arms the
-        // tracker, only the all-released transition flushes it.
+        // Two arrows pressed then released independently is still one burst,
+        // only the first-press transition arms the tracker, only the
+        // all-released transition flushes it.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2905,8 +2846,8 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_dropped_on_scene_close() {
-        // Scene close drops the burst without flushing, the object
-        // index it captured is about to become meaningless.
+        // Scene close drops the burst without flushing, the object index it
+        // captured is about to become meaningless.
         let ctrl = Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
         ctrl.install_graph_for_test(one_object_graph());
@@ -2934,8 +2875,8 @@ mod keyboard_focus_tests {
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
-        // No drag is possible without a camera; simulate the
-        // mid-cascade state by directly writing the gizmo cell.
+        // No drag is possible without a camera; simulate the mid-cascade state
+        // by directly writing the gizmo cell.
         let node_id = ctrl
             .session
             .document()
@@ -2967,10 +2908,9 @@ mod keyboard_focus_tests {
         assert_eq!(ctrl.selection(), None);
     }
 
-    /// Single object whose local AABB has world.max.x = 1 with the
-    /// identity transform. Useful for clamp tests where the goal is
-    /// "envelope is exactly flush with the object's +X face, so any
-    /// +X delta clamps to zero".
+    /// Single object whose local AABB has world.max.x = 1 with the identity
+    /// transform. Useful for clamp tests where the goal is "envelope is exactly
+    /// flush with the object's +X face, so any +X delta clamps to zero".
     fn cube_object_graph() -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -2991,9 +2931,9 @@ mod keyboard_focus_tests {
         g
     }
 
-    /// Front-axis camera + 400 x 200 viewport. Mirrors the gizmo
-    /// tests' setup so `world_per_pixel` is the same scale, and
-    /// the keyboard integrator's translation rate is comparable.
+    /// Front-axis camera + 400 x 200 viewport. Mirrors the gizmo tests' setup
+    /// so `world_per_pixel` is the same scale, and the keyboard integrator's
+    /// translation rate is comparable.
     fn install_for_integration(ctrl: &ViewportController) {
         ctrl.install_graph_for_test(cube_object_graph());
         let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
@@ -3002,10 +2942,9 @@ mod keyboard_focus_tests {
         ctrl.set_viewport_for_test(400.0, 200.0);
     }
 
-    /// Drive `kbd_drive.integrate` twice with a real-time pause
-    /// between calls so the per-tick `dt` is non-zero on the second
-    /// call. The first call seeds `last_tick`; the second produces
-    /// the actual integration step.
+    /// Drive `kbd_drive.integrate` twice with a real-time pause between calls
+    /// so the per-tick `dt` is non-zero on the second call. The first call
+    /// seeds `last_tick`; the second produces the actual integration step.
     fn integrate_two_ticks(ctrl: &ViewportController) {
         let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
             document: ctrl.session.document(),
@@ -3026,10 +2965,10 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_translate_focus_clamps_at_plus_x_wall() {
-        // Cube world AABB.max.x = 1.0 with identity. Envelope of
-        // (2, 4, 4) gives env.max.x = 1.0 exactly: zero room on +X.
-        // Holding +X under Translate focus must leave the object's
-        // translation at zero across as many ticks as we run.
+        // Cube world AABB.max.x = 1.0 with identity. Envelope of (2, 4, 4)
+        // gives env.max.x = 1.0 exactly: zero room on +X. Holding +X under
+        // Translate focus must leave the object's translation at zero across as
+        // many ticks as we run.
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
@@ -3061,15 +3000,14 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_rotate_focus_unaffected_by_envelope() {
-        // Same envelope-flush-with-cube setup. Rotate focus must
-        // ignore the clamp: the linear part of the resulting
-        // transform should reflect the integrated rotation, even
-        // though the composed translation component is non-zero
-        // (rotation about a non-origin pivot leaves the box centroid
-        // in place but writes a non-zero translation into the affine
-        // form). The test asserts the linear part diverges from
-        // identity, which is the claim that matters here: rotation
-        // happened and the clamp didn't squash it.
+        // Same envelope-flush-with-cube setup. Rotate focus must ignore the
+        // clamp: the linear part of the resulting transform should reflect the
+        // integrated rotation, even though the composed translation component
+        // is non-zero (rotation about a non-origin pivot leaves the box
+        // centroid in place but writes a non-zero translation into the affine
+        // form). The test asserts the linear part diverges from identity, which
+        // is the claim that matters here: rotation happened and the clamp
+        // didn't squash it.
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
@@ -3092,10 +3030,9 @@ mod keyboard_focus_tests {
             Transform3D::Identity => panic!("rotate focus should have produced an affine"),
             Transform3D::Affine(a) => {
                 let m = a.linear();
-                // R_x(theta) maps (0, 1, 0) to (0, cos, sin) and
-                // (0, 0, 1) to (0, -sin, cos). For any non-zero
-                // theta, m[2][1] (the Y-into-Z coefficient) is
-                // non-zero, distinguishing the result from the
+                // R_x(theta) maps (0, 1, 0) to (0, cos, sin) and (0, 0, 1) to
+                // (0, -sin, cos). For any non-zero theta, m[2][1] (the Y-into-Z
+                // coefficient) is non-zero, distinguishing the result from the
                 // identity matrix.
                 assert!(
                     m[2][1].abs() > 1e-6,
@@ -3138,8 +3075,8 @@ mod paste_clipboard_tests {
 
     #[test]
     fn paste_without_viewport_returns_false() {
-        // No set_viewport_for_test: the render host's viewport is
-        // None, so the controller bails before reaching the camera.
+        // No set_viewport_for_test: the render host's viewport is None, so the
+        // controller bails before reaching the camera.
         let ctrl = ViewportController::new_for_test();
         let cb = triangle_clipboard();
         assert!(!ctrl.paste_clipboard_at_cursor(&cb));
@@ -3149,8 +3086,8 @@ mod paste_clipboard_tests {
     fn paste_without_camera_returns_false() {
         let ctrl = ViewportController::new_for_test();
         ctrl.set_viewport_for_test(800.0, 600.0);
-        // No on_scene_load_finished / handle_rendering_setup ever
-        // installed a camera, so the camera cell is still None.
+        // No on_scene_load_finished / handle_rendering_setup ever installed a
+        // camera, so the camera cell is still None.
         let cb = triangle_clipboard();
         assert!(!ctrl.paste_clipboard_at_cursor(&cb));
     }
