@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Keyboard-driven gizmo integrator. Data types (`KbdFocus`,
-//! `ArrowDrive`), the per-tick pure function `keyboard_step`, and the
-//! `KeyboardDriveState` struct that owns the controller's three
-//! keyboard cells (focus, arrow bitset, last integrator tick) and
-//! drives them through the Slint callbacks.
+//! Keyboard-driven gizmo integrator. Data types (`KbdFocus`, `ArrowDrive`), the
+//! per-tick pure function `keyboard_step`, and the `KeyboardDriveState` struct
+//! that owns the controller's three keyboard cells (focus, arrow bitset, last
+//! integrator tick) and drives them through the Slint callbacks.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -27,10 +26,10 @@ use crate::gizmo::axis::Axis;
 use crate::mesh_render::default_fov_y;
 use crate::scene_document::{SceneDocument, SceneEdit};
 
-/// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
-/// the three operation types; Esc returns to `None`. While focus is
-/// non-`None`, the arrow / PageUp / PageDown keys are hijacked by
-/// the per-frame integrator and no longer drive the camera.
+/// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through the three
+/// operation types; Esc returns to `None`. While focus is non-`None`, the arrow
+/// / PageUp / PageDown keys are hijacked by the per-frame integrator and no
+/// longer drive the camera.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub(super) enum KbdFocus {
     #[default]
@@ -40,10 +39,10 @@ pub(super) enum KbdFocus {
     Scale,
 }
 
-/// Bitset of held arrow-driving keys, with the per-axis sign:
-/// `Right`/`Left` = ±X, `Up`/`Down` = ±Y, `PageUp`/`PageDown` = ±Z.
-/// Driven by `key-pressed` / `key-released` from the FocusScope and
-/// sampled every animation tick to integrate continuous motion.
+/// Bitset of held arrow-driving keys, with the per-axis sign: `Right`/`Left` =
+/// ±X, `Up`/`Down` = ±Y, `PageUp`/`PageDown` = ±Z. Driven by `key-pressed` /
+/// `key-released` from the FocusScope and sampled every animation tick to
+/// integrate continuous motion.
 #[derive(Copy, Clone, Default, Debug)]
 pub(super) struct ArrowDrive {
     pub x_pos: bool,
@@ -55,9 +54,8 @@ pub(super) struct ArrowDrive {
 }
 
 impl ArrowDrive {
-    /// Per-axis sign as `(±1, ±1, ±1)`, with `0` for any axis whose
-    /// keys are both unpressed (or both pressed at once, in which
-    /// case they cancel).
+    /// Per-axis sign as `(±1, ±1, ±1)`, with `0` for any axis whose keys are
+    /// both unpressed (or both pressed at once, in which case they cancel).
     pub(super) fn signs(self) -> (f32, f32, f32) {
         let x = i32::from(self.x_pos) - i32::from(self.x_neg);
         let y = i32::from(self.y_pos) - i32::from(self.y_neg);
@@ -70,11 +68,10 @@ impl ArrowDrive {
     }
 }
 
-/// Codes carried on `gizmo-arrow-pressed` / `gizmo-arrow-released`.
-/// `0/1` = ±X, `2/3` = ±Y, `4/5` = ±Z. The Slint layer uses bare
-/// `int`s because Slint's typed enums can't be passed through a
-/// callback that's bound at runtime; the Rust layer normalises into
-/// the `ArrowDrive` bitset above.
+/// Codes carried on `gizmo-arrow-pressed` / `gizmo-arrow-released`. `0/1` = ±X,
+/// `2/3` = ±Y, `4/5` = ±Z. The Slint layer uses bare `int`s because Slint's
+/// typed enums can't be passed through a callback that's bound at runtime; the
+/// Rust layer normalises into the `ArrowDrive` bitset above.
 pub(super) const ARROW_X_POS: i32 = 0;
 pub(super) const ARROW_X_NEG: i32 = 1;
 pub(super) const ARROW_Y_POS: i32 = 2;
@@ -83,41 +80,39 @@ pub(super) const ARROW_Z_POS: i32 = 4;
 pub(super) const ARROW_Z_NEG: i32 = 5;
 
 /// Translation rate for keyboard-focus drive: 30 logical pixels of
-/// screen-projected motion per second along the chosen world axis.
-/// Converted to world units per frame via the camera's
-/// `world_per_pixel` ratio.
+/// screen-projected motion per second along the chosen world axis. Converted to
+/// world units per frame at the depth of the pivot.
 const KBD_TRANSLATE_PIXELS_PER_SEC: f32 = 30.0;
 
-/// Rotation rate for keyboard-focus drive: 45° per second about the
-/// chosen world axis.
+/// Rotation rate for keyboard-focus drive: 45° per second about the chosen
+/// world axis.
 const KBD_ROTATE_RAD_PER_SEC: f32 = std::f32::consts::FRAC_PI_4;
 
-/// Scale-rate base for keyboard-focus drive: factor `1.5` per second
-/// of held key. Combined with per-axis sign, the effective per-axis
-/// factor each tick is `1.5 ^ (sign * dt)`.
+/// Scale-rate base for keyboard-focus drive: factor `1.5` per second of held
+/// key. Combined with per-axis sign, the effective per-axis factor each tick is
+/// `1.5 ^ (sign * dt)`.
 const KBD_SCALE_BASE: f32 = 1.5;
 
-/// Maximum integrator step. Caps the per-frame delta so a stalled
-/// frame (debugger pause, garbage collection, anything that delays
-/// the next render past ~100 ms) doesn't translate the object across
-/// the viewport in a single jump when the loop resumes. Applied at
-/// the controller's call site, before `keyboard_step` is invoked.
+/// Maximum integrator step. Caps the per-frame delta so a stalled frame
+/// (debugger pause, garbage collection, anything that delays the next render
+/// past ~100 ms) doesn't translate the object across the viewport in a single
+/// jump when the loop resumes. Applied at the controller's call site, before
+/// `keyboard_step` is invoked.
 pub(super) const KBD_MAX_DT: f32 = 0.1;
 
-/// Pure helper: produces one tick of the keyboard-focus integrator.
-/// Returns `None` when there's nothing to integrate (no axes held,
-/// or the focus is `None`); otherwise returns the new running
-/// transform composed onto the previous frame's `running` transform.
+/// Pure helper: produces one tick of the keyboard-focus integrator. Returns
+/// `None` when there's nothing to integrate (no axes held, or the focus is
+/// `None`); otherwise returns the new running transform composed onto the
+/// previous frame's `running` transform.
 ///
-/// `dt` is the per-tick delta in seconds; callers clamp it to
-/// `KBD_MAX_DT` and gate against non-positive values before calling.
+/// `dt` is the per-tick delta in seconds; callers clamp it to `KBD_MAX_DT` and
+/// gate against non-positive values before calling.
 ///
-/// Translate steps compose as `T(delta) ∘ running`. Rotate steps
-/// compose as `T(p) ∘ R_z ∘ R_y ∘ R_x ∘ T(-p) ∘ running`, a fixed
-/// canonical order across held axes; for the small per-tick angles
-/// this matters only by a second-order amount. Scale steps compose
-/// as `T(p) ∘ diag(s) ∘ T(-p) ∘ running`, with off-axes held at
-/// `1.0`.
+/// Translate steps compose as `T(delta) ∘ running`. Rotate steps compose as
+/// `T(p) ∘ R_z ∘ R_y ∘ R_x ∘ T(-p) ∘ running`, a fixed canonical order across
+/// held axes; for the small per-tick angles this matters only by a second-order
+/// amount. Scale steps compose as `T(p) ∘ diag(s) ∘ T(-p) ∘ running`, with
+/// off-axes held at `1.0`.
 pub(super) fn keyboard_step(
     focus: KbdFocus,
     arrows: ArrowDrive,
@@ -179,31 +174,28 @@ pub(super) fn keyboard_step(
     }
 }
 
-/// Per-frame inputs the keyboard integrator pulls off the controller.
-/// Bundling them avoids a five-arg method while keeping ownership
-/// where it lives (scene on the document, camera in a `RefCell` on the
-/// controller).
+/// Per-frame inputs the keyboard integrator pulls off the controller. Bundling
+/// them avoids a five-arg method while keeping ownership where it lives (scene
+/// on the document, camera in a `RefCell` on the controller).
 pub(super) struct IntegrationCtx<'a> {
     pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_id: Option<NodeId>,
-    /// Build envelope used by the post-step clamp on `Translate`
-    /// focus (rotate / scale focuses ignore it). Carried by value
-    /// since `BuildVolume` is `Copy` and small.
+    /// Build envelope used by the post-step clamp on `Translate` focus (rotate
+    /// / scale focuses ignore it). Carried by value since `BuildVolume` is
+    /// `Copy` and small.
     pub(super) build_volume: BuildVolume,
 }
 
-/// Tracks the in-progress "keyboard burst": the user holds one or
-/// more arrow / page keys while a gizmo focus is active. The first
-/// held key arms the tracker with the object's transform at that
-/// moment; the burst ends when all keys are released, the focus
-/// changes, or `reset` is called.
+/// Tracks the in-progress "keyboard burst": the user holds one or more arrow /
+/// page keys while a gizmo focus is active. The first held key arms the tracker
+/// with the object's transform at that moment; the burst ends when all keys are
+/// released, the focus changes, or `reset` is called.
 ///
-/// `last_event_at` is currently unused but written on every event so a
-/// future coalesce window (one undo entry per ~Xms regardless of
-/// release/re-press) can gate the flush from inside `take` without
-/// touching the public API.
+/// `last_event_at` is currently unused but written on every event so a future
+/// coalesce window (one undo entry per ~Xms regardless of release/re-press) can
+/// gate the flush from inside `take` without touching the public API.
 struct BurstTracker {
     armed: Cell<Option<(NodeId, Transform3D)>>,
     last_event_at: Cell<Option<Instant>>,
@@ -225,8 +217,8 @@ impl BurstTracker {
         self.armed.set(Some((node_id, before)));
     }
 
-    /// Returns the captured pre-image and clears the tracker. Returns
-    /// `None` when nothing is armed.
+    /// Returns the captured pre-image and clears the tracker. Returns `None`
+    /// when nothing is armed.
     fn take(&self) -> Option<(NodeId, Transform3D)> {
         self.armed.take()
     }
@@ -240,8 +232,8 @@ impl BurstTracker {
     }
 }
 
-/// Owns the controller's three keyboard cells and the methods that
-/// mutate them. Used by `ViewportController` through composition.
+/// Owns the controller's three keyboard cells and the methods that mutate them.
+/// Used by `ViewportController` through composition.
 pub(super) struct KeyboardDriveState {
     focus: Cell<KbdFocus>,
     arrows: Cell<ArrowDrive>,
@@ -269,9 +261,9 @@ impl KeyboardDriveState {
         self.arrows.get()
     }
 
-    /// Force-clear focus + bitset + tick. Used on scene close. Any
-    /// in-progress burst is dropped without flushing; the object
-    /// indices it referred to are about to become meaningless.
+    /// Force-clear focus + bitset + tick. Used on scene close. Any in-progress
+    /// burst is dropped without flushing; the object indices it referred to are
+    /// about to become meaningless.
     pub(super) fn reset(&self) {
         self.focus.set(KbdFocus::None);
         self.arrows.set(ArrowDrive::default());
@@ -279,15 +271,15 @@ impl KeyboardDriveState {
         self.burst.discard();
     }
 
-    /// Sets `focus` if the move is legal. Returns `true` when the cell
-    /// changed; the caller should mark the controller dirty and update
-    /// the `gizmo-keyboard-focus-active` UI property accordingly.
-    /// Refuses non-`None` focus when nothing is selected, and is a
-    /// no-op when the focus is already `focus`.
+    /// Sets `focus` if the move is legal. Returns `true` when the cell changed;
+    /// the caller should mark the controller dirty and update the
+    /// `gizmo-keyboard-focus-active` UI property accordingly. Refuses
+    /// non-`None` focus when nothing is selected, and is a no-op when the focus
+    /// is already `focus`.
     ///
-    /// Side effect: an in-progress burst is flushed before the focus
-    /// switch, so the user's key-presses-so-far land as one undo
-    /// entry instead of bleeding across modes.
+    /// Side effect: an in-progress burst is flushed before the focus switch, so
+    /// the user's key-presses-so-far land as one undo entry instead of bleeding
+    /// across modes.
     pub(super) fn try_set_focus(
         &self,
         document: &Rc<SceneDocument>,
@@ -307,16 +299,14 @@ impl KeyboardDriveState {
         true
     }
 
-    /// Held-arrow bitset update. `code` is one of `ARROW_*`. Returns
-    /// `true` if the bitset changed (caller marks dirty), `false` for
-    /// out-of-range codes.
+    /// Held-arrow bitset update. `code` is one of `ARROW_*`. Returns `true` if
+    /// the bitset changed (caller marks dirty), `false` for out-of-range codes.
     ///
-    /// Burst lifecycle: a press that flips the bitset from empty →
-    /// non-empty arms the burst tracker with the selected object's
-    /// current transform; a release that flips it back to empty
-    /// flushes the burst as one undo entry. Out-of-range codes
-    /// short-circuit before the bitset write, so they don't influence
-    /// the burst.
+    /// Burst lifecycle: a press that flips the bitset from empty → non-empty
+    /// arms the burst tracker with the selected object's current transform; a
+    /// release that flips it back to empty flushes the burst as one undo entry.
+    /// Out-of-range codes short-circuit before the bitset write, so they don't
+    /// influence the burst.
     pub(super) fn update_arrow(
         &self,
         document: &Rc<SceneDocument>,
@@ -351,10 +341,10 @@ impl KeyboardDriveState {
         true
     }
 
-    /// Captures the current transform of the selected object as the
-    /// burst's pre-image. No-op if the burst is already armed (a
-    /// second key press during an existing burst), the selection is
-    /// empty, or the scene isn't loaded.
+    /// Captures the current transform of the selected object as the burst's
+    /// pre-image. No-op if the burst is already armed (a second key press
+    /// during an existing burst), the selection is empty, or the scene isn't
+    /// loaded.
     fn try_arm_burst(&self, document: &Rc<SceneDocument>, selection_id: Option<NodeId>) {
         if self.burst.is_armed() {
             return;
@@ -371,11 +361,10 @@ impl KeyboardDriveState {
         self.burst.arm(node_id, before);
     }
 
-    /// Pushes the in-progress burst as one undo entry, using the
-    /// scene's current transform of the captured object as `after`.
-    /// `push_edit` filters the no-op case (the user pressed and
-    /// released without an integration tick), so we don't gate it
-    /// here.
+    /// Pushes the in-progress burst as one undo entry, using the scene's
+    /// current transform of the captured object as `after`. `push_edit` filters
+    /// the no-op case (the user pressed and released without an integration
+    /// tick), so we don't gate it here.
     fn flush_burst(&self, document: &Rc<SceneDocument>) {
         let Some((node_id, before)) = self.burst.take() else {
             return;
@@ -392,11 +381,11 @@ impl KeyboardDriveState {
         }
     }
 
-    /// Per-frame integration. If the focus is active, axes are held,
-    /// the selection has a pivot-attachable object, and the camera +
-    /// viewport are present, applies one tick of `keyboard_step` to
-    /// the selected object's transform and returns `true`. The caller
-    /// marks dirty on `true`.
+    /// Per-frame integration. If the focus is active, axes are held, the
+    /// selection has a pivot-attachable object in front of the eye, and the
+    /// camera + viewport are present, applies one tick of `keyboard_step` to
+    /// the selected object's transform and returns `true`. The caller marks
+    /// dirty on `true`.
     pub(super) fn integrate(&self, ctx: IntegrationCtx) -> bool {
         let focus = self.focus.get();
         if focus == KbdFocus::None {
@@ -424,9 +413,8 @@ impl KeyboardDriveState {
         }
 
         // Pull the running transform + pivot + camera + the leaf's
-        // ancestor-chain transform through the document's read borrow
-        // + camera borrow; all drop at the closure's end before the
-        // scene write below.
+        // ancestor-chain transform through the document's read borrow + camera
+        // borrow; all drop at the closure's end before the scene write below.
         let prepared: Option<(Vec3, Transform3D, Transform3D, f32)> = ctx
             .document
             .with_scene(|spatial| {
@@ -440,7 +428,7 @@ impl KeyboardDriveState {
                     pivot,
                     running,
                     parent_world,
-                    camera.world_per_pixel(default_fov_y(), h),
+                    camera.world_per_pixel_at(pivot, default_fov_y(), h)?,
                 ))
             })
             .flatten();
@@ -460,12 +448,11 @@ impl KeyboardDriveState {
             return false;
         };
 
-        // Translate focus is clamped against the build envelope so
-        // the object's transformed AABB cannot leave it. Rotate /
-        // Scale paths compose translation as a pivot side effect
-        // and are not clamped. The clamp re-opens the document's
-        // read borrow; `with_scene` returns `None` if the scene was
-        // cleared between the step computation and now, in which
+        // Translate focus is clamped against the build envelope so the object's
+        // transformed AABB cannot leave it. Rotate / Scale paths compose
+        // translation as a pivot side effect and are not clamped. The clamp
+        // re-opens the document's read borrow; `with_scene` returns `None` if
+        // the scene was cleared between the step computation and now, in which
         // case we keep the unclamped transform.
         let new_transform = if focus == KbdFocus::Translate {
             ctx.document
@@ -494,8 +481,8 @@ mod keyboard_step_tests {
 
     #[test]
     fn arrow_drive_signs_compose_per_axis_kbd() {
-        // +X and -X cancel; +Y alone keeps a sign; mixed bits across
-        // axes drive each axis independently.
+        // +X and -X cancel; +Y alone keeps a sign; mixed bits across axes drive
+        // each axis independently.
         let d = ArrowDrive {
             x_pos: true,
             x_neg: true,
@@ -522,8 +509,8 @@ mod keyboard_step_tests {
 
     #[test]
     fn keyboard_step_translate_produces_pure_translation() {
-        // 1 second of held +X at 30 px/sec, world_per_pixel = 0.1
-        // → world delta = 30 * 0.1 = 3.0 along +X. Off-axis stays 0.
+        // 1 second of held +X at 30 px/sec, world_per_pixel = 0.1 → world delta
+        // = 30 * 0.1 = 3.0 along +X. Off-axis stays 0.
         let arrows = ArrowDrive {
             x_pos: true,
             ..ArrowDrive::default()
@@ -584,8 +571,8 @@ mod keyboard_step_tests {
 
     #[test]
     fn keyboard_step_rotate_about_x_takes_y_into_z() {
-        // 1 s at 45°/s about +X = π/4 rotation. R_x(π/4) maps
-        // (0, 1, 0) → (0, cos π/4, sin π/4).
+        // 1 s at 45°/s about +X = π/4 rotation. R_x(π/4) maps (0, 1, 0) →
+        // (0, cos π/4, sin π/4).
         let arrows = ArrowDrive {
             x_pos: true,
             ..ArrowDrive::default()
@@ -663,5 +650,133 @@ mod keyboard_step_tests {
             }
             other => panic!("expected Affine, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod integrate_tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use float_cmp::assert_approx_eq;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::Vertex;
+    use sc_scene::{LeafPayload, Scene};
+
+    use super::*;
+    use crate::camera::AxisView;
+    use crate::picking;
+
+    /// Builds a scene with one leaf whose local AABB is a unit cube, translated
+    /// so that its pivot lands on `pivot`.
+    fn graph_with_cube_at(pivot: [f64; 3]) -> Scene {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let mesh = IndexedMesh::new(
+            None,
+            vec![
+                Vertex::new([-0.5, -0.5, -0.5]),
+                Vertex::new([0.5, 0.5, 0.5]),
+            ],
+            vec![],
+        );
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation(pivot)),
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        g
+    }
+
+    fn document_with_cube_at(pivot: [f64; 3]) -> (Rc<SceneDocument>, NodeId) {
+        let document = SceneDocument::new();
+        document.install_graph(graph_with_cube_at(pivot), PathBuf::from("<test>"));
+        let node_id = document
+            .with_scene(|s| s.leaf_id_at_index(0))
+            .flatten()
+            .unwrap();
+        (document, node_id)
+    }
+
+    fn pivot_of(document: &Rc<SceneDocument>, node_id: NodeId) -> Vec3 {
+        document
+            .with_scene(|s| crate::gizmo::pivot_for_leaf(s, node_id))
+            .flatten()
+            .unwrap()
+    }
+
+    /// Returns a state with Translate focus and +X held. The next `integrate`
+    /// step is exactly KBD_MAX_DT (0.1 s) long, because the last tick is older
+    /// than that.
+    fn translate_x_held(document: &Rc<SceneDocument>, node_id: NodeId) -> KeyboardDriveState {
+        let state = KeyboardDriveState::new();
+        assert!(state.try_set_focus(document, KbdFocus::Translate, true));
+        assert!(state.update_arrow(document, Some(node_id), ARROW_X_POS, true));
+        state
+            .last_tick
+            .set(Some(Instant::now() - Duration::from_secs(1)));
+        state
+    }
+
+    /// Returns a camera with the eye at (0, -3, 0), looking along +Y, so +X is
+    /// parallel to the image plane.
+    fn front_camera() -> OrbitCamera {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.set_axis_view(AxisView::Front);
+        camera
+    }
+
+    fn integrate_once(
+        state: &KeyboardDriveState,
+        document: &Rc<SceneDocument>,
+        node_id: NodeId,
+        camera: &OrbitCamera,
+    ) -> bool {
+        state.integrate(IntegrationCtx {
+            document,
+            camera: &RefCell::new(Some(camera.clone())),
+            viewport: ViewportSize::new(400.0, 200.0),
+            selection_id: Some(node_id),
+            build_volume: BuildVolume::new(100.0, 100.0, 100.0),
+        })
+    }
+
+    #[test]
+    fn translate_moves_the_pivot_30_px_per_second_off_the_orbit_target_plane() {
+        // Pivots at y = -1 and y = +1 are in front of and behind the plane
+        // through the orbit target.
+        let camera = front_camera();
+        let screen_x = |p: Vec3| {
+            picking::project_world_to_screen(&camera, default_fov_y(), 400.0, 200.0, p)
+                .unwrap()
+                .0
+        };
+        for pivot_y in [-1.0, 1.0] {
+            let (document, node_id) = document_with_cube_at([0.0, pivot_y, 1.0]);
+            let state = translate_x_held(&document, node_id);
+
+            let before = screen_x(pivot_of(&document, node_id));
+            assert!(integrate_once(&state, &document, node_id, &camera));
+            let after = screen_x(pivot_of(&document, node_id));
+
+            // 30 px/s for 0.1 s.
+            assert_approx_eq!(f32, after - before, 3.0, epsilon = 1e-3);
+        }
+    }
+
+    #[test]
+    fn translate_skips_the_step_when_the_pivot_is_behind_the_eye() {
+        // The eye is at y = -3.
+        let (document, node_id) = document_with_cube_at([0.0, -4.0, 1.0]);
+        let state = translate_x_held(&document, node_id);
+
+        let before = pivot_of(&document, node_id);
+        assert!(!integrate_once(&state, &document, node_id, &front_camera()));
+        assert_eq!(pivot_of(&document, node_id), before);
     }
 }
