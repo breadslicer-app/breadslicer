@@ -252,6 +252,15 @@ $Version = Read-AppVersion
 Assert-IconCurrent
 Write-Host "Building SoulCrafted Slicer $Version for $Target ..."
 
+# Keeps the builder's profile directory out of the panic locations.
+if (-not $env:USERPROFILE) {
+    throw 'USERPROFILE is not set, so the build paths cannot be remapped.'
+}
+if ($env:RUSTFLAGS) {
+    Write-Warning 'RUSTFLAGS is ignored by this build.'
+}
+$env:CARGO_ENCODED_RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"
+
 Push-Location $RepoRoot
 try {
     Invoke-Tool 'cargo build' { cargo build --release --target $Target -p sc-slicer-gui -p sc-slicer-cli }

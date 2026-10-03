@@ -159,6 +159,12 @@ assert_icon_current
 assert_deployment_target
 
 echo "Building SoulCrafted Slicer $VERSION for $TARGET ..."
+
+# Keeps the builder's home directory out of the panic locations.
+[ -n "$HOME" ] || fail "HOME is not set, so the build paths cannot be remapped"
+[ -z "${RUSTFLAGS:-}" ] || echo "Note: RUSTFLAGS is ignored by this build."
+export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$HOME=~"
+
 (cd "$REPO_ROOT" && cargo build --release --target "$TARGET" -p "$GUI_BIN" -p "$CLI_BIN")
 
 # --- Stage the bundle --------------------------------------------------
