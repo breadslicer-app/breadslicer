@@ -15,11 +15,14 @@ use sc_print_profiles::{EffectiveMaterial, MaterialProfile, PrinterProfile};
 use sc_scene::Scene;
 use sc_scene::node::LeafPayload;
 use sc_sl1cer::CancelToken;
+use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::error::SliceSceneError;
+use sc_sl1cer::profile::LayerSchedule;
 
 use super::prepare::UnsliceableSelection;
 use super::slice_plate::{
-    SlicePlateError, SliceRun, SlicedPlate, SlicingParams, schedule_for_selection, slice_plate,
+    MismatchedLayerCount, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
+    schedule_for_selection, slice_plate,
 };
 
 const PRINTER_TOML: &str = r#"
@@ -62,8 +65,8 @@ bottom_layer_count = 5
 [per_printer]
 "#;
 
-/// A material carrying no layer-height source at all, so the
-/// schedule cannot resolve without a per-print request.
+/// A material carrying no layer-height source at all, so the schedule cannot
+/// resolve without a per-print request.
 const HEIGHTLESS_MATERIAL_TOML: &str = r#"
 [identity]
 id = "no-height"
@@ -99,8 +102,8 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
 
-/// 0.25 mm layers; the cube (top at z = 0.5) covers in 2, the
-/// prisms (top at z = 2) in 8.
+/// 0.25 mm layers; the cube (top at z = 0.5) covers in 2, the prisms (top at z
+/// = 2) in 8.
 fn params() -> SlicingParams {
     SlicingParams {
         layer_height_request: Some(mm(0.25)),
@@ -194,13 +197,27 @@ fn the_trio_merges_into_one_plate_stack() {
         cuboid_with_y_tunnel(),
     ]));
     assert_eq!(plate.leaves().len(), 3);
-    let merged = plate.merge().expect("stacks share one schedule");
+    let contours = plate.merge().expect("stacks share one schedule");
+    let merged = contours.stack();
     assert_eq!(merged.layers().len(), 8);
-    // Layer 0 carries all 3 leaves; the cube (top at 0.5) is gone
-    // well before the last layer, where the Y-tunnel prism is solid
-    // again and the Z-tunnel prism still has its hole.
+    // Layer 0 carries all 3 leaves; the cube (top at 0.5) is gone well before
+    // the last layer, where the Y-tunnel prism is solid again and the Z-tunnel
+    // prism still has its hole.
     assert_eq!(merged.layers()[0].polygons().len(), 3);
     assert_eq!(merged.layers()[7].polygons().len(), 2);
+}
+
+#[test]
+fn the_merged_contours_keep_the_schedule_the_run_sliced_on() {
+    let plate = completed(&scene_with([
+        unit_cube_mesh(),
+        cuboid_with_z_tunnel(),
+        cuboid_with_y_tunnel(),
+    ]));
+    let contours = plate.merge().expect("stacks share one schedule");
+    let expected = LayerSchedule::uniform(0.25, 0.25, 8).expect("a positive, non-empty schedule");
+    assert_eq!(contours.schedule(), &expected);
+    assert_eq!(contours.stack().layers().len(), 8);
 }
 
 #[test]
@@ -312,8 +329,8 @@ fn an_invalid_leaf_is_an_engine_error() {
 fn stacks_from_different_schedules_refuse_to_merge() {
     let cube = completed(&scene_with([unit_cube_mesh()]));
     let prism = completed(&scene_with([cuboid_with_z_tunnel()]));
-    // Splice leaves sliced under 2-layer and 8-layer grids into one
-    // plate; only reachable by hand, and merge must refuse, typed.
+    // Splice leaves sliced under 2-layer and 8-layer grids into one plate; only
+    // reachable by hand, and merge must refuse, typed.
     let mut leaves = cube.leaves;
     leaves.extend(prism.leaves);
     let mixed = SlicedPlate {
@@ -330,4 +347,50 @@ fn schedule_for_selection_matches_the_sliced_schedule() {
         .expect("the schedule resolves");
     let plate = completed(&scene);
     assert_eq!(&schedule, plate.schedule());
+}
+
+fn empty_layers_at(zs: &[f64]) -> ContourStack {
+    ContourStack::new(zs.iter().map(|&z| ContourLayer::new(z, vec![])).collect())
+        .expect("z is strictly increasing")
+}
+
+fn three_layer_schedule() -> LayerSchedule {
+    LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule")
+}
+
+#[test]
+fn a_stack_pairs_with_a_schedule_of_its_own_layer_count() {
+    let contours = PlateContours::new(
+        empty_layers_at(&[0.025, 0.075, 0.125]),
+        three_layer_schedule(),
+    )
+    .expect("3 layers pair with a 3-layer schedule");
+    let (stack, schedule) = contours.into_parts();
+    assert_eq!(stack.layers().len(), 3);
+    assert_eq!(schedule, three_layer_schedule());
+}
+
+#[test]
+fn a_stack_refuses_a_schedule_of_another_layer_count() {
+    let err = PlateContours::new(empty_layers_at(&[0.025, 0.075]), three_layer_schedule())
+        .expect_err("2 layers cannot pair with a 3-layer schedule");
+    assert_eq!(
+        err,
+        MismatchedLayerCount {
+            stack_layers: 2,
+            schedule_layers: 3,
+        },
+    );
+}
+
+#[test]
+fn mismatched_layer_count_display_names_both_counts() {
+    let err = MismatchedLayerCount {
+        stack_layers: 2,
+        schedule_layers: 3,
+    };
+    assert_eq!(
+        err.to_string(),
+        "the contour stack has 2 layers, but its layer schedule has 3",
+    );
 }

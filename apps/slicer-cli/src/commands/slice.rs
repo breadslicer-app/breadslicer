@@ -14,8 +14,9 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
-    SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene, UnsliceableSelection,
-    creation_time_now, fallback_report_lines, project_to_print_program, slice_plate,
+    PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene,
+    UnsliceableSelection, creation_time_now, fallback_report_lines, project_to_print_program,
+    slice_plate,
 };
 use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
 use sc_print_profiles::{
@@ -25,7 +26,6 @@ use sc_print_profiles::{
 };
 use sc_project_formats::{ReadProjectWarning, load_scene};
 use sc_scene::Scene;
-use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::{
@@ -42,10 +42,9 @@ use crate::filesystem::{
     ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
 };
 
-/// Parsed CLI arguments for the `slice` subcommand. The profile
-/// references are classified at parse time into either a path or a
-/// validated id; the remaining scalar fields carry their domain
-/// invariant in their type.
+/// Parsed CLI arguments for the `slice` subcommand. The profile references are
+/// classified at parse time into either a path or a validated id; the remaining
+/// scalar fields carry their domain invariant in their type.
 pub(crate) struct SliceArgs {
     pub source: OsString,
     pub target: OsString,
@@ -74,12 +73,11 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         })?,
     };
 
-    // A file-target format truncates whatever sits at the target, and
-    // the source is fully in memory by write time, so nothing further
-    // down notices it is destroying its own input. Directory-target
-    // formats take a path the target-file validation would reject, and
-    // the writer's own "must be an empty directory" check already keeps
-    // them away from the source file.
+    // A file-target format truncates whatever sits at the target, and the
+    // source is fully in memory by write time, so nothing further down notices
+    // it is destroying its own input. Directory-target formats take a path the
+    // target-file validation would reject, and the writer's own "must be an
+    // empty directory" check already keeps them away from the source file.
     let target_path = if target_format.is_directory_format() {
         requested_target
     } else {
@@ -112,13 +110,13 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         if !fixes.is_empty() {
             show_applied_fixes(&fixes, stderr);
         }
-        // Refusals warn but do not abort: the engine's validation
-        // gate below remains the authority on what can be sliced.
+        // Refusals warn but do not abort: the engine's validation gate below
+        // remains the authority on what can be sliced.
         show_refusal_warnings(&outcomes, stderr);
     }
 
-    // A project's placement is part of its saved content: only a
-    // plain mesh auto-places.
+    // A project's placement is part of its saved content: only a plain mesh
+    // auto-places.
     if !is_project && !args.no_auto_place {
         place_on_build_plate(&mut scene, &printer.hardware.build_volume())?;
     }
@@ -148,8 +146,8 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
 
     let model_count = plate.leaves().len();
     // Every stack shares the schedule's layer grid, and merging only
-    // concatenates polygons per layer, so the totals are the same
-    // whichever writer path runs below.
+    // concatenates polygons per layer, so the totals are the same whichever
+    // writer path runs below.
     let layer_count = plate
         .leaves()
         .first()
@@ -169,15 +167,15 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         SettledTarget::Slices(
             format @ (Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer),
         ) => {
-            let stack = merge_plate(plate)?;
-            write_slice(&stack, &target_path, format, &options)?;
+            let contours = merge_plate(plate)?;
+            write_slice(contours.stack(), &target_path, format, &options)?;
         }
         SettledTarget::PrinterFile(format) => {
             let config = resolve_print_config(&printer, &material, args.layer_height)?;
             report_fallbacks(&config, &mut std::io::stderr());
             let program = print_program_for(&scene, &config, &plate)?;
-            let stack = merge_plate(plate)?;
-            write_printer_file(&stack, &target_path, format, &program, None)?;
+            let contours = merge_plate(plate)?;
+            write_printer_file(contours.stack(), &target_path, format, &program, None)?;
         }
     }
 
@@ -189,9 +187,9 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
     Ok(())
 }
 
-/// Merge the plate's per-leaf stacks into the one stack a file
-/// target is written from.
-fn merge_plate(plate: SlicedPlate) -> Result<ContourStack> {
+/// Merge the plate's per-leaf stacks into the contours a file target is written
+/// from.
+fn merge_plate(plate: SlicedPlate) -> Result<PlateContours> {
     plate.merge().map_err(|err| {
         anyhow!(
             "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
@@ -201,16 +199,16 @@ fn merge_plate(plate: SlicedPlate) -> Result<ContourStack> {
 
 /// Resolve the full print configuration a printer file needs.
 ///
-/// A pairing that sliced geometry fine can still fail here for want
-/// of an exposure: geometry needs the layer height alone.
+/// A pairing that sliced geometry fine can still fail here for want of an
+/// exposure: geometry needs the layer height alone.
 fn resolve_print_config(
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
     layer_height: Option<PositiveFiniteMm>,
 ) -> Result<ResolvedPrintConfig> {
-    // The plate was sliced under this same request, so overriding
-    // here keeps the program's nominal thickness on the grid the
-    // layers were actually cut on.
+    // The plate was sliced under this same request, so overriding here keeps
+    // the program's nominal thickness on the grid the layers were actually cut
+    // on.
     let overrides = SceneOverrides {
         layer_height_mm: layer_height,
         ..Default::default()
@@ -219,9 +217,8 @@ fn resolve_print_config(
         .map_err(|err| anyhow!("could not resolve the print configuration: {err}"))
 }
 
-/// Write the values the machine will run that no profile chose, so
-/// they are seen before the file is written rather than after the
-/// print fails.
+/// Write the values the machine will run that no profile chose, so they are
+/// seen before the file is written rather than after the print fails.
 fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
     for line in fallback_report_lines(config) {
         let _ = writeln!(out, "{line}");
@@ -238,8 +235,8 @@ fn print_program_for(
         .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 
-/// Loads the effective printer for `profile_ref`. It reads directly
-/// from a path, or looks it up by id across the configured libraries.
+/// Loads the effective printer for `profile_ref`. It reads directly from a
+/// path, or looks it up by id across the configured libraries.
 fn load_printer_profile(
     profile_ref: &PrinterProfileRef,
     libraries: &ProfileLibraries,
@@ -253,9 +250,9 @@ fn load_printer_profile(
     }
 }
 
-/// Loads the effective material for `profile_ref`. The ref picks the
-/// base document only; the user library's same-id extension
-/// composes over it whether the ref is a path or an id.
+/// Loads the effective material for `profile_ref`. The ref picks the base
+/// document only; the user library's same-id extension composes over it whether
+/// the ref is a path or an id.
 fn load_material_profile(
     profile_ref: &MaterialProfileRef,
     libraries: &ProfileLibraries,
@@ -272,15 +269,14 @@ fn load_material_profile(
     }
 }
 
-/// Write project-read warnings to `out`: mesh-level 3MF warnings
-/// go through the shared renderer; the project-only variants print
-/// nothing.
+/// Write project-read warnings to `out`: mesh-level 3MF warnings go through the
+/// shared renderer; the project-only variants print nothing.
 fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write) {
     for warning in warnings {
         match warning {
             ReadProjectWarning::ThreeMf(w) => display_threemf_warning(w, out),
-            // Project data is ignored here on purpose: profiles come
-            // from the flags and nothing is re-saved.
+            // Project data is ignored here on purpose: profiles come from the
+            // flags and nothing is re-saved.
             ReadProjectWarning::ProjectVersionUnsupported { .. }
             | ReadProjectWarning::UnrecognizedProfilePart { .. }
             | ReadProjectWarning::ForeignProjectData { .. } => {}
@@ -288,12 +284,11 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
     }
 }
 
-/// Drop the scene onto the build plate at the printer envelope's XY
-/// centre with its lowest point on the envelope floor, via
-/// [`Scene::drop_at`] (which preserves the roots' relative layout
-/// and no-ops on empty or already-placed scenes). The target is
-/// derived from the loaded printer's envelope rather than restated
-/// as constants.
+/// Drop the scene onto the build plate at the printer envelope's XY centre with
+/// its lowest point on the envelope floor, via [`Scene::drop_at`] (which
+/// preserves the roots' relative layout and no-ops on empty or already-placed
+/// scenes). The target is derived from the loaded printer's envelope rather
+/// than restated as constants.
 fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result<()> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
@@ -306,10 +301,10 @@ fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result
     Ok(())
 }
 
-/// Render a slice-preparation failure for the terminal. The
-/// at-or-below-plate arm keeps its repositioning advice: it is only
-/// reachable with `--no-auto-place`, where repositioning is exactly
-/// the action available to the user.
+/// Render a slice-preparation failure for the terminal. The at-or-below-plate
+/// arm keeps its repositioning advice: it is only reachable with
+/// `--no-auto-place`, where repositioning is exactly the action available to
+/// the user.
 fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     match err {
         UnsliceableSelection::LayerHeight(err) => {
@@ -322,8 +317,8 @@ fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     }
 }
 
-/// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the
-/// engine's own error Display uses.
+/// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the engine's
+/// own error Display uses.
 fn leaf_label(failure: &LeafValidationFailure) -> String {
     match &failure.leaf_name {
         Some(name) => format!("leaf #{} (\"{name}\")", failure.leaf.get()),
@@ -333,16 +328,15 @@ fn leaf_label(failure: &LeafValidationFailure) -> String {
 
 /// Render a scene validation failure to `out`:
 ///
-/// 1. The aggregated summary produced by `Display for SliceSceneError`:
-///    one header naming the invalid-leaf count, then per leaf a label
-///    line with its per-variant breakdown (up to five face indices
-///    each).
-/// 2. When `verbose` is set, one section per invalid leaf: a blank
-///    line, the leaf label, then a section per variant listing every
-///    offending error via its `Display` impl.
-/// 3. Always, a blank line followed by a hint pointing at the `fix`
-///    subcommand. When `verbose` is unset the hint also advertises
-///    `--verbose` for the full error list.
+/// 1. The aggregated summary produced by `Display for SliceSceneError`: one
+///    header naming the invalid-leaf count, then per leaf a label line with its
+///    per-variant breakdown (up to five face indices each).
+/// 2. When `verbose` is set, one section per invalid leaf: a blank line, the
+///    leaf label, then a section per variant listing every offending error via
+///    its `Display` impl.
+/// 3. Always, a blank line followed by a hint pointing at the `fix` subcommand.
+///    When `verbose` is unset the hint also advertises `--verbose` for the full
+///    error list.
 fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn Write) {
     let _ = writeln!(out, "{err}");
     if verbose && let SliceSceneError::LeavesValidationFailed(failures) = err {
@@ -367,10 +361,9 @@ fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn
     };
 }
 
-/// Write `errors` to `out` grouped by variant. One section per variant
-/// in first-occurrence order: a header line `VariantName (count):`
-/// followed by `  - {err}` for each member. Sections are separated by
-/// a blank line.
+/// Write `errors` to `out` grouped by variant. One section per variant in
+/// first-occurrence order: a header line `VariantName (count):` followed by
+/// `  - {err}` for each member. Sections are separated by a blank line.
 fn write_grouped_errors<E>(errors: &[E], out: &mut dyn Write)
 where
     E: MeshErrorReport + fmt::Display,

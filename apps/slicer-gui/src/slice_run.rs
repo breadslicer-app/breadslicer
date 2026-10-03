@@ -5,19 +5,18 @@
 
 //! Per-window driver for the Slice action.
 //!
-//! The Slice button snapshots the scene and the chosen inputs on the UI
-//! thread, then runs the projection and the slicing engine on a worker
-//! thread so the event loop stays responsive. Progress is published
-//! through shared atomics that a `slint::Timer` polls into the modal;
-//! the finished result is deposited into a slot and picked up on the UI
-//! thread via `invoke_slice_finished`. A `CancelToken` lets the modal's
-//! Cancel button stop the run between layers.
+//! The Slice button snapshots the scene and the chosen inputs on the UI thread,
+//! then runs the projection and the slicing engine on a worker thread so the
+//! event loop stays responsive. Progress is published through shared atomics
+//! that a `slint::Timer` polls into the modal; the finished result is deposited
+//! into a slot and picked up on the UI thread via `invoke_slice_finished`. A
+//! `CancelToken` lets the modal's Cancel button stop the run between layers.
 //!
-//! The window's `slicing-in-progress` property is the single gate: the
-//! button is disabled while it is set, and it is cleared on every exit
-//! path (completion, cancellation, error, worker panic). The worker
-//! wraps its body in `catch_unwind` so a panic still deposits a result
-//! and the modal always closes.
+//! The window's `slicing-in-progress` property is the single gate: the button
+//! is disabled while it is set, and it is cleared on every exit path
+//! (completion, cancellation, error, worker panic). The worker wraps its body
+//! in `catch_unwind` so a panic still deposits a result and the modal always
+//! closes.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -44,29 +43,29 @@ use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_s
 /// Cadence of the UI-side progress poll while a slice is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// How long the "already up to date" hint stays up after an unchanged
-/// Slice press before it fades back out.
+/// How long the "already up to date" hint stays up after an unchanged Slice
+/// press before it fades back out.
 const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
 
-/// Shared completed/total layer-slice counters: the worker writes them,
-/// the UI polls them into the modal. `completed` climbs monotonically
-/// (`fetch_max`); `total` is the run's fixed denominator.
+/// Shared completed/total layer-slice counters: the worker writes them, the UI
+/// polls them into the modal. `completed` climbs monotonically (`fetch_max`);
+/// `total` is the run's fixed denominator.
 #[derive(Default)]
 struct SliceProgressCell {
     completed: AtomicU32,
     total: AtomicU32,
 }
 
-/// A completed slice, already merged and fingerprinted on the worker
-/// thread so the event loop never does that work.
+/// A completed slice, already merged and fingerprinted on the worker thread so
+/// the event loop never does that work.
 struct CompletedSlice {
     merged: ContourStack,
     schedule: LayerSchedule,
     token: String,
 }
 
-/// The worker's finished payload, past the engine's raw per-leaf output:
-/// a completed, merged, fingerprinted slice, or a cancellation.
+/// The worker's finished payload, past the engine's raw per-leaf output: a
+/// completed, merged, fingerprinted slice, or a cancellation.
 enum SliceRunOutcome {
     Completed(CompletedSlice),
     Cancelled,
@@ -81,25 +80,25 @@ pub(crate) struct SliceRun {
     dialogs: Rc<DialogManager>,
     progress: Arc<SliceProgressCell>,
     slot: SliceSlot,
-    // The current run's cancel token, so the modal's Cancel can trip it.
-    // `None` when no slice is in flight.
-    cancel: RefCell<Option<CancelToken>>,
-    // Inputs of the in-flight run, captured at launch so the finished
-    // handler can record them alongside the produced contours. `None`
+    // The current run's cancel token, so the modal's Cancel can trip it. `None`
     // when no slice is in flight.
+    cancel: RefCell<Option<CancelToken>>,
+    // Inputs of the in-flight run, captured at launch so the finished handler
+    // can record them alongside the produced contours. `None` when no slice is
+    // in flight.
     pending_params: RefCell<Option<SliceParams>>,
-    // Poll timer driving the modal's progress readout. Behind an `Rc` so
-    // its own callback can stop it through a `Weak` without a cycle.
+    // Poll timer driving the modal's progress readout. Behind an `Rc` so its
+    // own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
-    // Single-shot timer that lowers the "already up to date" hint after
-    // a delay. Restarted on each unchanged press so repeated presses keep
-    // it visible; stopped when a real slice starts.
+    // Single-shot timer that lowers the "already up to date" hint after a
+    // delay. Restarted on each unchanged press so repeated presses keep it
+    // visible; stopped when a real slice starts.
     tooltip_timer: Rc<slint::Timer>,
 }
 
 impl SliceRun {
-    /// Wires the Slice / Cancel / finished callbacks and returns the
-    /// driver, which the caller keeps alive for the window's lifetime.
+    /// Wires the Slice / Cancel / finished callbacks and returns the driver,
+    /// which the caller keeps alive for the window's lifetime.
     pub(crate) fn install(
         ui: &MainWindow,
         bus: Rc<PreferencesBus>,
@@ -134,11 +133,11 @@ impl SliceRun {
     }
 
     /// Handles a Slice press. Resolves the effective inputs, then decides
-    /// against the held result: a first slice or a changed input launches
-    /// the run (a change first confirms the overwrite); an unchanged press
-    /// does nothing. A no-op while a slice is already in flight, or when
-    /// no printer/resin is chosen (the button gates both, but the checks
-    /// keep the path safe).
+    /// against the held result: a first slice or a changed input launches the
+    /// run (a change first confirms the overwrite); an unchanged press does
+    /// nothing. A no-op while a slice is already in flight, or when no
+    /// printer/resin is chosen (the button gates both, but the checks keep the
+    /// path safe).
     fn start(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -146,11 +145,11 @@ impl SliceRun {
         if ui.get_slicing_in_progress() {
             return;
         }
-        // The Slice panel prefills its pickers with the scene's own
-        // choice, else the app-wide default (see `slice_selection`).
-        // Slicing resolves the printer and resin the same way, so the
-        // selection shown in the panel is the one that runs rather than
-        // requiring an explicit re-pick of a default already on display.
+        // The Slice panel prefills its pickers with the scene's own choice,
+        // else the app-wide default (see `slice_selection`). Slicing resolves
+        // the printer and resin the same way, so the selection shown in the
+        // panel is the one that runs rather than requiring an explicit re-pick
+        // of a default already on display.
         let snapshot = self.bus.snapshot();
         let printer = self
             .document
@@ -197,11 +196,11 @@ impl SliceRun {
         }
     }
 
-    /// Clones the scene, resets the modal readout, captures the run's
-    /// inputs, and spawns the worker. Reached for a first slice, or once
-    /// a re-slice over stale data is confirmed. The scene clone and the
-    /// geometry marker are taken together here so the marker recorded
-    /// with the result matches the geometry actually sliced.
+    /// Clones the scene, resets the modal readout, captures the run's inputs,
+    /// and spawns the worker. Reached for a first slice, or once a re-slice
+    /// over stale data is confirmed. The scene clone and the geometry marker
+    /// are taken together here so the marker recorded with the result matches
+    /// the geometry actually sliced.
     fn launch(self: &Rc<Self>, mut current: SliceParams) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -235,9 +234,9 @@ impl SliceRun {
         );
     }
 
-    /// Spawns the worker: run the projection + slicing, then deposit the
-    /// result and wake the UI thread. `catch_unwind` converts a panic
-    /// into a deposited error so the modal always closes.
+    /// Spawns the worker: run the projection + slicing, then deposit the result
+    /// and wake the UI thread. `catch_unwind` converts a panic into a deposited
+    /// error so the modal always closes.
     fn spawn(
         &self,
         scene: Scene,
@@ -269,8 +268,8 @@ impl SliceRun {
     }
 
     /// Starts the modal's progress poll. Stops itself once the window's
-    /// `slicing-in-progress` flips false (the finished handler), mirroring
-    /// the load-progress poll.
+    /// `slicing-in-progress` flips false (the finished handler), mirroring the
+    /// load-progress poll.
     fn start_poll(&self) {
         let progress = self.progress.clone();
         let ui_weak = self.ui.clone();
@@ -313,8 +312,8 @@ impl SliceRun {
     }
 
     /// Raises the "already up to date" hint and schedules its dismissal.
-    /// Restarting the single-shot timer keeps the hint up for the full
-    /// delay when the user presses Slice again while it is still showing.
+    /// Restarting the single-shot timer keeps the hint up for the full delay
+    /// when the user presses Slice again while it is still showing.
     fn show_up_to_date_hint(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -332,8 +331,8 @@ impl SliceRun {
         );
     }
 
-    /// Lowers the "already up to date" hint at once and cancels its
-    /// pending dismissal.
+    /// Lowers the "already up to date" hint at once and cancels its pending
+    /// dismissal.
     fn hide_up_to_date_hint(&self) {
         self.tooltip_timer.stop();
         if let Some(ui) = self.ui.upgrade() {
@@ -341,9 +340,9 @@ impl SliceRun {
         }
     }
 
-    /// Drains the deposited result on the UI thread: closes the modal,
-    /// and either reports a completed slice, silently discards a
-    /// cancelled one, or surfaces the failure.
+    /// Drains the deposited result on the UI thread: closes the modal, and
+    /// either reports a completed slice, silently discards a cancelled one, or
+    /// surfaces the failure.
     fn finish(&self) {
         let taken = self
             .slot
@@ -368,8 +367,8 @@ impl SliceRun {
                         token: completed.token,
                         params,
                     });
-                    // Size and enable the height slider, parking the
-                    // selected layer at the top.
+                    // Size and enable the height slider, parking the selected
+                    // layer at the top.
                     if let Some(ui) = self.ui.upgrade() {
                         ui.set_slice_layer_count(layer_count as i32);
                         ui.set_selected_layer_index(layer_count.saturating_sub(1) as f32);
@@ -387,8 +386,8 @@ impl SliceRun {
     }
 }
 
-/// Load the profiles and run the shared slicing service, publishing
-/// progress into `progress` as layers complete.
+/// Load the profiles and run the shared slicing service, publishing progress
+/// into `progress` as layers complete.
 fn run_slice(
     scene: &Scene,
     printer: &PrinterId,
@@ -421,15 +420,17 @@ fn run_slice(
     match run {
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
-            let schedule = *plate.schedule();
-            let merged = plate.merge().map_err(|_| SliceFailure::SliceMerge)?;
+            let (merged, schedule) = plate
+                .merge()
+                .map_err(|_| SliceFailure::SliceMerge)?
+                .into_parts();
             capture(scene, schedule, merged).map(SliceRunOutcome::Completed)
         }
     }
 }
 
-/// Fingerprint the slice inputs off the event loop and wrap the
-/// merged plate stack for the UI hand-off.
+/// Fingerprint the slice inputs off the event loop and wrap the merged plate
+/// stack for the UI hand-off.
 fn capture(
     scene: &Scene,
     schedule: LayerSchedule,
@@ -474,8 +475,8 @@ mod capture_tests {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
     }
 
-    /// A CCW triangle as one solid layer plus an empty layer, standing
-    /// in for a merged plate stack.
+    /// A CCW triangle as one solid layer plus an empty layer, standing in for a
+    /// merged plate stack.
     fn triangle_stack() -> ContourStack {
         let outer = ClosedRing::new(
             [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
@@ -514,8 +515,8 @@ mod capture_tests {
 
     #[test]
     fn capture_fails_when_the_scene_has_no_geometry() {
-        // An empty scene has no sliceable leaf, so the fingerprint, and
-        // thus the capture, cannot be computed.
+        // An empty scene has no sliceable leaf, so the fingerprint, and thus
+        // the capture, cannot be computed.
         let result = capture(&Scene::new(), schedule(), triangle_stack());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
     }

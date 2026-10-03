@@ -5,23 +5,23 @@
 
 #![deny(missing_docs)]
 
-//! Application services between the profile bounded context and the
-//! slicing engine. The 2 crates do not know each other; this one
-//! maps between them and hosts the use cases both frontends share.
+//! Application services between the profile bounded context and the slicing
+//! engine. The 2 crates do not know each other; this one maps between them and
+//! hosts the use cases both frontends share.
 //!
-//! - [`slice_plate`] runs a whole slicing pass: schedule resolution,
-//!   the engine run with progress and cancellation, and the merge of
-//!   the per-leaf stacks into one plate stack.
-//! - [`prepare`] derives the engine's input for a measured scene
-//!   from a chosen printer + material.
-//! - [`projection`] maps printer hardware and per-print parameters
-//!   onto the engine's profile type.
-//! - [`print_program`] maps a resolved configuration onto the
-//!   printer-file writers' input port.
-//! - [`fingerprint`] computes the slice-input token project files
-//!   use to revalidate persisted slices.
-//! - [`fallback_report`] lists the resolved values no profile
-//!   supplied, for a frontend to show before it writes a file.
+//! - [`slice_plate`] runs a whole slicing pass: schedule resolution, the engine
+//!   run with progress and cancellation, and the merge of the per-leaf stacks
+//!   into one plate stack.
+//! - [`prepare`] derives the engine's input for a measured scene from a chosen
+//!   printer + material.
+//! - [`projection`] maps printer hardware and per-print parameters onto the
+//!   engine's profile type.
+//! - [`print_program`] maps a resolved configuration onto the printer-file
+//!   writers' input port.
+//! - [`fingerprint`] computes the slice-input token project files use to
+//!   revalidate persisted slices.
+//! - [`fallback_report`] lists the resolved values no profile supplied, for a
+//!   frontend to show before it writes a file.
 
 pub mod fallback_report;
 pub mod fingerprint;
@@ -46,7 +46,8 @@ pub use projection::{
     total_layers_for_height,
 };
 pub use slice_plate::{
-    SlicePlateError, SliceRun, SlicedPlate, SlicingParams, schedule_for_selection, slice_plate,
+    MismatchedLayerCount, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
+    schedule_for_selection, slice_plate,
 };
 
 #[cfg(test)]
