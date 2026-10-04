@@ -3,22 +3,20 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Deriving the Slice panel's print-format selector from the printer's
-//! declared output formats.
+//! Deriving the Slice panel's print-format selector from the printer's declared
+//! output formats.
 //!
-//! A printer profile states which files its machine takes; this build
-//! writes only some of them. The dropdown offers the ones it can write
-//! and the note beneath it says why each of the rest is missing, so a
-//! printer with nothing writable explains itself instead of presenting
-//! an empty control.
+//! A printer profile lists output formats for its machine; this build writes
+//! only some of them. The dropdown offers the ones it can write, and the note
+//! beneath it says why each of the rest is missing.
 
 use sc_print_primitives::{OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::{CtbVariant, GooVersion, PrinterFileFormat};
 
 use crate::i18n::ctr;
 
-/// One offered print format: the binding it came from, the format
-/// that binding names, and the label the dropdown shows.
+/// An offered print format: the binding it came from, the format that binding
+/// names, and the label the dropdown shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrintFormatOption {
     pub binding: OutputFormatBinding,
@@ -26,10 +24,9 @@ pub(crate) struct PrintFormatOption {
     pub label: String,
 }
 
-/// The selector's rendered state: the writable options in the order
-/// the profile declares them, the index of the selected one (`-1` when
-/// there is none), and one line per declared format this build cannot
-/// write.
+/// The selector's rendered state: the writable options in the order the profile
+/// declares them, the index of the selected one (`-1` when there is none), and
+/// 1 line per declared format this build cannot write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrintFormatModel {
     pub options: Vec<PrintFormatOption>,
@@ -38,8 +35,8 @@ pub(crate) struct PrintFormatModel {
 }
 
 impl PrintFormatModel {
-    /// The state to show while no printer is selected: nothing on
-    /// offer, and nothing to explain either.
+    /// Return the state to show while no printer is selected: nothing on offer,
+    /// and nothing to explain either.
     pub(crate) fn nothing_declared() -> Self {
         Self {
             options: Vec::new(),
@@ -49,13 +46,12 @@ impl PrintFormatModel {
     }
 }
 
-/// Builds the selector from a printer's declared output formats.
+/// Build the selector from a printer's declared output formats.
 ///
-/// `remembered` is the choice to restore. Anything it cannot name
-/// (a binding the printer no longer declares, one this build cannot
-/// write, or no choice at all) falls back to the printer's first
-/// writable binding, so the panel always offers a usable format when
-/// one exists.
+/// `remembered` is the choice to restore. Anything it cannot name (a binding
+/// the printer no longer declares, one this build cannot write, or no choice at
+/// all) falls back to the printer's first writable binding, so the panel always
+/// offers a usable format when one exists.
 pub(crate) fn print_format_model(
     declared: &OutputFormatBindings,
     remembered: Option<&OutputFormatBinding>,
@@ -93,9 +89,9 @@ pub(crate) fn print_format_model(
     }
 }
 
-/// The label the dropdown shows: the extension the file is written
-/// with, plus the revision, because revisions of one family share an
-/// extension and produce different bytes.
+/// Return the label the dropdown shows: the extension the file is written with,
+/// plus the revision, because revisions of a family share an extension and
+/// produce different bytes.
 fn format_label(format: PrinterFileFormat) -> String {
     match format {
         PrinterFileFormat::Goo(GooVersion::V3_0) => ctr!("SlicePanel", ".goo (V3.0)"),
@@ -108,19 +104,10 @@ fn format_label(format: PrinterFileFormat) -> String {
     .to_string()
 }
 
-/// One line of the panel's note: the binding as the profile spells it,
-/// then why it is not in the dropdown.
+/// Compose a line of the panel's note: the binding, then why it is not in the
+/// dropdown.
 fn refusal(binding: &OutputFormatBinding, reason: &str) -> String {
-    format!("{}: {reason}", binding_text(binding))
-}
-
-/// A binding as a printer profile writes it, with the version when it
-/// carries one.
-fn binding_text(binding: &OutputFormatBinding) -> String {
-    match &binding.version {
-        Some(version) => format!("{}@{}", binding.format.as_canonical(), version.as_str()),
-        None => binding.format.as_canonical().to_owned(),
-    }
+    format!("{binding}: {reason}")
 }
 
 #[cfg(test)]
@@ -205,8 +192,8 @@ mod print_format_tests {
 
     #[test]
     fn the_remembered_binding_selects_its_own_option() {
-        // Two bindings that differ only in how they spell the version,
-        // so both resolve to the same writable format.
+        // 2 bindings that differ only in how they spell the version, so both
+        // resolve to the same writable format.
         let upper = binding(FormatKind::Goo, Some("V3.0"));
         let declared = declared(&[goo_v3_0(), upper.clone()]);
         let model = print_format_model(&declared, Some(&upper));

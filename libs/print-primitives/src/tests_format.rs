@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
+use super::format::{EmptyBindingPart, FormatKind, OutputFormatBinding, OutputFormatBindings};
 use crate::non_empty_string::NonEmptyString;
 
 #[test]
@@ -44,6 +44,122 @@ fn output_format_bindings_alias_holds_a_non_empty_list() {
     });
     assert_eq!(bindings.len().get(), 1);
     assert_eq!(bindings.first().format, FormatKind::Sl1);
+}
+
+#[test]
+fn output_format_binding_displays_its_family_at_its_version() {
+    let binding = OutputFormatBinding {
+        format: FormatKind::Goo,
+        version: Some(NonEmptyString::new("v3.0").unwrap()),
+    };
+    assert_eq!(binding.to_string(), "goo@v3.0");
+}
+
+#[test]
+fn output_format_binding_without_a_version_displays_its_bare_family() {
+    let binding = OutputFormatBinding {
+        format: FormatKind::Goo,
+        version: None,
+    };
+    assert_eq!(binding.to_string(), "goo");
+}
+
+#[test]
+fn output_format_binding_display_keeps_the_version_case() {
+    let binding = OutputFormatBinding {
+        format: FormatKind::Goo,
+        version: Some(NonEmptyString::new("V3.0").unwrap()),
+    };
+    assert_eq!(binding.to_string(), "goo@V3.0");
+}
+
+#[test]
+fn output_format_binding_display_passes_an_unknown_family_through() {
+    let binding = OutputFormatBinding {
+        format: FormatKind::Unknown("aff".to_owned()),
+        version: Some(NonEmptyString::new("dl2p").unwrap()),
+    };
+    assert_eq!(binding.to_string(), "aff@dl2p");
+}
+
+#[test]
+fn output_format_binding_parses_a_family_at_a_version() {
+    let parsed = "goo@v3.0".parse::<OutputFormatBinding>().unwrap();
+    assert_eq!(parsed.format, FormatKind::Goo);
+    assert_eq!(parsed.version, Some(NonEmptyString::new("v3.0").unwrap()));
+}
+
+#[test]
+fn output_format_binding_parses_a_bare_family_without_a_version() {
+    let parsed = "goo".parse::<OutputFormatBinding>().unwrap();
+    assert_eq!(parsed.format, FormatKind::Goo);
+    assert_eq!(parsed.version, None);
+}
+
+#[test]
+fn output_format_binding_parse_keeps_the_version_case() {
+    let parsed = "goo@V3.0".parse::<OutputFormatBinding>().unwrap();
+    assert_eq!(parsed.version, Some(NonEmptyString::new("V3.0").unwrap()));
+}
+
+#[test]
+fn output_format_binding_parse_passes_an_unknown_family_through() {
+    let parsed = "aff@dl2p".parse::<OutputFormatBinding>().unwrap();
+    assert_eq!(parsed.format, FormatKind::Unknown("aff".to_owned()));
+    assert_eq!(parsed.version, Some(NonEmptyString::new("dl2p").unwrap()));
+}
+
+#[test]
+fn output_format_binding_parse_refuses_an_empty_family() {
+    for spelling in ["", "@v3.0", "@"] {
+        assert_eq!(
+            spelling.parse::<OutputFormatBinding>(),
+            Err(EmptyBindingPart::Family),
+            "{spelling:?}",
+        );
+    }
+}
+
+#[test]
+fn output_format_binding_parse_refuses_an_empty_version() {
+    assert_eq!(
+        "goo@".parse::<OutputFormatBinding>(),
+        Err(EmptyBindingPart::Version),
+    );
+}
+
+#[test]
+fn output_format_binding_parses_back_what_it_displays() {
+    for binding in [
+        OutputFormatBinding {
+            format: FormatKind::Goo,
+            version: Some(NonEmptyString::new("v3.0").unwrap()),
+        },
+        OutputFormatBinding {
+            format: FormatKind::Ctb,
+            version: Some(NonEmptyString::new("v5enc").unwrap()),
+        },
+        OutputFormatBinding {
+            format: FormatKind::PngPerLayer,
+            version: None,
+        },
+        OutputFormatBinding {
+            format: FormatKind::Unknown("aff".to_owned()),
+            version: Some(NonEmptyString::new("dl2p").unwrap()),
+        },
+    ] {
+        assert_eq!(
+            binding.to_string().parse::<OutputFormatBinding>(),
+            Ok(binding.clone()),
+            "{binding}",
+        );
+    }
+}
+
+#[test]
+fn an_empty_binding_part_names_the_part() {
+    assert!(EmptyBindingPart::Family.to_string().contains("family"));
+    assert!(EmptyBindingPart::Version.to_string().contains("version"));
 }
 
 #[cfg(feature = "serde")]

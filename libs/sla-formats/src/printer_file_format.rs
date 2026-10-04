@@ -5,17 +5,16 @@
 
 //! Which printer file a profile's declared format names.
 //!
-//! A printer profile states what it wants as an
-//! [`OutputFormatBinding`]: a format family plus a version string.
-//! Both halves are needed to reach a revision. `.goo` at `v5.1`
-//! shares an extension with `.goo` at `V3.0` and nothing else, and
-//! `ctb` at `v5enc` differs from `ctb` at `v5` in whether the
+//! A printer profile declares each output format as an [`OutputFormatBinding`]:
+//! a format family plus a version string. Both halves are needed to reach a
+//! revision. `.goo` at `v5.1` shares an extension with `.goo` at `V3.0` and
+//! nothing else, and `ctb` at `v5enc` differs from `ctb` at `v5` in whether the
 //! settings block is encrypted.
 
 use std::fmt;
 use std::path::Path;
 
-use sc_print_primitives::{FormatKind, OutputFormatBinding};
+use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
 
 use crate::ctb::PREVIEW_SIZES as CTB_PREVIEW_SIZES;
 use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
@@ -43,20 +42,13 @@ pub enum CtbVariant {
 }
 
 impl fmt::Display for PrinterFileFormat {
-    /// Render the format the way a profile binding spells it.
+    /// Write the binding that names the format, as in `goo@v3.0`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let version = match self {
-            Self::Goo(GooVersion::V3_0) => "v3.0",
-            Self::Goo(GooVersion::V5_1) => "v5.1",
-            Self::Ctb(CtbVariant::PlainV5) => "v5",
-            Self::Ctb(CtbVariant::EncryptedV5) => "v5enc",
-        };
-        write!(f, "{}@{version}", self.extension())
+        self.binding().fmt(f)
     }
 }
 
-/// Returned when a binding does not name a printer file this crate
-/// knows.
+/// Returned when a binding does not name a printer file this crate knows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnresolvedBinding {
     pub binding: OutputFormatBinding,
@@ -83,9 +75,8 @@ impl std::error::Error for UnresolvedBinding {}
 impl PrinterFileFormat {
     /// Identify the printer file a profile's declared binding names.
     ///
-    /// Both halves are required: revisions within a family produce
-    /// different bytes, so an absent version is refused rather than
-    /// resolved to one of them.
+    /// Both halves are required: revisions within a family produce different
+    /// bytes, so a binding without a version is refused.
     pub fn from_binding(binding: &OutputFormatBinding) -> Result<Self, UnresolvedBinding> {
         let version = binding.version.as_ref().map(|v| v.as_str().to_lowercase());
         match (&binding.format, version.as_deref()) {
@@ -99,11 +90,26 @@ impl PrinterFileFormat {
         }
     }
 
+    /// Return the binding that names this format. [`Self::from_binding`]
+    /// resolves it back to the same format.
+    pub fn binding(self) -> OutputFormatBinding {
+        let (format, version) = match self {
+            Self::Goo(GooVersion::V3_0) => (FormatKind::Goo, "v3.0"),
+            Self::Goo(GooVersion::V5_1) => (FormatKind::Goo, "v5.1"),
+            Self::Ctb(CtbVariant::PlainV5) => (FormatKind::Ctb, "v5"),
+            Self::Ctb(CtbVariant::EncryptedV5) => (FormatKind::Ctb, "v5enc"),
+        };
+        OutputFormatBinding {
+            format,
+            version: Some(NonEmptyString::new(version).expect("a version literal is not empty")),
+        }
+    }
+
     /// Report whether this build carries a writer for the format.
     ///
-    /// Identifying a revision and encoding it are separate: a profile
-    /// may declare a format this crate names but cannot yet write, and
-    /// callers that offer a choice need to tell the two apart before
+    /// Identifying a revision and encoding it are separate: a profile may
+    /// declare a format this crate names but cannot yet write, and callers that
+    /// offer a choice need to tell the 2 apart before
     /// [`write_printer_file`](crate::write_printer_file) refuses.
     pub fn has_writer(self) -> bool {
         matches!(
@@ -112,15 +118,14 @@ impl PrinterFileFormat {
         )
     }
 
-    /// Report the sizes this format fixes for the previews it
-    /// carries, so a caller renders at a size the writer accepts.
+    /// Report the sizes this format fixes for the previews it carries, so a
+    /// caller renders at a size the writer accepts.
     ///
-    /// `None` for a format with no writer in this build: the sizes
-    /// belong to the container's layout, which arrives with it.
+    /// `None` for a format with no writer in this build: the sizes belong to
+    /// the container's layout, which arrives with it.
     ///
-    /// GOO fixes its 2 sizes. CTB does not, since each of its preview
-    /// records carries its own, so what it reports is the size its
-    /// writer renders at.
+    /// GOO fixes its 2 sizes. CTB does not, since each of its preview records
+    /// carries its own, so what it reports is the size its writer renders at.
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
@@ -129,11 +134,11 @@ impl PrinterFileFormat {
         }
     }
 
-    /// Report the file extension this format is written with, without
-    /// a leading dot.
+    /// Report the file extension this format is written with, without a leading
+    /// dot.
     ///
-    /// Some file formats that differ in shape share file extension, so
-    /// an extension is not enough to identify a file format.
+    /// Some file formats that differ in shape share file extension, so an
+    /// extension is not enough to identify a file format.
     pub fn extension(self) -> &'static str {
         match self {
             Self::Goo(_) => "goo",
@@ -144,10 +149,10 @@ impl PrinterFileFormat {
 
 /// Name the container family an output path's extension asks for.
 ///
-/// An extension never names a revision: `.goo` is shared by V3.0 and
-/// V5.1, and `.ctb` by the plain and the encrypted variant. The
-/// revision comes from a binding's version string, which a printer
-/// declares and a file name does not carry.
+/// An extension never names a revision: `.goo` is shared by V3.0 and V5.1, and
+/// `.ctb` by the plain and the encrypted variant. The revision comes from a
+/// binding's version string, which a printer declares and a file name does not
+/// carry.
 pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
@@ -279,23 +284,34 @@ mod printer_file_format_tests {
     }
 
     #[test]
-    fn a_rendered_format_resolves_back_from_a_binding() {
+    fn every_format_resolves_back_from_its_binding() {
         for format in [
             PrinterFileFormat::Goo(GooVersion::V3_0),
             PrinterFileFormat::Goo(GooVersion::V5_1),
             PrinterFileFormat::Ctb(CtbVariant::PlainV5),
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
         ] {
-            let rendered = format.to_string();
-            let (family, version) = rendered.split_once('@').unwrap();
-            let kind = match family {
-                "goo" => FormatKind::Goo,
-                "ctb" => FormatKind::Ctb,
-                other => panic!("unexpected family \"{other}\""),
-            };
+            let binding = format.binding();
 
-            assert_eq!(family, format.extension());
-            assert_eq!(resolve(kind, Some(version)), Ok(format), "{rendered}");
+            assert_eq!(binding.format.as_canonical(), format.extension());
+            assert_eq!(
+                PrinterFileFormat::from_binding(&binding),
+                Ok(format),
+                "{binding}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_format_displays_as_its_binding() {
+        for (format, displayed) in [
+            (PrinterFileFormat::Goo(GooVersion::V3_0), "goo@v3.0"),
+            (PrinterFileFormat::Goo(GooVersion::V5_1), "goo@v5.1"),
+            (PrinterFileFormat::Ctb(CtbVariant::PlainV5), "ctb@v5"),
+            (PrinterFileFormat::Ctb(CtbVariant::EncryptedV5), "ctb@v5enc"),
+        ] {
+            assert_eq!(format.to_string(), displayed);
+            assert_eq!(format.binding().to_string(), displayed);
         }
     }
 

@@ -5,15 +5,10 @@
 
 //! Shared primitive types for the resin-printing pipeline.
 //!
-//! This crate hosts the typed values that describe a printer's
-//! physical characteristics (build volume, pixel resolution,
-//! display mirror flags) along with the measurement primitives
-//! that travel with them (validated positive-finite millimetre
-//! lengths and their parse errors).
-//!
-//! It is consumed by both the slicing engine and the print-profile
-//! crate so neither has to depend on the other for these shared
-//! foundations.
+//! This crate hosts the typed values that describe a printer's physical
+//! characteristics (build volume, pixel resolution, display mirror flags) along
+//! with the measurement primitives that travel with them (validated
+//! positive-finite millimetre lengths and their parse errors).
 
 pub mod aa_level;
 pub mod build_volume;
@@ -37,7 +32,7 @@ pub mod volume;
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use energy_density::{MjPerCm2OutOfRange, PositiveFiniteMjPerCm2};
-pub use format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
+pub use format::{EmptyBindingPart, FormatKind, OutputFormatBinding, OutputFormatBindings};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
 pub use length::{
     LengthOutOfRange, LengthRange, LengthRangeBoundsInverted, ParseLengthError,

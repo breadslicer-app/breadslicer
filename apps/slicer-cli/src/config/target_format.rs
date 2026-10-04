@@ -5,33 +5,28 @@
 
 //! Discriminator for the `slice --target-format` flag value.
 //!
-//! The flag spans the two output vocabularies the writer crate keeps
-//! apart, and reaches one of its two entry points accordingly:
-//! `Format` names the slice outputs `write_slice` produces, and
-//! `PrinterFileFormat` names the files `write_printer_file` produces
-//! for a machine. Someone naming a format on the command line is
-//! choosing between all of them at once, so the parsed value carries
-//! whichever vocabulary the word landed in.
+//! The flag spans the 2 output vocabularies the writer crate keeps apart, and
+//! reaches 1 of its 2 entry points accordingly: `Format` names the slice
+//! outputs `write_slice` produces, and `PrinterFileFormat` names the files
+//! `write_printer_file` produces for a machine. Someone naming a format on the
+//! command line is choosing between all of them at once, so the parsed value
+//! carries whichever vocabulary the word landed in.
 
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
-use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings};
+use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, PrinterFileFormat, UnresolvedBinding, printer_file_family_from_path};
 
-/// Every spelling the flag accepts, in help-text order. A family
-/// name may also carry the revision a profile would declare, as in
-/// `ctb@v5`.
+/// Every spelling the flag accepts, in help-text order. A family name may also
+/// carry the revision a profile would declare, as in `ctb@v5`.
 pub(crate) const ACCEPTED_TARGET_FORMATS: &str =
     "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb";
 
-/// Separates a family from the revision a profile spells after it.
-const REVISION_SEPARATOR: char = '@';
-
-/// A `--target-format` flag value: a slice output, a printer file, or
-/// the family of one whose revision the printer still has to name.
+/// A `--target-format` flag value: a slice output, a printer file, or the
+/// family of one whose revision the printer still has to name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TargetFormat {
     Slices(Format),
@@ -42,16 +37,15 @@ pub(crate) enum TargetFormat {
 impl TargetFormat {
     /// Name the target format an output path's extension asks for.
     ///
-    /// A printer file's extension names only its family, since one
-    /// extension covers every revision of a container.
+    /// A printer file's extension names only its family, since 1 extension
+    /// covers every revision of a container.
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
         format_from_path(path)
             .map(Self::Slices)
             .or_else(|| printer_file_family_from_path(path).map(Self::PrinterFamily))
     }
 
-    /// Report whether the target path is a directory to fill rather
-    /// than a single file to write.
+    /// Report whether the target path is a directory to fill.
     pub(crate) fn is_directory_format(&self) -> bool {
         match self {
             Self::Slices(format) => format.is_directory_format(),
@@ -70,37 +64,26 @@ impl fmt::Display for TargetFormat {
     }
 }
 
-/// Resolve a family spelled with its revision, as a profile spells
-/// it, into the one format it names.
-fn printer_file_from_spelling(family: &str, revision: &str) -> Option<PrinterFileFormat> {
-    let binding = OutputFormatBinding {
-        format: FormatKind::from_canonical(family),
-        version: Some(NonEmptyString::new(revision).ok()?),
-    };
-    PrinterFileFormat::from_binding(&binding).ok()
-}
-
-/// A target format with nothing left to resolve, which is what the
-/// writers take.
+/// A target format with nothing left to resolve, which is what the writers
+/// take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettledTarget {
     Slices(Format),
     PrinterFile(PrinterFileFormat),
 }
 
-/// Settle `target` against the outputs `declared` by the printer that
-/// will run the file, so a bare family name takes the revision that
-/// printer asks for.
+/// Settle `target` against the outputs `declared` by the printer that will run
+/// the file, so a bare family name takes the revision that printer asks for.
 ///
-/// A slice output and a format already spelled with its revision pass
-/// through: naming a revision outright is how a caller asks for one
-/// the printer does not declare.
+/// A slice output and a format already spelled with its revision pass through:
+/// naming a revision outright is how a caller asks for one the printer does not
+/// declare.
 ///
 /// # Errors
 ///
-/// [`UnwritableTarget`] when the printer declares nothing of the
-/// requested family, declares it at a revision this build does not
-/// name, or names one whose writer has not landed.
+/// [`UnwritableTarget`] when the printer declares nothing of the requested
+/// family, declares it at a revision this build does not name, or names one
+/// whose writer has not landed.
 pub(crate) fn settle_for_printer(
     target: TargetFormat,
     declared: &OutputFormatBindings,
@@ -114,7 +97,11 @@ pub(crate) fn settle_for_printer(
                 .find(|binding| binding.format == family)
                 .ok_or_else(|| UnwritableTarget::FamilyNotDeclared {
                     family: family.clone(),
-                    declared: declared.iter().map(rendered).collect::<Vec<_>>().join(", "),
+                    declared: declared
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 })?;
             PrinterFileFormat::from_binding(binding).map_err(UnwritableTarget::Unresolved)?
         }
@@ -126,19 +113,8 @@ pub(crate) fn settle_for_printer(
     }
 }
 
-/// Spell a binding the way a profile declares it.
-fn rendered(binding: &OutputFormatBinding) -> String {
-    match &binding.version {
-        Some(version) => format!(
-            "{}{REVISION_SEPARATOR}{version}",
-            binding.format.as_canonical(),
-        ),
-        None => binding.format.as_canonical().to_owned(),
-    }
-}
-
-/// Returned when the printer and the requested family cannot name a
-/// format this build writes.
+/// Returned when the printer and the requested family cannot name a format this
+/// build writes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum UnwritableTarget {
     FamilyNotDeclared {
@@ -191,27 +167,26 @@ impl std::error::Error for UnknownTargetFormat {}
 impl FromStr for TargetFormat {
     type Err = UnknownTargetFormat;
 
-    /// A bare family name defers the revision to the printer, which
-    /// declares one. Spelling the revision after it, as a profile
-    /// does in `ctb@v5`, names the format outright and overrides
-    /// whatever the printer declares.
+    /// Parse a `--target-format` flag value. A bare family name defers the
+    /// revision to the printer, which declares one. Spelling the revision after
+    /// it, as in `ctb@v5`, names the format outright and overrides whatever the
+    /// printer declares.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(format) = Format::from_str(s) {
             return Ok(Self::Slices(format));
         }
-        if let Some((family, revision)) = s.split_once(REVISION_SEPARATOR) {
-            return printer_file_from_spelling(family, revision)
+        let unknown = || UnknownTargetFormat {
+            value: s.to_owned(),
+        };
+        let binding = OutputFormatBinding::from_str(s).map_err(|_| unknown())?;
+        match binding.version {
+            Some(_) => PrinterFileFormat::from_binding(&binding)
                 .map(Self::PrinterFile)
-                .ok_or_else(|| UnknownTargetFormat {
-                    value: s.to_owned(),
-                });
-        }
-        match s {
-            "goo" => Ok(Self::PrinterFamily(FormatKind::Goo)),
-            "ctb" => Ok(Self::PrinterFamily(FormatKind::Ctb)),
-            other => Err(UnknownTargetFormat {
-                value: other.to_owned(),
-            }),
+                .map_err(|_| unknown()),
+            None if matches!(binding.format, FormatKind::Goo | FormatKind::Ctb) => {
+                Ok(Self::PrinterFamily(binding.format))
+            }
+            None => Err(unknown()),
         }
     }
 }
@@ -220,6 +195,7 @@ impl FromStr for TargetFormat {
 mod target_format_tests {
     use std::path::PathBuf;
 
+    use sc_print_primitives::NonEmptyString;
     use sc_sla_formats::{CtbVariant, GooVersion};
 
     use super::*;
@@ -288,7 +264,7 @@ mod target_format_tests {
 
     #[test]
     fn a_revision_no_container_here_names_is_refused() {
-        for spelling in ["goo@v9", "ctb@v1", "sl1@v1", "goo@"] {
+        for spelling in ["goo@v9", "ctb@v1", "sl1@v1", "goo@", "@v3.0"] {
             assert!(TargetFormat::from_str(spelling).is_err(), "{spelling}");
         }
     }
