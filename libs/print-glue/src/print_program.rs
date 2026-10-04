@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Projection from a resolved print configuration to the program a
-//! printer file hands the machine.
+//! Projection from a resolved print configuration to the program a printer file
+//! hands the machine.
 
 use std::fmt;
 
@@ -21,8 +21,8 @@ use sc_sla_formats::{CreationTime, LayerProgram, MotionStage, PrintProgram, Rast
 
 const SEC_PER_MIN: f64 = 60.0;
 
-/// Returned when a schedule places a layer's slab top outside the
-/// range a length can hold.
+/// Returned when a schedule places a layer's slab top outside the range a
+/// length can hold.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlabTopOutOfRange {
     /// Position of the offending layer in the schedule.
@@ -54,8 +54,8 @@ pub enum UnprojectablePrint {
     Volume(VolumeOutOfRange),
     /// That volume at the resin's density is not a mass.
     Mass(MassOutOfRange),
-    /// The schedule, once the printer's calibration is applied, is
-    /// not a duration.
+    /// The schedule, once the printer's calibration is applied, is not a
+    /// duration.
     PrintTime(NegativeDuration),
 }
 
@@ -83,25 +83,24 @@ impl std::error::Error for UnprojectablePrint {
     }
 }
 
-/// Build the [`PrintProgram`] for a scene under a resolved
-/// configuration, one record per layer of `profile`'s schedule.
+/// Build the [`PrintProgram`] for a scene under a resolved configuration, 1
+/// record per layer of `profile`'s schedule.
 ///
-/// `scene` must be the one that was sliced and `profile` the one the
-/// contours were sliced under.
+/// `scene` must be the one that was sliced and `profile` the one the contours
+/// were sliced under.
 ///
-/// The reported volume is everything `scene` encloses, so geometry
-/// the machine will not reach still counts towards it, and the
-/// reported weight is that volume at the resin's cured density, which
-/// is what the print's resin weighs rather than what pouring it costs.
-/// The reported duration is what the layer schedule adds up to under
-/// the printer's own time calibration.
+/// The reported volume is everything `scene` encloses, so geometry the machine
+/// will not reach still counts towards it, and the reported weight is that
+/// volume at the resin's cured density, which is what the print's resin weighs
+/// rather than what pouring it costs. The reported duration is what the layer
+/// schedule adds up to under the printer's own time calibration.
 ///
 /// # Errors
 ///
-/// [`UnprojectablePrint`] when a scheduled layer has no representable
-/// height, when the scene yields no volume to weigh, or when the
-/// calibrated schedule overflows a duration.
-pub fn project_to_print_program(
+/// [`UnprojectablePrint`] when a scheduled layer has no representable height,
+/// when the scene yields no volume to weigh, or when the calibrated schedule
+/// overflows a duration.
+pub(crate) fn project_to_print_program(
     scene: &Scene,
     config: &ResolvedPrintConfig,
     profile: &SliceProfile,
@@ -165,8 +164,8 @@ pub fn project_to_print_program(
     })
 }
 
-/// Measure the material a scene encloses, as the validated volume a
-/// printer file carries.
+/// Measure the material a scene encloses, as the validated volume a printer
+/// file carries.
 fn plate_volume(scene: &Scene) -> Result<VolumeMm3, UnprojectablePrint> {
     let total = scene
         .world_volume_mm3()
@@ -174,12 +173,12 @@ fn plate_volume(scene: &Scene) -> Result<VolumeMm3, UnprojectablePrint> {
     VolumeMm3::new(total).map_err(UnprojectablePrint::Volume)
 }
 
-/// Add up what the layer records ask for: light, pauses and travel,
-/// second stages included.
+/// Add up what the layer records ask for: light, pauses and travel, second
+/// stages included.
 ///
-/// A real machine takes longer, spending time on ramps and per-layer
-/// overhead that no record carries. The printer's time calibration is
-/// what adds those back.
+/// A real machine takes longer, spending time on ramps and per-layer overhead
+/// that no record carries. The printer's time calibration is what adds those
+/// back.
 fn schedule_duration_sec(layers: &[LayerProgram]) -> f64 {
     layers.iter().map(layer_duration_sec).sum()
 }
@@ -203,19 +202,17 @@ fn layer_duration_sec(layer: &LayerProgram) -> f64 {
         + travel
 }
 
-/// Time one stage of platform travel takes, from the per-minute
-/// speed these files record.
+/// Compute the time 1 stage of platform travel takes, from the per-minute speed
+/// these files record.
 fn travel_duration_sec(stage: MotionStage) -> f64 {
     stage.distance_mm.value() / stage.speed_mm_min.value() * SEC_PER_MIN
 }
 
 /// Take the current local time as a printer file's creation time.
 ///
-/// The rendering is the writer's to choose, since the formats that
-/// keep one as text never parse it back; this is the one this
-/// workspace writes. A clock set before the unix epoch yields 0
-/// seconds, which is what the oldest real files carry anyway.
-pub fn creation_time_now() -> CreationTime {
+/// A clock set before the unix epoch yields 0 seconds, which is what the oldest
+/// real files carry anyway.
+pub(crate) fn creation_time_now() -> CreationTime {
     let now = Local::now();
     let rendered = now.format("%Y-%m-%d %H:%M:%S").to_string();
     CreationTime {
@@ -224,7 +221,7 @@ pub fn creation_time_now() -> CreationTime {
     }
 }
 
-/// The three pauses one layer's record carries.
+/// The 3 pauses 1 layer's record carries.
 #[derive(Clone, Copy, Debug)]
 struct LayerWaits {
     before_cure_sec: NonNegativeFiniteSec,
@@ -232,9 +229,9 @@ struct LayerWaits {
     after_lift_sec: NonNegativeFiniteSec,
 }
 
-/// Pick one layer's pauses: the bottom layers hold the bottom waits
-/// and every other layer the normal ones. The transition band takes
-/// the normal waits, because only the exposure changes across it.
+/// Pick 1 layer's pauses: the bottom layers hold the bottom waits and every
+/// other layer the normal ones. The transition band takes the normal waits,
+/// because only the exposure changes across it.
 fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
     if layer_index < material.bottom_layer_count {
         LayerWaits {
@@ -251,7 +248,7 @@ fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
     }
 }
 
-/// The platform travel one layer's record carries.
+/// The platform travel 1 layer's record carries.
 #[derive(Clone, Copy, Debug)]
 struct LayerMotion {
     lift: MotionStage,
@@ -260,15 +257,14 @@ struct LayerMotion {
     second_retract: Option<MotionStage>,
 }
 
-/// Pick one layer's platform travel: the bottom layers hold the
-/// bottom distance and speeds and every other layer the normal ones.
-/// The transition band takes the normal travel, because only the
-/// exposure changes across it.
+/// Pick 1 layer's platform travel: the bottom layers hold the bottom distance
+/// and speeds and every other layer the normal ones. The transition band takes
+/// the normal travel, because only the exposure changes across it.
 ///
-/// The platform returns the distance it rose. One stage returns it in
-/// a single move; a split travel returns the 2 parts in reverse order,
-/// so the retract carries the second lift's distance and the second
-/// retract carries the first lift's.
+/// The platform returns the distance it rose. 1 stage returns it in a single
+/// move; a split travel returns the 2 parts in reverse order, so the retract
+/// carries the second lift's distance and the second retract carries the first
+/// lift's.
 fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
     let (distance_mm, lift_speed_mm_min, retract_speed_mm_min, second) =
         if layer_index < material.bottom_layer_count {
@@ -301,11 +297,10 @@ fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
             second_retract: None,
         };
     };
-    // The platform covers the same 2 distances on the way down in
-    // reverse order, so the first part of the return is the second
-    // lift's distance and the last part is the first lift's. Each
-    // stage states its own return speed; none is derived from a lift
-    // speed.
+    // The platform covers the same 2 distances on the way down in reverse
+    // order, so the first part of the return is the second lift's distance and
+    // the last part is the first lift's. Each stage states its own return
+    // speed; none is derived from a lift speed.
     LayerMotion {
         lift,
         retract: MotionStage {
@@ -323,10 +318,10 @@ fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
     }
 }
 
-/// Pick how hard one layer drives the light: the bottom layers hold
-/// the bottom duty and every other layer the normal one. The
-/// transition band takes the normal duty, because only the exposure
-/// changes across it.
+/// Pick the light PWM for the layer at `layer_index`: the bottom value for
+/// bottom layers, the normal value for all other layers. The light PWM sets the
+/// UV source's average power while the layer cures. Transition layers get the
+/// normal value, because only their exposure ramps.
 fn light_pwm_for(layer_index: u32, material: &MaterialResolved) -> LightPwm {
     if layer_index < material.bottom_layer_count {
         material.bottom_light_pwm
@@ -335,10 +330,9 @@ fn light_pwm_for(layer_index: u32, material: &MaterialResolved) -> LightPwm {
     }
 }
 
-/// Pick one layer's exposure: the bottom layers hold the bottom
-/// exposure, the transition band steps from it towards the normal
-/// exposure, and every layer after the band holds the normal
-/// exposure.
+/// Pick 1 layer's exposure: the bottom layers hold the bottom exposure, the
+/// transition band steps from it towards the normal exposure, and every layer
+/// after the band holds the normal exposure.
 fn exposure_for(
     layer_index: u32,
     transition_count: u32,
@@ -353,9 +347,9 @@ fn exposure_for(
     }
 
     let step = f64::from(layer_index - material.bottom_layer_count) + 1.0;
-    // Stepping over one more layer than the band holds keeps its last
-    // layer above the normal exposure, which the layer after the band
-    // is the first to carry.
+    // Stepping over 1 more layer than the band holds keeps its last layer above
+    // the normal exposure, which the layer after the band is the first to
+    // carry.
     let steps = f64::from(transition_count) + 1.0;
     material
         .bottom_exposure_sec
@@ -375,9 +369,8 @@ mod schedule_tests {
         }
     }
 
-    /// A layer costing 2.5 s of light, 4.1 s of pauses, a 5 mm lift
-    /// at 120 mm/min and a 5 mm retract at 150 mm/min, so 2.5 s and
-    /// 2 s of travel.
+    /// Build a layer that costs 2.5 s of light, 4.1 s of pauses, a 5 mm lift at
+    /// 120 mm/min and a 5 mm retract at 150 mm/min, so 2.5 s and 2 s of travel.
     fn layer() -> LayerProgram {
         LayerProgram {
             slab_top_mm: PositiveFiniteMm::new(0.05).unwrap(),

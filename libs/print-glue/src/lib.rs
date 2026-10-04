@@ -40,12 +40,8 @@ pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
 };
-pub use prepare::{
-    UnsliceableScene, UnsliceableSelection, slice_profile_for_scene, slice_profile_for_selection,
-};
-pub use print_program::{
-    SlabTopOutOfRange, UnprojectablePrint, creation_time_now, project_to_print_program,
-};
+pub use prepare::{UnsliceableScene, UnsliceableSelection};
+pub use print_program::{SlabTopOutOfRange, UnprojectablePrint};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,

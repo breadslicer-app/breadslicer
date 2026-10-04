@@ -3,19 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Preparation of a scene's slice profile.
-//!
-//! [`slice_profile_for_selection`] is the entry both application
-//! frontends share: resolve the layer height for the chosen
-//! printer + material (the only material parameter geometry slicing
-//! consumes) and hand the scene to [`slice_profile_for_scene`],
-//! which measures the scene's top, refuses a scene with no geometry
-//! or one whose top is at or below the build plate (z = 0), falls
-//! back to the layer height when no first-layer height is chosen,
-//! derives the layer count that covers the scene, and projects the
-//! printer hardware onto the engine's input port. The scene-level
-//! entry takes the layer height as an input for callers that
-//! already hold a resolved value.
+//! Preparation of a scene's slice profile for a chosen printer + material: the
+//! resolved layer height, the first layer on the printer's Z step, and the
+//! layer count that covers the scene.
 
 use std::fmt;
 
@@ -39,8 +29,8 @@ pub enum UnsliceableScene {
     Aabb(SceneError),
     /// The scene contributes no geometry to slice.
     NoGeometry,
-    /// The scene's top is at or below the build plate (z = 0), so
-    /// nothing sits above the plate to slice.
+    /// The scene's top is at or below the build plate (z = 0), so nothing sits
+    /// above the plate to slice.
     TopAtOrBelowPlate {
         /// The scene's top in world millimetres.
         z_max_mm: f64,
@@ -107,24 +97,21 @@ impl std::error::Error for UnsliceableSelection {
     }
 }
 
-/// Build a [`SliceProfile`] for `scene` from a chosen printer and
-/// material.
+/// Build a [`SliceProfile`] for `scene` from a chosen printer and material.
 ///
-/// Geometry slicing consumes exactly one material parameter, the
-/// layer height, resolved here through
-/// [`resolve_layer_height`] (with `layer_height_request` as the
-/// per-print choice, constraint-checked by the resolver). The full
-/// print configuration (exposure, motion, bottom layers) is the
-/// input of the printer-file export step and never gates slicing.
-/// The scene derivation itself is [`slice_profile_for_scene`].
+/// Geometry slicing consumes exactly 1 material parameter, the layer height,
+/// resolved here through [`resolve_layer_height`] (with `layer_height_request`
+/// as the per-print choice, constraint-checked by the resolver). The full print
+/// configuration (exposure, motion, bottom layers) is the input of the
+/// printer-file export step and never gates slicing. The scene derivation
+/// itself is [`slice_profile_for_scene`].
 ///
-/// A chosen first-layer height is quantised onto the printer's
-/// z-step grid ([`snap_to_z_step`]); the declared layer-height range
-/// does not bind it, since first layers legitimately run thicker
-/// than the normal-layer curing range. The fallback (no first-layer
-/// choice) inherits the resolved layer height, which is already on
-/// the grid.
-pub fn slice_profile_for_selection(
+/// A chosen first-layer height is quantised onto the printer's z-step grid
+/// ([`snap_to_z_step`]); the declared layer-height range does not bind it,
+/// since first layers legitimately run thicker than the normal-layer curing
+/// range. The fallback (no first-layer choice) inherits the resolved layer
+/// height, which is already on the grid.
+pub(crate) fn slice_profile_for_selection(
     scene: &Scene,
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
@@ -148,23 +135,21 @@ pub fn slice_profile_for_selection(
     .map_err(UnsliceableSelection::Scene)
 }
 
-/// Build a [`SliceProfile`] for `scene` from the printer hardware
-/// plus the per-print slicing parameters.
+/// Build a [`SliceProfile`] for `scene` from the printer hardware plus the
+/// per-print slicing parameters.
 ///
 /// Rules, in order:
 ///
-/// 1. The scene must contribute geometry
-///    ([`UnsliceableScene::NoGeometry`]).
-/// 2. Slicing runs upward from the build plate at z = 0, so the
-///    scene's top must sit above it
-///    ([`UnsliceableScene::TopAtOrBelowPlate`]).
+/// 1. The scene must contribute geometry ([`UnsliceableScene::NoGeometry`]).
+/// 2. Slicing runs upward from the build plate at z = 0, so the scene's top
+///    must sit above it ([`UnsliceableScene::TopAtOrBelowPlate`]).
 /// 3. An absent first-layer height falls back to the layer height.
-/// 4. The layer count is the smallest count whose slab layout covers
-///    the scene's top (see [`total_layers_for_height`]).
+/// 4. The layer count is the smallest count whose slab layout covers the
+///    scene's top (see [`total_layers_for_height`]).
 ///
-/// The layer height is taken as given; resolving it against the
-/// printer and material profiles is the caller's responsibility.
-pub fn slice_profile_for_scene(
+/// The layer height is taken as given; resolving it against the printer and
+/// material profiles is the caller's responsibility.
+pub(crate) fn slice_profile_for_scene(
     scene: &Scene,
     hardware: &PrinterHardware,
     layer_height: PositiveFiniteMm,
