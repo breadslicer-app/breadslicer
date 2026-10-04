@@ -1056,102 +1056,102 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/preferences_window.rs:574 src/preferences_window.rs:599
+#: src/preferences_window.rs:550 src/preferences_window.rs:575
 msgctxt "FileDialog"
 msgid "Profile package"
 msgstr ""
 
-#: src/preferences_window.rs:620
+#: src/preferences_window.rs:596
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:622
+#: src/preferences_window.rs:598
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:626 src/preferences_window.rs:1410
+#: src/preferences_window.rs:602 src/preferences_window.rs:1386
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:818 src/preferences_window.rs:1694
+#: src/preferences_window.rs:794 src/preferences_window.rs:1617
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:1044
+#: src/preferences_window.rs:1020
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1143
+#: src/preferences_window.rs:1119
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1392
+#: src/preferences_window.rs:1368
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1399
+#: src/preferences_window.rs:1375
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1404
+#: src/preferences_window.rs:1380
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1406
+#: src/preferences_window.rs:1382
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1858
+#: src/preferences_window.rs:1716
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/viewport/controller.rs:788
+#: src/viewport/controller.rs:769
 msgctxt "ErrorDialog"
 msgid "Edit failed"
 msgstr ""
 
-#: src/viewport/controller.rs:792
+#: src/viewport/controller.rs:773
 msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr ""
 
-#: src/viewport/controller.rs:1163
+#: src/viewport/controller.rs:1132
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr ""
 
-#: src/viewport/controller.rs:1164
+#: src/viewport/controller.rs:1133
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr ""
 
-#: src/viewport/controller.rs:1418
+#: src/viewport/controller.rs:1381
 msgctxt "MeshViewer"
 msgid "FRONT"
 msgstr ""
 
-#: src/viewport/controller.rs:1502
+#: src/viewport/controller.rs:1464
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1506
+#: src/viewport/controller.rs:1468
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -1193,7 +1193,7 @@ msgid "Failed to save"
 msgstr ""
 
 #: src/wiring.rs:608 src/wiring.rs:730 src/scene_loader.rs:580
-#: src/app_state.rs:748 src/export_print_file.rs:289
+#: src/app_state.rs:748 src/export_print_file.rs:264
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -1495,7 +1495,7 @@ msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/app_state.rs:452 src/lib.rs:278
+#: src/app_state.rs:452 src/lib.rs:291
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
@@ -1661,27 +1661,37 @@ msgctxt "GenSupportDialog"
 msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
 msgstr ""
 
-#: src/print_format.rs:75
+#: src/print_format.rs:72
 msgctxt "SlicePanel"
 msgid "this build cannot write it yet"
 msgstr ""
 
-#: src/print_format.rs:101
+#: src/print_format.rs:148
+msgctxt "SlicePanel"
+msgid ".goo (automatic)"
+msgstr ""
+
+#: src/print_format.rs:149
+msgctxt "SlicePanel"
+msgid ".ctb (automatic)"
+msgstr ""
+
+#: src/print_format.rs:159
 msgctxt "SlicePanel"
 msgid ".goo (V3.0)"
 msgstr ""
 
-#: src/print_format.rs:102
+#: src/print_format.rs:160
 msgctxt "SlicePanel"
 msgid ".goo (V5.1)"
 msgstr ""
 
-#: src/print_format.rs:103
+#: src/print_format.rs:161
 msgctxt "SlicePanel"
 msgid ".ctb (v5)"
 msgstr ""
 
-#: src/print_format.rs:105
+#: src/print_format.rs:163
 msgctxt "SlicePanel"
 msgid ".ctb (v5 encrypted)"
 msgstr ""
@@ -1717,18 +1727,18 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:283
+#: src/lib.rs:296
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."
 msgstr ""
 
-#: src/export_print_file.rs:288
+#: src/export_print_file.rs:263
 msgctxt "ErrorDialog"
 msgid "Cannot export for the printer"
 msgstr ""
 
-#: src/export_print_file.rs:302
+#: src/export_print_file.rs:277
 msgctxt "FileDialog"
 msgid "Printer files"
 msgstr ""

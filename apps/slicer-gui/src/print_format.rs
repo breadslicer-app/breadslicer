@@ -8,15 +8,17 @@
 //!
 //! A printer profile lists output formats for its machine; this build writes
 //! only some of them. The dropdown offers the ones it can write, and the note
-//! beneath it says why each of the rest is missing.
+//! beneath it says why each of the rest is missing. A family with 2 or more
+//! writable revisions also gets an automatic entry, which writes the highest of
+//! them.
 
-use sc_print_primitives::{OutputFormatBinding, OutputFormatBindings};
-use sc_sla_formats::{CtbVariant, GooVersion, PrinterFileFormat};
+use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
+use sc_sla_formats::{CtbVariant, GooVersion, PrinterFileFormat, UnwritableBinding};
 
 use crate::i18n::ctr;
 
-/// An offered print format: the binding it came from, the format that binding
-/// names, and the label the dropdown shows.
+/// An offered print format: the binding a pick of it saves, the format it
+/// writes, and the label the dropdown shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrintFormatOption {
     pub binding: OutputFormatBinding,
@@ -24,9 +26,9 @@ pub(crate) struct PrintFormatOption {
     pub label: String,
 }
 
-/// The selector's rendered state: the writable options in the order the profile
-/// declares them, the index of the selected one (`-1` when there is none), and
-/// 1 line per declared format this build cannot write.
+/// The selector's rendered state: the writable options grouped by family, each
+/// family's automatic entry first; the index of the selected one (`-1` when
+/// there is none); and 1 line per declared format this build cannot write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrintFormatModel {
     pub options: Vec<PrintFormatOption>,
@@ -35,8 +37,8 @@ pub(crate) struct PrintFormatModel {
 }
 
 impl PrintFormatModel {
-    /// Return the state to show while no printer is selected: nothing on offer,
-    /// and nothing to explain either.
+    /// Returns the state to show while no printer is selected: nothing on
+    /// offer, and nothing to explain either.
     pub(crate) fn nothing_declared() -> Self {
         Self {
             options: Vec::new(),
@@ -46,41 +48,40 @@ impl PrintFormatModel {
     }
 }
 
-/// Build the selector from a printer's declared output formats.
+/// Builds the selector from a printer's declared output formats.
 ///
-/// `remembered` is the choice to restore. Anything it cannot name (a binding
-/// the printer no longer declares, one this build cannot write, or no choice at
-/// all) falls back to the printer's first writable binding, so the panel always
-/// offers a usable format when one exists.
+/// `remembered` is the choice to restore. When no option has it, a printer that
+/// offers 1 family gets that family's first option selected, and a printer that
+/// offers 2 families or more gets none, so the user picks.
 pub(crate) fn print_format_model(
     declared: &OutputFormatBindings,
     remembered: Option<&OutputFormatBinding>,
 ) -> PrintFormatModel {
-    let mut options = Vec::new();
+    let mut writable = Vec::new();
     let mut refusals = Vec::new();
 
     for binding in declared.iter() {
-        match PrinterFileFormat::from_binding(binding) {
-            Ok(format) if format.has_writer() => options.push(PrintFormatOption {
+        match PrinterFileFormat::writable_from_binding(binding) {
+            Ok(format) => writable.push(PrintFormatOption {
                 binding: binding.clone(),
                 format,
                 label: format_label(format),
             }),
-            Ok(_) => refusals.push(refusal(
+            Err(UnwritableBinding::NoWriter(_)) => refusals.push(refusal(
                 binding,
                 &ctr!("SlicePanel", "this build cannot write it yet"),
             )),
-            Err(unresolved) => refusals.push(refusal(binding, &unresolved.to_string())),
+            Err(UnwritableBinding::Unresolved(unresolved)) => {
+                refusals.push(refusal(binding, &unresolved.to_string()));
+            }
         }
     }
 
-    let remembered_index =
-        remembered.and_then(|wanted| options.iter().position(|option| &option.binding == wanted));
-    let selected = match remembered_index {
-        Some(index) => index as i32,
-        None if options.is_empty() => -1,
-        None => 0,
-    };
+    let options = grouped_by_family(writable, declared);
+    let selected = remembered
+        .and_then(|wanted| options.iter().position(|option| &option.binding == wanted))
+        .or_else(|| default_selection(&options))
+        .map_or(-1, |index| index as i32);
 
     PrintFormatModel {
         options,
@@ -89,9 +90,70 @@ pub(crate) fn print_format_model(
     }
 }
 
-/// Return the label the dropdown shows: the extension the file is written with,
-/// plus the revision, because revisions of a family share an extension and
-/// produce different bytes.
+/// Groups `writable` by family, in the order the families first appear, and
+/// puts an automatic entry first in each family whose options name 2 or more
+/// revisions. The automatic entry saves the family without a version and writes
+/// the revision [`PrinterFileFormat::highest_writable`] picks.
+fn grouped_by_family(
+    writable: Vec<PrintFormatOption>,
+    declared: &OutputFormatBindings,
+) -> Vec<PrintFormatOption> {
+    let mut families: Vec<FormatKind> = Vec::new();
+    for option in &writable {
+        if !families.contains(&option.binding.format) {
+            families.push(option.binding.format.clone());
+        }
+    }
+
+    let mut options = Vec::with_capacity(writable.len() + families.len());
+    for family in families {
+        let entries: Vec<&PrintFormatOption> = writable
+            .iter()
+            .filter(|option| option.binding.format == family)
+            .collect();
+        let revisions_differ = entries
+            .windows(2)
+            .any(|pair| pair[0].format != pair[1].format);
+        if revisions_differ
+            && let Ok(format) = PrinterFileFormat::highest_writable(&family, declared)
+        {
+            options.push(PrintFormatOption {
+                binding: OutputFormatBinding {
+                    format: family,
+                    version: None,
+                },
+                format,
+                label: automatic_label(format),
+            });
+        }
+        options.extend(entries.into_iter().cloned());
+    }
+    options
+}
+
+/// Picks the option to preselect when no option has the remembered choice: the
+/// first one, when all the options belong to 1 family. That is the family's
+/// automatic entry when it has one.
+fn default_selection(options: &[PrintFormatOption]) -> Option<usize> {
+    let first = options.first()?;
+    options
+        .iter()
+        .all(|option| option.binding.format == first.binding.format)
+        .then_some(0)
+}
+
+/// Returns the label of a family's automatic entry, from the format it writes.
+fn automatic_label(format: PrinterFileFormat) -> String {
+    match format {
+        PrinterFileFormat::Goo(_) => ctr!("SlicePanel", ".goo (automatic)"),
+        PrinterFileFormat::Ctb(_) => ctr!("SlicePanel", ".ctb (automatic)"),
+    }
+    .to_string()
+}
+
+/// Returns the label the dropdown shows: the extension the file is written
+/// with, plus the revision, because revisions of a family share an extension
+/// and produce different bytes.
 fn format_label(format: PrinterFileFormat) -> String {
     match format {
         PrinterFileFormat::Goo(GooVersion::V3_0) => ctr!("SlicePanel", ".goo (V3.0)"),
@@ -104,7 +166,7 @@ fn format_label(format: PrinterFileFormat) -> String {
     .to_string()
 }
 
-/// Compose a line of the panel's note: the binding, then why it is not in the
+/// Composes a line of the panel's note: the binding, then why it is not in the
 /// dropdown.
 fn refusal(binding: &OutputFormatBinding, reason: &str) -> String {
     format!("{binding}: {reason}")
@@ -258,6 +320,130 @@ mod print_format_tests {
         assert_eq!(
             format_label(PrinterFileFormat::Ctb(CtbVariant::EncryptedV5)),
             ".ctb (v5 encrypted)",
+        );
+    }
+
+    fn selected(model: &PrintFormatModel) -> Option<&OutputFormatBinding> {
+        let index = usize::try_from(model.selected).ok()?;
+        Some(&model.options[index].binding)
+    }
+
+    fn bindings(model: &PrintFormatModel) -> Vec<OutputFormatBinding> {
+        model
+            .options
+            .iter()
+            .map(|option| option.binding.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_family_with_2_revisions_offers_its_automatic_entry_first_and_selects_it() {
+        let declared = declared(&[
+            binding(FormatKind::Ctb, Some("v5")),
+            binding(FormatKind::Ctb, Some("v5enc")),
+        ]);
+        let model = print_format_model(&declared, None);
+
+        assert_eq!(model.options.len(), 3);
+        assert_eq!(model.options[0].binding, binding(FormatKind::Ctb, None));
+        assert_eq!(
+            model.options[0].format,
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+        );
+        assert_eq!(model.options[0].label, ".ctb (automatic)");
+        assert_eq!(model.selected, 0);
+    }
+
+    #[test]
+    fn a_printer_offering_2_families_preselects_nothing() {
+        let declared = declared(&[binding(FormatKind::Ctb, Some("v5enc")), goo_v3_0()]);
+        let model = print_format_model(&declared, None);
+
+        assert_eq!(model.options.len(), 2);
+        assert_eq!(model.selected, -1);
+    }
+
+    #[test]
+    fn a_remembered_automatic_choice_restores_the_automatic_entry() {
+        let declared = declared(&[
+            binding(FormatKind::Ctb, Some("v5")),
+            binding(FormatKind::Ctb, Some("v5enc")),
+            goo_v3_0(),
+        ]);
+        let model = print_format_model(&declared, Some(&binding(FormatKind::Ctb, None)));
+
+        assert_eq!(selected(&model), Some(&binding(FormatKind::Ctb, None)));
+    }
+
+    #[test]
+    fn a_remembered_specific_choice_restores_its_own_entry() {
+        let plain = binding(FormatKind::Ctb, Some("v5"));
+        let declared = declared(&[
+            plain.clone(),
+            binding(FormatKind::Ctb, Some("v5enc")),
+            goo_v3_0(),
+        ]);
+        let model = print_format_model(&declared, Some(&plain));
+
+        assert_eq!(selected(&model), Some(&plain));
+    }
+
+    #[test]
+    fn a_remembered_choice_no_longer_offered_selects_nothing_between_2_families() {
+        let declared = declared(&[binding(FormatKind::Ctb, Some("v5enc")), goo_v3_0()]);
+        let model = print_format_model(&declared, Some(&binding(FormatKind::Goo, Some("v5.1"))));
+
+        assert_eq!(model.selected, -1);
+    }
+
+    #[test]
+    fn a_remembered_automatic_choice_falls_back_to_the_only_entry_of_its_family() {
+        let plain = binding(FormatKind::Ctb, Some("v5"));
+        let model = print_format_model(
+            &declared(std::slice::from_ref(&plain)),
+            Some(&binding(FormatKind::Ctb, None)),
+        );
+
+        assert_eq!(selected(&model), Some(&plain));
+    }
+
+    #[test]
+    fn a_family_s_entries_follow_its_automatic_entry() {
+        let declared = declared(&[
+            binding(FormatKind::Ctb, Some("v5")),
+            goo_v3_0(),
+            binding(FormatKind::Ctb, Some("v5enc")),
+        ]);
+        let model = print_format_model(&declared, None);
+
+        assert_eq!(
+            bindings(&model),
+            vec![
+                binding(FormatKind::Ctb, None),
+                binding(FormatKind::Ctb, Some("v5")),
+                binding(FormatKind::Ctb, Some("v5enc")),
+                goo_v3_0(),
+            ],
+        );
+    }
+
+    #[test]
+    fn spellings_of_the_same_revision_add_no_automatic_entry() {
+        let upper = binding(FormatKind::Goo, Some("V3.0"));
+        let model = print_format_model(&declared(&[goo_v3_0(), upper.clone()]), None);
+
+        assert_eq!(bindings(&model), vec![goo_v3_0(), upper]);
+    }
+
+    #[test]
+    fn the_automatic_entries_name_their_family() {
+        assert_eq!(
+            automatic_label(PrinterFileFormat::Goo(GooVersion::V3_0)),
+            ".goo (automatic)",
+        );
+        assert_eq!(
+            automatic_label(PrinterFileFormat::Ctb(CtbVariant::PlainV5)),
+            ".ctb (automatic)",
         );
     }
 }
