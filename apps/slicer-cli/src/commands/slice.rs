@@ -15,22 +15,19 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_e
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene,
-    UnsliceableSelection, creation_time_now, fallback_report_lines, project_to_print_program,
-    slice_plate,
+    UnsliceableSelection, fallback_report_lines, prepare_export, slice_plate,
 };
 use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
-    load_printer_profile_from_path, resolve,
+    load_printer_profile_from_path,
 };
 use sc_project_formats::{ReadProjectWarning, load_scene};
 use sc_scene::Scene;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
-use sc_sla_formats::{
-    Format, PrintProgram, WriterOptions, write_printer_file, write_scene_slices, write_slice,
-};
+use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
@@ -171,11 +168,24 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             write_slice(contours.stack(), &target_path, format, &options)?;
         }
         SettledTarget::PrinterFile(format) => {
-            let config = resolve_print_config(&printer, &material, args.layer_height)?;
-            report_fallbacks(&config, &mut std::io::stderr());
-            let program = print_program_for(&scene, &config, &plate)?;
-            let contours = merge_plate(plate)?;
-            write_printer_file(contours.stack(), &target_path, format, &program, None)?;
+            let overrides = SceneOverrides {
+                layer_height_mm: args.layer_height,
+                ..Default::default()
+            };
+            let job = prepare_export(
+                &scene,
+                merge_plate(plate)?,
+                &printer,
+                &material,
+                &overrides,
+                args.aa,
+                VERSION,
+            )
+            // The message already ends with its cause, which `?` would print
+            // again as a "Caused by" line.
+            .map_err(|err| anyhow!("{err}"))?;
+            report_fallbacks(job.config(), &mut std::io::stderr());
+            job.write(&target_path, format, None)?;
         }
     }
 
@@ -197,42 +207,12 @@ fn merge_plate(plate: SlicedPlate) -> Result<PlateContours> {
     })
 }
 
-/// Resolve the full print configuration a printer file needs.
-///
-/// A pairing that sliced geometry fine can still fail here for want of an
-/// exposure: geometry needs the layer height alone.
-fn resolve_print_config(
-    printer: &PrinterProfile,
-    material: &EffectiveMaterial,
-    layer_height: Option<PositiveFiniteMm>,
-) -> Result<ResolvedPrintConfig> {
-    // The plate was sliced under this same request, so overriding here keeps
-    // the program's nominal thickness on the grid the layers were actually cut
-    // on.
-    let overrides = SceneOverrides {
-        layer_height_mm: layer_height,
-        ..Default::default()
-    };
-    resolve(printer, material, &overrides)
-        .map_err(|err| anyhow!("could not resolve the print configuration: {err}"))
-}
-
 /// Write the values the machine will run that no profile chose, so they are
 /// seen before the file is written rather than after the print fails.
 fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
     for line in fallback_report_lines(config) {
         let _ = writeln!(out, "{line}");
     }
-}
-
-/// Build the machine program the printer-file writers run.
-fn print_program_for(
-    scene: &Scene,
-    config: &ResolvedPrintConfig,
-    plate: &SlicedPlate,
-) -> Result<PrintProgram> {
-    project_to_print_program(scene, config, plate.profile(), creation_time_now(), VERSION)
-        .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 
 /// Loads the effective printer for `profile_ref`. It reads directly from a
@@ -317,8 +297,8 @@ fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     }
 }
 
-/// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the engine's
-/// own error Display uses.
+/// Build the label `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels
+/// the engine's own error Display uses.
 fn leaf_label(failure: &LeafValidationFailure) -> String {
     match &failure.leaf_name {
         Some(name) => format!("leaf #{} (\"{name}\")", failure.leaf.get()),
@@ -328,12 +308,12 @@ fn leaf_label(failure: &LeafValidationFailure) -> String {
 
 /// Render a scene validation failure to `out`:
 ///
-/// 1. The aggregated summary produced by `Display for SliceSceneError`: one
+/// 1. The aggregated summary produced by `Display for SliceSceneError`: 1
 ///    header naming the invalid-leaf count, then per leaf a label line with its
-///    per-variant breakdown (up to five face indices each).
-/// 2. When `verbose` is set, one section per invalid leaf: a blank line, the
-///    leaf label, then a section per variant listing every offending error via
-///    its `Display` impl.
+///    per-variant breakdown (up to 5 face indices each).
+/// 2. When `verbose` is set, 1 section per invalid leaf: a blank line, the leaf
+///    label, then a section per variant listing every offending error via its
+///    `Display` impl.
 /// 3. Always, a blank line followed by a hint pointing at the `fix` subcommand.
 ///    When `verbose` is unset the hint also advertises `--verbose` for the full
 ///    error list.
@@ -361,7 +341,7 @@ fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn
     };
 }
 
-/// Write `errors` to `out` grouped by variant. One section per variant in
+/// Write `errors` to `out` grouped by variant. 1 section per variant in
 /// first-occurrence order: a header line `VariantName (count):` followed by
 /// `  - {err}` for each member. Sections are separated by a blank line.
 fn write_grouped_errors<E>(errors: &[E], out: &mut dyn Write)

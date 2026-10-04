@@ -20,16 +20,13 @@ use std::rc::Rc;
 
 use futures_channel::oneshot;
 use sc_print_glue::{
-    PlateContours, UnprojectablePrint, creation_time_now, fallback_report_lines,
-    project_to_print_program, slice_profile_for_selection,
+    ExportJob, SlicingParams, UnexportableSlice, UnprojectablePrint, fallback_report_lines,
+    schedule_for_selection,
 };
-use sc_print_profiles::{EffectiveMaterial, PrinterProfile, ResolveError, SceneOverrides, resolve};
+use sc_print_profiles::{EffectiveMaterial, PrinterProfile, ResolveError, SceneOverrides};
 use sc_scene::Scene;
 use sc_sl1cer::VERSION;
-use sc_sl1cer::profile::PackingMode;
-use sc_sla_formats::{
-    PrintPreviews, PrintProgram, PrinterFileFormat, WriterError, write_printer_file,
-};
+use sc_sla_formats::{PrintPreviews, PrinterFileFormat, WriterError};
 
 use crate::MainWindow;
 use crate::error_dialog::DialogManager;
@@ -59,7 +56,7 @@ pub(crate) enum ExportFailure {
     /// height alone; a printer file also needs the exposures, the waits and the
     /// motion.
     Resolve(ResolveError),
-    /// A scheduled layer sits at a height the program cannot record.
+    /// The print program cannot be built for this plate.
     Program(UnprojectablePrint),
     /// The writer refused, or the file could not be written.
     Write(WriterError),
@@ -87,15 +84,16 @@ impl fmt::Display for ExportFailure {
     }
 }
 
-/// A prepared export: the plate to rasterise, the program the machine runs it
-/// under, the file both are written as, and the report of the values in that
-/// program nobody calibrated.
-#[derive(Debug)]
-struct ExportJob {
-    contours: PlateContours,
-    program: PrintProgram,
-    format: PrinterFileFormat,
-    fallback_report: Vec<String>,
+impl From<UnexportableSlice> for ExportFailure {
+    fn from(err: UnexportableSlice) -> Self {
+        match err {
+            UnexportableSlice::Configuration(err) => Self::Resolve(err),
+            // Slicing again under the profiles on disk cures both.
+            UnexportableSlice::LayerHeightMismatch { .. }
+            | UnexportableSlice::FirstLayerOffZStep { .. } => Self::Stale,
+            UnexportableSlice::Program(err) => Self::Program(err),
+        }
+    }
 }
 
 /// Report whether the export action can run: a writable format is selected and
@@ -119,10 +117,7 @@ pub(crate) fn export_button_enabled(
 
 /// Build the export from the held slice and the profiles it was cut under,
 /// reading those profiles from the installed libraries.
-fn prepare_export(
-    document: &SceneDocument,
-    format: PrinterFileFormat,
-) -> Result<ExportJob, ExportFailure> {
+fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> {
     let held = document.held_slice().ok_or(ExportFailure::NoSlice)?;
     if document.slice_geometry_changed(held.params.geometry) {
         return Err(ExportFailure::Stale);
@@ -132,46 +127,37 @@ fn prepare_export(
         .ok_or(ExportFailure::NoSlice)?;
     let (printer, material) = load_selected_profiles(&held.params.printer, &held.params.resin)
         .map_err(ExportFailure::Prepare)?;
-    export_job(held, &scene, &printer, &material, format)
+    export_job(held, &scene, &printer, &material)
 }
 
-/// Fuse a held slice with the profiles it was cut under into the job the
-/// writers run.
-///
-/// The schedule is re-derived from `scene` and the profiles rather than taken
-/// from the slice, and the two must agree: the program's records pair with the
-/// contours by position, so a profile edited since the slice ran would
-/// otherwise describe a print these layers are not.
+/// Check that `scene` and the profiles the held slice was cut under still give
+/// its schedule, then prepare its export under those profiles.
 fn export_job(
     held: SliceResult,
     scene: &Scene,
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
-    format: PrinterFileFormat,
 ) -> Result<ExportJob, ExportFailure> {
-    let config =
-        resolve(printer, material, &SceneOverrides::default()).map_err(ExportFailure::Resolve)?;
-    let profile = slice_profile_for_selection(
-        scene,
-        printer,
-        material,
-        None,
-        held.params.first_layer_height,
-        held.params.aa_level,
-        PackingMode::None,
-    )
-    .map_err(|err| ExportFailure::Prepare(SliceFailure::from(err)))?;
-    if profile.layer_schedule() != held.contours.schedule() {
+    let params = SlicingParams {
+        layer_height_request: None,
+        first_layer_height: held.params.first_layer_height,
+        aa_level: held.params.aa_level,
+    };
+    let schedule = schedule_for_selection(scene, printer, material, &params)
+        .map_err(|err| ExportFailure::Prepare(SliceFailure::from(err)))?;
+    if &schedule != held.contours.schedule() {
         return Err(ExportFailure::Stale);
     }
-    let program = project_to_print_program(scene, &config, &profile, creation_time_now(), VERSION)
-        .map_err(ExportFailure::Program)?;
-    Ok(ExportJob {
-        contours: held.contours,
-        program,
-        format,
-        fallback_report: fallback_report_lines(&config),
-    })
+    sc_print_glue::export::prepare_export(
+        scene,
+        held.contours,
+        printer,
+        material,
+        &SceneOverrides::default(),
+        held.params.aa_level,
+        VERSION,
+    )
+    .map_err(ExportFailure::from)
 }
 
 /// Wires the panel's export action. The callback holds the panel bridge, which
@@ -206,9 +192,9 @@ pub(crate) fn wire_export_print_file(
     });
 }
 
-/// Runs one export: prepare and check, ask for the target, draw what the
-/// machine will show for the file, then write on a worker thread. Every refusal
-/// and failure surfaces its own dialog.
+/// Runs 1 export: prepare and check, ask for the target, draw what the machine
+/// will show for the file, then write on a worker thread. Every refusal and
+/// failure surfaces its own dialog.
 ///
 /// `previews_for` runs once the target is settled, so a cancelled export draws
 /// nothing.
@@ -222,7 +208,7 @@ async fn run_export_flow(
 ) {
     // Before the dialog: asking for a filename and refusing afterwards is the
     // ordering to avoid.
-    let job = match prepare_export(&document, format) {
+    let job = match prepare_export(&document) {
         Ok(job) => job,
         Err(err) => {
             show_export_failure(&dialogs, None, &err);
@@ -231,7 +217,7 @@ async fn run_export_flow(
     };
     // Also before the dialog: cancelling it is the last point at which the user
     // can act on what the warning says.
-    for line in &job.fallback_report {
+    for line in fallback_report_lines(job.config()) {
         eprintln!("{line}");
     }
     let Some(target) = pick_printer_file_target(default_stem, format).await else {
@@ -248,14 +234,9 @@ async fn run_export_flow(
             // The writer reports no progress of its own, so the panel names the
             // phase and nothing finer.
             sink.set(ExportPhase::Write, 0, 1);
-            let written = write_printer_file(
-                job.contours.stack(),
-                &worker_target,
-                job.format,
-                &job.program,
-                previews.as_ref(),
-            )
-            .map_err(ExportFailure::Write);
+            let written = job
+                .write(&worker_target, format, previews.as_ref())
+                .map_err(ExportFailure::Write);
             sink.set(ExportPhase::Write, 1, 1);
             written
         }))
@@ -380,12 +361,12 @@ mod export_job_tests {
 
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_print_glue::PlateContours;
     use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
     use sc_print_profiles::MaterialProfile;
     use sc_scene::LeafPayload;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
-    use sc_sla_formats::GooVersion;
 
     use super::*;
     use crate::scene_document::SceneRevision;
@@ -457,8 +438,6 @@ target_layer_height_mm = 0.05
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 "#;
 
-    const GOO: PrinterFileFormat = PrinterFileFormat::Goo(GooVersion::V3_0);
-
     fn profiles(material_toml: &str) -> (PrinterProfile, EffectiveMaterial) {
         let printer: PrinterProfile = toml::from_str(PRINTER_TOML).expect("printer profile");
         let material: MaterialProfile = toml::from_str(material_toml).expect("material profile");
@@ -487,17 +466,12 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         printer: &PrinterProfile,
         material: &EffectiveMaterial,
     ) -> LayerSchedule {
-        *slice_profile_for_selection(
-            scene,
-            printer,
-            material,
-            None,
-            None,
-            AaLevel::Off,
-            PackingMode::None,
-        )
-        .expect("the cube schedules")
-        .layer_schedule()
+        let params = SlicingParams {
+            layer_height_request: None,
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+        };
+        schedule_for_selection(scene, printer, material, &params).expect("the cube schedules")
     }
 
     fn held_slice(schedule: LayerSchedule) -> SliceResult {
@@ -519,47 +493,14 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
     }
 
     #[test]
-    fn the_program_carries_one_record_per_held_layer() {
+    fn a_held_slice_its_profiles_still_give_prepares_a_job() {
         let (printer, material) = profiles(MATERIAL_TOML);
         let scene = cube_scene();
         let held = held_slice(derived_schedule(&scene, &printer, &material));
 
-        let job = export_job(held, &scene, &printer, &material, GOO).expect("the export prepares");
+        let job = export_job(held, &scene, &printer, &material).expect("the export prepares");
 
-        assert_eq!(
-            job.program.layers.len(),
-            job.contours.stack().layers().len()
-        );
-        assert_eq!(job.format, GOO);
-    }
-
-    #[test]
-    fn the_program_names_the_machine_and_the_resin_it_was_sliced_for() {
-        let (printer, material) = profiles(MATERIAL_TOML);
-        let scene = cube_scene();
-        let held = held_slice(derived_schedule(&scene, &printer, &material));
-
-        let job = export_job(held, &scene, &printer, &material, GOO).expect("the export prepares");
-
-        assert_eq!(job.program.machine_name.as_str(), "Mars 5");
-        assert_eq!(job.program.material_name.as_str(), "Blu");
-    }
-
-    #[test]
-    fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
-        // The fixture resin names what resolution requires and none of the
-        // optional values, so the whole optional set falls back.
-        let (printer, material) = profiles(MATERIAL_TOML);
-        let scene = cube_scene();
-        let held = held_slice(derived_schedule(&scene, &printer, &material));
-
-        let job = export_job(held, &scene, &printer, &material, GOO).expect("the export prepares");
-
-        assert_eq!(
-            job.fallback_report.first().map(String::as_str),
-            Some("warning: 12 values for this print were chosen by no profile:"),
-        );
-        assert_eq!(job.fallback_report.len(), 13, "{:?}", job.fallback_report);
+        assert_eq!(job.config().printer.identity.name.as_str(), "Mars 5");
     }
 
     #[test]
@@ -570,7 +511,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         let scene = cube_scene();
         let stale = LayerSchedule::uniform(0.1, 0.1, 5).expect("a positive, non-empty schedule");
 
-        let err = export_job(held_slice(stale), &scene, &printer, &material, GOO)
+        let err = export_job(held_slice(stale), &scene, &printer, &material)
             .expect_err("a mismatched schedule cannot be written");
 
         assert!(matches!(err, ExportFailure::Stale), "{err}");
@@ -584,10 +525,58 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         let scene = cube_scene();
         let held = held_slice(derived_schedule(&scene, &printer, &material));
 
-        let err = export_job(held, &scene, &printer, &material, GOO)
+        let err = export_job(held, &scene, &printer, &material)
             .expect_err("an unresolvable configuration cannot be written");
 
         assert!(matches!(err, ExportFailure::Resolve(_)), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod export_failure_tests {
+    use sc_print_glue::SlabTopOutOfRange;
+    use sc_print_primitives::PositiveFiniteMm;
+
+    use super::*;
+
+    fn mm(value: f64) -> PositiveFiniteMm {
+        PositiveFiniteMm::new(value).expect("test lengths are positive finite")
+    }
+
+    #[test]
+    fn a_layer_grid_the_configuration_refuses_reads_as_a_stale_slice() {
+        let mismatch = UnexportableSlice::LayerHeightMismatch {
+            sliced: mm(0.1),
+            resolved: mm(0.05),
+        };
+        let off_step = UnexportableSlice::FirstLayerOffZStep {
+            first_layer: mm(0.057),
+            nearest: mm(0.06),
+        };
+
+        assert!(matches!(
+            ExportFailure::from(mismatch),
+            ExportFailure::Stale
+        ));
+        assert!(matches!(
+            ExportFailure::from(off_step),
+            ExportFailure::Stale
+        ));
+    }
+
+    #[test]
+    fn a_program_failure_keeps_its_cause() {
+        let cause = UnprojectablePrint::SlabTop(SlabTopOutOfRange {
+            layer_index: 1,
+            z_mm: f64::INFINITY,
+        });
+
+        let failure = ExportFailure::from(UnexportableSlice::Program(cause.clone()));
+
+        assert!(
+            matches!(&failure, ExportFailure::Program(err) if *err == cause),
+            "{failure}"
+        );
     }
 }
 
@@ -598,16 +587,14 @@ mod prepare_export_tests {
 
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_print_glue::PlateContours;
     use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
     use sc_scene::LeafPayload;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
-    use sc_sla_formats::GooVersion;
 
     use super::*;
     use crate::scene_document::SceneEdit;
-
-    const GOO: PrinterFileFormat = PrinterFileFormat::Goo(GooVersion::V3_0);
 
     fn cube_document() -> Rc<SceneDocument> {
         let mut scene = Scene::new();
@@ -649,7 +636,7 @@ mod prepare_export_tests {
     fn an_unsliced_document_has_nothing_to_export() {
         let document = cube_document();
 
-        let err = prepare_export(&document, GOO).expect_err("nothing is held");
+        let err = prepare_export(&document).expect_err("nothing is held");
 
         assert!(matches!(err, ExportFailure::NoSlice), "{err}");
     }
@@ -670,7 +657,7 @@ mod prepare_export_tests {
         document.apply_edit(edit.clone()).expect("the edit applies");
         document.push_edit(edit);
 
-        let err = prepare_export(&document, GOO).expect_err("the plate moved under the slice");
+        let err = prepare_export(&document).expect_err("the plate moved under the slice");
 
         assert!(matches!(err, ExportFailure::Stale), "{err}");
     }
