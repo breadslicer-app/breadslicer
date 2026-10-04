@@ -5,10 +5,10 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-//! End-to-end tests for the `slice` subcommand: feed in one of the
-//! committed STL fixtures, ask for per-layer SVG, combined SVG, or
-//! per-layer PNG output, and assert that the rendered topology or
-//! pixel pattern matches what we expect from the fixture's geometry.
+//! End-to-end tests for the `slice` subcommand: feed in 1 of the committed STL
+//! fixtures, ask for per-layer SVG, combined SVG, or per-layer PNG output, and
+//! assert that the rendered topology or pixel pattern matches what we expect
+//! from the fixture's geometry.
 
 use std::fs;
 use std::fs::File;
@@ -36,9 +36,9 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Directory of bundled test profiles, pointed at by the
-/// `SC_SLICER_ASSETS_DIR` override so the by-id loader finds the
-/// fake fixture profiles.
+/// Returns the directory of bundled test profiles, pointed at by the
+/// `SC_SLICER_ASSETS_DIR` override so the by-id loader finds the fake fixture
+/// profiles.
 fn profiles_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -46,15 +46,15 @@ fn profiles_dir() -> PathBuf {
         .join("profiles")
 }
 
-/// Path to a fixture profile TOML file, for exercising the
+/// Returns the path to a fixture profile TOML file, for exercising the
 /// load-by-path branch of the `--printer-profile` discriminator.
 fn profile_file(kind: &str, name: &str) -> PathBuf {
     profiles_dir().join(kind).join(name)
 }
 
-/// Run `slice --format svg-per-layer` on the named fixture into
-/// `output_dir`. Uses a fixed schedule that produces 5 layers for
-/// the cube (z in [0, 1]) and 10 for the prisms (z in [0, 2]).
+/// Run `slice --format svg-per-layer` on the named fixture into `output_dir`.
+/// Uses a fixed schedule that produces 5 layers for the cube (z in [0, 1]) and
+/// 10 for the prisms (z in [0, 2]).
 fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -74,8 +74,8 @@ fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
         .success();
 }
 
-/// Run `slice --target-format svg-combined` on the named fixture
-/// into a single SVG file at `output_file`. Same fixed schedule as
+/// Run `slice --target-format svg-combined` on the named fixture into a single
+/// SVG file at `output_file`. Same fixed schedule as
 /// [`slice_fixture_as_svg_per_layer`].
 fn slice_fixture_as_svg_combined(fixture: &str, output_file: &Path) {
     Command::cargo_bin("sc-slicer-cli")
@@ -96,8 +96,8 @@ fn slice_fixture_as_svg_combined(fixture: &str, output_file: &Path) {
         .success();
 }
 
-/// Run `slice --format png-per-layer` on the named fixture into
-/// `output_dir`. Same fixed schedule as the SVG variants.
+/// Run `slice --format png-per-layer` on the named fixture into `output_dir`.
+/// Same fixed schedule as the SVG variants.
 fn slice_fixture_as_png_per_layer(fixture: &str, output_dir: &Path) {
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -128,9 +128,9 @@ fn decode_grayscale_png(path: &Path) -> (u32, u32, Vec<u8>) {
     (info.width, info.height, buffer)
 }
 
-/// Sample a pixel at raster coords (X from left, Y from bottom of
-/// the build plate). PNG rows go top-down so the raster Y is
-/// flipped here to map back into the buffer.
+/// Sample a pixel at raster coords (X from left, Y from bottom of the build
+/// plate). PNG rows go top-down so the raster Y is flipped here to map back
+/// into the buffer.
 fn sample_at(pixels: &[u8], width: u32, height: u32, raster_x: u32, raster_y: u32) -> u8 {
     let png_row = height - 1 - raster_y;
     pixels[(png_row as usize) * (width as usize) + (raster_x as usize)]
@@ -238,9 +238,9 @@ fn y_tunnel_prism_topology_transitions_above_below_and_through_the_tunnel() {
     );
 
     // Schedule slice planes: 0.1, 0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9.
-    // Tunnel band z in [0.6, 1.4]. Layers passing through the tunnel
-    // split into two disjoint rectangles; layers above and below the
-    // tunnel band are a single solid rectangle.
+    // Tunnel band z in [0.6, 1.4]. Layers passing through the tunnel split into
+    // 2 disjoint rectangles; layers above and below the tunnel band are a
+    // single solid rectangle.
     let solid_layer_indices: &[usize] = &[0, 1, 2, 7, 8, 9];
     let through_tunnel_layer_indices: &[usize] = &[3, 4, 5, 6];
 
@@ -354,9 +354,9 @@ fn y_tunnel_prism_svg_combined_groups_match_per_layer_topology() {
         "expected 10 layer groups, got:\n{content}"
     );
 
-    // Same indices as in the svg-per-layer test: layers 0-2 and 7-9
-    // sit above and below the tunnel band (solid); 3-6 cut through
-    // the tunnel (two disjoint rectangles).
+    // Same indices as in the svg-per-layer test: layers 0-2 and 7-9 sit above
+    // and below the tunnel band (solid); 3-6 cut through the tunnel (2 disjoint
+    // rectangles).
     let solid_layer_indices: &[usize] = &[0, 1, 2, 7, 8, 9];
     let through_tunnel_layer_indices: &[usize] = &[3, 4, 5, 6];
 
@@ -419,13 +419,12 @@ fn cube_fixture_png_per_layer_emits_8bit_grayscale_500x500_per_layer() {
         );
     }
 
-    // Layer 0 cuts the cube at z = 0.1; the cube occupies printer-
-    // frame x, y in [-0.5, +0.5] mm. The 5 mm plate maps to 500 px
-    // (100 px/mm) with the envelope's min corner (-2.5, -2.5) at
-    // pixel (0, 0), so the cube renders at pixels [200, 300].
-    // Inside: pixel (250, 250) at printer mm (0, 0), the plate
-    // origin and the raster centre. Outside: pixel (100, 100) at
-    // printer mm (-1.5, -1.5), well below the cube.
+    // Layer 0 cuts the cube at z = 0.1; the cube occupies printer-frame x, y in
+    // [-0.5, +0.5] mm. The 5 mm plate maps to 500 px (100 px/mm) with the
+    // envelope's min corner (-2.5, -2.5) at pixel (0, 0), so the cube renders
+    // at pixels [200, 300]. Inside: pixel (250, 250) at printer mm (0, 0), the
+    // plate origin and the raster centre. Outside: pixel (100, 100) at printer
+    // mm (-1.5, -1.5), well below the cube.
     let (w, h, buf) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&buf, w, h, 250, 250),
@@ -457,17 +456,16 @@ fn z_tunnel_prism_png_per_layer_carries_the_inner_hole_pixels() {
         assert_eq!(h, 500);
     }
 
-    // Outer box printer-frame x, y in [-1, +1] mm, tunnel x, y in
-    // [-0.4, +0.4] mm. At 100 px/mm with the envelope's min corner
-    // (-2.5, -2.5) at pixel (0, 0), the outer renders at pixels
-    // [150, 350] and the tunnel at pixels [210, 290]. In raster
-    // pixel coords:
-    // - (170, 170) at printer mm (-0.8, -0.8): inside the outer
-    //   ring, outside the tunnel -> filled (255).
-    // - (250, 250) at printer mm (0, 0) (the plate origin, raster
-    //   centre): inside the tunnel hole -> empty (0).
-    // - (100, 100) at printer mm (-1.5, -1.5): outside the outer
-    //   ring -> empty (0).
+    // Outer box printer-frame x, y in [-1, +1] mm, tunnel x, y in [-0.4, +0.4]
+    // mm. At 100 px/mm with the envelope's min corner (-2.5, -2.5) at pixel
+    // (0, 0), the outer renders at pixels [150, 350] and the tunnel at pixels
+    // [210, 290]. In raster pixel coords:
+    // - (170, 170) at printer mm (-0.8, -0.8): inside the outer ring, outside
+    //   the tunnel -> filled (255).
+    // - (250, 250) at printer mm (0, 0) (the plate origin, raster centre):
+    //   inside the tunnel hole -> empty (0).
+    // - (100, 100) at printer mm (-1.5, -1.5): outside the outer ring -> empty
+    //   (0).
     let (w, h, buf) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&buf, w, h, 170, 170),
@@ -499,12 +497,12 @@ fn y_tunnel_prism_png_per_layer_transitions_above_below_and_through_the_tunnel()
     );
 
     // Outer box printer-frame x, y in [-1, +1] mm, tunnel slab x in
-    // [-0.4, +0.4] (spanning all Y). At 100 px/mm with the
-    // envelope's min corner (-2.5, -2.5) at pixel (0, 0): outer at
-    // pixels [150, 350], tunnel slab at pixel columns [210, 290].
+    // [-0.4, +0.4] (spanning all Y). At 100 px/mm with the envelope's min
+    // corner (-2.5, -2.5) at pixel (0, 0): outer at pixels [150, 350], tunnel
+    // slab at pixel columns [210, 290].
 
-    // Layer 0 (z = 0.1, below tunnel): solid outer rect. Pixel
-    // (250, 250) at the plate origin should be filled.
+    // Layer 0 (z = 0.1, below tunnel): solid outer rect. Pixel (250, 250) at
+    // the plate origin should be filled.
     let (w, h, below) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&below, w, h, 250, 250),
@@ -512,10 +510,10 @@ fn y_tunnel_prism_png_per_layer_transitions_above_below_and_through_the_tunnel()
         "below-tunnel layer should be solid at the plate origin",
     );
 
-    // Layer 3 (z = 0.7, in tunnel): outer rect minus tunnel slab.
-    // Pixel (250, 250) (the plate origin) sits inside the tunnel
-    // slab -> empty. Pixel (170, 250) at printer mm (-0.8, 0) sits
-    // outside the tunnel slab but inside the outer ring -> filled.
+    // Layer 3 (z = 0.7, in tunnel): outer rect minus tunnel slab. Pixel
+    // (250, 250) (the plate origin) sits inside the tunnel slab -> empty. Pixel
+    // (170, 250) at printer mm (-0.8, 0) sits outside the tunnel slab but
+    // inside the outer ring -> filled.
     let (_, _, through) = decode_grayscale_png(&layers[3]);
     assert_eq!(
         sample_at(&through, w, h, 250, 250),
@@ -577,9 +575,9 @@ fn unknown_material_id_fails_with_not_found() {
 
 #[test]
 fn a_material_without_any_layer_height_fails_to_resolve() {
-    // The incomplete fixture supplies neither an intent layer height
-    // nor calibration: the one material parameter slicing needs is
-    // missing, so the slice refuses.
+    // The incomplete fixture supplies neither an intent layer height nor
+    // calibration: the only material parameter slicing needs is missing, so the
+    // slice refuses.
     let out = tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -604,11 +602,10 @@ fn a_material_without_any_layer_height_fails_to_resolve() {
 
 #[test]
 fn a_material_without_print_calibration_slices_geometry() {
-    // The extendable resin's base carries an intent layer height
-    // (0.2 mm) and no per-printer calibration, and no extension is
-    // installed here. Geometry slicing consumes the layer height
-    // only; the print calibration belongs to the printer-file export
-    // step, so this pairing slices.
+    // The extendable resin's base carries an intent layer height (0.2 mm) and
+    // no per-printer calibration, and no extension is installed here. Geometry
+    // slicing consumes the layer height only; the print calibration belongs to
+    // the printer-file export step, so this pairing slices.
     let out = tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -629,7 +626,7 @@ fn a_material_without_print_calibration_slices_geometry() {
         .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
 }
 
-/// A temporary user library whose `materials/extensions/` holds the
+/// Builds a temporary user library whose `materials/extensions/` holds the
 /// extendable resin's extension fixture, for `SC_SLICER_LIBRARY_DIR`.
 fn library_with_extendable_extension() -> tempfile::TempDir {
     let library = tempdir().unwrap();
@@ -643,11 +640,11 @@ fn library_with_extendable_extension() -> tempfile::TempDir {
     library
 }
 
-/// Slice one fixture with the extendable resin while its same-id
-/// extension is installed in a temporary user library, and assert
-/// the expected layer count. Pins that the by-id route composes the
-/// extension without disturbing the slice (extensions add print
-/// calibration, which geometry slicing does not consume).
+/// Slice 1 fixture with the extendable resin while its same-id extension is
+/// installed in a temporary user library, and assert the expected layer count.
+/// Pins that the by-id route composes the extension without disturbing the
+/// slice (extensions add print calibration, which geometry slicing does not
+/// consume).
 fn slice_with_extension_calibration(fixture: &str, expected_layers: u32) {
     let out = tempdir().unwrap();
     let library = library_with_extendable_extension();
@@ -690,11 +687,10 @@ fn an_installed_extension_does_not_disturb_the_slice_of_the_y_tunnel_prism() {
 
 #[test]
 fn a_material_given_by_path_composes_the_library_extension() {
-    // Same composition rule on both routes: a --material-profile
-    // PATH picks the document, and the user library's same-id
-    // extension still composes over it. Observable through the
-    // not-flagged exclusion warning, which only a running
-    // composition can emit.
+    // Same composition rule on both routes: a --material-profile PATH picks the
+    // document, and the user library's same-id extension still composes over
+    // it. Observable through the not-flagged exclusion warning, which only a
+    // running composition can emit.
     let out = tempdir().unwrap();
     let library = tempdir().unwrap();
     let extensions_dir = library.path().join("materials").join("extensions");
@@ -742,10 +738,9 @@ normal_exposure_sec = 9.0
 
 #[test]
 fn an_invalid_extension_is_reported_and_does_not_break_the_slice() {
-    // The base resin is fully calibrated on its own; the file in the
-    // library's extensions slot is not flagged as an extension. The
-    // slice must proceed on the base's values and surface the
-    // exclusion on stderr.
+    // The base resin is fully calibrated on its own; the file in the library's
+    // extensions slot is not flagged as an extension. The slice must proceed on
+    // the base's values and surface the exclusion on stderr.
     let out = tempdir().unwrap();
     let library = tempdir().unwrap();
     let extensions_dir = library.path().join("materials").join("extensions");
@@ -791,8 +786,8 @@ normal_exposure_sec = 9.0
         .stderr(predicate::str::contains("not flagged as an extension"));
 }
 
-/// The origin-centred unit cube translated to x, y in [0.5, 1.5]
-/// and z in [5, 6]: off-centre and lifted, but inside the e2e
+/// Builds a scene holding the origin-centred unit cube, translated to x, y in
+/// [0.5, 1.5] and z in [5, 6]: off-centre and lifted, but inside the e2e
 /// printer's 5 x 5 x 50 mm envelope, so it slices without placement.
 fn lifted_cube_scene() -> Scene {
     let mut scene = Scene::new();
@@ -807,8 +802,8 @@ fn lifted_cube_scene() -> Scene {
     scene
 }
 
-/// Write `scene` as a project 3MF referencing the e2e profiles,
-/// returning the raw package bytes.
+/// Write `scene` as a project 3MF referencing the e2e profiles, returning the
+/// raw package bytes.
 fn project_bytes(scene: &Scene) -> Vec<u8> {
     let payload = ProjectPayload {
         printer: Some(PrinterId::new("slicer-cli-e2e-test").expect("valid slug")),
@@ -831,9 +826,8 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
     bytes
 }
 
-/// Run `slice --target-format svg-per-layer` on `source` with the
-/// e2e profiles plus `extra` arguments, returning the assertion
-/// handle for output checks.
+/// Run `slice --target-format svg-per-layer` on `source` with the e2e profiles
+/// plus `extra` arguments, returning the assertion handle for output checks.
 fn slice_source_as_svg_per_layer(
     source: &Path,
     out_dir: &Path,
@@ -860,9 +854,9 @@ fn slice_source_as_svg_per_layer(
 
 #[test]
 fn a_project_3mf_slices_where_it_was_saved() {
-    // A project's placement is part of its saved content: the lifted
-    // cube (top at z = 6) must slice to 30 layers at 0.2 mm, not be
-    // dropped to the plate (5 layers).
+    // A project's placement is part of its saved content: the lifted cube (top
+    // at z = 6) must slice to 30 layers at 0.2 mm, not be dropped to the plate
+    // (5 layers).
     let tmp = tempdir().unwrap();
     let source = tmp.path().join("lifted.3mf");
     fs::write(&source, project_bytes(&lifted_cube_scene())).unwrap();
@@ -899,9 +893,9 @@ fn a_plain_3mf_still_auto_places() {
 
 #[test]
 fn project_only_warnings_print_nothing() {
-    // Foreign project data (here a Bambu/Orca marker part) is
-    // detected by the project reader; `slice` ignores project data
-    // on purpose, so stderr must stay silent about it.
+    // Foreign project data (here a Bambu/Orca marker part) is detected by the
+    // project reader; `slice` ignores project data on purpose, so stderr must
+    // stay silent about it.
     let tmp = tempdir().unwrap();
     let mut package = Package::read_from(Cursor::new(project_bytes(&lifted_cube_scene())))
         .expect("the project bytes reopen as a package");
@@ -924,9 +918,9 @@ fn project_only_warnings_print_nothing() {
         .stderr(predicate::str::is_empty());
 }
 
-// The GOO V3.0 offsets and constants below are the specification's,
-// written out here instead of imported from the writer, so that a
-// change on either side has to be made on both.
+// The GOO V3.0 offsets and constants below are the specification's, written out
+// here instead of imported from the writer, so that a change on either side has
+// to be made on both.
 
 const GOO_HEADER_SIZE: usize = 195_477;
 const GOO_MAGIC: [u8; 8] = [0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00];
@@ -945,8 +939,8 @@ fn be_f32(bytes: &[u8], at: usize) -> f32 {
     f32::from_be_bytes(bytes[at..at + 4].try_into().unwrap())
 }
 
-/// Slice the cube fixture to `target`, naming the format explicitly
-/// only when `format` carries one, and read back what was written.
+/// Slice the cube fixture to `target`, naming the format explicitly only when
+/// `format` carries one, and read back what was written.
 fn slice_cube_to(target: &Path, format: Option<&str>) -> Vec<u8> {
     let mut command = Command::cargo_bin("sc-slicer-cli").unwrap();
     command
@@ -967,9 +961,8 @@ fn slice_cube_to(target: &Path, format: Option<&str>) -> Vec<u8> {
     fs::read(target).unwrap()
 }
 
-/// Walk the layer section by the format's own stride rule, returning
-/// one offset per layer record and failing unless the walk lands
-/// exactly on the footer.
+/// Walk the layer section by the format's own stride rule, returning 1 offset
+/// per layer record and failing unless the walk lands exactly on the footer.
 fn goo_layer_offsets(bytes: &[u8]) -> Vec<usize> {
     let footer_at = bytes.len() - GOO_FOOTER.len();
     let mut offsets = Vec::new();
@@ -1054,6 +1047,48 @@ fn the_goo_records_carry_the_schedule_the_slice_ran() {
 }
 
 #[test]
+fn a_requested_layer_height_reaches_the_goo_header_and_records() {
+    // The e2e resin's own layer height is 0.2 mm, so 10 layers of 0.1 mm show
+    // that the request reached both the slicing and the print configuration.
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(&target)
+        .arg("--layer-height")
+        .arg("0.1")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .success();
+    let bytes = fs::read(&target).unwrap();
+
+    let offsets = goo_layer_offsets(&bytes);
+    assert_eq!(offsets.len(), 10);
+    assert_eq!(be_u32(&bytes, 195_310), 10, "declared layer count");
+    let thickness = be_f32(&bytes, 195_332);
+    assert!(
+        (thickness - 0.1).abs() < 1e-6,
+        "header thickness {thickness}"
+    );
+    for (index, at) in offsets.into_iter().enumerate() {
+        let slab_top = 0.1 * (index + 1) as f32;
+        let z = be_f32(&bytes, at + 6);
+        assert!(
+            (z - slab_top).abs() < 1e-5,
+            "layer {index} sits at {z}, expected the slab top {slab_top}",
+        );
+    }
+}
+
+#[test]
 fn a_dot_goo_target_needs_no_explicit_format() {
     let dir = tempdir().unwrap();
     let target = dir.path().join("plate.goo");
@@ -1066,9 +1101,9 @@ fn a_dot_goo_target_needs_no_explicit_format() {
 #[test]
 fn a_material_without_print_calibration_cannot_be_written_as_goo() {
     // The same pairing slices geometry (see
-    // `a_material_without_print_calibration_slices_geometry`): a
-    // printer file additionally needs the exposures, which this
-    // resin carries for no printer.
+    // `a_material_without_print_calibration_slices_geometry`): a printer file
+    // additionally needs the exposures, which this resin carries for no
+    // printer.
     let dir = tempdir().unwrap();
     let target = dir.path().join("plate.goo");
     Command::cargo_bin("sc-slicer-cli")
@@ -1095,8 +1130,8 @@ fn a_material_without_print_calibration_cannot_be_written_as_goo() {
 
 #[test]
 fn an_uncalibrated_resin_reports_what_it_left_to_the_resolver() {
-    // The e2e resin names the 7 values resolution requires and none
-    // of the optional ones, so every optional value is a fallback.
+    // The e2e resin names the 7 values resolution requires and none of the
+    // optional ones, so every optional value is a fallback.
     let dir = tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -1205,8 +1240,8 @@ fn a_revision_without_a_writer_is_refused_by_name() {
         .stderr(predicate::str::contains("goo@v5.1"));
 }
 
-/// The printer declares the plain revision, so naming the encrypted
-/// one is the case the spelling exists for.
+/// Names the encrypted revision for a printer that declares the plain one,
+/// which is the case the spelling exists for.
 #[test]
 fn spelling_the_encrypted_ctb_revision_overrides_the_printer() {
     let dir = tempdir().unwrap();
