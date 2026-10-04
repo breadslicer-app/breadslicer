@@ -4,15 +4,15 @@
  */
 
 //! "Save" / "Save As" support for project files: functions over
-//! `&SceneDocument` plus explicit inputs. The wiring layer drives
-//! the file dialog, then calls in here to produce the file.
+//! `&SceneDocument` plus explicit inputs. The wiring layer drives the file
+//! dialog, then calls in here to produce the file.
 //!
-//! A save always writes a 3MF project: the scene plus the project
-//! payload. The payload holds the scene's own printer / resin /
-//! first-layer choices, with a missing printer or resin filled from
-//! the app-wide default at save time, and the embedded profile
-//! documents the document holds. Referenced profiles without a held
-//! document get embedded copies resolved from the local libraries.
+//! A save always writes a 3MF project: the scene plus the project payload. The
+//! payload holds the scene's own printer / resin / first-layer choices, with a
+//! missing printer or resin filled from the app-wide default at save time, and
+//! the embedded profile documents the document holds. Referenced profiles
+//! without a held document get embedded copies resolved from the local
+//! libraries.
 
 use std::path::{Path, PathBuf};
 
@@ -34,19 +34,17 @@ use crate::slice_projection::resolve_current_schedule;
 /// Classification of a "Save" command against the document state.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SaveDispatch {
-    /// The document is a project with a known location and unsaved
-    /// changes: overwrite it in place, no dialog.
+    /// The document is a project with a known location and unsaved changes:
+    /// overwrite it in place, no dialog.
     OverwriteProject(PathBuf),
-    /// The source is a plain mesh file (or a 3MF without project
-    /// data): route to "Save As" so an STL/OBJ/interop file is never
-    /// silently replaced by a project.
+    /// The source is a plain mesh file (or a 3MF without project data): route
+    /// to "Save As" so an STL/OBJ/interop file is never silently replaced by a
+    /// project.
     NeedsSaveAs,
-    /// The project file already matches the document: nothing to
-    /// write.
+    /// The project file already matches the document: nothing to write.
     AlreadySaved,
-    /// No scene is loaded: nothing to save. The menu item is
-    /// disabled in that case; this catches a stale callback racing
-    /// the close path.
+    /// No scene is loaded: nothing to save. The menu item is disabled in that
+    /// case; this catches a stale callback racing the close path.
     NoScene,
 }
 
@@ -71,12 +69,11 @@ pub(crate) fn decide_save_dispatch(doc: &SceneDocument) -> SaveDispatch {
 pub(crate) enum SaveTargetDispatch {
     /// The user dismissed the dialog.
     Cancelled,
-    /// The picked path names a different format; a project save
-    /// would not produce what the name promises.
+    /// The picked path names a different format; a project save would not
+    /// produce what the name promises.
     WrongExtension(PathBuf),
-    /// The path is ready to write (a missing extension gets `.3mf`
-    /// appended: there is exactly one project format, so the intent
-    /// is unambiguous).
+    /// The path is ready to write (a missing extension gets `.3mf` appended:
+    /// there is exactly one project format, so the intent is unambiguous).
     Ready(PathBuf),
 }
 
@@ -91,11 +88,11 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
     }
 }
 
-/// Build the payload to write when saving `doc` as a project. A
-/// document opened from a project keeps that project's payload;
-/// `default_printer` and `default_resin` are used only when the
-/// document did not come from one. Every referenced profile without
-/// an embedded document then gets one, resolved from `libraries`.
+/// Build the payload to write when saving `doc` as a project. A document opened
+/// from a project keeps that project's payload; `default_printer` and
+/// `default_resin` are used only when the document did not come from one. Every
+/// referenced profile without an embedded document then gets one, resolved from
+/// `libraries`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
     default_printer: Option<PrinterId>,
@@ -107,11 +104,11 @@ pub(crate) fn payload_for_save(
     payload
 }
 
-/// Everything a project write needs, captured as owned, `Send` data so
-/// the write can run off the UI thread. The scene is a cheap clone of
-/// the document's graph (mesh payloads are shared through `Arc`), and
-/// the slices, payload, and target are owned. Built on the UI thread by
-/// [`prepare_save`]; consumed by [`write_bundle`] on a worker thread.
+/// Everything a project write needs, captured as owned, `Send` data so the
+/// write can run off the UI thread. The scene is a cheap clone of the
+/// document's graph (mesh payloads are shared through `Arc`), and the slices,
+/// payload, and target are owned. Built on the UI thread by [`prepare_save`];
+/// consumed by [`write_bundle`] on a worker thread.
 pub(crate) struct SaveBundle {
     scene: Scene,
     payload: ProjectPayload,
@@ -120,11 +117,10 @@ pub(crate) struct SaveBundle {
     target: PathBuf,
 }
 
-/// Snapshots the document's scene and the slices to persist into a
-/// `Send` [`SaveBundle`], on the UI thread. Returns `None` when no scene
-/// is loaded. The scene clone and the slice capture are taken together
-/// under one scene borrow so the persisted slices match the geometry
-/// written.
+/// Snapshots the document's scene and the slices to persist into a `Send`
+/// [`SaveBundle`], on the UI thread. Returns `None` when no scene is loaded.
+/// The scene clone and the slice capture are taken together under one scene
+/// borrow so the persisted slices match the geometry written.
 pub(crate) fn prepare_save(
     doc: &SceneDocument,
     payload: ProjectPayload,
@@ -147,9 +143,8 @@ pub(crate) fn prepare_save(
 }
 
 /// Writes a prepared bundle to its target as a 3MF project, atomically,
-/// reporting each phase through `progress`. Pure with respect to the
-/// document, so it runs on a worker thread; the caller records success
-/// on the UI thread.
+/// reporting each phase through `progress`. Pure with respect to the document,
+/// so it runs on a worker thread; the caller records success on the UI thread.
 pub(crate) fn write_bundle(
     bundle: &SaveBundle,
     mut progress: impl FnMut(SavePhase, u64, u64),
@@ -174,11 +169,11 @@ pub(crate) fn write_bundle(
     Ok(())
 }
 
-/// The held slices to persist with the project, or `None` when the scene
-/// has no in-sync slice result to write. Resolves the current layer
-/// schedule from `payload`'s printer and resin and defers the in-sync
-/// decision to the document's write guard; a missing profile or a
-/// resolution failure persists nothing.
+/// Returns the held slices to persist with the project, or `None` when the
+/// scene has no in-sync slice result to write. Resolves the current layer
+/// schedule from `payload`'s printer and resin and defers the in-sync decision
+/// to the document's write guard; a missing profile or a resolution failure
+/// persists nothing.
 fn persist_slices(
     doc: &SceneDocument,
     payload: &ProjectPayload,
@@ -192,12 +187,11 @@ fn persist_slices(
     doc.slices_for_persist(&schedule)
 }
 
-/// The synchronous form of a full project save against `target`: builds
-/// the payload, snapshots and writes the bundle, and on success updates
-/// the document so the held payload matches the file, "Save" overwrites
-/// `target` from now on, and the dirty marker clears. The GUI drives the
-/// write off the UI thread instead; this direct composition backs the
-/// save round-trip tests.
+/// Runs a full project save against `target` synchronously: builds the payload,
+/// snapshots and writes the bundle, and on success updates the document so the
+/// held payload matches the file, "Save" overwrites `target` from now on, and
+/// the dirty marker clears. The GUI drives the write off the UI thread instead;
+/// this direct composition backs the save round-trip tests.
 #[cfg(test)]
 pub(crate) fn save_project_to(
     doc: &SceneDocument,
@@ -213,10 +207,9 @@ pub(crate) fn save_project_to(
     Ok(())
 }
 
-/// Builds the save payload and snapshots the scene into a `Send`
-/// [`SaveBundle`] for `target`. Returns the bundle, the payload it
-/// carries, and the document state both were taken from; `None` when no
-/// scene is loaded.
+/// Builds the save payload and snapshots the scene into a `Send` [`SaveBundle`]
+/// for `target`. Returns the bundle, the payload it carries, and the document
+/// state both were taken from; `None` when no scene is loaded.
 ///
 /// The stamp is captured here so it cannot drift from the snapshot it
 /// describes: the caller hands it back once the write completes.
@@ -362,19 +355,17 @@ mod scene_save_tests {
 
         #[test]
         fn a_clean_plain_mesh_source_still_routes_to_save_as() {
-            // No project file exists yet, so "Save" on a clean
-            // mesh-sourced scene is still a real action: it creates
-            // the project.
+            // No project file exists yet, so "Save" on a clean mesh-sourced
+            // scene is still a real action: it creates the project.
             let doc = SceneDocument::new();
             doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
             assert!(!doc.is_dirty());
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
         }
 
-        // A printer / resin / first-layer pick makes the document dirty
-        // but does not turn a plain mesh file into a project: "Save"
-        // must still go through the dialog instead of overwriting the
-        // mesh file with a 3MF.
+        // A printer / resin / first-layer pick makes the document dirty but
+        // does not turn a plain mesh file into a project: "Save" must still go
+        // through the dialog instead of overwriting the mesh file with a 3MF.
         #[test]
         fn a_plain_mesh_source_with_a_picked_printer_still_routes_to_save_as() {
             let doc = SceneDocument::new();
@@ -483,10 +474,9 @@ mod scene_save_tests {
             assert!(payload.embedded.is_empty());
         }
 
-        // For each of printer and resin, the panel and the slice run use
-        // the scene's own choice when there is one and the app-wide
-        // default otherwise. The saved payload must hold those same
-        // values.
+        // For each of printer and resin, the panel and the slice run use the
+        // scene's own choice when there is one and the app-wide default
+        // otherwise. The saved payload must hold those same values.
         #[test]
         fn a_partial_selection_is_completed_from_the_globals() {
             let doc = SceneDocument::new();
@@ -728,7 +718,7 @@ mod scene_save_tests {
             // silently dropping them, so a reopened project can show them.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
-            use sc_print_glue::slice_input_fingerprint;
+            use sc_print_glue::{PlateContours, slice_input_fingerprint};
             use sc_print_primitives::AaLevel;
             use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
@@ -740,8 +730,8 @@ mod scene_save_tests {
             let resin = material_id("siraya-tech-craft-high-clear");
 
             let doc = SceneDocument::new();
-            // No project data: `selected_printer` stays `None`,
-            // exactly the state right after a plain mesh load.
+            // No project data: `selected_printer` stays `None`, exactly the
+            // state right after a plain mesh load.
             doc.install_graph(one_object_graph(), source);
             let scene = doc
                 .with_scene(|s| s.graph().clone())
@@ -756,8 +746,8 @@ mod scene_save_tests {
                 .map(|_| ContourLayer::new(0.05, vec![]))
                 .collect();
             doc.set_slice_result(SliceResult {
-                merged: ContourStack::new_unchecked(layers),
-                schedule,
+                contours: PlateContours::new(ContourStack::new_unchecked(layers), schedule)
+                    .expect("1 layer for each scheduled layer"),
                 token,
                 params: SliceParams {
                     printer: printer.clone(),
@@ -783,11 +773,11 @@ mod scene_save_tests {
         #[test]
         fn slices_persist_when_only_the_printer_was_picked() {
             // The pick leaves the resin to the app default, which is what
-            // slicing ran on; the saved project must name both and keep
-            // the slices.
+            // slicing ran on; the saved project must name both and keep the
+            // slices.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
-            use sc_print_glue::slice_input_fingerprint;
+            use sc_print_glue::{PlateContours, slice_input_fingerprint};
             use sc_print_primitives::AaLevel;
             use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
@@ -814,8 +804,8 @@ mod scene_save_tests {
                 .map(|_| ContourLayer::new(0.05, vec![]))
                 .collect();
             doc.set_slice_result(SliceResult {
-                merged: ContourStack::new_unchecked(layers),
-                schedule,
+                contours: PlateContours::new(ContourStack::new_unchecked(layers), schedule)
+                    .expect("1 layer for each scheduled layer"),
                 token,
                 params: SliceParams {
                     printer: printer.clone(),

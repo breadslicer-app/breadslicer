@@ -79,7 +79,7 @@ pub struct SlicedPlate {
 }
 
 impl SlicedPlate {
-    /// The per-leaf stacks, in the engine's discovery order.
+    /// Return the per-leaf stacks, in the engine's discovery order.
     pub fn leaves(&self) -> &[LeafSlices] {
         &self.leaves
     }
@@ -89,7 +89,7 @@ impl SlicedPlate {
         self.profile.layer_schedule()
     }
 
-    /// The engine input the run was sliced with.
+    /// Return the engine input the run was sliced with.
     pub fn profile(&self) -> &SliceProfile {
         &self.profile
     }
@@ -113,7 +113,7 @@ impl SlicedPlate {
 }
 
 /// The whole plate's contour stack and the layer schedule it was cut on.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PlateContours {
     stack: ContourStack,
     schedule: LayerSchedule,
@@ -144,11 +144,6 @@ impl PlateContours {
     /// Return the layer schedule the stack was cut on.
     pub fn schedule(&self) -> &LayerSchedule {
         &self.schedule
-    }
-
-    /// Split the pair into the stack and its schedule.
-    pub fn into_parts(self) -> (ContourStack, LayerSchedule) {
-        (self.stack, self.schedule)
     }
 }
 

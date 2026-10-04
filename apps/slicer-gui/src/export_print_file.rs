@@ -3,20 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-window driver for the Slice panel's "Export for printer"
-//! action.
+//! Per-window driver for the Slice panel's "Export for printer" action.
 //!
-//! The file is written from the held slice, never from what the panel
-//! currently shows: the contours are the one input that cannot be
-//! re-derived, so the printer, resin and per-print height they were
-//! cut under are the ones the machine program is built from. Those
-//! profiles live on disk and may have been edited since, so the
-//! schedule is re-derived and compared against the held one before a
-//! file whose header declares a layer count is written.
+//! The machine program is built from the printer, resin and per-print height
+//! the held contours were cut under, because the contours cannot be re-derived.
+//! Those profiles live on disk and may have been edited since, so the schedule
+//! is re-derived and compared against the held one before a file whose header
+//! declares a layer count is written.
 //!
 //! Preparation and that comparison run on the UI thread; the per-layer
-//! rasterisation runs on a worker while the export-progress panel is
-//! up.
+//! rasterisation runs on a worker while the export-progress panel is up.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -24,13 +20,12 @@ use std::rc::Rc;
 
 use futures_channel::oneshot;
 use sc_print_glue::{
-    UnprojectablePrint, creation_time_now, fallback_report_lines, project_to_print_program,
-    slice_profile_for_selection,
+    PlateContours, UnprojectablePrint, creation_time_now, fallback_report_lines,
+    project_to_print_program, slice_profile_for_selection,
 };
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, ResolveError, SceneOverrides, resolve};
 use sc_scene::Scene;
 use sc_sl1cer::VERSION;
-use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::PackingMode;
 use sc_sla_formats::{
     PrintPreviews, PrintProgram, PrinterFileFormat, WriterError, write_printer_file,
@@ -54,15 +49,15 @@ use crate::viewport::ViewportController;
 pub(crate) enum ExportFailure {
     /// The current scene has not been sliced.
     NoSlice,
-    /// The held slice no longer describes what the scene and the
-    /// profiles on disk would now produce.
+    /// The held slice no longer describes what the scene and the profiles on
+    /// disk would now produce.
     Stale,
-    /// The profiles the slice ran under could not be loaded, or no
-    /// longer schedule the scene.
+    /// The profiles the slice ran under could not be loaded, or no longer
+    /// schedule the scene.
     Prepare(SliceFailure),
-    /// The full print configuration does not resolve. Slicing needs
-    /// the layer height alone; a printer file also needs the
-    /// exposures, the waits and the motion.
+    /// The full print configuration does not resolve. Slicing needs the layer
+    /// height alone; a printer file also needs the exposures, the waits and the
+    /// motion.
     Resolve(ResolveError),
     /// A scheduled layer sits at a height the program cannot record.
     Program(UnprojectablePrint),
@@ -92,24 +87,24 @@ impl fmt::Display for ExportFailure {
     }
 }
 
-/// A prepared export: the plate to rasterise, the program the machine
-/// runs it under, the file both are written as, and the report of the
-/// values in that program nobody calibrated.
+/// A prepared export: the plate to rasterise, the program the machine runs it
+/// under, the file both are written as, and the report of the values in that
+/// program nobody calibrated.
 #[derive(Debug)]
 struct ExportJob {
-    stack: ContourStack,
+    contours: PlateContours,
     program: PrintProgram,
     format: PrinterFileFormat,
     fallback_report: Vec<String>,
 }
 
-/// Whether the export action can run: a writable format is selected
-/// and the held slice still matches the inputs the panel shows.
+/// Report whether the export action can run: a writable format is selected and
+/// the held slice still matches the inputs the panel shows.
 ///
-/// `current` is absent while no printer or resin is chosen. The
-/// comparison is the one a Slice press makes, so anything that would
-/// re-slice also blocks the export: the contours on hand would
-/// otherwise be written under a program describing a different print.
+/// `current` is absent while no printer or resin is chosen. The comparison is
+/// the one a Slice press makes, so anything that would re-slice also blocks the
+/// export: the contours on hand would otherwise be written under a program
+/// describing a different print.
 pub(crate) fn export_button_enabled(
     held: Option<&SliceParams>,
     current: Option<&SliceParams>,
@@ -122,8 +117,8 @@ pub(crate) fn export_button_enabled(
         })
 }
 
-/// Build the export from the held slice and the profiles it was cut
-/// under, reading those profiles from the installed libraries.
+/// Build the export from the held slice and the profiles it was cut under,
+/// reading those profiles from the installed libraries.
 fn prepare_export(
     document: &SceneDocument,
     format: PrinterFileFormat,
@@ -140,14 +135,13 @@ fn prepare_export(
     export_job(held, &scene, &printer, &material, format)
 }
 
-/// Fuse a held slice with the profiles it was cut under into the job
-/// the writers run.
+/// Fuse a held slice with the profiles it was cut under into the job the
+/// writers run.
 ///
-/// The schedule is re-derived from `scene` and the profiles rather
-/// than taken from the slice, and the two must agree: the program's
-/// records pair with the contours by position, so a profile edited
-/// since the slice ran would otherwise describe a print these layers
-/// are not.
+/// The schedule is re-derived from `scene` and the profiles rather than taken
+/// from the slice, and the two must agree: the program's records pair with the
+/// contours by position, so a profile edited since the slice ran would
+/// otherwise describe a print these layers are not.
 fn export_job(
     held: SliceResult,
     scene: &Scene,
@@ -167,21 +161,21 @@ fn export_job(
         PackingMode::None,
     )
     .map_err(|err| ExportFailure::Prepare(SliceFailure::from(err)))?;
-    if profile.layer_schedule() != &held.schedule {
+    if profile.layer_schedule() != held.contours.schedule() {
         return Err(ExportFailure::Stale);
     }
     let program = project_to_print_program(scene, &config, &profile, creation_time_now(), VERSION)
         .map_err(ExportFailure::Program)?;
     Ok(ExportJob {
-        stack: held.merged,
+        contours: held.contours,
         program,
         format,
         fallback_report: fallback_report_lines(&config),
     })
 }
 
-/// Wires the panel's export action. The callback holds the panel
-/// bridge, which is where the selected printer file is known.
+/// Wires the panel's export action. The callback holds the panel bridge, which
+/// is where the selected printer file is known.
 pub(crate) fn wire_export_print_file(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
@@ -212,12 +206,12 @@ pub(crate) fn wire_export_print_file(
     });
 }
 
-/// Runs one export: prepare and check, ask for the target, draw what
-/// the machine will show for the file, then write on a worker thread.
-/// Every refusal and failure surfaces its own dialog.
+/// Runs one export: prepare and check, ask for the target, draw what the
+/// machine will show for the file, then write on a worker thread. Every refusal
+/// and failure surfaces its own dialog.
 ///
-/// `previews_for` runs once the target is settled, so a cancelled
-/// export draws nothing.
+/// `previews_for` runs once the target is settled, so a cancelled export draws
+/// nothing.
 async fn run_export_flow(
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
@@ -226,8 +220,8 @@ async fn run_export_flow(
     default_stem: Option<String>,
     previews_for: impl FnOnce(PrinterFileFormat) -> Option<PrintPreviews>,
 ) {
-    // Before the dialog: asking for a filename and refusing afterwards
-    // is the ordering to avoid.
+    // Before the dialog: asking for a filename and refusing afterwards is the
+    // ordering to avoid.
     let job = match prepare_export(&document, format) {
         Ok(job) => job,
         Err(err) => {
@@ -235,8 +229,8 @@ async fn run_export_flow(
             return;
         }
     };
-    // Also before the dialog: cancelling it is the last point at which
-    // the user can act on what the warning says.
+    // Also before the dialog: cancelling it is the last point at which the user
+    // can act on what the warning says.
     for line in &job.fallback_report {
         eprintln!("{line}");
     }
@@ -251,11 +245,11 @@ async fn run_export_flow(
     let worker_target = target.clone();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // The writer reports no progress of its own, so the panel
-            // names the phase and nothing finer.
+            // The writer reports no progress of its own, so the panel names the
+            // phase and nothing finer.
             sink.set(ExportPhase::Write, 0, 1);
             let written = write_printer_file(
-                &job.stack,
+                job.contours.stack(),
                 &worker_target,
                 job.format,
                 &job.program,
@@ -277,8 +271,8 @@ async fn run_export_flow(
     match outcome {
         Ok(Ok(())) => {}
         Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), &err),
-        // The sender dropped without sending (event loop gone at
-        // shutdown): there is nothing left to report to.
+        // The sender dropped without sending (event loop gone at shutdown):
+        // there is nothing left to report to.
         Err(_canceled) => {}
     }
 }
@@ -445,9 +439,9 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
-    /// The same resin with its calibration for this printer removed,
-    /// which is what every shipped resin looks like on a machine it
-    /// was never measured on.
+    /// The same resin with its calibration for this printer removed, which is
+    /// what every shipped resin looks like on a machine it was never measured
+    /// on.
     const UNCALIBRATED_MATERIAL_TOML: &str = r#"
 [identity]
 id = "sirayatech-blu"
@@ -471,7 +465,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         (printer, EffectiveMaterial::from(material))
     }
 
-    /// One cube leaf as the scene's own root, spanning z = -0.5 to
+    /// Builds a scene with 1 cube leaf as its own root, spanning z = -0.5 to
     /// 0.5, so half of it stands above the plate.
     fn cube_scene() -> Scene {
         let mut scene = Scene::new();
@@ -486,8 +480,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         scene
     }
 
-    /// The schedule this scene and these profiles derive, which is
-    /// what a slice of them would have run under.
+    /// Returns the schedule this scene and these profiles derive, which is what
+    /// a slice of them would have run under.
     fn derived_schedule(
         scene: &Scene,
         printer: &PrinterProfile,
@@ -511,8 +505,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
             .map(|_| ContourLayer::new(0.05, vec![]))
             .collect();
         SliceResult {
-            merged: ContourStack::new_unchecked(layers),
-            schedule,
+            contours: PlateContours::new(ContourStack::new_unchecked(layers), schedule)
+                .expect("1 layer for each scheduled layer"),
             token: String::new(),
             params: SliceParams {
                 printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
@@ -532,7 +526,10 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
         let job = export_job(held, &scene, &printer, &material, GOO).expect("the export prepares");
 
-        assert_eq!(job.program.layers.len(), job.stack.layers().len());
+        assert_eq!(
+            job.program.layers.len(),
+            job.contours.stack().layers().len()
+        );
         assert_eq!(job.format, GOO);
     }
 
@@ -550,8 +547,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
     #[test]
     fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
-        // The fixture resin names what resolution requires and none of
-        // the optional values, so the whole optional set falls back.
+        // The fixture resin names what resolution requires and none of the
+        // optional values, so the whole optional set falls back.
         let (printer, material) = profiles(MATERIAL_TOML);
         let scene = cube_scene();
         let held = held_slice(derived_schedule(&scene, &printer, &material));
@@ -567,8 +564,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
     #[test]
     fn a_slice_whose_schedule_no_longer_matches_is_refused() {
-        // A layer height the profiles no longer produce stands in for
-        // a profile edited between the slice and the export.
+        // A layer height the profiles no longer produce stands in for a profile
+        // edited between the slice and the export.
         let (printer, material) = profiles(MATERIAL_TOML);
         let scene = cube_scene();
         let stale = LayerSchedule::uniform(0.1, 0.1, 5).expect("a positive, non-empty schedule");
@@ -581,8 +578,8 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
     #[test]
     fn a_resin_without_print_calibration_cannot_be_written() {
-        // The same pairing slices geometry: a printer file also needs
-        // the exposures, which this resin carries for no printer.
+        // The same pairing slices geometry: a printer file also needs the
+        // exposures, which this resin carries for no printer.
         let (printer, material) = profiles(UNCALIBRATED_MATERIAL_TOML);
         let scene = cube_scene();
         let held = held_slice(derived_schedule(&scene, &printer, &material));
@@ -632,8 +629,11 @@ mod prepare_export_tests {
 
     fn hold_a_slice(document: &SceneDocument) {
         document.set_slice_result(SliceResult {
-            merged: ContourStack::new_unchecked(vec![ContourLayer::new(0.05, vec![])]),
-            schedule: LayerSchedule::uniform(0.05, 0.05, 1).expect("a one-layer schedule"),
+            contours: PlateContours::new(
+                ContourStack::new_unchecked(vec![ContourLayer::new(0.05, vec![])]),
+                LayerSchedule::uniform(0.05, 0.05, 1).expect("a one-layer schedule"),
+            )
+            .expect("1 layer for a 1-layer schedule"),
             token: String::new(),
             params: SliceParams {
                 printer: PrinterId::new("elegoo-mars-5").expect("valid id"),

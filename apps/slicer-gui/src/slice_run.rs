@@ -24,11 +24,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_print_glue::{SlicingParams, slice_input_fingerprint, slice_plate};
+use sc_print_glue::{PlateContours, SlicingParams, slice_input_fingerprint, slice_plate};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_scene::Scene;
-use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::profile::LayerSchedule;
 use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
 
@@ -59,8 +57,7 @@ struct SliceProgressCell {
 /// A completed slice, already merged and fingerprinted on the worker thread so
 /// the event loop never does that work.
 struct CompletedSlice {
-    merged: ContourStack,
-    schedule: LayerSchedule,
+    contours: PlateContours,
     token: String,
 }
 
@@ -360,10 +357,9 @@ impl SliceRun {
         match result {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
-                    let layer_count = completed.schedule.total_layers();
+                    let layer_count = completed.contours.schedule().total_layers();
                     self.document.set_slice_result(SliceResult {
-                        merged: completed.merged,
-                        schedule: completed.schedule,
+                        contours: completed.contours,
                         token: completed.token,
                         params,
                     });
@@ -420,30 +416,19 @@ fn run_slice(
     match run {
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
-            let (merged, schedule) = plate
-                .merge()
-                .map_err(|_| SliceFailure::SliceMerge)?
-                .into_parts();
-            capture(scene, schedule, merged).map(SliceRunOutcome::Completed)
+            let contours = plate.merge().map_err(|_| SliceFailure::SliceMerge)?;
+            capture(scene, contours).map(SliceRunOutcome::Completed)
         }
     }
 }
 
 /// Fingerprint the slice inputs off the event loop and wrap the merged plate
-/// stack for the UI hand-off.
-fn capture(
-    scene: &Scene,
-    schedule: LayerSchedule,
-    merged: ContourStack,
-) -> Result<CompletedSlice, SliceFailure> {
-    let token = slice_input_fingerprint(scene, &schedule)
+/// contours for the UI hand-off.
+fn capture(scene: &Scene, contours: PlateContours) -> Result<CompletedSlice, SliceFailure> {
+    let token = slice_input_fingerprint(scene, contours.schedule())
         .map_err(SliceFailure::Fingerprint)?
         .to_token();
-    Ok(CompletedSlice {
-        merged,
-        schedule,
-        token,
-    })
+    Ok(CompletedSlice { contours, token })
 }
 
 #[cfg(test)]
@@ -455,8 +440,9 @@ mod capture_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::unit_cube_mesh;
     use sc_scene::node::LeafPayload;
-    use sc_sl1cer::contour::{ClosedRing, ContourLayer, Polygon};
+    use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
     use sc_sl1cer::geom2d::Point2D;
+    use sc_sl1cer::profile::LayerSchedule;
 
     fn cube_scene() -> Scene {
         let mut scene = Scene::new();
@@ -475,8 +461,8 @@ mod capture_tests {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
     }
 
-    /// A CCW triangle as one solid layer plus an empty layer, standing in for a
-    /// merged plate stack.
+    /// Build a CCW triangle as 1 solid layer plus an empty layer, standing in
+    /// for a merged plate stack.
     fn triangle_stack() -> ContourStack {
         let outer = ClosedRing::new(
             [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
@@ -490,16 +476,20 @@ mod capture_tests {
         ContourStack::new(vec![solid, void]).expect("z is strictly increasing")
     }
 
+    fn contours() -> PlateContours {
+        PlateContours::new(triangle_stack(), schedule())
+            .expect("2 layers pair with a 2-layer schedule")
+    }
+
     #[test]
     fn capture_carries_the_stack_and_fingerprints_the_scene() {
         let scene = cube_scene();
-        let sched = schedule();
-        let completed = capture(&scene, sched, triangle_stack()).expect("capture");
-        assert_eq!(completed.merged.layers().len(), 2);
-        assert_eq!(completed.schedule, sched);
+        let completed = capture(&scene, contours()).expect("capture");
+        assert_eq!(completed.contours.stack().layers().len(), 2);
+        assert_eq!(completed.contours.schedule(), &schedule());
         assert_eq!(
             completed.token,
-            slice_input_fingerprint(&scene, &sched)
+            slice_input_fingerprint(&scene, &schedule())
                 .expect("the cube fingerprints")
                 .to_token(),
         );
@@ -508,8 +498,8 @@ mod capture_tests {
     #[test]
     fn capture_is_deterministic() {
         let scene = cube_scene();
-        let first = capture(&scene, schedule(), triangle_stack()).expect("first capture");
-        let second = capture(&scene, schedule(), triangle_stack()).expect("second capture");
+        let first = capture(&scene, contours()).expect("first capture");
+        let second = capture(&scene, contours()).expect("second capture");
         assert_eq!(first.token, second.token);
     }
 
@@ -517,7 +507,7 @@ mod capture_tests {
     fn capture_fails_when_the_scene_has_no_geometry() {
         // An empty scene has no sliceable leaf, so the fingerprint, and thus
         // the capture, cannot be computed.
-        let result = capture(&Scene::new(), schedule(), triangle_stack());
+        let result = capture(&Scene::new(), contours());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
     }
 }

@@ -3,16 +3,17 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! [`SceneDocument`] side of the slice result: holding the produced
-//! slice, capturing a scene revision, and the geometry-change
-//! comparison the re-slice decision relies on (including the
-//! empty-stack eviction guard, mirrored from the save-point tracking).
+//! [`SceneDocument`] side of the slice result: holding the produced slice,
+//! capturing a scene revision, and the geometry-change comparison the re-slice
+//! decision relies on (including the empty-stack eviction guard, mirrored from
+//! the save-point tracking).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_print_glue::PlateContours;
 use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
 use sc_scene::{LeafPayload, NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -29,8 +30,8 @@ fn translation(dx: f64) -> Transform3D {
     Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
 }
 
-/// One inline-mesh leaf under an identity-Group root, matching what the
-/// loader produces.
+/// Builds a graph of 1 inline-mesh leaf under an identity-Group root, matching
+/// what the loader produces.
 fn graph_with_one_object() -> Scene {
     let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
@@ -56,8 +57,8 @@ fn loaded_document() -> (std::rc::Rc<SceneDocument>, NodeId) {
     (doc, node_id)
 }
 
-/// Applies and commits the `dx - 1.0 -> dx` translation step, the
-/// well-formed chain shape undo expects.
+/// Applies and commits the `dx - 1.0 -> dx` translation step, the well-formed
+/// chain shape undo expects.
 fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
     let edit = SceneEdit::SetLocalTransform {
         node_id,
@@ -76,11 +77,18 @@ fn sample_schedule() -> LayerSchedule {
     LayerSchedule::uniform(0.05, 0.05, 1).expect("a positive, non-empty schedule")
 }
 
+fn contours_on(schedule: LayerSchedule) -> PlateContours {
+    let layers = schedule
+        .iter_z()
+        .map(|z| ContourLayer::new(z, vec![]))
+        .collect();
+    let stack = ContourStack::new(layers).expect("z is strictly increasing");
+    PlateContours::new(stack, schedule).expect("1 layer for each scheduled layer")
+}
+
 fn sample_result(geometry: SceneRevision) -> SliceResult {
     SliceResult {
-        merged: ContourStack::new(vec![ContourLayer::new(0.05, vec![])])
-            .expect("a one-layer stack is valid"),
-        schedule: sample_schedule(),
+        contours: contours_on(sample_schedule()),
         token: "sample-token".to_string(),
         params: SliceParams {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
@@ -118,9 +126,9 @@ fn a_committed_edit_moves_the_scene_revision() {
 
 #[test]
 fn replacing_the_scene_reads_changed_even_at_an_empty_undo_stack() {
-    // Both scenes sit at an empty stack, so only the scene half of the
-    // revision separates them. A marker taken against the outgoing
-    // scene describes geometry the document no longer holds.
+    // Both scenes sit at an empty stack, so only the scene half of the revision
+    // separates them. A marker taken against the outgoing scene describes
+    // geometry the document no longer holds.
     let (doc, _) = loaded_document();
     let rev = doc.scene_revision();
     doc.install_graph(graph_with_one_object(), fixture_path());
@@ -157,9 +165,9 @@ fn a_committed_edit_reads_changed_against_the_slice_point() {
 
 #[test]
 fn undo_back_to_the_slice_point_reads_unchanged_again() {
-    // A change followed by an undo back to the sliced state restores
-    // the exact top edit id, so the comparison is precise here (no
-    // over-report), matching the save-point tracking.
+    // A change followed by an undo back to the sliced state restores the exact
+    // top edit id, so the comparison is precise here (no over-report), matching
+    // the save-point tracking.
     let (doc, node_id) = loaded_document();
     commit_step(&doc, node_id, 1.0);
     let rev = doc.scene_revision();
@@ -174,9 +182,9 @@ fn undo_back_to_the_slice_point_reads_unchanged_again() {
 
 #[test]
 fn an_empty_stack_slice_point_without_eviction_reads_unchanged_after_full_undo() {
-    // Sliced with an empty undo stack, then a change-and-undo cycle
-    // that evicts nothing: the drained stack proves the geometry is
-    // back at the sliced state.
+    // Sliced with an empty undo stack, then a change-and-undo cycle that evicts
+    // nothing: the drained stack proves the geometry is back at the sliced
+    // state.
     let (doc, node_id) = loaded_document();
     let rev = doc.scene_revision();
     doc.set_slice_result(sample_result(rev));
@@ -188,11 +196,11 @@ fn an_empty_stack_slice_point_without_eviction_reads_unchanged_after_full_undo()
 
 #[test]
 fn eviction_after_an_empty_stack_slice_point_reads_changed() {
-    // Sliced with an empty undo stack (revision None). Committing one
-    // entry past the cap evicts the oldest applied edit; undoing
-    // everything then drains the stack back to empty without restoring
-    // the sliced geometry. Top (None) equals the slice point (None), so
-    // only the eviction guard prevents a false "unchanged".
+    // Sliced with an empty undo stack (revision None). Committing one entry
+    // past the cap evicts the oldest applied edit; undoing everything then
+    // drains the stack back to empty without restoring the sliced geometry. Top
+    // (None) equals the slice point (None), so only the eviction guard prevents
+    // a false "unchanged".
     let (doc, node_id) = loaded_document();
     let rev = doc.scene_revision();
     doc.set_slice_result(sample_result(rev));
@@ -233,7 +241,9 @@ fn slice_layer_count_reports_the_held_schedule_layer_count() {
     let (doc, _) = loaded_document();
     let rev = doc.scene_revision();
     let result = SliceResult {
-        schedule: LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule"),
+        contours: contours_on(
+            LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule"),
+        ),
         ..sample_result(rev)
     };
     doc.set_slice_result(result);
@@ -261,7 +271,7 @@ fn slice_layer_top_z_returns_the_layer_top() {
     let schedule = LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule");
     let expected: Vec<f64> = schedule.iter_slab_tops().collect();
     doc.set_slice_result(SliceResult {
-        schedule,
+        contours: contours_on(schedule),
         ..sample_result(rev)
     });
     assert_eq!(doc.slice_layer_top_z(0), Some(expected[0]));
@@ -274,7 +284,7 @@ fn slice_layer_top_z_is_none_past_the_last_layer() {
     let rev = doc.scene_revision();
     let schedule = LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule");
     doc.set_slice_result(SliceResult {
-        schedule,
+        contours: contours_on(schedule),
         ..sample_result(rev)
     });
     assert!(doc.slice_layer_top_z(3).is_none());
@@ -315,8 +325,8 @@ fn slices_for_persist_is_none_when_the_schedule_differs_by_value() {
     let (doc, _) = loaded_document();
     let rev = doc.scene_revision();
     doc.set_slice_result(sample_result(rev));
-    // Same shape, a different layer height: a by-value schedule change,
-    // under whatever profile identity, must withhold the slices.
+    // Same shape, a different layer height: a by-value schedule change, under
+    // whatever profile identity, must withhold the slices.
     let thicker = LayerSchedule::uniform(0.10, 0.05, 1).expect("a positive, non-empty schedule");
     assert!(doc.slices_for_persist(&thicker).is_none());
 }

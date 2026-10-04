@@ -5,23 +5,23 @@
 
 //! The held slice result and the re-slice decision.
 //!
-//! A completed slice is kept on the [`SceneDocument`](crate::scene_document::SceneDocument)
-//! as a [`SliceResult`]: the produced contours plus the [`SliceParams`]
-//! the run used. When the Slice button is pressed again, the current
-//! inputs are compared against the held ones through [`decide_re_slice`]
-//! to decide whether the previous result is still current (nothing to
-//! do), stale (confirm before overwriting), or absent (a first slice).
+//! A completed slice is kept on the
+//! [`SceneDocument`](crate::scene_document::SceneDocument) as a
+//! [`SliceResult`]: the produced contours plus the [`SliceParams`] the run
+//! used. When the Slice button is pressed again, the current inputs are
+//! compared against the held ones through [`decide_re_slice`] to decide whether
+//! the previous result is still current (nothing to do), stale (confirm before
+//! overwriting), or absent (a first slice).
 
+use sc_print_glue::PlateContours;
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
-use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::SceneRevision;
 
-/// The effective inputs a slice ran with: the resolved printer and
-/// resin, the per-print first-layer height (absent means the material's
-/// resolved layer height), the anti-aliasing level, and an opaque
-/// marker of the scene geometry at slice time.
+/// The effective inputs a slice ran with: the resolved printer and resin, the
+/// per-print first-layer height (absent means the material's resolved layer
+/// height), the anti-aliasing level, and an opaque marker of the scene geometry
+/// at slice time.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SliceParams {
     pub printer: PrinterId,
@@ -31,21 +31,17 @@ pub(crate) struct SliceParams {
     pub geometry: SceneRevision,
 }
 
-/// A completed slice held for the session: the merged plate contours,
-/// the schedule and validity token captured off the event loop for
+/// A completed slice held for the session: the merged plate contours with their
+/// schedule and the validity token, captured off the event loop for
 /// persistence, plus the parameters the run used.
 #[derive(Clone, Debug)]
 pub(crate) struct SliceResult {
-    /// The whole plate's merged, world-coordinate contours. Held for
-    /// slice persistence and the layer view, which read them back.
-    #[allow(dead_code)]
-    pub merged: ContourStack,
-    /// The layer schedule the slice ran under: its z-grid, and the
-    /// by-value key the write guard compares against on save.
-    #[allow(dead_code)]
-    pub schedule: LayerSchedule,
-    /// The slice-input fingerprint token, captured off the event loop
-    /// and persisted so a later load can revalidate the slices.
+    /// The whole plate's merged, world-coordinate contours, paired with the
+    /// layer schedule they were cut on. Slice persistence and the layer view
+    /// read them back; the write guard compares the schedule by value on save.
+    pub contours: PlateContours,
+    /// The slice-input fingerprint token, captured off the event loop and
+    /// persisted so a later load can revalidate the slices.
     #[allow(dead_code)]
     pub token: String,
     pub params: SliceParams,
@@ -62,9 +58,9 @@ pub(crate) enum ReSliceDecision {
     Changed,
 }
 
-/// Decide what a Slice press should do. The scalar inputs are compared
-/// here; `geometry_changed` carries the scene-geometry comparison, which
-/// the document answers from its edit history (see
+/// Decide what a Slice press should do. The scalar inputs are compared here;
+/// `geometry_changed` carries the scene-geometry comparison, which the document
+/// answers from its edit history (see
 /// [`SceneDocument::slice_geometry_changed`](crate::scene_document::SceneDocument::slice_geometry_changed)).
 /// It is only consulted when a result is held.
 pub(crate) fn decide_re_slice(

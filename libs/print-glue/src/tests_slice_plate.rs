@@ -102,8 +102,8 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
 
-/// 0.25 mm layers; the cube (top at z = 0.5) covers in 2, the prisms (top at z
-/// = 2) in 8.
+/// Request 0.25 mm layers: the cube (top at z = 0.5) takes 2 layers, the prisms
+/// (top at z = 2) take 8.
 fn params() -> SlicingParams {
     SlicingParams {
         layer_height_request: Some(mm(0.25)),
@@ -365,9 +365,8 @@ fn a_stack_pairs_with_a_schedule_of_its_own_layer_count() {
         three_layer_schedule(),
     )
     .expect("3 layers pair with a 3-layer schedule");
-    let (stack, schedule) = contours.into_parts();
-    assert_eq!(stack.layers().len(), 3);
-    assert_eq!(schedule, three_layer_schedule());
+    assert_eq!(contours.stack().layers().len(), 3);
+    assert_eq!(contours.schedule(), &three_layer_schedule());
 }
 
 #[test]

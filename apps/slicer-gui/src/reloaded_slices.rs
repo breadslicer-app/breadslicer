@@ -5,20 +5,19 @@
 
 //! Revalidation of a reopened project's persisted slices.
 //!
-//! A saved project carries its merged slice geometry plus a validity
-//! token fingerprinting the scene geometry and the resolved layer
-//! schedule. On load the slices are trusted only when that token still
-//! matches: the profiles are re-resolved from the installed library and
-//! the fingerprint recomputed against the reopened scene, so a profile
-//! or geometry change since the save discards the stale slices and the
-//! scene opens slice-less. Both steps (disk profile resolution and the
-//! geometry hash) run on the load worker, off the event loop.
+//! A saved project carries its merged slice geometry plus a validity token
+//! fingerprinting the scene geometry and the resolved layer schedule. On load
+//! the slices are trusted only when that token still matches: the profiles are
+//! re-resolved from the installed library and the fingerprint recomputed
+//! against the reopened scene, so a profile or geometry change since the save
+//! discards the stale slices and the scene opens slice-less. Both steps (disk
+//! profile resolution and the geometry hash) run on the load worker, off the
+//! event loop.
 //!
 //! The revalidated slices ride to the UI thread and become the held
-//! [`SliceResult`] at install time, when the scene-geometry marker is
-//! known.
+//! [`SliceResult`] at install time, when the scene-geometry marker is known.
 
-use sc_print_glue::{PersistedSliceValidity, validate_persisted_slices};
+use sc_print_glue::{PersistedSliceValidity, PlateContours, validate_persisted_slices};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::ProjectPayload;
 use sc_scene::Scene;
@@ -29,13 +28,12 @@ use crate::scene_document::SceneRevision;
 use crate::slice_projection::resolve_current_schedule;
 use crate::slice_result::{SliceParams, SliceResult};
 
-/// A project's persisted slices that passed revalidation on load: the
-/// reloaded contour stack plus the schedule and the inputs they were
-/// validated against. Built on the worker and turned into a held
-/// [`SliceResult`] at install time.
+/// A project's persisted slices that passed revalidation on load: the reloaded
+/// contour stack paired with its schedule, plus the inputs they were validated
+/// against. Built on the worker and turned into a held [`SliceResult`] at
+/// install time.
 pub(crate) struct ReloadedSlices {
-    contours: ContourStack,
-    schedule: LayerSchedule,
+    contours: PlateContours,
     token: String,
     printer: PrinterId,
     resin: MaterialId,
@@ -43,15 +41,13 @@ pub(crate) struct ReloadedSlices {
 }
 
 impl ReloadedSlices {
-    /// Build the held slice result, stamping the scene-geometry marker
-    /// captured after the fresh install, so the reloaded slice reads as
-    /// in sync and re-persists without a re-slice. The anti-aliasing
-    /// level is not persisted and does not feed the token, so it
-    /// defaults to `Off`.
+    /// Build the held slice result, stamping the scene-geometry marker captured
+    /// after the fresh install, so the reloaded slice reads as in sync and
+    /// re-persists without a re-slice. The anti-aliasing level is not persisted
+    /// and does not feed the token, so it defaults to `Off`.
     pub(crate) fn into_slice_result(self, geometry: SceneRevision) -> SliceResult {
         SliceResult {
-            merged: self.contours,
-            schedule: self.schedule,
+            contours: self.contours,
             token: self.token,
             params: SliceParams {
                 printer: self.printer,
@@ -65,19 +61,19 @@ impl ReloadedSlices {
 }
 
 /// Revalidate a project's persisted slices against the reopened scene,
-/// returning them only when they are still in sync. Resolves the layer
-/// schedule from the installed profiles the same way the save path does,
-/// then recomputes the geometry fingerprint and compares it to the
-/// stored token. Any missing input (no slices, no token, no printer or
-/// resin, or a schedule that no longer resolves) or a token mismatch
-/// yields `None`, and the scene loads slice-less.
+/// returning them only when they are still in sync. Resolves the layer schedule
+/// from the installed profiles the same way the save path does, then recomputes
+/// the geometry fingerprint and compares it to the stored token. Any missing
+/// input (no slices, no token, no printer or resin, or a schedule that no
+/// longer resolves), a stack whose layer count differs from the schedule's, or
+/// a token mismatch yields `None`, and the scene loads slice-less.
 pub(crate) fn revalidate_persisted_slices(
     payload: Option<&ProjectPayload>,
     scene: &Scene,
     slices: Option<ContourStack>,
     fingerprint: Option<String>,
 ) -> Option<ReloadedSlices> {
-    let contours = slices?;
+    let stack = slices?;
     let token = fingerprint?;
     let payload = payload?;
     let printer = payload.printer.clone()?;
@@ -85,12 +81,12 @@ pub(crate) fn revalidate_persisted_slices(
     let first_layer_height = payload.first_layer_height;
 
     let schedule = resolve_current_schedule(&printer, &resin, first_layer_height, scene).ok()?;
-    if !slices_in_sync(&token, scene, &schedule) {
+    let contours = PlateContours::new(stack, schedule).ok()?;
+    if !slices_in_sync(&token, scene, contours.schedule()) {
         return None;
     }
     Some(ReloadedSlices {
         contours,
-        schedule,
         token,
         printer,
         resin,
@@ -98,7 +94,7 @@ pub(crate) fn revalidate_persisted_slices(
     })
 }
 
-/// Whether the stored token still matches the fingerprint of the scene
+/// Report whether the stored token still matches the fingerprint of the scene
 /// under the resolved schedule.
 fn slices_in_sync(token: &str, scene: &Scene, schedule: &LayerSchedule) -> bool {
     matches!(
@@ -124,6 +120,7 @@ mod reloaded_slices_tests {
         write_project,
     };
     use sc_scene::node::LeafPayload;
+    use sc_sl1cer::contour::ContourLayer;
 
     fn cube_mesh() -> IndexedMesh {
         let v = |x, y, z| Vertex::new([x, y, z]);
@@ -174,6 +171,11 @@ mod reloaded_slices_tests {
             .to_token()
     }
 
+    fn empty_layers_at(zs: impl Iterator<Item = f64>) -> ContourStack {
+        ContourStack::new(zs.map(|z| ContourLayer::new(z, vec![])).collect())
+            .expect("z is strictly increasing")
+    }
+
     fn three_mf() -> ProjectFileType {
         infer_project_file_type_from_extension(Path::new("plate.3mf"))
             .expect("the 3mf extension is a project format")
@@ -191,9 +193,9 @@ mod reloaded_slices_tests {
 
     #[test]
     fn the_fingerprint_survives_a_project_write_read_round_trip() {
-        // The whole feature rests on this: if the scene fingerprint did
-        // not survive a save/reopen, every reopened project would read
-        // as stale and never show its slices.
+        // The whole feature rests on this: if the scene fingerprint did not
+        // survive a save/reopen, every reopened project would read as stale and
+        // never show its slices.
         let scene = cube_scene();
         let schedule = schedule();
         let token = token_for(&scene, &schedule);
@@ -230,8 +232,8 @@ mod reloaded_slices_tests {
 
     #[test]
     fn a_changed_schedule_is_not_in_sync() {
-        // The token covers the resolved schedule by value, so slicing at
-        // a different layer height must invalidate it.
+        // The token covers the resolved schedule by value, so slicing at a
+        // different layer height must invalidate it.
         let scene = cube_scene();
         let token = token_for(&scene, &schedule());
         let other = LayerSchedule::uniform(0.1, 0.05, 20).expect("a valid schedule");
@@ -248,8 +250,8 @@ mod reloaded_slices_tests {
         let first_layer_height = Some(PositiveFiniteMm::new(0.05).expect("valid length"));
 
         let reloaded = ReloadedSlices {
-            contours: ContourStack::new_unchecked(Vec::new()),
-            schedule,
+            contours: PlateContours::new(empty_layers_at(schedule.iter_z()), schedule)
+                .expect("1 layer for each scheduled layer"),
             token: token.clone(),
             printer: printer.clone(),
             resin: resin.clone(),
@@ -258,6 +260,8 @@ mod reloaded_slices_tests {
         let geometry = SceneRevision::from_top_edit_id(None);
         let result = reloaded.into_slice_result(geometry);
 
+        assert_eq!(result.contours.schedule(), &schedule);
+        assert_eq!(result.contours.stack().layers().len(), 40);
         assert_eq!(result.token, token);
         assert_eq!(result.params.printer, printer);
         assert_eq!(result.params.resin, resin);
@@ -289,23 +293,45 @@ mod reloaded_slices_tests {
     }
 
     #[test]
+    fn a_saved_stack_of_another_layer_count_reopens_without_slices() {
+        // The token covers the scene and the schedule, not the saved layers, so
+        // a matching token does not prove that the layer count is correct.
+        let scene = cube_scene();
+        let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
+        let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
+        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+            .expect("the bundled default profiles resolve a schedule");
+        let token = token_for(&scene, &schedule);
+        let payload = ProjectPayload {
+            printer: Some(printer),
+            resin: Some(resin),
+            ..empty_payload()
+        };
+        let reopen = |stack: ContourStack| {
+            revalidate_persisted_slices(Some(&payload), &scene, Some(stack), Some(token.clone()))
+        };
+
+        assert!(reopen(empty_layers_at(schedule.iter_z())).is_some());
+        assert!(reopen(empty_layers_at(schedule.iter_z().skip(1))).is_none());
+    }
+
+    #[test]
     fn a_reopened_project_revalidates_slices_saved_on_a_placed_scene() {
         // Reproduces the reopen scenario: a mesh placed by a non-identity
-        // affine transform (a fit scale plus recentre), sliced on the
-        // bundled default profiles, saved with real slice geometry, then
-        // reopened. The full reopen path (read back the standalone slice
-        // part, re-resolve the schedule, recompute the fingerprint) must
-        // accept the slices.
+        // affine transform (a fit scale plus recentre), sliced on the bundled
+        // default profiles, saved with real slice geometry, then reopened. The
+        // full reopen path (read back the standalone slice part, re-resolve the
+        // schedule, recompute the fingerprint) must accept the slices.
         //
-        // The slice-time scene is built the way the plain-mesh loader does:
-        // the mesh leaf is the scene's direct root, with the plate placement
+        // The slice-time scene is built the way the plain-mesh loader does: the
+        // mesh leaf is the scene's direct root, with the plate placement
         // written onto it. Reopening from 3MF wraps that leaf under a fresh
         // identity group, so the saved and reopened scenes place the same
         // geometry under different nesting. The fingerprint must ignore that
         // nesting, or the reopened slices are wrongly rejected as stale.
         use sc_mesh_core::transform::AffineTransform3D;
         use sc_project_formats::PlateSlices;
-        use sc_sl1cer::contour::{ClosedRing, ContourLayer, Polygon};
+        use sc_sl1cer::contour::{ClosedRing, Polygon};
         use sc_sl1cer::geom2d::Point2D;
 
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
