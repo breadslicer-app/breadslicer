@@ -18,7 +18,7 @@ use std::str::FromStr;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
-use sc_sla_formats::{Format, PrinterFileFormat, UnresolvedBinding, printer_file_family_from_path};
+use sc_sla_formats::{Format, PrinterFileFormat, UnwritableFamily, printer_file_family_from_path};
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
@@ -35,7 +35,7 @@ pub(crate) enum TargetFormat {
 }
 
 impl TargetFormat {
-    /// Name the target format an output path's extension asks for.
+    /// Names the target format an output path's extension asks for.
     ///
     /// A printer file's extension names only its family, since 1 extension
     /// covers every revision of a container.
@@ -45,7 +45,7 @@ impl TargetFormat {
             .or_else(|| printer_file_family_from_path(path).map(Self::PrinterFamily))
     }
 
-    /// Report whether the target path is a directory to fill.
+    /// Reports whether the target path is a directory to fill.
     pub(crate) fn is_directory_format(&self) -> bool {
         match self {
             Self::Slices(format) => format.is_directory_format(),
@@ -72,8 +72,9 @@ pub(crate) enum SettledTarget {
     PrinterFile(PrinterFileFormat),
 }
 
-/// Settle `target` against the outputs `declared` by the printer that will run
-/// the file, so a bare family name takes the revision that printer asks for.
+/// Settles `target` against the outputs `declared` by the printer that will run
+/// the file, so a bare family name takes the highest revision that printer
+/// lists and this build writes.
 ///
 /// A slice output and a format already spelled with its revision pass through:
 /// naming a revision outright is how a caller asks for one the printer does not
@@ -81,9 +82,8 @@ pub(crate) enum SettledTarget {
 ///
 /// # Errors
 ///
-/// [`UnwritableTarget`] when the printer declares nothing of the requested
-/// family, declares it at a revision this build does not name, or names one
-/// whose writer has not landed.
+/// [`UnwritableTarget`] when the printer declares no revision of the requested
+/// family that this build writes, or when a named revision has no writer yet.
 pub(crate) fn settle_for_printer(
     target: TargetFormat,
     declared: &OutputFormatBindings,
@@ -92,18 +92,22 @@ pub(crate) fn settle_for_printer(
         TargetFormat::Slices(format) => return Ok(SettledTarget::Slices(format)),
         TargetFormat::PrinterFile(format) => format,
         TargetFormat::PrinterFamily(family) => {
-            let binding = declared
-                .iter()
-                .find(|binding| binding.format == family)
-                .ok_or_else(|| UnwritableTarget::FamilyNotDeclared {
-                    family: family.clone(),
-                    declared: declared
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                })?;
-            PrinterFileFormat::from_binding(binding).map_err(UnwritableTarget::Unresolved)?
+            return PrinterFileFormat::highest_writable(&family, declared)
+                .map(SettledTarget::PrinterFile)
+                .map_err(|err| {
+                    if err.refused.is_empty() {
+                        UnwritableTarget::FamilyNotDeclared {
+                            err,
+                            declared: declared
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        }
+                    } else {
+                        UnwritableTarget::NoneWritable(err)
+                    }
+                });
         }
     };
     if format.has_writer() {
@@ -113,30 +117,24 @@ pub(crate) fn settle_for_printer(
     }
 }
 
-/// Returned when the printer and the requested family cannot name a format this
-/// build writes.
+/// Returned when a target format gives no printer file this build writes.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum UnwritableTarget {
     FamilyNotDeclared {
-        family: FormatKind,
+        err: UnwritableFamily,
         declared: String,
     },
-    Unresolved(UnresolvedBinding),
+    NoneWritable(UnwritableFamily),
     NoWriter(PrinterFileFormat),
 }
 
 impl fmt::Display for UnwritableTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FamilyNotDeclared { family, declared } => write!(
-                f,
-                "this printer declares no \"{}\" output; it declares: {declared}",
-                family.as_canonical(),
-            ),
-            Self::Unresolved(err) => write!(
-                f,
-                "this printer declares an output this build cannot name: {err}"
-            ),
+            Self::FamilyNotDeclared { err, declared } => {
+                write!(f, "{err}; it declares: {declared}")
+            }
+            Self::NoneWritable(err) => err.fmt(f),
             Self::NoWriter(format) => {
                 write!(f, "this build has no writer for \"{format}\" yet")
             }
@@ -167,7 +165,7 @@ impl std::error::Error for UnknownTargetFormat {}
 impl FromStr for TargetFormat {
     type Err = UnknownTargetFormat;
 
-    /// Parse a `--target-format` flag value. A bare family name defers the
+    /// Parses a `--target-format` flag value. A bare family name defers the
     /// revision to the printer, which declares one. Spelling the revision after
     /// it, as in `ctb@v5`, names the format outright and overrides whatever the
     /// printer declares.
@@ -302,6 +300,30 @@ mod target_format_tests {
             settle_for_printer(TargetFormat::from_str("goo").unwrap(), &declared),
             Ok(SettledTarget::PrinterFile(PrinterFileFormat::Goo(
                 GooVersion::V3_0
+            ))),
+        );
+    }
+
+    #[test]
+    fn a_bare_family_takes_the_highest_revision_this_build_writes() {
+        let declared = declared(&[binding("goo", Some("v5.1")), binding("goo", Some("v3.0"))]);
+
+        assert_eq!(
+            settle_for_printer(TargetFormat::from_str("goo").unwrap(), &declared),
+            Ok(SettledTarget::PrinterFile(PrinterFileFormat::Goo(
+                GooVersion::V3_0
+            ))),
+        );
+    }
+
+    #[test]
+    fn a_bare_ctb_takes_the_encrypted_revision_when_both_are_listed() {
+        let declared = declared(&[binding("ctb", Some("v5")), binding("ctb", Some("v5enc"))]);
+
+        assert_eq!(
+            settle_for_printer(TargetFormat::from_str("ctb").unwrap(), &declared),
+            Ok(SettledTarget::PrinterFile(PrinterFileFormat::Ctb(
+                CtbVariant::EncryptedV5
             ))),
         );
     }

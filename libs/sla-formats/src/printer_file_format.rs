@@ -11,10 +11,11 @@
 //! nothing else, and `ctb` at `v5enc` differs from `ctb` at `v5` in whether the
 //! settings block is encrypted.
 
+use std::cmp::Ordering;
 use std::fmt;
 use std::path::Path;
 
-use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
+use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings};
 
 use crate::ctb::PREVIEW_SIZES as CTB_PREVIEW_SIZES;
 use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
@@ -27,22 +28,35 @@ pub enum PrinterFileFormat {
     Ctb(CtbVariant),
 }
 
-/// A revision of the Elegoo GOO container.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A revision of the Elegoo GOO container. A later revision compares greater.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GooVersion {
-    V3_0,
-    V5_1,
+    V3_0 = 0,
+    V5_1 = 1,
 }
 
-/// A revision of the ChiTuBox CTB container.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A revision of the ChiTuBox CTB container. Version 5 comes in 2 dialects; the
+/// encrypted one compares greater than the plain one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CtbVariant {
-    PlainV5,
-    EncryptedV5,
+    PlainV5 = 0,
+    EncryptedV5 = 1,
+}
+
+impl PartialOrd for PrinterFileFormat {
+    /// Compares 2 formats of the same family by revision. Formats of different
+    /// families give `None`.
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Self::Goo(revision), Self::Goo(other)) => Some(revision.cmp(other)),
+            (Self::Ctb(revision), Self::Ctb(other)) => Some(revision.cmp(other)),
+            (Self::Goo(_), Self::Ctb(_)) | (Self::Ctb(_), Self::Goo(_)) => None,
+        }
+    }
 }
 
 impl fmt::Display for PrinterFileFormat {
-    /// Write the binding that names the format, as in `goo@v3.0`.
+    /// Writes the binding that names the format, as in `goo@v3.0`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.binding().fmt(f)
     }
@@ -72,8 +86,58 @@ impl fmt::Display for UnresolvedBinding {
 
 impl std::error::Error for UnresolvedBinding {}
 
+/// Returned when a binding gives no printer file this build writes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnwritableBinding {
+    /// The binding names no printer file this crate knows.
+    Unresolved(UnresolvedBinding),
+    /// The binding names a format this build has no writer for.
+    NoWriter(PrinterFileFormat),
+}
+
+impl fmt::Display for UnwritableBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unresolved(err) => err.fmt(f),
+            Self::NoWriter(_) => f.write_str("this build has no writer for it yet"),
+        }
+    }
+}
+
+impl std::error::Error for UnwritableBinding {}
+
+/// Returned when a printer lists no binding of a family that this build writes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnwritableFamily {
+    /// The family asked for.
+    pub family: FormatKind,
+    /// Every binding of the family that the printer lists, with the reason this
+    /// build cannot write it. Empty when the printer lists none.
+    pub refused: Vec<(OutputFormatBinding, UnwritableBinding)>,
+}
+
+impl fmt::Display for UnwritableFamily {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let family = self.family.as_canonical();
+        write!(f, "this printer declares no \"{family}\" output")?;
+        if self.refused.is_empty() {
+            return Ok(());
+        }
+        f.write_str(" this build can write: ")?;
+        for (index, (binding, reason)) in self.refused.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{binding} ({reason})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for UnwritableFamily {}
+
 impl PrinterFileFormat {
-    /// Identify the printer file a profile's declared binding names.
+    /// Identifies the printer file a profile's declared binding names.
     ///
     /// Both halves are required: revisions within a family produce different
     /// bytes, so a binding without a version is refused.
@@ -90,7 +154,7 @@ impl PrinterFileFormat {
         }
     }
 
-    /// Return the binding that names this format. [`Self::from_binding`]
+    /// Returns the binding that names this format. [`Self::from_binding`]
     /// resolves it back to the same format.
     pub fn binding(self) -> OutputFormatBinding {
         let (format, version) = match self {
@@ -105,7 +169,41 @@ impl PrinterFileFormat {
         }
     }
 
-    /// Report whether this build carries a writer for the format.
+    /// Identifies the printer file `binding` names, when this build writes it.
+    pub fn writable_from_binding(binding: &OutputFormatBinding) -> Result<Self, UnwritableBinding> {
+        let format = Self::from_binding(binding).map_err(UnwritableBinding::Unresolved)?;
+        if format.has_writer() {
+            Ok(format)
+        } else {
+            Err(UnwritableBinding::NoWriter(format))
+        }
+    }
+
+    /// Picks the format a family name means for a printer: the highest revision
+    /// of `family` that `declared` lists and this build writes. Any order of
+    /// `declared` gives the same format.
+    pub fn highest_writable(
+        family: &FormatKind,
+        declared: &OutputFormatBindings,
+    ) -> Result<Self, UnwritableFamily> {
+        let mut writable = Vec::new();
+        let mut refused = Vec::new();
+        for binding in declared.iter().filter(|binding| &binding.format == family) {
+            match Self::writable_from_binding(binding) {
+                Ok(format) => writable.push(format),
+                Err(reason) => refused.push((binding.clone(), reason)),
+            }
+        }
+        writable
+            .into_iter()
+            .reduce(|highest, format| if format > highest { format } else { highest })
+            .ok_or_else(|| UnwritableFamily {
+                family: family.clone(),
+                refused,
+            })
+    }
+
+    /// Reports whether this build carries a writer for the format.
     ///
     /// Identifying a revision and encoding it are separate: a profile may
     /// declare a format this crate names but cannot yet write, and callers that
@@ -118,7 +216,7 @@ impl PrinterFileFormat {
         )
     }
 
-    /// Report the sizes this format fixes for the previews it carries, so a
+    /// Reports the sizes this format fixes for the previews it carries, so a
     /// caller renders at a size the writer accepts.
     ///
     /// `None` for a format with no writer in this build: the sizes belong to
@@ -134,8 +232,8 @@ impl PrinterFileFormat {
         }
     }
 
-    /// Report the file extension this format is written with, without a leading
-    /// dot.
+    /// Reports the file extension this format is written with, without a
+    /// leading dot.
     ///
     /// Some file formats that differ in shape share file extension, so an
     /// extension is not enough to identify a file format.
@@ -147,7 +245,7 @@ impl PrinterFileFormat {
     }
 }
 
-/// Name the container family an output path's extension asks for.
+/// Names the container family an output path's extension asks for.
 ///
 /// An extension never names a revision: `.goo` is shared by V3.0 and V5.1, and
 /// `.ctb` by the plain and the encrypted variant. The revision comes from a
@@ -178,6 +276,10 @@ mod printer_file_format_tests {
 
     fn resolve(format: FormatKind, version: Option<&str>) -> Result<PrinterFileFormat, String> {
         PrinterFileFormat::from_binding(&binding(format, version)).map_err(|err| err.to_string())
+    }
+
+    fn declared(bindings: &[OutputFormatBinding]) -> OutputFormatBindings {
+        OutputFormatBindings::try_from_vec(bindings.to_vec()).expect("test list is non-empty")
     }
 
     #[test]
@@ -427,6 +529,173 @@ mod printer_file_format_tests {
         assert_eq!(
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5).preview_sizes(),
             PrinterFileFormat::Ctb(CtbVariant::PlainV5).preview_sizes(),
+        );
+    }
+
+    #[test]
+    fn a_binding_this_build_writes_gives_its_format() {
+        assert_eq!(
+            PrinterFileFormat::writable_from_binding(&binding(FormatKind::Goo, Some("v3.0"))),
+            Ok(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        );
+    }
+
+    #[test]
+    fn each_unwritable_binding_carries_its_own_reason() {
+        let listed = [
+            binding(FormatKind::Goo, Some("v5.1")),
+            binding(FormatKind::Ctb, Some("v2")),
+        ];
+        let reasons: Vec<_> = listed
+            .iter()
+            .map(PrinterFileFormat::writable_from_binding)
+            .collect();
+
+        assert_eq!(
+            reasons,
+            vec![
+                Err(UnwritableBinding::NoWriter(PrinterFileFormat::Goo(
+                    GooVersion::V5_1
+                ))),
+                Err(UnwritableBinding::Unresolved(UnresolvedBinding {
+                    binding: listed[1].clone(),
+                })),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_family_name_takes_the_highest_revision_this_build_writes() {
+        let declared = declared(&[
+            binding(FormatKind::Goo, Some("v5.1")),
+            binding(FormatKind::Goo, Some("v3.0")),
+        ]);
+
+        assert_eq!(
+            PrinterFileFormat::highest_writable(&FormatKind::Goo, &declared),
+            Ok(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        );
+    }
+
+    #[test]
+    fn the_encrypted_ctb_wins_over_the_plain_one_in_either_order() {
+        for listed in [["v5", "v5enc"], ["v5enc", "v5"]] {
+            let declared = declared(&listed.map(|version| binding(FormatKind::Ctb, Some(version))));
+
+            assert_eq!(
+                PrinterFileFormat::highest_writable(&FormatKind::Ctb, &declared),
+                Ok(PrinterFileFormat::Ctb(CtbVariant::EncryptedV5)),
+                "{listed:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_family_name_passes_over_the_other_families_listed() {
+        let declared = declared(&[
+            binding(FormatKind::Ctb, Some("v5enc")),
+            binding(FormatKind::Goo, Some("v3.0")),
+        ]);
+
+        assert_eq!(
+            PrinterFileFormat::highest_writable(&FormatKind::Goo, &declared),
+            Ok(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        );
+    }
+
+    #[test]
+    fn a_family_the_printer_does_not_list_refuses_no_binding() {
+        let declared = declared(&[binding(FormatKind::Goo, Some("v3.0"))]);
+
+        assert_eq!(
+            PrinterFileFormat::highest_writable(&FormatKind::Ctb, &declared),
+            Err(UnwritableFamily {
+                family: FormatKind::Ctb,
+                refused: Vec::new(),
+            }),
+        );
+    }
+
+    #[test]
+    fn a_family_with_nothing_writable_refuses_every_listed_binding() {
+        let unwritable = binding(FormatKind::Goo, Some("v5.1"));
+        let declared = declared(std::slice::from_ref(&unwritable));
+
+        assert_eq!(
+            PrinterFileFormat::highest_writable(&FormatKind::Goo, &declared),
+            Err(UnwritableFamily {
+                family: FormatKind::Goo,
+                refused: vec![(
+                    unwritable,
+                    UnwritableBinding::NoWriter(PrinterFileFormat::Goo(GooVersion::V5_1)),
+                )],
+            }),
+        );
+    }
+
+    #[test]
+    fn goo_v5_1_compares_greater_than_v3_0() {
+        assert!(
+            PrinterFileFormat::Goo(GooVersion::V5_1) > PrinterFileFormat::Goo(GooVersion::V3_0)
+        );
+    }
+
+    #[test]
+    fn the_encrypted_ctb_compares_greater_than_the_plain_one() {
+        assert!(
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5)
+                > PrinterFileFormat::Ctb(CtbVariant::PlainV5)
+        );
+    }
+
+    #[test]
+    fn formats_of_different_families_are_incomparable() {
+        let goo = PrinterFileFormat::Goo(GooVersion::V3_0);
+        let ctb = PrinterFileFormat::Ctb(CtbVariant::PlainV5);
+
+        assert_eq!(goo.partial_cmp(&ctb), None);
+        assert_eq!(ctb.partial_cmp(&goo), None);
+    }
+
+    #[test]
+    fn a_format_compares_equal_to_itself() {
+        let format = PrinterFileFormat::Ctb(CtbVariant::EncryptedV5);
+
+        assert_eq!(format.partial_cmp(&format), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn an_unlisted_family_says_the_printer_declares_none() {
+        let err = UnwritableFamily {
+            family: FormatKind::Ctb,
+            refused: Vec::new(),
+        };
+
+        assert_eq!(err.to_string(), "this printer declares no \"ctb\" output");
+    }
+
+    #[test]
+    fn an_unwritable_family_names_each_refused_binding_and_its_reason() {
+        let unknown = binding(FormatKind::Goo, Some("v9"));
+        let err = UnwritableFamily {
+            family: FormatKind::Goo,
+            refused: vec![
+                (
+                    binding(FormatKind::Goo, Some("v5.1")),
+                    UnwritableBinding::NoWriter(PrinterFileFormat::Goo(GooVersion::V5_1)),
+                ),
+                (
+                    unknown.clone(),
+                    UnwritableBinding::Unresolved(UnresolvedBinding { binding: unknown }),
+                ),
+            ],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "this printer declares no \"goo\" output this build can write: \
+             goo@v5.1 (this build has no writer for it yet), \
+             goo@v9 (unknown version \"v9\" for format \"goo\")",
         );
     }
 }
