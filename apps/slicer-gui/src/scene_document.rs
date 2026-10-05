@@ -482,12 +482,6 @@ impl SceneDocument {
         self.print_selection.borrow().first_layer_height
     }
 
-    /// Returns the scene's own printer-file choice, as its printer profile
-    /// spells it.
-    pub(crate) fn selected_output_format(&self) -> Option<OutputFormatBinding> {
-        self.print_selection.borrow().output_format.clone()
-    }
-
     /// Sets the scene's own printer-file choice. Marks the document save-dirty
     /// only when the value actually changes. Returns whether it changed.
     pub(crate) fn set_selected_output_format(

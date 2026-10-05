@@ -3,22 +3,20 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! In-memory catalog of the printer and material profiles available to
-//! the GUI, merged from the user library and the bundled library.
+//! In-memory catalog of the printer and material profiles available to the GUI,
+//! merged from the user library and the bundled library.
 //!
-//! The catalog is the single source the Preferences pickers read from:
-//! the printer gallery, the manufacturer filter, and the resin list.
-//! It merges the two on-disk libraries by id with the user copy
-//! winning (the same precedence the by-id loaders use), captures the
-//! fields the pickers display, and records which library each winning
-//! id came from so user-provided profiles can be marked as not shipped
-//! with the app. Material extensions from the user library attach by
-//! id to their base entry; an extension whose base entry is absent
-//! degrades to a standalone custom entry.
+//! The Preferences window and the Slice panel read their profile lists from it.
+//! It merges the 2 on-disk libraries by id, and the user copy wins (the same
+//! precedence the by-id loaders use). It captures the fields that the pickers
+//! display, and records which library each winning id came from, so that the
+//! GUI can mark the profiles that the user added. Material extensions from the
+//! user library attach by id to their base entry; an extension whose base entry
+//! is absent degrades to a standalone custom entry.
 //!
-//! The catalog is rebuilt (not mutated in place) whenever the on-disk
-//! libraries change, for instance after authoring or importing a
-//! profile, so callers hold it behind a refreshable handle.
+//! A change of the on-disk libraries, for instance after authoring or importing
+//! a profile, builds a new catalog, so callers hold it behind a refreshable
+//! handle.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -32,38 +30,37 @@ use sc_print_profiles::{
     load_printer_profile_from_library,
 };
 
-/// A printer profile reduced to the fields the picker needs.
+/// A printer profile reduced to the fields that the GUI reads.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrinterCatalogEntry {
     pub id: PrinterId,
     pub manufacturer: String,
     pub name: String,
     pub build_volume: BuildVolume,
-    /// The printer files the profile declares, in the order it
-    /// declares them. Which of them this build can actually write is a
-    /// separate question, answered in [`crate::print_format`].
+    /// The printer files that the profile declares, in its order.
+    /// [`crate::print_format`] decides which of them this build can write.
     pub output_formats: OutputFormatBindings,
-    /// Absolute path to the printer's thumbnail, or `None` when the
-    /// profile carries no image or the referenced file is missing.
+    /// Absolute path to the printer's thumbnail, or `None` when the profile
+    /// carries no image or the referenced file is missing.
     pub image_path: Option<PathBuf>,
     pub source: ProfileSource,
 }
 
-/// A material profile reduced to the fields the picker needs.
+/// A material profile reduced to the fields that the GUI reads.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialCatalogEntry {
     pub id: MaterialId,
     pub brand: String,
     pub name: String,
     pub family: String,
-    /// The targets this material ships a `[per_printer.<id>]`
-    /// calibration block for.
+    /// The targets for which this material ships a `[per_printer.<id>]`
+    /// calibration block.
     pub calibrated_printers: BTreeSet<CalibrationTarget>,
     pub source: ProfileSource,
 }
 
-/// A material extension from the user library: a same-id companion
-/// profile adding calibration blocks the base profile does not cover.
+/// A material extension from the user library: a same-id companion profile that
+/// adds calibration blocks for targets that the base profile leaves out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialExtensionEntry {
     /// The shared resin id: the base entry this extension attaches to.
@@ -72,7 +69,7 @@ pub struct MaterialExtensionEntry {
     pub printers: BTreeSet<CalibrationTarget>,
 }
 
-/// Coverage of `printer` by the union of the entry's and the
+/// Returns the coverage of `printer` by the union of the entry's and the
 /// extension's calibration blocks.
 pub fn coverage(
     entry: &MaterialCatalogEntry,
@@ -86,8 +83,8 @@ pub fn coverage(
     )
 }
 
-/// Whether the entry (with its extension) carries a block that applies
-/// to `printer`: a specific block or the generic fallback. Drives the
+/// Returns whether the entry, with its extension, carries a block that applies
+/// to `printer`: a specific block or the generic fallback. It drives the
 /// matcher-first grouping of the resin list.
 pub fn has_active_matcher(
     entry: &MaterialCatalogEntry,
@@ -101,25 +98,21 @@ const PLACEHOLDER_BRAND: &str = "Default";
 
 /// The merged printer and material profiles available to the GUI.
 ///
-/// Printers are held sorted by `(manufacturer, name)`; materials by
-/// `(brand, name)`. The resin picker re-derives its own display order
-/// per selected printer (calibrated first), so materials stay in this
-/// stable base order here.
+/// Printers are sorted by `(manufacturer, name)`; materials by `(brand, name)`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProfileCatalog {
     printers: Vec<PrinterCatalogEntry>,
     materials: Vec<MaterialCatalogEntry>,
-    /// Material extensions from the user library, attached by id to
-    /// their base entry in `materials`. An extension whose base is
-    /// absent is not held here: it degrades to a standalone entry in
-    /// `materials` instead.
+    /// Material extensions from the user library, attached by id to their base
+    /// entry in `materials`. An extension whose base is absent degrades to a
+    /// standalone entry in `materials`.
     extensions: Vec<MaterialExtensionEntry>,
 }
 
 impl ProfileCatalog {
-    /// Build the catalog from the given libraries, in their root
-    /// order (earliest root wins on id collision). A root directory
-    /// that does not exist contributes nothing.
+    /// Builds the catalog from the libraries, in their root order: on an id
+    /// collision, the earliest root wins. A root directory that does not exist
+    /// adds nothing.
     pub fn from_libraries(libraries: &ProfileLibraries) -> Self {
         let roots: Vec<(PathBuf, ProfileSource)> = libraries
             .roots()
@@ -128,8 +121,8 @@ impl ProfileCatalog {
         Self::from_roots(&roots)
     }
 
-    /// Build the catalog by merging the given roots in precedence order
-    /// (earliest wins on id collision).
+    /// Builds the catalog from `roots`, in precedence order: on an id
+    /// collision, the earliest root wins.
     fn from_roots(roots: &[(PathBuf, ProfileSource)]) -> Self {
         let mut materials = load_materials(roots);
         let extensions = load_extensions(roots, &mut materials);
@@ -137,6 +130,22 @@ impl ProfileCatalog {
             printers: load_printers(roots),
             materials,
             extensions,
+        }
+    }
+
+    /// Builds a catalog from entries, sorted as the loaders sort them, with no
+    /// material extensions. The ids must be unique, as in a loaded catalog.
+    #[cfg(test)]
+    pub(crate) fn from_entries(
+        mut printers: Vec<PrinterCatalogEntry>,
+        mut materials: Vec<MaterialCatalogEntry>,
+    ) -> Self {
+        sort_printers(&mut printers);
+        sort_materials(&mut materials);
+        ProfileCatalog {
+            printers,
+            materials,
+            extensions: Vec::new(),
         }
     }
 
@@ -148,32 +157,31 @@ impl ProfileCatalog {
         &self.materials
     }
 
-    /// The material extensions attached to base entries, sorted by id.
+    /// Returns the material extensions attached to base entries, sorted by id.
     pub fn extensions(&self) -> &[MaterialExtensionEntry] {
         &self.extensions
     }
 
-    /// The extension attached to the material with this id, if any.
+    /// Returns the extension attached to the material with this id, if any.
     pub fn extension_for(&self, id: &MaterialId) -> Option<&MaterialExtensionEntry> {
         self.extensions.iter().find(|entry| &entry.id == id)
     }
 
-    /// Index of the printer entry with this id, if present.
+    /// Returns the index of the printer entry with this id, if present.
     pub fn printer_index(&self, id: &PrinterId) -> Option<usize> {
         self.printers.iter().position(|entry| &entry.id == id)
     }
 
-    /// Index of the material entry with this id, if present.
+    /// Returns the index of the material entry with this id, if present.
     pub fn material_index(&self, id: &MaterialId) -> Option<usize> {
         self.materials.iter().position(|entry| &entry.id == id)
     }
 
-    /// The printer to treat as selected when the user has not chosen
-    /// one yet (a fresh install with no persisted default): the Generic
-    /// Machine when the catalog ships it, otherwise the first printer in
-    /// catalog order, otherwise `None` for an empty catalog. This is a
-    /// display / envelope default only; it is never written to the
-    /// user's settings.
+    /// Returns the printer to treat as the default while the user has chosen
+    /// none (a fresh install with no persisted default): the Generic Machine
+    /// when the catalog holds it, else the first printer in catalog order, else
+    /// `None` for an empty catalog. It is a display and envelope default only;
+    /// nothing writes it to the user's settings.
     pub fn first_run_default_printer(&self) -> Option<PrinterId> {
         self.printers
             .iter()
@@ -182,14 +190,14 @@ impl ProfileCatalog {
             .map(|entry| entry.id.clone())
     }
 
-    /// The printer effectively in force: the user's explicit choice when
-    /// present, otherwise the first-run soft default. `chosen` is the
-    /// persisted selection (`None` until the user picks one).
+    /// Returns the app's default printer: the user's explicit default, else the
+    /// first-run soft default. `chosen` is the persisted default (`None` until
+    /// the user picks a printer).
     pub fn effective_default_printer(&self, chosen: Option<&PrinterId>) -> Option<PrinterId> {
         chosen.cloned().or_else(|| self.first_run_default_printer())
     }
 
-    /// Build volume of the printer with this id, if present.
+    /// Returns the build volume of the printer with this id, if present.
     pub fn printer_build_volume(&self, id: &PrinterId) -> Option<BuildVolume> {
         self.printers
             .iter()
@@ -197,7 +205,7 @@ impl ProfileCatalog {
             .map(|entry| entry.build_volume)
     }
 
-    /// The distinct manufacturers across all printers, sorted, for the
+    /// Returns the distinct manufacturers across all printers, sorted, for the
     /// manufacturer filter.
     pub fn manufacturers(&self) -> Vec<String> {
         self.printers
@@ -208,8 +216,8 @@ impl ProfileCatalog {
             .collect()
     }
 
-    /// Lists the distinct resin brands across all materials, sorted.
-    /// The placeholder brand of the generic profiles is not among them.
+    /// Lists the distinct resin brands across all materials, sorted. It leaves
+    /// out the placeholder brand of the generic profiles.
     pub fn brands(&self) -> Vec<String> {
         self.materials
             .iter()
@@ -220,11 +228,10 @@ impl ProfileCatalog {
             .collect()
     }
 
-    /// The viewport build envelope implied by the selected printer: the
-    /// printer's physical build volume when `printer` resolves in the
-    /// catalog, otherwise the hardcoded default used when no printer is
-    /// selected yet. The `sc_print_primitives` build volume (x/y/z,
-    /// f64) maps to the GUI envelope as (width, depth, height), f32.
+    /// Returns the viewport build envelope of `printer`: its build volume when
+    /// the catalog holds it, else the hardcoded placeholder. The
+    /// `sc_print_primitives` build volume (x, y, z; f64) maps to the GUI
+    /// envelope as (width, depth, height; f32).
     pub fn envelope_for_printer(
         &self,
         printer: Option<&PrinterId>,
@@ -242,11 +249,10 @@ impl ProfileCatalog {
     }
 }
 
-/// Merge the printer profiles across `roots` (highest precedence
-/// first): the first root that lists an id owns it; a corrupt or
-/// unreadable winning copy is skipped with a warning and shadows any
-/// lower-precedence copy, so the entry is simply absent. Result sorted
-/// by `(manufacturer, name)`.
+/// Merges the printer profiles across `roots`, highest precedence first: the
+/// first root that lists an id owns it. A corrupt or unreadable winning copy is
+/// skipped with a warning and shadows any lower-precedence copy, so the entry
+/// is absent. The result is in catalog order.
 fn load_printers(roots: &[(PathBuf, ProfileSource)]) -> Vec<PrinterCatalogEntry> {
     let mut entries: Vec<PrinterCatalogEntry> = Vec::new();
     let mut seen: BTreeSet<PrinterId> = BTreeSet::new();
@@ -270,16 +276,21 @@ fn load_printers(roots: &[(PathBuf, ProfileSource)]) -> Vec<PrinterCatalogEntry>
         }
     }
 
+    sort_printers(&mut entries);
+    entries
+}
+
+/// Sorts printers into catalog order: by manufacturer, then by name.
+fn sort_printers(entries: &mut [PrinterCatalogEntry]) {
     entries.sort_by(|a, b| {
         a.manufacturer
             .cmp(&b.manufacturer)
             .then_with(|| a.name.cmp(&b.name))
     });
-    entries
 }
 
-/// Merge the material profiles across `roots` with the same precedence
-/// as [`load_printers`]. Result sorted by `(brand, name)`.
+/// Merges the material profiles across `roots` with the precedence of
+/// [`load_printers`]. The result is in catalog order.
 fn load_materials(roots: &[(PathBuf, ProfileSource)]) -> Vec<MaterialCatalogEntry> {
     let mut entries: Vec<MaterialCatalogEntry> = Vec::new();
     let mut seen: BTreeSet<MaterialId> = BTreeSet::new();
@@ -303,15 +314,20 @@ fn load_materials(roots: &[(PathBuf, ProfileSource)]) -> Vec<MaterialCatalogEntr
         }
     }
 
-    entries.sort_by(|a, b| a.brand.cmp(&b.brand).then_with(|| a.name.cmp(&b.name)));
+    sort_materials(&mut entries);
     entries
 }
 
-/// Load the material extensions from the user roots (bundled libraries
-/// ship none). An extension whose id matches a merged material entry
-/// attaches to it; one whose base is absent degrades to a standalone
-/// custom entry appended to `materials`, so its data stays visible.
-/// A corrupt or unflagged file is skipped with a warning.
+/// Sorts materials into catalog order: by brand, then by name.
+fn sort_materials(entries: &mut [MaterialCatalogEntry]) {
+    entries.sort_by(|a, b| a.brand.cmp(&b.brand).then_with(|| a.name.cmp(&b.name)));
+}
+
+/// Loads the material extensions from the user roots; the bundled libraries
+/// ship none. An extension whose id matches a merged material entry attaches to
+/// it. An extension whose base is absent degrades to a standalone custom entry
+/// in `materials`, so its data stays visible. A corrupt or unflagged file is
+/// skipped with a warning.
 fn load_extensions(
     roots: &[(PathBuf, ProfileSource)],
     materials: &mut Vec<MaterialCatalogEntry>,
@@ -353,7 +369,7 @@ fn load_extensions(
     }
 
     if degraded_any {
-        materials.sort_by(|a, b| a.brand.cmp(&b.brand).then_with(|| a.name.cmp(&b.name)));
+        sort_materials(materials);
     }
     extensions.sort_by(|a, b| a.id.cmp(&b.id));
     extensions
@@ -367,7 +383,7 @@ fn printer_entry(
     let build_volume = profile.hardware.build_volume();
     let output_formats = profile.capabilities.output_formats;
     let identity = profile.identity;
-    // Keep the image path only when the file is really there.
+    // Keep the image path only when the file exists.
     let image_path = identity.image_asset_path.as_ref().and_then(|reference| {
         let path = reference.resolve_in(root);
         path.is_file().then_some(path)
