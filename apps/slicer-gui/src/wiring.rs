@@ -3,16 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Adapter layer that glues Slint UI callbacks of a `MainWindow` to the
-//! `ViewportController` domain object. Kept out of `main.rs` and out of the
-//! controller itself so neither gets polluted with `rfd` / file-dialog /
-//! worker-thread plumbing.
+//! Adapter layer that connects the Slint callbacks of a `MainWindow` to its
+//! `ViewportController`, and runs the file dialogs and the worker threads of
+//! the open, save and export commands.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use futures_channel::oneshot;
-use sc_print_primitives::{MaterialId, PrinterId};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -21,6 +19,7 @@ use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
 use crate::mesh_loader::{self, LoadDispatch};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
+use crate::print_selection::PrintDefaults;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SaveRecorded, SceneDocument};
 use crate::scene_export;
@@ -33,20 +32,18 @@ mod export_flow_dispatch {
 
     use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
 
-    /// Classification of the file-save dialog's outcome for the
-    /// "Export As..." flow. Pure: derived only from whether the user
-    /// picked a path and whether that path's extension maps to a
-    /// writeable format. The variants own the picked path (when
-    /// present) so the caller can render it back into an error dialog
-    /// or pass it straight to the exporter without re-cloning the
-    /// `Option`.
+    /// Classification of the file-save dialog's outcome for the "Export As..."
+    /// flow. Pure: derived only from whether the user picked a path and whether
+    /// that path's extension maps to a writeable format. The variants own the
+    /// picked path, so the caller can show it in an error dialog or pass it to
+    /// the exporter.
     #[derive(Debug, PartialEq, Eq)]
     pub(crate) enum ExportDispatch {
         /// The user dismissed the dialog.
         Cancelled,
-        /// The user picked a path, but its extension is either not
-        /// inferrable or maps to a format the writer side does not
-        /// support (e.g. `.ply`, `.amf`, `.3mf`).
+        /// The user picked a path, but its extension is either not inferrable
+        /// or maps to a format the writer side does not support (for example
+        /// `.ply` or `.amf`).
         UnsupportedExtension(PathBuf),
         /// The user picked a path and its extension cleanly maps to a
         /// `WriteFormat` the exporter accepts.
@@ -72,10 +69,10 @@ mod export_flow_dispatch {
 
 use export_flow_dispatch::{ExportDispatch, decide_export_dispatch};
 
-/// Installs every per-window Slint callback (rendering notifier, input
-/// handlers, file open/close/save, resize debounce). Called once per
-/// `MainWindow` from `AppState::spawn_main_window`. `prefs` feeds the
-/// save flow the app-wide default profiles at save time.
+/// Installs the Slint callbacks of a `MainWindow` for rendering, the viewport,
+/// the edit menu, the workspace sections, and the open, close, save and export
+/// commands. `prefs` gives the open dialog its start directory and the save
+/// commands the app-wide defaults.
 pub(crate) fn wire_main_window(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
@@ -125,12 +122,10 @@ fn install_rendering_notifier(
                 slint::GraphicsAPI::WGPU30 { device, queue, .. } => {
                     ctrl.handle_rendering_setup(device.clone(), queue.clone());
                 }
-                // Slint hands over whatever the surface it built runs
-                // on, and the viewport is drawn with wgpu, so anything
-                // else leaves this window without a device for good.
-                // Recording which API arrived turns that into something
-                // the user can be told and a report can name, rather
-                // than a viewport that silently stays empty.
+                // Slint hands over whatever API the surface it built runs on,
+                // and the viewport is drawn with wgpu, so any other API leaves
+                // this window without a device for good. Recording which API
+                // arrived lets the user be told and a report name it.
                 other => ctrl.handle_unsupported_graphics_api(format!("{other:?}")),
             },
             slint::RenderingState::BeforeRendering => {
@@ -149,9 +144,9 @@ fn wire_close_scene(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 
 fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     // A single `Timer` captured by the closure below acts as the resize
-    // debounce: each `viewport-resized` restarts it, and when no event
-    // arrives for `RESIZE_SETTLE`, it fires `on_resize_settled` to snap the
-    // renderer allocations back to exact pixel size.
+    // debounce: each `viewport-resized` restarts it, and when no event arrives
+    // for `RESIZE_SETTLE`, it fires `on_resize_settled` to snap the renderer
+    // allocations back to exact pixel size.
     let settle_timer = slint::Timer::default();
     ui.on_viewport_resized(move |w, h| {
         ctrl.on_viewport_resized(w, h);
@@ -186,10 +181,8 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     {
         let ctrl = ctrl.clone();
         ui.on_object_list_selection_changed(move |idx| {
-            // Slint hands us an i32; clamp non-negative values into a
-            // usize for the controller. A negative idx means "no
-            // selection", which the controller models as `None` via
-            // `on_clear_selection` rather than via this callback.
+            // Slint passes an i32. A negative index means "no selection", which
+            // the controller clears through `on_clear_selection`.
             if idx >= 0 {
                 ctrl.on_select_by_index(idx as usize);
             } else {
@@ -247,11 +240,11 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefe
     }
 
     ui.on_open_file_requested(move || {
-        // The Slint event loop keeps processing callbacks while the native
-        // file dialog is open, and `enabled: !root.loading` on the menu item
-        // doesn't block that. Gate in Rust via `begin_load` *before* touching
-        // the dialog, so `loading` flips immediately (not after pick_file
-        // awaits) and a ticket is held for the duration of the load.
+        // The Slint event loop keeps processing callbacks while the native file
+        // dialog is open, and `enabled: !root.loading` on the menu item cannot
+        // stop them. `begin_load` gates the command in Rust before the dialog
+        // opens, so `loading` flips at once and the ticket holds the gate for
+        // the whole load.
         let Some(ticket) = ctrl.loader().begin_load() else {
             return;
         };
@@ -259,24 +252,22 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefe
             slint::spawn_local(run_open_file_flow(ticket, ctrl.clone(), prefs.clone()))
         {
             eprintln!("Failed to spawn file dialog task: {err}");
-            // `ticket` was moved into the future; when `spawn_local`
-            // returns `Err`, the future is dropped and the ticket with
-            // it, releasing the gate.
+            // `ticket` was moved into the future; when `spawn_local` returns
+            // `Err`, the future is dropped and the ticket with it, releasing
+            // the gate.
         }
     });
 }
 
-/// Orchestrates one "Open…" command: show the dialog, hand the picked
-/// path to the shared post-pick pipeline. The ticket has already been
-/// acquired before the dialog so `loading` flips immediately rather
-/// than after the await; if the user cancels, the ticket drops here
-/// and the gate releases.
+/// Orchestrates 1 "Open..." command: show the dialog, hand the picked path to
+/// the shared post-pick pipeline. The caller takes `ticket` before the dialog
+/// opens, so `loading` flips at once; if the user cancels, the ticket drops
+/// here and the gate releases.
 ///
-/// The dialog starts in the directory of the last opened file (falling
-/// back to the home directory), and that directory is remembered after
-/// a successful pick. The build envelope is read *after* the dialog so
-/// the placement reflects whatever the user has set by the time they
-/// finished picking; a mid-dialog settings edit lands on the next file.
+/// The dialog starts in the directory of the last opened file (falling back to
+/// the home directory), and that directory is remembered after a successful
+/// pick. The build envelope is read after the dialog closes, so the placement
+/// uses the envelope that the window holds when the user finishes picking.
 async fn run_open_file_flow(
     ticket: LoadTicket,
     ctrl: Rc<ViewportController>,
@@ -295,26 +286,25 @@ async fn run_open_file_flow(
             mesh_loader::start_load_with_ticket(ticket, path, &loader, ctrl.build_volume());
         }
         LoadDispatch::Queue => {
-            // The viewport has not started yet, which on a cold window
-            // is a matter of the first paint rather than a failure.
-            // Park the pick where `handle_rendering_setup` drains it,
-            // and let the ticket drop so the loader gate reopens; the
-            // drain takes a fresh one when it dispatches.
+            // The viewport has not started yet; on a new window it starts at
+            // the first paint. Park the pick where `handle_rendering_setup`
+            // drains it, and let the ticket drop so the loader gate reopens;
+            // the drain takes a fresh one when it dispatches.
             ctrl.pending_load().queue(path);
             drop(ticket);
         }
         LoadDispatch::Report(reason) => {
-            // Depositing rather than dropping keeps the failure on the
-            // one path that already reports load errors, so the user
-            // gets the usual dialog naming the file they picked.
+            // The deposit sends the failure down the path that reports load
+            // errors, so the user gets the usual dialog that names the picked
+            // file.
             ticket.deposit(path, Err(anyhow::Error::msg(reason.message())));
         }
     }
 }
 
-/// Picks the directory the open dialog should start in: the last opened
-/// file's directory when it still exists, otherwise the home directory,
-/// otherwise the platform default (no explicit directory).
+/// Picks the directory the open dialog should start in: the last opened file's
+/// directory when it still exists, otherwise the home directory, otherwise the
+/// platform default (no explicit directory).
 fn resolve_open_dialog_dir(
     last_open_dir: Option<PathBuf>,
     home_dir: Option<PathBuf>,
@@ -327,9 +317,9 @@ fn resolve_open_dialog_dir(
     home_dir.filter(|home| home.is_dir())
 }
 
-/// Records the directory an opened file lived in so the next open dialog
-/// starts there. No-op when the path has no parent or the directory is
-/// already the remembered one (avoids a redundant settings write).
+/// Records the directory an opened file lived in so the next open dialog starts
+/// there. No-op when the path has no parent or the directory is already the
+/// remembered one (avoids a redundant settings write).
 fn remember_open_directory(prefs: &Rc<PreferencesBus>, opened_file: &Path) {
     let Some(dir) = opened_file.parent().map(Path::to_path_buf) else {
         return;
@@ -365,20 +355,19 @@ async fn pick_mesh_file(start_dir: Option<PathBuf>) -> Option<PathBuf> {
 fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_requested(move || {
         let ctrl = ctrl.clone();
-        let snapshot = prefs.snapshot();
+        let defaults = PrintDefaults::from(&prefs.snapshot());
         if let Err(err) = slint::spawn_local(async move {
             let _ = run_save_flow(
                 ctrl.document(),
                 ctrl.dialogs(),
                 ctrl.save_progress(),
-                snapshot.default_printer,
-                snapshot.default_resin,
+                defaults,
             )
             .await;
-            // A first "Save" falls back to "Save As", which relocates
-            // the document. So does a write that completed while the
-            // document moved on, which reports itself as not saved, so
-            // mirror the name whatever the outcome was.
+            // A first "Save" falls back to "Save As", which relocates the
+            // document. So does a write that completed while the document moved
+            // on, which reports itself as not saved, so mirror the name
+            // whatever the outcome was.
             ctrl.refresh_document_title();
         }) {
             eprintln!("Failed to spawn save task: {err}");
@@ -386,19 +375,19 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
     });
 }
 
-/// Result of one Save or Save As command.
+/// Result of 1 Save or Save As command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SaveOutcome {
-    /// The document's current state is on disk. The only outcome that
-    /// lets a chained caller discard the scene.
+    /// The document's current state is on disk. The only outcome that lets a
+    /// chained caller discard the scene.
     Saved,
-    /// A file was written, but from a snapshot the document has since
-    /// left behind. The event loop stays live during a write, so an
-    /// edit, a printer change or an Open can land after the snapshot
-    /// was taken; the file holds none of it.
+    /// A file was written, but from a snapshot the document has since left
+    /// behind. The event loop stays live during a write, so an edit, a printer
+    /// change or an Open can land after the snapshot was taken; the file holds
+    /// none of it.
     MovedOn,
-    /// Nothing reached the disk: no scene, a cancelled dialog, or a
-    /// write failure that surfaced its own dialog.
+    /// Nothing reached the disk: no scene, a cancelled dialog, a wrong
+    /// extension, or a write failure that surfaced its own dialog.
     NotSaved,
 }
 
@@ -407,84 +396,64 @@ impl SaveOutcome {
     fn from_recorded(recorded: SaveRecorded) -> Self {
         match recorded {
             SaveRecorded::Clean => Self::Saved,
-            // Both mean the file does not hold what the document holds
-            // now, whether it drifted or was swapped outright.
+            // Both mean the file does not hold what the document holds now,
+            // whether it drifted or was swapped outright.
             SaveRecorded::Drifted | SaveRecorded::Replaced => Self::MovedOn,
         }
     }
 }
 
-/// Orchestrates one "Save" command: overwrite the document's project
-/// file, fall back to the Save As flow when there is none, and treat
-/// a clean project as already saved without touching the disk.
-/// Reports [`SaveOutcome::Saved`] only when the document's current
-/// state is on disk by the time the flow ends; cancellation of the Save
-/// As dialog and write failures surface their own dialogs and report
-/// nothing written.
+/// Orchestrates 1 "Save" command: overwrite the document's project file, fall
+/// back to the Save As flow when there is none, and treat a clean project as
+/// already saved without touching the disk. Reports [`SaveOutcome::Saved`] only
+/// when the document's current state is on disk by the time the flow ends. A
+/// cancelled dialog, a wrong extension and a failed write report nothing
+/// written; the last 2 show an error dialog.
+///
+/// `defaults` holds the app-wide defaults from when the command fired, so a
+/// default changed while the Save As dialog is open does not reach the file.
 pub(crate) async fn run_save_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     save_progress: Rc<SaveProgressPanel>,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: PrintDefaults,
 ) -> SaveOutcome {
     match scene_save::decide_save_dispatch(&doc) {
         SaveDispatch::NoScene => SaveOutcome::NotSaved,
         SaveDispatch::AlreadySaved => SaveOutcome::Saved,
         SaveDispatch::OverwriteProject(target) => {
-            save_to_target(
-                &doc,
-                &dialogs,
-                &save_progress,
-                &target,
-                default_printer,
-                default_resin,
-            )
-            .await
+            save_to_target(&doc, &dialogs, &save_progress, &target, &defaults).await
         }
         SaveDispatch::NeedsSaveAs => {
             let default_stem = scene_export::default_export_stem(&doc);
-            run_save_as_flow(
-                doc,
-                dialogs,
-                save_progress,
-                default_stem,
-                default_printer,
-                default_resin,
-            )
-            .await
+            run_save_as_flow(doc, dialogs, save_progress, default_stem, defaults).await
         }
     }
 }
 
-/// Writes a project to `target` off the UI thread, driving the
-/// save-progress panel. Snapshots the scene and payload on the UI
-/// thread, spawns a worker for the serialize + compress + disk write,
-/// and awaits its result over a oneshot delivered back through the event
-/// loop, so the event loop stays responsive throughout.
+/// Writes a project to `target` off the UI thread, driving the save-progress
+/// panel. Snapshots the scene and payload on the UI thread, spawns a worker for
+/// the serialize + compress + disk write, and awaits its result over a oneshot
+/// delivered back through the event loop, so the event loop stays responsive
+/// throughout.
 ///
-/// Reports [`SaveOutcome::Saved`] only when the document's current state
-/// is the one that reached the disk. The event loop keeps running during
-/// the write, so the user can edit, change the printer, or open another
-/// file in that window; the file then holds none of that, the document
-/// stays dirty, and the outcome is [`SaveOutcome::MovedOn`]. A write
-/// failure surfaces the error dialog.
+/// Reports [`SaveOutcome::Saved`] only when the document's current state is the
+/// one that reached the disk. The event loop keeps running during the write, so
+/// the user can edit, change the printer, or open another file in that window;
+/// the file then holds none of that, the document stays dirty, and the outcome
+/// is [`SaveOutcome::MovedOn`]. A write failure surfaces the error dialog.
 async fn save_to_target(
     doc: &Rc<SceneDocument>,
     dialogs: &Rc<DialogManager>,
     save_progress: &Rc<SaveProgressPanel>,
     target: &Path,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: &PrintDefaults,
 ) -> SaveOutcome {
-    let Some((bundle, payload, stamp)) = scene_save::prepare_save_for_target(
-        doc,
-        target.to_path_buf(),
-        default_printer,
-        default_resin,
-    ) else {
-        // The menu gates this, but a stale callback could still race a
-        // close: no scene means nothing to write.
+    let Some((bundle, payload, stamp)) =
+        scene_save::prepare_save_for_target(doc, target.to_path_buf(), defaults)
+    else {
+        // The menu gates this, but a stale callback could still race a close:
+        // no scene means nothing to write.
         return SaveOutcome::NotSaved;
     };
 
@@ -496,9 +465,9 @@ async fn save_to_target(
             scene_save::write_bundle(&bundle, |phase, done, total| sink.set(phase, done, total))
         }))
         .unwrap_or_else(|payload| Err(anyhow::anyhow!(mesh_loader::panic_message(&payload))));
-        // Deliver on the UI thread so the awaiting task wakes there. If
-        // the event loop is gone (shutdown), the sender drops and the
-        // receiver resolves to a cancellation.
+        // Deliver on the UI thread so the awaiting task wakes there. If the
+        // event loop is gone (shutdown), the sender drops and the receiver
+        // resolves to a cancellation.
         let _ = slint::invoke_from_event_loop(move || {
             let _ = tx.send(result);
         });
@@ -516,28 +485,19 @@ async fn save_to_target(
             show_save_error(dialogs, target, &err);
             SaveOutcome::NotSaved
         }
-        // The sender dropped without sending (event loop gone at
-        // shutdown): treat as not saved.
+        // The sender dropped without sending (event loop gone at shutdown):
+        // treat as not saved.
         Err(_canceled) => SaveOutcome::NotSaved,
     }
 }
 
 fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_as_requested(move || {
-        let snapshot = prefs.snapshot();
-        spawn_save_as_flow(
-            ctrl.clone(),
-            snapshot.default_printer,
-            snapshot.default_resin,
-        );
+        spawn_save_as_flow(ctrl.clone(), PrintDefaults::from(&prefs.snapshot()));
     });
 }
 
-fn spawn_save_as_flow(
-    ctrl: Rc<ViewportController>,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
-) {
+fn spawn_save_as_flow(ctrl: Rc<ViewportController>, defaults: PrintDefaults) {
     let default_stem = scene_export::default_export_stem(&ctrl.document());
     if let Err(err) = slint::spawn_local(async move {
         let _ = run_save_as_flow(
@@ -545,31 +505,31 @@ fn spawn_save_as_flow(
             ctrl.dialogs(),
             ctrl.save_progress(),
             default_stem,
-            default_printer,
-            default_resin,
+            defaults,
         )
         .await;
-        // "Save As" relocates the document even when the write
-        // completed against a moved-on document and reported itself as
-        // not saved, so mirror the name whatever the outcome was.
+        // "Save As" relocates the document even when the write completed
+        // against a moved-on document and reported itself as not saved, so
+        // mirror the name whatever the outcome was.
         ctrl.refresh_document_title();
     }) {
         eprintln!("Failed to spawn save dialog task: {err}");
     }
 }
 
-/// Orchestrates one "Save As" command: show the file-save dialog
-/// (seeded with the source stem and the `.3mf` extension), validate
-/// the picked name, and write the project. Cancellation, wrong
-/// extensions, and write failures report nothing written and surface
-/// their own dialogs.
+/// Orchestrates 1 "Save As" command: show the file-save dialog (seeded with the
+/// source stem and the `.3mf` extension), validate the picked name, and write
+/// the project. A cancelled dialog, a wrong extension and a failed write report
+/// nothing written; the last 2 show an error dialog.
+///
+/// `defaults` holds the app-wide defaults from when the command fired, so a
+/// default changed while the Save As dialog is open does not reach the file.
 async fn run_save_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     save_progress: Rc<SaveProgressPanel>,
     default_stem: Option<String>,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: PrintDefaults,
 ) -> SaveOutcome {
     let dispatch = scene_save::decide_save_target(pick_save_target(default_stem).await);
     match dispatch {
@@ -580,15 +540,7 @@ async fn run_save_as_flow(
             SaveOutcome::NotSaved
         }
         SaveTargetDispatch::Ready(target) => {
-            save_to_target(
-                &doc,
-                &dialogs,
-                &save_progress,
-                &target,
-                default_printer,
-                default_resin,
-            )
-            .await
+            save_to_target(&doc, &dialogs, &save_progress, &target, &defaults).await
         }
     }
 }
@@ -633,15 +585,13 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     });
 }
 
-/// Orchestrates one "Export As" command: show the file-save dialog,
-/// infer the format from the chosen extension, snapshot the scene on
-/// the UI thread, and write the file on a worker thread while the
-/// export-progress panel polls, so the event loop stays responsive
-/// throughout. Returns `true` only when a file was actually written
-/// (so a chained "Export & Open" caller knows it's safe to discard
-/// the current scene); user cancellation, unknown extensions, and
-/// write failures all return `false`. Errors and unknown extensions
-/// surface dialogs from this function so callers don't have to.
+/// Orchestrates 1 "Export As" command: show the file-save dialog, infer the
+/// format from the chosen extension, snapshot the scene on the UI thread, and
+/// write the file on a worker thread while the export-progress panel polls, so
+/// the event loop stays responsive throughout. Returns `true` only when a file
+/// was written (so a chained "Export & Open" caller knows it is safe to discard
+/// the current scene); a cancelled dialog, an unknown extension and a failed
+/// write return `false`. Errors and unknown extensions show their dialogs here.
 pub(crate) async fn run_export_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
@@ -649,11 +599,11 @@ pub(crate) async fn run_export_as_flow(
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> bool {
-    // rfd 0.17 doesn't expose the filter the user actually picked, so
-    // the path's extension is the portable source of truth for the
-    // format. `.stl` -> binary, `.stla` -> ASCII, `.obj` -> OBJ. The
-    // dialog seeds the active filter's extension into the filename so
-    // the user gets the format they implicitly chose.
+    // rfd 0.17 doesn't expose the filter the user actually picked, so the
+    // path's extension is the portable source of truth for the format. `.stl`
+    // -> binary, `.stla` -> ASCII, `.obj` -> OBJ. The dialog seeds the active
+    // filter's extension into the filename so the user gets the format they
+    // implicitly chose.
     let dispatch =
         decide_export_dispatch(pick_export_target(default_stem, default_extension).await);
     match dispatch {
@@ -667,11 +617,10 @@ pub(crate) async fn run_export_as_flow(
             false
         }
         ExportDispatch::Ready { target, format } => {
-            // Snapshot on the UI thread: one borrow, one cheap clone
-            // that the worker owns outright, so the written bytes
-            // match the on-screen scene at this instant. The menu
-            // gates exports without a scene, but a stale callback
-            // could still race the close path.
+            // Snapshot on the UI thread: 1 borrow, 1 cheap clone that the
+            // worker owns outright, so the written bytes match the on-screen
+            // scene at this instant. The menu gates exports without a scene,
+            // but a stale callback could still race the close path.
             let Some(scene) = scene_export::prepare_export(&doc) else {
                 let err = anyhow::anyhow!("No scene loaded");
                 show_export_error(&dialogs, &target, &err);
@@ -694,10 +643,9 @@ pub(crate) async fn run_export_as_flow(
                 .unwrap_or_else(|payload| {
                     Err(anyhow::anyhow!(mesh_loader::panic_message(&payload)))
                 });
-                // Deliver on the UI thread so the awaiting task wakes
-                // there. If the event loop is gone (shutdown), the
-                // sender drops and the receiver resolves to a
-                // cancellation.
+                // Deliver on the UI thread so the awaiting task wakes there. If
+                // the event loop is gone (shutdown), the sender drops and the
+                // receiver resolves to a cancellation.
                 let _ = slint::invoke_from_event_loop(move || {
                     let _ = tx.send(result);
                 });
@@ -716,8 +664,8 @@ pub(crate) async fn run_export_as_flow(
                     show_export_error(&dialogs, &target, &err);
                     false
                 }
-                // The sender dropped without sending (event loop gone
-                // at shutdown): treat as not exported.
+                // The sender dropped without sending (event loop gone at
+                // shutdown): treat as not exported.
                 Err(_canceled) => false,
             }
         }
@@ -737,10 +685,9 @@ async fn pick_export_target(
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> Option<PathBuf> {
-    // Filters in source-format-first order. Most rfd backends pick
-    // the first filter as the active one, which is also the
-    // extension we seed the filename with, so the dialog opens on a
-    // consistent format pair.
+    // Filters in source-format-first order. Most rfd backends pick the first
+    // filter as the active one, which is also the extension we seed the
+    // filename with, so the dialog opens on a consistent format pair.
     let stl_bin = (
         ctr!("FileDialog", "STL (binary)").to_string(),
         ["stl"].as_slice(),
@@ -774,8 +721,8 @@ async fn pick_export_target(
     dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
 
-/// The save flow's promise to a chained caller: only an undisturbed
-/// write lets that caller discard the scene it just saved.
+/// The save flow's promise to a chained caller: only an undisturbed write lets
+/// that caller discard the scene it just saved.
 #[cfg(test)]
 mod save_outcome_tests {
     use super::*;
@@ -839,9 +786,9 @@ mod export_flow_dispatch_tests {
     #[test]
     fn readable_but_unwriteable_extensions_classify_as_unsupported() {
         // PLY / AMF are inferrable as `MeshFileType` but
-        // `WriteFormat::try_from` rejects them, so the dispatch must
-        // collapse them into `UnsupportedExtension` rather than letting
-        // them escape as a "Ready" variant the exporter can't handle.
+        // `WriteFormat::try_from` rejects them, so the dispatch must collapse
+        // them into `UnsupportedExtension`; a "Ready" variant would hand the
+        // exporter a format it cannot write.
         for name in ["model.ply", "model.amf"] {
             let path = PathBuf::from(name);
             assert_eq!(
@@ -854,9 +801,8 @@ mod export_flow_dispatch_tests {
 
     #[test]
     fn writeable_extensions_classify_as_ready_with_the_matching_write_format() {
-        // `.stl` (no ASCII/binary hint) maps to binary STL by
-        // long-standing project convention; see
-        // `WriteFormat::try_from(MeshFileType::Stl)`.
+        // `.stl` (no ASCII/binary hint) maps to binary STL by long-standing
+        // project convention; see `WriteFormat::try_from(MeshFileType::Stl)`.
         let cases = [
             ("/tmp/out.stl", WriteFormat::StlBin),
             ("/tmp/out.stlb", WriteFormat::StlBin),
@@ -897,8 +843,8 @@ mod open_dialog_dir_tests {
 
     #[test]
     fn falls_back_to_home_when_the_last_dir_is_gone() {
-        // A remembered directory that no longer exists is skipped in
-        // favour of the home directory.
+        // A remembered directory that no longer exists is skipped in favour of
+        // the home directory.
         let missing = tempdir().unwrap();
         let missing_path = missing.path().to_path_buf();
         drop(missing);
@@ -916,8 +862,8 @@ mod open_dialog_dir_tests {
 
     #[test]
     fn yields_nothing_when_neither_dir_is_usable() {
-        // No remembered directory and no resolvable home leaves the
-        // dialog at the platform default.
+        // No remembered directory and no resolvable home leaves the dialog at
+        // the platform default.
         assert_eq!(resolve_open_dialog_dir(None, None), None);
     }
 

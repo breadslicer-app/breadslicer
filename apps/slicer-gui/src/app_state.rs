@@ -30,6 +30,7 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
+use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::ProfileCatalog;
 use crate::repair_run::RepairRun;
 use crate::scene_document::SceneDocument;
@@ -45,24 +46,24 @@ use crate::wiring::SaveOutcome;
 mod replace_scene_policy {
     use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
 
-    /// Pre-prompt branch chosen by `open_path_in_window` from the
-    /// state of the target window and the dropped/opened path.
+    /// Pre-prompt branch chosen by `open_path_in_window` from the state of the
+    /// target window and the dropped/opened path.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum OpenPathAction {
-        /// Path extension is not in the supported mesh set; caller
-        /// should surface an "Unsupported file type" error dialog.
+        /// Path extension is not in the supported mesh set; caller should
+        /// surface an "Unsupported file type" error dialog.
         RejectUnsupported,
-        /// No scene is currently loaded; caller should dispatch the
-        /// path to the loader directly.
+        /// No scene is currently loaded; caller should dispatch the path to the
+        /// loader directly.
         DispatchImmediately,
-        /// A scene is already loaded; caller should show the replace-
-        /// scene confirmation dialog. `offer` controls which "keep
-        /// your work" buttons (Save / Export) the dialog shows.
+        /// A scene is already loaded; caller should show the replace-scene
+        /// confirmation dialog. `offer` controls which "keep your work" buttons
+        /// (Save / Export) the dialog shows.
         PromptReplace { offer: KeepChangesOffer },
     }
 
-    /// Post-prompt branch chosen from the user's reply to the
-    /// replace-scene confirmation dialog.
+    /// Post-prompt branch chosen from the user's reply to the replace-scene
+    /// confirmation dialog.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum PostPromptAction {
         DiscardThenOpen,
@@ -108,12 +109,11 @@ use replace_scene_policy::{
 };
 
 mod context_menu_policy {
-    /// Visibility flags for the viewport's right-click context menu.
-    /// Each flag controls whether the corresponding `MenuItem` is
-    /// rendered in `mesh-viewer.slint`; the menu popup itself is
-    /// suppressed when none of the flags are set so a right-click on
-    /// empty space with an empty clipboard does not pop an empty
-    /// menu.
+    /// Visibility flags for the viewport's right-click context menu. Each flag
+    /// controls whether the corresponding `MenuItem` is rendered in
+    /// `mesh-viewer.slint`; the menu popup itself is suppressed when none of
+    /// the flags are set, so a right-click on empty space with an empty
+    /// clipboard does not pop an empty menu.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) struct ContextMenuFlags {
         pub(crate) can_copy: bool,
@@ -122,15 +122,15 @@ mod context_menu_policy {
     }
 
     impl ContextMenuFlags {
-        /// True when at least one item would be visible.
+        /// Reports whether at least 1 item is visible.
         pub(crate) fn any(self) -> bool {
             self.can_copy || self.can_paste || self.can_delete
         }
     }
 
-    /// Map the right-click state to the menu's visibility flags:
-    /// - `picked_hit` (whether `pick_node_at` returned a node) drives
-    ///   both Copy and Delete: both require an object under the cursor;
+    /// Maps the right-click state to the menu's visibility flags:
+    /// - `picked_hit` (whether `pick_node_at` returned a node) drives both Copy
+    ///   and Delete: both require an object under the cursor;
     /// - `clipboard_has_content` drives Paste alone.
     pub(crate) fn context_menu_flags(
         picked_hit: bool,
@@ -147,97 +147,89 @@ mod context_menu_policy {
 use context_menu_policy::context_menu_flags;
 
 thread_local! {
-    /// The Slint thread's `AppState`, for delivering a device loss
-    /// raised on another thread.
+    /// The Slint thread's `AppState`, for delivering a device loss raised on
+    /// another thread.
     static DEVICE_LOST_TARGET: RefCell<Weak<AppState>> = const { RefCell::new(Weak::new()) };
 }
 
-/// A main window paired with its viewport controller and preference-
-/// bus subscription. Drop of this struct drops the subscription,
-/// unregistering the window's preference-apply listener. Held by value
-/// in `AppState::main_windows` so closing a window via
-/// `on_close_requested` cleans up all three halves in one step. The
-/// `window` field must be held even though it is never read: keeping
-/// the Slint handle by value keeps the component alive, while the
-/// only accesses to the live window happen through the
-/// `Weak<MainWindow>` captured in the subscription's listener. The `controller` is held so external entry
-/// points (path-driven loads from argv / drag-and-drop) can resolve
-/// the window's `SceneLoader` from the window id.
+/// A main window with the objects that live as long as it does.
+/// `AppState::main_windows` holds it by value, so closing the window through
+/// `on_close_requested` drops all of them in 1 step; the drop of
+/// `_subscription` unregisters the window's preferences listener. Holding
+/// `window` by value keeps the Slint component alive. `AppState` reaches the
+/// window's controller and its pending-load slot through the window id.
 struct WiredMainWindow {
     window: MainWindow,
     controller: Rc<ViewportController>,
-    // Shared with the controller. Writer side: external entry points
-    // park a path here when the GPU device isn't yet available. The
-    // controller drains it from `handle_rendering_setup`.
+    // Shared with the controller. Writer side: external entry points park a
+    // path here when the GPU device isn't yet available. The controller drains
+    // it from `handle_rendering_setup`.
     pending_load: Rc<PendingLoad>,
     _subscription: Subscription,
-    /// The Slice control panel's picker bridge. Held so its document
-    /// and preferences-bus subscriptions live as long as the window.
+    /// The Slice control panel's picker bridge. Held so its document and
+    /// preferences-bus subscriptions live as long as the window.
     _slice_panel: Rc<SlicePanelBridge>,
-    /// The Slice action driver. Held so its Slint callbacks and progress
-    /// timer live as long as the window.
+    /// The Slice action driver. Held so its Slint callbacks and progress timer
+    /// live as long as the window.
     _slice_run: Rc<SliceRun>,
-    /// The Repair action driver. Held so its Slint callbacks live as
-    /// long as the window.
+    /// The Repair action driver. Held so its Slint callbacks live as long as
+    /// the window.
     _repair_run: Rc<RepairRun>,
-    /// The Tools > "Generate Support (trivial for test)" action driver.
-    /// Held so its Slint callbacks live as long as the window.
+    /// The Tools > "Generate Support (trivial for test)" action driver. Held so
+    /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
 }
 
-/// Owns every piece of state that is app-wide (not tied to a single
-/// `MainWindow`):
+/// Owns the app-wide state:
 ///
-/// - a lazily-created, app-wide `AboutWindow` shared across every main
-///   window;
-/// - a lazily-created, app-wide `PreferencesWindow` shared across
-///   every main window;
-/// - the `PreferencesBus`, which owns the canonical theme / language
-///   state and notifies every live window on change;
-/// - strong handles to each live `MainWindow`, so they aren't dropped
-///   while the event loop is running.
+/// - the `AboutWindow` and the `PreferencesWindow`, each created on first use
+///   and shared by every main window;
+/// - the `PreferencesBus`, which holds the preferences and notifies every live
+///   window of a change;
+/// - the profile catalog, the clipboard, the device-loss flag and the settings
+///   saver;
+/// - strong handles to each live `MainWindow`, which keep them alive while the
+///   event loop runs.
 ///
-/// Per-window state (scene, camera, GPU renderer, per-window error
-/// dialogs) stays inside `ViewportController`, one instance per
-/// `MainWindow`. Closures installed on a `MainWindow` that need to
-/// reach `AppState` hold a `Weak<AppState>` so the
-/// window->closure->AppState->window graph doesn't form a strong-
-/// reference cycle.
+/// Per-window state (scene, camera, GPU renderer, per-window error dialogs)
+/// stays inside `ViewportController`, 1 instance per `MainWindow`. Closures
+/// installed on a `MainWindow` that need to reach `AppState` hold a
+/// `Weak<AppState>`, so the window->closure->AppState->window graph forms no
+/// strong-reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<WiredAboutWindow>>,
     preferences_window: RefCell<Option<WiredPreferencesWindow>>,
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
     prefs: Rc<PreferencesBus>,
-    /// The merged printer / material catalog the Preferences pickers
-    /// read from. Behind a refreshable handle so a later authoring or
-    /// import step can rebuild it without a restart.
+    /// The merged printer and material catalog that the Preferences window and
+    /// the Slice panels read. Behind a shared handle, so the Preferences window
+    /// can rebuild it after a change to the user library, without a restart.
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
-    /// App-wide copy / paste clipboard. Populated from any window's
-    /// current selection by `copy_selection`; consumed by the paste
-    /// path which lives on the viewport controller. `None` until the
-    /// user has performed the first copy.
+    /// App-wide copy / paste clipboard. Populated from any window's current
+    /// selection by `copy_selection`; consumed by the paste path which lives on
+    /// the viewport controller. `None` until the user has performed the first
+    /// copy.
     clipboard: RefCell<Option<Clipboard>>,
     /// The shared device's lost-device flag.
     device_loss: DeviceLoss,
-    // Bus subscriptions owned by AppState. They run on every
-    // `bus.update`; dropping them unregisters. Stored here so they
-    // live as long as `AppState`. The settings subscription holds the
-    // only `Sender` clone; dropping it lets the saver thread observe
-    // channel-closed and exit its recv loop.
+    // Bus subscriptions owned by AppState. They run on every `bus.update`;
+    // dropping them unregisters. Stored here so they live as long as
+    // `AppState`. The settings subscription holds the only `Sender` clone;
+    // dropping it lets the saver thread observe channel-closed and exit its
+    // recv loop.
     _settings_sub: Subscription,
     _language_apply_sub: Subscription,
-    // RAII handle that joins the settings-saver worker thread. Declared
-    // after `_settings_sub` so the subscription's `Sender` is dropped
-    // first; otherwise the join would deadlock waiting for the worker
-    // to exit while the worker is still blocked on `recv`.
+    // RAII handle that joins the settings-saver worker thread. Declared after
+    // `_settings_sub` so the subscription's `Sender` is dropped first;
+    // otherwise the join would deadlock waiting for the worker to exit while
+    // the worker is still blocked on `recv`.
     _settings_saver: SettingsSaverJoin,
 }
 
-/// RAII handle joining the settings-saver thread on drop. The worker
-/// owns the `AppSettings` instance and writes to disk off the Slint
-/// event-loop thread; joining on drop preserves the previous "save
-/// completes before process exit" guarantee.
+/// RAII handle joining the settings-saver thread on drop. The worker owns the
+/// `AppSettings` instance and writes to disk off the Slint event-loop thread;
+/// joining on drop makes the last save complete before the process exits.
 struct SettingsSaverJoin {
     join: Option<JoinHandle<()>>,
 }
@@ -250,10 +242,10 @@ impl Drop for SettingsSaverJoin {
     }
 }
 
-/// Settings-saver worker loop. Blocks on `recv`; on each wake drains
-/// any further pending snapshots via `try_recv` so a burst of rapid
-/// preference changes collapses to a single `on_snapshot` call.
-/// Returns when every `Sender` clone is dropped.
+/// Runs the settings-saver worker loop. Blocks on `recv`; on each wake drains
+/// any further pending snapshots via `try_recv`, so a burst of rapid preference
+/// changes collapses to a single `on_snapshot` call. Returns when every
+/// `Sender` clone is dropped.
 fn run_settings_saver_loop<F>(rx: mpsc::Receiver<PreferencesSnapshot>, mut on_snapshot: F)
 where
     F: FnMut(&PreferencesSnapshot),
@@ -266,9 +258,9 @@ where
     }
 }
 
-/// Copies every persisted preference out of a live snapshot into the
-/// on-disk settings model. The single place the two representations are
-/// mapped, so the saver thread and its tests stay in agreement.
+/// Copies every persisted preference out of a live snapshot into the on-disk
+/// settings model. The single place the 2 representations are mapped, so the
+/// saver thread and its tests stay in agreement.
 fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnapshot) {
     settings.set_theme(snap.theme);
     settings.set_menu_layout(snap.menu_layout);
@@ -304,8 +296,8 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
-/// Spawns the settings-saver worker thread, with the loop body wired
-/// to persist each coalesced snapshot through `AppSettings::save`.
+/// Spawns the settings-saver worker thread, with the loop body wired to persist
+/// each coalesced snapshot through `AppSettings::save`.
 fn spawn_settings_saver(
     initial_settings: AppSettings,
 ) -> std::io::Result<(Sender<PreferencesSnapshot>, SettingsSaverJoin)> {
@@ -333,11 +325,10 @@ impl AppState {
         let default_printer = settings.default_printer();
         let default_resin = settings.default_resin();
         // The envelope is derived from the effective printer: the user's
-        // explicit choice when present, otherwise the first-run soft
-        // default (Generic Machine, else the first catalog printer). The
-        // soft default drives the opening envelope only; `default_printer`
-        // stays None so nothing is written to settings until the user
-        // picks a printer.
+        // explicit choice when present, otherwise the first-run soft default
+        // (Generic Machine, else the first catalog printer). The soft default
+        // drives the opening envelope only; `default_printer` stays None so
+        // nothing is written to settings until the user picks a printer.
         let build_volume = {
             let catalog = catalog.borrow();
             let effective_printer = catalog.effective_default_printer(default_printer.as_ref());
@@ -378,32 +369,31 @@ impl AppState {
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
         };
-        // Apply the persisted language *once* up front so the very
-        // first `@tr` evaluation during window construction uses the
-        // right locale. `select_bundled_translation` is a no-op until
-        // at least one Slint component exists, but the next
-        // successful call after the first window is built will retry;
-        // keeping this call here preserves the pre-bus behaviour.
+        // Apply the persisted language *once* up front so the very first `@tr`
+        // evaluation during window construction uses the right locale.
+        // `select_bundled_translation` is a no-op until at least 1 Slint
+        // component exists, but the next successful call after the first window
+        // is built will retry.
         snapshot.language.apply();
 
         let prefs = PreferencesBus::new(snapshot);
 
-        // Persistence runs on a dedicated worker thread: the
-        // subscription forwards each updated snapshot to it over an
-        // `mpsc` channel and the worker writes to disk. Off-loading
-        // the write keeps the Slint event loop responsive on slow /
-        // network-mounted / nearly-full config directories.
+        // Persistence runs on a dedicated worker thread: the subscription
+        // forwards each updated snapshot to it over an `mpsc` channel and the
+        // worker writes to disk. Off-loading the write keeps the Slint event
+        // loop responsive on slow / network-mounted / nearly-full config
+        // directories.
         let (saver_tx, settings_saver) = spawn_settings_saver(settings)?;
         let settings_sub = prefs.subscribe(move |snap, _change| {
-            // Channel send is non-blocking; failure means the worker
-            // has already exited, which only happens at shutdown.
+            // Channel send is non-blocking; failure means the worker has
+            // already exited, which only happens at shutdown.
             let _ = saver_tx.send(snap.clone());
         });
 
-        // Language side-effect: flip the process-global bundled
-        // translation before per-window listeners re-render. The
-        // `PreferencesWindow`'s listener rebuilds its language combo
-        // against the *active* translation, so this must come first.
+        // Language side-effect: flip the process-global bundled translation
+        // before per-window listeners re-render. The `PreferencesWindow`'s
+        // listener rebuilds its language combo against the *active*
+        // translation, so this must come first.
         let language_apply_sub = prefs.subscribe(|snap, change| {
             if *change == PreferencesChange::Language {
                 snap.language.apply();
@@ -427,8 +417,7 @@ impl AppState {
         Ok(app)
     }
 
-    /// Delivers a device loss to this thread's `AppState`, if one
-    /// exists.
+    /// Delivers a device loss to this thread's `AppState`, if one exists.
     pub(crate) fn dispatch_device_lost(reason: String) {
         let target = DEVICE_LOST_TARGET.with(|target| target.borrow().upgrade());
         if let Some(app) = target {
@@ -436,8 +425,8 @@ impl AppState {
         }
     }
 
-    /// Takes every window off the lost device (renderer dropped, loads
-    /// refused with the reason) and tells the user once per process.
+    /// Takes every window off the lost device (renderer dropped, loads refused
+    /// with the reason) and tells the user once per process.
     fn on_device_lost(&self, reason: String) {
         let windows = self.main_windows.borrow();
         for wired in windows.values() {
@@ -457,28 +446,23 @@ impl AppState {
         }
     }
 
-    /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
-    /// callbacks (viewport input, rendering notifier, file open/close,
-    /// resize debounce) are installed by `crate::wiring::wire_main_window`;
-    /// the app-level "About" and "New Window" menu items and the OS
-    /// close-request handler are wired here.
+    /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
-        // Static platform flag consumed by the View menu to show the
-        // correct fullscreen accelerator (Cmd+Ctrl+F on macOS, F11
-        // elsewhere). Slint has no compile-time platform branch, so the
-        // choice is made here and pushed into the UI.
+        // Static platform flag consumed by the View menu to show the correct
+        // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
+        // has no compile-time platform branch, so the choice is made here and
+        // pushed into the UI.
         ui.set_is_macos(cfg!(target_os = "macos"));
         let snapshot = self.prefs.snapshot();
         ui.apply_preferences(&snapshot);
-        // Object-list panel visibility and geometry are per-window live
-        // state: restored once here at creation and deliberately left
-        // out of `apply_preferences`, so a later change in one window is
-        // saved to disk without moving or hiding the panel in other
-        // windows. An offset or size field is pushed only when a previous
-        // session saved it; leaving a field untouched keeps the Slint
-        // default (top-right anchor, 12px offsets, 220px width, auto
-        // height).
+        // Object-list panel visibility and geometry are per-window live state:
+        // restored once here at creation and deliberately left out of
+        // `apply_preferences`, so a later change in 1 window is saved to disk
+        // without moving or hiding the panel in other windows. An offset or
+        // size field is pushed only when a previous session saved it; leaving a
+        // field untouched keeps the Slint default (top-right anchor, 12px
+        // offsets, 220px width, auto height).
         ui.set_show_object_list(snapshot.object_list_visible);
         ui.set_object_list_minimized(snapshot.object_list_minimized);
         ui.set_object_list_anchor_right(snapshot.object_list_anchor_right);
@@ -495,11 +479,10 @@ impl AppState {
         if let Some(height) = snapshot.object_list_height {
             ui.set_object_list_height(height);
         }
-        // Slice control panel geometry: same per-window live semantics as
-        // the object-list panel. An offset or size field is pushed only
-        // when a previous session saved it; leaving a field untouched
-        // keeps the Slint default (top-left anchor, 12px offsets, 240px
-        // width, auto height).
+        // Slice control panel geometry: same per-window live semantics as the
+        // object-list panel. An offset or size field is pushed only when a
+        // previous session saved it; leaving a field untouched keeps the Slint
+        // default (top-left anchor, 12px offsets, 240px width, auto height).
         ui.set_slice_panel_anchor_right(snapshot.slice_panel_anchor_right);
         ui.set_slice_panel_anchor_bottom(snapshot.slice_panel_anchor_bottom);
         if let Some(offset_x) = snapshot.slice_panel_offset_x {
@@ -515,10 +498,10 @@ impl AppState {
             ui.set_slice_panel_height(height);
         }
         // Slice-view panel visibility and geometry: same per-window live
-        // semantics as the object-list panel. An offset or size field is
-        // pushed only when a previous session saved it; leaving a field
-        // untouched keeps the Slint default (bottom-left anchor, 12px
-        // offsets, 240px width, auto height).
+        // semantics as the object-list panel. An offset or size field is pushed
+        // only when a previous session saved it; leaving a field untouched
+        // keeps the Slint default (bottom-left anchor, 12px offsets, 240px
+        // width, auto height).
         ui.set_show_slice_view(snapshot.slice_view_visible);
         ui.set_slice_view_minimized(snapshot.slice_view_minimized);
         ui.set_slice_view_anchor_right(snapshot.slice_view_anchor_right);
@@ -544,9 +527,9 @@ impl AppState {
             self.device_loss.clone(),
         ));
         ctrl.register_document_listener();
-        // Bus listeners only fire on `update`, not on subscribe, so
-        // the persisted build volume is pushed imperatively here.
-        // Future runtime edits flow in through the subscription below.
+        // Bus listeners run on `update` only, so the window gets the current
+        // build volume here, and the subscription below delivers each later
+        // change.
         ctrl.set_build_volume(snapshot.build_volume);
 
         crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
@@ -566,11 +549,10 @@ impl AppState {
         let id = self.next_window_id.get();
         self.next_window_id.set(id.wrapping_add(1));
 
-        // Copy / paste live at the AppState level (the clipboard
-        // is app-wide, not per-window) but the keystrokes arrive
-        // through the per-window MeshViewer FocusScope. Bind them
-        // here so the closure captures the window id and a Weak
-        // back to AppState.
+        // The clipboard is app-wide, so copy and paste live in AppState, but
+        // the keystrokes arrive through each window's MeshViewer FocusScope.
+        // The closures bound here capture the window id and a Weak back to
+        // AppState.
         {
             let app_weak = Rc::downgrade(self);
             ui.on_copy_pressed(move || {
@@ -588,10 +570,9 @@ impl AppState {
             });
         }
 
-        // Right-button context menu. Down latches the press
-        // position on the controller; up classifies the gesture
-        // and, if it was a click (no drag), asks AppState to open
-        // the menu at the press position.
+        // Right-button context menu. Down latches the press position on the
+        // controller; up classifies the gesture and, if it was a click (no
+        // drag), asks AppState to open the menu at the press position.
         {
             let ctrl = ctrl.clone();
             ui.on_viewport_right_pointer_down(move |x, y| {
@@ -639,8 +620,8 @@ impl AppState {
 
         // On OS-level close: drop our strong handle so the window's
         // `ViewportController`, `Renderer`, scene, and the preference
-        // subscription can be released. Without this, hidden windows
-        // accumulate for the whole session.
+        // subscription can be released. Without this, hidden windows accumulate
+        // for the whole session.
         {
             let app_weak = Rc::downgrade(self);
             ui.window().on_close_requested(move || {
@@ -651,12 +632,10 @@ impl AppState {
             });
         }
 
-        // Drag-and-drop: route the winit `DroppedFile` event for this
-        // window's surface into the shared `open_path_in_window`
-        // entry, and toggle the `drop-hovering` overlay on hover
-        // events. Wayland users won't see any of this until winit
-        // lands its Wayland DnD support upstream; see the open-with
-        // plan for context.
+        // Drag-and-drop: route the winit `DroppedFile` event for this window's
+        // surface into the shared `open_path_in_window` entry, and toggle the
+        // `drop-hovering` overlay on hover events. winit 0.30 emits these
+        // events on Windows, macOS and X11; its Wayland backend emits none.
         {
             use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
             let app_weak = Rc::downgrade(self);
@@ -688,8 +667,8 @@ impl AppState {
         }
 
         ui.show()?;
-        // The winit window only exists once shown; set the taskbar icon
-        // here so the live window matches the executable resource.
+        // The winit window only exists once shown; set the taskbar icon here so
+        // the live window matches the executable resource.
         crate::window_icon::apply(ui.window());
         self.main_windows.borrow_mut().insert(
             id,
@@ -707,25 +686,22 @@ impl AppState {
         Ok(id)
     }
 
-    /// Routes an external (non-menu) open request into the right
-    /// place. Used by argv at startup, drag-and-drop, future macOS
-    /// `openURLs`. Branches:
+    /// Routes an external (non-menu) open request into the right place: a path
+    /// on `argv` at start-up, a drag-and-drop, or a file that the Finder opens
+    /// on macOS. Branches:
     ///
-    /// 1. Unrecognised window id (window closed since the request was
-    ///    queued): silently drop.
-    /// 2. Unsupported file extension: surface an error dialog
-    ///    (decision #3) and return.
+    /// 1. Unrecognised window id (window closed since the request was queued):
+    ///    silently drop.
+    /// 2. Unsupported file extension: surface an error dialog and return.
     /// 3. Window already has a loaded scene: surface the
-    ///    [`ReplaceSceneDialog`] (decision #4). On Discard, close and
-    ///    load the new path; on Save, run the Save flow (overwrite
-    ///    the project file, or Save As when there is none) and only
-    ///    once the document is on disk close + load; on Export, run
-    ///    the existing "Export As…" flow and only on a successful
-    ///    save close + load; on Cancel, do nothing.
-    /// 4. Otherwise dispatch through [`Self::dispatch_path_to_loader`],
-    ///    which queues the path on the window's `PendingLoad` slot if
-    ///    the GPU device isn't ready yet, or starts the load
-    ///    immediately if it is.
+    ///    [`ReplaceSceneDialog`]. On Discard, close and load the new path; on
+    ///    Save, run the Save flow (overwrite the project file, or Save As when
+    ///    there is none) and only once the document is on disk close + load; on
+    ///    Export, run the existing "Export As..." flow and only on a successful
+    ///    export close + load; on Cancel, do nothing.
+    /// 4. Otherwise dispatch through [`Self::dispatch_path_to_loader`], which
+    ///    queues the path on the window's `PendingLoad` slot if the GPU device
+    ///    isn't ready yet, or starts the load immediately if it is.
     pub(crate) fn open_path_in_window(self: &Rc<Self>, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -759,11 +735,10 @@ impl AppState {
                 self.dispatch_path_to_loader(window_id, path);
             }
             OpenPathAction::PromptReplace { offer } => {
-                // Replace-confirm flow. The choice callback fires on
-                // the UI thread once the user picks a button.
-                // `Weak<AppState>` keeps the closure non-cyclic; if
-                // the app is gone by then, every branch silently
-                // drops.
+                // Replace-confirm flow. The choice callback fires on the UI
+                // thread once the user picks a button. `Weak<AppState>` keeps
+                // the closure non-cyclic; if the app is gone by then, every
+                // branch silently drops.
                 let app_weak = Rc::downgrade(self);
                 let source_name = path
                     .file_name()
@@ -795,13 +770,12 @@ impl AppState {
         }
     }
 
-    /// Capture the currently-selected leaf from the focused window's
-    /// [`SceneDocument`] into the app-wide clipboard. Silently does
-    /// nothing if the window id is unknown (window closed since the
-    /// keystroke fired), no scene is loaded, or no leaf is selected;
-    /// in those cases the previous clipboard contents survive,
-    /// matching the convention that only a successful copy
-    /// overwrites the clipboard.
+    /// Captures the currently-selected leaf from the focused window's
+    /// [`SceneDocument`] into the app-wide clipboard. Silently does nothing if
+    /// the window id is unknown (window closed since the keystroke fired), no
+    /// scene is loaded, or no leaf is selected; in those cases the previous
+    /// clipboard contents survive, matching the convention that only a
+    /// successful copy overwrites the clipboard.
     pub(crate) fn copy_selection(&self, window_id: u64) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -810,8 +784,8 @@ impl AppState {
             };
             wired.controller.clone()
         };
-        // Copy is a Transform-section tool (it seeds a paste, which
-        // mutates the scene); it stays inert in Prepare and Slice.
+        // Copy is a Transform-section tool (it seeds a paste, which mutates the
+        // scene); it stays inert in Prepare and Slice.
         if !controller.allows_layout_tools() {
             return;
         }
@@ -822,12 +796,11 @@ impl AppState {
         *self.clipboard.borrow_mut() = Some(Clipboard::new(fragment));
     }
 
-    /// Paste the app-wide clipboard's fragment into the focused
-    /// window. Silent no-op when the window id is unknown, the
-    /// clipboard is empty, or the controller's paste path bails
-    /// (no scene loaded, no camera ready, fragment empty, cursor
-    /// ray missed the build plate). On a successful paste the
-    /// cascade counter is bumped so the next `Ctrl+V` offsets
+    /// Pastes the app-wide clipboard's fragment into the focused window. Silent
+    /// no-op when the window id is unknown, the clipboard is empty, or the
+    /// controller's paste path bails (no scene loaded, no camera ready,
+    /// fragment empty, cursor ray missed the build plate). On a successful
+    /// paste the cascade counter is bumped so the next `Ctrl+V` offsets
     /// further; on failure the cascade stays untouched.
     pub(crate) fn paste_at_cursor(&self, window_id: u64) {
         let controller = {
@@ -846,26 +819,23 @@ impl AppState {
         }
     }
 
-    /// Right-click context-menu orchestration. Runs the picker at
-    /// `(x, y)`; on a hit, moves the selection to that leaf so
-    /// the existing `copy_selection` path applies to the hit
-    /// object. Selection stays untouched on a miss, per the
-    /// agreed UX. Computes the menu's visibility flags (Copy
-    /// when something was hit, Paste when the clipboard has
-    /// content) and asks the MainWindow to show the popup. Silent
-    /// no-op when neither item would be visible (so a right-click
-    /// on empty space with an empty clipboard doesn't pop an
-    /// empty menu).
+    /// Opens the context menu for a right-click at `(x, y)`. Runs the picker
+    /// there; on a hit, moves the selection to that leaf so the existing
+    /// `copy_selection` path applies to the hit object, and on a miss leaves
+    /// the selection as it is. Computes the menu's visibility flags (Copy and
+    /// Delete when something was hit, Paste when the clipboard has content) and
+    /// asks the MainWindow to show the popup. Silent no-op when no item would
+    /// be visible (so a right-click on empty space with an empty clipboard pops
+    /// no menu).
     pub(crate) fn open_context_menu(&self, window_id: u64, x: f32, y: f32) {
         let main_windows = self.main_windows.borrow();
         let Some(wired) = main_windows.get(&window_id) else {
             return;
         };
         // The context menu only offers Copy / Paste / Delete, all
-        // Transform-section tools; outside Transform there is nothing to
-        // show, so a right-click there opens no menu (camera orbit on
-        // the right button still works, it runs through a separate
-        // gesture path).
+        // Transform-section tools; outside Transform there is nothing to show,
+        // so a right-click there opens no menu (camera orbit on the right
+        // button still works, it runs through a separate gesture path).
         if !wired.controller.allows_layout_tools() {
             return;
         }
@@ -889,12 +859,11 @@ impl AppState {
         );
     }
 
-    /// Paste anchored on an explicit logical pixel (the position
-    /// where the right-click opened the context menu). Counterpart
-    /// of `paste_at_cursor` for the menu-driven path: the cursor
-    /// may have drifted inside the menu by the time the user
-    /// clicks Paste, but the placement should still land at the
-    /// original anchor pixel.
+    /// Pastes the clipboard at an explicit logical pixel (the position where
+    /// the right-click opened the context menu). Counterpart of
+    /// `paste_at_cursor` for the menu-driven path: the cursor may have drifted
+    /// inside the menu by the time the user clicks Paste, but the placement
+    /// should still land at the original anchor pixel.
     pub(crate) fn paste_at_pixel(&self, window_id: u64, x: f32, y: f32) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -912,10 +881,8 @@ impl AppState {
         }
     }
 
-    /// Inner queue-or-load step. Called from `open_path_in_window`
-    /// after extension validation and the replace-confirm branch, and
-    /// from the post-Discard / post-Export callbacks below. Caller is
-    /// responsible for ensuring any prior scene has been closed.
+    /// Queues `path` for the window or starts its load. The caller must close
+    /// any prior scene first.
     fn dispatch_path_to_loader(&self, window_id: u64, path: PathBuf) {
         let (loader, pending, build_volume) = {
             let main_windows = self.main_windows.borrow();
@@ -935,19 +902,18 @@ impl AppState {
             return;
         }
         let Some(ticket) = loader.begin_load() else {
-            // Decision #2: drop onto a busy window is silently ignored.
+            // A drop onto a busy window is silently ignored.
             return;
         };
-        // Covers both a ready device and a renderer that will never
-        // provide one; `start_load_with_ticket` reads the same graphics
-        // state and deposits the reason for the latter, so a path that
-        // can never open reports itself instead of waiting forever on a
-        // setup that is not coming.
+        // Covers both a ready device and a renderer that will never provide
+        // one; `start_load_with_ticket` reads the same graphics state and
+        // deposits the reason for the latter, so a path that can never open
+        // reports its failure at once.
         start_load_with_ticket(ticket, path, &loader, build_volume);
     }
 
-    /// Replace-confirm Discard branch: clear the current scene then
-    /// dispatch the new path. Runs synchronously on the UI thread.
+    /// Clears the current scene, then dispatches the new path: the Discard
+    /// choice of the replace prompt. Runs synchronously on the UI thread.
     fn discard_then_open(&self, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -960,16 +926,15 @@ impl AppState {
         self.dispatch_path_to_loader(window_id, path);
     }
 
-    /// Replace-confirm Save branch: run the Save flow (overwrite the
-    /// document's project file, or fall back to the Save As flow when
-    /// there is none) and, only once the document is safely on disk,
-    /// close the current scene and dispatch the new path. Cancellation
-    /// of the Save As dialog or a write failure leaves the current
-    /// scene intact (the failure dialog is surfaced by `run_save_flow`
-    /// itself). A write that completed against a document which moved
-    /// on in the meantime also leaves the scene intact, and says so:
-    /// the user asked to replace what they had saved, and that is not
-    /// what is on disk.
+    /// Runs the Save flow for the Save choice of the replace prompt: overwrite
+    /// the document's project file, or fall back to the Save As flow when there
+    /// is none. Only once the document is safely on disk does it close the
+    /// current scene and dispatch the new path. A cancelled Save As dialog or a
+    /// failed write leaves the current scene intact (`run_save_flow` shows the
+    /// failure dialog itself). A write that completed against a document which
+    /// moved on in the meantime also leaves the scene intact, and says so: the
+    /// user asked to replace what they had saved, and that is not what is on
+    /// disk.
     fn save_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -981,17 +946,11 @@ impl AppState {
         let doc = controller.document();
         let dialogs = controller.dialogs();
         let save_progress = controller.save_progress();
-        let snapshot = self.prefs.snapshot();
+        let defaults = PrintDefaults::from(&self.prefs.snapshot());
         let app_weak = Rc::downgrade(self);
         if let Err(err) = slint::spawn_local(async move {
-            let outcome = crate::wiring::run_save_flow(
-                doc,
-                dialogs.clone(),
-                save_progress,
-                snapshot.default_printer,
-                snapshot.default_resin,
-            )
-            .await;
+            let outcome =
+                crate::wiring::run_save_flow(doc, dialogs.clone(), save_progress, defaults).await;
             match outcome {
                 SaveOutcome::Saved => {}
                 SaveOutcome::MovedOn => {
@@ -1016,11 +975,11 @@ impl AppState {
         }
     }
 
-    /// Replace-confirm Export branch: run the existing "Export As…"
-    /// flow and, only on a successful save, close the current scene
-    /// and dispatch the new path. Cancellation of the export dialog
-    /// or a write failure leaves the current scene intact (the
-    /// failure dialog is surfaced by `run_export_as_flow` itself).
+    /// Runs the "Export As..." flow for the Export choice of the replace prompt
+    /// and, only on a successful export, closes the current scene and
+    /// dispatches the new path. A cancelled export dialog or a failed write
+    /// leaves the current scene intact (`run_export_as_flow` shows the failure
+    /// dialog itself).
     fn export_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -1050,9 +1009,8 @@ impl AppState {
     }
 
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {
-        // Closures hold `Weak<AppState>` so the MainWindow -> closure
-        // -> AppState -> main_windows(MainWindow) chain isn't a strong
-        // cycle.
+        // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
+        // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         {
             let app = Rc::downgrade(self);
             ui.on_show_about_requested(move || {
@@ -1081,9 +1039,9 @@ impl AppState {
             });
         }
         {
-            // Persist and broadcast a menu-layout switch through the bus,
-            // like the preferences window does for the theme. Every
-            // window re-applies it and the settings saver writes it out.
+            // Persist and broadcast a menu-layout switch through the bus, like
+            // the preferences window does for the theme. Every window
+            // re-applies it and the settings saver writes it out.
             let bus = self.prefs.clone();
             ui.on_menu_layout_change_requested(move |layout| {
                 bus.update(move |snap| {
@@ -1093,10 +1051,10 @@ impl AppState {
             });
         }
         {
-            // Persist the object-list panel's visibility. Unlike the
-            // menu layout this is per-window live state, so the bus write
-            // reaches the settings saver but no window re-applies it (see
-            // the restore in `spawn_main_window` and `window_prefs`).
+            // Persist the object-list panel's visibility. It is per-window live
+            // state: the bus write reaches the settings saver, and no window
+            // re-applies it (see the restore in `spawn_main_window` and
+            // `window_prefs`).
             let bus = self.prefs.clone();
             ui.on_object_list_visibility_changed(move |visible| {
                 bus.update(move |snap| {
@@ -1106,14 +1064,13 @@ impl AppState {
             });
         }
         {
-            // Persist the panel geometry after a drag, resize, or
-            // minimize. Same per-window live handling as the visibility.
+            // Persist the panel geometry after a drag, resize, or minimize.
+            // Same per-window live handling as the visibility.
             let bus = self.prefs.clone();
             ui.on_object_list_geometry_changed(
                 move |anchor_right, anchor_bottom, offset_x, offset_y, width, height, minimized| {
-                    // A 0px height means the panel is auto-sizing; store
-                    // it as "unset" so it keeps auto-sizing after a
-                    // restart.
+                    // A 0px height means the panel is auto-sizing; store it as
+                    // "unset" so it keeps auto-sizing after a restart.
                     let height = if height > 0.0 { Some(height) } else { None };
                     let current = bus.snapshot();
                     if current.object_list_anchor_right == anchor_right
@@ -1124,9 +1081,9 @@ impl AppState {
                         && current.object_list_height == height
                         && current.object_list_minimized == minimized
                     {
-                        // A gesture that ended without changing anything
-                        // (for example a plain click on the title bar)
-                        // must not trigger a redundant settings write.
+                        // A gesture that ended without changing anything (for
+                        // example a plain click on the title bar) must not
+                        // trigger a redundant settings write.
                         return;
                     }
                     bus.update(move |snap| {
@@ -1143,14 +1100,13 @@ impl AppState {
             );
         }
         {
-            // Persist the Slice control panel geometry after a drag or
-            // resize. Per-window live state, like the object-list panel.
+            // Persist the Slice control panel geometry after a drag or resize.
+            // Per-window live state, like the object-list panel.
             let bus = self.prefs.clone();
             ui.on_slice_panel_geometry_changed(
                 move |anchor_right, anchor_bottom, offset_x, offset_y, width, height| {
-                    // A 0px height means the panel is auto-sizing; store
-                    // it as "unset" so it keeps auto-sizing after a
-                    // restart.
+                    // A 0px height means the panel is auto-sizing; store it as
+                    // "unset" so it keeps auto-sizing after a restart.
                     let height = if height > 0.0 { Some(height) } else { None };
                     let current = bus.snapshot();
                     if current.slice_panel_anchor_right == anchor_right
@@ -1160,8 +1116,8 @@ impl AppState {
                         && current.slice_panel_width == Some(width)
                         && current.slice_panel_height == height
                     {
-                        // A gesture that ended without changing anything
-                        // must not trigger a redundant settings write.
+                        // A gesture that ended without changing anything must
+                        // not trigger a redundant settings write.
                         return;
                     }
                     bus.update(move |snap| {
@@ -1177,9 +1133,9 @@ impl AppState {
             );
         }
         {
-            // Persist the slice-view panel's visibility. Per-window live
-            // state, like the object-list panel: the bus write reaches
-            // the settings saver but no window re-applies it.
+            // Persist the slice-view panel's visibility. Per-window live state,
+            // like the object-list panel: the bus write reaches the settings
+            // saver but no window re-applies it.
             let bus = self.prefs.clone();
             ui.on_slice_view_visibility_changed(move |visible| {
                 bus.update(move |snap| {
@@ -1189,15 +1145,13 @@ impl AppState {
             });
         }
         {
-            // Persist the slice-view panel geometry after a drag, resize,
-            // or minimize. Same per-window live handling as the object
-            // list.
+            // Persist the slice-view panel geometry after a drag, resize, or
+            // minimize. Same per-window live handling as the object list.
             let bus = self.prefs.clone();
             ui.on_slice_view_geometry_changed(
                 move |anchor_right, anchor_bottom, offset_x, offset_y, width, height, minimized| {
-                    // A 0px height means the panel is auto-sizing; store
-                    // it as "unset" so it keeps auto-sizing after a
-                    // restart.
+                    // A 0px height means the panel is auto-sizing; store it as
+                    // "unset" so it keeps auto-sizing after a restart.
                     let height = if height > 0.0 { Some(height) } else { None };
                     let current = bus.snapshot();
                     if current.slice_view_anchor_right == anchor_right
@@ -1208,8 +1162,8 @@ impl AppState {
                         && current.slice_view_height == height
                         && current.slice_view_minimized == minimized
                     {
-                        // A gesture that ended without changing anything
-                        // must not trigger a redundant settings write.
+                        // A gesture that ended without changing anything must
+                        // not trigger a redundant settings write.
                         return;
                     }
                     bus.update(move |snap| {
@@ -1227,10 +1181,9 @@ impl AppState {
         }
     }
 
-    /// Shows the app-wide About window, creating it on first use and
-    /// re-showing the same instance on subsequent calls. The window's
-    /// bus subscription keeps it up-to-date while hidden, so no extra
-    /// re-apply is needed here.
+    /// Shows the app-wide About window, creating it on first use and re-showing
+    /// the same instance on subsequent calls. The window's bus subscription
+    /// keeps it up-to-date while hidden, so no extra re-apply is needed here.
     fn show_about(&self) {
         let mut slot = self.about_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
@@ -1249,9 +1202,9 @@ impl AppState {
         }
     }
 
-    /// Shows the app-wide Preferences window, creating it on first
-    /// use and re-showing the same instance on subsequent calls. The
-    /// window's bus subscription keeps it up-to-date while hidden.
+    /// Shows the app-wide Preferences window, creating it on first use and
+    /// re-showing the same instance on subsequent calls. The window's bus
+    /// subscription keeps it up-to-date while hidden.
     fn show_preferences(&self) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
@@ -1294,8 +1247,8 @@ mod replace_scene_policy_tests {
             decide_open_path_action(true, false, false, false),
             OpenPathAction::DispatchImmediately
         );
-        // `document_is_dirty` / `document_is_project` are irrelevant
-        // when nothing is loaded.
+        // `document_is_dirty` / `document_is_project` are irrelevant when
+        // nothing is loaded.
         assert_eq!(
             decide_open_path_action(true, false, true, true),
             OpenPathAction::DispatchImmediately
@@ -1304,8 +1257,8 @@ mod replace_scene_policy_tests {
 
     #[test]
     fn clean_document_prompts_with_nothing_to_keep() {
-        // Whether a project file exists doesn't matter when there
-        // are no unsaved changes: nothing would be lost.
+        // Whether a project file exists doesn't matter when there are no
+        // unsaved changes: nothing would be lost.
         assert_eq!(
             decide_open_path_action(true, true, false, false),
             OpenPathAction::PromptReplace {
@@ -1540,19 +1493,18 @@ mod settings_saver_tests {
     fn loop_exits_when_all_senders_drop() {
         let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
         drop(tx);
-        // If the loop's exit condition regresses, this test hangs
-        // rather than fails; that's the failure mode we want to catch
-        // since `AppState::drop` would deadlock the same way.
+        // If the loop's exit condition regresses, this test hangs;
+        // `AppState::drop` would deadlock the same way.
         run_settings_saver_loop(rx, |_| {
             panic!("on_snapshot must not fire when no snapshots were sent");
         });
     }
 
     #[test]
-    fn loop_processes_each_snapshot_when_arrivals_are_serialised() {
-        // Sender dropped between sends so each `recv` sees exactly one
-        // queued message; no coalescing opportunity. Verifies the
-        // straight-line "save every message" path still works.
+    fn pre_queued_snapshots_coalesce_to_the_last_one() {
+        // The 3 snapshots are queued before the loop runs, so the first `recv`
+        // returns 1 and `try_recv` drains the other 2 in the same wake: 1 call,
+        // with the last snapshot.
         let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
         tx.send(snapshot_with(ThemePreference::Light)).unwrap();
         tx.send(snapshot_with(ThemePreference::Dark)).unwrap();
@@ -1560,24 +1512,17 @@ mod settings_saver_tests {
         drop(tx);
         let mut seen = Vec::new();
         run_settings_saver_loop(rx, |snap| seen.push(snap.theme));
-        // All three queued sends are observable; coalescing only kicks
-        // in when multiple messages are already buffered at recv time,
-        // which is timing-dependent across threads. With a single
-        // consumer thread and pre-queued messages, the first recv
-        // returns one and try_recv drains the rest in a single wake,
-        // so we expect exactly one coalesced call here too.
         assert_eq!(seen.len(), 1);
         assert!(matches!(seen[0], ThemePreference::System));
     }
 
     #[test]
     fn loop_coalesces_burst_to_latest_snapshot() {
-        // Queue a burst of snapshots before the loop starts. The first
-        // `recv` returns one; `try_recv` drains the rest in the same
-        // wake; the loop calls `on_snapshot` once with the LAST value
-        // queued. Catches regressions in the inner drain (e.g. an off-
-        // by-one or a missing while loop) that would re-introduce
-        // per-snapshot writes.
+        // Queue a burst of snapshots before the loop starts. The first `recv`
+        // returns one; `try_recv` drains the rest in the same wake; the loop
+        // calls `on_snapshot` once with the LAST value queued. Catches
+        // regressions in the inner drain (for example an off-by-one or a
+        // missing while loop) that would write each snapshot.
         let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
         let mut last_bv = BuildVolume::new(100.0, 100.0, 100.0);
         for i in 0..16 {
@@ -1631,8 +1576,8 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_object_list_visibility() {
-        // The snapshot-to-settings mapping must copy the panel
-        // visibility so a hide survives a save.
+        // The snapshot-to-settings mapping must copy the panel visibility so a
+        // hide survives a save.
         let mut settings = AppSettings::default();
         assert!(settings.object_list_visible());
 
@@ -1645,8 +1590,8 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_object_list_geometry() {
-        // The mapping must copy the panel anchor, offsets, size, and
-        // minimized state so a drag or resize survives a save.
+        // The mapping must copy the panel anchor, offsets, size, and minimized
+        // state so a drag or resize survives a save.
         let mut settings = AppSettings::default();
 
         let mut snap = snapshot_with(ThemePreference::System);
@@ -1670,8 +1615,8 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_slice_view_visibility() {
-        // The snapshot-to-settings mapping must copy the slice-view
-        // panel visibility so a hide survives a save.
+        // The snapshot-to-settings mapping must copy the slice-view panel
+        // visibility so a hide survives a save.
         let mut settings = AppSettings::default();
         assert!(settings.slice_view_visible());
 
@@ -1684,8 +1629,8 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_slice_view_geometry() {
-        // The mapping must copy the slice-view panel anchor, offsets,
-        // size, and minimized state so a drag or resize survives a save.
+        // The mapping must copy the slice-view panel anchor, offsets, size, and
+        // minimized state so a drag or resize survives a save.
         let mut settings = AppSettings::default();
 
         let mut snap = snapshot_with(ThemePreference::System);
@@ -1709,8 +1654,8 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_last_open_dir() {
-        // The mapping must copy the remembered open directory so it
-        // survives a save.
+        // The mapping must copy the remembered open directory so it survives a
+        // save.
         let mut settings = AppSettings::default();
         assert_eq!(settings.last_open_dir(), None);
 
@@ -1723,13 +1668,12 @@ mod settings_saver_tests {
 
     #[test]
     fn spawn_settings_saver_joins_cleanly_on_drop() {
-        // Smoke test for the production spawn path: drop the sender
-        // without sending any snapshot, so the worker exits via
-        // channel-closed before ever calling `AppSettings::save` (which
-        // would touch the user's real config directory under test).
-        // The join in `SettingsSaverJoin::drop` must complete without
-        // hanging, matching the shutdown behaviour `AppState::drop`
-        // relies on.
+        // Smoke test for the production spawn path: drop the sender without
+        // sending any snapshot, so the worker exits via channel-closed before
+        // ever calling `AppSettings::save` (which would touch the user's real
+        // config directory under test). The join in `SettingsSaverJoin::drop`
+        // must complete without hanging, matching the shutdown behaviour
+        // `AppState::drop` relies on.
         let settings = AppSettings::default();
         let (tx, saver) = spawn_settings_saver(settings).expect("spawn settings-saver thread");
         drop(tx);

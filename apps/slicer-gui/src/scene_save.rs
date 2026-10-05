@@ -18,7 +18,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
-use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
     EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, WriteProgress,
@@ -26,6 +25,7 @@ use sc_project_formats::{
 };
 use sc_scene::Scene;
 
+use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
 use crate::scene_document::{SaveStamp, SceneDocument};
@@ -89,16 +89,15 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
 }
 
 /// Builds the payload to write when saving `doc` as a project: the scene's own
-/// choices, with a missing printer or resin filled from `default_printer` and
-/// `default_resin`. Every referenced profile without an embedded document then
-/// gets one, resolved from `libraries`.
+/// choices, with a missing printer or resin filled from `defaults`. Every
+/// referenced profile without an embedded document then gets one, resolved from
+/// `libraries`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: &PrintDefaults,
     libraries: &ProfileLibraries,
 ) -> ProjectPayload {
-    let mut payload = doc.compose_project_payload(default_printer, default_resin);
+    let mut payload = doc.compose_project_payload(defaults);
     complete_embedded_documents(&mut payload, libraries);
     payload
 }
@@ -170,9 +169,9 @@ pub(crate) fn write_bundle(
 
 /// Returns the held slices to persist with the project, or `None` when the
 /// scene has no in-sync slice result to write. Resolves the current layer
-/// schedule from `payload`'s printer and resin and defers the in-sync decision
-/// to the document's write guard; a missing profile or a resolution failure
-/// persists nothing.
+/// schedule from `payload`'s printer, resin and first-layer height, and defers
+/// the in-sync decision to the document's write guard; a missing profile or a
+/// resolution failure persists nothing.
 fn persist_slices(
     doc: &SceneDocument,
     payload: &ProjectPayload,
@@ -181,8 +180,7 @@ fn persist_slices(
     let printer = payload.printer.clone()?;
     let resin = payload.resin.clone()?;
     let schedule =
-        resolve_current_schedule(&printer, &resin, doc.selected_first_layer_height(), scene)
-            .ok()?;
+        resolve_current_schedule(&printer, &resin, payload.first_layer_height, scene).ok()?;
     doc.slices_for_persist(&schedule)
 }
 
@@ -195,12 +193,10 @@ fn persist_slices(
 pub(crate) fn save_project_to(
     doc: &SceneDocument,
     target: &Path,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: &PrintDefaults,
 ) -> Result<()> {
-    let (bundle, payload, stamp) =
-        prepare_save_for_target(doc, target.to_path_buf(), default_printer, default_resin)
-            .ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
+    let (bundle, payload, stamp) = prepare_save_for_target(doc, target.to_path_buf(), defaults)
+        .ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
     write_bundle(&bundle, |_, _, _| {})?;
     doc.record_project_save_for(payload, target.to_path_buf(), stamp);
     Ok(())
@@ -215,15 +211,9 @@ pub(crate) fn save_project_to(
 pub(crate) fn prepare_save_for_target(
     doc: &SceneDocument,
     target: PathBuf,
-    default_printer: Option<PrinterId>,
-    default_resin: Option<MaterialId>,
+    defaults: &PrintDefaults,
 ) -> Option<(SaveBundle, ProjectPayload, SaveStamp)> {
-    let payload = payload_for_save(
-        doc,
-        default_printer,
-        default_resin,
-        &ProfileLibraries::platform_default(),
-    );
+    let payload = payload_for_save(doc, defaults, &ProfileLibraries::platform_default());
     let bundle = prepare_save(doc, payload.clone(), target)?;
     Some((bundle, payload, doc.save_stamp()))
 }
@@ -238,6 +228,7 @@ mod scene_save_tests {
 
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_print_primitives::{MaterialId, PrinterId};
     use sc_project_formats::{EmbeddedProfile, read_project};
     use sc_scene::{LeafPayload, Scene};
 
@@ -247,6 +238,13 @@ mod scene_save_tests {
 
     fn material_id(raw: &str) -> MaterialId {
         MaterialId::new(raw).expect("test id is a valid slug")
+    }
+
+    fn defaults(printer: PrinterId, resin: MaterialId) -> PrintDefaults {
+        PrintDefaults {
+            printer: Some(printer),
+            resin: Some(resin),
+        }
     }
 
     fn unit_triangle() -> IndexedMesh {
@@ -450,8 +448,7 @@ mod scene_save_tests {
             );
             let payload = payload_for_save(
                 &doc,
-                Some(printer_id("global-printer")),
-                Some(material_id("global-resin")),
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
                 &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("held-printer")));
@@ -464,8 +461,7 @@ mod scene_save_tests {
             doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
             let payload = payload_for_save(
                 &doc,
-                Some(printer_id("global-printer")),
-                Some(material_id("global-resin")),
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
                 &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("global-printer")));
@@ -483,8 +479,7 @@ mod scene_save_tests {
             assert!(doc.set_selected_printer(Some(printer_id("picked-printer"))));
             let payload = payload_for_save(
                 &doc,
-                Some(printer_id("global-printer")),
-                Some(material_id("global-resin")),
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
                 &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("picked-printer")));
@@ -500,8 +495,7 @@ mod scene_save_tests {
             assert!(doc.set_selected_first_layer_height(Some(height)));
             let payload = payload_for_save(
                 &doc,
-                Some(printer_id("global-printer")),
-                Some(material_id("global-resin")),
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
                 &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("global-printer")));
@@ -534,8 +528,7 @@ mod scene_save_tests {
             doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
             let payload = payload_for_save(
                 &doc,
-                Some(printer_id("global-printer")),
-                Some(material_id("global-resin")),
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
                 &ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]),
             );
             assert_eq!(
@@ -575,8 +568,7 @@ mod scene_save_tests {
             );
             let payload = payload_for_save(
                 &doc,
-                None,
-                None,
+                &PrintDefaults::default(),
                 &ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]),
             );
             let printer_bytes: Vec<&[u8]> = payload
@@ -599,7 +591,7 @@ mod scene_save_tests {
             let doc = SceneDocument::new();
             let dir = tempfile::tempdir().expect("temp dir");
             let target = dir.path().join("plate.3mf");
-            assert!(save_project_to(&doc, &target, None, None).is_err());
+            assert!(save_project_to(&doc, &target, &PrintDefaults::default()).is_err());
             assert!(!target.exists());
         }
 
@@ -612,7 +604,7 @@ mod scene_save_tests {
             let doc = SceneDocument::new();
             doc.install_project_graph(one_object_graph(), source, held_payload());
 
-            save_project_to(&doc, &target, None, None).expect("the save succeeds");
+            save_project_to(&doc, &target, &PrintDefaults::default()).expect("the save succeeds");
 
             assert_eq!(doc.source_path(), Some(target.clone()));
             assert!(doc.is_project());
@@ -642,7 +634,7 @@ mod scene_save_tests {
             // The pick alone must not route "Save" onto the mesh file.
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
 
-            save_project_to(&doc, &target, None, None).expect("the save succeeds");
+            save_project_to(&doc, &target, &PrintDefaults::default()).expect("the save succeeds");
 
             assert_eq!(fs::read(&source).expect("the mesh file exists"), stl_bytes);
             assert!(target.exists());
@@ -669,9 +661,9 @@ mod scene_save_tests {
                 ProjectPayload::default(),
             );
 
-            save_project_to(&doc, &target, None, None).expect("first save");
+            save_project_to(&doc, &target, &PrintDefaults::default()).expect("first save");
             let first = fs::read(&target).expect("first bytes");
-            save_project_to(&doc, &target, None, None).expect("second save");
+            save_project_to(&doc, &target, &PrintDefaults::default()).expect("second save");
             let second = fs::read(&target).expect("second bytes");
             assert_eq!(first.len(), second.len());
         }
@@ -687,8 +679,10 @@ mod scene_save_tests {
             save_project_to(
                 &doc,
                 &target,
-                Some(printer_id("nonexistent-printer")),
-                Some(material_id("nonexistent-resin")),
+                &defaults(
+                    printer_id("nonexistent-printer"),
+                    material_id("nonexistent-resin"),
+                ),
             )
             .expect("the save succeeds");
 
@@ -754,7 +748,7 @@ mod scene_save_tests {
                 },
             });
 
-            save_project_to(&doc, &target, Some(printer), Some(resin)).expect("the save succeeds");
+            save_project_to(&doc, &target, &defaults(printer, resin)).expect("the save succeeds");
 
             let bytes = fs::read(&target).expect("the file exists");
             let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
@@ -815,8 +809,7 @@ mod scene_save_tests {
             save_project_to(
                 &doc,
                 &target,
-                Some(printer_id("global-printer")),
-                Some(resin.clone()),
+                &defaults(printer_id("global-printer"), resin.clone()),
             )
             .expect("the save succeeds");
 
@@ -829,6 +822,65 @@ mod scene_save_tests {
             assert!(
                 loaded.slices.is_some(),
                 "slices sliced on the picked printer and default resin must survive the save"
+            );
+            assert!(loaded.slice_fingerprint.is_some());
+        }
+
+        #[test]
+        fn slices_persist_when_sliced_with_an_own_first_layer_height() {
+            // The resin's layer height is 0.05 mm, so a schedule resolved
+            // without the own first-layer height of 0.1 mm differs from the
+            // held slice's, and the save would drop the slices.
+            use crate::slice_projection::resolve_current_schedule;
+            use crate::slice_result::{SliceParams, SliceResult};
+            use sc_print_glue::{PlateContours, slice_input_fingerprint};
+            use sc_print_primitives::{AaLevel, PositiveFiniteMm};
+            use sc_sl1cer::contour::{ContourLayer, ContourStack};
+
+            let dir = tempfile::tempdir().expect("temp dir");
+            let source = dir.path().join("widget.stl");
+            let target = dir.path().join("widget.3mf");
+
+            let printer = printer_id("elegoo-mars-5");
+            let resin = material_id("siraya-tech-craft-high-clear");
+            let height = PositiveFiniteMm::new(0.1).expect("valid length");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), source);
+            assert!(doc.set_selected_first_layer_height(Some(height)));
+            let scene = doc
+                .with_scene(|s| s.graph().clone())
+                .expect("the scene is installed");
+
+            let schedule = resolve_current_schedule(&printer, &resin, Some(height), &scene)
+                .expect("the bundled profiles resolve a schedule");
+            let token = slice_input_fingerprint(&scene, &schedule)
+                .expect("the scene has sliceable geometry")
+                .to_token();
+            let layers: Vec<ContourLayer> = (0..schedule.total_layers())
+                .map(|_| ContourLayer::new(0.05, vec![]))
+                .collect();
+            doc.set_slice_result(SliceResult {
+                contours: PlateContours::new(ContourStack::new_unchecked(layers), schedule)
+                    .expect("1 layer for each scheduled layer"),
+                token,
+                params: SliceParams {
+                    printer: printer.clone(),
+                    resin: resin.clone(),
+                    first_layer_height: Some(height),
+                    aa_level: AaLevel::Off,
+                    geometry: doc.scene_revision(),
+                },
+            });
+
+            save_project_to(&doc, &target, &defaults(printer, resin)).expect("the save succeeds");
+
+            let bytes = fs::read(&target).expect("the file exists");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
+            assert!(
+                loaded.slices.is_some(),
+                "slices sliced with the own first-layer height must survive the save"
             );
             assert!(loaded.slice_fingerprint.is_some());
         }

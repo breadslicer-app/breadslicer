@@ -383,6 +383,8 @@ mod unsaved_project_state_tests {
     };
     use sc_project_formats::ProjectPayload;
 
+    use crate::print_selection::PrintDefaults;
+
     fn printer(id: &str) -> PrinterId {
         PrinterId::new(id).expect("valid printer id")
     }
@@ -419,7 +421,7 @@ mod unsaved_project_state_tests {
         let (doc, _) = loaded_document();
         assert!(doc.set_selected_first_layer_height(Some(mm(0.05))));
         assert!(doc.is_dirty());
-        assert_eq!(doc.selected_first_layer_height(), Some(mm(0.05)));
+        assert_eq!(doc.print_selection().first_layer_height, Some(mm(0.05)));
     }
 
     #[test]
@@ -440,7 +442,7 @@ mod unsaved_project_state_tests {
         let (doc, _) = loaded_document();
         assert!(!doc.set_selected_first_layer_height(None));
         assert!(!doc.is_dirty());
-        assert_eq!(doc.selected_first_layer_height(), None);
+        assert_eq!(doc.print_selection().first_layer_height, None);
     }
 
     #[test]
@@ -512,7 +514,7 @@ mod unsaved_project_state_tests {
         assert_eq!(own.printer, Some(printer("anycubic-photon")));
         assert_eq!(own.resin, None);
         assert_eq!(
-            doc.compose_project_payload(None, None),
+            doc.compose_project_payload(&PrintDefaults::default()),
             ProjectPayload {
                 printer: Some(printer("anycubic-photon")),
                 resin: None,
@@ -560,10 +562,12 @@ mod unsaved_project_state_tests {
         let own = doc.print_selection();
         assert_eq!(own.printer, Some(printer("anycubic-photon")));
         assert_eq!(own.resin, None);
-        assert_eq!(doc.selected_first_layer_height(), Some(mm(0.1)));
+        assert_eq!(own.first_layer_height, Some(mm(0.1)));
         // Composing with defaults fills only the missing field.
-        let composed = doc
-            .compose_project_payload(Some(printer("global-printer")), Some(resin("global-resin")));
+        let composed = doc.compose_project_payload(&PrintDefaults {
+            printer: Some(printer("global-printer")),
+            resin: Some(resin("global-resin")),
+        });
         assert_eq!(composed.printer, Some(printer("anycubic-photon")));
         assert_eq!(composed.resin, Some(resin("global-resin")));
         assert_eq!(composed.first_layer_height, Some(mm(0.1)));
@@ -572,7 +576,7 @@ mod unsaved_project_state_tests {
         // Clearing the scene drops the choices and the embedded documents.
         doc.clear_scene();
         assert_eq!(doc.print_selection().printer, None);
-        assert_eq!(doc.selected_first_layer_height(), None);
+        assert_eq!(doc.print_selection().first_layer_height, None);
     }
 
     #[test]
@@ -592,12 +596,17 @@ mod unsaved_project_state_tests {
         );
 
         assert_eq!(
-            doc.compose_project_payload(None, None).output_format,
+            doc.compose_project_payload(&PrintDefaults::default())
+                .output_format,
             loaded.output_format,
         );
 
         doc.clear_scene();
-        assert_eq!(doc.compose_project_payload(None, None).output_format, None);
+        assert_eq!(
+            doc.compose_project_payload(&PrintDefaults::default())
+                .output_format,
+            None
+        );
     }
 
     #[test]
@@ -641,6 +650,8 @@ mod save_completion_guard_tests {
 
     use sc_print_primitives::PrinterId;
 
+    use crate::print_selection::PrintDefaults;
+
     fn target() -> PathBuf {
         PathBuf::from("/tmp/dirty_fixture.scproj")
     }
@@ -649,7 +660,7 @@ mod save_completion_guard_tests {
     fn an_edit_landing_during_the_write_keeps_the_document_dirty() {
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
-        let payload = doc.compose_project_payload(None, None);
+        let payload = doc.compose_project_payload(&PrintDefaults::default());
         let stamp = doc.save_stamp();
 
         // The write is in flight from here.
@@ -668,7 +679,7 @@ mod save_completion_guard_tests {
     #[test]
     fn a_printer_change_during_the_write_survives_the_recording() {
         let (doc, _) = loaded_document();
-        let payload = doc.compose_project_payload(None, None);
+        let payload = doc.compose_project_payload(&PrintDefaults::default());
         let stamp = doc.save_stamp();
 
         let chosen = PrinterId::new("elegoo-mars-4").expect("valid id");
@@ -690,7 +701,7 @@ mod save_completion_guard_tests {
     fn an_undisturbed_write_records_the_project_and_cleans_the_document() {
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
-        let payload = doc.compose_project_payload(None, None);
+        let payload = doc.compose_project_payload(&PrintDefaults::default());
         let stamp = doc.save_stamp();
 
         assert_eq!(
@@ -705,7 +716,7 @@ mod save_completion_guard_tests {
     #[test]
     fn a_drifted_write_still_becomes_the_save_target() {
         let (doc, node_id) = loaded_document();
-        let payload = doc.compose_project_payload(None, None);
+        let payload = doc.compose_project_payload(&PrintDefaults::default());
         let stamp = doc.save_stamp();
 
         commit_step(&doc, node_id, 1.0);
@@ -724,7 +735,7 @@ mod save_completion_guard_tests {
     #[test]
     fn a_scene_replaced_during_the_write_is_not_relabeled() {
         let (doc, _) = loaded_document();
-        let payload = doc.compose_project_payload(None, None);
+        let payload = doc.compose_project_payload(&PrintDefaults::default());
         let stamp = doc.save_stamp();
 
         let replacement = PathBuf::from("/tmp/other_fixture.obj");

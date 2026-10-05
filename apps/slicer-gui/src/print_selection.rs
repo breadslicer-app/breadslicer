@@ -97,6 +97,17 @@ impl PrintSelectionInForce {
                 .and_then(|printer| remembered.get(printer))
         })
     }
+
+    /// Returns the choices that a project save records: the printer and the
+    /// resin in force, the own first-layer height and the own format binding.
+    pub(crate) fn recorded_in_project(&self) -> PrintSelection {
+        PrintSelection {
+            printer: self.printer.in_force().cloned(),
+            resin: self.resin.in_force().cloned(),
+            first_layer_height: self.first_layer_height,
+            output_format: self.output_format.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +317,103 @@ mod print_selection_tests {
                 .in_force(&PrintDefaults::default())
                 .format_to_restore(&remembered),
             None,
+        );
+    }
+
+    fn both_defaults() -> PrintDefaults {
+        PrintDefaults {
+            printer: Some(printer("default-printer")),
+            resin: Some(resin("default-resin")),
+        }
+    }
+
+    #[test]
+    fn a_project_records_the_own_printer_and_resin_over_the_defaults() {
+        let own = PrintSelection {
+            printer: Some(printer("own-printer")),
+            resin: Some(resin("own-resin")),
+            ..PrintSelection::default()
+        };
+
+        assert_eq!(
+            own.in_force(&both_defaults()).recorded_in_project(),
+            PrintSelection {
+                printer: Some(printer("own-printer")),
+                resin: Some(resin("own-resin")),
+                first_layer_height: None,
+                output_format: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_project_records_the_default_for_a_missing_printer_or_resin() {
+        let own_printer = PrintSelection {
+            printer: Some(printer("own-printer")),
+            ..PrintSelection::default()
+        };
+        assert_eq!(
+            own_printer.in_force(&both_defaults()).recorded_in_project(),
+            PrintSelection {
+                printer: Some(printer("own-printer")),
+                resin: Some(resin("default-resin")),
+                first_layer_height: None,
+                output_format: None,
+            },
+        );
+
+        let own_resin = PrintSelection {
+            resin: Some(resin("own-resin")),
+            ..PrintSelection::default()
+        };
+        assert_eq!(
+            own_resin.in_force(&both_defaults()).recorded_in_project(),
+            PrintSelection {
+                printer: Some(printer("default-printer")),
+                resin: Some(resin("own-resin")),
+                first_layer_height: None,
+                output_format: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_project_records_the_own_first_layer_height_and_format() {
+        let own = PrintSelection {
+            first_layer_height: Some(mm(0.05)),
+            output_format: Some(binding("v5")),
+            ..PrintSelection::default()
+        };
+        assert_eq!(
+            own.in_force(&both_defaults()).recorded_in_project(),
+            PrintSelection {
+                printer: Some(printer("default-printer")),
+                resin: Some(resin("default-resin")),
+                first_layer_height: Some(mm(0.05)),
+                output_format: Some(binding("v5")),
+            },
+        );
+
+        assert_eq!(
+            PrintSelection::default()
+                .in_force(&both_defaults())
+                .recorded_in_project(),
+            PrintSelection {
+                printer: Some(printer("default-printer")),
+                resin: Some(resin("default-resin")),
+                first_layer_height: None,
+                output_format: None,
+            },
+        );
+    }
+
+    #[test]
+    fn with_no_own_choice_and_no_default_a_project_records_nothing() {
+        assert_eq!(
+            PrintSelection::default()
+                .in_force(&PrintDefaults::default())
+                .recorded_in_project(),
+            PrintSelection::default(),
         );
     }
 }

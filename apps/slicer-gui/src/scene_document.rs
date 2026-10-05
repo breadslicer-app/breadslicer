@@ -36,7 +36,7 @@ use sc_sl1cer::profile::LayerSchedule;
 
 pub(crate) use sc_scene_edit::SceneEdit;
 
-use crate::print_selection::PrintSelection;
+use crate::print_selection::{PrintDefaults, PrintSelection};
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
 
@@ -397,19 +397,24 @@ impl SceneDocument {
     }
 
     /// Composes the project payload for a save: the scene's own choices, with a
-    /// missing printer or resin filled from the given app-wide default, plus
-    /// the held embedded profile documents.
-    pub(crate) fn compose_project_payload(
-        &self,
-        default_printer: Option<PrinterId>,
-        default_resin: Option<MaterialId>,
-    ) -> ProjectPayload {
-        let selection = self.print_selection.borrow();
+    /// missing printer or resin filled from `defaults`, and the held embedded
+    /// profile documents.
+    pub(crate) fn compose_project_payload(&self, defaults: &PrintDefaults) -> ProjectPayload {
+        let PrintSelection {
+            printer,
+            resin,
+            first_layer_height,
+            output_format,
+        } = self
+            .print_selection
+            .borrow()
+            .in_force(defaults)
+            .recorded_in_project();
         ProjectPayload {
-            printer: selection.printer.clone().or(default_printer),
-            resin: selection.resin.clone().or(default_resin),
-            first_layer_height: selection.first_layer_height,
-            output_format: selection.output_format.clone(),
+            printer,
+            resin,
+            first_layer_height,
+            output_format,
             embedded: self.embedded_profiles.borrow().clone(),
         }
     }
@@ -465,11 +470,6 @@ impl SceneDocument {
     /// Returns a copy of the scene's own print choices.
     pub(crate) fn print_selection(&self) -> PrintSelection {
         self.print_selection.borrow().clone()
-    }
-
-    /// Returns the scene's own first-layer height.
-    pub(crate) fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
-        self.print_selection.borrow().first_layer_height
     }
 
     /// Sets the scene's own printer-file choice. Marks the document save-dirty
