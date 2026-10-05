@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Dirty-tracking behavior of [`SceneDocument`]: the save-point
-//! comparison, the eviction rule, and the exactness of the
-//! `DirtyChanged` event.
+//! Dirty-tracking behavior of [`SceneDocument`]: the save-point comparison, the
+//! eviction rule, and the exactness of the `DirtyChanged` event.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ fn translation(dx: f64) -> Transform3D {
     Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
 }
 
-/// Loader-faithful single-object graph: one inline-mesh leaf under
+/// Builds the graph that a loader makes for 1 object: an inline-mesh leaf under
 /// an identity-Group root.
 fn graph_with_one_object() -> Scene {
     let mut g = Scene::new();
@@ -45,7 +44,7 @@ fn graph_with_one_object() -> Scene {
     g
 }
 
-/// A loaded document plus the node id its edits target.
+/// Returns a loaded document and the node id that its edits target.
 fn loaded_document() -> (Rc<SceneDocument>, NodeId) {
     let doc = SceneDocument::new();
     doc.install_graph(graph_with_one_object(), fixture_path());
@@ -56,8 +55,8 @@ fn loaded_document() -> (Rc<SceneDocument>, NodeId) {
     (doc, node_id)
 }
 
-/// Applies and commits the `dx - 1.0 -> dx` translation step, the
-/// well-formed chain shape undo expects.
+/// Applies and commits the `dx - 1.0 -> dx` translation step, the well-formed
+/// chain shape undo expects.
 fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
     let edit = SceneEdit::SetLocalTransform {
         node_id,
@@ -188,8 +187,8 @@ mod save_point_tests {
         doc.mark_saved();
         doc.undo().unwrap();
 
-        // The new branch replaces the saved top entry; its fresh id
-        // can never match the save point again.
+        // The new branch replaces the saved top entry; its fresh id can never
+        // match the save point again.
         commit_step(&doc, node_id, 5.0);
         assert!(doc.is_dirty());
         doc.undo().unwrap();
@@ -202,9 +201,9 @@ mod eviction_tests {
 
     #[test]
     fn undoing_every_edit_without_eviction_reads_clean() {
-        // open -> change -> undo everything: nothing was ever
-        // evicted, so the drained stack proves the content is back
-        // at the freshly-installed state.
+        // open -> change -> undo everything: nothing was ever evicted, so the
+        // drained stack proves the content is back at the freshly-installed
+        // state.
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         commit_step(&doc, node_id, 2.0);
@@ -216,9 +215,8 @@ mod eviction_tests {
 
     #[test]
     fn redo_back_to_a_saved_top_after_draining_reads_clean() {
-        // Draining the stack past a saved top entry leaves no
-        // lasting mark: the entry's identity proves the content
-        // once redo puts it back on top.
+        // Draining the stack past a saved top entry leaves no lasting mark: the
+        // entry's identity proves the content once redo puts it back on top.
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         doc.mark_saved();
@@ -231,11 +229,11 @@ mod eviction_tests {
     #[test]
     fn eviction_plus_full_undo_never_reads_clean() {
         // The document was last saved with an EMPTY stack (the
-        // freshly-installed state). Committing one entry more than
-        // the cap evicts the oldest edit; undoing everything then
-        // drains the stack without reaching the installed content.
-        // Top (None) equals the save point (None) here, so only the
-        // eviction rule stands between this state and a false clean.
+        // freshly-installed state). Committing 1 entry more than the cap evicts
+        // the oldest edit; undoing everything then drains the stack without
+        // reaching the installed content. Top (None) equals the save point
+        // (None) here, so only the eviction rule stands between this state and
+        // a false clean.
         let (doc, node_id) = loaded_document();
         for i in 0..(UNDO_STACK_CAP + 1) {
             commit_step(&doc, node_id, (i + 1) as f64);
@@ -249,9 +247,8 @@ mod eviction_tests {
 
     #[test]
     fn a_save_resets_the_eviction_rule() {
-        // After an eviction the empty-vs-empty comparison is
-        // untrusted, but only until the next save records a new
-        // reference state.
+        // After an eviction the empty-vs-empty comparison is untrusted, but
+        // only until the next save records a new reference state.
         let (doc, node_id) = loaded_document();
         for i in 0..(UNDO_STACK_CAP + 1) {
             commit_step(&doc, node_id, (i + 1) as f64);
@@ -264,10 +261,9 @@ mod eviction_tests {
         doc.mark_saved();
         assert!(!doc.is_dirty());
 
-        // A fresh change-then-undo cycle on top of the new save
-        // point reads clean again. The undo of edit 1 was evicted,
-        // so the content sits at translation(1.0); the next step in
-        // the chain is 2.0.
+        // A fresh change-then-undo cycle on top of the new save point reads
+        // clean again. The undo of edit 1 was evicted, so the content sits at
+        // translation(1.0); the next step in the chain is 2.0.
         commit_step(&doc, node_id, 2.0);
         assert!(doc.is_dirty());
         assert!(doc.undo().unwrap());
@@ -308,8 +304,8 @@ mod reset_tests {
             .flatten()
             .expect("fixture has one leaf");
 
-        // Were the eviction flag still set, this change-then-undo
-        // cycle would read dirty at the end.
+        // Were the eviction flag still set, this change-then-undo cycle would
+        // read dirty at the end.
         commit_step(&doc, node_id, 1.0);
         assert!(doc.undo().unwrap());
         assert!(!doc.is_dirty());
@@ -377,10 +373,9 @@ mod dirty_changed_event_tests {
     }
 }
 
-/// The printer/resin choice is project-level state that lives on the
-/// payload, not on the undo stack. Changing it must mark the document
-/// save-dirty (unsaved changes) without touching undo history, and a
-/// save must clear it.
+/// The scene's own print choices are project-level state that the payload
+/// holds, apart from the undo stack. A change marks the document save-dirty and
+/// leaves the undo history as it is; a save clears the mark.
 mod unsaved_project_state_tests {
     use super::*;
     use sc_print_primitives::{
@@ -405,7 +400,10 @@ mod unsaved_project_state_tests {
         let (doc, _) = loaded_document();
         assert!(doc.set_selected_printer(Some(printer("anycubic-photon"))));
         assert!(doc.is_dirty());
-        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
+        assert_eq!(
+            doc.print_selection().printer,
+            Some(printer("anycubic-photon"))
+        );
     }
 
     #[test]
@@ -413,7 +411,7 @@ mod unsaved_project_state_tests {
         let (doc, _) = loaded_document();
         assert!(doc.set_selected_resin(Some(resin("generic-grey"))));
         assert!(doc.is_dirty());
-        assert_eq!(doc.selected_resin(), Some(resin("generic-grey")));
+        assert_eq!(doc.print_selection().resin, Some(resin("generic-grey")));
     }
 
     #[test]
@@ -464,7 +462,7 @@ mod unsaved_project_state_tests {
         let (doc, _) = loaded_document();
         assert!(!doc.set_selected_printer(None));
         assert!(!doc.is_dirty());
-        assert_eq!(doc.selected_printer(), None);
+        assert_eq!(doc.print_selection().printer, None);
     }
 
     #[test]
@@ -487,9 +485,9 @@ mod unsaved_project_state_tests {
 
     #[test]
     fn an_unsaved_selection_keeps_the_document_dirty_after_undoing_edits() {
-        // The save-dirty signal is the OR of undo-history changes and
-        // unsaved project state: undoing every geometry edit back to
-        // the save point does not clear a pending selection change.
+        // The save-dirty signal is the OR of undo-history changes and unsaved
+        // project state: a pending selection change keeps the document dirty
+        // after every geometry edit is undone back to the save point.
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         doc.mark_saved();
@@ -507,11 +505,12 @@ mod unsaved_project_state_tests {
         assert!(!doc.is_project());
         doc.set_selected_printer(Some(printer("anycubic-photon")));
 
-        // The document's kind is what its file is (a plain mesh here),
-        // not whether it holds print choices.
+        // The document's kind follows its file (a plain mesh here), whatever
+        // print choices it holds.
         assert!(!doc.is_project());
-        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
-        assert_eq!(doc.selected_resin(), None);
+        let own = doc.print_selection();
+        assert_eq!(own.printer, Some(printer("anycubic-photon")));
+        assert_eq!(own.resin, None);
         assert_eq!(
             doc.compose_project_payload(None, None),
             ProjectPayload {
@@ -558,8 +557,9 @@ mod unsaved_project_state_tests {
             loaded.clone(),
         );
 
-        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
-        assert_eq!(doc.selected_resin(), None);
+        let own = doc.print_selection();
+        assert_eq!(own.printer, Some(printer("anycubic-photon")));
+        assert_eq!(own.resin, None);
         assert_eq!(doc.selected_first_layer_height(), Some(mm(0.1)));
         // Composing with defaults fills only the missing field.
         let composed = doc
@@ -571,7 +571,7 @@ mod unsaved_project_state_tests {
 
         // Clearing the scene drops the choices and the embedded documents.
         doc.clear_scene();
-        assert_eq!(doc.selected_printer(), None);
+        assert_eq!(doc.print_selection().printer, None);
         assert_eq!(doc.selected_first_layer_height(), None);
     }
 
@@ -606,8 +606,9 @@ mod unsaved_project_state_tests {
         doc.set_selected_printer(Some(printer("anycubic-photon")));
         doc.set_selected_resin(Some(resin("generic-grey")));
 
-        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
-        assert_eq!(doc.selected_resin(), Some(resin("generic-grey")));
+        let own = doc.print_selection();
+        assert_eq!(own.printer, Some(printer("anycubic-photon")));
+        assert_eq!(own.resin, Some(resin("generic-grey")));
     }
 
     #[test]
@@ -630,10 +631,10 @@ mod unsaved_project_state_tests {
     }
 }
 
-/// The save flow snapshots the payload on the UI thread, writes on a
-/// worker while the event loop stays live, then records the result.
-/// These drive that gap: whatever lands between the snapshot and the
-/// recording is NOT in the file that was written.
+/// The save flow snapshots the payload on the UI thread, writes on a worker
+/// while the event loop stays live, then records the result. These tests act in
+/// that gap: whatever lands between the snapshot and the recording is NOT in
+/// the written file.
 #[cfg(test)]
 mod save_completion_guard_tests {
     use super::*;
@@ -678,7 +679,7 @@ mod save_completion_guard_tests {
         );
 
         assert_eq!(
-            doc.selected_printer(),
+            doc.print_selection().printer,
             Some(chosen),
             "the recording must not overwrite a choice made after the snapshot",
         );

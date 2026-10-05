@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 
 use crate::print_format::{PrintFormatModel, print_format_model};
-use crate::print_selection::{PrintDefaults, PrintSelection};
+use crate::print_selection::{OwnOrDefault, PrintDefaults, PrintSelection};
 use crate::profile_catalog::{MaterialCatalogEntry, PrinterCatalogEntry, ProfileCatalog};
 
 /// An entry in a picker: the profile id, which the pick callback carries back,
@@ -72,7 +72,7 @@ impl SlicePanelView {
 /// scene's own choice, else the default, and selects nothing for an id that the
 /// catalog does not hold. The format dropdown offers the formats of the
 /// selected printer, and restores the scene's own binding, else the binding
-/// remembered for that printer.
+/// remembered for the printer in force.
 pub(crate) fn slice_panel_view(
     own: &PrintSelection,
     defaults: &PrintDefaults,
@@ -81,44 +81,39 @@ pub(crate) fn slice_panel_view(
     favourite_resins: &BTreeSet<MaterialId>,
     catalog: &ProfileCatalog,
 ) -> SlicePanelView {
+    let selection = own.in_force(defaults);
     let printer = picker_model(
         &printer_candidates(catalog.printers()),
         favourite_printers,
-        defaults.printer.as_ref(),
-        own.printer.as_ref(),
+        selection.printer(),
     );
     let resin = picker_model(
         &resin_candidates(catalog.materials()),
         favourite_resins,
-        defaults.resin.as_ref(),
-        own.resin.as_ref(),
+        selection.resin(),
     );
 
     let shown_printer = printer.selected_option().map(|option| &option.id);
     let declared = shown_printer
         .and_then(|id| catalog.printer_index(id))
         .map(|index| &catalog.printers()[index].output_formats);
-    let remembered = own
-        .output_format
-        .as_ref()
-        .or_else(|| shown_printer.and_then(|id| remembered_formats.get(id)));
     let print_format = declared.map_or_else(PrintFormatModel::nothing_declared, |declared| {
-        print_format_model(declared, remembered)
+        print_format_model(declared, selection.format_to_restore(remembered_formats))
     });
 
     SlicePanelView {
         printer,
         resin,
         print_format,
-        first_layer_height: own.first_layer_height,
+        first_layer_height: selection.first_layer_height(),
     }
 }
 
 /// Builds a picker list from `(id, label)` candidates. It keeps only the ids
-/// that are a favourite, the app-wide `default` or the scene's `current`
-/// choice; orders them by label without case, with the id as tiebreak; and
-/// selects `current` when set, else `default`. The selection is `-1` when
-/// neither is set, or when the candidates do not carry the selected id.
+/// that are a favourite, the app-wide default or the scene's own choice; orders
+/// them by label without case, with the id as tiebreak; and selects the choice
+/// in force. The selection is `-1` when no choice is in force, or when the
+/// candidates do not carry it.
 ///
 /// The candidates must be unique by id, as the catalog guarantees. A wanted id
 /// that the candidates do not carry (an unknown favourite, default or scene
@@ -126,18 +121,17 @@ pub(crate) fn slice_panel_view(
 fn picker_model<Id>(
     candidates: &[(Id, String)],
     favourites: &BTreeSet<Id>,
-    default: Option<&Id>,
-    current: Option<&Id>,
+    choice: &OwnOrDefault<Id>,
 ) -> PickerModel<Id>
 where
     Id: Ord + Clone,
 {
     let mut wanted: BTreeSet<Id> = favourites.clone();
-    if let Some(default) = default {
+    if let Some(default) = &choice.default {
         wanted.insert(default.clone());
     }
-    if let Some(current) = current {
-        wanted.insert(current.clone());
+    if let Some(own) = &choice.own {
+        wanted.insert(own.clone());
     }
 
     let mut options: Vec<PickerOption<Id>> = candidates
@@ -155,9 +149,9 @@ where
             .then_with(|| a.id.cmp(&b.id))
     });
 
-    let prefill = current.or(default);
-    let selected = prefill
-        .and_then(|prefill| options.iter().position(|option| &option.id == prefill))
+    let selected = choice
+        .in_force()
+        .and_then(|in_force| options.iter().position(|option| &option.id == in_force))
         .map_or(-1, |index| index as i32);
 
     PickerModel { options, selected }
@@ -261,10 +255,17 @@ mod picker_model_tests {
         ids.iter().map(|id| (*id).to_string()).collect()
     }
 
+    fn choice(own: Option<&str>, default: Option<&str>) -> OwnOrDefault<String> {
+        OwnOrDefault {
+            own: own.map(id),
+            default: default.map(id),
+        }
+    }
+
     #[test]
     fn only_favourites_are_listed_when_there_is_no_default_or_current() {
         let cands = candidates(&[("a", "Alpha"), ("b", "Bravo"), ("c", "Charlie")]);
-        let model = picker_model(&cands, &favourites(&["a", "c"]), None, None);
+        let model = picker_model(&cands, &favourites(&["a", "c"]), &choice(None, None));
 
         let ids: Vec<_> = model.options.iter().map(|o| o.id.clone()).collect();
         assert_eq!(ids, vec![id("a"), id("c")]);
@@ -274,7 +275,7 @@ mod picker_model_tests {
     #[test]
     fn the_default_and_current_join_the_list_even_when_not_favourites() {
         let cands = candidates(&[("a", "Alpha"), ("b", "Bravo"), ("c", "Charlie")]);
-        let model = picker_model(&cands, &favourites(&["a"]), Some(&id("b")), Some(&id("c")));
+        let model = picker_model(&cands, &favourites(&["a"]), &choice(Some("c"), Some("b")));
 
         let ids: Vec<_> = model.options.iter().map(|o| o.id.clone()).collect();
         assert_eq!(ids, vec![id("a"), id("b"), id("c")]);
@@ -283,7 +284,7 @@ mod picker_model_tests {
     #[test]
     fn an_id_that_is_favourite_and_selected_appears_once() {
         let cands = candidates(&[("a", "Alpha"), ("b", "Bravo")]);
-        let model = picker_model(&cands, &favourites(&["a"]), Some(&id("a")), Some(&id("a")));
+        let model = picker_model(&cands, &favourites(&["a"]), &choice(Some("a"), Some("a")));
 
         assert_eq!(model.options.len(), 1);
         assert_eq!(model.options[0].id, id("a"));
@@ -292,7 +293,7 @@ mod picker_model_tests {
     #[test]
     fn options_are_ordered_case_insensitively_by_label() {
         let cands = candidates(&[("z", "alpha"), ("y", "Bravo"), ("x", "Charlie")]);
-        let model = picker_model(&cands, &favourites(&["x", "y", "z"]), None, None);
+        let model = picker_model(&cands, &favourites(&["x", "y", "z"]), &choice(None, None));
 
         let labels: Vec<_> = model.options.iter().map(|o| o.label.clone()).collect();
         assert_eq!(labels, vec!["alpha", "Bravo", "Charlie"]);
@@ -304,8 +305,7 @@ mod picker_model_tests {
         let model = picker_model(
             &cands,
             &favourites(&["a", "ghost"]),
-            Some(&id("gone")),
-            None,
+            &choice(None, Some("gone")),
         );
 
         let ids: Vec<_> = model.options.iter().map(|o| o.id.clone()).collect();
@@ -316,7 +316,7 @@ mod picker_model_tests {
     #[test]
     fn the_current_choice_is_selected_over_the_default() {
         let cands = candidates(&[("a", "Alpha"), ("b", "Bravo")]);
-        let model = picker_model(&cands, &favourites(&[]), Some(&id("a")), Some(&id("b")));
+        let model = picker_model(&cands, &favourites(&[]), &choice(Some("b"), Some("a")));
 
         let selected = &model.options[model.selected as usize];
         assert_eq!(selected.id, id("b"));
@@ -325,7 +325,7 @@ mod picker_model_tests {
     #[test]
     fn the_default_is_selected_when_there_is_no_current_choice() {
         let cands = candidates(&[("a", "Alpha"), ("b", "Bravo")]);
-        let model = picker_model(&cands, &favourites(&["a", "b"]), Some(&id("a")), None);
+        let model = picker_model(&cands, &favourites(&["a", "b"]), &choice(None, Some("a")));
 
         let selected = &model.options[model.selected as usize];
         assert_eq!(selected.id, id("a"));
@@ -333,7 +333,7 @@ mod picker_model_tests {
 
     #[test]
     fn an_empty_catalog_yields_an_empty_unselected_model() {
-        let model = picker_model::<String>(&[], &favourites(&["a"]), Some(&id("a")), None);
+        let model = picker_model::<String>(&[], &favourites(&["a"]), &choice(None, Some("a")));
         assert!(model.options.is_empty());
         assert_eq!(model.selected, -1);
     }

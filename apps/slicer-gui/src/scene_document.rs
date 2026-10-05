@@ -467,16 +467,6 @@ impl SceneDocument {
         self.print_selection.borrow().clone()
     }
 
-    /// Returns the scene's own printer choice.
-    pub(crate) fn selected_printer(&self) -> Option<PrinterId> {
-        self.print_selection.borrow().printer.clone()
-    }
-
-    /// Returns the scene's own resin choice.
-    pub(crate) fn selected_resin(&self) -> Option<MaterialId> {
-        self.print_selection.borrow().resin.clone()
-    }
-
     /// Returns the scene's own first-layer height.
     pub(crate) fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
         self.print_selection.borrow().first_layer_height

@@ -9,6 +9,8 @@
 //! For the printer and the resin, the value in force is the document's own
 //! choice, else the default that the user set in the Preferences window.
 
+use std::collections::BTreeMap;
+
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 
 /// The print choices that a document makes for itself. A `None` field means
@@ -48,6 +50,7 @@ pub(crate) struct PrintSelectionInForce {
     printer: OwnOrDefault<PrinterId>,
     resin: OwnOrDefault<MaterialId>,
     first_layer_height: Option<PositiveFiniteMm>,
+    output_format: Option<OutputFormatBinding>,
 }
 
 impl PrintSelection {
@@ -62,6 +65,7 @@ impl PrintSelection {
                 default: defaults.resin.clone(),
             },
             first_layer_height: self.first_layer_height,
+            output_format: self.output_format.clone(),
         }
     }
 }
@@ -80,10 +84,25 @@ impl PrintSelectionInForce {
     pub(crate) fn first_layer_height(&self) -> Option<PositiveFiniteMm> {
         self.first_layer_height
     }
+
+    /// Returns the binding that the format dropdown restores: the own binding,
+    /// else the binding remembered for the printer in force.
+    pub(crate) fn format_to_restore<'a>(
+        &'a self,
+        remembered: &'a BTreeMap<PrinterId, OutputFormatBinding>,
+    ) -> Option<&'a OutputFormatBinding> {
+        self.output_format.as_ref().or_else(|| {
+            self.printer
+                .in_force()
+                .and_then(|printer| remembered.get(printer))
+        })
+    }
 }
 
 #[cfg(test)]
 mod print_selection_tests {
+    use sc_print_primitives::{FormatKind, NonEmptyString};
+
     use super::*;
 
     fn printer(id: &str) -> PrinterId {
@@ -203,6 +222,89 @@ mod print_selection_tests {
             PrintSelection::default()
                 .in_force(&PrintDefaults::default())
                 .first_layer_height(),
+            None,
+        );
+    }
+
+    fn binding(version: &str) -> OutputFormatBinding {
+        OutputFormatBinding {
+            format: FormatKind::Ctb,
+            version: Some(NonEmptyString::new(version).expect("test version is non-empty")),
+        }
+    }
+
+    #[test]
+    fn the_own_format_is_restored_over_the_remembered_one() {
+        let own = PrintSelection {
+            printer: Some(printer("own-printer")),
+            output_format: Some(binding("v5")),
+            ..PrintSelection::default()
+        };
+        let remembered = BTreeMap::from([(printer("own-printer"), binding("v5enc"))]);
+
+        let selection = own.in_force(&PrintDefaults::default());
+
+        assert_eq!(
+            selection.format_to_restore(&remembered),
+            Some(&binding("v5"))
+        );
+    }
+
+    #[test]
+    fn without_an_own_format_the_format_remembered_for_the_default_printer_is_restored() {
+        let defaults = PrintDefaults {
+            printer: Some(printer("default-printer")),
+            resin: None,
+        };
+        let remembered = BTreeMap::from([(printer("default-printer"), binding("v5enc"))]);
+
+        let selection = PrintSelection::default().in_force(&defaults);
+
+        assert_eq!(
+            selection.format_to_restore(&remembered),
+            Some(&binding("v5enc"))
+        );
+    }
+
+    #[test]
+    fn an_own_printer_restores_the_format_remembered_for_it_only() {
+        let own = PrintSelection {
+            printer: Some(printer("own-printer")),
+            ..PrintSelection::default()
+        };
+        let defaults = PrintDefaults {
+            printer: Some(printer("default-printer")),
+            resin: None,
+        };
+        let selection = own.in_force(&defaults);
+
+        let for_the_default = BTreeMap::from([(printer("default-printer"), binding("v5enc"))]);
+        assert_eq!(selection.format_to_restore(&for_the_default), None);
+
+        let for_both = BTreeMap::from([
+            (printer("own-printer"), binding("v5")),
+            (printer("default-printer"), binding("v5enc")),
+        ]);
+        assert_eq!(selection.format_to_restore(&for_both), Some(&binding("v5")));
+    }
+
+    #[test]
+    fn with_no_printer_in_force_only_the_own_format_is_restored() {
+        let remembered = BTreeMap::from([(printer("other-printer"), binding("v5enc"))]);
+        let own = PrintSelection {
+            output_format: Some(binding("v5")),
+            ..PrintSelection::default()
+        };
+
+        assert_eq!(
+            own.in_force(&PrintDefaults::default())
+                .format_to_restore(&remembered),
+            Some(&binding("v5")),
+        );
+        assert_eq!(
+            PrintSelection::default()
+                .in_force(&PrintDefaults::default())
+                .format_to_restore(&remembered),
             None,
         );
     }

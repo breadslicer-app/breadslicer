@@ -194,23 +194,15 @@ impl SlicePanelBridge {
             return;
         };
         let snapshot = self.bus.snapshot();
-        // The same resolution the Slice button makes: the scene's own choice,
-        // else the app-wide default the pickers prefill with.
-        let printer = self
+        let selection = self
             .document
-            .selected_printer()
-            .or_else(|| snapshot.default_printer.clone());
-        let resin = self
-            .document
-            .selected_resin()
-            .or_else(|| snapshot.default_resin.clone());
-        let current = printer.zip(resin).map(|(printer, resin)| SliceParams {
-            printer,
-            resin,
-            first_layer_height: self.document.selected_first_layer_height(),
-            aa_level: snapshot.aa_level,
-            geometry: self.document.scene_revision(),
-        });
+            .print_selection()
+            .in_force(&PrintDefaults::from(&snapshot));
+        let current = SliceParams::for_selection(
+            &selection,
+            snapshot.aa_level,
+            self.document.scene_revision(),
+        );
         let held = self.document.slice_params();
         let geometry_changed = held
             .as_ref()

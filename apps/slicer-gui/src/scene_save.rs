@@ -8,11 +8,11 @@
 //! dialog, then calls in here to produce the file.
 //!
 //! A save always writes a 3MF project: the scene plus the project payload. The
-//! payload holds the scene's own printer / resin / first-layer choices, with a
-//! missing printer or resin filled from the app-wide default at save time, and
-//! the embedded profile documents the document holds. Referenced profiles
-//! without a held document get embedded copies resolved from the local
-//! libraries.
+//! payload holds the scene's own printer, resin, first-layer height and printer
+//! file, with a missing printer or resin filled from the app-wide default at
+//! save time, and the embedded profile documents that the document holds.
+//! Referenced profiles without a held document get embedded copies resolved
+//! from the local libraries.
 
 use std::path::{Path, PathBuf};
 
@@ -73,7 +73,7 @@ pub(crate) enum SaveTargetDispatch {
     /// produce what the name promises.
     WrongExtension(PathBuf),
     /// The path is ready to write (a missing extension gets `.3mf` appended:
-    /// there is exactly one project format, so the intent is unambiguous).
+    /// 3MF is the only project format, so the intent is unambiguous).
     Ready(PathBuf),
 }
 
@@ -88,11 +88,10 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
     }
 }
 
-/// Build the payload to write when saving `doc` as a project. A document opened
-/// from a project keeps that project's payload; `default_printer` and
-/// `default_resin` are used only when the document did not come from one. Every
-/// referenced profile without an embedded document then gets one, resolved from
-/// `libraries`.
+/// Builds the payload to write when saving `doc` as a project: the scene's own
+/// choices, with a missing printer or resin filled from `default_printer` and
+/// `default_resin`. Every referenced profile without an embedded document then
+/// gets one, resolved from `libraries`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
     default_printer: Option<PrinterId>,
@@ -119,8 +118,8 @@ pub(crate) struct SaveBundle {
 
 /// Snapshots the document's scene and the slices to persist into a `Send`
 /// [`SaveBundle`], on the UI thread. Returns `None` when no scene is loaded.
-/// The scene clone and the slice capture are taken together under one scene
-/// borrow so the persisted slices match the geometry written.
+/// The scene clone and the slice capture are taken together under the same
+/// scene borrow, so the persisted slices match the geometry written.
 pub(crate) fn prepare_save(
     doc: &SceneDocument,
     payload: ProjectPayload,
@@ -190,8 +189,8 @@ fn persist_slices(
 /// Runs a full project save against `target` synchronously: builds the payload,
 /// snapshots and writes the bundle, and on success updates the document so the
 /// held payload matches the file, "Save" overwrites `target` from now on, and
-/// the dirty marker clears. The GUI drives the write off the UI thread instead;
-/// this direct composition backs the save round-trip tests.
+/// the dirty marker clears. The GUI drives the write off the UI thread; this
+/// synchronous composition serves the save round-trip tests.
 #[cfg(test)]
 pub(crate) fn save_project_to(
     doc: &SceneDocument,
@@ -293,7 +292,7 @@ mod scene_save_tests {
         }
     }
 
-    /// Commits one transform edit so the document reads dirty.
+    /// Commits a transform edit so the document reads dirty.
     fn make_dirty(doc: &SceneDocument) {
         use sc_mesh_core::transform::AffineTransform3D;
 
@@ -363,9 +362,9 @@ mod scene_save_tests {
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
         }
 
-        // A printer / resin / first-layer pick makes the document dirty but
-        // does not turn a plain mesh file into a project: "Save" must still go
-        // through the dialog instead of overwriting the mesh file with a 3MF.
+        // A printer, resin or first-layer pick makes the document dirty, and
+        // the source stays a plain mesh file: "Save" still goes through the
+        // dialog, so the mesh file keeps its content.
         #[test]
         fn a_plain_mesh_source_with_a_picked_printer_still_routes_to_save_as() {
             let doc = SceneDocument::new();
@@ -702,20 +701,17 @@ mod scene_save_tests {
             // The ids resolve nowhere, so nothing was embedded.
             assert!(payload.embedded.is_empty());
             // The written values become the scene's own choices.
-            assert_eq!(
-                doc.selected_printer(),
-                Some(printer_id("nonexistent-printer"))
-            );
-            assert_eq!(doc.selected_resin(), Some(material_id("nonexistent-resin")));
+            let own = doc.print_selection();
+            assert_eq!(own.printer, Some(printer_id("nonexistent-printer")));
+            assert_eq!(own.resin, Some(material_id("nonexistent-resin")));
         }
 
         #[test]
         fn slices_persist_when_sliced_on_the_default_profile() {
-            // Regression: a freshly loaded mesh has no project payload, so
-            // `selected_printer`/`selected_resin` read `None` and slicing runs
-            // on the app-default profiles the panel shows. The save must
-            // persist the held slices against those same defaults rather than
-            // silently dropping them, so a reopened project can show them.
+            // A freshly loaded mesh has no own printer or resin, so slicing
+            // runs on the app-wide defaults that the panel shows. The save
+            // persists the held slices against those defaults, so a reopened
+            // project can show them.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
             use sc_print_glue::{PlateContours, slice_input_fingerprint};
@@ -730,8 +726,8 @@ mod scene_save_tests {
             let resin = material_id("siraya-tech-craft-high-clear");
 
             let doc = SceneDocument::new();
-            // No project data: `selected_printer` stays `None`, exactly the
-            // state right after a plain mesh load.
+            // No project data: the scene has no own printer, as right after a
+            // plain mesh load.
             doc.install_graph(one_object_graph(), source);
             let scene = doc
                 .with_scene(|s| s.graph().clone())
