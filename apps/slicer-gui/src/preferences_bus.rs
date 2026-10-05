@@ -5,23 +5,21 @@
 
 //! Publisher for app-wide preference changes.
 //!
-//! The GUI runs single-threaded on the Slint event loop, so the bus
-//! is `Rc<RefCell<…>>` rather than `Arc<Mutex<…>>`. Non-UI-thread
-//! writers (a slicing worker, a network printer subsystem) go through
-//! `slint::invoke_from_event_loop` to schedule a `bus.update(…)` on
-//! the UI thread.
+//! The GUI runs single-threaded on the Slint event loop, so the bus is
+//! `Rc<RefCell<...>>`. A writer on another thread schedules its
+//! `bus.update(...)` on the UI thread through `slint::invoke_from_event_loop`.
 //!
-//! Listeners receive the whole new snapshot plus a `PreferencesChange`
-//! enum describing what triggered the dispatch. They can filter by
-//! variant if they only care about specific prefs. Listener order is
-//! registration order: `AppState`'s persistence + language-apply
-//! listeners are subscribed first, so per-window listeners see the
-//! post-persistence, post-`select_bundled_translation` world.
+//! Listeners receive the whole new snapshot plus a `PreferencesChange` enum
+//! describing what triggered the dispatch. They can filter by variant if they
+//! only care about specific prefs. Listener order is registration order:
+//! `AppState`'s persistence + language-apply listeners are subscribed first, so
+//! per-window listeners see the post-persistence,
+//! post-`select_bundled_translation` world.
 //!
-//! Subscriptions are RAII: the [`Subscription`] handle drops the
-//! listener from the bus on `Drop`. Each window's builder holds its
-//! own `Subscription` alongside the Slint handle so the listener is
-//! automatically removed when the window is closed.
+//! Subscriptions are RAII: the [`Subscription`] handle drops the listener from
+//! the bus on `Drop`. Each window's builder holds its own `Subscription`
+//! alongside the Slint handle so the listener is automatically removed when the
+//! window is closed.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,15 +30,16 @@ use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
 use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
+use crate::print_selection::PrintDefaults;
 use crate::{MenuLayout, ThemePreference};
 
-/// Full read-out of every preference. Listeners receive a reference;
-/// clone the fields they care about.
+/// Full read-out of every preference. Listeners receive a reference; clone the
+/// fields they care about.
 ///
-/// `build_volume` is not a stored preference of its own: it is derived
-/// from the selected `default_printer` (or the hardcoded default when
-/// none is selected) and carried here so viewports can keep reading it
-/// unchanged.
+/// `build_volume` is a derived value: the plate of the app's default printer,
+/// which is the explicit `default_printer`, else the catalog's first-run soft
+/// default. It is the hardcoded placeholder when the catalog does not hold that
+/// printer.
 #[derive(Clone, Debug)]
 pub(crate) struct PreferencesSnapshot {
     pub theme: ThemePreference,
@@ -48,62 +47,56 @@ pub(crate) struct PreferencesSnapshot {
     pub language: LanguagePreference,
     pub default_printer: Option<PrinterId>,
     pub default_resin: Option<MaterialId>,
-    /// The user's favourite printers / resins, by id. Global (not
-    /// per-scene); the Slice-section picker shows these plus the
-    /// selected profiles. Toggled from the Preferences window.
+    /// The user's favourite printers / resins, by id, shared by every scene.
     pub favourite_printers: BTreeSet<PrinterId>,
     pub favourite_resins: BTreeSet<MaterialId>,
-    /// The printer file last chosen for each printer, so the Slice
-    /// panel can restore a machine's own choice when it is selected
-    /// again. Written by the panel, persisted like the rest.
+    /// The printer file last chosen for each printer. The Slice panel restores
+    /// it for a scene that has no printer file of its own.
     pub output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// App-wide anti-aliasing level applied when rasterizing slices.
-    /// Set from the Slicing Preferences section; the slicing flow reads
-    /// it when a slice is produced.
     pub aa_level: AaLevel,
     pub build_volume: BuildVolume,
-    /// Whether the floating object-list panel is shown. Persisted so a
-    /// window restores the last state on the next launch. Per-window
-    /// live state: a change in one window is written to disk but not
-    /// re-applied to other open windows (see `window_prefs`).
+    /// Whether the floating object-list panel is shown. Persisted so a window
+    /// restores the last state on the next launch. Per-window live state: a
+    /// change in a window is written to disk and left out of the other open
+    /// windows (see `window_prefs`).
     pub object_list_visible: bool,
     /// Panel position, stored relative to the window edges so it tracks
-    /// resizes. `anchor_right` / `anchor_bottom` pick the corner the
-    /// panel hugs; `offset_x` / `offset_y` are the distances to those
-    /// edges in logical pixels. `None` offsets mean "use the default"
-    /// (12px). Same per-window live semantics as the visibility.
+    /// resizes. `anchor_right` / `anchor_bottom` pick the corner the panel
+    /// hugs; `offset_x` / `offset_y` are the distances to those edges in
+    /// logical pixels. `None` offsets mean "use the default" (12px). Same
+    /// per-window live semantics as the visibility.
     pub object_list_anchor_right: bool,
     pub object_list_anchor_bottom: bool,
     pub object_list_offset_x: Option<f32>,
     pub object_list_offset_y: Option<f32>,
-    /// Panel size in logical pixels. `None` means "use the default"
-    /// (220px width; auto-sized height for `object_list_height`).
+    /// Panel size in logical pixels. `None` means "use the default" (220px
+    /// width; auto-sized height for `object_list_height`).
     pub object_list_width: Option<f32>,
     pub object_list_height: Option<f32>,
     /// Whether the panel is collapsed to its title bar.
     pub object_list_minimized: bool,
-    /// Floating Slice control panel position, stored relative to the
-    /// window edges (same anchor/offset model as the object-list panel).
-    /// `None` offsets and size mean "use the default" (top-left corner,
-    /// 12px offsets, 240px width, auto-sized height). Per-window live
-    /// state persisted across sessions, like the object-list geometry.
+    /// Floating Slice control panel position, stored relative to the window
+    /// edges (same anchor/offset model as the object-list panel). `None`
+    /// offsets and size mean "use the default" (top-left corner, 12px offsets,
+    /// 240px width, auto-sized height). Per-window live state persisted across
+    /// sessions, like the object-list geometry.
     pub slice_panel_anchor_right: bool,
     pub slice_panel_anchor_bottom: bool,
     pub slice_panel_offset_x: Option<f32>,
     pub slice_panel_offset_y: Option<f32>,
     pub slice_panel_width: Option<f32>,
     pub slice_panel_height: Option<f32>,
-    /// Whether the floating slice-view panel is shown. Toggled from the
-    /// View menu on top of the section/slice gate. Persisted so a window
-    /// restores the last state on the next launch; per-window live state,
-    /// like the object-list panel.
+    /// Whether the floating slice-view panel is shown. Toggled from the View
+    /// menu on top of the section/slice gate. Persisted so a window restores
+    /// the last state on the next launch; per-window live state, like the
+    /// object-list panel.
     pub slice_view_visible: bool,
-    /// Slice-view panel position and size, same anchor/offset model as
-    /// the object-list panel. `anchor_right` / `anchor_bottom` pick the
-    /// corner the panel hugs; `offset_x` / `offset_y` are the distances
-    /// to those edges in logical pixels. `None` offsets and size mean
-    /// "use the default" (bottom-left corner, 12px offsets, 240px width,
-    /// auto-sized height).
+    /// Slice-view panel position and size, same anchor/offset model as the
+    /// object-list panel. `anchor_right` / `anchor_bottom` pick the corner the
+    /// panel hugs; `offset_x` / `offset_y` are the distances to those edges in
+    /// logical pixels. `None` offsets and size mean "use the default"
+    /// (bottom-left corner, 12px offsets, 240px width, auto-sized height).
     pub slice_view_anchor_right: bool,
     pub slice_view_anchor_bottom: bool,
     pub slice_view_offset_x: Option<f32>,
@@ -112,10 +105,19 @@ pub(crate) struct PreferencesSnapshot {
     pub slice_view_height: Option<f32>,
     /// Whether the slice-view panel is collapsed to its title bar.
     pub slice_view_minimized: bool,
-    /// Directory the file-open dialog should start in: the folder the
-    /// last opened file lived in. `None` until the first open; the
-    /// dialog then falls back to the home directory. App-wide state.
+    /// Directory the file-open dialog should start in: the folder the last
+    /// opened file lived in. `None` until the first open; the dialog then falls
+    /// back to the home directory. App-wide state.
     pub last_open_dir: Option<PathBuf>,
+}
+
+impl From<&PreferencesSnapshot> for PrintDefaults {
+    fn from(snapshot: &PreferencesSnapshot) -> Self {
+        Self {
+            printer: snapshot.default_printer.clone(),
+            resin: snapshot.default_resin.clone(),
+        }
+    }
 }
 
 /// Describes which field was mutated in the last `update` call.
@@ -163,23 +165,20 @@ impl PreferencesBus {
         })
     }
 
-    /// Current snapshot. Windows call this at construction time to
-    /// apply the initial state; listeners usually receive a reference
-    /// to the post-update snapshot instead.
+    /// Returns a copy of the current snapshot.
     pub(crate) fn snapshot(&self) -> PreferencesSnapshot {
         self.inner.borrow().snapshot.clone()
     }
 
-    /// Mutates the snapshot via `f` and notifies listeners with the
-    /// change the caller reports. Listeners are cloned out of the
-    /// inner state before dispatch so a listener can freely call back
-    /// into `subscribe` / `snapshot` / `update` without re-borrowing
-    /// the cell.
+    /// Mutates the snapshot via `f` and notifies listeners with the change the
+    /// caller reports. Listeners are cloned out of the inner state before
+    /// dispatch so a listener can freely call back into `subscribe` /
+    /// `snapshot` / `update` without re-borrowing the cell.
     ///
-    /// Reentrant `update` calls (from within `f` or from a listener
-    /// callback) are queued and drained after the in-flight dispatch
-    /// finishes, in registration order. This preserves the temporal
-    /// order of updates as observed by listeners.
+    /// Reentrant `update` calls (from within `f` or from a listener callback)
+    /// are queued and drained after the in-flight dispatch finishes, in
+    /// registration order. This preserves the temporal order of updates as
+    /// observed by listeners.
     pub(crate) fn update<F>(&self, f: F)
     where
         F: FnOnce(&mut PreferencesSnapshot) -> PreferencesChange + 'static,
@@ -219,9 +218,8 @@ impl PreferencesBus {
         }
     }
 
-    /// Subscribes a listener and returns a handle that removes it
-    /// when dropped. Listener is called on every `update`, in
-    /// registration order.
+    /// Subscribes a listener and returns a handle that removes it when dropped.
+    /// The listener is called on every `update`, in registration order.
     pub(crate) fn subscribe<F>(self: &Rc<Self>, listener: F) -> Subscription
     where
         F: Fn(&PreferencesSnapshot, &PreferencesChange) + 'static,
@@ -237,9 +235,8 @@ impl PreferencesBus {
     }
 }
 
-/// Clears the `dispatching` flag on drop so an unwinding panic in a
-/// closure or listener cannot leave the bus stuck in the "queue every
-/// new update" state.
+/// Clears the `dispatching` flag on drop so an unwinding panic in a closure or
+/// listener cannot leave the bus stuck in the "queue every new update" state.
 struct DispatchingGuard<'a> {
     flag: &'a Cell<bool>,
 }
@@ -587,9 +584,8 @@ mod preferences_bus_tests {
             let inner_fired = inner_fired.clone();
             bus.subscribe(move |_, _| {
                 // Register an inner listener the first time we fire,
-                // re-entering `subscribe` while the outer dispatch is
-                // in progress. Subsequent firings see the slot filled
-                // and skip.
+                // re-entering `subscribe` while the outer dispatch is in
+                // progress. Subsequent firings see the slot filled and skip.
                 let mut slot = captured_sub.borrow_mut();
                 if slot.is_some() {
                     return;
@@ -747,5 +743,17 @@ mod preferences_bus_tests {
             "observer must see updates in the temporal order they were issued",
         );
         assert!(matches!(bus.snapshot().theme, ThemePreference::Light));
+    }
+
+    #[test]
+    fn print_defaults_copy_the_default_printer_and_resin() {
+        let mut snapshot = initial();
+        snapshot.default_printer = Some(PrinterId::new("anycubic-photon-m3").unwrap());
+        snapshot.default_resin = Some(MaterialId::new("abs-like-405").unwrap());
+
+        let defaults = PrintDefaults::from(&snapshot);
+
+        assert_eq!(defaults.printer, snapshot.default_printer);
+        assert_eq!(defaults.resin, snapshot.default_resin);
     }
 }

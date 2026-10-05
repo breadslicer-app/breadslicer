@@ -16,12 +16,13 @@
 use sc_print_glue::PlateContours;
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 
+use crate::print_selection::PrintSelectionInForce;
 use crate::scene_document::SceneRevision;
 
-/// The effective inputs a slice ran with: the resolved printer and resin, the
-/// per-print first-layer height (absent means the material's resolved layer
-/// height), the anti-aliasing level, and an opaque marker of the scene geometry
-/// at slice time.
+/// The inputs a slice ran with: the printer and resin in force, the per-print
+/// first-layer height (absent means the material's resolved layer height), the
+/// anti-aliasing level, and an opaque marker of the scene geometry at slice
+/// time.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SliceParams {
     pub printer: PrinterId,
@@ -31,14 +32,31 @@ pub(crate) struct SliceParams {
     pub geometry: SceneRevision,
 }
 
+impl SliceParams {
+    /// Returns the inputs that a slice of `selection` runs with, or `None`
+    /// while it has no printer or no resin in force.
+    pub(crate) fn for_selection(
+        selection: &PrintSelectionInForce,
+        aa_level: AaLevel,
+        geometry: SceneRevision,
+    ) -> Option<Self> {
+        Some(Self {
+            printer: selection.printer().in_force()?.clone(),
+            resin: selection.resin().in_force()?.clone(),
+            first_layer_height: selection.first_layer_height(),
+            aa_level,
+            geometry,
+        })
+    }
+}
+
 /// A completed slice held for the session: the merged plate contours with their
 /// schedule and the validity token, captured off the event loop for
 /// persistence, plus the parameters the run used.
 #[derive(Clone, Debug)]
 pub(crate) struct SliceResult {
     /// The whole plate's merged, world-coordinate contours, paired with the
-    /// layer schedule they were cut on. Slice persistence and the layer view
-    /// read them back; the write guard compares the schedule by value on save.
+    /// layer schedule they were cut on.
     pub contours: PlateContours,
     /// The slice-input fingerprint token, captured off the event loop and
     /// persisted so a later load can revalidate the slices.
@@ -58,11 +76,12 @@ pub(crate) enum ReSliceDecision {
     Changed,
 }
 
-/// Decide what a Slice press should do. The scalar inputs are compared here;
-/// `geometry_changed` carries the scene-geometry comparison, which the document
-/// answers from its edit history (see
-/// [`SceneDocument::slice_geometry_changed`](crate::scene_document::SceneDocument::slice_geometry_changed)).
-/// It is only consulted when a result is held.
+/// Decides what a Slice press does. The scalar inputs are compared here;
+/// `geometry_changed` carries the scene-geometry comparison, which
+/// [`SceneDocument::slice_geometry_changed`][changed] answers from the edit
+/// history. It is only consulted when a result is held.
+///
+/// [changed]: crate::scene_document::SceneDocument::slice_geometry_changed
 pub(crate) fn decide_re_slice(
     held: Option<&SliceParams>,
     current: &SliceParams,
@@ -184,6 +203,78 @@ mod decide_re_slice_tests {
         assert_eq!(
             decide_re_slice(Some(&held), &current, false),
             ReSliceDecision::Changed
+        );
+    }
+}
+
+#[cfg(test)]
+mod for_selection_tests {
+    use super::*;
+
+    use crate::print_selection::{PrintDefaults, PrintSelection};
+
+    fn printer() -> PrinterId {
+        PrinterId::new("elegoo-saturn-4-ultra").expect("valid id")
+    }
+
+    fn resin() -> MaterialId {
+        MaterialId::new("standard-405").expect("valid id")
+    }
+
+    fn geometry() -> SceneRevision {
+        SceneRevision::from_top_edit_id(Some(7))
+    }
+
+    #[test]
+    fn no_printer_in_force_gives_no_params() {
+        let selection = PrintSelection {
+            resin: Some(resin()),
+            ..PrintSelection::default()
+        }
+        .in_force(&PrintDefaults::default());
+
+        assert_eq!(
+            SliceParams::for_selection(&selection, AaLevel::Off, geometry()),
+            None,
+        );
+    }
+
+    #[test]
+    fn no_resin_in_force_gives_no_params() {
+        let selection = PrintSelection {
+            printer: Some(printer()),
+            ..PrintSelection::default()
+        }
+        .in_force(&PrintDefaults::default());
+
+        assert_eq!(
+            SliceParams::for_selection(&selection, AaLevel::Off, geometry()),
+            None,
+        );
+    }
+
+    #[test]
+    fn a_printer_and_a_resin_in_force_give_every_field() {
+        let height = PositiveFiniteMm::new(0.05).expect("valid length");
+        let selection = PrintSelection {
+            printer: Some(printer()),
+            first_layer_height: Some(height),
+            ..PrintSelection::default()
+        }
+        .in_force(&PrintDefaults {
+            printer: None,
+            resin: Some(resin()),
+        });
+
+        assert_eq!(
+            SliceParams::for_selection(&selection, AaLevel::X4, geometry()),
+            Some(SliceParams {
+                printer: printer(),
+                resin: resin(),
+                first_layer_height: Some(height),
+                aa_level: AaLevel::X4,
+                geometry: geometry(),
+            }),
         );
     }
 }

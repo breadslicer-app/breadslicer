@@ -34,6 +34,7 @@ use crate::MainWindow;
 use crate::error_dialog::DialogManager;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
+use crate::print_selection::PrintDefaults;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
@@ -129,12 +130,12 @@ impl SliceRun {
         run
     }
 
-    /// Handles a Slice press. Resolves the effective inputs, then decides
+    /// Handles a Slice press. Resolves the inputs in force, then decides
     /// against the held result: a first slice or a changed input launches the
     /// run (a change first confirms the overwrite); an unchanged press does
-    /// nothing. A no-op while a slice is already in flight, or when no
-    /// printer/resin is chosen (the button gates both, but the checks keep the
-    /// path safe).
+    /// nothing. A no-op while a slice is already in flight; an error dialog
+    /// when no printer or no resin is in force (the button gates both, but the
+    /// checks keep the path safe).
     fn start(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -142,21 +143,16 @@ impl SliceRun {
         if ui.get_slicing_in_progress() {
             return;
         }
-        // The Slice panel prefills its pickers with the scene's own choice,
-        // else the app-wide default (see `slice_selection`). Slicing resolves
-        // the printer and resin the same way, so the selection shown in the
-        // panel is the one that runs rather than requiring an explicit re-pick
-        // of a default already on display.
         let snapshot = self.bus.snapshot();
-        let printer = self
+        let selection = self
             .document
-            .selected_printer()
-            .or_else(|| snapshot.default_printer.clone());
-        let resin = self
-            .document
-            .selected_resin()
-            .or_else(|| snapshot.default_resin.clone());
-        let (Some(printer), Some(resin)) = (printer, resin) else {
+            .print_selection()
+            .in_force(&PrintDefaults::from(&snapshot));
+        let Some(current) = SliceParams::for_selection(
+            &selection,
+            snapshot.aa_level,
+            self.document.scene_revision(),
+        ) else {
             self.dialogs.show_error(
                 "Cannot slice",
                 None,
@@ -164,13 +160,6 @@ impl SliceRun {
                 String::new(),
             );
             return;
-        };
-        let current = SliceParams {
-            printer,
-            resin,
-            first_layer_height: self.document.selected_first_layer_height(),
-            aa_level: snapshot.aa_level,
-            geometry: self.document.scene_revision(),
         };
 
         let held = self.document.slice_params();
@@ -382,7 +371,7 @@ impl SliceRun {
     }
 }
 
-/// Load the profiles and run the shared slicing service, publishing progress
+/// Loads the profiles and runs the shared slicing service, publishing progress
 /// into `progress` as layers complete.
 fn run_slice(
     scene: &Scene,
@@ -422,7 +411,7 @@ fn run_slice(
     }
 }
 
-/// Fingerprint the slice inputs off the event loop and wrap the merged plate
+/// Fingerprints the slice inputs off the event loop and wraps the merged plate
 /// contours for the UI hand-off.
 fn capture(scene: &Scene, contours: PlateContours) -> Result<CompletedSlice, SliceFailure> {
     let token = slice_input_fingerprint(scene, contours.schedule())
@@ -461,7 +450,7 @@ mod capture_tests {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
     }
 
-    /// Build a CCW triangle as 1 solid layer plus an empty layer, standing in
+    /// Builds a CCW triangle as 1 solid layer plus an empty layer, standing in
     /// for a merged plate stack.
     fn triangle_stack() -> ContourStack {
         let outer = ClosedRing::new(

@@ -5,9 +5,8 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-//! Library root for the slicer GUI crate. Owns every module that previously sat
-//! under `main.rs`; the binary entry point now lives in `main.rs` as a thin
-//! wrapper that calls into `run`.
+//! Library root for the slicer GUI crate. The binary entry point in `main.rs`
+//! is a thin wrapper that calls into `run`.
 //!
 //! Modules touched by external integration tests (`apps/slicer-gui/tests/...`)
 //! are re-published as `pub`; the rest stay crate-private.
@@ -45,6 +44,7 @@ mod preferences_filters;
 mod preferences_window;
 mod print_file_preview;
 mod print_format;
+mod print_selection;
 pub mod profile_catalog;
 mod profile_extending;
 mod profile_forking;
@@ -100,9 +100,9 @@ use crate::app_state::AppState;
 use crate::i18n::ctr;
 use crate::mesh_loader::is_supported_mesh_extension;
 
-/// Entry point invoked by the binary wrapper. Builds the shared wgpu stack,
-/// wires it into Slint, spawns one window per accepted CLI path (or one empty
-/// window if none were supplied) and runs the event loop.
+/// Starts the GUI for the binary wrapper: builds the shared wgpu stack, wires
+/// it into Slint, spawns 1 window per accepted CLI path (or 1 empty window if
+/// none were supplied) and runs the event loop.
 pub fn run() -> Result<(), Box<dyn Error>> {
     // First statement of the process: taking the token clears it from the
     // environment, which is only safe before wgpu and the drivers below it
@@ -116,14 +116,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // measured), which makes "New Window" feel like it hangs.
     use slint::wgpu_30::wgpu;
 
-    // Slint's Skia renderer only wires one wgpu backend per platform: Dx12 on
+    // Slint's Skia renderer only wires 1 wgpu backend per platform: Dx12 on
     // Windows, Vulkan on Linux, Metal on macOS. An instance that enumerates
     // every backend can hand Slint an adapter it rejects; on Windows
     // `request_adapter` may return a Vulkan adapter, which the Skia surface
     // refuses with "Unsupported WGPU backend for use with Skia: vulkan".
     // Restrict the instance to the single backend the renderer accepts here.
-    // The cfg predicates mirror i-slint-renderer-skia so the two stay in
-    // lockstep.
+    // The cfg predicates mirror i-slint-renderer-skia so both stay in lockstep.
     #[cfg(target_family = "windows")]
     let backends = wgpu::Backends::DX12;
     #[cfg(all(target_family = "unix", not(target_vendor = "apple")))]
@@ -135,10 +134,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         backends,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
-    // Adapter choice goes through `graphics_adapter` rather than
-    // `Instance::request_adapter`, which with default options returns whatever
-    // the platform enumerated first. See that module for why that matters on
-    // machines carrying more than one adapter.
+    // Adapter choice goes through `graphics_adapter`: with default options,
+    // `Instance::request_adapter` returns whatever the platform enumerated
+    // first. See that module for why that matters on machines with 2 or more
+    // adapters.
     let graphics_adapter::AdapterSelection {
         adapter,
         device,
@@ -242,21 +241,20 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let app = AppState::new(device_loss.clone())?;
 
-    // OS "Open With…" / file-association support on Linux + Windows: every
+    // OS "Open With..." / file-association support on Linux + Windows: every
     // positional argument that names a supported mesh file gets its own window.
     // Rejected paths (unsupported extension, missing file) are reported on
     // stderr without aborting the launch; the user still sees the app come up.
-    // macOS carries the files in an Apple Event instead of argv, handled by
+    // macOS carries the files in an Apple Event, handled by
     // `macos_open_documents`.
     let accepted = collect_argv_paths();
     let empty_window = if accepted.is_empty() {
-        // No paths supplied (or none were supported): preserve the current
-        // "launch with one empty window" behaviour.
+        // No paths supplied (or none were supported): the launch shows 1 empty
+        // window.
         Some(app.spawn_main_window()?)
     } else {
-        // Decision: N files -> N windows. The path is parked on each window's
-        // `PendingLoad` slot and dispatched once `RenderingSetup` publishes its
-        // GPU device.
+        // 1 window per file. The path is parked on each window's `PendingLoad`
+        // slot and dispatched once `RenderingSetup` publishes its GPU device.
         for path in accepted {
             let window_id = app.spawn_main_window()?;
             app.open_path_in_window(window_id, path);
@@ -346,9 +344,9 @@ fn collect_argv_paths() -> Vec<PathBuf> {
     // Skip argv[0] (the binary path).
     for raw in std::env::args_os().skip(1) {
         let path = PathBuf::from(&raw);
-        // Treat anything starting with `-` as an unrecognised option rather
-        // than a file. We don't (yet) parse flags, so a leading dash is far
-        // more likely to be a mistake than a real filename beginning with `-`.
+        // Anything starting with `-` is an unrecognised option. The app parses
+        // no flags, so a leading dash is far more likely a mistake than a real
+        // filename beginning with `-`.
         if path
             .to_str()
             .is_some_and(|s| s.starts_with('-') && s != "-")

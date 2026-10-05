@@ -10,7 +10,7 @@
 //! viewport controller and the object-list panel observe the document instead
 //! of holding their own copies.
 //!
-//! Mutation goes through one path: [`SceneDocument::apply_edit`]. It accepts a
+//! Mutation goes through 1 path: [`SceneDocument::apply_edit`]. It accepts a
 //! typed [`SceneEdit`] from [`sc_scene_edit`] and routes through
 //! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync with the
 //! scene state. There is no closure-based mutation entry point: the cache layer
@@ -36,18 +36,19 @@ use sc_sl1cer::profile::LayerSchedule;
 
 pub(crate) use sc_scene_edit::SceneEdit;
 
+use crate::print_selection::PrintSelection;
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
 
 /// An opaque marker of which scene is installed and of its committed-edit
 /// state, taken by [`SceneDocument::scene_revision`] and compared by
 /// [`SceneDocument::slice_geometry_changed`] to tell whether the geometry
-/// changed between two moments (producing a slice and a later Slice press). Two
-/// equal markers prove the committed geometry matches.
+/// changed between 2 moments (producing a slice and a later Slice press). Equal
+/// markers prove the committed geometry matches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SceneRevision {
-    /// Which installed scene. Two freshly loaded scenes both sit at an empty
-    /// undo stack, so the edit head alone cannot tell them apart.
+    /// Which installed scene. 2 freshly loaded scenes both sit at an empty undo
+    /// stack, so the edit head alone cannot tell them apart.
     scene: u64,
     /// Committed-edit head, the identity the save point also tracks.
     top_edit: Option<u64>,
@@ -63,16 +64,16 @@ impl SceneRevision {
 
 /// The document state a save was prepared from, rechecked when the write
 /// completes. The write runs off the UI thread while the event loop stays live,
-/// so all three parts can move on in between.
+/// so all 3 parts can move on in between.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SaveStamp {
-    /// Which installed scene. Two freshly loaded scenes both sit at an empty
-    /// undo stack, so the edit head alone cannot tell them apart.
+    /// Which installed scene. 2 freshly loaded scenes both sit at an empty undo
+    /// stack, so the edit head alone cannot tell them apart.
     scene: u64,
     /// Committed-edit head, the identity the save point also tracks.
     top_edit: Option<u64>,
-    /// Number of project-level changes so far. The printer and resin choices
-    /// never reach the undo stack.
+    /// Number of project-level changes so far. The print choices never reach
+    /// the undo stack.
     project_state: u64,
 }
 
@@ -94,8 +95,7 @@ pub(crate) enum SaveRecorded {
 /// overflow the oldest entry (front of the deque) is discarded.
 pub(crate) const UNDO_STACK_CAP: usize = 256;
 
-/// Coarse-grained dispatch hint for document listeners. Each public mutation on
-/// `SceneDocument` fires exactly one event variant.
+/// Coarse-grained dispatch hint for document listeners.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SceneEvent {
     /// A scene has just been installed (replacing whatever was there).
@@ -108,8 +108,7 @@ pub(crate) enum SceneEvent {
     /// The scene's contents were mutated through [`SceneDocument::apply_edit`]
     /// (also the path used internally by `undo` and `redo`) WITHOUT changing
     /// arena membership. Fires for transform-only edits (gizmo drag,
-    /// keyboard-driven arrow nudges, etc.); the listener marks the renderer
-    /// dirty so the per-frame model-matrix update covers the change.
+    /// keyboard-driven arrow nudges, etc.).
     Mutated,
     /// A structural mutation landed: a leaf was added or removed, or a mesh
     /// resource was registered or removed. The GPU scene's per-leaf model
@@ -121,20 +120,17 @@ pub(crate) enum SceneEvent {
     /// mirror slice state to the UI react here.
     SliceChanged,
     /// The undo or redo stack changed (push, undo, redo, or install/clear when
-    /// the stacks were non-empty). Listeners that only care about scene
-    /// contents can ignore this; the controller uses it to mirror `can-undo` /
-    /// `can-redo` to the UI.
+    /// the stacks were non-empty).
     UndoStackChanged,
     /// The value of [`SceneDocument::is_dirty`] flipped. Fired only on actual
     /// transitions (a push onto an already-dirty document stays silent), after
-    /// the operation's other events. The controller uses it to mirror the
-    /// unsaved-changes marker to the UI.
+    /// the operation's other events.
     DirtyChanged,
 }
 
 type Listener = Rc<dyn Fn(SceneEvent)>;
 
-/// One committed entry on the undo/redo stacks: the edit plus the identity the
+/// A committed entry on the undo/redo stacks: the edit plus the identity the
 /// dirty tracking compares against the save point. An entry keeps its id when
 /// undo/redo moves it between the stacks, so "the same edit is on top again" is
 /// detectable after an undo + redo round trip. Ids are never reused within a
@@ -145,46 +141,34 @@ struct HistoryEntry {
     edit: SceneEdit,
 }
 
-/// As "what" the document was loaded, as a project or as a mesh. Used to decide
-/// whether "Save" may overwrite that file in place (a project) or must go
-/// through "Save As".
+/// What the document was loaded as: a project or a mesh. It decides whether
+/// "Save" may overwrite that file in place (a project) or must go through "Save
+/// As".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DocumentOrigin {
     PlainMesh,
     Project,
 }
 
-/// The scene's own print choices, as opposed to the app-wide defaults. A `None`
-/// field means the scene has no choice of its own for it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct PrintSelection {
-    printer: Option<PrinterId>,
-    resin: Option<MaterialId>,
-    first_layer_height: Option<PositiveFiniteMm>,
-    output_format: Option<OutputFormatBinding>,
-}
-
-impl PrintSelection {
-    /// Splits a project payload into the scene's choices and the embedded
-    /// profile documents it carries.
-    fn from_payload(payload: ProjectPayload) -> (Self, Vec<EmbeddedProfile>) {
-        let ProjectPayload {
+/// Splits a project payload into the scene's own choices and the embedded
+/// profile documents it carries.
+fn split_payload(payload: ProjectPayload) -> (PrintSelection, Vec<EmbeddedProfile>) {
+    let ProjectPayload {
+        printer,
+        resin,
+        first_layer_height,
+        output_format,
+        embedded,
+    } = payload;
+    (
+        PrintSelection {
             printer,
             resin,
             first_layer_height,
             output_format,
-            embedded,
-        } = payload;
-        (
-            Self {
-                printer,
-                resin,
-                first_layer_height,
-                output_format,
-            },
-            embedded,
-        )
-    }
+        },
+        embedded,
+    )
 }
 
 pub(crate) struct SceneDocument {
@@ -195,9 +179,9 @@ pub(crate) struct SceneDocument {
     source_path: RefCell<Option<PathBuf>>,
     /// Kind of the file at `source_path`: set on install from whether the file
     /// carried project data, and flipped to `Project` by
-    /// [`Self::record_project_save`].
+    /// [`Self::record_project_save_for`].
     origin: Cell<DocumentOrigin>,
-    /// The scene's own printer / resin / first-layer choices.
+    /// The scene's own print choices.
     print_selection: RefCell<PrintSelection>,
     /// Embedded profile documents carried by the source file or by the latest
     /// save. Held opaquely.
@@ -233,13 +217,12 @@ pub(crate) struct SceneDocument {
     /// empty-vs-empty comparison must read dirty.
     evicted_since_save: Cell<bool>,
     /// Save-dirty contribution from project-level state that does not live on
-    /// the undo stack: the scene's printer/resin choice today, and later the
-    /// per-print settings and the produced slice result. Set by
+    /// the undo stack: the scene's own print choices. Set by
     /// [`Self::mark_project_state_unsaved`], OR'd into [`Self::is_dirty`], and
     /// cleared by [`Self::mark_saved`] and on install/clear. This tracks
     /// UNSAVED changes only (the signal that drives Save and the close-prompt);
-    /// it says nothing about whether a computed slice still matches the
-    /// geometry and settings it was produced from, which is a separate concern.
+    /// whether a computed slice still matches the geometry and settings it was
+    /// produced from is a separate concern.
     unsaved_project_state: Cell<bool>,
     /// The slice produced for the current scene, held for the session and
     /// consulted by the re-slice decision. Cleared when a scene is installed or
@@ -255,7 +238,7 @@ pub(crate) struct SceneDocument {
     /// its cached texture on this plus the layer index, so a re-slice
     /// invalidates the cap.
     slice_generation: Cell<u64>,
-    /// Bumped by every install and clear, so a save prepared against one scene
+    /// Bumped by every install and clear, so a save prepared against a scene
     /// can tell it is completing against another.
     scene_generation: Cell<u64>,
     /// Bumped by every project-level change, giving those the same comparable
@@ -306,7 +289,7 @@ impl SceneDocument {
         self.install_spatial(SceneSpatial::from_graph(graph), source_path, Some(payload));
     }
 
-    /// Install a [`SceneSpatial`] (typically pre-primed by the load worker
+    /// Installs a [`SceneSpatial`] (typically pre-primed by the load worker
     /// thread). Resets selection and clears history just like
     /// [`Self::install_graph`]. `project_payload` is the project data the
     /// source file carried, `None` for plain mesh files.
@@ -323,7 +306,7 @@ impl SceneDocument {
         let (selection, embedded) = match project_payload {
             Some(payload) => {
                 self.origin.set(DocumentOrigin::Project);
-                PrintSelection::from_payload(payload)
+                split_payload(payload)
             }
             None => {
                 self.origin.set(DocumentOrigin::PlainMesh);
@@ -376,7 +359,7 @@ impl SceneDocument {
     /// state it was loaded or last saved in (the save-dirty / unsaved-changes
     /// signal). Scene contents are judged by committed edits only (a
     /// mid-gesture mutation that has not been pushed yet does not count);
-    /// project-level state such as the printer/resin choice contributes through
+    /// project-level state such as the print choices contributes through
     /// [`Self::mark_project_state_unsaved`]. `false` whenever no scene is
     /// loaded.
     ///
@@ -384,8 +367,8 @@ impl SceneDocument {
     /// [`Self::mark_saved`]. A top entry matching the save point proves the
     /// content matches the saved state regardless of eviction: entry ids are
     /// unique, and eviction only forgets undo ability without mutating the
-    /// scene. The empty-vs-empty match is the one exception; it is only trusted
-    /// while no eviction has happened since the save point (see
+    /// scene. The empty-vs-empty match is the only exception; it is only
+    /// trusted while no eviction has happened since the save point (see
     /// [`Self::evicted_since_save`]). The comparison can over-report dirty (the
     /// save point may sit deeper in the stack or be evicted), never
     /// under-report it.
@@ -404,8 +387,7 @@ impl SceneDocument {
     }
 
     /// Records the current history position as the saved state, so
-    /// [`Self::is_dirty`] reads `false` until the next committed change. Called
-    /// by the save flow after a successful write.
+    /// [`Self::is_dirty`] reads `false` until the next committed change.
     pub(crate) fn mark_saved(&self) {
         let was_dirty = self.is_dirty();
         self.save_point.set(self.top_edit_id());
@@ -473,11 +455,16 @@ impl SceneDocument {
         if current != prepared {
             return SaveRecorded::Drifted;
         }
-        let (selection, embedded) = PrintSelection::from_payload(payload);
+        let (selection, embedded) = split_payload(payload);
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
         self.mark_saved();
         SaveRecorded::Clean
+    }
+
+    /// Returns a copy of the scene's own print choices.
+    pub(crate) fn print_selection(&self) -> PrintSelection {
+        self.print_selection.borrow().clone()
     }
 
     /// Returns the scene's own printer choice.
@@ -528,7 +515,7 @@ impl SceneDocument {
         self.set_selection_field(|selection| &mut selection.first_layer_height, height)
     }
 
-    /// Writes one field of the print selection, marking the document save-dirty
+    /// Writes a field of the print selection, marking the document save-dirty
     /// only when the value actually changes. Returns whether it changed.
     fn set_selection_field<T: PartialEq>(
         &self,
@@ -562,7 +549,7 @@ impl SceneDocument {
 
     /// Reports whether the committed geometry changed since `since` was taken.
     /// Installing or clearing a scene in between always counts as a change: the
-    /// geometry `since` describes is gone. Within one scene this mirrors
+    /// geometry `since` describes is gone. Within a scene this mirrors
     /// [`Self::is_dirty`]'s comparison: a differing top edit id means changed;
     /// a matching empty stack (`None`) is trusted only while no applied edit
     /// has been evicted since the slice was recorded. Can over-report a change,
@@ -588,9 +575,8 @@ impl SceneDocument {
     }
 
     /// Returns the held slice, or `None` when the current scene has not been
-    /// sliced. Clones the contours, so this is the accessor for handing the
-    /// slice to a worker rather than for reading one layer (see
-    /// [`Self::with_slice_layer`]).
+    /// sliced. Clones the contours; [`Self::with_slice_layer`] reads a layer in
+    /// place.
     pub(crate) fn held_slice(&self) -> Option<SliceResult> {
         self.slice_result.borrow().clone()
     }
@@ -632,8 +618,8 @@ impl SceneDocument {
         self.slice_generation.get()
     }
 
-    /// Run `f` against the held slice's layer at `index`, or return `None` when
-    /// no slice is held or the index is past the last layer. The layer is
+    /// Runs `f` against the held slice's layer at `index`, or returns `None`
+    /// when no slice is held or the index is past the last layer. The layer is
     /// borrowed in place, so the cap raster is built without cloning the
     /// contour.
     pub(crate) fn with_slice_layer<R>(
@@ -685,13 +671,12 @@ impl SceneDocument {
     }
 
     /// Records an unsaved change to project-level state that does not live on
-    /// the undo stack (the printer/resin choice today; later the per-print
-    /// settings and the produced slice result). Feeds [`Self::is_dirty`] (the
-    /// save-dirty / unsaved-changes signal that drives Save and the
-    /// close-prompt) and is cleared by [`Self::mark_saved`]. Deliberately NOT
-    /// slice staleness: whether a computed slice still matches its inputs is
-    /// tracked separately. Fires [`SceneEvent::DirtyChanged`] on an actual
-    /// clean->dirty flip.
+    /// the undo stack (the scene's own print choices). Feeds [`Self::is_dirty`]
+    /// (the save-dirty / unsaved-changes signal that drives Save and the
+    /// close-prompt) and is cleared by [`Self::mark_saved`]. Slice staleness,
+    /// whether a computed slice still matches its inputs, is tracked
+    /// separately. Fires [`SceneEvent::DirtyChanged`] on an actual clean->dirty
+    /// flip.
     fn mark_project_state_unsaved(&self) {
         let was_dirty = self.is_dirty();
         self.unsaved_project_state.set(true);
@@ -737,7 +722,7 @@ impl SceneDocument {
         self.selection.primary_node_id()
     }
 
-    /// Apply a typed scene edit. The single mutation choke-point on
+    /// Applies a typed scene edit. The single mutation choke-point on
     /// `SceneDocument`: routes through [`SceneSpatial::apply_edit`] (which
     /// keeps spatial caches in sync) and fires [`SceneEvent::Mutated`] or
     /// [`SceneEvent::Restructured`].
@@ -755,9 +740,9 @@ impl SceneDocument {
             return Err(EditNotApplied::NoSceneLoaded);
         };
         // Decide selection-clearing and the post-mutation event kind BEFORE
-        // moving the edit into spatial.apply_edit: the typed-edit enum is no
-        // longer `Copy`, and `RemoveLeaf` may be nested under a `Compound`
-        // produced by paste-undo, so a plain `match` post-apply is not enough.
+        // moving the edit into spatial.apply_edit: the typed-edit enum is not
+        // `Copy`, and `RemoveLeaf` may be nested under a `Compound` produced by
+        // paste-undo, so a plain `match` post-apply is not enough.
         let drops_selection = edit_removes_selected_leaf(&edit, &self.selection);
         let event = if edit.is_structural() {
             SceneEvent::Restructured
@@ -783,11 +768,10 @@ impl SceneDocument {
         Ok(())
     }
 
-    /// Records a reversible edit on the undo stack. No-op edits
-    /// (`before == after`) are dropped silently so a gesture that began and
-    /// ended in the same place doesn't clutter history. A successful push
-    /// clears the redo stack: a fresh edit invalidates the
-    /// previously-rolled-back trail.
+    /// Records a reversible edit on the undo stack. No-op edits (`before ==
+    /// after`) are dropped silently so a gesture that began and ended in the
+    /// same place doesn't clutter history. A successful push clears the redo
+    /// stack: a fresh edit invalidates the previously-rolled-back trail.
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
         if edit.is_noop() {
             return;
@@ -809,11 +793,10 @@ impl SceneDocument {
         self.notify_dirty_change(was_dirty);
     }
 
-    /// Allocate a fresh [`NodeId`] and install a mesh-resource-backed leaf at
-    /// it as the last scene root. Combines the `allocate + AddLeaf + push_edit`
-    /// dance into the single call paste needs, returning the new id (`Ok(None)`
-    /// when no scene is loaded, `Err` when the scene rejected the edit; either
-    /// way nothing is recorded).
+    /// Allocates a fresh [`NodeId`] and installs a mesh-resource-backed leaf at
+    /// it as the last scene root: `allocate`, `AddLeaf` and `push_edit` in 1
+    /// call. Returns the new id (`Ok(None)` when no scene is loaded, `Err` when
+    /// the scene rejected the edit; either way nothing is recorded).
     ///
     /// The corresponding edit goes onto the undo stack: a subsequent `undo`
     /// pops it as a `RemoveLeaf` and tombstones the leaf.
@@ -848,7 +831,7 @@ impl SceneDocument {
         }
     }
 
-    /// Delete the currently-selected leaf, recording the operation as one undo
+    /// Deletes the currently-selected leaf, recording the operation as 1 undo
     /// entry.
     ///
     /// Works on any leaf the loaders or paste flow can produce:
@@ -889,22 +872,21 @@ impl SceneDocument {
         }
     }
 
-    /// Paste a [`SceneFragment`] into the current scene as a new root.
+    /// Pastes a [`SceneFragment`] into the current scene as a new root.
     /// `placement_translation` overrides the fragment root's translation
     /// component (the caller's mouse-projection / placement-search result);
     /// rotation + scale carried by the fragment root are preserved.
     ///
     /// Mesh resources in the fragment are deduped against the target scene by
     /// `Arc::as_ptr` identity: a resource that's already registered (same-scene
-    /// paste, repeated paste after one AddMeshResource has landed) is reused
+    /// paste, repeated paste after an AddMeshResource has landed) is reused
     /// without emitting a new edit; otherwise an `AddMeshResource` joins the
-    /// compound. The whole paste reaches the undo stack as one entry so a
-    /// single `Ctrl+Z` reverses the entire gesture.
+    /// compound. The whole paste reaches the undo stack as 1 entry so a single
+    /// `Ctrl+Z` reverses the entire gesture.
     ///
     /// Returns the new root leaf's `NodeId`; `Ok(None)` when no scene is loaded
     /// or the fragment carries no mesh-resource leaf roots (the only shape the
-    /// current builder produces; future variants extend the match in
-    /// [`Self::paste_fragment_compound`]); `Err`, with nothing recorded and the
+    /// current builder produces); `Err`, with nothing recorded and the
     /// selection untouched, when the scene rejected the edit.
     pub(crate) fn paste_fragment(
         &self,
@@ -965,9 +947,7 @@ impl SceneDocument {
         }
 
         // Step 2: walk the fragment's roots, allocate target node ids, emit
-        // AddLeaf for each mesh-resource leaf root. Future CSG / multi-select
-        // phases extend this match with AddGroup / AddCsg / AddReference
-        // branches.
+        // AddLeaf for each mesh-resource leaf root.
         let mut first_new_root: Option<NodeId> = None;
         // Pasted leaves land after the roots already there, one after another,
         // and none of the edits before them adds a root.
@@ -982,11 +962,8 @@ impl SceneDocument {
                 | NodeKind::Group { .. }
                 | NodeKind::Csg { .. }
                 | NodeKind::Reference { .. } => {
-                    // The current SceneFragment builder only emits
-                    // mesh-resource leaf roots, so skipping the other shapes
-                    // here keeps the contract additive: future CSG / Group /
-                    // inline-leaf fragments can grow new branches without
-                    // breaking existing callers.
+                    // The SceneFragment builder only emits mesh-resource leaf
+                    // roots; other shapes are skipped.
                     continue;
                 }
             };
@@ -1159,11 +1136,8 @@ impl SceneDocument {
     }
 }
 
-/// Return `xform` with its translation component replaced by `translation`,
-/// preserving the linear (rotation + scale) part. Used by the paste primitive:
-/// the clipboard's fragment carries the source leaf's rotation + scale on its
-/// root's local transform, and paste re-anchors that root at the
-/// placement-chosen translation.
+/// Returns `xform` with its translation component replaced by `translation`,
+/// preserving the linear (rotation + scale) part.
 fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transform3D {
     match xform {
         Transform3D::Identity => {
@@ -1179,12 +1153,12 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
 /// scene, the caches, and the selection are untouched.
 #[derive(Debug)]
 pub(crate) enum EditNotApplied {
-    /// No document is loaded; a legal UI state (a shortcut firing with nothing
-    /// open), not an error worth a dialog.
+    /// No document is loaded: a legal UI state (a shortcut firing with nothing
+    /// open) that needs no dialog.
     NoSceneLoaded,
     /// The scene rejected the edit's preconditions. The GUI builds edits
     /// against the live scene, so this indicates a programming bug; callers
-    /// surface it instead of recording the edit.
+    /// surface it and record nothing.
     Rejected(SceneError),
 }
 
@@ -1377,10 +1351,8 @@ mod scene_document_tests {
         assert_eq!(doc.selection_primary_node_id(), None);
     }
 
-    /// Pick the [`LeafId`] of the document's first leaf. The test suite uses
-    /// this everywhere it needs a real `Selection::One(_)` for a one-leaf
-    /// fixture; the legacy `ObjectIdx(0)` constant has no NodeId-side
-    /// equivalent that tests can synthesise without going through the spatial.
+    /// Picks the [`LeafId`] of the document's first leaf, for tests that need a
+    /// real `Selection::One(_)` on a 1-leaf fixture.
     fn first_leaf_id(doc: &SceneDocument) -> crate::selection::LeafId {
         crate::selection::LeafId(
             doc.with_scene(|spatial| spatial.leaf_id_at_index(0))
@@ -1752,7 +1724,7 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
-        // Push UNDO_STACK_CAP + 5 distinct edits; the oldest five should be
+        // Push UNDO_STACK_CAP + 5 distinct edits; the oldest 5 should be
         // silently dropped by `pop_front`.
         for i in 0..(UNDO_STACK_CAP + 5) {
             let dx = (i + 1) as f64;
@@ -1763,7 +1735,7 @@ mod scene_document_tests {
             });
         }
         assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
-        // Front of the deque is the oldest surviving entry; with five entries
+        // Front of the deque is the oldest surviving entry; with 5 entries
         // dropped it should start at i = 5 (after = 6.0).
         let front = doc
             .undo_stack
@@ -2004,7 +1976,7 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        // Add two roots so removing one leaves the other selectable.
+        // Add 2 roots so removing one leaves the other selectable.
         let kept = doc
             .add_root_leaf(rid, Transform3D::Identity)
             .unwrap()
@@ -2397,10 +2369,10 @@ mod scene_document_tests {
             .unwrap()
             .unwrap();
         assert!(doc.can_undo());
-        // One undo reverses the entire paste: leaf and resource both
-        // tombstoned, no stranded entry left on the stack. Counts use the
-        // live-only iterators because the arena Vecs keep their length even
-        // when every entry is `None`.
+        // 1 undo reverses the entire paste: leaf and resource both tombstoned,
+        // no stranded entry left on the stack. Counts use the live-only
+        // iterators because the arena Vecs keep their length even when every
+        // entry is `None`.
         doc.undo().unwrap();
         let observed = doc.with_scene(|s| {
             (
@@ -2414,11 +2386,11 @@ mod scene_document_tests {
 
     #[test]
     fn paste_fragment_fires_restructured_event() {
-        // Regression guard: paste lands a compound that grows the node +
-        // mesh-resource arenas, so the document must signal the structural
-        // change so the renderer's GpuScene mirror is re-uploaded. A bare
-        // `Mutated` event would skip the upload and the next render would trip
-        // the leaf-count assertion in mesh_render::render.
+        // Paste lands a compound that grows the node + mesh-resource arenas, so
+        // the document must signal the structural change so the renderer's
+        // GpuScene mirror is re-uploaded. A bare `Mutated` event would skip the
+        // upload and the next render would trip the leaf-count assertion in
+        // mesh_render::render.
         let doc = SceneDocument::new();
         doc.install_graph(empty_graph(), fixture_path());
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
@@ -2433,10 +2405,9 @@ mod scene_document_tests {
 
     #[test]
     fn set_local_transform_still_fires_mutated_not_restructured() {
-        // Counterpart guard: a non-structural edit (gizmo tick) must keep
-        // firing `Mutated` so the upload-owed flag is not flipped on every
-        // transform frame, which would burn GPU bandwidth on a hot path that
-        // needs none.
+        // A non-structural edit (gizmo tick) must keep firing `Mutated` so the
+        // upload-owed flag is not flipped on every transform frame, which would
+        // burn GPU bandwidth on a hot path that needs none.
         let doc = SceneDocument::new();
         doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
