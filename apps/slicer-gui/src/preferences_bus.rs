@@ -28,18 +28,12 @@ use std::rc::{Rc, Weak};
 
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
-use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
 use crate::{MenuLayout, ThemePreference};
 
 /// Full read-out of every preference. Listeners receive a reference; clone the
 /// fields they care about.
-///
-/// `build_volume` is a derived value: the plate of the app's default printer,
-/// which is the explicit `default_printer`, else the catalog's first-run soft
-/// default. It is the hardcoded placeholder when the catalog does not hold that
-/// printer.
 #[derive(Clone, Debug)]
 pub(crate) struct PreferencesSnapshot {
     pub theme: ThemePreference,
@@ -55,7 +49,6 @@ pub(crate) struct PreferencesSnapshot {
     pub output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// App-wide anti-aliasing level applied when rasterizing slices.
     pub aa_level: AaLevel,
-    pub build_volume: BuildVolume,
     /// Whether the floating object-list panel is shown. Persisted so a window
     /// restores the last state on the next launch. Per-window live state: a
     /// change in a window is written to disk and left out of the other open
@@ -116,6 +109,48 @@ impl From<&PreferencesSnapshot> for PrintDefaults {
         Self {
             printer: snapshot.default_printer.clone(),
             resin: snapshot.default_resin.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl PreferencesSnapshot {
+    /// Returns a snapshot of fixed values for tests: no default printer or
+    /// resin, no favourites, and every panel shown at its default place.
+    pub(crate) fn for_tests() -> Self {
+        Self {
+            theme: ThemePreference::System,
+            menu_layout: MenuLayout::Bar,
+            language: LanguagePreference::System,
+            default_printer: None,
+            default_resin: None,
+            favourite_printers: BTreeSet::new(),
+            favourite_resins: BTreeSet::new(),
+            output_format_by_printer: BTreeMap::new(),
+            aa_level: AaLevel::Off,
+            object_list_visible: true,
+            object_list_anchor_right: true,
+            object_list_anchor_bottom: false,
+            object_list_offset_x: None,
+            object_list_offset_y: None,
+            object_list_width: None,
+            object_list_height: None,
+            object_list_minimized: false,
+            slice_panel_anchor_right: false,
+            slice_panel_anchor_bottom: false,
+            slice_panel_offset_x: None,
+            slice_panel_offset_y: None,
+            slice_panel_width: None,
+            slice_panel_height: None,
+            slice_view_visible: true,
+            slice_view_anchor_right: false,
+            slice_view_anchor_bottom: true,
+            slice_view_offset_x: None,
+            slice_view_offset_y: None,
+            slice_view_width: None,
+            slice_view_height: None,
+            slice_view_minimized: false,
+            last_open_dir: None,
         }
     }
 }
@@ -269,45 +304,10 @@ mod preferences_bus_tests {
 
     use std::cell::{Cell, RefCell};
 
-    use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
     use crate::{MenuLayout, ThemePreference};
 
     fn initial() -> PreferencesSnapshot {
-        PreferencesSnapshot {
-            theme: ThemePreference::System,
-            menu_layout: MenuLayout::Bar,
-            language: LanguagePreference::System,
-            default_printer: None,
-            default_resin: None,
-            favourite_printers: BTreeSet::new(),
-            favourite_resins: BTreeSet::new(),
-            output_format_by_printer: BTreeMap::new(),
-            aa_level: AaLevel::Off,
-            build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
-            object_list_visible: true,
-            object_list_anchor_right: true,
-            object_list_anchor_bottom: false,
-            object_list_offset_x: None,
-            object_list_offset_y: None,
-            object_list_width: None,
-            object_list_height: None,
-            object_list_minimized: false,
-            slice_panel_anchor_right: false,
-            slice_panel_anchor_bottom: false,
-            slice_panel_offset_x: None,
-            slice_panel_offset_y: None,
-            slice_panel_width: None,
-            slice_panel_height: None,
-            slice_view_visible: true,
-            slice_view_anchor_right: false,
-            slice_view_anchor_bottom: true,
-            slice_view_offset_x: None,
-            slice_view_offset_y: None,
-            slice_view_width: None,
-            slice_view_height: None,
-            slice_view_minimized: false,
-            last_open_dir: None,
-        }
+        PreferencesSnapshot::for_tests()
     }
 
     fn trigger_theme(bus: &PreferencesBus, theme: ThemePreference) {
@@ -613,38 +613,32 @@ mod preferences_bus_tests {
     }
 
     #[test]
-    fn default_printer_change_propagates_with_derived_build_volume() {
-        use crate::build_volume::BuildVolume;
-
-        type Captured = Option<(Option<PrinterId>, BuildVolume, PreferencesChange)>;
+    fn default_printer_change_propagates() {
+        type Captured = Option<(Option<PrinterId>, PreferencesChange)>;
 
         let bus = PreferencesBus::new(initial());
         let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
         let _sub = {
             let captured = captured.clone();
             bus.subscribe(move |snap, change| {
-                *captured.borrow_mut() =
-                    Some((snap.default_printer.clone(), snap.build_volume, *change));
+                *captured.borrow_mut() = Some((snap.default_printer.clone(), *change));
             })
         };
 
         let new_printer = PrinterId::new("anycubic-photon-m3").unwrap();
-        let new_bv = BuildVolume::new(150.0, 80.0, 160.0);
         bus.update({
             let new_printer = new_printer.clone();
             move |snap| {
                 snap.default_printer = Some(new_printer);
-                snap.build_volume = new_bv;
                 PreferencesChange::DefaultPrinter
             }
         });
 
-        let (got_printer, got_bv, got_change) = captured
+        let (got_printer, got_change) = captured
             .borrow()
             .clone()
             .expect("listener must have fired and captured the payload");
         assert_eq!(got_printer, Some(new_printer));
-        assert_eq!(got_bv, new_bv);
         assert_eq!(got_change, PreferencesChange::DefaultPrinter);
     }
 

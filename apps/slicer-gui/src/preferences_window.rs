@@ -57,11 +57,11 @@ use crate::{
     ExtendDialog, ForkDialog, PillKind, PreferencesWindow, ProfileViewDialog, ResinPill, ResinRow,
 };
 
-/// View-local state of the resin list: every derived row in tier
-/// order, the filter data for the materials those rows index into, the
-/// tab labels, and the active filter. Never reaches the bus.
+/// View-local state of the resin list: every derived row in tier order, the
+/// filter data for the materials those rows index into, the tab labels, and the
+/// active filter. Never reaches the bus.
 ///
-/// `rows` and `filter_data` are rebuilt together from one catalog, so a
+/// `rows` and `filter_data` are rebuilt together from the same catalog, so a
 /// row's `id_index` always indexes `filter_data`.
 struct ResinView {
     rows: Vec<ResinRow>,
@@ -71,14 +71,14 @@ struct ResinView {
     search_lower: String,
 }
 
-/// Bundle of a `PreferencesWindow` and its bus subscription. Drop
-/// drops the subscription so the listener is removed as soon as the
-/// wrapped window is no longer held.
+/// Bundle of a `PreferencesWindow` and its bus subscription. Drop drops the
+/// subscription so the listener is removed as soon as the wrapped window is no
+/// longer held.
 pub(crate) struct WiredPreferencesWindow {
     pub window: PreferencesWindow,
     _subscription: Subscription,
-    // Keeps the thumbnail-loading poll timer alive for the window's
-    // lifetime; dropping it (when the window closes) stops the poll.
+    // Keeps the thumbnail-loading poll timer alive for the window's lifetime;
+    // dropping it (when the window closes) stops the poll.
     _thumbnail_timer: Rc<Timer>,
 }
 
@@ -89,26 +89,25 @@ pub(crate) fn build_preferences_window(
     let prefs = PreferencesWindow::new()?;
     let catalog = catalog_handle.borrow().clone();
 
-    // The gallery tiles and the manufacturer tab bar are derived from
-    // the catalog, held behind interior mutability so an import (or a
-    // later authoring step) can rebuild them in place via `refresh_view`.
+    // The gallery tiles and the manufacturer tab bar are derived from the
+    // catalog, held behind interior mutability so `refresh_view` can rebuild
+    // them in place after each rebuild of the catalog.
     let all_cards = Rc::new(RefCell::new(build_card_data(
         catalog.printers(),
         &bus.snapshot().favourite_printers,
     )));
     let tabs = Rc::new(RefCell::new(build_manufacturer_tabs(&catalog)));
-    // View-local filter state: which manufacturer tab and search text
-    // narrow the visible tiles. Never reaches the bus.
+    // View-local filter state: which manufacturer tab and search text narrow
+    // the visible tiles. Never reaches the bus.
     let current_tab = Rc::new(Cell::new(0i32));
     let search_lower = Rc::new(RefCell::new(String::new()));
 
     let snapshot = bus.snapshot();
     prefs.apply_preferences(&snapshot);
 
-    // Start on the selected resin's brand tab rather than "All", the
-    // way the gallery starts on the selected printer's manufacturer.
-    // Resolved before the first derivation, which pushes through this
-    // filter.
+    // Start on the brand tab of the default resin, the way the gallery starts
+    // on the manufacturer of the default printer. Resolved before the first
+    // derivation, which pushes through this filter.
     let brand_tabs = build_brand_tabs(&catalog);
     let initial_brand_tab = tab_index_for_label(
         &brand_tabs,
@@ -124,13 +123,12 @@ pub(crate) fn build_preferences_window(
         search_lower: String::new(),
     }));
 
-    // Selection first: the visible-cards pass below reads the selected
-    // printer index back from the window.
+    // Selection first: the visible-cards pass below reads the selected printer
+    // index back from the window.
     apply_printing(&prefs, &snapshot, &catalog, &resin_view);
 
-    // Start on the selected printer's manufacturer tab rather than
-    // "All", so the printer chosen in the persisted settings is in
-    // view when the section is first opened.
+    // Start on the manufacturer tab of the app's default printer, so that
+    // printer is in view when the section first opens.
     let initial_tab = tab_index_for_label(
         &tabs.borrow(),
         selected_manufacturer(&catalog, &snapshot).as_deref(),
@@ -148,9 +146,9 @@ pub(crate) fn build_preferences_window(
 
     let prefs_weak = prefs.as_weak();
 
-    // Thumbnails decode on a worker thread and land in the gallery once
-    // ready; this timer polls for the finished batch. Kept alive by the
-    // returned `WiredPreferencesWindow`.
+    // Thumbnails decode on a worker thread and land in the gallery once ready;
+    // this timer polls for the finished batch. Kept alive by the returned
+    // `WiredPreferencesWindow`.
     let thumbnail_timer = Rc::new(Timer::default());
     start_thumbnail_load(
         &thumbnail_timer,
@@ -159,9 +157,9 @@ pub(crate) fn build_preferences_window(
         thumbnail_paths(&catalog),
     );
 
-    // Rebuild every catalog-derived view (gallery, tabs, resin list)
-    // from the current catalog handle, preserving the active filter and
-    // selection. Called after an import refreshes the catalog.
+    // Rebuild every catalog-derived view (gallery, tabs, resin list) from the
+    // current catalog handle, preserving the active filter and selection.
+    // Called after each rebuild of the catalog.
     let refresh_view: Rc<dyn Fn()> = {
         let prefs_weak = prefs_weak.clone();
         let bus = bus.clone();
@@ -180,8 +178,8 @@ pub(crate) fn build_preferences_window(
             *all_cards.borrow_mut() =
                 build_card_data(catalog.printers(), &bus.snapshot().favourite_printers);
             *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
-            // An import can add a brand, which shifts every tab index
-            // after it, so the active tab is re-resolved by its label.
+            // An import can add a brand, which shifts every tab index after it,
+            // so the active tab is re-resolved by its label.
             {
                 let mut view = resin_view.borrow_mut();
                 let active = tab_label(&view.tabs, view.current_tab).map(str::to_owned);
@@ -190,9 +188,9 @@ pub(crate) fn build_preferences_window(
                 w.set_current_brand_index(view.current_tab);
                 w.set_resin_brand_tabs(string_model(&view.tabs));
             }
-            // Selection first: catalog indices may have shifted, and
-            // the visible-cards pass reads the selected printer index
-            // back from the window.
+            // Selection first: catalog indices may have shifted, and the
+            // visible-cards pass reads the selected printer index back from the
+            // window.
             apply_printing(&w, &bus.snapshot(), &catalog, &resin_view);
             w.set_manufacturer_tabs(string_model(&tabs.borrow()));
             set_visible_cards(
@@ -306,9 +304,9 @@ pub(crate) fn build_preferences_window(
         move |text| {
             resin_view.borrow_mut().search_lower = text.to_lowercase();
             if let Some(w) = prefs_weak.upgrade() {
-                // Without this the box would come back empty over a
-                // still filtered list when the section is rebuilt on a
-                // sidebar switch.
+                // Without this the box would come back empty over a still
+                // filtered list when the section is rebuilt on a sidebar
+                // switch.
                 w.set_resin_search_text(text);
                 push_visible_resins(&w, &resin_view.borrow());
             }
@@ -324,10 +322,8 @@ pub(crate) fn build_preferences_window(
                 return;
             };
             let id = entry.id.clone();
-            let envelope = catalog.envelope_for_printer(Some(&id));
             bus.update(move |snap| {
                 snap.default_printer = Some(id);
-                snap.build_volume = envelope;
                 PreferencesChange::DefaultPrinter
             });
         }
@@ -369,10 +365,10 @@ pub(crate) fn build_preferences_window(
                 }
                 PreferencesChange::Favourites
             });
-            // Flip the star in place: the bus subscription re-applies the
-            // resin view but not the gallery, and rebuilding the cards
-            // would drop the async-loaded thumbnails, so update the one
-            // card directly (keeps its thumbnail and the scroll position).
+            // Flip the star in place: the bus subscription re-applies the resin
+            // view but not the gallery, and rebuilding the cards would drop the
+            // async-loaded thumbnails, so update that card directly (keeps its
+            // thumbnail and the scroll position).
             if let Some(data) = all_cards.borrow_mut().get_mut(index as usize) {
                 data.card.is_favourite = make_favourite;
             }
@@ -408,9 +404,9 @@ pub(crate) fn build_preferences_window(
                 }
                 PreferencesChange::Favourites
             });
-            // The bus subscription re-runs `apply_printing`, which
-            // rebuilds the resin rows against the updated favourites, so
-            // the row's star refreshes without extra work here.
+            // The bus subscription re-runs `apply_printing`, which rebuilds the
+            // resin rows against the updated favourites, so the row's star
+            // refreshes without extra work here.
         }
     });
 
@@ -422,9 +418,9 @@ pub(crate) fn build_preferences_window(
     prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
     prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
 
-    // Holds the profile viewer or editor while one is open so it is
-    // not dropped (and closed) the moment its opener returns. Opening
-    // another profile replaces (and closes) the previous dialog.
+    // Holds the profile viewer or editor while one is open so it is not dropped
+    // (and closed) the moment its opener returns. Opening another profile
+    // replaces (and closes) the previous dialog.
     let profile_dialog: Rc<RefCell<Option<ProfileViewDialog>>> = Rc::new(RefCell::new(None));
     prefs.on_view_requested({
         let bus = bus.clone();
@@ -468,8 +464,8 @@ pub(crate) fn build_preferences_window(
         }
     });
 
-    // Holds the fork dialog while one is open, like `profile_dialog`
-    // does for the viewer / editor.
+    // Holds the fork dialog while one is open, like `profile_dialog` does for
+    // the viewer / editor.
     let fork_dialog: Rc<RefCell<Option<ForkDialog>>> = Rc::new(RefCell::new(None));
     prefs.on_fork_requested({
         let bus = bus.clone();
@@ -536,9 +532,9 @@ fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
     ));
 }
 
-/// Run the export flow for `scope`: pick a `.zip` destination, then
-/// package the matching profiles from the user library. Failures are
-/// reported on stderr; the library is read-only here.
+/// Runs the export flow for `scope`: pick a `.zip` destination, then package
+/// the matching profiles from the user library. Failures are reported on
+/// stderr; the library is read-only here.
 fn spawn_export(scope: ExportScope) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
@@ -561,10 +557,9 @@ fn spawn_export(scope: ExportScope) {
     }
 }
 
-/// Run the import flow: pick a `.zip`, install it into the user library,
-/// and on a collision offer to overwrite. On success the catalog is
-/// rebuilt and the window's views refreshed so imported profiles appear
-/// immediately.
+/// Runs the import flow: pick a `.zip`, install it into the user library, and
+/// on a collision offer to overwrite. On success the catalog is rebuilt and the
+/// window's views refreshed so imported profiles appear immediately.
 fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: Rc<dyn Fn()>) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
@@ -619,11 +614,10 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
     }
 }
 
-/// Load the material profile behind a catalog entry. Regular entries
-/// resolve through the by-id cascade (user library shadowing the
-/// bundled roots); an id whose only file is an extension (its base
-/// profile is gone) falls back to the extension file itself so the
-/// data stays viewable.
+/// Loads the material profile behind a catalog entry. Regular entries resolve
+/// through the by-id cascade (user library shadowing the bundled roots); an id
+/// whose only file is an extension (its base profile is gone) falls back to the
+/// extension file itself so the data stays viewable.
 fn load_profile_for_view(
     catalog: &ProfileCatalog,
     index: i32,
@@ -661,9 +655,9 @@ fn load_profile_for_view(
     Some((profile, extension, entry.source))
 }
 
-/// Open the read-only profile viewer for the resin at `index`: the
-/// base profile's sections plus its extension's calibration blocks,
-/// with the block the default printer would use highlighted.
+/// Opens the read-only profile viewer for the resin at `index`: the base
+/// profile's sections plus its extension's calibration blocks, with the block
+/// the default printer would use highlighted.
 fn open_profile_view_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -717,13 +711,12 @@ fn open_profile_view_dialog(
     *dialog_slot.borrow_mut() = Some(dialog);
 }
 
-/// Open the in-place editor for a custom row. The extension row edits
-/// the extension file; a custom profile row edits the full profile,
-/// falling back to the extension file for an orphaned extension
-/// entry. The defaults are editable for full profiles only (an
-/// extension inherits them from its parent), and one calibration pair
-/// per session can be picked from the profile's own blocks and
-/// edited.
+/// Opens the in-place editor for a custom row. The extension row edits the
+/// extension file; a custom profile row edits the full profile, falling back to
+/// the extension file for an orphaned extension entry. The defaults are
+/// editable for full profiles only (an extension inherits them from its
+/// parent), and 1 calibration pair per session can be picked from the profile's
+/// own blocks and edited.
 fn open_profile_editor(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -769,8 +762,8 @@ fn open_profile_editor(
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
 
-    // Read-only context above the edit cards: identity, plus intent
-    // for full profiles (an extension's intent is inherited).
+    // Read-only context above the edit cards: identity, plus intent for full
+    // profiles (an extension's intent is inherited).
     let mut sections = vec![identity_section(&profile.identity, ProfileSource::User)];
     if kind == EditedProfileKind::Full {
         sections.push(intent_section(&profile.intent));
@@ -982,12 +975,12 @@ fn open_profile_editor(
     *dialog_slot.borrow_mut() = Some(dialog);
 }
 
-/// Open the fork dialog for the resin at `index`. The source is the
-/// resolved profile behind the row (an extension row forks the same
-/// resolved base); the offered parts are strictly the source's own
-/// blocks. On confirm the fork is written to the user library and the
-/// in-place editor opens on it, with a note that the profile is
-/// already saved so cancelling there keeps the untouched fork.
+/// Opens the fork dialog for the resin at `index`. The source is the resolved
+/// profile behind the row (an extension row forks the same resolved base); the
+/// offered parts are strictly the source's own blocks. On confirm the fork is
+/// written to the user library and the in-place editor opens on it, with a note
+/// that the profile is already saved so cancelling there keeps the untouched
+/// fork.
 fn open_fork_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -1028,8 +1021,8 @@ fn open_fork_dialog(
             .collect::<Vec<_>>(),
     )));
 
-    // The checkboxes' state, mirrored from the dialog; every part
-    // starts selected, matching the checkboxes' initial state.
+    // The checkboxes' state, mirrored from the dialog; every part starts
+    // selected, matching the checkboxes' initial state.
     let blocks_checked = Rc::new(RefCell::new(vec![true; targets.len()]));
     dialog.on_block_toggled({
         let blocks_checked = blocks_checked.clone();
@@ -1139,10 +1132,10 @@ fn open_fork_dialog(
     *fork_slot.borrow_mut() = Some(dialog);
 }
 
-/// Open the extend dialog for the resin at `index`: pick one of the
-/// targets the resin does not cover yet, enter the calibration values
-/// (partial allowed), and write the block into the resin's extension
-/// file (created on the first extend, appended to afterwards).
+/// Opens the extend dialog for the resin at `index`: pick one of the targets
+/// the resin does not cover yet, enter the calibration values (partial
+/// allowed), and write the block into the resin's extension file (created on
+/// the first extend, appended to afterwards).
 fn open_extend_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -1157,9 +1150,9 @@ fn open_extend_dialog(
 
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
-    // The dialog writes to the raw files, so `base` and `extension`
-    // stay around; the composed view feeds the target complement and
-    // the blocks a new one can be copied from.
+    // The dialog writes to the raw files, so `base` and `extension` stay
+    // around; the composed view feeds the target complement and the blocks a
+    // new one can be copied from.
     let (material, issues) = EffectiveMaterial::compose(base.clone(), extension.clone());
     for issue in &issues {
         eprintln!("warning: {issue}");
@@ -1328,9 +1321,9 @@ fn open_extend_dialog(
     *extend_slot.borrow_mut() = Some(dialog);
 }
 
-/// Whether the just-deleted id was the default resin and no longer
-/// resolves to any profile. Deleting a user override of a bundled id
-/// keeps the default: the bundled copy still resolves it.
+/// Reports whether the just-deleted id was the default resin and no longer
+/// resolves to any profile. Deleting a user override of a bundled id keeps the
+/// default: the bundled copy still resolves it.
 fn default_resin_orphaned(
     catalog: &ProfileCatalog,
     default_resin: Option<&MaterialId>,
@@ -1339,10 +1332,10 @@ fn default_resin_orphaned(
     default_resin == Some(deleted) && catalog.material_index(deleted).is_none()
 }
 
-/// Run the delete flow for a custom row: confirm, remove the file
-/// (the full profile's, or the extension file with every pair it
-/// adds), then refresh. When the deleted id was the default resin and
-/// nothing else resolves it any more, the default is unset.
+/// Runs the delete flow for a custom row: confirm, remove the file (the full
+/// profile's, or the extension file with every pair it adds), then refresh.
+/// When the deleted id was the default resin and nothing else resolves it any
+/// more, the default is unset.
 fn spawn_delete_flow(
     bus: Rc<PreferencesBus>,
     catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -1413,19 +1406,18 @@ fn spawn_delete_flow(
     }
 }
 
-/// Push the current selection (printer / resin indices, the derived
-/// resin ordering, and whether a printer is chosen) into the window.
-/// Does not touch the manufacturer / search filter, which is view-local.
+/// Pushes the current selection (printer / resin indices, the derived resin
+/// ordering, and whether a printer is chosen) into the window. The manufacturer
+/// and search filters, which are view-local, stay as they are.
 fn apply_printing(
     window: &PreferencesWindow,
     snap: &PreferencesSnapshot,
     catalog: &ProfileCatalog,
     resin: &Rc<RefCell<ResinView>>,
 ) {
-    // The gallery highlights, the calibration affordances, and the
-    // per-printer resin ordering all track the effective printer: the
-    // persisted choice, or the first-run soft default until the user
-    // picks one.
+    // The gallery highlights, the calibration affordances, and the per-printer
+    // resin ordering all track the effective printer: the persisted choice, or
+    // the first-run soft default until the user picks one.
     let effective_printer = catalog.effective_default_printer(snap.default_printer.as_ref());
     let printer_index = effective_printer
         .as_ref()
@@ -1466,7 +1458,7 @@ fn push_visible_resins(window: &PreferencesWindow, view: &ResinView) {
     set_visible_resin_rows(window, &view.rows, &mask);
 }
 
-/// The `(card index, thumbnail path)` pairs that need decoding. Indices
+/// Returns the `(card index, thumbnail path)` pairs that need decoding. Indices
 /// match `build_card_data`'s one-to-one printer ordering.
 fn thumbnail_paths(catalog: &ProfileCatalog) -> Vec<(usize, PathBuf)> {
     catalog
@@ -1477,10 +1469,9 @@ fn thumbnail_paths(catalog: &ProfileCatalog) -> Vec<(usize, PathBuf)> {
         .collect()
 }
 
-/// Decodes one thumbnail into an RGBA pixel buffer. Runs on a worker
-/// thread, so it returns a `SharedPixelBuffer` (which is `Send`) rather
-/// than a `slint::Image` (which is not). Returns `None` on any read or
-/// decode failure; the card then keeps its blank placeholder.
+/// Decodes a thumbnail into an RGBA pixel buffer. It runs on a worker thread,
+/// so it returns a `SharedPixelBuffer`, which is `Send`. Returns `None` on any
+/// read or decode failure; the card then keeps its blank placeholder.
 fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
     let rgba = image::open(path)
         .map_err(|err| {
@@ -1497,12 +1488,11 @@ fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
     Some(buffer)
 }
 
-/// Decodes the printer thumbnails on a worker thread and drops them into
-/// the gallery once ready, so opening Preferences never blocks the UI
-/// thread. The decoded images land as in-place row updates on the
-/// visible model (see `apply_thumbnails_to_visible`), which keeps the
-/// gallery's scroll position; they still arrive as a single batch so
-/// the timer fires once.
+/// Decodes the printer thumbnails on a worker thread and drops them into the
+/// gallery once ready, so opening Preferences never blocks the UI thread. The
+/// decoded images land as in-place row updates on the visible model (see
+/// `apply_thumbnails_to_visible`), which keeps the gallery's scroll position;
+/// they still arrive as a single batch so the timer fires once.
 fn start_thumbnail_load(
     timer: &Rc<Timer>,
     window: &PreferencesWindow,
@@ -1559,13 +1549,12 @@ fn start_thumbnail_load(
     });
 }
 
-/// Resin rows for the list, in 3 tiers: profiles whose block (the
-/// base profile's own or its extension's) matches the default printer
-/// or generic; then profiles carrying calibration data that does not
-/// apply to it; then profiles with no calibration data at all. The
-/// catalog's `(brand, name)` order is kept within each tier. An
-/// extension renders as its own row right below its parent, sharing
-/// the parent's catalog index.
+/// Derives the resin rows for the list, in 3 tiers: profiles whose block (the
+/// base profile's own or its extension's) matches the default printer or
+/// generic; then profiles carrying calibration data that does not apply to it;
+/// then profiles with no calibration data at all. The catalog's `(brand, name)`
+/// order is kept within each tier. An extension renders as its own row right
+/// below its parent, sharing the parent's catalog index.
 fn derive_resin_view(
     materials: &[MaterialCatalogEntry],
     extensions: &[MaterialExtensionEntry],
@@ -1578,8 +1567,8 @@ fn derive_resin_view(
     let mut dataless_rows = Vec::new();
     for (i, entry) in materials.iter().enumerate() {
         let extension = extensions.iter().find(|ext| ext.id == entry.id);
-        // The red no-data marker reflects the whole resin: a base
-        // profile whose extension carries blocks is not data-less.
+        // The red no-data marker reflects the whole resin: a base profile whose
+        // extension carries blocks is not data-less.
         let union_empty = entry.calibrated_printers.is_empty()
             && extension.is_none_or(|ext| ext.printers.is_empty());
         let target = if has_active_matcher(entry, extension, default_printer) {
@@ -1637,9 +1626,9 @@ fn derive_resin_view(
     matched_rows
 }
 
-/// The unchunked pills of one row: the base profile's calibration
-/// tags (or the red no-data marker when base and extension are both
-/// empty), or, for an extension row, the extension's own tags.
+/// Returns the unchunked pills of a row: the base profile's calibration tags
+/// (or the red no-data marker when base and extension are both empty), or, for
+/// an extension row, the extension's own tags.
 fn row_pill_list(
     entry: &MaterialCatalogEntry,
     extension: Option<&MaterialExtensionEntry>,
@@ -1661,9 +1650,9 @@ fn row_pill_list(
     }
 }
 
-/// Whether some printer in the catalog has no calibration block in
-/// either the base profile or its extension, i.e. whether the extend
-/// flow has a target to offer.
+/// Reports whether some printer in the catalog has no calibration block in
+/// either the base profile or its extension, i.e. whether the extend flow has a
+/// target to offer.
 fn has_uncovered_target(
     entry: &MaterialCatalogEntry,
     extension: Option<&MaterialExtensionEntry>,
@@ -1676,8 +1665,8 @@ fn has_uncovered_target(
     })
 }
 
-/// Display label of a calibration tag: the printer's name, or its id
-/// when the printer is not in the catalog.
+/// Returns the display label of a calibration tag: the printer's name, or its
+/// id when the printer is not in the catalog.
 fn printer_pill_label(printers: &[PrinterCatalogEntry], id: &PrinterId) -> SharedString {
     printers
         .iter()
@@ -1686,11 +1675,11 @@ fn printer_pill_label(printers: &[PrinterCatalogEntry], id: &PrinterId) -> Share
         .unwrap_or_else(|| SharedString::from(id.as_str()))
 }
 
-/// One pill per calibration block, ordered: the default printer's tag
-/// first, the generic tag next, the rest by label. Kinds follow the
-/// tag colors: green for the default printer's tag, yellow/orange for
-/// generic, gray otherwise; with no default printer everything is
-/// gray (the whole list renders dim).
+/// Builds 1 pill per calibration block, ordered: the default printer's tag
+/// first, the generic tag next, the rest by label. Kinds follow the tag colors:
+/// green for the default printer's tag, yellow/orange for generic, gray
+/// otherwise; with no default printer everything is gray (the whole list
+/// renders dim).
 fn build_pills(
     calibrated: &BTreeSet<CalibrationTarget>,
     printers: &[PrinterCatalogEntry],
@@ -1734,9 +1723,8 @@ fn build_pills(
         .collect()
 }
 
-/// The salient marker for a profile without any calibration data. It
-/// renders gray like everything else when no default printer is
-/// configured.
+/// Returns the salient marker for a profile without any calibration data. It
+/// renders gray like everything else when no default printer is configured.
 fn no_data_pill(default_printer: Option<&PrinterId>) -> ResinPill {
     ResinPill {
         label: ctr!("PreferencesPage", "No calibration data"),
@@ -1830,18 +1818,17 @@ mod derive_resin_view_tests {
             Some(&printer("printer-a")),
             &BTreeSet::new(),
         );
-        // Matched (b: specific, d: generic fallback) first in base
-        // order, then the rest.
+        // Matched (b: specific, d: generic fallback) first in base order, then
+        // the rest.
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![1, 3, 0, 2]);
     }
 
     #[test]
     fn dataless_resins_sink_below_unmatched_calibrated_ones() {
-        // The default printer matches nothing: no resin carries a
-        // block for it and none has a generic block. Resins with some
-        // calibration data must still rank above the data-less ones,
-        // whatever the brand order says.
+        // The default printer matches nothing: no resin carries a block for it
+        // and none has a generic block. Resins with some calibration data must
+        // still rank above the data-less ones, whatever the brand order says.
         let materials = vec![
             material("abs-like", "Default", "ABS-like", &[]),
             material("standard", "Default", "Standard", &[]),
@@ -1861,8 +1848,8 @@ mod derive_resin_view_tests {
 
     #[test]
     fn a_dataless_parent_with_a_calibrated_extension_is_not_dataless() {
-        // The extension's blocks count for the whole resin: the pair
-        // of rows ranks in the middle tier, not the data-less one.
+        // The extension's blocks count for the whole resin: the pair of rows
+        // ranks in the middle tier.
         let materials = vec![
             material("bare", "Alpha", "Bare", &[]),
             material("empty", "Zeta", "Empty", &[]),
@@ -1876,8 +1863,8 @@ mod derive_resin_view_tests {
             &BTreeSet::new(),
         );
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
-        // "empty" (+ its extension row) leads despite sorting after
-        // "bare" by brand.
+        // "empty" (+ its extension row) leads despite sorting after "bare" by
+        // brand.
         assert_eq!(ids, vec![1, 1, 0]);
         assert!(rows[1].is_extension);
     }
@@ -1896,8 +1883,8 @@ mod derive_resin_view_tests {
             Some(&printer("printer-a")),
             &BTreeSet::new(),
         );
-        // z-resin's extension covers our printer: parent + extension
-        // rows lead; a-resin (unmatched) follows.
+        // z-resin's extension covers our printer: parent + extension rows lead;
+        // a-resin (unmatched) follows.
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].id_index, 1);
         assert!(!rows[0].is_extension);
@@ -1955,8 +1942,8 @@ mod derive_resin_view_tests {
             Some(&printer("printer-a")),
             &BTreeSet::new(),
         );
-        // Default printer first (green), generic next (yellow), the
-        // rest by label (gray).
+        // Default printer first (green), generic next (yellow), the rest by
+        // label (gray).
         assert_eq!(
             row_pills(&rows[0]),
             vec![
@@ -2027,8 +2014,8 @@ mod derive_resin_view_tests {
             Some(&printer("printer-a")),
             &BTreeSet::new(),
         );
-        // The resin has data (in the extension row); the parent row
-        // shows neither pills nor the red marker.
+        // The resin has data (in the extension row); the parent row shows
+        // neither pills nor the red marker.
         assert!(row_pills(&rows[0]).is_empty());
         assert_eq!(row_pills(&rows[1]).len(), 1);
     }
@@ -2069,8 +2056,8 @@ mod derive_resin_view_tests {
             Some(&printer("printer-a")),
             &BTreeSet::new(),
         );
-        // Base plus extension cover every catalog printer: nothing
-        // left to extend, on either row.
+        // Base plus extension cover every catalog printer: nothing left to
+        // extend, on either row.
         assert!(!rows[0].can_extend);
         assert!(!rows[1].can_extend);
 
@@ -2104,8 +2091,8 @@ mod derive_resin_view_tests {
 
         let rows = derive_resin_view(&materials, &extensions, &printers, None, &favourites);
 
-        // fav-resin is material index 0 and produces a base + an
-        // extension row, both favourite; plain-resin (index 1) is not.
+        // fav-resin is material index 0 and produces a base + an extension row,
+        // both favourite; plain-resin (index 1) is not.
         assert_eq!(rows.iter().filter(|r| r.is_favourite).count(), 2);
         assert!(
             rows.iter()
@@ -2210,8 +2197,8 @@ profile_version = \"1.0.0\"
 
     #[test]
     fn the_default_survives_when_a_bundled_copy_still_resolves_the_id() {
-        // Deleting the user override of a bundled id: the bundled copy
-        // still resolves it after the catalog refresh.
+        // Deleting the user override of a bundled id: the bundled copy still
+        // resolves it after the catalog refresh.
         let bundled = tempfile::tempdir().unwrap();
         write_material(bundled.path(), "shared-resin");
         let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(

@@ -18,6 +18,7 @@ mod app_state;
 pub mod build_volume;
 pub mod camera;
 mod clipboard;
+mod default_envelope;
 mod error_dialog;
 mod export_print_file;
 mod export_progress;

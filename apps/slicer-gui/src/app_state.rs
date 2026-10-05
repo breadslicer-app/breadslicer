@@ -18,6 +18,7 @@ use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
+use crate::default_envelope::DefaultEnvelope;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
 use crate::mesh_loader::{
@@ -186,8 +187,8 @@ struct WiredMainWindow {
 ///   and shared by every main window;
 /// - the `PreferencesBus`, which holds the preferences and notifies every live
 ///   window of a change;
-/// - the profile catalog, the clipboard, the device-loss flag and the settings
-///   saver;
+/// - the profile catalog, the default printer's envelope, the clipboard, the
+///   device-loss flag and the settings saver;
 /// - strong handles to each live `MainWindow`, which keep them alive while the
 ///   event loop runs.
 ///
@@ -206,6 +207,8 @@ pub(crate) struct AppState {
     /// the Slice panels read. Behind a shared handle, so the Preferences window
     /// can rebuild it after a change to the user library, without a restart.
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
+    /// The plate of the app's default printer, which every window shows.
+    default_envelope: Rc<DefaultEnvelope>,
     /// App-wide copy / paste clipboard. Populated from any window's current
     /// selection by `copy_selection`; consumed by the paste path which lives on
     /// the viewport controller. `None` until the user has performed the first
@@ -322,29 +325,16 @@ impl AppState {
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
-        let default_printer = settings.default_printer();
-        let default_resin = settings.default_resin();
-        // The envelope is derived from the effective printer: the user's
-        // explicit choice when present, otherwise the first-run soft default
-        // (Generic Machine, else the first catalog printer). The soft default
-        // drives the opening envelope only; `default_printer` stays None so
-        // nothing is written to settings until the user picks a printer.
-        let build_volume = {
-            let catalog = catalog.borrow();
-            let effective_printer = catalog.effective_default_printer(default_printer.as_ref());
-            catalog.envelope_for_printer(effective_printer.as_ref())
-        };
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             menu_layout: settings.menu_layout(),
             language: settings.language(),
-            default_printer,
-            default_resin,
+            default_printer: settings.default_printer(),
+            default_resin: settings.default_resin(),
             favourite_printers: settings.favourite_printers(),
             favourite_resins: settings.favourite_resins(),
             output_format_by_printer: settings.output_format_by_printer(),
             aa_level: settings.aa_level(),
-            build_volume,
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
             object_list_anchor_bottom: settings.object_list_anchor_bottom(),
@@ -400,6 +390,8 @@ impl AppState {
             }
         });
 
+        let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
+
         let app = Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
@@ -407,6 +399,7 @@ impl AppState {
             next_window_id: Cell::new(0),
             prefs,
             catalog,
+            default_envelope,
             clipboard: RefCell::new(None),
             device_loss,
             _settings_sub: settings_sub,
@@ -530,7 +523,7 @@ impl AppState {
         // Bus listeners run on `update` only, so the window gets the current
         // build volume here, and the subscription below delivers each later
         // change.
-        ctrl.set_build_volume(snapshot.build_volume);
+        ctrl.set_build_volume(self.default_envelope.current());
 
         crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
         let slice_panel = SlicePanelBridge::install(
@@ -609,12 +602,13 @@ impl AppState {
 
         let ui_weak = ui.as_weak();
         let ctrl_for_listener = ctrl.clone();
+        let default_envelope = self.default_envelope.clone();
         let subscription = self.prefs.subscribe(move |snap, change| {
             if let Some(w) = ui_weak.upgrade() {
                 w.apply_preferences(snap);
             }
             if matches!(change, PreferencesChange::DefaultPrinter) {
-                ctrl_for_listener.set_build_volume(snap.build_volume);
+                ctrl_for_listener.set_build_volume(default_envelope.current());
             }
         });
 
@@ -1372,51 +1366,16 @@ mod context_menu_policy_tests {
 
 #[cfg(test)]
 mod settings_saver_tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
     use sc_print_primitives::{MaterialId, PrinterId};
 
     use super::*;
-    use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
-    use crate::language::LanguagePreference;
-    use crate::{MenuLayout, ThemePreference};
+    use crate::ThemePreference;
     use sc_print_primitives::AaLevel;
 
     fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
         PreferencesSnapshot {
             theme,
-            menu_layout: MenuLayout::Bar,
-            language: LanguagePreference::System,
-            default_printer: None,
-            default_resin: None,
-            favourite_printers: BTreeSet::new(),
-            favourite_resins: BTreeSet::new(),
-            output_format_by_printer: BTreeMap::new(),
-            aa_level: AaLevel::Off,
-            build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
-            object_list_visible: true,
-            object_list_anchor_right: true,
-            object_list_anchor_bottom: false,
-            object_list_offset_x: None,
-            object_list_offset_y: None,
-            object_list_width: None,
-            object_list_height: None,
-            object_list_minimized: false,
-            slice_panel_anchor_right: false,
-            slice_panel_anchor_bottom: false,
-            slice_panel_offset_x: None,
-            slice_panel_offset_y: None,
-            slice_panel_width: None,
-            slice_panel_height: None,
-            slice_view_visible: true,
-            slice_view_anchor_right: false,
-            slice_view_anchor_bottom: true,
-            slice_view_offset_x: None,
-            slice_view_offset_y: None,
-            slice_view_width: None,
-            slice_view_height: None,
-            slice_view_minimized: false,
-            last_open_dir: None,
+            ..PreferencesSnapshot::for_tests()
         }
     }
 
@@ -1524,54 +1483,23 @@ mod settings_saver_tests {
         // regressions in the inner drain (for example an off-by-one or a
         // missing while loop) that would write each snapshot.
         let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
-        let mut last_bv = BuildVolume::new(100.0, 100.0, 100.0);
+        let mut last_width = None;
         for i in 0..16 {
-            let bv = BuildVolume::new(100.0 + i as f32, 80.0, 60.0);
-            last_bv = bv;
+            let width = Some(100.0 + i as f32);
+            last_width = width;
             tx.send(PreferencesSnapshot {
-                theme: ThemePreference::System,
-                menu_layout: MenuLayout::Bar,
-                language: LanguagePreference::System,
-                default_printer: None,
-                default_resin: None,
-                favourite_printers: BTreeSet::new(),
-                favourite_resins: BTreeSet::new(),
-                output_format_by_printer: BTreeMap::new(),
-                aa_level: AaLevel::Off,
-                build_volume: bv,
-                object_list_visible: true,
-                object_list_anchor_right: true,
-                object_list_anchor_bottom: false,
-                object_list_offset_x: None,
-                object_list_offset_y: None,
-                object_list_width: None,
-                object_list_height: None,
-                object_list_minimized: false,
-                slice_panel_anchor_right: false,
-                slice_panel_anchor_bottom: false,
-                slice_panel_offset_x: None,
-                slice_panel_offset_y: None,
-                slice_panel_width: None,
-                slice_panel_height: None,
-                slice_view_visible: true,
-                slice_view_anchor_right: false,
-                slice_view_anchor_bottom: true,
-                slice_view_offset_x: None,
-                slice_view_offset_y: None,
-                slice_view_width: None,
-                slice_view_height: None,
-                slice_view_minimized: false,
-                last_open_dir: None,
+                object_list_width: width,
+                ..PreferencesSnapshot::for_tests()
             })
             .unwrap();
         }
         drop(tx);
 
-        let mut calls: Vec<BuildVolume> = Vec::new();
-        run_settings_saver_loop(rx, |snap| calls.push(snap.build_volume));
+        let mut calls: Vec<Option<f32>> = Vec::new();
+        run_settings_saver_loop(rx, |snap| calls.push(snap.object_list_width));
 
         assert_eq!(calls.len(), 1, "burst must coalesce to one call");
-        assert_eq!(calls[0], last_bv);
+        assert_eq!(calls[0], last_width);
     }
 
     #[test]
