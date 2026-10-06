@@ -4,8 +4,27 @@
  */
 
 use sc_mesh_core::primitives::CoordAxis;
+use sc_mesh_core::{Aabb, Vertex};
 
 use super::build_volume::{AxisOutOfRange, BuildVolume};
+use super::wall::{Side, Wall, Walls};
+
+fn aabb(min: [f32; 3], max: [f32; 3]) -> Aabb {
+    Aabb::from_min_max(Vertex::new(min), Vertex::new(max))
+}
+
+/// Returns a volume of 100 x 60 x 80 mm, whose envelope runs from [-50,-30,0]
+/// to [50,30,80].
+fn volume() -> BuildVolume {
+    BuildVolume::new(100.0, 60.0, 80.0).unwrap()
+}
+
+fn walls(crossed: &[(CoordAxis, Side)]) -> Walls {
+    crossed
+        .iter()
+        .map(|&(axis, side)| Wall { axis, side })
+        .collect()
+}
 
 #[test]
 fn build_volume_new_accepts_positive_finite() {
@@ -120,6 +139,135 @@ fn envelope_aabb_floor_is_positive_zero() {
         .unwrap()
         .envelope_aabb();
     assert_eq!(aabb.min().coords()[2].to_bits(), 0.0_f32.to_bits());
+}
+
+#[test]
+fn contains_returns_true_for_aabb_strictly_inside() {
+    let inside = aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 50.0]);
+    assert!(volume().contains(&inside));
+}
+
+#[test]
+fn contains_returns_true_when_aabb_touches_walls() {
+    // Faces flush against every wall; still contained (contains is inclusive on
+    // the boundary).
+    let flush = aabb([-50.0, -30.0, 0.0], [50.0, 30.0, 80.0]);
+    assert!(volume().contains(&flush));
+}
+
+#[test]
+fn contains_returns_false_when_extending_past_plus_x() {
+    let past_plus_x = aabb([0.0, 0.0, 1.0], [60.0, 10.0, 10.0]);
+    assert!(!volume().contains(&past_plus_x));
+}
+
+#[test]
+fn contains_returns_false_when_extending_past_minus_x() {
+    let past_minus_x = aabb([-60.0, 0.0, 1.0], [0.0, 10.0, 10.0]);
+    assert!(!volume().contains(&past_minus_x));
+}
+
+#[test]
+fn contains_returns_false_when_extending_below_plate() {
+    let below_plate = aabb([-10.0, -10.0, -1.0], [10.0, 10.0, 10.0]);
+    assert!(!volume().contains(&below_plate));
+}
+
+#[test]
+fn contains_returns_false_when_extending_above_ceiling() {
+    let above_ceiling = aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 100.0]);
+    assert!(!volume().contains(&above_ceiling));
+}
+
+#[test]
+fn contains_returns_true_for_empty_aabb() {
+    // Vacuously contained: no extent to breach a wall.
+    assert!(volume().contains(&Aabb::empty()));
+}
+
+#[test]
+fn walls_crossed_by_names_each_wall_crossed_alone() {
+    let cases = [
+        (
+            aabb([-60.0, 0.0, 1.0], [0.0, 10.0, 10.0]),
+            CoordAxis::X,
+            Side::Min,
+        ),
+        (
+            aabb([0.0, 0.0, 1.0], [60.0, 10.0, 10.0]),
+            CoordAxis::X,
+            Side::Max,
+        ),
+        (
+            aabb([-10.0, -40.0, 1.0], [10.0, 10.0, 10.0]),
+            CoordAxis::Y,
+            Side::Min,
+        ),
+        (
+            aabb([-10.0, -10.0, 1.0], [10.0, 40.0, 10.0]),
+            CoordAxis::Y,
+            Side::Max,
+        ),
+        (
+            aabb([-10.0, -10.0, -1.0], [10.0, 10.0, 10.0]),
+            CoordAxis::Z,
+            Side::Min,
+        ),
+        (
+            aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 100.0]),
+            CoordAxis::Z,
+            Side::Max,
+        ),
+    ];
+    for (aabb, axis, side) in cases {
+        assert_eq!(
+            volume().walls_crossed_by(&aabb),
+            walls(&[(axis, side)]),
+            "{axis} {side:?}"
+        );
+    }
+}
+
+#[test]
+fn walls_crossed_by_names_every_wall_a_box_crosses() {
+    let past_2_walls = aabb([-60.0, 0.0, 1.0], [10.0, 40.0, 10.0]);
+    assert_eq!(
+        volume().walls_crossed_by(&past_2_walls),
+        walls(&[(CoordAxis::X, Side::Min), (CoordAxis::Y, Side::Max)])
+    );
+}
+
+#[test]
+fn a_box_flush_with_every_wall_crosses_none() {
+    let flush = aabb([-50.0, -30.0, 0.0], [50.0, 30.0, 80.0]);
+    assert!(volume().walls_crossed_by(&flush).is_empty());
+}
+
+#[test]
+fn the_empty_box_crosses_no_wall() {
+    assert!(volume().walls_crossed_by(&Aabb::empty()).is_empty());
+}
+
+#[test]
+fn a_box_empty_on_1_axis_fits_even_past_a_wall_on_another() {
+    // Empty on Z, as `Aabb::empty` is, and past the `Min` wall of X.
+    let empty_on_z = aabb([-60.0, 0.0, f32::INFINITY], [0.0, 10.0, f32::NEG_INFINITY]);
+    assert!(volume().contains(&empty_on_z));
+}
+
+#[test]
+fn walls_are_tested_against_the_f32_corners() {
+    // The X corner is half the f32 length of 218.88, 109.44_f32
+    // (109.44000244140625), above the f64 corner: a box flush with it fits, and
+    // 1 that reaches the next f32 crosses the `Max` wall of X.
+    let plate = BuildVolume::new(218.88, 100.0, 100.0).unwrap();
+    let flush = aabb([0.0, 0.0, 0.0], [109.44, 1.0, 1.0]);
+    let past = aabb([0.0, 0.0, 0.0], [109.440_01, 1.0, 1.0]);
+    assert!(plate.contains(&flush));
+    assert_eq!(
+        plate.walls_crossed_by(&past),
+        walls(&[(CoordAxis::X, Side::Max)])
+    );
 }
 
 #[test]

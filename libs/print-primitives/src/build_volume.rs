@@ -15,6 +15,7 @@ use sc_mesh_core::primitives::CoordAxis;
 use sc_mesh_core::{Aabb, Vertex};
 
 use crate::length::{LengthOutOfRange, PositiveFiniteMm};
+use crate::wall::{Side, Wall, Walls};
 
 /// Build volume in millimetres, validated finite and strictly positive per axis
 /// on construction. Each axis is stored as its [`PositiveFiniteMm`] witness, so
@@ -179,5 +180,36 @@ impl BuildVolume {
             Vertex::new([-0.5 * x, -0.5 * y, 0.0]),
             Vertex::new([0.5 * x, 0.5 * y, z]),
         )
+    }
+
+    /// Returns the walls of the envelope that `aabb` reaches strictly past,
+    /// compared in f32 with the corners of [`Self::envelope_aabb`].
+    pub fn walls_crossed_by(&self, aabb: &Aabb) -> Walls {
+        let envelope = self.envelope_aabb();
+        let (env_min, env_max) = (envelope.min().coords(), envelope.max().coords());
+        let (min, max) = (aabb.min().coords(), aabb.max().coords());
+        CoordAxis::ALL
+            .into_iter()
+            .flat_map(|axis| {
+                let i = axis.as_index();
+                [
+                    (min[i] < env_min[i]).then_some(Wall {
+                        axis,
+                        side: Side::Min,
+                    }),
+                    (max[i] > env_max[i]).then_some(Wall {
+                        axis,
+                        side: Side::Max,
+                    }),
+                ]
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// Returns whether `aabb` lies inside the envelope, walls included. An
+    /// empty box fits.
+    pub fn contains(&self, aabb: &Aabb) -> bool {
+        aabb.is_empty() || self.walls_crossed_by(aabb).is_empty()
     }
 }

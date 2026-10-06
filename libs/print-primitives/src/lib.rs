@@ -28,6 +28,7 @@ pub mod scale_compensation;
 pub mod speed;
 pub mod time;
 pub mod volume;
+pub mod wall;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
@@ -58,6 +59,7 @@ pub use time::{
     TimeMultiplierOutOfRange, TimeOffsetOutOfRange, TimeOffsetSec,
 };
 pub use volume::{VolumeMm3, VolumeOutOfRange};
+pub use wall::{Side, Wall, Walls};
 
 #[cfg(test)]
 mod tests_aa_level;
@@ -95,3 +97,5 @@ mod tests_speed;
 mod tests_time;
 #[cfg(test)]
 mod tests_volume;
+#[cfg(test)]
+mod tests_wall;

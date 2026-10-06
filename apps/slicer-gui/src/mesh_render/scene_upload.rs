@@ -10,9 +10,10 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::Vertex;
+use sc_mesh_core::primitives::{CoordAxis, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_print_primitives::{Side, Wall, Walls};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError};
 use slint::wgpu_30::wgpu;
 
@@ -26,10 +27,10 @@ pub(super) struct GpuVertex {
     position: [f32; 3],
 }
 
-/// Per-object entry in the model uniform buffer. Mirrors the WGSL
-/// `ModelEntry` struct one-for-one. `flags.x` is the selection bit
-/// (1 for the selected object, 0 otherwise); the remaining lanes are
-/// reserved for future per-object hints (hover, gizmo focus, …).
+/// Per-object entry in the model uniform buffer. Mirrors the WGSL `ModelEntry`
+/// struct field by field. `flags.x` is the selection bit (1 for the selected
+/// object, 0 otherwise) and `flags.y` the envelope-breach bit; the other lanes
+/// are unused.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub(super) struct ModelEntry {
@@ -39,21 +40,18 @@ pub(super) struct ModelEntry {
 
 pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;
 
-/// Round `size` up to the next multiple of `alignment`. Used to space
-/// successive `ModelEntry` slots in the per-scene uniform buffer at the
-/// device's `min_uniform_buffer_offset_alignment`. Both inputs are u64
-/// and non-zero in practice; the `alignment - 1` mask trick is the
-/// standard `assume-power-of-two` form used everywhere wgpu samples
-/// align uniform-buffer offsets.
+/// Rounds `size` up to the next multiple of `alignment`, which must be a power
+/// of 2 for the mask form. Used to space successive `ModelEntry` slots in the
+/// per-scene uniform buffer at the device's
+/// `min_uniform_buffer_offset_alignment`.
 pub(super) const fn align_up(size: u64, alignment: u64) -> u64 {
     (size + alignment - 1) & !(alignment - 1)
 }
 
-/// GPU-resident draw data for a single graph leaf: its local-space
-/// vertex+index buffers (the leaf's transform is *not* baked in; it
-/// arrives at draw time through the model storage buffer). The
-/// `node_id` lets the draw loop key per-leaf state (selection
-/// stencil) against the graph's stable id.
+/// GPU-resident draw data for a single graph leaf: its local-space vertex+index
+/// buffers (the leaf's transform is *not* baked in; it arrives at draw time
+/// through the model uniform buffer). The `node_id` lets the draw loop key
+/// per-leaf state (selection stencil) against the graph's stable id.
 pub(super) struct ObjectDraw {
     node_id: NodeId,
     vertex_buffer: wgpu::Buffer,
@@ -117,8 +115,8 @@ impl std::error::Error for LeafBufferExceedsDeviceLimit {}
 
 #[derive(Debug)]
 pub struct DeviceRefusedBuffer {
-    /// What the buffer holds, in the user's terms ("index buffer of
-    /// object 'hull'", "per-object transform table").
+    /// What the buffer holds, in the user's terms ("index buffer of object
+    /// 'hull'", "per-object transform table").
     pub what: String,
     pub num_bytes: u64,
     pub source: wgpu::Error,
@@ -159,9 +157,8 @@ fn describe_leaf_buffer(buffer: &str, leaf_name: Option<&str>) -> String {
 }
 
 /// Creates a buffer holding `contents`, reporting a refusal instead of
-/// panicking. Empty contents give an empty, unmapped buffer. If the
-/// device is lost before or during the call, the error is
-/// [`DeviceLostDuringUpload`].
+/// panicking. Empty contents give an empty, unmapped buffer. If the device is
+/// lost before or during the call, the error is [`DeviceLostDuringUpload`].
 fn upload_buffer(
     device: &wgpu::Device,
     device_loss: &DeviceLoss,
@@ -171,8 +168,8 @@ fn upload_buffer(
     what: impl FnOnce() -> String,
 ) -> Result<wgpu::Buffer> {
     let unpadded = contents.len() as u64;
-    // wgpu requires mapped-at-creation sizes to be a non-zero multiple
-    // of COPY_BUFFER_ALIGNMENT.
+    // wgpu requires mapped-at-creation sizes to be a multiple of
+    // COPY_BUFFER_ALIGNMENT above 0.
     let align_mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
     let size = if contents.is_empty() {
         0
@@ -197,8 +194,8 @@ fn upload_buffer(
         if device_loss.is_lost() {
             return Err(DeviceLostDuringUpload.into());
         }
-        // The buffer is mapped at creation over its whole aligned size,
-        // so a map error can only come from a lost device.
+        // The buffer is mapped at creation over its whole aligned size, so a
+        // map error can only come from a lost device.
         buffer
             .get_mapped_range_mut(..)
             .map_err(|_| DeviceLostDuringUpload)?
@@ -209,30 +206,29 @@ fn upload_buffer(
     Ok(buffer)
 }
 
-/// GPU mirror of a `Scene`. Holds one [`ObjectDraw`] per leaf in
-/// pre-order traversal of the graph's roots, plus a uniform buffer of
-/// [`ModelEntry`] slots, padded to the device's
-/// `min_uniform_buffer_offset_alignment` so the render loop can address
-/// each slot via a dynamic-offset bind. The world-space AABB is captured
-/// at build time from `Scene::aabb`; it is used once for camera
-/// framing and is not refreshed on per-frame transform updates (the
+/// GPU mirror of a `Scene`. Holds 1 [`ObjectDraw`] per leaf in pre-order
+/// traversal of the graph's roots, plus a uniform buffer of [`ModelEntry`]
+/// slots, padded to the device's `min_uniform_buffer_offset_alignment` so the
+/// render loop can address each slot via a dynamic-offset bind. The world-space
+/// AABB is captured at build time from `Scene::aabb`; it is used once for
+/// camera framing and is not refreshed on per-frame transform updates (the
 /// camera persists across edits, so a post-edit AABB is irrelevant for
 /// framing).
 ///
-/// Construction ([`GpuScene::build`]) touches a `wgpu::Device` but not
-/// the UI loop, so it can run on the worker thread that parsed the
-/// scene; the UI thread then attaches the matching bind group via
+/// Construction ([`GpuScene::build`]) touches a `wgpu::Device` but not the UI
+/// loop, so it can run on the worker thread that parsed the scene; the UI
+/// thread then attaches the matching bind group via
 /// [`Renderer::install_scene`].
 pub struct GpuScene {
     objects: Vec<ObjectDraw>,
     model_buffer: wgpu::Buffer,
     /// Distance in bytes between consecutive `ModelEntry` slots in
-    /// `model_buffer`. Always ≥ `MODEL_ENTRY_SIZE` and a multiple of
-    /// the device's `min_uniform_buffer_offset_alignment`.
+    /// `model_buffer`. Always at least `MODEL_ENTRY_SIZE` and a multiple of the
+    /// device's `min_uniform_buffer_offset_alignment`.
     model_stride: u64,
-    /// Identity token of the device this scene's GPU resources were
-    /// built against. `Renderer::install_scene` checks this against
-    /// the renderer's own token before attaching the scene.
+    /// Identity token of the device this scene's GPU resources were built
+    /// against. `Renderer::install_scene` checks this against the renderer's
+    /// own token before attaching the scene.
     device_token: super::DeviceToken,
     aabb_min: Vec3,
     aabb_max: Vec3,
@@ -249,11 +245,10 @@ impl fmt::Debug for GpuScene {
     }
 }
 
-/// Triangle counts reported while a scene's GPU data is built. Each
-/// object's triangles count twice, once when its vertex/index vectors
-/// are flattened and once when its device buffers are created, so
-/// `total_triangles` is twice the scene's reachable triangle count
-/// and the final tick reaches it.
+/// Triangle counts reported while a scene's GPU data is built. Each object's
+/// triangles count twice, once when its vertex/index vectors are flattened and
+/// once when its device buffers are created, so `total_triangles` is twice the
+/// scene's reachable triangle count and the final tick reaches it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UploadProgress {
     /// Triangles processed so far, summed across both passes.
@@ -272,8 +267,8 @@ impl GpuScene {
         Self::build_with_progress(device, device_token, graph, device_loss, |_| {})
     }
 
-    /// [`GpuScene::build`], reporting per-object triangle progress;
-    /// see [`UploadProgress`] for the tick contract.
+    /// Builds the scene as [`GpuScene::build`] does, reporting per-object
+    /// triangle progress; see [`UploadProgress`] for the tick contract.
     pub fn build_with_progress(
         device: &wgpu::Device,
         device_token: super::DeviceToken,
@@ -333,8 +328,9 @@ impl GpuScene {
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let model_stride = align_up(MODEL_ENTRY_SIZE, alignment);
 
-        // The bind group requires a non-zero binding size; we already
-        // bail above if the scene has no objects.
+        // The bind group requires a binding size above 0;
+        // `build_gpu_scene_data` already fails above when the scene has no
+        // objects.
         let model_size = model_stride * objects.len() as u64;
         let model_buffer = create_buffer_reporting(
             device,
@@ -361,9 +357,9 @@ impl GpuScene {
         })
     }
 
-    /// Identity token of the device this scene was built against.
-    /// `Renderer::install_scene` matches it against the renderer's
-    /// own token before attaching.
+    /// Returns the identity token of the device this scene was built against.
+    /// `Renderer::install_scene` matches it against the renderer's own token
+    /// before attaching.
     pub fn device_token(&self) -> super::DeviceToken {
         self.device_token
     }
@@ -389,9 +385,9 @@ impl GpuScene {
     }
 }
 
-/// Translates `AffineTransform3D`'s row-major 3×3 + translation form
-/// into glam's column-major 4×4. f64 internals are downcast to f32
-/// here at the GPU boundary.
+/// Translates `AffineTransform3D`'s row-major 3x3 + translation form into
+/// glam's column-major 4x4. f64 internals are downcast to f32 here at the GPU
+/// boundary.
 fn affine_to_mat4(a: &AffineTransform3D) -> Mat4 {
     let l = a.linear();
     let t = a.translation();
@@ -410,13 +406,13 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
     }
 }
 
-/// `selection` is the [`NodeId`] of the selected leaf, or `None` for
-/// no selection. A `NodeId` that does not name a reachable leaf
-/// leaves every entry's `flags.x` at 0. The shader reads `flags.x`
-/// and mixes a warm tint when it is 1; `flags.y` is set when the
-/// leaf has any vertex outside the build envelope, driving the mild
-/// interior wash that marks the whole object as "offending" even
-/// where individual fragments are still inside the envelope.
+/// Returns the model entry of each reachable leaf, in draw order. `selection`
+/// is the [`NodeId`] of the selected leaf, or `None` for no selection. A
+/// `NodeId` that does not name a reachable leaf leaves every entry's `flags.x`
+/// at 0. The shader reads `flags.x` and mixes a warm tint when it is 1;
+/// `flags.y` is set when the leaf has any vertex outside the build envelope,
+/// driving the mild interior wash that marks the whole object as "offending"
+/// even where individual fragments are still inside the envelope.
 pub(super) fn build_model_entries(
     graph: &Scene,
     selection: Option<NodeId>,
@@ -438,31 +434,38 @@ pub(super) fn build_model_entries(
     Ok(entries)
 }
 
-/// Returns `true` if `mesh`, after `world_transform` is applied, has
-/// any part outside `build_volume`'s envelope. Computes the
-/// transformed AABB of the mesh vertices and asks
-/// [`BuildVolume::contains_aabb`]: containment of the AABB is
-/// equivalent to containment of every vertex (and therefore of every
-/// triangle interior) when the envelope is convex.
+/// Returns `true` if `mesh`, after `world_transform` is applied, has any part
+/// outside `build_volume`'s envelope. Computes the transformed AABB of the mesh
+/// vertices and asks [`sc_print_primitives::BuildVolume::contains`]:
+/// containment of the AABB is equivalent to containment of every vertex (and
+/// therefore of every triangle interior) when the envelope is convex.
 fn leaf_breaches_envelope(
     mesh: &IndexedMesh,
     world_transform: &Transform3D,
     build_volume: &BuildVolume,
 ) -> bool {
+    !build_volume
+        .volume()
+        .contains(&leaf_world_box(mesh, world_transform))
+}
+
+/// Returns the box of `mesh`'s vertices after `world_transform`, computed in
+/// f32 with the matrix that the GPU draws them with.
+fn leaf_world_box(mesh: &IndexedMesh, world_transform: &Transform3D) -> Aabb {
     let transform_mat = transform_to_mat4(world_transform);
     let mut aabb = Aabb::empty();
     for v in mesh.vertices() {
         let p = transform_mat.transform_point3(Vec3::from(v.coords()));
         aabb.extend(Vertex::new([p.x, p.y, p.z]));
     }
-    !build_volume.contains_aabb(aabb)
+    aabb
 }
 
-/// Bit positions for the per-face breach mask consumed by the plate
-/// shader. Bits 0..=4 drive the side-wall + top warning quads; bit 5
-/// (-Z, the build-plate floor) is read by the floor path of the same
-/// shader and overlays a stripe pattern on top of the grid instead of
-/// going through a dedicated wall quad.
+/// Bit positions for the per-face breach mask consumed by the plate shader.
+/// Bits 0..=4 drive the side-wall + top warning quads; bit 5 (-Z, the
+/// build-plate floor) is read by the floor path of the same shader and overlays
+/// a stripe pattern on top of the grid instead of going through a dedicated
+/// wall quad.
 pub(super) const FACE_BIT_X_NEG: u32 = 1 << 0;
 pub(super) const FACE_BIT_X_POS: u32 = 1 << 1;
 pub(super) const FACE_BIT_Y_NEG: u32 = 1 << 2;
@@ -470,54 +473,39 @@ pub(super) const FACE_BIT_Y_POS: u32 = 1 << 3;
 pub(super) const FACE_BIT_Z_POS: u32 = 1 << 4;
 pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 
-/// Walks every reachable leaf's world-transformed vertices and returns
-/// a bitmask of envelope faces that some vertex falls outside. The mask
-/// matches the shader's bit layout: `FACE_BIT_X_NEG` etc.
-///
-/// Per-vertex (not per-AABB) is mathematically exact for a convex
-/// envelope: a vertex outside on axis `a` is the only way for the
-/// mesh's `a`-face to be breached, since the convex hull of the
-/// vertices contains the mesh and the envelope is convex.
+/// Returns the bitmask of the envelope walls that some reachable leaf crosses,
+/// in the shader's bit layout (`FACE_BIT_X_NEG` etc.). A leaf crosses a wall
+/// when the box of its world-transformed vertices reaches strictly past it,
+/// which is when some vertex does.
 pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> Result<u32> {
-    let env_min = build_volume.envelope_min_mm();
-    let env_max = build_volume.envelope_max_mm();
-    let mut mask = 0u32;
+    let volume = build_volume.volume();
+    let mut crossed = Walls::default();
     graph.for_each_expanded_leaf::<SceneError, _>(
         CsgPolicy::Descend,
         |_node_id, world_transform, mesh| {
-            let transform_mat = transform_to_mat4(world_transform);
-            for v in mesh.vertices() {
-                let p = transform_mat.transform_point3(Vec3::from(v.coords()));
-                if p.x < env_min.x {
-                    mask |= FACE_BIT_X_NEG;
-                }
-                if p.x > env_max.x {
-                    mask |= FACE_BIT_X_POS;
-                }
-                if p.y < env_min.y {
-                    mask |= FACE_BIT_Y_NEG;
-                }
-                if p.y > env_max.y {
-                    mask |= FACE_BIT_Y_POS;
-                }
-                if p.z < env_min.z {
-                    mask |= FACE_BIT_Z_NEG;
-                }
-                if p.z > env_max.z {
-                    mask |= FACE_BIT_Z_POS;
-                }
-            }
+            crossed |= volume.walls_crossed_by(&leaf_world_box(mesh, world_transform));
             Ok(())
         },
     )?;
-    Ok(mask)
+    Ok(crossed.iter().fold(0, |mask, wall| mask | face_bit(wall)))
 }
 
-/// Count the leaf occurrences [`Scene::for_each_expanded_leaf`]
-/// visits under [`CsgPolicy::Descend`]: the population
-/// [`build_gpu_scene_data`] turns into draws, so a zero answer means
-/// there is nothing for the GPU to mirror. A dangling id surfaces as
-/// an error instead of being flattened into a count of zero.
+/// Returns the bit of `wall` in the mask that the plate shader reads.
+fn face_bit(wall: Wall) -> u32 {
+    match (wall.axis, wall.side) {
+        (CoordAxis::X, Side::Min) => FACE_BIT_X_NEG,
+        (CoordAxis::X, Side::Max) => FACE_BIT_X_POS,
+        (CoordAxis::Y, Side::Min) => FACE_BIT_Y_NEG,
+        (CoordAxis::Y, Side::Max) => FACE_BIT_Y_POS,
+        (CoordAxis::Z, Side::Min) => FACE_BIT_Z_NEG,
+        (CoordAxis::Z, Side::Max) => FACE_BIT_Z_POS,
+    }
+}
+
+/// Counts the leaf occurrences [`Scene::for_each_expanded_leaf`] visits under
+/// [`CsgPolicy::Descend`]: the population [`build_gpu_scene_data`] turns into
+/// draws, so an answer of 0 means there is nothing for the GPU to mirror. A
+/// dangling id surfaces as an error, not as a count of 0.
 pub(super) fn renderable_leaf_count(graph: &Scene) -> Result<usize> {
     let mut count = 0usize;
     graph.for_each_expanded_leaf::<SceneError, _>(
@@ -530,9 +518,7 @@ pub(super) fn renderable_leaf_count(graph: &Scene) -> Result<usize> {
     Ok(count)
 }
 
-/// CPU-only build of the per-object draw data plus the world-space
-/// scene AABB. Kept separate from buffer creation so the transformation
-/// can be unit-tested without a `wgpu::Device`.
+/// The draw data of 1 object, before its buffers are created.
 struct ObjectData {
     node_id: NodeId,
     name: Option<String>,
@@ -540,10 +526,10 @@ struct ObjectData {
     indices: Vec<u32>,
 }
 
-/// Refuses the first leaf (pre-order, vertex buffer before index buffer)
-/// whose buffer would exceed `max_buffer_size`. Both element sizes are
-/// multiples of wgpu's copy alignment, so the byte counts here are the
-/// sizes that will be requested.
+/// Refuses the first leaf (pre-order, vertex buffer before index buffer) whose
+/// buffer would exceed `max_buffer_size`. Both element sizes are multiples of
+/// wgpu's copy alignment, so the byte counts here are the sizes that will be
+/// requested.
 fn check_leaf_buffers_fit(
     objects: &[ObjectData],
     max_buffer_size: u64,
@@ -581,10 +567,12 @@ struct SceneData {
     aabb_max: Vec3,
 }
 
-/// `on_object_flattened` receives each flattened object's triangle
-/// count (0 for geometry-less leaves), in traversal order; the
-/// progress plumbing in [`GpuScene::build_with_progress`] is its only
-/// non-test consumer.
+/// Builds, on the CPU, the per-object draw data and the world-space scene AABB,
+/// apart from buffer creation so that it can be unit-tested without a
+/// `wgpu::Device`. `on_object_flattened` receives each flattened object's
+/// triangle count (0 for geometry-less leaves), in traversal order; the
+/// progress plumbing in [`GpuScene::build_with_progress`] is its only non-test
+/// consumer.
 fn build_gpu_scene_data(
     graph: &Scene,
     mut on_object_flattened: impl FnMut(u64),
@@ -600,12 +588,12 @@ fn build_gpu_scene_data(
                 .and_then(|meta| meta.name.clone())
                 .or_else(|| mesh.meta.as_ref().and_then(|meta| meta.name.clone()));
             if mesh.faces().is_empty() {
-                // A leaf with no geometry contributes nothing to the
-                // draw set, but we keep its slot in the model buffer so
-                // the per-frame `build_model_entries` walk (which uses
-                // the same pre-order traversal) lines up index-by-index
-                // with the renderer's per-leaf draw loop. The slot is
-                // drawn as a no-op (index_count = 0).
+                // A leaf with no geometry contributes nothing to the draw set,
+                // but we keep its slot in the model buffer so the per-frame
+                // `build_model_entries` walk (which uses the same pre-order
+                // traversal) lines up index-by-index with the renderer's
+                // per-leaf draw loop. The slot is drawn as a no-op (an
+                // `index_count` of 0).
                 objects.push(ObjectData {
                     node_id,
                     name,
@@ -644,11 +632,10 @@ fn build_gpu_scene_data(
         return Err(anyhow!("Graph has no leaves to render"));
     }
 
-    // World-space scene AABB via `Scene::aabb`, which composes
-    // each leaf's ancestor chain via Arvo. If every leaf is empty,
-    // fall back to a degenerate bbox at the origin (the renderer's
-    // diagonal-clamp `.max(1e-3)` keeps the projection matrix
-    // well-defined).
+    // World-space scene AABB via `Scene::aabb`, which composes each leaf's
+    // ancestor chain via Arvo. If every leaf is empty, fall back to a
+    // degenerate bbox at the origin (the renderer's diagonal-clamp `.max(1e-3)`
+    // keeps the projection matrix well-defined).
     let (aabb_min, aabb_max) = match graph.aabb()? {
         Some(aabb) => (
             Vec3::from(aabb.min().coords()),
@@ -673,7 +660,8 @@ mod build_gpu_scene_data_tests {
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_scene::{LeafPayload, MeshResourceId};
 
-    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    /// Builds an empty graph shaped as the loader builds it: an identity group
+    /// root and no leaves.
     fn graph_with_group_root() -> (Scene, NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -720,8 +708,7 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn empty_graph_returns_error() {
-        // Loader-faithful empty graph: a Group root with no children,
-        // the same shape an empty-file load produces.
+        // A Group root with no children: the shape an empty-file load produces.
         let (graph, _root) = graph_with_group_root();
         assert!(build_gpu_scene_data(&graph, |_| {}).is_err());
     }
@@ -758,10 +745,9 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn vertices_stay_local_even_with_affine_transform() {
-        // Vertex buffers are local-space; the transform is applied at
-        // draw time via the per-leaf model uniform, so
-        // `build_gpu_scene_data` must NOT bake it into the vertex
-        // stream.
+        // Vertex buffers are local-space; the transform is applied at draw time
+        // via the per-leaf model uniform, so `build_gpu_scene_data` must NOT
+        // bake it into the vertex stream.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -781,9 +767,9 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn indices_are_local_per_leaf_not_offset() {
-        // With per-leaf draws, each leaf's index buffer references its
-        // own vertex buffer, so indices stay local, not offset by
-        // previous leaves' vertex counts as the merged build did.
+        // With per-leaf draws, each leaf's index buffer references its own
+        // vertex buffer, so indices stay local, not offset by previous leaves'
+        // vertex counts.
         let a = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -844,10 +830,10 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn empty_leaf_keeps_a_slot_in_the_leaf_list() {
-        // A leaf with no faces still occupies a slot in the per-leaf
-        // pre-order index; the renderer indexes into `models[]` by
-        // that index, so the GpuScene must keep a parallel slot. The
-        // slot must be drawable as a no-op (index_count = 0).
+        // A leaf with no faces still occupies a slot in the per-leaf pre-order
+        // index; the renderer indexes into `models[]` by that index, so the
+        // GpuScene must keep a parallel slot. The slot must be drawable as a
+        // no-op (an `index_count` of 0).
         let empty = IndexedMesh {
             meta: None,
             vertices: vec![],
@@ -868,12 +854,11 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn singular_transform_is_accepted() {
-        // `Scene::aabb` doesn't fail on singular linear parts
-        // (it uses Arvo), so this currently succeeds. The check here
-        // pins the behaviour: the per-leaf data is built without
-        // touching `apply_to_normal`, so even a degenerate transform
-        // doesn't bring the build down; degenerate matrices only
-        // matter at `merge_meshes` / export time.
+        // `Scene::aabb` doesn't fail on singular linear parts (it uses Arvo),
+        // so this currently succeeds. The check here pins the behaviour: the
+        // per-leaf data is built without touching `apply_to_normal`, so even a
+        // degenerate transform doesn't bring the build down; degenerate
+        // matrices only matter at `merge_meshes` / export time.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -884,10 +869,10 @@ mod build_gpu_scene_data_tests {
         );
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh, Transform3D::Affine(singular));
-        // Singular transforms aren't rejected here; the GPU path is
-        // fine with a singular model matrix (it just collapses the
-        // mesh to a plane). Mirror this in the assertion so the test
-        // fails loudly if the behaviour changes.
+        // Singular transforms aren't rejected here; the GPU path is fine with a
+        // singular model matrix (it just collapses the mesh to a plane). Mirror
+        // this in the assertion so the test fails loudly if the behaviour
+        // changes.
         assert!(build_gpu_scene_data(&g, |_| {}).is_ok());
     }
 }
@@ -930,9 +915,8 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn affine_to_mat4_matches_apply_to_vertex() {
-        // The matrix should transform vertices the same way the
-        // mesh-core `apply_to_vertex` does; that is the contract the
-        // shader relies on.
+        // The matrix should transform vertices the same way the mesh-core
+        // `apply_to_vertex` does; that is the contract the shader relies on.
         let a = AffineTransform3D::from_translation([1.0, 2.0, 3.0]).compose(
             &AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_4)
                 .compose(&AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0])),
@@ -947,14 +931,15 @@ mod transform_to_mat4_tests {
         }
     }
 
-    /// Roomy envelope that contains every fixture in this module so
-    /// tests focused on the selection / model-matrix lanes are not
-    /// disturbed by the breach detection added to `build_model_entries`.
+    /// Returns a roomy envelope that contains every fixture in this module, so
+    /// tests focused on the selection / model-matrix lanes are not disturbed by
+    /// the breach detection of `build_model_entries`.
     fn permissive_volume() -> BuildVolume {
         BuildVolume::new(1000.0, 1000.0, 1000.0)
     }
 
-    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    /// Builds an empty graph shaped as the loader builds it: an identity group
+    /// root and no leaves.
     fn graph_with_group_root() -> (Scene, NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -975,9 +960,9 @@ mod transform_to_mat4_tests {
         leaf
     }
 
-    /// Resolve the `n`-th leaf's [`NodeId`] in pre-order traversal,
-    /// used by the selection tests to feed `build_model_entries` a
-    /// real id instead of a counter.
+    /// Returns the [`NodeId`] of the `n`-th leaf in pre-order traversal, used
+    /// by the selection tests to feed `build_model_entries` a real id instead
+    /// of a counter.
     fn nth_leaf(graph: &Scene, n: usize) -> NodeId {
         let mut ids: Vec<NodeId> = Vec::new();
         let _ = graph.for_each_expanded_leaf::<SceneError, _>(CsgPolicy::Descend, |id, _, _| {
@@ -1056,10 +1041,9 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn non_leaf_selection_falls_back_to_no_highlight() {
-        // The loader-faithful Group root that wraps the leaves is not
-        // a leaf itself, so the iterator never visits it; flags.x
-        // stays 0 on every entry when the selection points at the
-        // root.
+        // The Group root that wraps the leaves, as the loader builds it, is not
+        // a leaf itself, so the iterator never visits it; flags.x stays 0 on
+        // every entry when the selection points at the root.
         let graph = two_object_graph();
         let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume())
             .expect("clean graph");
@@ -1092,10 +1076,10 @@ mod transform_to_mat4_tests {
         g
     }
 
-    /// 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
-    /// Y in [-30, 30], Z in [0, 80]. Tight enough that small fixtures
-    /// can be placed strictly inside or strictly outside without
-    /// arithmetic gymnastics.
+    /// Returns a 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
+    /// Y in [-30, 30], Z in [0, 80]. Tight enough that small fixtures can be
+    /// placed strictly inside or strictly outside without arithmetic
+    /// gymnastics.
     fn snug_volume() -> BuildVolume {
         BuildVolume::new(100.0, 60.0, 80.0)
     }
@@ -1110,8 +1094,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn flags_y_is_one_when_any_vertex_is_past_a_side_wall() {
         // Translation +60 mm on X puts the unit triangle's vertices at
-        // [60, 0, 0], [61, 0, 0], [60, 1, 0]. All three lie past the
-        // +X wall at x = 50.
+        // [60,0,0], [61,0,0] and [60,1,0], all 3 past the +X wall at x = 50.
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
         let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
@@ -1127,9 +1110,9 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn flags_y_is_one_when_leaf_straddles_a_wall() {
-        // Translation +49.5 mm on X: vertex [0,0,0] lands at x = 49.5
-        // (inside), [1,0,0] at x = 50.5 (outside +X wall). Per-vertex
-        // breach detection must fire on the second vertex.
+        // Translation +49.5 mm on X: vertex [0,0,0] lands at x = 49.5 (inside),
+        // [1,0,0] at x = 50.5 (outside +X wall), so the leaf breaches through
+        // the second vertex.
         let graph = unit_triangle_graph_at([49.5, 0.0, 0.0]);
         let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
@@ -1137,8 +1120,8 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn flags_y_is_unset_for_leaf_resting_exactly_on_the_floor() {
-        // Every vertex has z = 0 (the floor). The breach test uses a
-        // strict comparison, so resting on the plate is "inside".
+        // Every vertex has z = 0 (the floor). The breach test uses a strict
+        // comparison, so resting on the plate is "inside".
         let graph = unit_triangle_graph_at([0.0, 0.0, 0.0]);
         let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
@@ -1164,8 +1147,8 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn warning_mask_sets_minus_y_when_a_vertex_passes_the_minus_y_wall() {
-        // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0],
-        // and [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
+        // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0], and
+        // [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
         let graph = unit_triangle_graph_at([0.0, -40.0, 0.0]);
         let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
@@ -1182,9 +1165,9 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn warning_mask_sets_minus_z_when_a_vertex_dips_below_the_floor() {
-        // The Z = 0 floor breach is still represented in the mask
-        // (bit FACE_BIT_Z_NEG); the plate shader consumes it through
-        // the floor-overlay path rather than a dedicated wall quad.
+        // The Z = 0 floor breach is still represented in the mask (bit
+        // FACE_BIT_Z_NEG); the plate shader consumes it through the
+        // floor-overlay path rather than a dedicated wall quad.
         let graph = unit_triangle_graph_at([0.0, 0.0, -1.0]);
         let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_NEG, FACE_BIT_Z_NEG);
@@ -1197,8 +1180,8 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn warning_mask_unions_bits_across_leaves() {
-        // First leaf breaches +X, second breaches -Y. The mask
-        // collects both bits.
+        // First leaf breaches +X, second breaches -Y. The mask collects both
+        // bits.
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         let mesh = IndexedMesh {
             meta: None,
@@ -1257,9 +1240,9 @@ mod align_up_tests {
 
 /// The walk-error arm of `renderable_leaf_count` is not covered here:
 /// `Scene::add_leaf` rejects an unbound `MeshResourceId` and
-/// `Scene::remove_mesh_resource` rejects a still-referenced one, so a
-/// graph with a dangling id cannot be built through the public API.
-/// The walk's own error propagation is pinned by `sc-scene`'s suite.
+/// `Scene::remove_mesh_resource` rejects a still-referenced one, so a graph
+/// with a dangling id cannot be built through the public API. The walk's own
+/// error propagation is pinned by `sc-scene`'s suite.
 #[cfg(test)]
 mod renderable_leaf_count_tests {
     use std::sync::Arc;
@@ -1283,7 +1266,8 @@ mod renderable_leaf_count_tests {
         }
     }
 
-    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    /// Builds an empty graph shaped as the loader builds it: an identity group
+    /// root and no leaves.
     fn graph_with_group_root() -> (Scene, NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -1331,9 +1315,9 @@ mod renderable_leaf_count_tests {
 
     #[test]
     fn leaves_under_a_nested_group_are_counted() {
-        // The count must follow the whole subtree, not just the roots'
-        // direct children: one leaf sits under the root, the other two
-        // under a Group nested inside it.
+        // The count must follow the whole subtree, not just the roots' direct
+        // children: 1 leaf sits under the root, the other 2 under a Group
+        // nested inside it.
         let (mut graph, root) = graph_with_group_root();
         add_inline_leaf(&mut graph, root);
         let nested = graph.add_group(None, Transform3D::Identity);
@@ -1345,8 +1329,8 @@ mod renderable_leaf_count_tests {
 
     #[test]
     fn root_leaf_counts_without_a_group_above_it() {
-        // The STL-loaded shape: the leaf is a scene root itself rather
-        // than a child of an identity Group.
+        // The STL-loaded shape: the leaf is a scene root itself rather than a
+        // child of an identity Group.
         let mut graph = Scene::new();
         let leaf = graph
             .add_leaf(
@@ -1361,8 +1345,8 @@ mod renderable_leaf_count_tests {
 
     #[test]
     fn removing_the_only_leaf_drops_the_count_to_zero() {
-        // The shape the scene lands in when the user deletes the last
-        // object: a live graph whose leaf population is empty.
+        // The shape the scene lands in when the user deletes the last object: a
+        // live graph whose leaf population is empty.
         let (mut graph, root) = graph_with_group_root();
         let leaf = add_inline_leaf(&mut graph, root);
         graph.remove_leaf(leaf).expect("remove the only leaf");
@@ -1371,8 +1355,8 @@ mod renderable_leaf_count_tests {
 
     #[test]
     fn removing_the_only_root_leaf_drops_the_count_to_zero() {
-        // Same, for the STL shape: removing a root leaf leaves a graph
-        // with no roots at all.
+        // Same, for the STL shape: removing a root leaf leaves a graph with no
+        // roots at all.
         let mut graph = Scene::new();
         let leaf = graph
             .add_leaf(
@@ -1399,9 +1383,9 @@ mod leaf_buffer_limit_tests {
     /// Small enough that a mesh of a few dozen faces exceeds it.
     const LIMIT: u64 = 1024;
 
-    /// A mesh of `vertex_count` vertices and `face_count` faces on the
-    /// first 3 vertices: `12 * vertex_count` vertex bytes, `12 *
-    /// face_count` index bytes.
+    /// Builds a mesh of `vertex_count` vertices and `face_count` faces on the
+    /// first 3 vertices: `12 * vertex_count` vertex bytes and `12 * face_count`
+    /// index bytes.
     fn mesh(vertex_count: usize, face_count: usize, name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
             meta: name.map(|n| MeshMetadata {
@@ -1417,7 +1401,8 @@ mod leaf_buffer_limit_tests {
         }
     }
 
-    /// One root leaf per mesh, in order; returns the graph and the leaf ids.
+    /// Builds a graph with 1 root leaf per mesh, in order; returns the graph
+    /// and the leaf ids.
     fn graph_of(leaves: Vec<(IndexedMesh, Option<&str>)>) -> (Scene, Vec<NodeId>) {
         let mut g = Scene::new();
         let mut ids = Vec::new();
