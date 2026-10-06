@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use float_cmp::assert_approx_eq;
 use sc_mesh_core::primitives::CoordAxis;
-use sc_mesh_core::{Aabb, Vertex};
+use sc_mesh_core::{Aabb, Vector3D, Vertex};
 
 use super::build_volume::{AxisOutOfRange, BuildVolume};
 use super::wall::{Side, Wall, Walls};
@@ -268,6 +269,129 @@ fn walls_are_tested_against_the_f32_corners() {
         plate.walls_crossed_by(&past),
         walls(&[(CoordAxis::X, Side::Max)])
     );
+}
+
+#[test]
+fn zero_delta_is_zero() {
+    let pre = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
+    let out = volume().clamp_translation_delta(&pre, Vector3D::new([0.0; 3]));
+    assert_eq!(out, Vector3D::new([0.0; 3]));
+}
+
+#[test]
+fn fully_interior_small_delta_passes_through() {
+    let pre = aabb([-1.0, -1.0, 1.0], [1.0, 1.0, 3.0]);
+    let delta = Vector3D::new([2.0, 1.0, 0.5]);
+    let [x, y, z] = volume().clamp_translation_delta(&pre, delta).coords();
+    assert_approx_eq!(f32, x, 2.0);
+    assert_approx_eq!(f32, y, 1.0);
+    assert_approx_eq!(f32, z, 0.5);
+}
+
+#[test]
+fn delta_breaching_plus_x_wall_clamps_x_only() {
+    // pre.max.x = 49, only 1 mm of room before +X wall.
+    let pre = aabb([47.0, -1.0, 0.0], [49.0, 1.0, 2.0]);
+    let delta = Vector3D::new([5.0, 1.0, 1.0]);
+    let [x, y, z] = volume().clamp_translation_delta(&pre, delta).coords();
+    assert_approx_eq!(f32, x, 1.0);
+    assert_approx_eq!(f32, y, 1.0);
+    assert_approx_eq!(f32, z, 1.0);
+}
+
+#[test]
+fn touching_minus_x_wall_blocks_negative_x() {
+    // pre.min.x = -50: flush against -X wall.
+    let pre = aabb([-50.0, -1.0, 0.0], [-48.0, 1.0, 2.0]);
+    let delta = Vector3D::new([-3.0, 0.5, 0.5]);
+    let [x, y, z] = volume().clamp_translation_delta(&pre, delta).coords();
+    assert_approx_eq!(f32, x, 0.0);
+    assert_approx_eq!(f32, y, 0.5);
+    assert_approx_eq!(f32, z, 0.5);
+}
+
+#[test]
+fn already_outside_plus_x_blocks_further_plus_x() {
+    // pre.max.x = 60 > env_max.x = 50.
+    let pre = aabb([55.0, -1.0, 0.0], [60.0, 1.0, 2.0]);
+    let delta = Vector3D::new([2.0, 0.0, 0.0]);
+    let [x, _, _] = volume().clamp_translation_delta(&pre, delta).coords();
+    assert_approx_eq!(f32, x, 0.0);
+}
+
+#[test]
+fn already_outside_plus_x_allows_negative_x_back_inside() {
+    // pre.max.x = 60 > 50. Allow movement back toward inside up to the opposite
+    // wall: lower bound is env_min.x - pre.min.x = -50 - 55 = -105. A small
+    // inward delta is preserved.
+    let pre = aabb([55.0, -1.0, 0.0], [60.0, 1.0, 2.0]);
+    let delta = Vector3D::new([-3.0, 0.0, 0.0]);
+    let [x, _, _] = volume().clamp_translation_delta(&pre, delta).coords();
+    assert_approx_eq!(f32, x, -3.0);
+}
+
+#[test]
+fn z_floor_is_one_sided() {
+    // Resting on the plate: pre.min.z = 0. -Z motion is blocked, +Z motion is
+    // allowed up to env_max.z - pre.max.z = 80 - 5 = 75.
+    let pre = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 5.0]);
+    let [_, _, down_z] = volume()
+        .clamp_translation_delta(&pre, Vector3D::new([0.0, 0.0, -2.0]))
+        .coords();
+    assert_approx_eq!(f32, down_z, 0.0);
+    let [_, _, up_z] = volume()
+        .clamp_translation_delta(&pre, Vector3D::new([0.0, 0.0, 100.0]))
+        .coords();
+    assert_approx_eq!(f32, up_z, 75.0);
+}
+
+#[test]
+fn aabb_larger_than_envelope_clamps_to_zero_on_that_axis() {
+    // pre.x = [-200, 200] is wider than envelope on X. Y/Z fit.
+    let pre = aabb([-200.0, -1.0, 0.0], [200.0, 1.0, 2.0]);
+    let [x, y, z] = volume()
+        .clamp_translation_delta(&pre, Vector3D::new([10.0, 5.0, 5.0]))
+        .coords();
+    assert_approx_eq!(f32, x, 0.0);
+    assert_approx_eq!(f32, y, 5.0);
+    assert_approx_eq!(f32, z, 5.0);
+}
+
+#[test]
+fn diagonal_delta_slides_along_a_wall() {
+    // Touching the +X wall, with room on Y and Z. A diagonal +X+Y push clamps X
+    // to 0 and lets Y through unchanged: the box slides along the wall.
+    let pre = aabb([48.0, -1.0, 0.0], [50.0, 1.0, 2.0]);
+    let [x, y, z] = volume()
+        .clamp_translation_delta(&pre, Vector3D::new([5.0, 4.0, 0.0]))
+        .coords();
+    assert_approx_eq!(f32, x, 0.0);
+    assert_approx_eq!(f32, y, 4.0);
+    assert_approx_eq!(f32, z, 0.0);
+}
+
+#[test]
+fn a_box_flush_with_both_walls_of_an_axis_cannot_move_along_it() {
+    // The box spans X from -50 to 50, flush with both walls: the range of X is
+    // [0, 0].
+    let pre = aabb([-50.0, -1.0, 0.0], [50.0, 1.0, 2.0]);
+    let [x, _, _] = volume()
+        .clamp_translation_delta(&pre, Vector3D::new([7.0, 0.0, 0.0]))
+        .coords();
+    assert_approx_eq!(f32, x, 0.0);
+}
+
+#[test]
+fn the_clamp_stops_at_the_f32_corner() {
+    // The X corner is 109.44_f32 (109.44000244140625). From a box whose maximum
+    // X is 100, the room is 9.44000244140625, exact in f32; on the f64 corner
+    // it would be 9.43999958038330078125, the f32 of 9.44.
+    let plate = BuildVolume::new(218.88, 100.0, 100.0).unwrap();
+    let pre = aabb([0.0, 0.0, 0.0], [100.0, 1.0, 1.0]);
+    let [x, _, _] = plate
+        .clamp_translation_delta(&pre, Vector3D::new([20.0, 0.0, 0.0]))
+        .coords();
+    assert_eq!(x, 9.440_002);
 }
 
 #[test]

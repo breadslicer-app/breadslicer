@@ -12,7 +12,7 @@
 use std::fmt;
 
 use sc_mesh_core::primitives::CoordAxis;
-use sc_mesh_core::{Aabb, Vertex};
+use sc_mesh_core::{Aabb, Vector3D, Vertex};
 
 use crate::length::{LengthOutOfRange, PositiveFiniteMm};
 use crate::wall::{Side, Wall, Walls};
@@ -185,26 +185,7 @@ impl BuildVolume {
     /// Returns the walls of the envelope that `aabb` reaches strictly past,
     /// compared in f32 with the corners of [`Self::envelope_aabb`].
     pub fn walls_crossed_by(&self, aabb: &Aabb) -> Walls {
-        let envelope = self.envelope_aabb();
-        let (env_min, env_max) = (envelope.min().coords(), envelope.max().coords());
-        let (min, max) = (aabb.min().coords(), aabb.max().coords());
-        CoordAxis::ALL
-            .into_iter()
-            .flat_map(|axis| {
-                let i = axis.as_index();
-                [
-                    (min[i] < env_min[i]).then_some(Wall {
-                        axis,
-                        side: Side::Min,
-                    }),
-                    (max[i] > env_max[i]).then_some(Wall {
-                        axis,
-                        side: Side::Max,
-                    }),
-                ]
-            })
-            .flatten()
-            .collect()
+        walls_crossed(&self.envelope_aabb(), aabb)
     }
 
     /// Returns whether `aabb` lies inside the envelope, walls included. An
@@ -212,4 +193,79 @@ impl BuildVolume {
     pub fn contains(&self, aabb: &Aabb) -> bool {
         aabb.is_empty() || self.walls_crossed_by(aabb).is_empty()
     }
+
+    /// Returns the largest part of `delta`, per axis, by which `aabb` can move
+    /// and stay inside the envelope, computed in f32 on the corners of
+    /// [`Self::envelope_aabb`]. An axis on which `aabb` already crosses a wall
+    /// cannot get worse.
+    ///
+    /// On each axis, with `min` and `max` the bounds of `aabb`, `env_min` and
+    /// `env_max` those of the envelope, and `d` the component of `delta`:
+    ///
+    /// - no wall crossed: `d` is clamped to `[env_min - min, env_max - max]`,
+    ///   the range that keeps `aabb` inside, which holds 0;
+    /// - `min < env_min` (past the `Min` wall): a negative `d` becomes 0, and a
+    ///   positive `d` stops at `env_max - max`;
+    /// - `max > env_max` (past the `Max` wall): a positive `d` becomes 0, and a
+    ///   negative `d` stops at `env_min - min`;
+    /// - both walls crossed: `d` becomes 0.
+    ///
+    /// A component of `delta` inside its range comes back unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a bound of `aabb` is NaN.
+    pub fn clamp_translation_delta(&self, aabb: &Aabb, delta: Vector3D<f32>) -> Vector3D<f32> {
+        let envelope = self.envelope_aabb();
+        let crossed = walls_crossed(&envelope, aabb);
+        let (env_min, env_max) = (envelope.min().coords(), envelope.max().coords());
+        let (min, max) = (aabb.min().coords(), aabb.max().coords());
+        let d = delta.coords();
+        Vector3D::new(CoordAxis::ALL.map(|axis| {
+            let i = axis.as_index();
+            let lower = if crossed.contains(Wall {
+                axis,
+                side: Side::Min,
+            }) {
+                0.0
+            } else {
+                env_min[i] - min[i]
+            };
+            let upper = if crossed.contains(Wall {
+                axis,
+                side: Side::Max,
+            }) {
+                0.0
+            } else {
+                env_max[i] - max[i]
+            };
+            // For a box without a NaN bound, `lower <= 0 <= upper` holds, so
+            // `0` is always feasible and the clamp is well-defined even when
+            // `lower == upper`.
+            d[i].clamp(lower, upper)
+        }))
+    }
+}
+
+/// Returns the walls of `envelope` that `aabb` reaches strictly past.
+fn walls_crossed(envelope: &Aabb, aabb: &Aabb) -> Walls {
+    let (env_min, env_max) = (envelope.min().coords(), envelope.max().coords());
+    let (min, max) = (aabb.min().coords(), aabb.max().coords());
+    CoordAxis::ALL
+        .into_iter()
+        .flat_map(|axis| {
+            let i = axis.as_index();
+            [
+                (min[i] < env_min[i]).then_some(Wall {
+                    axis,
+                    side: Side::Min,
+                }),
+                (max[i] > env_max[i]).then_some(Wall {
+                    axis,
+                    side: Side::Max,
+                }),
+            ]
+        })
+        .flatten()
+        .collect()
 }

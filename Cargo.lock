@@ -4905,6 +4905,7 @@ dependencies = [
 name = "sc-print-primitives"
 version = "0.2.0"
 dependencies = [
+ "float-cmp 0.10.0",
  "nonempty-collections",
  "sc-mesh-core",
  "serde",

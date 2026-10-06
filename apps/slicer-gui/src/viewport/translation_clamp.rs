@@ -3,38 +3,36 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-edit clamp that keeps a translate operation's transformed AABB
-//! inside the [`BuildVolume`].
+//! Per-edit clamp that keeps a translate operation's transformed AABB inside
+//! the [`BuildVolume`].
 //!
-//! The viewport calls [`clamp_translate_edit`] from the two sites
-//! that build a "translate `before` to `proposed_after`" edit: the
-//! gizmo-translate-handle drag (in [`super::gizmo_fsm`]) and the
-//! keyboard `Translate`-focus integrator (in [`super::keyboard_drive`]).
-//! Other operation kinds (rotate, scale) are not clamped: their
-//! composed translation component is a side effect of the pivot
-//! pre/post-translate, and constraining it would surprise the user.
+//! The viewport calls [`clamp_translate_edit`] from the 2 sites that build a
+//! "translate `before` to `proposed_after`" edit: the gizmo-translate-handle
+//! drag (in [`super::gizmo_fsm`]) and the keyboard `Translate`-focus integrator
+//! (in [`super::keyboard_drive`]). Other operation kinds (rotate, scale) are
+//! not clamped: their composed translation component is a side effect of the
+//! pivot pre/post-translate, and constraining it would surprise the user.
 //!
-//! The helper assumes `proposed_after = Affine(delta).compose(before)`
-//! for some translation `delta` (which is how both call sites build
-//! it). It extracts that delta as the difference of the two
-//! transforms' translation components, runs it through
-//! [`BuildVolume::clamp_translation_delta`], and rebuilds the result
-//! by composing the clamped delta onto `before`.
+//! The helper assumes `proposed_after = Affine(delta).compose(before)` for some
+//! translation `delta`, which is how both call sites build it. It extracts that
+//! delta as the difference of the translations of the 2 world transforms, runs
+//! it through [`sc_print_primitives::BuildVolume::clamp_translation_delta`],
+//! and rebuilds the result by composing the clamped delta onto `before`.
 //!
-//! `aabb_pre` comes from `ObjectQuery::transformed_aabb`, which walks
-//! the rotated vertices rather than passing the local AABB through
-//! Arvo. The tight AABB matches the envelope-warning overlay's
-//! per-vertex test, so the two never disagree: an axis is clamped iff
-//! some vertex would breach the corresponding wall.
+//! `aabb_pre` comes from `ObjectQuery::transformed_aabb`, which walks the
+//! transformed vertices instead of passing the local AABB through Arvo. The
+//! renderer tests the box of the same vertices for the out-of-volume tint and
+//! the wall stripes, so the 2 agree up to rounding: the renderer applies the
+//! whole world matrix in f32, while `transformed_aabb` applies the linear part
+//! in f64, rounds each vertex to f32, and adds the translation in f32.
 //!
-//! `before` is the leaf's parent-relative transform (as carried by
-//! the gizmo / keyboard FSMs); the AABB the envelope cares about is
-//! in world space. The helper composes the leaf's `parent_world`
-//! onto `before` before walking the mesh, so a non-identity ancestor
-//! transform (e.g. the placement translation `place_on_plate` writes
-//! onto the scene root) is honoured.
+//! `before` is the leaf's parent-relative transform (as carried by the gizmo
+//! and keyboard FSMs), and the wall test needs the AABB in world space. The
+//! helper composes the leaf's `parent_world` onto `before` before walking the
+//! mesh, so a non-identity ancestor transform (e.g. the placement translation
+//! that `place_on_plate` writes onto the scene root) is honoured.
 
-use glam::Vec3;
+use sc_mesh_core::Vector3D;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
@@ -42,25 +40,20 @@ use sc_scene::NodeId;
 
 use crate::build_volume::BuildVolume;
 
-/// Clamp a translate-mode edit so the object's transformed AABB
-/// stays inside `build_volume`. Returns:
+/// Clamps a translate edit so that the object's transformed AABB stays inside
+/// `build_volume`. Returns:
 ///
-/// - `proposed_after` unchanged when the object is missing, has no
-///   local AABB (empty mesh), or no clamping was needed.
-/// - `before` when the clamp blocks the entire delta (motion was
-///   zero on every axis after clamping). Preserves the
-///   `Transform3D::Identity` variant when `before` is identity.
+/// - `proposed_after` unchanged when the object is missing, has no local AABB
+///   (empty mesh), or needs no clamp.
+/// - `before` when the clamp blocks the whole delta (the clamped motion is 0 on
+///   every axis). This keeps the `Transform3D::Identity` variant of an identity
+///   `before`.
 /// - `Affine(clamped_delta).compose(before)` otherwise.
 ///
-/// `before` is the leaf's parent-relative transform. The world-space
-/// AABB is computed by composing the leaf's `parent_world` onto
-/// `before`. The translation delta passed to
-/// [`BuildVolume::clamp_translation_delta`] is the world-space delta,
-/// derived from the world translations of `before` and
-/// `proposed_after`; the result is rewritten back as a world-space
-/// translation composed with `before` (the leaf's parent ancestor
-/// is currently a pure translation in every production scene, so the
-/// world delta lands on the leaf transform unchanged).
+/// `before` is the leaf's parent-relative transform, and the clamp works on the
+/// world-space delta between `before` and `proposed_after`. The result is
+/// correct when the leaf's parent chain is a pure translation, because only
+/// then is that world-space delta also the delta in the parent's frame.
 pub(super) fn clamp_translate_edit(
     spatial: &SceneSpatial,
     node_id: NodeId,
@@ -78,26 +71,27 @@ pub(super) fn clamp_translate_edit(
         return proposed_after;
     };
     let delta = translation_delta(world_before, world_after);
-    let clamped = build_volume.clamp_translation_delta(aabb_pre, delta);
+    let clamped = build_volume
+        .volume()
+        .clamp_translation_delta(&aabb_pre, delta);
     if clamped == delta {
         return proposed_after;
     }
-    if clamped == Vec3::ZERO {
+    if clamped == Vector3D::new([0.0; 3]) {
         return before;
     }
-    let translation =
-        AffineTransform3D::from_translation([clamped.x as f64, clamped.y as f64, clamped.z as f64]);
+    let translation = AffineTransform3D::from_translation(clamped.coords().map(f64::from));
     Transform3D::Affine(translation).compose(&before)
 }
 
-fn translation_delta(before: Transform3D, after: Transform3D) -> Vec3 {
+fn translation_delta(before: Transform3D, after: Transform3D) -> Vector3D<f32> {
     let t_before = translation_of(before);
     let t_after = translation_of(after);
-    Vec3::new(
+    Vector3D::new([
         (t_after[0] - t_before[0]) as f32,
         (t_after[1] - t_before[1]) as f32,
         (t_after[2] - t_before[2]) as f32,
-    )
+    ])
 }
 
 fn translation_of(t: Transform3D) -> [f64; 3] {
@@ -122,10 +116,9 @@ mod translation_clamp_tests {
         BuildVolume::new(100.0, 60.0, 80.0)
     }
 
-    /// Single-leaf scene under a Group root, mirroring what the
-    /// loader pipeline installs: every file-format reader funnels its
-    /// objects under an identity-Group root. Tests that inspect
-    /// `graph().roots()[0]` rely on that wrapping Group being present.
+    /// Builds a scene with 1 leaf under an identity Group root, as the OBJ and
+    /// 3MF readers build theirs. Tests that inspect `graph().roots()[0]` rely
+    /// on that Group.
     fn one_leaf_spatial(mesh: IndexedMesh) -> SceneSpatial {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -142,10 +135,10 @@ mod translation_clamp_tests {
     }
 
     fn spatial_with_centred_unit_cube() -> SceneSpatial {
-        // Eight-vertex axis-aligned unit cube centred on (0, 0, 1):
-        // [-1, 1]^2 on X/Y, [0, 2] on Z. Vertices reach every AABB
-        // corner, so per-vertex and Arvo agree under any rotation,
-        // which is what the rotation-coverage tests below rely on.
+        // 8-vertex axis-aligned cube centred on (0, 0, 1): [-1, 1]^2 on X/Y,
+        // [0, 2] on Z. Its vertices reach every corner of its AABB, so its
+        // tight box and Arvo's box agree under any rotation, which the rotation
+        // tests below rely on.
         one_leaf_spatial(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -163,12 +156,10 @@ mod translation_clamp_tests {
     }
 
     fn spatial_with_octahedron() -> SceneSpatial {
-        // Six unit-axis vertices: AABB is [-1, 1]^3 but no vertex
-        // reaches a corner. The local AABB is the same as a unit
-        // cube's, so this is the worst-case fixture for the old
-        // Arvo-based clamp: after a 45° Z rotation, Arvo extends X
-        // and Y by sqrt(2) while the true rotated-mesh AABB stays
-        // at sqrt(2) / 2 on those axes.
+        // 6 unit-axis vertices: the AABB is [-1, 1]^3, but no vertex reaches a
+        // corner, so this is the worst case for a clamp on Arvo's box: after a
+        // 45 degree rotation about Z, Arvo's box reaches sqrt(2) on X and Y,
+        // while the box of the rotated vertices reaches sqrt(2) / 2.
         one_leaf_spatial(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -183,14 +174,12 @@ mod translation_clamp_tests {
         })
     }
 
-    /// Builds the same centred unit cube as
-    /// [`spatial_with_centred_unit_cube`] but with a non-identity
-    /// translation written onto the scene root (mimicking the
-    /// loader's `place_on_plate`: the placement delta lives on the
-    /// root Group, leaves keep their authored local transform).
-    /// Without the world-space AABB fix, the clamp would treat the
-    /// leaf's identity local transform as the world transform and
-    /// either over-block or fail to block the drag.
+    /// Builds the cube of [`spatial_with_centred_unit_cube`] with a
+    /// non-identity translation on its Group root, as the loader's
+    /// `place_on_plate` leaves a scene whose root is a Group: the placement
+    /// delta is on the root, and the leaf keeps its local transform. A clamp
+    /// that took the leaf's local transform as its world transform would block
+    /// too much or too little.
     fn spatial_with_unit_cube_under_root_translation(root_translation: [f64; 3]) -> SceneSpatial {
         use sc_scene::NodeId;
 
@@ -267,8 +256,8 @@ mod translation_clamp_tests {
     #[test]
     fn delta_breaching_plus_x_clamps_x_only() {
         let spatial = spatial_with_centred_unit_cube();
-        // Cube AABB is [-1, 1]; envelope is [-50, 50] on X. Room to
-        // +X = 49. Asking for +60 should clamp to +49.
+        // Cube AABB is [-1, 1]; envelope is [-50, 50] on X. Room to +X = 49.
+        // Asking for +60 should clamp to +49.
         let proposed = translate([60.0, 0.0, 0.0]);
         let out = clamp_translate_edit(
             &spatial,
@@ -285,9 +274,8 @@ mod translation_clamp_tests {
 
     #[test]
     fn diagonal_delta_against_plus_x_wall_slides_along_y() {
-        // Pre-translate the cube to the +X wall, then ask for a
-        // diagonal +X / +Y move. X is fully blocked; Y passes
-        // through.
+        // Pre-translate the cube to the +X wall, then ask for a diagonal move
+        // of +5 on X and +4 on Y. X is fully blocked; Y passes through.
         let spatial = spatial_with_centred_unit_cube();
         let before = translate([49.0, 0.0, 0.0]); // cube max.x = 50, flush against +X wall.
         let proposed = translate([54.0, 4.0, 0.0]); // +5 on X, +4 on Y from before.
@@ -299,12 +287,9 @@ mod translation_clamp_tests {
     }
 
     #[test]
-    fn fully_blocked_delta_returns_before_preserving_identity_variant() {
-        // Cube already touching +X wall; asking for further +X is
-        // blocked entirely. The result must equal `before` *as the
-        // same variant*: passing in `Identity` and getting back an
-        // `Affine` zero would change the document's variant
-        // unnecessarily.
+    fn fully_blocked_delta_returns_before() {
+        // The cube already touches the +X wall, and the move asks for more +X:
+        // the whole delta is blocked, and the result is `before`.
         let spatial = spatial_with_centred_unit_cube();
         let before = translate([49.0, 0.0, 0.0]);
         let proposed = translate([54.0, 0.0, 0.0]);
@@ -336,21 +321,13 @@ mod translation_clamp_tests {
 
     #[test]
     fn root_translation_offsets_world_aabb_so_leaf_can_drag_back_inside() {
-        // Regression for the `place_on_plate`-shaped scene: the
-        // placement delta lives on the root, the leaf carries
-        // identity local. With the cube's local AABB at
-        // `[-1, 1] x [-1, 1] x [0, 2]` and the root translated by
-        // (+69, 0, 0), the WORLD AABB.max.x is 70, past the envelope
-        // wall at +50. An inward drag (-10 on X composed onto the
-        // leaf's identity local) must be allowed, exactly the same
-        // way it would be on a flat scene where the leaf's own
-        // transform carried the (+69, 0, 0) offset.
-        //
-        // Before the fix, `transformed_aabb(leaf_local)` would have
-        // produced the LOCAL AABB (no offset), looking like both
-        // walls were inside the envelope; the helper would have
-        // either pass-throughed (wrong-but-permissive) or blocked
-        // incorrectly when combined with an outward proposal.
+        // A scene as `place_on_plate` leaves it: the placement delta is on the
+        // root, and the leaf's local transform is the identity. With the cube's
+        // local AABB at `[-1, 1] x [-1, 1] x [0, 2]` and the root translated by
+        // (+69, 0, 0), the world AABB's maximum X is 70, past the envelope wall
+        // at +50. An inward drag (-10 on X, composed onto the leaf's identity
+        // local transform) must be allowed, as on a flat scene where the leaf's
+        // own transform carries the (+69, 0, 0) offset.
         let spatial = spatial_with_unit_cube_under_root_translation([69.0, 0.0, 0.0]);
         let before = Transform3D::Identity;
         let proposed = translate([-10.0, 0.0, 0.0]); // inward
@@ -363,13 +340,11 @@ mod translation_clamp_tests {
 
     #[test]
     fn root_translation_offsets_world_aabb_so_further_outward_is_blocked() {
-        // Sibling of the previous regression: the cube's WORLD AABB
-        // sticks past +X = 50 because of the root translation. A
-        // further outward drag (+5 on X) must be clamped to zero,
-        // returning the leaf's `before` unchanged. The bug being
-        // pinned here is that without parent_world composition, the
-        // helper would mistakenly let the drag through (LOCAL AABB
-        // is inside the envelope), pushing the object further out.
+        // As in the previous test, the cube's world AABB reaches past +X = 50
+        // because of the root translation. A further outward drag (+5 on X) is
+        // clamped to 0, and the result is the leaf's `before`. A clamp on the
+        // local AABB, which is inside the envelope, would let the drag through
+        // and push the object further out.
         let spatial = spatial_with_unit_cube_under_root_translation([69.0, 0.0, 0.0]);
         let before = Transform3D::Identity;
         let proposed = translate([5.0, 0.0, 0.0]); // outward
@@ -379,10 +354,9 @@ mod translation_clamp_tests {
 
     #[test]
     fn root_translation_z_floor_blocks_downward_through_plate() {
-        // The plate-placement case the GUI actually exercises: the
-        // loader translates the root so the cube's bottom rests on
-        // Z = 0. Asking to translate the leaf by -1 on Z (the
-        // textbook "below the plate" case) must be blocked.
+        // The scene of the loader's placement: the root carries a translation,
+        // 0 here, and the cube's bottom rests on Z = 0. A move of -1 on Z,
+        // below the plate, is blocked.
         let spatial = spatial_with_unit_cube_under_root_translation([0.0, 0.0, 0.0]);
         let before = Transform3D::Identity;
         let proposed = translate([0.0, 0.0, -1.0]);
@@ -393,8 +367,8 @@ mod translation_clamp_tests {
     #[test]
     fn empty_mesh_is_pass_through() {
         let spatial = spatial_with_empty_mesh();
-        // Wildly out-of-bounds delta: with no AABB to constrain,
-        // the helper returns proposed_after unchanged.
+        // Wildly out-of-bounds delta: with no AABB to constrain, the helper
+        // returns proposed_after unchanged.
         let proposed = translate([10000.0, 0.0, 0.0]);
         let out = clamp_translate_edit(
             &spatial,
@@ -408,9 +382,9 @@ mod translation_clamp_tests {
 
     #[test]
     fn non_leaf_node_is_pass_through() {
-        // Group nodes (e.g. the scene root) carry no resolvable mesh,
-        // so SceneSpatial::leaf returns None and the helper short-
-        // circuits to the unchanged proposed transform.
+        // Group nodes (e.g. the scene root) carry no resolvable mesh, so
+        // SceneSpatial::leaf returns None and the helper returns the proposed
+        // transform unchanged.
         let spatial = spatial_with_centred_unit_cube();
         let root_id = spatial.graph().roots()[0];
         let proposed = translate([10000.0, 0.0, 0.0]);
@@ -421,8 +395,8 @@ mod translation_clamp_tests {
     #[test]
     fn z_floor_is_one_sided() {
         let spatial = spatial_with_centred_unit_cube();
-        // Cube AABB.min.z = 0 with identity. -2 on Z would go
-        // below the plate; clamped to 0.
+        // Cube AABB.min.z = 0 with identity. -2 on Z would go below the plate;
+        // clamped to 0.
         let down = translate([0.0, 0.0, -2.0]);
         let out_down = clamp_translate_edit(
             &spatial,
@@ -433,7 +407,8 @@ mod translation_clamp_tests {
         );
         assert_eq!(out_down, Transform3D::Identity);
 
-        // +50 on Z is fine (cube max.z = 2 → room to ceiling = 78).
+        // +50 on Z is fine: the cube's max.z is 2, so 78 mm of room remain
+        // below the ceiling.
         let up = translate([0.0, 0.0, 50.0]);
         let out_up = clamp_translate_edit(
             &spatial,
@@ -459,14 +434,11 @@ mod translation_clamp_tests {
 
     #[test]
     fn rotated_octahedron_can_travel_further_than_arvo_would_allow() {
-        // Regression for the over-clamping bug: a 45° Z rotation of
-        // the unit-axis octahedron has true rotated-mesh
-        // half-extents of √2 / 2 (≈ 0.707) on X. Arvo on the local
-        // AABB (the unit cube) would report √2 (≈ 1.414). With the
-        // envelope at X ∈ [-50, 50], the tight clamp lets the mesh
-        // travel up to 50 - √2 / 2 ≈ 49.29 on +X; Arvo would have
-        // stopped it at 50 - √2 ≈ 48.59. Ask for +60; the new path
-        // must report ~49.29, not ~48.59.
+        // After a 45 degree rotation about Z, the octahedron's vertices reach
+        // sqrt(2)/2 (about 0.707) on X, while Arvo's box of its local AABB
+        // reaches sqrt(2) (about 1.414). With the envelope at X in [-50, 50], a
+        // move of +60 must stop at 50-sqrt(2)/2 (about 49.29), past where a
+        // clamp on Arvo's box would stop: 50-sqrt(2) (about 48.59).
         let spatial = spatial_with_octahedron();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
@@ -475,8 +447,7 @@ mod translation_clamp_tests {
         let expected = 50.0 - f64::from(std::f32::consts::FRAC_1_SQRT_2);
         let arvo_bound = 50.0 - f64::from(std::f32::consts::SQRT_2);
         assert_approx_eq!(f64, t[0], expected, epsilon = 1e-4);
-        // Hard guard against regressing to the Arvo bound: the new
-        // result must be strictly past where Arvo would have stopped.
+        // The result must be past where a clamp on Arvo's box would stop.
         assert!(
             t[0] > arvo_bound + 0.1,
             "rotated octahedron over-clamped: got {}, Arvo bound was {}",
@@ -487,11 +458,11 @@ mod translation_clamp_tests {
 
     #[test]
     fn rotated_cube_clamps_at_arvo_bound_because_it_fills_its_aabb() {
-        // The cube fills its local AABB, so the tight and Arvo
-        // bounds coincide. A 45° Z rotation of the centred unit
-        // cube extends X to ±√2 around the cube centre. With the
-        // envelope X ∈ [-50, 50], asking for +60 on X must clamp to
-        // (envelope_max - rotated_max) = 50 - √2 ≈ 48.586.
+        // The cube fills its local AABB, so its tight box and Arvo's box
+        // coincide. A 45 degree rotation about Z extends the cube on X to
+        // sqrt(2) on each side of its centre. With the envelope X in [-50, 50],
+        // a move of +60 on X must clamp to 50-sqrt(2), about 48.586, the room
+        // that is left.
         let spatial = spatial_with_centred_unit_cube();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
@@ -503,10 +474,9 @@ mod translation_clamp_tests {
 
     #[test]
     fn small_in_bounds_delta_passes_through_under_rotation() {
-        // A cube already away from any wall, rotated 45° about Z,
-        // gets a small in-bounds delta. The result must be the
-        // unchanged `proposed`, not silently clamped: the tighten
-        // must not introduce a false clamp for cubes either.
+        // A cube away from any wall, rotated 45 degrees about Z, gets a small
+        // in-bounds delta. The result must be `proposed` unchanged, with no
+        // false clamp.
         let spatial = spatial_with_centred_unit_cube();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([2.0, 1.0, 3.0], std::f64::consts::FRAC_PI_4);

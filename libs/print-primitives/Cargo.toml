@@ -18,6 +18,7 @@ nonempty-collections = { workspace = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+float-cmp = { workspace = true }
 toml_edit = { workspace = true }
 
 [features]
