@@ -3,29 +3,27 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Integration tests that exercise the GUI's `Renderer` end-to-end
-//! against real wgpu devices, including the parts the
-//! `mesh_render::tests_gpu` module cannot reach
-//! without a second device (the `install_scene` device-mismatch
-//! branch) or the Slint texture surface (`slint::Image::try_from`).
+//! Integration tests that exercise the GUI's `Renderer` end-to-end against real
+//! wgpu devices, including the parts the `mesh_render::tests_gpu` module cannot
+//! reach without a second device (the `install_scene` device-mismatch branch)
+//! or the Slint texture surface (`slint::Image::try_from`).
 //!
-//! The render tests run once per adapter wgpu reports, so on a machine
-//! with several GPUs the renderer is checked against every one of
-//! them. Tests soft-skip when no adapter is available, so CI without a
-//! software-wgpu provider does not block.
+//! The render tests run once per adapter wgpu reports, so on a machine with
+//! several GPUs the renderer is checked against every one of them. Tests
+//! soft-skip when no adapter is available, so CI without a software-wgpu
+//! provider does not block.
 //!
 //! Concurrency note: the tests take turns on the GPU. `with_test_gpus`
-//! serialises every Vulkan call this file makes, opens one device per
-//! adapter for the length of a single test, and closes them again
-//! before the next test gets its turn. Two separate crashes forced
-//! that shape, each killing the process with SIGSEGV on a few percent
-//! of runs. Building a `wgpu::Instance` on one thread while another
-//! thread had work in flight through an existing device made the
-//! Vulkan loader read through a torn pointer inside
-//! `vkSetDebugUtilsObjectNameEXT`. Holding devices open on several
-//! drivers until the process exited instead moved the fault into
-//! teardown, where it jumped through a dangling dispatch pointer.
-//! Nothing GPU-shaped may outlive the turn that opened it.
+//! serialises every Vulkan call this file makes, opens 1 device per adapter for
+//! the length of a single test, and closes them again before the next test gets
+//! its turn. 2 separate crashes forced that shape, each killing the process
+//! with SIGSEGV on a few percent of runs. Building a `wgpu::Instance` on 1
+//! thread while another thread had work in flight through an existing device
+//! made the Vulkan loader read through a torn pointer inside
+//! `vkSetDebugUtilsObjectNameEXT`. Holding devices open on several drivers
+//! until the process exited instead moved the fault into teardown, where it
+//! jumped through a dangling dispatch pointer. No GPU object may outlive the
+//! turn that opened it.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -36,7 +34,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeId, NodeKind};
 
-use sc_slicer_gui::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
+use sc_slicer_gui::build_volume::NO_PRINTER_BUILD_VOLUME;
 use sc_slicer_gui::camera::OrbitCamera;
 use sc_slicer_gui::mesh_render::{
     DeviceLoss, DeviceToken, Renderer, SceneRender, scene_upload::GpuScene,
@@ -44,14 +42,14 @@ use sc_slicer_gui::mesh_render::{
 
 use slint::wgpu_30::wgpu;
 
-/// Backends the sweep covers: everything wgpu was compiled with except
-/// the GL/EGL fallback, which the GUI does not ship on. `Backends::all()`
-/// also names the no-op backend, but that one stays inert unless it is
-/// switched on through `BackendOptions`, which this file never does.
+/// Backends the sweep covers: everything wgpu was compiled with except the
+/// GL/EGL fallback, which the GUI does not ship on. `Backends::all()` also
+/// names the no-op backend, but that one stays inert unless it is switched on
+/// through `BackendOptions`, which this file never does.
 const SWEEP_BACKENDS: wgpu::Backends = wgpu::Backends::all().difference(wgpu::Backends::GL);
 
-/// One adapter opened for the sweep, carrying a readable name so a
-/// failing assertion says which GPU produced it.
+/// An adapter opened for the sweep, carrying a readable name so a failing
+/// assertion says which GPU produced it.
 struct TestGpu {
     label: String,
     device: wgpu::Device,
@@ -60,23 +58,23 @@ struct TestGpu {
 
 /// The devices a single test runs against.
 struct TestGpus {
-    /// One open device per adapter, in enumeration order.
+    /// 1 open device per adapter, in enumeration order.
     sweep: Vec<TestGpu>,
-    /// Declared after `sweep` so it is dropped once every device built
-    /// from it is already gone.
+    /// Declared after `sweep` so it is dropped once every device built from it
+    /// is already gone.
     instance: wgpu::Instance,
 }
 
-/// Grants one test at a time the right to call into wgpu.
+/// Grants 1 test at a time the right to call into wgpu.
 static GPU_TURN: Mutex<()> = Mutex::new(());
 
-/// Runs `body` against one freshly opened device per adapter, with no
-/// other test touching the GPU meanwhile, then closes them again.
-/// `body` does not run when the machine has no usable adapter.
+/// Runs `body` against 1 freshly opened device per adapter, with no other test
+/// touching the GPU meanwhile, then closes them again. `body` does not run when
+/// the machine has no usable adapter.
 fn with_test_gpus(body: impl FnOnce(&TestGpus)) {
-    // A test that panics poisons the lock. The failure is already
-    // being reported on its own thread, and the remaining tests still
-    // need their turn, so the poison itself is not interesting here.
+    // A test that panics poisons the lock. The failure is already being
+    // reported on its own thread, and the remaining tests still need their
+    // turn, so the poison itself is not interesting here.
     let _turn = GPU_TURN
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -118,18 +116,17 @@ impl TestGpus {
         Self { sweep, instance }
     }
 
-    /// A device independent of every entry in `sweep`, for the
-    /// device-mismatch test. Opened from a freshly enumerated
-    /// `Adapter` rather than from one the sweep already used: WebGPU
-    /// gives an adapter a single device, and wgpu only declines to
-    /// enforce that.
+    /// Opens a device independent of every entry in `sweep`, for the
+    /// device-mismatch test. It comes from a freshly enumerated `Adapter`
+    /// rather than from one the sweep already used: WebGPU gives an adapter a
+    /// single device, and wgpu only declines to enforce that.
     fn open_spare_device(&self) -> Option<(wgpu::Device, wgpu::Queue)> {
         let adapter = adapters(&self.instance).into_iter().next()?;
         open_device(&adapter, "integration-render spare device")
     }
 
-    /// Lets every queue drain before the devices and then the instance
-    /// are destroyed, so nothing is still in flight at teardown.
+    /// Lets every queue drain before the devices and then the instance are
+    /// destroyed, so nothing is still in flight at teardown.
     fn close(self) {
         for gpu in &self.sweep {
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
@@ -141,9 +138,9 @@ fn adapters(instance: &wgpu::Instance) -> Vec<wgpu::Adapter> {
     pollster::block_on(instance.enumerate_adapters(SWEEP_BACKENDS))
 }
 
-/// Opens a device with the default-limits profile Slint requests.
-/// `None` for an adapter that cannot satisfy it, which leaves that
-/// adapter out of the sweep instead of failing the run.
+/// Opens a device with the default-limits profile Slint requests. Returns
+/// `None` for an adapter that cannot satisfy it, which leaves that adapter out
+/// of the sweep instead of failing the run.
 fn open_device(adapter: &wgpu::Adapter, label: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(label),
@@ -200,11 +197,9 @@ fn first_leaf(graph: &Scene) -> NodeId {
     panic!("test fixture has no leaves");
 }
 
-/// T22: drive the renderer end-to-end and confirm the produced
-/// `wgpu::Texture` is acceptable to `slint::Image::try_from`.
-/// Equivalent to the production frame-handoff at the
-/// `slint::Image::try_from(texture)` call in
-/// `viewport::controller::handle_before_rendering`.
+/// Drives the renderer end-to-end and checks that `slint::Image::try_from`
+/// accepts the produced `wgpu::Texture`, as the production frame handoff in
+/// `viewport::controller::on_paint` needs.
 #[test]
 fn render_texture_converts_to_slint_image() {
     with_test_gpus(|gpus| {
@@ -241,7 +236,7 @@ fn render_texture_converts_to_slint_image() {
                         gizmo: None,
                         clip_z: None,
                     }),
-                    HARDCODED_DEFAULT_BUILD_VOLUME,
+                    NO_PRINTER_BUILD_VOLUME,
                     &camera,
                     64,
                     64,
@@ -261,8 +256,8 @@ fn render_texture_converts_to_slint_image() {
     });
 }
 
-/// The slice clip path renders without crashing: a `SceneRender` with a
-/// clip height set still produces a texture, so the mesh shader's clip
+/// Checks that the slice clip path renders without crashing: a `SceneRender`
+/// with a clip height set still produces a texture, so the mesh shader's clip
 /// discard compiles and runs.
 #[test]
 fn render_with_a_slice_clip_produces_a_texture() {
@@ -296,7 +291,7 @@ fn render_with_a_slice_clip_produces_a_texture() {
                         gizmo: None,
                         clip_z: Some(0.5),
                     }),
-                    HARDCODED_DEFAULT_BUILD_VOLUME,
+                    NO_PRINTER_BUILD_VOLUME,
                     &camera,
                     64,
                     64,
@@ -314,25 +309,24 @@ fn render_with_a_slice_clip_produces_a_texture() {
     });
 }
 
-/// T23: a `GpuScene` built against device A must not install on a
-/// `Renderer` built against device B. The renderer must report
-/// `false` (the caller's fallback path in `mesh_loader` then
-/// triggers a recovery upload).
+/// Checks that a `GpuScene` built against device A does not install on a
+/// `Renderer` built against device B: the renderer reports `false`, and its
+/// caller then falls back to the recovery upload.
 #[test]
 fn install_scene_with_mismatched_device_returns_false() {
     with_test_gpus(|gpus| {
-        // Device A: the sweep's first device. Device B: a spare one
-        // opened for this test. Both belong to this test's turn, so
-        // nothing else is calling into wgpu meanwhile.
+        // Device A: the sweep's first device. Device B: a spare one opened for
+        // this test. Both belong to this test's turn, so nothing else is
+        // calling into wgpu meanwhile.
         let device_a = &gpus.sweep[0].device;
         let Some((device_b, queue_b)) = gpus.open_spare_device() else {
             eprintln!("skipping: could not open a second wgpu device");
             return;
         };
 
-        // Two distinct tokens, one per device. install_scene checks
-        // `self.device_token == gpu.device_token()`, so a mismatch must
-        // surface even though both tokens are syntactically `u64`s.
+        // 2 distinct tokens, 1 per device. `install_scene` compares
+        // `self.core.device_token` with `gpu.device_token()`, so a mismatch
+        // must surface even though both tokens are syntactically `u64`s.
         let token_a = DeviceToken::next();
         let token_b = DeviceToken::next();
 

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use sc_print_primitives::PrinterId;
 
-use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
+use crate::build_volume::{BuildVolume, NO_PRINTER_BUILD_VOLUME};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_catalog::ProfileCatalog;
 
@@ -64,7 +64,7 @@ fn default_printer_plate(catalog: &ProfileCatalog, chosen: Option<&PrinterId>) -
     catalog
         .effective_default_printer(chosen)
         .and_then(|printer| catalog.printer_build_volume(&printer))
-        .map_or(HARDCODED_DEFAULT_BUILD_VOLUME, BuildVolume::from)
+        .map_or(NO_PRINTER_BUILD_VOLUME, BuildVolume::from)
 }
 
 #[cfg(test)]
@@ -152,7 +152,7 @@ mod default_envelope_tests {
     fn an_empty_catalog_gives_the_placeholder() {
         let bus = bus_with_default(None);
         let envelope = DefaultEnvelope::new(&bus, cell(ProfileCatalog::default()));
-        assert_eq!(envelope.current(), HARDCODED_DEFAULT_BUILD_VOLUME);
+        assert_eq!(envelope.current(), NO_PRINTER_BUILD_VOLUME);
     }
 
     #[test]
@@ -160,7 +160,7 @@ mod default_envelope_tests {
         let ghost = PrinterId::new("ghost-printer").expect("valid printer id");
         let bus = bus_with_default(Some(ghost));
         let envelope = DefaultEnvelope::new(&bus, cell(catalog(OTHER, GENERIC)));
-        assert_eq!(envelope.current(), HARDCODED_DEFAULT_BUILD_VOLUME);
+        assert_eq!(envelope.current(), NO_PRINTER_BUILD_VOLUME);
     }
 
     #[test]

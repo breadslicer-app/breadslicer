@@ -3,25 +3,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! End-to-end GPU tests. They construct a fresh wgpu device with the
-//! **default-limits profile** (the same profile Slint uses), so they
-//! catch regressions that would only show up at runtime, most
-//! importantly, any binding type that is gated by a non-default
-//! limit (storage buffers in the vertex stage have
-//! `max_storage_buffers_per_shader_stage = 0` under default limits and
-//! silently broke an earlier draft of the renderer).
+//! End-to-end GPU tests. They run on a wgpu device with the **default-limits
+//! profile** (the same profile Slint uses), so they catch regressions that
+//! would only show up at runtime, most importantly, any binding type that is
+//! gated by a non-default limit (storage buffers in the vertex stage have
+//! `max_storage_buffers_per_shader_stage = 0` under default limits and silently
+//! broke an earlier draft of the renderer).
 //!
-//! The tests soft-skip when no adapter is available (CI environments
-//! without GPU drivers), printing a warning. On a developer's
-//! workstation with a working driver they exercise the full pipeline:
-//! shader compilation, bind-group layout validation, per-frame uniform
-//! writes, and a real draw call against a tiny scene.
+//! The tests soft-skip when no adapter is available (CI environments without
+//! GPU drivers), printing a warning. On a developer's workstation with a
+//! working driver they exercise the full pipeline: shader compilation,
+//! bind-group layout validation, per-frame uniform writes, and a real draw call
+//! against a tiny scene.
 
 use std::sync::Arc;
 
 use super::DeviceToken;
 use super::*;
-use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
+use crate::build_volume::NO_PRINTER_BUILD_VOLUME;
 use crate::gizmo::axis::Axis;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -29,7 +28,8 @@ use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::node::LeafPayload;
 
-/// Loader-faithful empty graph: identity-Group root, no leaves yet.
+/// Builds an empty graph shaped as the loader builds it: an identity group root
+/// and no leaves.
 fn graph_with_group_root() -> (Scene, NodeId) {
     let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
@@ -37,8 +37,8 @@ fn graph_with_group_root() -> (Scene, NodeId) {
     (g, root)
 }
 
-/// Attaches an inline-mesh leaf under `parent` with the given
-/// local transform and returns the leaf's [`NodeId`].
+/// Attaches an inline-mesh leaf under `parent` with the given local transform
+/// and returns the leaf's [`NodeId`].
 fn add_inline_leaf(
     g: &mut Scene,
     parent: NodeId,
@@ -52,15 +52,15 @@ fn add_inline_leaf(
     leaf
 }
 
-/// Build envelope used by the render tests below. Held as a
-/// module-level constant so each test passes the same value to
-/// `render` without extra boilerplate.
-const TEST_BV: BuildVolume = HARDCODED_DEFAULT_BUILD_VOLUME;
+/// Build envelope used by the render tests below. Held as a module-level
+/// constant so each test passes the same value to `render` without extra
+/// boilerplate.
+const TEST_BV: BuildVolume = NO_PRINTER_BUILD_VOLUME;
 
 /// `max_buffer_size` of the small-buffer test device.
 const SMALL_BUFFER_LIMIT: u64 = 1024;
-/// `max_buffer_size` of the tiny-buffer test device: below every
-/// static buffer the renderer uploads, so each of them is refused.
+/// `max_buffer_size` of the tiny-buffer test device: below every static buffer
+/// the renderer uploads, so each of them is refused.
 const TINY_BUFFER_LIMIT: u64 = 64;
 /// `max_texture_dimension_2d` of the small-texture test device.
 const SMALL_TEXTURE_LIMIT: u32 = 256;
@@ -71,29 +71,28 @@ struct TestDevices {
     small_buffers: (wgpu::Device, wgpu::Queue),
     tiny_buffers: (wgpu::Device, wgpu::Queue),
     small_textures: (wgpu::Device, wgpu::Queue),
-    /// `max_bind_groups: 1`: every pipeline with 2 bind groups is
-    /// refused at its layout.
+    /// `max_bind_groups: 1`: every pipeline with 2 bind groups is refused at
+    /// its layout.
     one_bind_group: (wgpu::Device, wgpu::Queue),
-    /// Destroyed by the one test that needs a lost device; no other
-    /// test may use it.
+    /// Destroyed once per process by [`destroyed_test_device`], for the tests
+    /// that need a lost device; no other test may use it.
     doomed: (wgpu::Device, wgpu::Queue),
-    /// Gets the uncaptured-error logger installed by the one test
-    /// that exercises it; no other test may use it. Small-buffer
-    /// limits, so an unscoped oversize buffer is refused.
+    /// Gets the uncaptured-error logger installed by the only test that
+    /// exercises it; no other test may use it. Small-buffer limits, so an
+    /// unscoped oversize buffer is refused.
     logged: (wgpu::Device, wgpu::Queue),
 }
 
-/// Builds the test devices once per process, on one adapter, one
-/// request after the other. Returns `None` if no adapter is
-/// available, the caller soft-skips so CI without a GPU isn't
-/// blocked.
+/// Builds the test devices once per process, on 1 adapter, 1 request after the
+/// other. Returns `None` if no adapter is available or a device request fails;
+/// the caller soft-skips so CI without a GPU isn't blocked.
 ///
-/// One shared adapter across every GPU test, rather than one per
-/// test: concurrent `wgpu::Instance::new` plus `request_adapter`
-/// against the same Vulkan ICD raced and crashed RADV reliably at
-/// `--test-threads=2`, intermittently at higher parallelism. wgpu's
-/// Device and Queue are `Send + Sync` and `Arc`-shaped, so cloning
-/// them out is cheap and concurrent test access is fine.
+/// 1 shared adapter across every GPU test, rather than 1 per test: concurrent
+/// `wgpu::Instance::new` plus `request_adapter` against the same Vulkan ICD
+/// raced and crashed RADV reliably at `--test-threads=2`, intermittently at
+/// higher parallelism. wgpu's Device and Queue are `Send + Sync` and
+/// reference-counted, so cloning them out is cheap and concurrent test access
+/// is fine.
 fn shared_test_devices() -> Option<TestDevices> {
     static DEVICES: std::sync::OnceLock<Option<TestDevices>> = std::sync::OnceLock::new();
     DEVICES
@@ -166,40 +165,40 @@ fn shared_test_devices() -> Option<TestDevices> {
         .clone()
 }
 
-/// The default-limits test device.
+/// Returns the default-limits test device.
 fn shared_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.default_limits)
 }
 
-/// The test device whose `max_buffer_size` is [`SMALL_BUFFER_LIMIT`].
+/// Returns the test device whose `max_buffer_size` is [`SMALL_BUFFER_LIMIT`].
 fn shared_small_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.small_buffers)
 }
 
-/// The test device whose `max_buffer_size` is [`TINY_BUFFER_LIMIT`].
+/// Returns the test device whose `max_buffer_size` is [`TINY_BUFFER_LIMIT`].
 fn shared_tiny_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.tiny_buffers)
 }
 
-/// The test device whose `max_texture_dimension_2d` is
+/// Returns the test device whose `max_texture_dimension_2d` is
 /// [`SMALL_TEXTURE_LIMIT`].
 fn shared_small_texture_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.small_textures)
 }
 
-/// The test device whose `max_bind_groups` is 1.
+/// Returns the test device whose `max_bind_groups` is 1.
 fn shared_one_bind_group_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.one_bind_group)
 }
 
-/// The test device reserved for the error-logger test.
+/// Returns the test device reserved for the error-logger test.
 fn logged_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     shared_test_devices().map(|d| d.logged)
 }
 
-/// The doomed test device, destroyed once per process with a lost
-/// callback that marks the returned flag; every caller sees the same
-/// destroyed device and the same marked flag.
+/// Returns the doomed test device, destroyed once per process with a lost
+/// callback that marks the returned flag; every caller sees the same destroyed
+/// device and the same marked flag.
 fn destroyed_test_device() -> Option<(wgpu::Device, DeviceLoss)> {
     static DESTROYED: std::sync::OnceLock<Option<(wgpu::Device, DeviceLoss)>> =
         std::sync::OnceLock::new();
@@ -252,10 +251,9 @@ fn read_buffer_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::B
     data
 }
 
-/// First reachable leaf's [`NodeId`] in pre-order traversal. The
-/// renderer's selection key is the leaf's stable id, so the
-/// render tests resolve "the only leaf" through this helper
-/// instead of fabricating an id.
+/// Returns the [`NodeId`] of the first reachable leaf in pre-order traversal.
+/// The renderer's selection key is the leaf's stable id, so the render tests
+/// resolve "the only leaf" through this helper instead of fabricating an id.
 fn first_leaf(graph: &Scene) -> NodeId {
     use sc_scene::node::NodeKind;
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
@@ -292,10 +290,9 @@ fn triangle_graph_with_translation(t: AffineTransform3D) -> Scene {
     g
 }
 
-/// Smoke test: `Renderer::new` succeeds against the default-limits
-/// device. The original failure mode this guards against is a
-/// `create_bind_group_layout` validation error coming out of
-/// `Renderer::new`.
+/// Checks that `Renderer::new` succeeds against the default-limits device. The
+/// failure this guards against is a `create_bind_group_layout` validation error
+/// coming out of `Renderer::new`.
 #[test]
 fn renderer_construction_under_default_limits_succeeds() {
     let Some((device, queue)) = shared_test_device() else {
@@ -428,9 +425,8 @@ fn gpu_scene_build_on_a_destroyed_device_turns_the_map_failure_into_an_error_whe
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    // A clear flag is a loss nobody has been told about yet: the
-    // buffer map inside wgpu fails, and that failure must come back
-    // as the typed error.
+    // A clear flag is a loss nobody has been told about yet: the buffer map
+    // inside wgpu fails, and that failure must come back as the typed error.
     let unflagged = DeviceLoss::default();
     let graph = graph_with_one_leaf_of_faces(4);
     let Err(err) = GpuScene::build(&device, DeviceToken::next(), &graph, &unflagged) else {
@@ -443,8 +439,8 @@ fn gpu_scene_build_on_a_destroyed_device_turns_the_map_failure_into_an_error_whe
     );
 }
 
-/// `GpuScene::build` succeeds against the default-limits device
-/// for a non-trivial graph with a non-identity transform.
+/// Checks that `GpuScene::build` succeeds against the default-limits device for
+/// a non-trivial graph with a non-identity transform.
 #[test]
 fn gpu_scene_build_succeeds_under_default_limits() {
     let Some((device, _queue)) = shared_test_device() else {
@@ -455,16 +451,16 @@ fn gpu_scene_build_succeeds_under_default_limits() {
         triangle_graph_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
     let gpu = GpuScene::build(&device, DeviceToken::next(), &graph, &DeviceLoss::default())
         .expect("GpuScene::build should succeed");
-    // Stride must be at least one ModelEntry and a multiple of the
-    // device's reported alignment.
+    // Stride must be at least 1 ModelEntry and a multiple of the device's
+    // reported alignment.
     let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
     assert!(gpu.model_stride() >= MODEL_ENTRY_SIZE);
     assert_eq!(gpu.model_stride() % alignment, 0);
 }
 
-/// `build_with_progress` ticks once per object per pass with
-/// triangle counts: the single-triangle graph yields one flatten
-/// tick and one buffer tick, ending at the doubled total.
+/// Checks that `build_with_progress` ticks once per object per pass with
+/// triangle counts: the single-triangle graph yields 1 flatten tick and 1
+/// buffer tick, ending at the doubled total.
 #[test]
 fn gpu_scene_build_reports_two_pass_triangle_progress() {
     let Some((device, _queue)) = shared_test_device() else {
@@ -494,9 +490,9 @@ fn gpu_scene_build_reports_two_pass_triangle_progress() {
     assert_eq!(ticks, expected);
 }
 
-/// One leaf whose mesh has `face_count` faces over 3 shared
-/// vertices: an index buffer of `12 * face_count` bytes next to a
-/// 36-byte vertex buffer.
+/// Builds a graph with 1 leaf whose mesh has `face_count` faces over 3 shared
+/// vertices: an index buffer of `12 * face_count` bytes next to a 36-byte
+/// vertex buffer.
 fn graph_with_one_leaf_of_faces(face_count: usize) -> Scene {
     let mesh = IndexedMesh {
         meta: None,
@@ -514,7 +510,7 @@ fn graph_with_one_leaf_of_faces(face_count: usize) -> Scene {
     g
 }
 
-/// A leaf whose index buffer is over the device's `max_buffer_size`
+/// Checks that a leaf whose index buffer is over the device's `max_buffer_size`
 /// is refused with an error, not a panic.
 #[test]
 fn gpu_scene_build_refuses_a_leaf_above_the_device_buffer_limit() {
@@ -535,7 +531,7 @@ fn gpu_scene_build_refuses_a_leaf_above_the_device_buffer_limit() {
     assert_eq!(refusal.max_buffer_size, SMALL_BUFFER_LIMIT);
 }
 
-/// A leaf whose index buffer is exactly at the limit builds.
+/// Checks that a leaf whose index buffer is exactly at the limit builds.
 #[test]
 fn gpu_scene_build_accepts_a_leaf_at_the_device_buffer_limit() {
     let Some((device, _queue)) = shared_small_buffer_test_device() else {
@@ -548,12 +544,11 @@ fn gpu_scene_build_accepts_a_leaf_at_the_device_buffer_limit() {
         .expect("a leaf at the limit should build");
 }
 
-/// Full end-to-end render: build the renderer, install a scene
-/// with a non-identity transform, drive a render at a tiny size.
-/// The original storage-buffer-in-vertex bug surfaced as a runtime
-/// panic during `RenderingSetup`'s `Renderer::new`; this test
-/// reproduces that exact code path against the same limits and
-/// would have caught the regression before runtime.
+/// Renders end-to-end: builds the renderer, installs a scene with a
+/// non-identity transform and drives a render at a tiny size. The
+/// storage-buffer-in-vertex bug surfaced as a runtime panic during
+/// `RenderingSetup`'s `Renderer::new`; this test runs that code path against
+/// the same limits and would have caught the regression before runtime.
 #[test]
 fn render_succeeds_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -621,7 +616,7 @@ fn render_succeeds_under_default_limits() {
         .expect("render after the second upload should produce a texture");
 }
 
-/// A buffer the device refuses comes back as `Err`, with the wgpu
+/// Checks that a buffer the device refuses comes back as `Err`, with the wgpu
 /// error, instead of a panic.
 #[test]
 fn create_buffer_reporting_returns_the_devices_refusal_without_panicking() {
@@ -643,7 +638,7 @@ fn create_buffer_reporting_returns_the_devices_refusal_without_panicking() {
     assert!(err.to_string().contains("maximum buffer size"), "{err}");
 }
 
-/// Within the limit the helper hands back a buffer that can be
+/// Checks that within the limit the helper hands back a buffer that can be
 /// mapped, written and unmapped like any other.
 #[test]
 fn create_buffer_reporting_yields_a_usable_buffer_within_the_limit() {
@@ -669,8 +664,8 @@ fn create_buffer_reporting_yields_a_usable_buffer_within_the_limit() {
     assert_eq!(buffer.size(), SMALL_BUFFER_LIMIT);
 }
 
-/// The gizmo geometry is uploaded without mapping: a device that
-/// refuses the buffers answers with `Err`, not a panic.
+/// Checks that a device that refuses the gizmo buffers answers with `Err`, not
+/// a panic; the gizmo geometry is uploaded without mapping.
 #[test]
 fn gizmo_buffers_are_refused_typed_on_a_tiny_buffer_device() {
     let Some((device, queue)) = shared_tiny_buffer_test_device() else {
@@ -684,7 +679,7 @@ fn gizmo_buffers_are_refused_typed_on_a_tiny_buffer_device() {
     assert!(err.to_string().contains("maximum buffer size"), "{err}");
 }
 
-/// Same for the plate geometry, which is uploaded at render time.
+/// Checks the same for the plate geometry, which is uploaded at render time.
 #[test]
 fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
     let Some((device, queue)) = shared_tiny_buffer_test_device() else {
@@ -708,7 +703,7 @@ fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
     assert!(err.to_string().contains("maximum buffer size"), "{err}");
 }
 
-/// `upload_static_buffer` fills the buffer through the queue: the
+/// Checks that `upload_static_buffer` fills the buffer through the queue: the
 /// bytes read back are the bytes handed in.
 #[test]
 fn upload_static_buffer_round_trips_contents() {
@@ -729,8 +724,8 @@ fn upload_static_buffer_round_trips_contents() {
     assert_eq!(read_buffer_back(&device, &queue, &buffer), contents);
 }
 
-/// With the error logger installed, a device error nothing scopes
-/// is logged; the calling thread survives it.
+/// Checks that, with the error logger installed, a device error nothing scopes
+/// is logged and the calling thread survives it.
 #[test]
 fn after_the_error_logger_is_installed_an_unscoped_device_error_no_longer_panics() {
     let Some((device, _queue)) = logged_test_device() else {
@@ -755,9 +750,9 @@ fn after_the_error_logger_is_installed_an_unscoped_device_error_no_longer_panics
     );
 }
 
-/// Error scopes are per thread: 2 threads scoping refused
-/// allocations at the same time each get their own refusal back
-/// and neither trips wgpu's scope-order check.
+/// Checks that error scopes are per thread: 2 threads scoping refused
+/// allocations at the same time each get their own refusal back and neither
+/// trips wgpu's scope-order check.
 #[test]
 fn concurrent_scoped_allocations_on_2_threads_each_get_their_own_refusal() {
     let Some((device, _queue)) = shared_small_buffer_test_device() else {
@@ -796,9 +791,9 @@ fn concurrent_scoped_allocations_on_2_threads_each_get_their_own_refusal() {
     }
 }
 
-/// The slice-view cap renders without crashing: once `update_cap`
-/// installs a coverage texture, a render with a clip height set still
-/// produces a texture, so the cap pipeline and its draw are exercised.
+/// Checks that the slice-view cap renders without crashing: once `update_cap`
+/// installs a coverage texture, a render with a clip height set still produces
+/// a texture, so the cap pipeline and its draw are exercised.
 #[test]
 fn render_with_a_cap_produces_a_texture() {
     let Some((device, queue)) = shared_test_device() else {
@@ -852,10 +847,10 @@ fn render_with_a_cap_produces_a_texture() {
     assert_eq!(texture.size().height, 64);
 }
 
-/// A shared (Device, Queue) pinned to the DX12 backend, built lazily.
-/// The default-backend `shared_test_device` may resolve to Vulkan on
-/// Windows when a Vulkan ICD is present, so it does not guarantee the
-/// DX12 path is exercised. `None` when no DX12 adapter is available.
+/// Returns a shared (Device, Queue) pinned to the DX12 backend, built lazily,
+/// or `None` when no DX12 adapter or device is available. The default-backend
+/// `shared_test_device` may resolve to Vulkan on Windows when a Vulkan ICD is
+/// present, so it does not guarantee the DX12 path is exercised.
 #[cfg(windows)]
 fn shared_dx12_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
@@ -885,14 +880,12 @@ fn shared_dx12_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
-/// Windows production pins the wgpu backend to DX12 (see the GUI's
-/// shared-device setup): Slint's Skia renderer rejects a non-DX12
-/// adapter on Windows. The other render tests build a default-backend
-/// device that may be Vulkan even on Windows, so this test pins DX12
-/// explicitly and drives a full end-to-end render, proving shader
-/// compilation, bind-group validation, and a draw call all work on
-/// the backend Windows actually ships. Soft-skips with no DX12
-/// adapter.
+/// Renders end-to-end on DX12, the backend that Windows production pins (see
+/// the GUI's shared-device setup): Slint's Skia renderer rejects a non-DX12
+/// adapter on Windows. The other render tests build a default-backend device
+/// that may be Vulkan even on Windows, so this test pins DX12 explicitly,
+/// proving shader compilation, bind-group validation, and a draw call all work
+/// on the backend Windows actually ships. Soft-skips with no DX12 adapter.
 #[cfg(windows)]
 #[test]
 fn render_succeeds_on_dx12_backend() {
@@ -935,10 +928,10 @@ fn render_succeeds_on_dx12_backend() {
     assert_eq!(texture.size().height, 64);
 }
 
-/// Identical to `render_succeeds_under_default_limits` but with a
-/// non-`None` selection so the `flags.x` lane carries a 1 through
-/// the per-frame uniform write. Catches any default-limits
-/// regression in the selection-flag path before runtime.
+/// Checks the same as `render_succeeds_under_default_limits`, but with a
+/// non-`None` selection so the `flags.x` lane carries a 1 through the per-frame
+/// uniform write. Catches any default-limits regression in the selection-flag
+/// path before runtime.
 #[test]
 fn render_with_selection_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -979,14 +972,13 @@ fn render_with_selection_under_default_limits() {
     assert_eq!(texture.size().width, 64);
 }
 
-/// Outline post-pass smoke test. Drives a render with `Some(0)`
-/// so the stencil-aspect bind group is bound and the fullscreen
-/// edge-detect runs; pins that
+/// Drives the outline post-pass: a render with a selection binds the
+/// stencil-aspect bind group and runs the fullscreen edge-detect. Pins that
 /// `RENDER_ATTACHMENT | TEXTURE_BINDING` on a multisampled
-/// `Depth24PlusStencil8` is accepted under the default-limits
-/// profile, plus that the `multisampled: true, sample_type: Uint`
-/// stencil binding declared in the layout matches the WGSL
-/// `texture_multisampled_2d<u32>` the outline shader expects.
+/// `Depth24PlusStencil8` is accepted under the default-limits profile, and that
+/// the `multisampled: true, sample_type: Uint` stencil binding declared in the
+/// layout matches the WGSL `texture_multisampled_2d<u32>` the outline shader
+/// expects.
 #[test]
 fn outline_post_pass_under_default_limits_is_validated() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1009,8 +1001,8 @@ fn outline_post_pass_under_default_limits_is_validated() {
     let center = (bounds.0 + bounds.1) * 0.5;
     let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
     let camera = OrbitCamera::new(center, radius);
-    // Twice, first frame creates the MSAA targets and outline
-    // bind group; second exercises the cached path.
+    // Twice: the first frame creates the MSAA targets and outline bind group;
+    // the second exercises the cached path.
     let _ = renderer
         .render(
             Some(SceneRender {
@@ -1043,12 +1035,10 @@ fn outline_post_pass_under_default_limits_is_validated() {
         .expect("cached outline bind group survives a second frame");
 }
 
-/// Gizmo pass smoke test: drive a render with `Some(GizmoFrame)`
-/// so the gizmo pipeline binds, the per-axis dynamic-offset
-/// uniform path runs, and the private depth attachment is
-/// validated under default limits. Two consecutive frames so the
-/// MSAA-targets cache + the gizmo depth view both go through the
-/// reuse path.
+/// Drives the gizmo pass: a render with `Some(GizmoFrame)` binds the gizmo
+/// pipeline, runs the per-axis dynamic-offset uniform path and validates the
+/// private depth attachment under default limits. 2 consecutive frames send the
+/// MSAA-targets cache and the gizmo depth view through the reuse path.
 #[test]
 fn render_with_gizmo_under_default_limits_is_validated() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1112,9 +1102,8 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         .expect("cached gizmo resources survive a second frame");
 }
 
-/// Idle visibility renders all three handle categories
-/// simultaneously, exercises the translate, rotate, and scale
-/// draws in a single frame.
+/// Checks that idle visibility renders all 3 handle categories at once, which
+/// exercises the translate, rotate and scale draws in a single frame.
 #[test]
 fn render_with_idle_gizmo_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1163,9 +1152,8 @@ fn render_with_idle_gizmo_under_default_limits() {
         .expect("idle gizmo render should succeed");
 }
 
-/// Rotate-drag visibility renders only the three rotate arcs.
-/// Pins the rotate-arc VBO/IBO + per-axis camera-roll wiring
-/// under default-limits.
+/// Checks that rotate-drag visibility renders only the 3 rotate arcs. Pins the
+/// rotate-arc VBO/IBO and the per-axis camera-roll wiring under default limits.
 #[test]
 fn render_with_rotate_gizmo_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1214,8 +1202,8 @@ fn render_with_rotate_gizmo_under_default_limits() {
         .expect("rotate gizmo render should succeed");
 }
 
-/// Scale-axis renders the three midpoint cubes, pins the
-/// scale-pass wiring under default-limits.
+/// Checks that scale-axis visibility renders the 3 midpoint cubes, which pins
+/// the scale-pass wiring under default limits.
 #[test]
 fn render_with_scale_gizmo_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1264,10 +1252,10 @@ fn render_with_scale_gizmo_under_default_limits() {
         .expect("scale-axis gizmo render should succeed");
 }
 
-/// Multi-object scene drives one draw call per object; the
-/// dynamic-offset bind path must keep `model_entry` pointing at
-/// the right slot for each draw. Pure smoke test (no read-back),
-/// but it exercises the full draw loop with N > 1.
+/// Renders a multi-object scene, which drives 1 draw call per object; the
+/// dynamic-offset bind path must keep `model_entry` pointing at the right slot
+/// for each draw. Pure smoke test (no read-back), but it exercises the full
+/// draw loop with N > 1.
 #[test]
 fn render_multi_object_scene_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1329,9 +1317,9 @@ fn render_multi_object_scene_under_default_limits() {
         .expect("render multi-object");
 }
 
-/// Render with no scene installed: the plate alone should
-/// produce a non-`None` texture. Two consecutive calls so the
-/// second exercises the cached `plate_buffers` path.
+/// Renders with no scene installed: the plate alone should produce a non-`None`
+/// texture. 2 consecutive calls, so the second exercises the cached
+/// `plate_buffers` path.
 #[test]
 fn render_plate_only_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1352,8 +1340,8 @@ fn render_plate_only_under_default_limits() {
         .expect("second plate-only render should succeed");
 }
 
-/// A label installed before the frame reaches the plate as a tab and
-/// a textured quad over it, and holds across a second frame.
+/// Checks that a label installed before the frame reaches the plate as a tab
+/// and a textured quad over it, and holds across a second frame.
 #[test]
 fn render_with_a_front_label_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1377,8 +1365,8 @@ fn render_with_a_front_label_under_default_limits() {
     }
 }
 
-/// A word that rasterises to nothing leaves the plate bare: no label,
-/// and no tab to carry one.
+/// Checks that a word that rasterises to nothing leaves the plate bare: no
+/// label, and no tab to carry one.
 #[test]
 fn a_label_with_no_ink_leaves_the_plate_without_a_tab() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1518,11 +1506,10 @@ fn update_cap_reports_a_refused_texture_and_leaves_the_cap_off() {
         .expect("a 64 x 64 frame produces a texture");
 }
 
-/// A render call against a different `BuildVolume` rebuilds the
-/// cached plate buffers so the new envelope reaches the next
-/// frame. Verified through the public path: render once at the
-/// default envelope, then at a smaller one, and confirm both
-/// frames succeed and the cache key reflects the latest call.
+/// Checks that a render call against a different `BuildVolume` rebuilds the
+/// cached plate buffers so the new envelope reaches the next frame: it renders
+/// once at `TEST_BV`, then at a smaller volume, and confirms that both frames
+/// succeed and that the cache key follows the latest call.
 #[test]
 fn render_plate_buffers_rebuild_on_envelope_change() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1557,10 +1544,9 @@ fn render_plate_buffers_rebuild_on_envelope_change() {
     assert_eq!(cached_after_second, Some(smaller));
 }
 
-/// Builds a one-triangle graph that pokes one vertex past the
-/// `TEST_BV`'s +X envelope wall at x = +96 mm. Two anchor
-/// vertices stay inside the envelope so the graph's AABB
-/// straddles the wall (and the camera framing centres on it).
+/// Builds a 1-triangle graph that pokes 1 vertex past the +X envelope wall of
+/// `TEST_BV` at x = +96 mm. 2 anchor vertices stay inside the envelope, so the
+/// graph's AABB straddles the wall.
 fn x_pos_breaching_graph() -> Scene {
     let mesh = IndexedMesh {
         meta: None,
@@ -1579,14 +1565,13 @@ fn x_pos_breaching_graph() -> Scene {
     g
 }
 
-/// Counts pixels whose RGB signature matches the wall warning
-/// stripe. The shader emits `WALL_WARNING_COLOUR = (1.00, 0.15,
-/// 0.15)` with `WALL_STRIPE_ALPHA = 0.55`, so on a typical
-/// background the visible pixel is red-dominant with green and
-/// blue both well below red. The thresholds are loose enough to
-/// match the stripe over any plausible background (white plate,
-/// grey mesh, dark cage) but tight enough that no untinted
-/// surface in the scene clears the bar.
+/// Counts pixels whose RGB signature matches the wall warning stripe. The
+/// shader emits `WALL_WARNING_COLOUR = (1.00, 0.15, 0.15)` with
+/// `WALL_STRIPE_ALPHA = 0.55`, so on a typical background the visible pixel is
+/// red-dominant with green and blue both well below red. The thresholds are
+/// loose enough to match the stripe over any plausible background (white plate,
+/// grey mesh, dark cage) but tight enough that no untinted surface in the scene
+/// clears the bar.
 fn count_warning_pixels(rgba: &[u8]) -> usize {
     rgba.as_chunks::<4>()
         .0
@@ -1598,13 +1583,12 @@ fn count_warning_pixels(rgba: &[u8]) -> usize {
         .count()
 }
 
-/// Copies an `Rgba8Unorm` 2D texture back to the CPU and returns
-/// the pixel bytes in row-major RGBA order. Requires
-/// `wgpu::TextureUsages::COPY_SRC` on the texture (the renderer's
-/// resolved color target has it). `width * 4` must satisfy
-/// `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes); the test sites
-/// pick widths that already do, so the function asserts rather
-/// than padding silently.
+/// Copies an `Rgba8Unorm` 2D texture back to the CPU and returns the pixel
+/// bytes in row-major RGBA order. Requires `wgpu::TextureUsages::COPY_SRC` on
+/// the texture (the renderer's resolved color target has it). `width * 4` must
+/// satisfy `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes); the test sites pick
+/// widths that already do, so the function asserts rather than padding
+/// silently.
 fn read_target_back(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1670,14 +1654,13 @@ fn read_target_back(
     data
 }
 
-/// End-to-end property test for the +X envelope warning stripe.
-/// Renders the same camera-frame twice, once with a mesh that
-/// stays inside the envelope and once with a mesh that pokes
-/// past +X, reads back both framebuffers, and asserts that the
-/// breach render carries visible stripe pixels (red-dominant,
-/// green / blue subordinate) and the safe render does not.
-/// Property-level: independent of the exact stripe geometry,
-/// driver-specific blending rounding, and viewport jitter.
+/// Checks the +X envelope warning stripe end to end: renders the same camera
+/// frame twice, once with a mesh that stays inside the envelope and once with a
+/// mesh that pokes past +X, reads back both framebuffers, and asserts that the
+/// breach render carries visible stripe pixels (red-dominant, green / blue
+/// subordinate) and the safe render does not. The check is a property,
+/// independent of the exact stripe geometry, driver-specific blending rounding,
+/// and viewport jitter.
 #[test]
 fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1692,13 +1675,13 @@ fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
     )
     .expect("Renderer::new under the test device");
     // 64 * 4 = 256 bytes / row, which already satisfies
-    // `COPY_BYTES_PER_ROW_ALIGNMENT` and matches the size used by
-    // the other render tests in this module.
+    // `COPY_BYTES_PER_ROW_ALIGNMENT` and matches the size used by the other
+    // render tests in this module.
     let width = 64u32;
     let height = 64u32;
-    // Centre the orbit on the build-volume centre with a radius
-    // that comfortably contains the envelope so the +X wall is
-    // in frame regardless of which mesh is installed.
+    // Centre the orbit on the build-volume centre with a radius that
+    // comfortably contains the envelope so the +X wall is in frame regardless
+    // of which mesh is installed.
     let camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 100.0), 250.0);
 
     let safe_graph =
@@ -1760,20 +1743,19 @@ fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
     );
 }
 
-/// `install_scene` with a `GpuScene` built against the same device
-/// as the renderer must report success and leave the renderer with
-/// a populated scene (observable through `scene_bounds`).
+/// Checks that `install_scene` with a `GpuScene` built against the same device
+/// as the renderer reports success and leaves the renderer with a populated
+/// scene (observable through `scene_bounds`).
 #[test]
 fn install_scene_with_matching_device_succeeds() {
     let Some((device, queue)) = shared_test_device() else {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    // Renderer and GpuScene must share the same `device_token`
-    // for `install_scene` to accept the worker-built scene;
-    // mismatched tokens are the device-rotation rejection path
-    // covered by the `install_scene_with_mismatched_device_returns_false`
-    // integration test.
+    // Renderer and GpuScene must share the same `device_token` for
+    // `install_scene` to accept the worker-built scene; mismatched tokens are
+    // the device-rotation rejection path covered by the
+    // `install_scene_with_mismatched_device_returns_false` integration test.
     let token = DeviceToken::next();
     let mut renderer = Renderer::new(device.clone(), token, queue, DeviceLoss::default())
         .expect("Renderer::new under the test device");
@@ -1786,13 +1768,12 @@ fn install_scene_with_matching_device_succeeds() {
     assert!(renderer.scene_bounds().is_some());
 }
 
-/// A live `Scene` that grew an extra leaf after `upload_scene` must
-/// not crash `render`: the per-leaf model uploads target a
-/// `model_buffer` sized at install time, so writing one entry per
-/// live leaf would OOB the buffer (the wgpu runtime would panic on
-/// the trailing `queue.write_buffer`). The renderer must detect the
-/// leaf-count drift and skip the per-frame mesh path until the next
-/// install brings the GpuScene back in sync with the graph.
+/// Checks that a live `Scene` that grew an extra leaf after `upload_scene` does
+/// not crash `render`: the per-leaf model uploads target a `model_buffer` sized
+/// at install time, so writing 1 entry per live leaf would overrun the buffer
+/// (the wgpu runtime would panic on the trailing `queue.write_buffer`). The
+/// renderer must detect the leaf-count drift and skip the per-frame mesh path
+/// until the next install brings the GpuScene back in sync with the graph.
 #[test]
 fn render_against_grown_graph_does_not_panic() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1854,8 +1835,8 @@ fn render_against_grown_graph_does_not_panic() {
     assert_eq!(texture.size().width, 64);
 }
 
-/// `clear_scene` drops the installed scene; subsequent
-/// `scene_bounds` reads return `None`.
+/// Checks that `clear_scene` drops the installed scene: later `scene_bounds`
+/// reads return `None`.
 #[test]
 fn clear_scene_drops_the_installed_scene() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1872,10 +1853,9 @@ fn clear_scene_drops_the_installed_scene() {
     assert!(renderer.scene_bounds().is_none());
 }
 
-/// A graph whose last leaf was deleted must upload cleanly. There
-/// is nothing to mirror, so the renderer ends up holding no scene
-/// rather than reporting a failure the viewport would have to
-/// recover from.
+/// Checks that a graph whose last leaf was deleted uploads cleanly. There is
+/// nothing to mirror, so the renderer ends up holding no scene rather than
+/// reporting a failure the viewport would have to recover from.
 #[test]
 fn upload_scene_on_a_leafless_graph_succeeds_and_installs_nothing() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1891,11 +1871,11 @@ fn upload_scene_on_a_leafless_graph_succeeds_and_installs_nothing() {
     assert!(renderer.scene_bounds().is_none());
 }
 
-/// The reported scenario end to end: a one-object scene, the
-/// object deleted, then the upload the deletion triggers. The
-/// render that follows must still produce a texture, which is what
-/// proves the empty case raises no wgpu validation error and that
-/// the viewport keeps painting the plate.
+/// Runs the deletion of the last object end to end: a 1-object scene, the
+/// object deleted, then the upload the deletion triggers. The render that
+/// follows must still produce a texture, which proves that the empty case
+/// raises no wgpu validation error and that the viewport keeps painting the
+/// plate.
 #[test]
 fn render_after_deleting_the_last_leaf_still_produces_a_texture() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1940,9 +1920,9 @@ fn render_after_deleting_the_last_leaf_still_produces_a_texture() {
     assert_eq!(texture.size().height, 64);
 }
 
-/// Re-uploading a leaf again after the scene went empty installs a
-/// fresh mirror, so the empty case is a transition the renderer can
-/// come back from rather than a terminal state.
+/// Checks that re-uploading a leaf after the scene went empty installs a fresh
+/// mirror, so the empty case is a transition the renderer can come back from
+/// rather than a terminal state.
 #[test]
 fn upload_after_an_empty_upload_installs_a_scene_again() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1972,7 +1952,7 @@ fn upload_after_an_empty_upload_installs_a_scene_again() {
     assert!(renderer.scene_bounds().is_some());
 }
 
-/// `invalidate_sizing` drops only the viewport-sized allocations;
+/// Checks that `invalidate_sizing` drops only the viewport-sized allocations:
 /// the installed scene survives (still reports bounds).
 #[test]
 fn invalidate_sizing_keeps_the_installed_scene() {
@@ -1991,9 +1971,9 @@ fn invalidate_sizing_keeps_the_installed_scene() {
     assert_eq!(bounds_before, bounds_after);
 }
 
-/// Counts pixels that differ from the mesh pass's clear colour, the
-/// near-black neutral quantised to `Rgba8Unorm`. Every surface the
-/// renderer draws lands well outside the tolerance.
+/// Counts pixels that differ from the mesh pass's clear colour, the near-black
+/// neutral quantised to `Rgba8Unorm`. Every surface the renderer draws lands
+/// well outside the tolerance.
 fn count_drawn_pixels(rgba: &[u8]) -> usize {
     const BACKGROUND: [i32; 3] = [31, 31, 33];
     const TOLERANCE: i32 = 2;
@@ -2006,7 +1986,7 @@ fn count_drawn_pixels(rgba: &[u8]) -> usize {
         .count()
 }
 
-/// A camera that holds the whole installed scene, the framing a file
+/// Returns a camera that holds the whole installed scene, the framing a file
 /// preview asks for.
 fn camera_framing_the_scene(renderer: &Renderer) -> OrbitCamera {
     let (min, max) = renderer.scene_bounds().expect("a scene is installed");
@@ -2014,9 +1994,9 @@ fn camera_framing_the_scene(renderer: &Renderer) -> OrbitCamera {
     OrbitCamera::new((min + max) * 0.5, radius)
 }
 
-/// A preview shows the print, not the machine: with no models on the
-/// plate it has nothing to draw, where the viewport's own frame still
-/// shows the plate and its cage.
+/// Checks that a preview shows the print, not the machine: with no models on
+/// the plate it has nothing to draw, where the viewport's own frame still shows
+/// the plate and its cage.
 #[test]
 fn a_preview_of_a_scene_without_models_draws_nothing() {
     let Some((device, queue)) = shared_test_device() else {
@@ -2030,8 +2010,8 @@ fn a_preview_of_a_scene_without_models_draws_nothing() {
         DeviceLoss::default(),
     )
     .expect("Renderer::new under the test device");
-    // 64 * 4 = 256 bytes per row, which the readback's copy
-    // alignment already satisfies.
+    // 64 * 4 = 256 bytes per row, which the readback's copy alignment already
+    // satisfies.
     let (width, height) = (64u32, 64u32);
     let (centre, radius) = TEST_BV.framing(None);
     let camera = OrbitCamera::new(centre, radius);
@@ -2086,10 +2066,10 @@ fn a_preview_draws_the_models() {
     );
 }
 
-/// 290 is the size a GOO file's large preview fixes, and 290 * 4 =
-/// 1160 bytes per row, which is not a multiple of the 256-byte copy
-/// stride. The readback has to pad and unpad around that, so the
-/// pixels have to come back tightly packed anyway.
+/// Reads back a preview 290 pixels wide, the size a GOO file's large preview
+/// fixes: 290 * 4 = 1160 bytes per row, which is not a multiple of the 256-byte
+/// copy stride. The readback has to pad and unpad around that, so the pixels
+/// have to come back tightly packed anyway.
 #[test]
 fn a_preview_at_an_unaligned_width_reads_back_tightly_packed() {
     let Some((device, queue)) = shared_test_device() else {
@@ -2123,9 +2103,9 @@ fn a_preview_at_an_unaligned_width_reads_back_tightly_packed() {
     );
 }
 
-/// Every row must carry its own pixels, not the padding the copy
-/// stride inserts: a run of background bytes at a row boundary would
-/// show up as a black band.
+/// Checks that every row carries its own pixels, not the padding the copy
+/// stride inserts: a run of background bytes at a row boundary would show up as
+/// a black band.
 #[test]
 fn a_read_back_preview_has_no_padding_left_between_its_rows() {
     let Some((device, queue)) = shared_test_device() else {
@@ -2149,9 +2129,9 @@ fn a_read_back_preview_has_no_padding_left_between_its_rows() {
         .expect("the preview is not refused")
         .expect("a sized preview produces pixels");
 
-    // An empty plate previews as background everywhere, and the
-    // staging buffer's padding is zeroed, so any padding left in
-    // would read as a fully black pixel.
+    // An empty plate previews as background everywhere, and the staging
+    // buffer's padding is zeroed, so any padding left in would read as a fully
+    // black pixel.
     assert_eq!(frame.rgba.len(), (width * height * 4) as usize);
     assert_eq!(count_drawn_pixels(&frame.rgba), 0);
 }

@@ -14,7 +14,7 @@ use sc_sla_formats::{PreviewSize, PreviewSizes};
 use slint::wgpu_30::wgpu;
 use std::sync::Arc;
 
-use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
+use crate::build_volume::NO_PRINTER_BUILD_VOLUME;
 use crate::mesh_render::mock::{MockRenderer, MockRendererState};
 use crate::mesh_render::{FramePixels, RenderAllocation, RenderError};
 use crate::print_file_preview::render_previews;
@@ -44,7 +44,7 @@ fn scene() -> Scene {
     scene
 }
 
-/// A frame of `width` x `height` whose every pixel carries a distinct
+/// Returns a frame of `width` x `height` whose every pixel carries a distinct
 /// alpha, so a preview that kept the alpha channel would show it.
 fn frame(width: u32, height: u32) -> FramePixels {
     let rgba = (0..width * height)
@@ -65,12 +65,7 @@ fn state_with_a_scene() -> Rc<RefCell<MockRendererState>> {
 
 fn previews_from(state: &Rc<RefCell<MockRendererState>>) -> Option<sc_sla_formats::PrintPreviews> {
     let mut renderer = MockRenderer::new(state.clone());
-    render_previews(
-        &mut renderer,
-        &scene(),
-        HARDCODED_DEFAULT_BUILD_VOLUME,
-        SIZES,
-    )
+    render_previews(&mut renderer, &scene(), NO_PRINTER_BUILD_VOLUME, SIZES)
 }
 
 #[test]

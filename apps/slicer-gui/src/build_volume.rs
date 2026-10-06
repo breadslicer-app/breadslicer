@@ -168,7 +168,7 @@ fn clamp_axis(pre_min: f32, pre_max: f32, env_min: f32, env_max: f32, d: f32) ->
 }
 
 /// The build volume that the viewport uses when it knows no printer.
-pub const HARDCODED_DEFAULT_BUILD_VOLUME: BuildVolume =
+pub const NO_PRINTER_BUILD_VOLUME: BuildVolume =
     match sc_print_primitives::BuildVolume::new(192.0, 120.0, 200.0) {
         Ok(volume) => BuildVolume { volume },
         Err(_) => panic!("the placeholder lengths are positive and finite"),
@@ -379,8 +379,8 @@ mod build_volume_tests {
     }
 
     #[test]
-    fn hardcoded_default_envelope_is_finite_and_positive() {
-        let v = HARDCODED_DEFAULT_BUILD_VOLUME;
+    fn no_printer_envelope_is_finite_and_positive() {
+        let v = NO_PRINTER_BUILD_VOLUME;
         let lo = v.envelope_min_mm();
         let hi = v.envelope_max_mm();
         assert!(lo.x.is_finite() && lo.y.is_finite() && lo.z.is_finite());
@@ -389,7 +389,7 @@ mod build_volume_tests {
 
     #[test]
     fn placeholder_is_192_by_120_by_200_mm() {
-        let v = HARDCODED_DEFAULT_BUILD_VOLUME;
+        let v = NO_PRINTER_BUILD_VOLUME;
         assert_eq!(v.width_mm(), 192.0);
         assert_eq!(v.depth_mm(), 120.0);
         assert_eq!(v.height_mm(), 200.0);

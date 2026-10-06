@@ -3,26 +3,25 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-viewport session concern: the cross-cutting state that does
-//! not belong to any of the other three sub-structs but does outlive
-//! a single frame and a single event.
+//! Per-viewport session concern: the cross-cutting state that does not belong
+//! to any of the other 3 sub-structs but does outlive a single frame and a
+//! single event.
 //!
-//! Owns the document handle, the scene-loader handle, the pending-
-//! load slot (a load request that arrived before the GPU device was
-//! available), the dialog manager, the document-subscription RAII
-//! handle held by the controller for the lifetime of the listener,
-//! and the live build volume.
+//! Owns the document handle, the scene-loader handle, the save and export
+//! progress panels, the pending-load slot (a load request that arrived before
+//! the GPU device was available), the dialog manager, the document-subscription
+//! RAII handle held by the controller for the lifetime of the listener, the
+//! live build volume and the active workspace section.
 //!
-//! Subscriber install lives on the coordinator because the listener
-//! body has to dispatch across all four concerns and needs a
-//! `Weak<ViewportController>` capture; this struct just stores the
-//! `SceneSubscription` once installed.
+//! Subscriber install lives on the coordinator because the listener body has to
+//! dispatch across all 4 concerns and needs a `Weak<ViewportController>`
+//! capture; this struct just stores the `SceneSubscription` once installed.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::WorkspaceSection;
-use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
+use crate::build_volume::{BuildVolume, NO_PRINTER_BUILD_VOLUME};
 use crate::error_dialog::DialogManager;
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::pending_load::PendingLoad;
@@ -37,19 +36,18 @@ pub(super) struct SessionState {
     export_progress: Rc<ExportProgressPanel>,
     pending_load: Rc<PendingLoad>,
     dialogs: Rc<DialogManager>,
-    /// Held by the controller so it's dropped alongside the
-    /// controller; populated by `register_document_listener` after
-    /// the controller is wrapped in `Rc`.
+    /// Held by the controller so it's dropped alongside the controller;
+    /// populated by `register_document_listener` after the controller is
+    /// wrapped in `Rc`.
     document_subscription: RefCell<Option<SceneSubscription>>,
-    /// Build envelope used to clamp translate edits. `Cell` so the
-    /// hardcoded default can later be swapped at runtime by the
-    /// preferences pipeline (and by tests, which inject a smaller
-    /// envelope to make the wall reachable in a few drag pixels).
+    /// The build volume that this window draws, edits and places against.
+    /// `AppState` sets it from `DefaultEnvelope` when it creates the window and
+    /// on each change of the default printer.
     build_volume: Cell<BuildVolume>,
-    /// Active workspace section (Prepare / Transform / Slice). Per-window
-    /// live state, not persisted. `Cell` because it is a plain `Copy`
-    /// value flipped by the pill switcher and by the load pipeline
-    /// (initial section from mesh health).
+    /// Active workspace section (Prepare / Transform / Slice). Per-window live
+    /// state, not persisted. `Cell` because it is a plain `Copy` value flipped
+    /// by the pill switcher and by the load pipeline (initial section from mesh
+    /// health).
     section: Cell<WorkspaceSection>,
 }
 
@@ -70,7 +68,7 @@ impl SessionState {
             pending_load,
             dialogs,
             document_subscription: RefCell::new(None),
-            build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
+            build_volume: Cell::new(NO_PRINTER_BUILD_VOLUME),
             section: Cell::new(WorkspaceSection::Prepare),
         }
     }
@@ -103,10 +101,9 @@ impl SessionState {
         self.build_volume.get()
     }
 
-    /// Replaces the build volume. Returns `true` if the value
-    /// actually changed (caller marks the renderer dirty so the
-    /// plate / envelope cage rebuilds against the new envelope on
-    /// the next render tick).
+    /// Replaces the build volume. Returns `true` if the value actually changed
+    /// (caller marks the renderer dirty so the plate / envelope cage rebuilds
+    /// against the new envelope on the next render tick).
     pub(super) fn set_build_volume(&self, bv: BuildVolume) -> bool {
         if self.build_volume.get() == bv {
             return false;
@@ -119,9 +116,9 @@ impl SessionState {
         self.section.get()
     }
 
-    /// Replaces the active workspace section. Returns `true` if the
-    /// value actually changed (caller mirrors it to the UI and
-    /// refreshes the transform tooling for the new section).
+    /// Replaces the active workspace section. Returns `true` if the value
+    /// actually changed (caller mirrors it to the UI and refreshes the
+    /// transform tooling for the new section).
     pub(super) fn set_section(&self, section: WorkspaceSection) -> bool {
         if self.section.get() == section {
             return false;
@@ -131,10 +128,9 @@ impl SessionState {
     }
 
     /// Installs the document-subscription RAII handle. Called by the
-    /// coordinator's `register_document_listener` once the listener
-    /// closure has been built (the closure needs a
-    /// `Weak<ViewportController>`, which only the coordinator can
-    /// provide).
+    /// coordinator's `register_document_listener` once the listener closure has
+    /// been built (the closure needs a `Weak<ViewportController>`, which only
+    /// the coordinator can provide).
     pub(super) fn install_subscription(&self, sub: SceneSubscription) {
         *self.document_subscription.borrow_mut() = Some(sub);
     }
@@ -158,9 +154,9 @@ mod session_state_tests {
     }
 
     #[test]
-    fn build_volume_starts_at_hardcoded_default() {
+    fn build_volume_starts_at_the_no_printer_volume() {
         let s = new_session();
-        assert_eq!(s.build_volume(), HARDCODED_DEFAULT_BUILD_VOLUME);
+        assert_eq!(s.build_volume(), NO_PRINTER_BUILD_VOLUME);
     }
 
     #[test]
@@ -180,9 +176,8 @@ mod session_state_tests {
 
     #[test]
     fn section_starts_in_prepare() {
-        // A no-op set to Prepare reporting no change pins the initial
-        // value without exposing a getter before the gating work needs
-        // one.
+        // A no-op set to Prepare reports no change, which pins the initial
+        // value.
         let s = new_session();
         assert!(!s.set_section(WorkspaceSection::Prepare));
     }
