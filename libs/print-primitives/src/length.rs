@@ -5,41 +5,39 @@
 
 //! Validated positive-finite lengths in their canonical units.
 //!
-//! [`PositiveFiniteMm`] and [`PositiveFiniteMicrons`] are newtypes
-//! carrying the "strictly positive and finite" invariant for a length
-//! in millimetres and microns respectively. Both share the
-//! [`LengthOutOfRange`] failure type (the invariant is unit-agnostic;
-//! the wrapping newtype carries the unit) and the [`ParseLengthError`]
-//! used by their `FromStr` impls. [`LengthRange`] is the `{ min, max }`
-//! envelope in millimetres; construction enforces `min < max`
+//! [`PositiveFiniteMm`] and [`PositiveFiniteMicrons`] are newtypes carrying the
+//! "strictly positive and finite" invariant for a length in millimetres and
+//! microns respectively. Both share the [`LengthOutOfRange`] failure type (the
+//! invariant is unit-agnostic; the wrapping newtype carries the unit) and the
+//! [`ParseLengthError`] used by their `FromStr` impls. [`LengthRange`] is the
+//! `{ min, max }` envelope in millimetres; construction enforces `min < max`
 //! strictly through [`LengthRangeBoundsInverted`].
 
 use std::fmt;
 use std::str::FromStr;
 
-/// A strictly positive, finite length in millimetres. Constructed
-/// through [`PositiveFiniteMm::new`] or its [`FromStr`] impl; once
-/// you hold one, the invariant holds by type. Use [`Self::value`]
-/// to unpack the raw `f64` for APIs that take a plain length.
+/// A strictly positive, finite length in millimetres. Constructed through
+/// [`PositiveFiniteMm::new`] or its [`FromStr`] impl; once you hold one, the
+/// invariant holds by type. Use [`Self::value`] to unpack the raw `f64` for
+/// APIs that take a plain length.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "f64", into = "f64"))]
 pub struct PositiveFiniteMm(f64);
 
-/// A strictly positive, finite length in microns (micrometres).
-/// Constructed through [`PositiveFiniteMicrons::new`] or its
-/// [`FromStr`] impl; once you hold one, the invariant holds by type.
-/// Use [`Self::value`] to unpack the raw `f64`.
+/// A strictly positive, finite length in microns (micrometres). Constructed
+/// through [`PositiveFiniteMicrons::new`] or its [`FromStr`] impl; once you
+/// hold one, the invariant holds by type. Use [`Self::value`] to unpack the raw
+/// `f64`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "f64", into = "f64"))]
 pub struct PositiveFiniteMicrons(f64);
 
-/// Returned by [`PositiveFiniteMm::new`] and
-/// [`PositiveFiniteMicrons::new`] (and their `FromStr` /
-/// `TryFrom<f64>` impls) when the input was zero, negative, or
-/// non-finite. The invariant captured is unit-agnostic; the wrapping
-/// newtype carries the unit context.
+/// Returned by [`PositiveFiniteMm::new`] and [`PositiveFiniteMicrons::new`]
+/// (and their `FromStr` / `TryFrom<f64>` impls) when the input was 0, negative,
+/// or non-finite. The invariant captured is unit-agnostic; the wrapping newtype
+/// carries the unit context.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LengthOutOfRange {
     pub value: f64,
@@ -58,8 +56,8 @@ impl fmt::Display for LengthOutOfRange {
 impl std::error::Error for LengthOutOfRange {}
 
 /// Returned by the `FromStr` impls of [`PositiveFiniteMm`] and
-/// [`PositiveFiniteMicrons`]: either the input was not a valid
-/// floating point number, or the parsed number was out of range.
+/// [`PositiveFiniteMicrons`]: either the input was not a valid floating point
+/// number, or the parsed number was out of range.
 #[derive(Debug)]
 pub enum ParseLengthError {
     NotANumber(std::num::ParseFloatError),
@@ -85,10 +83,9 @@ impl std::error::Error for ParseLengthError {
 }
 
 impl PositiveFiniteMm {
-    /// Construct from a raw `f64`. Fails with
-    /// [`LengthOutOfRange`] when the value is zero, negative,
-    /// or non-finite (`NaN` / +/- infinity).
-    pub fn new(value: f64) -> Result<Self, LengthOutOfRange> {
+    /// Builds a length in millimetres. Fails with [`LengthOutOfRange`] when
+    /// `value` is 0, negative, or non-finite (`NaN` / +/- infinity).
+    pub const fn new(value: f64) -> Result<Self, LengthOutOfRange> {
         if value.is_finite() && value > 0.0 {
             Ok(Self(value))
         } else {
@@ -96,17 +93,17 @@ impl PositiveFiniteMm {
         }
     }
 
-    /// The underlying millimetre value as a plain `f64`.
+    /// Returns the length in millimetres as a plain `f64`.
     #[inline]
     pub fn value(self) -> f64 {
         self.0
     }
 }
 
-// `PartialEq` is a total equivalence on the inhabited values: the
-// constructor rejects NaN (no incomparable value exists) and rejects
-// both zeroes, so the one equal-but-distinct-bits pair of `f64`
-// (`-0.0 == +0.0`) is unrepresentable.
+// `PartialEq` is a total equivalence on the inhabited values: the constructor
+// rejects NaN (no incomparable value exists) and rejects both zeroes, so the
+// only pair of distinct `f64` bit patterns that compare equal (`-0.0 == +0.0`)
+// is unrepresentable.
 impl Eq for PositiveFiniteMm {}
 
 impl fmt::Display for PositiveFiniteMm {
@@ -138,9 +135,8 @@ impl FromStr for PositiveFiniteMm {
 }
 
 impl PositiveFiniteMicrons {
-    /// Construct from a raw `f64`. Fails with
-    /// [`LengthOutOfRange`] when the value is zero, negative,
-    /// or non-finite (`NaN` / +/- infinity).
+    /// Builds a length in microns. Fails with [`LengthOutOfRange`] when `value`
+    /// is 0, negative, or non-finite (`NaN` / +/- infinity).
     pub fn new(value: f64) -> Result<Self, LengthOutOfRange> {
         if value.is_finite() && value > 0.0 {
             Ok(Self(value))
@@ -149,15 +145,15 @@ impl PositiveFiniteMicrons {
         }
     }
 
-    /// The underlying micron value as a plain `f64`.
+    /// Returns the length in microns as a plain `f64`.
     #[inline]
     pub fn value(self) -> f64 {
         self.0
     }
 }
 
-// Total equivalence for the same reason as `PositiveFiniteMm`: NaN
-// and both zeroes are unrepresentable.
+// Total equivalence for the same reason as `PositiveFiniteMm`: NaN and both
+// zeroes are unrepresentable.
 impl Eq for PositiveFiniteMicrons {}
 
 impl fmt::Display for PositiveFiniteMicrons {
@@ -188,10 +184,9 @@ impl FromStr for PositiveFiniteMicrons {
     }
 }
 
-/// A `{ min, max }` envelope of lengths in millimetres. Construction
-/// enforces `min < max` strictly; both bounds are
-/// [`PositiveFiniteMm`], so non-positive or non-finite values fail
-/// before this type is reached.
+/// A `{ min, max }` envelope of lengths in millimetres. Construction enforces
+/// `min < max` strictly; both bounds are [`PositiveFiniteMm`], so non-positive
+/// or non-finite values fail before this type is reached.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(
@@ -203,8 +198,8 @@ pub struct LengthRange {
     max: PositiveFiniteMm,
 }
 
-/// Returned by [`LengthRange::new`] (and TOML deserialisation) when
-/// `min` is not strictly less than `max`.
+/// Returned by [`LengthRange::new`] (and TOML deserialisation) when `min` is
+/// not strictly less than `max`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LengthRangeBoundsInverted {
     pub min: f64,
@@ -224,9 +219,9 @@ impl fmt::Display for LengthRangeBoundsInverted {
 impl std::error::Error for LengthRangeBoundsInverted {}
 
 impl LengthRange {
-    /// Construct from already-validated bounds. Fails with
-    /// [`LengthRangeBoundsInverted`] when `min` is not strictly less
-    /// than `max`.
+    /// Builds a range from 2 validated bounds. Fails with
+    /// [`LengthRangeBoundsInverted`] when `min` is not strictly less than
+    /// `max`.
     pub fn new(
         min: PositiveFiniteMm,
         max: PositiveFiniteMm,

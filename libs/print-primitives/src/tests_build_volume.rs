@@ -5,7 +5,7 @@
 
 use sc_mesh_core::primitives::CoordAxis;
 
-use super::build_volume::BuildVolume;
+use super::build_volume::{AxisOutOfRange, BuildVolume};
 
 #[test]
 fn build_volume_new_accepts_positive_finite() {
@@ -17,9 +17,9 @@ fn build_volume_new_accepts_positive_finite() {
 
 #[test]
 fn build_volume_is_eq() {
-    // Sound since the axes are stored as PositiveFiniteMm witnesses
-    // (NaN and both zeroes are unrepresentable); guards against the
-    // derive being dropped.
+    // Sound since the axes are stored as PositiveFiniteMm witnesses (NaN and
+    // both zeroes are unrepresentable); guards against the derive being
+    // dropped.
     fn assert_eq_bound<T: Eq>() {}
     assert_eq_bound::<BuildVolume>();
 }
@@ -75,6 +75,51 @@ fn build_volume_envelope_extent_matches_per_axis_dimensions() {
     assert!((max[0] - min[0] - bv.x_mm()).abs() < 1e-12);
     assert!((max[1] - min[1] - bv.y_mm()).abs() < 1e-12);
     assert!((max[2] - min[2] - bv.z_mm()).abs() < 1e-12);
+}
+
+#[test]
+fn build_volume_new_runs_in_a_const() {
+    const ACCEPTED: BuildVolume = match BuildVolume::new(192.0, 120.0, 200.0) {
+        Ok(volume) => volume,
+        Err(_) => panic!("192 x 120 x 200 mm is a valid build volume"),
+    };
+    const REFUSED: Result<BuildVolume, AxisOutOfRange> = BuildVolume::new(192.0, 0.0, 200.0);
+    assert_eq!(ACCEPTED.x_mm(), 192.0);
+    assert_eq!(ACCEPTED.y_mm(), 120.0);
+    assert_eq!(ACCEPTED.z_mm(), 200.0);
+    assert_eq!(REFUSED.unwrap_err().axis, CoordAxis::Y);
+}
+
+#[test]
+fn envelope_aabb_spans_the_envelope_corners() {
+    let aabb = BuildVolume::new(192.0, 120.0, 200.0)
+        .unwrap()
+        .envelope_aabb();
+    assert_eq!(aabb.min().coords(), [-96.0, -60.0, 0.0]);
+    assert_eq!(aabb.max().coords(), [96.0, 60.0, 200.0]);
+}
+
+#[test]
+fn envelope_aabb_halves_the_lengths_rounded_to_f32() {
+    // 143.43 and 89.6 are not exact in f32. The corners are the halves of the
+    // f32 lengths, 71.71499633789062 and 44.79999923706055: the f32 values
+    // nearest to 71.715 and 44.8.
+    let aabb = BuildVolume::new(143.43, 89.6, 175.0)
+        .unwrap()
+        .envelope_aabb();
+    assert_eq!(aabb.min().coords(), [-71.715, -44.8, 0.0]);
+    assert_eq!(aabb.max().coords(), [71.715, 44.8, 175.0]);
+}
+
+#[test]
+fn envelope_aabb_floor_is_positive_zero() {
+    // An object goes onto the floor with the translation `floor - min`, so a
+    // -0.0 floor would give an object that already rests on it a -0.0
+    // translation.
+    let aabb = BuildVolume::new(192.0, 120.0, 200.0)
+        .unwrap()
+        .envelope_aabb();
+    assert_eq!(aabb.min().coords()[2].to_bits(), 0.0_f32.to_bits());
 }
 
 #[test]
