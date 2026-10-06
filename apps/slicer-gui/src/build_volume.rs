@@ -3,98 +3,80 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Build envelope of a (resin) 3d printer: the rectangular volume the
-//! print head can reach, expressed in millimetres.
-//!
-//! The plate sits on the XY plane at `Z = 0` and is centred on the
-//! world origin: `X ∈ [-W/2, W/2]`, `Y ∈ [-D/2, D/2]`. The build
-//! volume extends upwards to `Z = H`. Coordinates are right-handed,
-//! `+Z` away from the plate (the workspace convention).
-//!
-//! This module also hosts [`BuildVolume::clamp_translation_delta`], the
-//! per-axis clamp the viewport applies to translate edits so an
-//! object's transformed AABB cannot leave the envelope.
-//!
-//! For now, the envelope is a hardcoded constant
-//! ([`HARDCODED_DEFAULT_BUILD_VOLUME`]). Future iterations layer an
-//! [`AppSettings`](crate::app_settings::AppSettings) override on top
-//! and, eventually, a per-project override; the canonical type will
-//! migrate to a shared printer-profile crate when one exists.
+//! The build volume as the viewport draws and edits against it, and the rules
+//! that the viewport applies with it: the fit test, the clamp of translate
+//! edits and the camera framing.
 
 use glam::Vec3;
 use sc_mesh_core::Aabb;
 
-/// Rectangular build envelope of a printer, in millimetres.
-///
-/// Construct via [`BuildVolume::new`]; query the envelope corners via
-/// [`BuildVolume::envelope_min_mm`] / [`BuildVolume::envelope_max_mm`]
-/// or as an [`Aabb`] via [`BuildVolume::envelope_aabb`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The build volume as the viewport uses it. It holds a validated
+/// [`sc_print_primitives::BuildVolume`] and reads its lengths and corners in
+/// f32, the precision of mesh vertices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuildVolume {
-    width_mm: f32,
-    depth_mm: f32,
-    height_mm: f32,
+    volume: sc_print_primitives::BuildVolume,
+}
+
+impl From<sc_print_primitives::BuildVolume> for BuildVolume {
+    fn from(volume: sc_print_primitives::BuildVolume) -> Self {
+        Self { volume }
+    }
 }
 
 impl BuildVolume {
-    /// Construct from the three side lengths. All three must be
-    /// strictly positive and finite; debug-asserted on construction
-    /// (release builds trust the caller, since the only producers in
-    /// this iteration are compile-time constants).
-    pub const fn new(width_mm: f32, depth_mm: f32, height_mm: f32) -> Self {
-        debug_assert!(width_mm > 0.0 && depth_mm > 0.0 && height_mm > 0.0);
-        Self {
-            width_mm,
-            depth_mm,
-            height_mm,
-        }
+    /// Builds a volume from its lengths in millimetres. Panics when a length is
+    /// 0, negative, or non-finite.
+    #[cfg(test)]
+    pub(crate) fn new(x_mm: f64, y_mm: f64, z_mm: f64) -> Self {
+        Self::from(
+            sc_print_primitives::BuildVolume::new(x_mm, y_mm, z_mm)
+                .expect("test build volumes have positive finite lengths"),
+        )
     }
 
-    /// X extent in millimetres.
+    /// Returns the X length in millimetres, rounded to f32.
     pub fn width_mm(&self) -> f32 {
-        self.width_mm
+        self.volume.x_mm() as f32
     }
 
-    /// Y extent in millimetres.
+    /// Returns the Y length in millimetres, rounded to f32.
     pub fn depth_mm(&self) -> f32 {
-        self.depth_mm
+        self.volume.y_mm() as f32
     }
 
-    /// Z extent in millimetres.
+    /// Returns the Z length in millimetres, rounded to f32.
     pub fn height_mm(&self) -> f32 {
-        self.height_mm
+        self.volume.z_mm() as f32
     }
 
-    /// Envelope minimum corner: `(-W/2, -D/2, 0)`.
+    /// Returns the minimum corner of
+    /// [`sc_print_primitives::BuildVolume::envelope_aabb`].
     ///
     /// For "is geometry inside the envelope" checks, prefer
-    /// [`Self::contains_aabb`] over comparing against the raw
-    /// corner.
+    /// [`Self::contains_aabb`] over comparing against the raw corner.
     pub fn envelope_min_mm(&self) -> Vec3 {
-        Vec3::new(-0.5 * self.width_mm, -0.5 * self.depth_mm, 0.0)
+        Vec3::from(self.volume.envelope_aabb().min().coords())
     }
 
-    /// Envelope maximum corner: `(W/2, D/2, H)`.
+    /// Returns the maximum corner of
+    /// [`sc_print_primitives::BuildVolume::envelope_aabb`].
     ///
     /// For "is geometry inside the envelope" checks, prefer
-    /// [`Self::contains_aabb`] over comparing against the raw
-    /// corner.
+    /// [`Self::contains_aabb`] over comparing against the raw corner.
     pub fn envelope_max_mm(&self) -> Vec3 {
-        Vec3::new(0.5 * self.width_mm, 0.5 * self.depth_mm, self.height_mm)
+        Vec3::from(self.volume.envelope_aabb().max().coords())
     }
 
-    /// Returns `true` iff `aabb` is fully inside the build envelope,
-    /// i.e. every coordinate of `aabb.min()` is at or above the
-    /// envelope's minimum corner and every coordinate of `aabb.max()`
-    /// is at or below the envelope's maximum corner. An empty AABB
-    /// returns `true` (vacuously contained: it has no extent to
-    /// breach a wall).
+    /// Returns `true` iff `aabb` is fully inside the build envelope, i.e. every
+    /// coordinate of `aabb.min()` is at or above the envelope's minimum corner
+    /// and every coordinate of `aabb.max()` is at or below the envelope's
+    /// maximum corner. An empty AABB returns `true` (vacuously contained: it
+    /// has no extent to breach a wall).
     ///
-    /// Use this as the single source of truth for "does this geometry
-    /// fit on the printer's plate". A convex envelope contains a mesh
-    /// iff it contains the mesh's AABB, so the per-vertex shape test
-    /// reduces to one call against the mesh's (post-transform)
-    /// bounding box.
+    /// A convex envelope contains a mesh iff it contains the mesh's AABB, so
+    /// the per-vertex shape test reduces to 1 call against the mesh's
+    /// (post-transform) bounding box.
     pub fn contains_aabb(&self, aabb: Aabb) -> bool {
         if aabb.is_empty() {
             return true;
@@ -111,27 +93,25 @@ impl BuildVolume {
             && hi[2] <= env_hi.z
     }
 
-    /// Largest fraction of `delta` (per axis) that keeps `aabb_pre +
-    /// delta` inside the envelope, with the additional rule that an
-    /// axis already outside the envelope cannot be made worse: motion
-    /// further away from the inside is blocked, motion back toward
-    /// the inside is allowed up to the opposite wall.
+    /// Returns the largest fraction of `delta` (per axis) by which `aabb_pre`
+    /// can move and stay inside the envelope, with the additional rule that an
+    /// axis already outside the envelope cannot be made worse: motion further
+    /// away from the inside is blocked, motion back toward the inside is
+    /// allowed up to the opposite wall.
     ///
-    /// Per-axis behaviour, with `pre_min`, `pre_max` the input AABB
-    /// extents on that axis, `env_min`, `env_max` the envelope
-    /// extents, and `d` the proposed delta:
+    /// Per-axis behaviour, with `pre_min`, `pre_max` the input AABB extents on
+    /// that axis, `env_min`, `env_max` the envelope extents, and `d` the
+    /// proposed delta:
     ///
-    /// - both extents inside: `d` clamped to
-    ///   `[env_min - pre_min, env_max - pre_max]` (the range that
-    ///   keeps the AABB strictly inside; contains `0`).
-    /// - `pre_min < env_min` (already over the `-` wall): negative
-    ///   `d` is clamped to `0`; positive `d` is clamped to
-    ///   `env_max - pre_max` (still bounded by the opposite wall).
-    /// - `pre_max > env_max` (already over the `+` wall): positive
-    ///   `d` is clamped to `0`; negative `d` is clamped to
-    ///   `env_min - pre_min`.
-    /// - `pre` larger than the envelope on that axis: both rules fire
-    ///   and `d` is clamped to `0`.
+    /// - both extents inside: `d` clamped to `[env_min - pre_min, env_max -
+    ///   pre_max]` (the range that keeps the AABB inside; contains `0`).
+    /// - `pre_min < env_min` (already over the `-` wall): negative `d` is
+    ///   clamped to `0`; positive `d` is clamped to `env_max - pre_max` (still
+    ///   bounded by the opposite wall).
+    /// - `pre_max > env_max` (already over the `+` wall): positive `d` is
+    ///   clamped to `0`; negative `d` is clamped to `env_min - pre_min`.
+    /// - `pre` larger than the envelope on that axis: both rules fire and `d`
+    ///   is clamped to `0`.
     pub fn clamp_translation_delta(&self, aabb_pre: Aabb, delta: Vec3) -> Vec3 {
         let pre_min = aabb_pre.min().coords();
         let pre_max = aabb_pre.max().coords();
@@ -154,16 +134,16 @@ impl BuildVolume {
         Vec3::new(out[0], out[1], out[2])
     }
 
-    /// Orbit-camera framing for the union of an optional scene AABB
-    /// and the build envelope. Returns the centre and bounding-sphere
-    /// radius (clamped to `1e-3` mm to keep `OrbitCamera::new` from
-    /// producing a zero distance for degenerate inputs).
+    /// Returns the orbit-camera framing for the union of an optional scene AABB
+    /// and the build envelope: the centre and the bounding-sphere radius
+    /// (clamped to `1e-3` mm to keep `OrbitCamera::new` from producing a
+    /// distance of 0 for degenerate inputs).
     ///
     /// `scene_aabb` is `Option<(min, max)>` to match
     /// `Renderer::scene_bounds()`; `None` frames on the envelope alone.
-    /// Component-wise `min` / `max` against the envelope corners yields
-    /// the union, so a degenerate scene AABB (sentinel
-    /// `(+inf, -inf)`) collapses safely to envelope-only.
+    /// Component-wise `min` / `max` against the envelope corners yields the
+    /// union, so a degenerate scene AABB (sentinel `(+inf, -inf)`) collapses
+    /// safely to envelope-only.
     pub fn framing(&self, scene_aabb: Option<(Vec3, Vec3)>) -> (Vec3, f32) {
         let env_min = self.envelope_min_mm();
         let env_max = self.envelope_max_mm();
@@ -182,14 +162,17 @@ fn clamp_axis(pre_min: f32, pre_max: f32, env_min: f32, env_max: f32, d: f32) ->
     let outside_pos = pre_max > env_max;
     let lower = if outside_neg { 0.0 } else { env_min - pre_min };
     let upper = if outside_pos { 0.0 } else { env_max - pre_max };
-    // `lower <= 0 <= upper` always holds, so `0` is always feasible
-    // and the clamp is well-defined even when `lower == upper`.
+    // For a box without a NaN bound, `lower <= 0 <= upper` holds, so `0` is
+    // always feasible and the clamp is well-defined even when `lower == upper`.
     d.clamp(lower, upper)
 }
 
-/// Hardcoded default until a printer-profile source is wired in.
-/// Roughly Mars-3-class: 192 mm x 120 mm plate, 200 mm Z.
-pub const HARDCODED_DEFAULT_BUILD_VOLUME: BuildVolume = BuildVolume::new(192.0, 120.0, 200.0);
+/// The build volume that the viewport uses when it knows no printer.
+pub const HARDCODED_DEFAULT_BUILD_VOLUME: BuildVolume =
+    match sc_print_primitives::BuildVolume::new(192.0, 120.0, 200.0) {
+        Ok(volume) => BuildVolume { volume },
+        Err(_) => panic!("the placeholder lengths are positive and finite"),
+    };
 
 #[cfg(test)]
 mod build_volume_tests {
@@ -218,6 +201,20 @@ mod build_volume_tests {
         assert_approx_eq!(f32, hi.x, 50.0);
         assert_approx_eq!(f32, hi.y, 30.0);
         assert_approx_eq!(f32, hi.z, 80.0);
+    }
+
+    #[test]
+    fn lengths_and_corners_are_read_in_f32() {
+        // 143.43 and 89.6 are not exact in f32: the lengths are their f32
+        // roundings, and the corners are the halves of those roundings.
+        let v = BuildVolume::from(
+            sc_print_primitives::BuildVolume::new(143.43, 89.6, 175.0).expect("valid build volume"),
+        );
+        assert_eq!(v.width_mm(), 143.43);
+        assert_eq!(v.depth_mm(), 89.6);
+        assert_eq!(v.height_mm(), 175.0);
+        assert_eq!(v.envelope_min_mm(), Vec3::new(-71.715, -44.8, 0.0));
+        assert_eq!(v.envelope_max_mm(), Vec3::new(71.715, 44.8, 175.0));
     }
 
     #[test]
@@ -276,9 +273,9 @@ mod build_volume_tests {
     #[test]
     fn already_outside_plus_x_allows_negative_x_back_inside() {
         let v = vol();
-        // pre.max.x = 60 > 50. Allow movement back toward inside up
-        // to the opposite wall: lower bound is env_min.x - pre.min.x
-        // = -50 - 55 = -105. A small inward delta is preserved.
+        // pre.max.x = 60 > 50. Allow movement back toward inside up to the
+        // opposite wall: lower bound is env_min.x - pre.min.x = -50 - 55 =
+        // -105. A small inward delta is preserved.
         let pre = aabb([55.0, -1.0, 0.0], [60.0, 1.0, 2.0]);
         let delta = Vec3::new(-3.0, 0.0, 0.0);
         let out = v.clamp_translation_delta(pre, delta);
@@ -288,9 +285,8 @@ mod build_volume_tests {
     #[test]
     fn z_floor_is_one_sided() {
         let v = vol();
-        // Resting on the plate: pre.min.z = 0. -Z motion is blocked,
-        // +Z motion is allowed up to env_max.z - pre.max.z = 80 - 5
-        // = 75.
+        // Resting on the plate: pre.min.z = 0. -Z motion is blocked, +Z motion
+        // is allowed up to env_max.z - pre.max.z = 80 - 5 = 75.
         let pre = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 5.0]);
         let down = v.clamp_translation_delta(pre, Vec3::new(0.0, 0.0, -2.0));
         assert_approx_eq!(f32, down.z, 0.0);
@@ -312,9 +308,8 @@ mod build_volume_tests {
     #[test]
     fn diagonal_delta_slides_along_a_wall() {
         let v = vol();
-        // Touching +X wall, plenty of Y/Z room. A diagonal +X+Y push
-        // clamps X to 0 and lets Y through unmodified: classic wall
-        // slide.
+        // Touching +X wall, plenty of Y/Z room. A diagonal +X+Y push clamps X
+        // to 0 and lets Y through unmodified: classic wall slide.
         let pre = aabb([48.0, -1.0, 0.0], [50.0, 1.0, 2.0]);
         let out = v.clamp_translation_delta(pre, Vec3::new(5.0, 4.0, 0.0));
         assert_approx_eq!(f32, out.x, 0.0);
@@ -325,8 +320,8 @@ mod build_volume_tests {
     #[test]
     fn opposite_walls_breached_gives_per_axis_room() {
         let v = vol();
-        // Pre.x = [-50, 50]: exactly fills X. Any X delta clamps to
-        // 0; per axis-clamp uses [d_lo=0, d_hi=0] = {0}.
+        // Pre.x = [-50, 50]: exactly fills X. Any X delta clamps to 0; per
+        // axis-clamp uses [d_lo=0, d_hi=0] = {0}.
         let pre = aabb([-50.0, -1.0, 0.0], [50.0, 1.0, 2.0]);
         let out = v.clamp_translation_delta(pre, Vec3::new(7.0, 0.0, 0.0));
         assert_approx_eq!(f32, out.x, 0.0);
@@ -341,8 +336,8 @@ mod build_volume_tests {
 
     #[test]
     fn contains_aabb_returns_true_when_aabb_touches_walls() {
-        // Faces flush against every wall; still contained
-        // (contains is inclusive on the boundary).
+        // Faces flush against every wall; still contained (contains is
+        // inclusive on the boundary).
         let v = vol();
         let flush = aabb([-50.0, -30.0, 0.0], [50.0, 30.0, 80.0]);
         assert!(v.contains_aabb(flush));
@@ -393,10 +388,20 @@ mod build_volume_tests {
     }
 
     #[test]
+    fn placeholder_is_192_by_120_by_200_mm() {
+        let v = HARDCODED_DEFAULT_BUILD_VOLUME;
+        assert_eq!(v.width_mm(), 192.0);
+        assert_eq!(v.depth_mm(), 120.0);
+        assert_eq!(v.height_mm(), 200.0);
+        assert_eq!(v.envelope_min_mm(), Vec3::new(-96.0, -60.0, 0.0));
+        assert_eq!(v.envelope_max_mm(), Vec3::new(96.0, 60.0, 200.0));
+    }
+
+    #[test]
     fn framing_with_no_scene_returns_plate_geometry() {
-        // Envelope 100 x 60 x 80: corners at (-50, -30, 0) and
-        // (50, 30, 80). Centre at (0, 0, 40), bounding-sphere radius
-        // is half the diagonal = sqrt(100^2 + 60^2 + 80^2) / 2.
+        // Envelope 100 x 60 x 80: corners at (-50, -30, 0) and (50, 30, 80).
+        // Centre at (0, 0, 40), bounding-sphere radius is half the diagonal =
+        // sqrt(100^2 + 60^2 + 80^2) / 2.
         let v = vol();
         let (centre, radius) = v.framing(None);
         let expected_radius =
@@ -409,8 +414,8 @@ mod build_volume_tests {
 
     #[test]
     fn framing_with_scene_inside_envelope_is_dominated_by_plate() {
-        // A small scene AABB strictly inside the envelope must not
-        // shift the framing: the union is the envelope itself.
+        // A small scene AABB strictly inside the envelope must not shift the
+        // framing: the union is the envelope itself.
         let v = vol();
         let scene = (Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 2.0));
         let (centre_with, radius_with) = v.framing(Some(scene));
@@ -423,9 +428,8 @@ mod build_volume_tests {
 
     #[test]
     fn framing_with_scene_outside_envelope_extends_bounds() {
-        // Scene AABB poking out past +X / +Y. The union takes the
-        // envelope on the negative side and the scene on the
-        // positive side.
+        // Scene AABB poking out past +X / +Y. The union takes the envelope on
+        // the negative side and the scene on the positive side.
         let v = vol();
         let scene = (Vec3::new(100.0, 100.0, 50.0), Vec3::new(110.0, 110.0, 60.0));
         let (centre, radius) = v.framing(Some(scene));

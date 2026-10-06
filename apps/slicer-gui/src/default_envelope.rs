@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use sc_print_primitives::PrinterId;
 
-use crate::build_volume::BuildVolume;
+use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_catalog::ProfileCatalog;
 
@@ -61,7 +61,10 @@ impl DefaultEnvelope {
 }
 
 fn default_printer_plate(catalog: &ProfileCatalog, chosen: Option<&PrinterId>) -> BuildVolume {
-    catalog.envelope_for_printer(catalog.effective_default_printer(chosen).as_ref())
+    catalog
+        .effective_default_printer(chosen)
+        .and_then(|printer| catalog.printer_build_volume(&printer))
+        .map_or(HARDCODED_DEFAULT_BUILD_VOLUME, BuildVolume::from)
 }
 
 #[cfg(test)]
@@ -72,7 +75,6 @@ mod default_envelope_tests {
     use sc_print_profiles::generic_printer_id;
 
     use super::*;
-    use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
     use crate::preferences_bus::PreferencesSnapshot;
     use crate::profile_catalog::{PrinterCatalogEntry, ProfileSource};
 

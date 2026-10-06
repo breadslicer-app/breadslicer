@@ -3,22 +3,21 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! End-to-end coverage of the profile catalog: merging the user and
-//! bundled libraries, capturing the fields the pickers show, resolving
-//! thumbnails, and attaching material extensions with their coverage
-//! derivation, driven from outside the crate against tempdir fixtures.
+//! End-to-end coverage of the profile catalog: merging the user and bundled
+//! libraries, capturing the fields the pickers show, resolving thumbnails, and
+//! attaching material extensions with their coverage derivation, driven from
+//! outside the crate against tempdir fixtures.
 
 use std::fs;
 use std::path::Path;
 
 use sc_print_primitives::{FormatKind, MaterialId, NonEmptyString, PrinterId};
 use sc_print_profiles::{CalibrationTarget, ProfileLibraries};
-use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use sc_slicer_gui::profile_catalog::{
     CalibrationCoverage, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
 };
 
-/// Build the catalog from an optional user root and 1 bundled root.
+/// Builds the catalog from an optional user root and 1 bundled root.
 fn catalog_from(user: Option<&Path>, bundled: &Path) -> ProfileCatalog {
     ProfileCatalog::from_libraries(&ProfileLibraries::new(
         user.map(Path::to_path_buf),
@@ -26,8 +25,8 @@ fn catalog_from(user: Option<&Path>, bundled: &Path) -> ProfileCatalog {
     ))
 }
 
-/// Format an `f64` with a decimal point so TOML parses it as a float
-/// (a bare `100` would be an integer and fail the `f64` field).
+/// Formats an `f64` with a decimal point so TOML parses it as a float (a bare
+/// `100` would be an integer and fail the `f64` field).
 fn f(value: f64) -> String {
     format!("{value:?}")
 }
@@ -42,8 +41,8 @@ fn write_printer(
 ) {
     let printers = root.join("printers");
     fs::create_dir_all(&printers).unwrap();
-    // 40 micron pixels: a build-volume axis of `n` mm implies `n * 25`
-    // pixels, which keeps the envelope-consistency check happy.
+    // 40 micron pixels: a build-volume axis of `n` mm implies `n * 25` pixels,
+    // which keeps the envelope-consistency check happy.
     let res_x = (x * 25.0).round() as u32;
     let res_y = (y * 25.0).round() as u32;
     let image_line = match image {
@@ -138,7 +137,7 @@ fn write_material(
     fs::write(materials.join(format!("{id}.toml")), toml).unwrap();
 }
 
-/// Write a material extension file (same shape as a material, plus the
+/// Writes a material extension file (same shape as a material, plus the
 /// `extension = true` flag) into `<root>/materials/extensions/`.
 fn write_material_extension(root: &Path, id: &str, calibrated: &[&str]) {
     let extensions = root.join("materials").join("extensions");
@@ -180,46 +179,6 @@ fn target(id: &str) -> CalibrationTarget {
 
 fn material_id(id: &str) -> MaterialId {
     MaterialId::new(id).unwrap()
-}
-
-#[test]
-fn envelope_for_a_resolved_printer_is_its_build_volume() {
-    let bundled = tempfile::tempdir().unwrap();
-    write_printer(
-        bundled.path(),
-        "vol",
-        "Maker",
-        "Model",
-        (192.0, 120.0, 200.0),
-        None,
-    );
-
-    let catalog = catalog_from(None, bundled.path());
-    let envelope = catalog.envelope_for_printer(Some(&printer_id("vol")));
-    assert_eq!(envelope, BuildVolume::new(192.0, 120.0, 200.0));
-}
-
-#[test]
-fn envelope_falls_back_to_the_hardcoded_default_when_unselected_or_unresolved() {
-    let bundled = tempfile::tempdir().unwrap();
-    write_printer(
-        bundled.path(),
-        "vol",
-        "Maker",
-        "Model",
-        (192.0, 120.0, 200.0),
-        None,
-    );
-
-    let catalog = catalog_from(None, bundled.path());
-    assert_eq!(
-        catalog.envelope_for_printer(None),
-        HARDCODED_DEFAULT_BUILD_VOLUME
-    );
-    assert_eq!(
-        catalog.envelope_for_printer(Some(&printer_id("missing"))),
-        HARDCODED_DEFAULT_BUILD_VOLUME
-    );
 }
 
 #[test]
@@ -622,8 +581,8 @@ fn an_unflagged_file_in_the_extensions_dir_is_skipped() {
     let user = tempfile::tempdir().unwrap();
     let bundled = tempfile::tempdir().unwrap();
     write_material(bundled.path(), "resin", "Brand", "Resin", "other", &[]);
-    // A full profile misplaced in the extensions directory: no
-    // `extension = true` flag.
+    // A full profile misplaced in the extensions directory: no `extension =
+    // true` flag.
     let extensions = user.path().join("materials").join("extensions");
     fs::create_dir_all(&extensions).unwrap();
     fs::write(
@@ -811,8 +770,8 @@ fn active_matcher_follows_coverage_including_the_extension_pull() {
         "other",
         &["printer-a"],
     );
-    // The base only covers printer-a; the extension covers our
-    // printer, pulling the entry into the active-matcher group.
+    // The base only covers printer-a; the extension covers our printer, pulling
+    // the entry into the active-matcher group.
     write_material_extension(user.path(), "pulled", &["printer-b"]);
 
     let catalog = catalog_from(Some(user.path()), bundled.path());
@@ -990,9 +949,9 @@ fn a_rebuild_picks_up_a_newly_written_user_profile() {
 
 #[test]
 fn an_id_only_in_a_second_bundled_root_is_listed_and_loads() {
-    // The catalog and the by-id loads consume one ProfileLibraries
-    // value, so an id the catalog lists must also load, wherever in
-    // the bundled list its file sits.
+    // The catalog and the by-id loads consume 1 ProfileLibraries value, so an
+    // id the catalog lists must also load, wherever in the bundled list its
+    // file sits.
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     write_printer(

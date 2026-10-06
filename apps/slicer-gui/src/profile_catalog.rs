@@ -227,26 +227,6 @@ impl ProfileCatalog {
             .into_iter()
             .collect()
     }
-
-    /// Returns the viewport build envelope of `printer`: its build volume when
-    /// the catalog holds it, else the hardcoded placeholder. The
-    /// `sc_print_primitives` build volume (x, y, z; f64) maps to the GUI
-    /// envelope as (width, depth, height; f32).
-    pub fn envelope_for_printer(
-        &self,
-        printer: Option<&PrinterId>,
-    ) -> crate::build_volume::BuildVolume {
-        printer
-            .and_then(|id| self.printer_build_volume(id))
-            .map(|bv| {
-                crate::build_volume::BuildVolume::new(
-                    bv.x_mm() as f32,
-                    bv.y_mm() as f32,
-                    bv.z_mm() as f32,
-                )
-            })
-            .unwrap_or(crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME)
-    }
 }
 
 /// Merges the printer profiles across `roots`, highest precedence first: the
