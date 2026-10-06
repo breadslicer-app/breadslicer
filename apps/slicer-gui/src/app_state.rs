@@ -1478,7 +1478,7 @@ mod settings_saver_tests {
     #[test]
     fn loop_coalesces_burst_to_latest_snapshot() {
         // Queue a burst of snapshots before the loop starts. The first `recv`
-        // returns one; `try_recv` drains the rest in the same wake; the loop
+        // returns 1; `try_recv` drains the rest in the same wake; the loop
         // calls `on_snapshot` once with the LAST value queued. Catches
         // regressions in the inner drain (for example an off-by-one or a
         // missing while loop) that would write each snapshot.

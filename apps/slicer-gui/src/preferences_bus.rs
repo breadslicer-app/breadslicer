@@ -11,10 +11,10 @@
 //!
 //! Listeners receive the whole new snapshot plus a `PreferencesChange` enum
 //! describing what triggered the dispatch. They can filter by variant if they
-//! only care about specific prefs. Listener order is registration order:
-//! `AppState`'s persistence + language-apply listeners are subscribed first, so
-//! per-window listeners see the post-persistence,
-//! post-`select_bundled_translation` world.
+//! only care about specific prefs. Listener order is registration order. The
+//! app-wide listeners subscribe in `AppState::new`, before any window exists,
+//! so the active translation and `DefaultEnvelope` are up to date when a
+//! window's listener runs.
 //!
 //! Subscriptions are RAII: the [`Subscription`] handle drops the listener from
 //! the bus on `Drop`. Each window's builder holds its own `Subscription`
