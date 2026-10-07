@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Behavioural tests for the wgpu-free helpers in
-//! `crate::mesh_loader`. The async worker spawned by `spawn_load`
-//! requires a real `wgpu::Device` and stays under the software-wgpu
-//! integration vehicle (Phase 1.F).
+//! Behavioural tests for `crate::mesh_loader`. The tests that run a whole load
+//! use the shared GPU test device, and skip when no adapter is available.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -20,8 +20,10 @@ use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
+use sc_print_primitives::PrinterId;
 use sc_project_formats::{
-    EmbedProfiles, ProjectPayload, infer_project_file_type_from_extension, write_project,
+    EmbedProfiles, ProfileRefWarning, ProjectPayload, infer_project_file_type_from_extension,
+    write_project,
 };
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeKind};
@@ -34,7 +36,10 @@ use crate::mesh_loader::{
     LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch, guard_worker,
     panic_message, parse_source, place_on_plate, start_load_with_ticket,
 };
-use crate::scene_loader::SceneLoader;
+use crate::mesh_render::DeviceToken;
+use crate::scene_loader::{PreparedScene, SceneLoader};
+use crate::test_support::gpu_devices::shared_test_device;
+use crate::test_support::projects::project_with_in_sync_slices;
 
 fn unit_triangle_mesh() -> IndexedMesh {
     IndexedMesh {
@@ -85,8 +90,8 @@ fn check_file_size_returns_err_for_a_file_over_the_cap() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("huge.stl");
     let f = std::fs::File::create(&path).expect("create");
-    // Sparse file: set the length without allocating; metadata().len()
-    // still reports the logical size.
+    // Sparse file: set the length without allocating; metadata().len() still
+    // reports the logical size.
     f.set_len(MAX_MESH_FILE_SIZE_BYTES + 1).expect("set_len");
     drop(f);
     let result = check_file_size(&path);
@@ -184,8 +189,8 @@ fn start_load_with_ticket_deposits_an_err_when_no_gpu_snapshot_is_available() {
     let Err(err) = result else {
         panic!("no-gpu must deposit an Err");
     };
-    // No setup has run, so the device may still be on its way and the
-    // dialog has to say so rather than name an internal condition.
+    // No setup has run, so the device may still be on its way, and the dialog
+    // has to say so.
     assert_eq!(
         err.to_string(),
         GraphicsUnavailable::AwaitingSetup.message(),
@@ -195,9 +200,9 @@ fn start_load_with_ticket_deposits_an_err_when_no_gpu_snapshot_is_available() {
 
 #[test]
 fn start_load_with_ticket_reports_an_unusable_renderer_when_one_was_seen() {
-    // Same empty device slot as above, but here a setup already went
-    // past carrying an API this build cannot draw with. Waiting will
-    // not help, so the user must be told something different.
+    // Same empty device slot as above, but here a setup already went past
+    // carrying an API this build cannot draw with. Waiting will not help, so
+    // the user must be told something different.
     let l = loader();
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("small.stl");
@@ -236,8 +241,8 @@ fn a_ready_device_starts_the_load() {
 
 #[test]
 fn a_pick_made_before_the_first_paint_is_parked() {
-    // The window is cold rather than broken, so the request waits for
-    // the device instead of failing in the user's face.
+    // The window has not painted yet, so its device may still arrive, and the
+    // request waits for it.
     assert_eq!(
         decide_load_dispatch(Some(GraphicsUnavailable::AwaitingSetup)),
         LoadDispatch::Queue
@@ -246,8 +251,8 @@ fn a_pick_made_before_the_first_paint_is_parked() {
 
 #[test]
 fn a_pick_on_an_unusable_renderer_is_reported_not_parked() {
-    // Parking this one would swallow the request for the rest of the
-    // session, since no later setup is going to arrive.
+    // Parking this one would swallow the request for the rest of the session,
+    // since no later setup is going to arrive.
     let reason = GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string());
     assert_eq!(
         decide_load_dispatch(Some(reason.clone())),
@@ -274,9 +279,8 @@ fn a_pick_after_a_device_loss_is_reported_not_parked() {
 
 #[test]
 fn the_reported_reason_reaches_the_caller_intact() {
-    // The caller turns this into the dialog body, so the API name has
-    // to survive the decision rather than be flattened to a generic
-    // failure.
+    // The caller turns this into the dialog body, so the API name has to
+    // survive the decision.
     let LoadDispatch::Report(reason) = decide_load_dispatch(Some(
         GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()),
     )) else {
@@ -336,9 +340,9 @@ fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
     mesh
 }
 
-/// Loader-shape scene carrying the cube and both tunnel prisms as
-/// named leaves with distinct translations.
-fn prism_trio_scene() -> Scene {
+/// Builds a group root over the cube and both tunnel prisms, as named leaves
+/// with distinct translations, each moved by `offset`.
+fn prism_trio_scene(offset: [f64; 3]) -> Scene {
     let mut scene = Scene::new();
     let root = scene.add_group(None, Transform3D::Identity);
     scene.add_root(root).expect("group root");
@@ -348,6 +352,7 @@ fn prism_trio_scene() -> Scene {
         ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
     ];
     for (name, mesh, translation) in sources {
+        let translation: [f64; 3] = std::array::from_fn(|axis| translation[axis] + offset[axis]);
         let transform = if translation == [0.0, 0.0, 0.0] {
             Transform3D::Identity
         } else {
@@ -386,7 +391,7 @@ fn root_child_count(scene: &Scene) -> usize {
 fn parse_source_obj_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.obj");
-    let trio = prism_trio_scene();
+    let trio = prism_trio_scene([0.0; 3]);
     write_scene(&trio, &path, WriteFormat::Obj).expect("obj writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("obj parses");
@@ -396,12 +401,11 @@ fn parse_source_obj_ends_the_parse_phase_complete() {
 
 #[test]
 fn parse_source_binary_stl_ends_the_parse_phase_complete() {
-    // `.stl` goes through the format sniffer, which probes the header
-    // and rewinds: the seek path of the progress reader is on this
-    // route.
+    // `.stl` goes through the format sniffer, which probes the header and
+    // rewinds: the seek path of the progress reader is on this route.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.stl");
-    let trio = prism_trio_scene();
+    let trio = prism_trio_scene([0.0; 3]);
     write_scene(&trio, &path, WriteFormat::StlBin).expect("stl writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("stl parses");
@@ -416,19 +420,107 @@ fn parse_source_binary_stl_ends_the_parse_phase_complete() {
 fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.3mf");
-    let file_type = infer_project_file_type_from_extension(Path::new("trio.3mf"))
-        .expect("3mf is a project format");
-    let payload = ProjectPayload {
-        printer: None,
-        resin: None,
-        first_layer_height: None,
-        output_format: None,
-        embedded: Vec::new(),
+    write_project_file(
+        &path,
+        &prism_trio_scene([0.0; 3]),
+        &ProjectPayload::default(),
+    );
+    let (sink, cell) = sink_and_cell();
+    let parsed = parse_source(&path, &sink).expect("3mf parses");
+    assert_eq!(root_child_count(&parsed.graph), 3);
+    assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
+}
+
+// --- a whole load, on the GPU ----------------------------------------
+
+/// An offset that takes the trio away from the plate's centre and floor: the
+/// moved trio's world box runs from (24, -21, 14.5) to (36, -19, 17).
+const TRIO_OFFSET: [f64; 3] = [30.0, -20.0, 15.0];
+
+const PLACED_TRIO_BOX: ([f32; 3], [f32; 3]) = ([-6.0, -1.0, 0.0], [6.0, 1.0, 2.5]);
+
+/// Loads `path` through `start_load_with_ticket`, with the shared
+/// default-limits test device as the window's device, and returns what the
+/// worker deposits. Returns `None` when no adapter is available.
+fn load_on_the_test_device(path: &Path) -> Option<PreparedScene> {
+    let (device, queue) = shared_test_device()?;
+    let l = loader();
+    l.set_gpu(device, DeviceToken::next(), queue);
+    let ticket = l.begin_load().expect("no load is in flight");
+    start_load_with_ticket(
+        ticket,
+        path.to_path_buf(),
+        &l,
+        BuildVolume::new(100.0, 60.0, 80.0),
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Some((deposited_path, result)) = l.drain_deposit_for_test() {
+            assert_eq!(deposited_path, path);
+            return Some(result.expect("the load succeeds"));
+        }
+        assert!(Instant::now() < deadline, "the worker deposits within 60 s");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Returns the minimum and the maximum corner of the scene's world box.
+fn world_box(scene: &Scene) -> ([f32; 3], [f32; 3]) {
+    let aabb = scene
+        .aabb()
+        .expect("the box resolves")
+        .expect("the scene has geometry");
+    (aabb.min().coords(), aabb.max().coords())
+}
+
+/// Writes the trio, moved by [`TRIO_OFFSET`], to `file_name` in `format`, and
+/// returns the world box of the scene that its load deposits.
+fn deposited_box_of_the_moved_trio(
+    format: WriteFormat,
+    file_name: &str,
+) -> Option<([f32; 3], [f32; 3])> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(file_name);
+    write_scene(&prism_trio_scene(TRIO_OFFSET), &path, format).expect("the trio writes");
+    load_on_the_test_device(&path).map(|prepared| world_box(prepared.spatial.graph()))
+}
+
+#[test]
+fn a_loaded_obj_is_dropped_onto_the_plate() {
+    let Some(placed) = deposited_box_of_the_moved_trio(WriteFormat::Obj, "trio.obj") else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
     };
+    assert_eq!(placed, PLACED_TRIO_BOX);
+}
+
+#[test]
+fn a_loaded_binary_stl_is_dropped_onto_the_plate() {
+    let Some(placed) = deposited_box_of_the_moved_trio(WriteFormat::StlBin, "trio.stl") else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert_eq!(placed, PLACED_TRIO_BOX);
+}
+
+#[test]
+fn a_loaded_plain_3mf_is_dropped_onto_the_plate() {
+    let Some(placed) = deposited_box_of_the_moved_trio(WriteFormat::ThreeMf, "trio.3mf") else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert_eq!(placed, PLACED_TRIO_BOX);
+}
+
+/// Writes `scene` and `payload` to `path` as a project of the type that its
+/// extension names, with no embedded profiles and no slices.
+fn write_project_file(path: &Path, scene: &Scene, payload: &ProjectPayload) {
+    let file_type =
+        infer_project_file_type_from_extension(path).expect("the extension is a project format");
     let mut bytes = Vec::new();
     write_project(
-        &prism_trio_scene(),
-        &payload,
+        scene,
+        payload,
         EmbedProfiles::No,
         None,
         None,
@@ -436,11 +528,84 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
         &mut bytes,
     )
     .expect("project writes");
+    std::fs::write(path, bytes).expect("file writes");
+}
+
+/// Returns the local transform of each leaf under the root group, by the name
+/// of its mesh.
+fn named_leaf_transforms(scene: &Scene) -> BTreeMap<String, Transform3D> {
+    let root = scene.node(scene.roots()[0]).expect("root resolves");
+    let NodeKind::Group { children } = &root.kind else {
+        panic!("the root should be a group, got {:?}", root.kind);
+    };
+    children
+        .iter()
+        .map(|&child| {
+            let name = scene
+                .leaf_mesh_arc(child)
+                .expect("every child is a mesh leaf")
+                .meta()
+                .as_ref()
+                .and_then(|meta| meta.name.clone())
+                .expect("every trio mesh is named");
+            let transform = scene.node(child).expect("child resolves").local_transform;
+            (name, transform)
+        })
+        .collect()
+}
+
+#[test]
+fn a_loaded_project_keeps_its_placement() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trio.3mf");
+    let trio = prism_trio_scene(TRIO_OFFSET);
+    write_project_file(&path, &trio, &ProjectPayload::default());
+    let Some(prepared) = load_on_the_test_device(&path) else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let scene = prepared.spatial.graph();
+    let root = scene.node(scene.roots()[0]).expect("root resolves");
+    assert_eq!(root.local_transform, Transform3D::Identity);
+    assert_eq!(named_leaf_transforms(scene), named_leaf_transforms(&trio));
+    assert_eq!(world_box(scene), ([24.0, -21.0, 14.5], [36.0, -19.0, 17.0]));
+}
+
+#[test]
+fn a_loaded_project_reports_a_printer_that_is_not_installed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trio.3mf");
+    let id = PrinterId::new("no-such-printer").expect("valid id");
+    let payload = ProjectPayload {
+        printer: Some(id.clone()),
+        ..ProjectPayload::default()
+    };
+    write_project_file(&path, &prism_trio_scene([0.0; 3]), &payload);
+    let Some(prepared) = load_on_the_test_device(&path) else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert_eq!(
+        prepared.profile_warnings,
+        vec![ProfileRefWarning::PrinterMissing { id }]
+    );
+}
+
+#[test]
+fn a_loaded_project_brings_back_its_in_sync_slices() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("plate.3mf");
+    let (bytes, _token) = project_with_in_sync_slices();
     std::fs::write(&path, bytes).expect("file writes");
-    let (sink, cell) = sink_and_cell();
-    let parsed = parse_source(&path, &sink).expect("3mf parses");
-    assert_eq!(root_child_count(&parsed.graph), 3);
-    assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
+    let Some(prepared) = load_on_the_test_device(&path) else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert!(
+        prepared.reloaded_slices.is_some(),
+        "the in-sync slices come back"
+    );
+    assert_eq!(prepared.profile_warnings, []);
 }
 
 // --- guard_worker -----------------------------------------------------

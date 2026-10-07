@@ -41,10 +41,10 @@ pub(crate) struct ReloadedSlices {
 }
 
 impl ReloadedSlices {
-    /// Build the held slice result, stamping the scene-geometry marker captured
-    /// after the fresh install, so the reloaded slice reads as in sync and
-    /// re-persists without a re-slice. The anti-aliasing level is not persisted
-    /// and does not feed the token, so it defaults to `Off`.
+    /// Builds the held slice result, stamping the scene-geometry marker
+    /// captured after the fresh install, so the reloaded slice reads as in sync
+    /// and re-persists without a re-slice. The anti-aliasing level is not
+    /// persisted and does not feed the token, so it defaults to `Off`.
     pub(crate) fn into_slice_result(self, geometry: SceneRevision) -> SliceResult {
         SliceResult {
             contours: self.contours,
@@ -60,7 +60,7 @@ impl ReloadedSlices {
     }
 }
 
-/// Revalidate a project's persisted slices against the reopened scene,
+/// Revalidates a project's persisted slices against the reopened scene,
 /// returning them only when they are still in sync. Resolves the layer schedule
 /// from the installed profiles the same way the save path does, then recomputes
 /// the geometry fingerprint and compares it to the stored token. Any missing
@@ -94,7 +94,7 @@ pub(crate) fn revalidate_persisted_slices(
     })
 }
 
-/// Report whether the stored token still matches the fingerprint of the scene
+/// Reports whether the stored token still matches the fingerprint of the scene
 /// under the resolved schedule.
 fn slices_in_sync(token: &str, scene: &Scene, schedule: &LayerSchedule) -> bool {
     matches!(
@@ -108,43 +108,15 @@ mod reloaded_slices_tests {
     use super::*;
 
     use std::io::Cursor;
-    use std::path::Path;
     use std::sync::Arc;
 
-    use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::Transform3D;
     use sc_print_glue::slice_input_fingerprint;
-    use sc_project_formats::{
-        EmbedProfiles, ProjectFileType, infer_project_file_type_from_extension, read_project,
-        write_project,
-    };
+    use sc_project_formats::{EmbedProfiles, read_project, write_project};
     use sc_scene::node::LeafPayload;
     use sc_sl1cer::contour::ContourLayer;
 
-    fn cube_mesh() -> IndexedMesh {
-        let v = |x, y, z| Vertex::new([x, y, z]);
-        let vertices = vec![
-            v(-1.0, -1.0, 0.0),
-            v(1.0, -1.0, 0.0),
-            v(1.0, 1.0, 0.0),
-            v(-1.0, 1.0, 0.0),
-            v(-1.0, -1.0, 2.0),
-            v(1.0, -1.0, 2.0),
-            v(1.0, 1.0, 2.0),
-            v(-1.0, 1.0, 2.0),
-        ];
-        let n = Normal::new([0.0, 0.0, 1.0]);
-        let faces = vec![
-            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
-        ];
-        IndexedMesh {
-            meta: None,
-            vertices,
-            faces,
-        }
-    }
+    use crate::test_support::projects::{cube_mesh, project_with_in_sync_slices, three_mf};
 
     fn cube_scene() -> Scene {
         let mut scene = Scene::new();
@@ -174,11 +146,6 @@ mod reloaded_slices_tests {
     fn empty_layers_at(zs: impl Iterator<Item = f64>) -> ContourStack {
         ContourStack::new(zs.map(|z| ContourLayer::new(z, vec![])).collect())
             .expect("z is strictly increasing")
-    }
-
-    fn three_mf() -> ProjectFileType {
-        infer_project_file_type_from_extension(Path::new("plate.3mf"))
-            .expect("the 3mf extension is a project format")
     }
 
     fn empty_payload() -> ProjectPayload {
@@ -276,7 +243,8 @@ mod reloaded_slices_tests {
         let stack = || ContourStack::new_unchecked(Vec::new());
         let token = || Some(token_for(&scene, &schedule()));
 
-        // No persisted geometry, no token: nothing to revalidate.
+        // Without persisted geometry or without a token, there is nothing to
+        // revalidate.
         assert!(
             revalidate_persisted_slices(Some(&empty_payload()), &scene, None, token()).is_none()
         );
@@ -294,8 +262,8 @@ mod reloaded_slices_tests {
 
     #[test]
     fn a_saved_stack_of_another_layer_count_reopens_without_slices() {
-        // The token covers the scene and the schedule, not the saved layers, so
-        // a matching token does not prove that the layer count is correct.
+        // The token covers only the scene and the schedule, so a matching token
+        // does not prove that the saved layer count is correct.
         let scene = cube_scene();
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
         let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
@@ -317,93 +285,14 @@ mod reloaded_slices_tests {
 
     #[test]
     fn a_reopened_project_revalidates_slices_saved_on_a_placed_scene() {
-        // Reproduces the reopen scenario: a mesh placed by a non-identity
-        // affine transform (a fit scale plus recentre), sliced on the bundled
-        // default profiles, saved with real slice geometry, then reopened. The
-        // full reopen path (read back the standalone slice part, re-resolve the
-        // schedule, recompute the fingerprint) must accept the slices.
-        //
-        // The slice-time scene is built the way the plain-mesh loader does: the
-        // mesh leaf is the scene's direct root, with the plate placement
-        // written onto it. Reopening from 3MF wraps that leaf under a fresh
-        // identity group, so the saved and reopened scenes place the same
-        // geometry under different nesting. The fingerprint must ignore that
-        // nesting, or the reopened slices are wrongly rejected as stale.
-        use sc_mesh_core::transform::AffineTransform3D;
-        use sc_project_formats::PlateSlices;
-        use sc_sl1cer::contour::{ClosedRing, Polygon};
-        use sc_sl1cer::geom2d::Point2D;
-
-        let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
-        let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
-
-        let placement = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
-            [
-                [0.6173767447471619, 0.0, 0.0],
-                [0.0, 0.6173767447471619, 0.0],
-                [0.0, 0.0, 0.6173767447471619],
-            ],
-            [
-                -67.91707062404612,
-                -67.90612409423966,
-                0.0021667425876330526,
-            ],
-        ));
-        let mut scene = Scene::new();
-        let leaf = scene
-            .add_leaf(None, placement, LeafPayload::Mesh(Arc::new(cube_mesh())))
-            .expect("add leaf");
-        scene.add_root(leaf).expect("leaf becomes the scene root");
-
-        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
-            .expect("the bundled default profiles resolve a schedule");
-        let token = slice_input_fingerprint(&scene, &schedule)
-            .expect("the scene has sliceable geometry")
-            .to_token();
-
-        let slab_tops: Vec<f64> = schedule.iter_slab_tops().collect();
-        let square = Polygon::new(
-            ClosedRing::new(vec![
-                Point2D::new(-1.0, -1.0),
-                Point2D::new(1.0, -1.0),
-                Point2D::new(1.0, 1.0),
-                Point2D::new(-1.0, 1.0),
-            ]),
-            vec![],
-        )
-        .expect("a CCW square is a valid polygon");
-        let layers: Vec<ContourLayer> = slab_tops
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                let polys = if i == 0 { vec![] } else { vec![square.clone()] };
-                ContourLayer::new(0.05, polys)
-            })
-            .collect();
-        let plate = PlateSlices {
-            contours: ContourStack::new_unchecked(layers),
-            slab_tops,
-        };
-
-        let payload = ProjectPayload {
-            printer: Some(printer.clone()),
-            resin: Some(resin.clone()),
-            first_layer_height: None,
-            output_format: None,
-            embedded: Vec::new(),
-        };
-
-        let mut bytes = Vec::new();
-        write_project(
-            &scene,
-            &payload,
-            EmbedProfiles::No,
-            Some(&plate),
-            Some(&token),
-            three_mf(),
-            &mut bytes,
-        )
-        .expect("the project writes cleanly");
+        // Reproduces the reopen scenario: a project saved with real slice
+        // geometry on the bundled default profiles, then reopened. The full
+        // reopen path (read back the standalone slice part, re-resolve the
+        // schedule, recompute the fingerprint) must accept the slices. The
+        // saved and the reopened scene nest the same geometry differently, so
+        // the fingerprint must ignore the nesting, or the reopened slices are
+        // wrongly rejected as stale.
+        let (bytes, token) = project_with_in_sync_slices();
         let loaded = read_project(&mut Cursor::new(bytes), three_mf()).expect("the project reads");
 
         assert!(
