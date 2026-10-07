@@ -25,6 +25,7 @@ toml_edit.workspace = true
 
 [dev-dependencies]
 sc-mesh-fixtures.workspace = true
+sc-scene-fixtures.workspace = true
 
 tempfile = "3.23.0"
 zip.workspace = true
