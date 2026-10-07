@@ -309,7 +309,7 @@ fn panic_message_decodes_a_string_payload() {
 fn panic_message_falls_back_for_an_unknown_payload_type() {
     let payload: Box<dyn Any + Send> = Box::new(42_u32);
     let s = panic_message(&payload);
-    assert!(s.contains("unknown panic payload"));
+    assert_eq!(s, "unknown panic payload");
 }
 
 #[test]
