@@ -5,22 +5,21 @@
 
 //! Read & write support for slicer project files.
 //!
-//! A project file carries a scene together with project-level data
-//! the plain mesh formats cannot hold: which printer and resin
-//! profiles the project uses, and (optionally) embedded copies of
-//! those profile documents so the file stays portable across
-//! machines.
+//! A project file carries a scene together with project-level data the plain
+//! mesh formats cannot hold: which printer and resin profiles the project uses,
+//! and (optionally) embedded copies of those profile documents so the file
+//! stays portable across machines.
 //!
-//! [`ProjectPayload`] and the warning enums say nothing about how a
-//! given file format stores them. The container specifics live in
-//! one submodule per format; [`threemf`] stores the payload in custom
-//! OPC parts of a 3MF package. [`read_project`] / [`write_project`]
-//! pick the submodule from a [`ProjectFileType`].
+//! [`ProjectPayload`] and the warning enums say nothing about how a given file
+//! format stores them. The container specifics live in 1 submodule per format;
+//! [`threemf`] stores the payload in custom OPC parts of a 3MF package.
+//! [`read_project`] / [`write_project`] pick the submodule from a
+//! [`ProjectFileType`].
 //!
-//! Applications load any supported scene file (plain mesh or
-//! project) through the function [`load_scene`], which picks the
-//! reader from the path's extension, enforces the file-size cap,
-//! and reports byte progress on both routes.
+//! Applications load any supported scene file (plain mesh or project) through
+//! the function [`load_scene`], which picks the reader from the path's
+//! extension, enforces the file-size cap, and reports byte progress on both
+//! routes.
 
 pub mod error;
 pub mod filetypes;
@@ -49,8 +48,8 @@ pub use filetypes::{
     InferProjectFileTypeError, ProjectFileType, infer_project_file_type_from_extension,
 };
 pub use loader::{
-    LoadProgress, LoadSceneError, LoadedScene, SUPPORTED_SCENE_FILE_EXTENSIONS,
-    is_supported_scene_file_extension, load_scene,
+    LoadProgress, LoadSceneError, LoadedContent, LoadedScene, PersistedSlices, ProjectContent,
+    SUPPORTED_SCENE_FILE_EXTENSIONS, is_supported_scene_file_extension, load_scene,
 };
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};

@@ -17,15 +17,18 @@ use sc_scene::node::{LeafPayload, NodeKind};
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 
+use crate::filetypes::ProjectFileType;
 use crate::loader::{
-    LoadProgress, LoadSceneError, LoadedScene, SUPPORTED_SCENE_FILE_EXTENSIONS,
-    is_supported_scene_file_extension, load_scene,
+    LoadProgress, LoadSceneError, LoadedContent, LoadedScene, ProjectContent,
+    SUPPORTED_SCENE_FILE_EXTENSIONS, is_supported_scene_file_extension, load_scene,
 };
 use crate::payload::{EmbedProfiles, ProjectPayload};
+use crate::read::{LoadedProject, read_project};
 use crate::slices::PlateSlices;
 use crate::write::write_project;
 
-/// Cube plus the 2 tunnel prisms as 3 translated leaf roots.
+/// Builds the cube and the 2 tunnel prisms as 3 leaf roots at distinct
+/// translations.
 fn prism_trio_scene() -> Scene {
     let mut scene = Scene::new();
     let sources = [
@@ -47,7 +50,7 @@ fn prism_trio_scene() -> Scene {
     scene
 }
 
-/// 2 leaves referencing one registered mesh resource, so the
+/// Builds 2 leaves that reference 1 registered mesh resource, so the
 /// shared-vertex check has something to flag.
 fn shared_resource_scene() -> Scene {
     let mut scene = Scene::new();
@@ -75,7 +78,7 @@ fn payload_with_ids() -> ProjectPayload {
     }
 }
 
-/// A CCW triangle as one solid layer plus an empty layer, paired
+/// Builds the slices of a CCW triangle: 1 solid layer and 1 empty layer, paired
 /// with the top Z of each layer.
 fn plate_slices() -> PlateSlices {
     let outer = ClosedRing::new(
@@ -101,15 +104,33 @@ fn write_mesh_fixture(dir: &Path, name: &str, format: WriteFormat) -> PathBuf {
 }
 
 fn write_project_fixture(dir: &Path, name: &str, scene: &Scene) -> PathBuf {
+    write_project_file(
+        dir,
+        name,
+        scene,
+        Some(&plate_slices()),
+        Some("fingerprint-token"),
+    )
+}
+
+/// Writes a 3MF project of `scene` to `name` in `dir`, with the given halves of
+/// its persisted slices.
+fn write_project_file(
+    dir: &Path,
+    name: &str,
+    scene: &Scene,
+    slices: Option<&PlateSlices>,
+    slice_fingerprint: Option<&str>,
+) -> PathBuf {
     let path = dir.join(name);
     let mut bytes = Vec::new();
     write_project(
         scene,
         &payload_with_ids(),
         EmbedProfiles::No,
-        Some(&plate_slices()),
-        Some("fingerprint-token"),
-        crate::filetypes::ProjectFileType::ThreeMf,
+        slices,
+        slice_fingerprint,
+        ProjectFileType::ThreeMf,
         &mut bytes,
     )
     .expect("project fixture writes");
@@ -121,7 +142,7 @@ fn open(path: &Path) -> Result<LoadedScene, LoadSceneError> {
     load_scene(path, None, |_| {})
 }
 
-/// Children of the single group root the readers rebuild loaded
+/// Counts the children of the single group root that the readers rebuild loaded
 /// content under.
 fn root_child_count(scene: &Scene) -> usize {
     let root = scene.node(scene.roots()[0]).expect("root resolves");
@@ -131,19 +152,39 @@ fn root_child_count(scene: &Scene) -> usize {
     }
 }
 
+/// Returns the scene of a file that loads as a mesh.
+fn mesh_scene(content: LoadedContent) -> Scene {
+    match content {
+        LoadedContent::Mesh(scene) => scene,
+        LoadedContent::Project(_) => panic!("the file should load as a mesh"),
+    }
+}
+
+/// Returns the content of a file that loads as a project.
+fn project_content(content: LoadedContent) -> ProjectContent {
+    match content {
+        LoadedContent::Project(project) => project,
+        LoadedContent::Mesh(_) => panic!("the file should load as a project"),
+    }
+}
+
+/// Reads the 3MF project at `path` with the project reader alone.
+fn read_project_at(path: &Path) -> LoadedProject {
+    let mut file = std::fs::File::open(path).expect("the project file opens");
+    read_project(&mut file, ProjectFileType::ThreeMf).expect("the project reads")
+}
+
 #[test]
-fn an_stl_file_opens_with_empty_project_fields() {
+fn an_stl_file_opens_as_a_mesh() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_mesh_fixture(dir.path(), "trio.stl", WriteFormat::StlBin);
     let opened = open(&path).expect("the stl opens");
+    assert!(opened.project_warnings.is_empty());
+    let scene = mesh_scene(opened.content);
     assert!(
-        opened.scene.aabb().expect("aabb resolves").is_some(),
+        scene.aabb().expect("aabb resolves").is_some(),
         "the scene carries geometry"
     );
-    assert!(opened.payload.is_none());
-    assert!(opened.slices.is_none());
-    assert!(opened.slice_fingerprint.is_none());
-    assert!(opened.project_warnings.is_empty());
 }
 
 #[test]
@@ -151,9 +192,8 @@ fn an_obj_file_opens_with_three_roots() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_mesh_fixture(dir.path(), "trio.obj", WriteFormat::Obj);
     let opened = open(&path).expect("the obj opens");
-    assert_eq!(root_child_count(&opened.scene), 3);
-    assert!(opened.payload.is_none());
     assert!(opened.project_warnings.is_empty());
+    assert_eq!(root_child_count(&mesh_scene(opened.content)), 3);
 }
 
 #[test]
@@ -161,13 +201,11 @@ fn a_plain_3mf_opens_with_no_payload() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_mesh_fixture(dir.path(), "trio.3mf", WriteFormat::ThreeMf);
     let opened = open(&path).expect("the plain 3mf opens");
+    let scene = mesh_scene(opened.content);
     assert!(
-        opened.scene.aabb().expect("aabb resolves").is_some(),
+        scene.aabb().expect("aabb resolves").is_some(),
         "the scene carries geometry"
     );
-    assert!(opened.payload.is_none());
-    assert!(opened.slices.is_none());
-    assert!(opened.slice_fingerprint.is_none());
 }
 
 #[test]
@@ -175,18 +213,47 @@ fn a_project_3mf_carries_payload_slices_and_fingerprint() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_project_fixture(dir.path(), "project.3mf", &prism_trio_scene());
     let opened = open(&path).expect("the project opens");
-    assert_eq!(root_child_count(&opened.scene), 3);
-    let payload = opened.payload.expect("the payload is carried");
+    let project = project_content(opened.content);
+    assert_eq!(root_child_count(&project.scene), 3);
     assert_eq!(
-        payload.printer,
+        project.payload.printer,
         Some(PrinterId::new("test-printer").expect("valid slug"))
     );
-    let slices = opened.slices.expect("the slices are carried");
-    assert_eq!(slices.layers().len(), 2);
-    assert_eq!(
-        opened.slice_fingerprint.as_deref(),
-        Some("fingerprint-token")
+    let persisted = project.persisted_slices.expect("the slices are carried");
+    assert_eq!(persisted.contours.layers().len(), 2);
+    assert_eq!(persisted.fingerprint, "fingerprint-token");
+}
+
+#[test]
+fn a_project_with_slices_and_no_token_opens_without_persisted_slices() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_project_file(
+        dir.path(),
+        "project.3mf",
+        &prism_trio_scene(),
+        Some(&plate_slices()),
+        None,
     );
+    let read = read_project_at(&path);
+    assert!(read.slices.is_some() && read.slice_fingerprint.is_none());
+    let project = project_content(open(&path).expect("the project opens").content);
+    assert!(project.persisted_slices.is_none());
+}
+
+#[test]
+fn a_project_with_a_token_and_no_slices_opens_without_persisted_slices() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_project_file(
+        dir.path(),
+        "project.3mf",
+        &prism_trio_scene(),
+        None,
+        Some("fingerprint-token"),
+    );
+    let read = read_project_at(&path);
+    assert!(read.slices.is_none() && read.slice_fingerprint.is_some());
+    let project = project_content(open(&path).expect("the project opens").content);
+    assert!(project.persisted_slices.is_none());
 }
 
 #[test]
@@ -200,10 +267,9 @@ fn an_unknown_extension_is_refused() {
 
 #[test]
 fn an_extension_outside_the_supported_list_is_refused_before_io() {
-    // ply and amf infer a mesh type in sc-mesh-formats but have no
-    // reader; the dispatch refuses them up front, on the same list
-    // the file dialogs advertise. The paths do not exist: reaching
-    // I/O would change the error.
+    // ply and amf infer a mesh type in sc-mesh-formats but have no reader; the
+    // dispatch refuses them up front, on the same list the file dialogs
+    // advertise. The paths do not exist: reaching I/O would change the error.
     for name in ["scene.ply", "scene.amf"] {
         let err = open(Path::new(name)).expect_err("outside the list");
         assert!(matches!(err, LoadSceneError::UnsupportedExtension { .. }));
@@ -218,8 +284,8 @@ fn the_supported_list_matches_the_dispatch() {
             is_supported_scene_file_extension(&path),
             "{ext} is supported"
         );
-        // A supported extension dispatches past the extension gate;
-        // the missing file then fails on I/O, never on the gate.
+        // A supported extension dispatches past the extension gate, so the
+        // missing file fails on I/O.
         let err = open(&path).expect_err("the file does not exist");
         assert!(
             !matches!(err, LoadSceneError::UnsupportedExtension { .. }),

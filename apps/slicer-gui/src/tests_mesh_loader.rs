@@ -22,8 +22,8 @@ use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_print_primitives::PrinterId;
 use sc_project_formats::{
-    EmbedProfiles, ProfileRefWarning, ProjectPayload, infer_project_file_type_from_extension,
-    write_project,
+    EmbedProfiles, LoadedContent, ProfileRefWarning, ProjectPayload,
+    infer_project_file_type_from_extension, write_project,
 };
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeKind};
@@ -387,6 +387,14 @@ fn root_child_count(scene: &Scene) -> usize {
     }
 }
 
+/// Returns the scene of `content`, whatever the kind of file.
+fn scene_of(content: &LoadedContent) -> &Scene {
+    match content {
+        LoadedContent::Mesh(scene) => scene,
+        LoadedContent::Project(project) => &project.scene,
+    }
+}
+
 #[test]
 fn parse_source_obj_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -395,7 +403,7 @@ fn parse_source_obj_ends_the_parse_phase_complete() {
     write_scene(&trio, &path, WriteFormat::Obj).expect("obj writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("obj parses");
-    assert_eq!(root_child_count(&parsed.scene), 3);
+    assert_eq!(root_child_count(scene_of(&parsed.content)), 3);
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
 }
 
@@ -410,7 +418,10 @@ fn parse_source_binary_stl_ends_the_parse_phase_complete() {
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("stl parses");
     assert!(
-        parsed.scene.aabb().expect("aabb resolves").is_some(),
+        scene_of(&parsed.content)
+            .aabb()
+            .expect("aabb resolves")
+            .is_some(),
         "the flattened scene carries geometry"
     );
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
@@ -427,7 +438,7 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     );
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("3mf parses");
-    assert_eq!(root_child_count(&parsed.scene), 3);
+    assert_eq!(root_child_count(scene_of(&parsed.content)), 3);
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
 }
 

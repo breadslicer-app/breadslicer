@@ -20,7 +20,7 @@ use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
-    LoadSceneError, LoadedScene, SUPPORTED_SCENE_FILE_EXTENSIONS,
+    LoadSceneError, LoadedContent, LoadedScene, ProjectContent, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
 };
 use sc_scene::Scene;
@@ -204,41 +204,46 @@ fn prepare_scene(
     device_loss: &DeviceLoss,
 ) -> anyhow::Result<PreparedScene> {
     let LoadedScene {
-        scene: mut graph,
-        mesh_warnings: warnings,
+        content,
+        mesh_warnings,
         project_warnings,
-        payload: project_payload,
-        slices,
-        slice_fingerprint,
     } = parse_source(path, sink)?;
-    // Classify the profile references against the installed libraries here on
-    // the worker: the checks probe the filesystem.
-    let profile_warnings = project_payload
-        .as_ref()
-        .map(|payload| profile_ref_warnings(payload, &ProfileLibraries::platform_default()))
-        .unwrap_or_default();
-    // Revalidate any persisted slices against the reopened scene on the worker:
-    // resolving the profiles and recomputing the geometry fingerprint both stay
-    // off the event loop. Stale or unresolvable slices drop here, and the scene
-    // opens slice-less.
-    let reloaded_slices =
-        revalidate_persisted_slices(project_payload.as_ref(), &graph, slices, slice_fingerprint);
-    // Drop the parsed graph onto the build plate before the GPU upload and
-    // cache priming run on it, so both observe the placed world coordinates. A
-    // project's placement is part of its saved content, so a file whose project
-    // data this build reads skips this and reopens as saved.
-    if project_payload.is_none() {
-        place_on_plate(&mut graph, build_volume)?;
-    }
+    let (scene, project_payload, profile_warnings, reloaded_slices) = match content {
+        LoadedContent::Mesh(mut scene) => {
+            // Drop the scene onto the build plate before the GPU upload and
+            // cache priming run on it, so both observe the placed world
+            // coordinates.
+            place_on_plate(&mut scene, build_volume)?;
+            (scene, None, Vec::new(), None)
+        }
+        LoadedContent::Project(ProjectContent {
+            scene,
+            payload,
+            persisted_slices,
+        }) => {
+            // A project's placement is part of its saved content, so it reopens
+            // as saved. Classify its profile references against the installed
+            // libraries here on the worker: the checks probe the filesystem.
+            let profile_warnings =
+                profile_ref_warnings(&payload, &ProfileLibraries::platform_default());
+            // Revalidate the persisted slices against the reopened scene on the
+            // worker: resolving the profiles and recomputing the geometry
+            // fingerprint both stay off the event loop. Stale or unresolvable
+            // slices drop here, and the scene opens slice-less.
+            let reloaded_slices = persisted_slices
+                .and_then(|slices| revalidate_persisted_slices(&payload, &scene, slices));
+            (scene, Some(payload), profile_warnings, reloaded_slices)
+        }
+    };
     // Validate every mesh (faces + manifold) on the worker so the UI thread
     // receives a ready health verdict; the initial workspace section is derived
     // from it. Placement changes only transforms, so the verdict is the same
-    // whether or not the graph was placed above.
-    let mesh_health = scene_mesh_health(&graph);
+    // whether or not the scene was placed above.
+    let mesh_health = scene_mesh_health(&scene);
     // Eager priming: build the per-mesh spatial caches on this worker thread,
     // so the UI thread receives a fully-primed `SceneSpatial` and the first
     // picker click / gizmo attachment doesn't pay the build cost synchronously.
-    let spatial = SceneSpatial::primed_graph_with_progress(graph, |p| {
+    let spatial = SceneSpatial::primed_graph_with_progress(scene, |p| {
         sink.set(LoadPhase::Priming, p.primed_triangles, p.total_triangles)
     });
     let gpu_scene =
@@ -252,7 +257,7 @@ fn prepare_scene(
     Ok(PreparedScene {
         spatial,
         gpu_scene,
-        warnings,
+        warnings: mesh_warnings,
         project_payload,
         project_warnings,
         profile_warnings,

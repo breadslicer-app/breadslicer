@@ -23,7 +23,9 @@ use sc_print_profiles::{
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
     load_printer_profile_from_path,
 };
-use sc_project_formats::{ReadProjectWarning, load_scene};
+use sc_project_formats::{
+    LoadedContent, LoadedScene, ProjectContent, ReadProjectWarning, load_scene,
+};
 use sc_scene::Scene;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
@@ -91,32 +93,33 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         eprintln!("warning: {issue}");
     }
 
-    let opened = load_scene(&source_path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})?;
-    display_warnings(&opened.mesh_warnings, &mut std::io::stderr());
-    display_project_warnings(&opened.project_warnings, &mut std::io::stderr());
-    let is_project = opened.payload.is_some();
-    let mut scene = opened.scene;
+    let LoadedScene {
+        content,
+        mesh_warnings,
+        project_warnings,
+    } = load_scene(&source_path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})?;
+    display_warnings(&mesh_warnings, &mut std::io::stderr());
+    display_project_warnings(&project_warnings, &mut std::io::stderr());
 
-    if args.repair {
-        let stderr = &mut std::io::stderr();
-        let outcomes = scene.repair_meshes(RepairPasses::default_repair());
-        let fixes: Vec<MeshFix> = outcomes
-            .iter()
-            .flat_map(|outcome| outcome.fixes.iter().cloned())
-            .collect();
-        if !fixes.is_empty() {
-            show_applied_fixes(&fixes, stderr);
+    // A project's placement is part of its saved content, so only a mesh is
+    // placed on the plate.
+    let scene = match content {
+        LoadedContent::Mesh(mut scene) => {
+            if args.repair {
+                repair_scene(&mut scene, &mut std::io::stderr());
+            }
+            if !args.no_auto_place {
+                place_on_build_plate(&mut scene, &printer.hardware.build_volume())?;
+            }
+            scene
         }
-        // Refusals warn but do not abort: the engine's validation gate below
-        // remains the authority on what can be sliced.
-        show_refusal_warnings(&outcomes, stderr);
-    }
-
-    // A project's placement is part of its saved content: only a plain mesh
-    // auto-places.
-    if !is_project && !args.no_auto_place {
-        place_on_build_plate(&mut scene, &printer.hardware.build_volume())?;
-    }
+        LoadedContent::Project(ProjectContent { mut scene, .. }) => {
+            if args.repair {
+                repair_scene(&mut scene, &mut std::io::stderr());
+            }
+            scene
+        }
+    };
     let params = SlicingParams {
         layer_height_request: args.layer_height,
         first_layer_height: args.first_layer_height,
@@ -197,8 +200,8 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
     Ok(())
 }
 
-/// Merge the plate's per-leaf stacks into the contours a file target is written
-/// from.
+/// Merges the plate's per-leaf stacks into the contours a file target is
+/// written from.
 fn merge_plate(plate: SlicedPlate) -> Result<PlateContours> {
     plate.merge().map_err(|err| {
         anyhow!(
@@ -207,8 +210,8 @@ fn merge_plate(plate: SlicedPlate) -> Result<PlateContours> {
     })
 }
 
-/// Write the values the machine will run that no profile chose, so they are
-/// seen before the file is written rather than after the print fails.
+/// Writes the values the machine will run that no profile chose, so they are
+/// seen before the file is written.
 fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
     for line in fallback_report_lines(config) {
         let _ = writeln!(out, "{line}");
@@ -249,8 +252,8 @@ fn load_material_profile(
     }
 }
 
-/// Write project-read warnings to `out`: mesh-level 3MF warnings go through the
-/// shared renderer; the project-only variants print nothing.
+/// Writes project-read warnings to `out`: mesh-level 3MF warnings go through
+/// the shared renderer; the project-only variants print nothing.
 fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write) {
     for warning in warnings {
         match warning {
@@ -264,11 +267,27 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
     }
 }
 
-/// Drop the scene onto the build plate at the printer envelope's XY centre with
-/// its lowest point on the envelope floor, via [`Scene::drop_at`] (which
-/// preserves the roots' relative layout and no-ops on empty or already-placed
-/// scenes). The target is derived from the loaded printer's envelope rather
-/// than restated as constants.
+/// Repairs every mesh of `scene` and reports the fixes and the refusals to
+/// `out`.
+fn repair_scene(scene: &mut Scene, out: &mut dyn Write) {
+    let outcomes = scene.repair_meshes(RepairPasses::default_repair());
+    let fixes: Vec<MeshFix> = outcomes
+        .iter()
+        .flat_map(|outcome| outcome.fixes.iter().cloned())
+        .collect();
+    if !fixes.is_empty() {
+        show_applied_fixes(&fixes, out);
+    }
+    // Refusals warn but do not abort: the engine's validation gate remains the
+    // authority on what can be sliced.
+    show_refusal_warnings(&outcomes, out);
+}
+
+/// Drops the scene onto the build plate at the printer envelope's XY centre
+/// with the bottom of its world box on the envelope floor, via
+/// [`Scene::drop_at`] (which preserves the roots' relative layout and no-ops on
+/// empty or already-placed scenes). The target comes from the loaded printer's
+/// envelope.
 fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result<()> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
@@ -281,10 +300,7 @@ fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result
     Ok(())
 }
 
-/// Render a slice-preparation failure for the terminal. The at-or-below-plate
-/// arm keeps its repositioning advice: it is only reachable with
-/// `--no-auto-place`, where repositioning is exactly the action available to
-/// the user.
+/// Renders a slice-preparation failure for the terminal.
 fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     match err {
         UnsliceableSelection::LayerHeight(err) => {
@@ -297,8 +313,8 @@ fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     }
 }
 
-/// Build the label `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels
-/// the engine's own error Display uses.
+/// Builds the label `leaf #<id>` or `leaf #<id> ("<name>")`, matching the
+/// labels the engine's own error Display uses.
 fn leaf_label(failure: &LeafValidationFailure) -> String {
     match &failure.leaf_name {
         Some(name) => format!("leaf #{} (\"{name}\")", failure.leaf.get()),
@@ -306,7 +322,7 @@ fn leaf_label(failure: &LeafValidationFailure) -> String {
     }
 }
 
-/// Render a scene validation failure to `out`:
+/// Renders a scene validation failure to `out`:
 ///
 /// 1. The aggregated summary produced by `Display for SliceSceneError`: 1
 ///    header naming the invalid-leaf count, then per leaf a label line with its
@@ -341,7 +357,7 @@ fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn
     };
 }
 
-/// Write `errors` to `out` grouped by variant. 1 section per variant in
+/// Writes `errors` to `out` grouped by variant. 1 section per variant in
 /// first-occurrence order: a header line `VariantName (count):` followed by
 /// `  - {err}` for each member. Sections are separated by a blank line.
 fn write_grouped_errors<E>(errors: &[E], out: &mut dyn Write)

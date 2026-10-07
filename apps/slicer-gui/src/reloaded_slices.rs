@@ -19,9 +19,8 @@
 
 use sc_print_glue::{PersistedSliceValidity, PlateContours, validate_persisted_slices};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
-use sc_project_formats::ProjectPayload;
+use sc_project_formats::{PersistedSlices, ProjectPayload};
 use sc_scene::Scene;
-use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::SceneRevision;
@@ -63,19 +62,19 @@ impl ReloadedSlices {
 /// Revalidates a project's persisted slices against the reopened scene,
 /// returning them only when they are still in sync. Resolves the layer schedule
 /// from the installed profiles the same way the save path does, then recomputes
-/// the geometry fingerprint and compares it to the stored token. Any missing
-/// input (no slices, no token, no printer or resin, or a schedule that no
-/// longer resolves), a stack whose layer count differs from the schedule's, or
-/// a token mismatch yields `None`, and the scene loads slice-less.
+/// the geometry fingerprint and compares it to the stored token. A payload
+/// without a printer or resin, a schedule that no longer resolves, a stack
+/// whose layer count differs from the schedule's, or a token mismatch yields
+/// `None`, and the scene loads slice-less.
 pub(crate) fn revalidate_persisted_slices(
-    payload: Option<&ProjectPayload>,
+    payload: &ProjectPayload,
     scene: &Scene,
-    slices: Option<ContourStack>,
-    fingerprint: Option<String>,
+    persisted: PersistedSlices,
 ) -> Option<ReloadedSlices> {
-    let stack = slices?;
-    let token = fingerprint?;
-    let payload = payload?;
+    let PersistedSlices {
+        contours: stack,
+        fingerprint: token,
+    } = persisted;
     let printer = payload.printer.clone()?;
     let resin = payload.resin.clone()?;
     let first_layer_height = payload.first_layer_height;
@@ -114,7 +113,7 @@ mod reloaded_slices_tests {
     use sc_print_glue::slice_input_fingerprint;
     use sc_project_formats::{EmbedProfiles, read_project, write_project};
     use sc_scene::node::LeafPayload;
-    use sc_sl1cer::contour::ContourLayer;
+    use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
     use crate::test_support::projects::{cube_mesh, project_with_in_sync_slices, three_mf};
 
@@ -238,26 +237,14 @@ mod reloaded_slices_tests {
     }
 
     #[test]
-    fn missing_slices_or_token_or_profiles_yield_no_reloaded_slices() {
+    fn a_payload_without_profiles_yields_no_reloaded_slices() {
         let scene = cube_scene();
-        let stack = || ContourStack::new_unchecked(Vec::new());
-        let token = || Some(token_for(&scene, &schedule()));
-
-        // Without persisted geometry or without a token, there is nothing to
-        // revalidate.
-        assert!(
-            revalidate_persisted_slices(Some(&empty_payload()), &scene, None, token()).is_none()
-        );
-        assert!(
-            revalidate_persisted_slices(Some(&empty_payload()), &scene, Some(stack()), None)
-                .is_none()
-        );
+        let persisted = PersistedSlices {
+            contours: ContourStack::new_unchecked(Vec::new()),
+            fingerprint: token_for(&scene, &schedule()),
+        };
         // A payload without a printer or resin cannot resolve a schedule.
-        assert!(
-            revalidate_persisted_slices(Some(&empty_payload()), &scene, Some(stack()), token())
-                .is_none()
-        );
-        assert!(revalidate_persisted_slices(None, &scene, Some(stack()), token()).is_none());
+        assert!(revalidate_persisted_slices(&empty_payload(), &scene, persisted).is_none());
     }
 
     #[test]
@@ -276,7 +263,14 @@ mod reloaded_slices_tests {
             ..empty_payload()
         };
         let reopen = |stack: ContourStack| {
-            revalidate_persisted_slices(Some(&payload), &scene, Some(stack), Some(token.clone()))
+            revalidate_persisted_slices(
+                &payload,
+                &scene,
+                PersistedSlices {
+                    contours: stack,
+                    fingerprint: token.clone(),
+                },
+            )
         };
 
         assert!(reopen(empty_layers_at(schedule.iter_z())).is_some());
@@ -302,10 +296,15 @@ mod reloaded_slices_tests {
         assert_eq!(loaded.slice_fingerprint.as_deref(), Some(token.as_str()));
         assert!(
             revalidate_persisted_slices(
-                loaded.payload.as_ref(),
+                loaded
+                    .payload
+                    .as_ref()
+                    .expect("the project carries its payload"),
                 &loaded.scene,
-                loaded.slices,
-                loaded.slice_fingerprint,
+                PersistedSlices {
+                    contours: loaded.slices.expect("checked above"),
+                    fingerprint: loaded.slice_fingerprint.expect("checked above"),
+                },
             )
             .is_some(),
             "a reopened project's slices must revalidate against the reloaded scene"

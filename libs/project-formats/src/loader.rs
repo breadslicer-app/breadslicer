@@ -5,11 +5,11 @@
 
 //! Loading a scene from a file, whatever its format.
 //!
-//! - [`load_scene`] reads a mesh or project file into a
-//!   [`LoadedScene`]: extension dispatch, size cap, byte progress
-//!   and the shared-vertex post-check in one place.
-//! - [`SUPPORTED_SCENE_FILE_EXTENSIONS`] is the list the dispatch
-//!   accepts; file dialogs and drop handlers filter on it.
+//! - [`load_scene`] reads a mesh or project file into a [`LoadedScene`]; it
+//!   owns the extension dispatch, the size cap, the byte progress and the
+//!   shared-vertex post-check.
+//! - [`SUPPORTED_SCENE_FILE_EXTENSIONS`] is the list the dispatch accepts; file
+//!   dialogs and drop handlers filter on it.
 
 use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
@@ -32,7 +32,7 @@ use crate::read::{LoadedProject, read_project_with_progress};
 
 pub const SUPPORTED_SCENE_FILE_EXTENSIONS: &[&str] = &["3mf", "obj", "stl", "stla", "stlb"];
 
-/// Return whether `path`'s extension is in
+/// Returns whether `path`'s extension is in
 /// [`SUPPORTED_SCENE_FILE_EXTENSIONS`], matching case-insensitively.
 pub fn is_supported_scene_file_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
@@ -42,37 +42,60 @@ pub fn is_supported_scene_file_extension(path: &Path) -> bool {
     SUPPORTED_SCENE_FILE_EXTENSIONS.iter().any(|&e| e == ext)
 }
 
-/// One byte-progress report from [`load_scene`]. The unit depends
-/// on the route: on-disk bytes for a mesh file, decompressed bytes
-/// for a project container; either way `done_bytes / total_bytes`
-/// is the fraction to display.
+/// A byte-progress report from [`load_scene`]. The unit depends on the route:
+/// on-disk bytes for a mesh file, decompressed bytes for a project container;
+/// either way `done_bytes / total_bytes` is the fraction to display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadProgress {
     pub done_bytes: u64,
     pub total_bytes: u64,
 }
 
-/// Everything loading one scene file produces. A plain mesh file
-/// (and a project-capable file without our project part) leaves
-/// `project_warnings` empty and the 3 project fields `None`.
+/// Everything loading a scene file produces.
 #[derive(Debug)]
 pub struct LoadedScene {
-    pub scene: Scene,
+    pub content: LoadedContent,
     pub mesh_warnings: Vec<LoadMeshWarning>,
     pub project_warnings: Vec<ReadProjectWarning>,
-    pub payload: Option<ProjectPayload>,
-    /// The file's persisted slices, mapped back to a contour stack.
-    /// They arrive unvalidated: revalidate against
-    /// `slice_fingerprint` before trusting them.
-    pub slices: Option<ContourStack>,
-    pub slice_fingerprint: Option<String>,
+}
+
+/// The scene of a loaded file, by whether the file carries project data that
+/// this build reads.
+#[derive(Debug)]
+pub enum LoadedContent {
+    /// A file without such data: a mesh file, a 3MF without the project part,
+    /// or a 3MF whose project part has a version that this build cannot read.
+    /// Its transforms are in no known printer frame.
+    Mesh(Scene),
+    /// A project. Its transforms are in the frame of the printer that it was
+    /// saved for.
+    Project(ProjectContent),
+}
+
+/// The scene of a project file and the project data that it carries.
+#[derive(Debug)]
+pub struct ProjectContent {
+    pub scene: Scene,
+    pub payload: ProjectPayload,
+    /// `None` unless the file stores both the slices and their token.
+    pub persisted_slices: Option<PersistedSlices>,
+}
+
+/// Slices that a project file stores, with the token that they were saved with.
+#[derive(Debug)]
+pub struct PersistedSlices {
+    /// The slices, mapped back to a contour stack. They arrive unvalidated:
+    /// revalidate them against `fingerprint` before trusting them.
+    pub contours: ContourStack,
+    /// The opaque validity token of `contours`, as the file holds it.
+    pub fingerprint: String,
 }
 
 /// Why [`load_scene`] produced no scene.
 #[derive(Debug)]
 pub enum LoadSceneError {
-    /// The path's extension is not in
-    /// [`SUPPORTED_SCENE_FILE_EXTENSIONS`]; nothing was opened.
+    /// The path's extension is not in [`SUPPORTED_SCENE_FILE_EXTENSIONS`];
+    /// nothing was opened.
     UnsupportedExtension { path: PathBuf },
     /// The file exceeds the caller's size cap; nothing was parsed.
     FileTooLarge { actual_bytes: u64, limit_bytes: u64 },
@@ -117,15 +140,14 @@ impl std::error::Error for LoadSceneError {
     }
 }
 
-/// Load the scene from the file at `path`. Project-capable
-/// extensions go through the project reader, everything else in
+/// Loads the scene from the file at `path`. Project-capable extensions go
+/// through the project reader, everything else in
 /// [`SUPPORTED_SCENE_FILE_EXTENSIONS`] through the mesh loader.
 ///
-/// `max_file_size` is the upper bound on the on-disk byte count;
-/// `None` disables the check.
+/// `max_file_size` is the upper bound on the on-disk byte count; `None`
+/// disables the check.
 ///
-/// On success the last `on_progress` call reports
-/// `done_bytes == total_bytes`.
+/// On success the last `on_progress` call reports `done_bytes == total_bytes`.
 pub fn load_scene(
     path: &Path,
     max_file_size: Option<u64>,
@@ -167,8 +189,8 @@ fn open_mesh<F: FnMut(LoadProgress)>(
         })
     };
     let reader = ProgressReader::new(file, &mut tick).map_err(LoadSceneError::Io)?;
-    // The measured total also covers the caller's cap when the
-    // metadata precheck in `load_scene` could not run.
+    // The measured total also covers the caller's cap when the metadata
+    // precheck in `load_scene` could not run.
     let total = reader.total_bytes();
     if let Some(cap) = max_file_size
         && total > cap
@@ -184,12 +206,9 @@ fn open_mesh<F: FnMut(LoadProgress)>(
     drop(buffered);
     tick(total, total);
     Ok(LoadedScene {
-        scene: graph,
+        content: LoadedContent::Mesh(graph),
         mesh_warnings: warnings,
         project_warnings: Vec::new(),
-        payload: None,
-        slices: None,
-        slice_fingerprint: None,
     })
 }
 
@@ -200,8 +219,8 @@ fn open_project<F: FnMut(LoadProgress)>(
     on_progress: &mut F,
 ) -> Result<LoadedScene, LoadSceneError> {
     let mut file = File::open(path).map_err(LoadSceneError::Io)?;
-    // Same duty as the mesh route's measured total: the cap must
-    // hold even when the metadata precheck could not run.
+    // Same duty as the mesh route's measured total: the cap must hold even when
+    // the metadata precheck could not run.
     let total = file.seek(SeekFrom::End(0)).map_err(LoadSceneError::Io)?;
     file.seek(SeekFrom::Start(0)).map_err(LoadSceneError::Io)?;
     if let Some(cap) = max_file_size
@@ -228,8 +247,8 @@ fn open_project<F: FnMut(LoadProgress)>(
         });
     })
     .map_err(LoadSceneError::Project)?;
-    // The plain loader's post-read check; the project reader sits
-    // below that dispatch level, so it runs here.
+    // The plain loader's post-read check; the project reader sits below that
+    // dispatch level, so it runs here.
     let mut mesh_warnings = Vec::new();
     if let Some(warning) = scene_shared_vertices_warning(&scene) {
         mesh_warnings.push(LoadMeshWarning::Scene(warning));
@@ -238,12 +257,22 @@ fn open_project<F: FnMut(LoadProgress)>(
         done_bytes: announced_total,
         total_bytes: announced_total,
     });
+    let content = match payload {
+        Some(payload) => LoadedContent::Project(ProjectContent {
+            scene,
+            payload,
+            persisted_slices: slices
+                .zip(slice_fingerprint)
+                .map(|(contours, fingerprint)| PersistedSlices {
+                    contours,
+                    fingerprint,
+                }),
+        }),
+        None => LoadedContent::Mesh(scene),
+    };
     Ok(LoadedScene {
-        scene,
+        content,
         mesh_warnings,
         project_warnings,
-        payload,
-        slices,
-        slice_fingerprint,
     })
 }
