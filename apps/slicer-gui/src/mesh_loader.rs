@@ -17,11 +17,10 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
-use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
-    ProfileRefWarning, ProjectPayload, ReadProjectWarning, SUPPORTED_SCENE_FILE_EXTENSIONS,
+    LoadSceneError, LoadedScene, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
 };
 use sc_scene::Scene;
@@ -33,8 +32,8 @@ use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink};
 use crate::mesh_health::scene_mesh_health;
 use crate::mesh_render::{DeviceLoss, GpuScene};
-use crate::project_profiles::{material_installed, printer_installed};
-use crate::reloaded_slices::{ReloadedSlices, revalidate_persisted_slices};
+use crate::project_profiles::profile_ref_warnings;
+use crate::reloaded_slices::revalidate_persisted_slices;
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
 pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -155,65 +154,13 @@ pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> an
     Ok(())
 }
 
-/// Parser output for a source file: the scene, the mesh-level warnings, and
-/// whatever project data the format carries (project fields stay empty for
-/// plain mesh files).
-pub(crate) struct ParsedSource {
-    pub(crate) graph: Scene,
-    pub(crate) warnings: Vec<LoadMeshWarning>,
-    pub(crate) project_payload: Option<ProjectPayload>,
-    pub(crate) project_warnings: Vec<ReadProjectWarning>,
-    pub(crate) profile_warnings: Vec<ProfileRefWarning>,
-    /// The file's persisted slices, revalidated against the reopened scene on
-    /// the worker; `None` unless a project carried in-sync slices. Turned into
-    /// the held slice result at install time.
-    pub(crate) reloaded_slices: Option<ReloadedSlices>,
-}
-
-/// Parses the file at `path`, reporting parse-phase progress through `sink`.
-/// For a project, 2 follow-up checks run against the installed profile
-/// libraries:
-/// - the printer and resin profiles the file references produce a warning when
-///   they are not installed,
-/// - the file's persisted slices are dropped when they no longer match the
-///   reopened scene.
-pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<ParsedSource> {
-    let opened = load_scene(path, Some(MAX_MESH_FILE_SIZE_BYTES), |p| {
+/// Reads the file at `path`, reporting parse-phase progress through `sink`.
+pub(crate) fn parse_source(
+    path: &Path,
+    sink: &LoadProgressSink,
+) -> Result<LoadedScene, LoadSceneError> {
+    load_scene(path, Some(MAX_MESH_FILE_SIZE_BYTES), |p| {
         sink.set(LoadPhase::Parse, p.done_bytes, p.total_bytes)
-    })?;
-
-    // Classify the profile references against the installed libraries here on
-    // the worker: the checks probe the filesystem.
-    let profile_warnings = opened
-        .payload
-        .as_ref()
-        .map(|payload| {
-            let libraries = ProfileLibraries::platform_default();
-            payload.profile_ref_warnings(
-                |id| printer_installed(&libraries, id),
-                |id| material_installed(&libraries, id),
-            )
-        })
-        .unwrap_or_default();
-
-    // Revalidate any persisted slices against the reopened scene on the worker:
-    // resolving the profiles and recomputing the geometry fingerprint both stay
-    // off the event loop. Stale or unresolvable slices drop here, and the scene
-    // opens slice-less.
-    let reloaded_slices = revalidate_persisted_slices(
-        opened.payload.as_ref(),
-        &opened.scene,
-        opened.slices,
-        opened.slice_fingerprint,
-    );
-
-    Ok(ParsedSource {
-        graph: opened.scene,
-        warnings: opened.mesh_warnings,
-        project_payload: opened.payload,
-        project_warnings: opened.project_warnings,
-        profile_warnings,
-        reloaded_slices,
     })
 }
 
@@ -256,14 +203,26 @@ fn prepare_scene(
     device_token: crate::mesh_render::DeviceToken,
     device_loss: &DeviceLoss,
 ) -> anyhow::Result<PreparedScene> {
-    let ParsedSource {
-        mut graph,
-        warnings,
-        project_payload,
+    let LoadedScene {
+        scene: mut graph,
+        mesh_warnings: warnings,
         project_warnings,
-        profile_warnings,
-        reloaded_slices,
+        payload: project_payload,
+        slices,
+        slice_fingerprint,
     } = parse_source(path, sink)?;
+    // Classify the profile references against the installed libraries here on
+    // the worker: the checks probe the filesystem.
+    let profile_warnings = project_payload
+        .as_ref()
+        .map(|payload| profile_ref_warnings(payload, &ProfileLibraries::platform_default()))
+        .unwrap_or_default();
+    // Revalidate any persisted slices against the reopened scene on the worker:
+    // resolving the profiles and recomputing the geometry fingerprint both stay
+    // off the event loop. Stale or unresolvable slices drop here, and the scene
+    // opens slice-less.
+    let reloaded_slices =
+        revalidate_persisted_slices(project_payload.as_ref(), &graph, slices, slice_fingerprint);
     // Drop the parsed graph onto the build plate before the GPU upload and
     // cache priming run on it, so both observe the placed world coordinates. A
     // project's placement is part of its saved content, so a file whose project

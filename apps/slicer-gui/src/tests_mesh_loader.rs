@@ -395,7 +395,7 @@ fn parse_source_obj_ends_the_parse_phase_complete() {
     write_scene(&trio, &path, WriteFormat::Obj).expect("obj writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("obj parses");
-    assert_eq!(root_child_count(&parsed.graph), 3);
+    assert_eq!(root_child_count(&parsed.scene), 3);
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
 }
 
@@ -410,7 +410,7 @@ fn parse_source_binary_stl_ends_the_parse_phase_complete() {
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("stl parses");
     assert!(
-        parsed.graph.aabb().expect("aabb resolves").is_some(),
+        parsed.scene.aabb().expect("aabb resolves").is_some(),
         "the flattened scene carries geometry"
     );
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
@@ -427,7 +427,7 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     );
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("3mf parses");
-    assert_eq!(root_child_count(&parsed.graph), 3);
+    assert_eq!(root_child_count(&parsed.scene), 3);
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
 }
 
