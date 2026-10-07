@@ -3,30 +3,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
 use crate::ascii_name::AsciiName;
 use crate::error::WriteStlError;
 use crate::ports::WriteSceneProgress;
 use crate::scene_writer::SerializeTally;
+use crate::stl::facet_normals::resolve_facet_normals;
 use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES};
 
 // Binary STL stores the triangle count in a fixed STL_TRIANGLE_COUNT_BYTES
-// little-endian header field. Centralising the encode lets us pin the
-// contract: any face count beyond `u32::MAX` must surface a clean error
-// rather than silently truncate to the low 32 bits (which would produce
-// an STL file whose header lies about the body).
+// little-endian header field. Centralising the encode lets us pin the contract:
+// any face count beyond `u32::MAX` must surface a clean error rather than
+// silently truncate to the low 32 bits (which would produce an STL file whose
+// header lies about the body).
 fn encode_triangle_count(count: usize) -> Result<[u8; STL_TRIANGLE_COUNT_BYTES], WriteStlError> {
     u32::try_from(count)
         .map(|n| n.to_le_bytes())
         .map_err(|_| WriteStlError::FaceCountExceedsU32 { count })
 }
 
-/// Writes the mesh as ASCII STL. The mesh name lands on the `solid`
-/// and `endsolid` lines folded to printable ASCII ([`AsciiName`]),
-/// so the header always stays one line no matter what the in-memory
-/// name contains; a name that folds to nothing is written like a
-/// missing name. The metadata itself is never modified.
+/// Writes the mesh as ASCII STL. The mesh name lands on the `solid` and
+/// `endsolid` lines folded to printable ASCII (`AsciiName`), so the header
+/// always stays 1 line whatever the in-memory name contains; a name that folds
+/// to nothing is written like a missing name. Each facet gets the normal the
+/// mesh's source file declared while the mesh keeps the geometry it came with,
+/// else the normal of its vertices, or the zero vector for a degenerate face.
 pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
@@ -34,10 +37,27 @@ where
     write_stla_with_progress(mesh, writer, |_| {})
 }
 
-/// [`write_stla`], reporting one `Serialize` unit per facet through
-/// `progress` (throttled by [`SerializeTally`]).
+/// Writes as [`write_stla`] does, and reports through `progress` 1 `Serialize`
+/// unit per facet, in throttled reports.
 pub fn write_stla_with_progress<W, F>(
     mesh: &IndexedMesh,
+    writer: &mut W,
+    progress: F,
+) -> Result<(), WriteStlError>
+where
+    W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
+{
+    let normals = resolve_facet_normals(mesh, [(mesh, &Transform3D::Identity)]);
+    write_stla_facets(mesh, &normals, writer, progress)
+}
+
+/// Writes `mesh` as [`write_stla_with_progress`] does, with `normals[k]`, as
+/// f32 bit patterns, for the normal of face k. `normals` holds 1 entry per
+/// face.
+pub(super) fn write_stla_facets<W, F>(
+    mesh: &IndexedMesh,
+    normals: &[[u32; 3]],
     writer: &mut W,
     mut progress: F,
 ) -> Result<(), WriteStlError>
@@ -59,12 +79,9 @@ where
 
     let mut tally = SerializeTally::new(mesh.faces().len() as u64);
     tally.begin(&mut progress);
-    for face in mesh.faces() {
-        writeln!(
-            writer,
-            "  facet normal {:e} {:e} {:e}",
-            face.normal[0], face.normal[1], face.normal[2]
-        )?;
+    for (face, normal) in mesh.faces().iter().zip(normals) {
+        let [x, y, z] = normal.map(f32::from_bits);
+        writeln!(writer, "  facet normal {x:e} {y:e} {z:e}")?;
         writer.write_all(b"    outer loop\n")?;
 
         let v0 = mesh.vertices()[usize::from(face.vertices[0])];
@@ -92,12 +109,11 @@ where
     Ok(())
 }
 
-/// Writes the mesh as binary STL. The mesh name lands in the
-/// 80-byte header folded to printable ASCII ([`AsciiName`]); a
-/// folded name longer than the header is silently truncated to the
-/// first 80 bytes, the cap being the format's own. A name that
-/// folds to nothing leaves the header all zeros, like a nameless
-/// mesh.
+/// Writes the mesh as binary STL. The mesh name lands in the 80-byte header
+/// folded to printable ASCII (`AsciiName`); a folded name longer than the
+/// header is silently truncated to the first 80 bytes, the cap being the
+/// format's own. A name that folds to nothing leaves the header all zeros, like
+/// a nameless mesh. Facet normals follow the rule of [`write_stla`].
 pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
@@ -105,10 +121,27 @@ where
     write_stlb_with_progress(mesh, writer, |_| {})
 }
 
-/// [`write_stlb`], reporting one `Serialize` unit per triangle record
-/// through `progress` (throttled by [`SerializeTally`]).
+/// Writes as [`write_stlb`] does, and reports through `progress` 1 `Serialize`
+/// unit per triangle record, in throttled reports.
 pub fn write_stlb_with_progress<W, F>(
     mesh: &IndexedMesh,
+    writer: &mut W,
+    progress: F,
+) -> Result<(), WriteStlError>
+where
+    W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
+{
+    let normals = resolve_facet_normals(mesh, [(mesh, &Transform3D::Identity)]);
+    write_stlb_facets(mesh, &normals, writer, progress)
+}
+
+/// Writes `mesh` as [`write_stlb_with_progress`] does, with `normals[k]`, as
+/// f32 bit patterns, for the normal of face k. `normals` holds 1 entry per
+/// face.
+pub(super) fn write_stlb_facets<W, F>(
+    mesh: &IndexedMesh,
+    normals: &[[u32; 3]],
     writer: &mut W,
     mut progress: F,
 ) -> Result<(), WriteStlError>
@@ -116,9 +149,8 @@ where
     W: std::io::Write,
     F: FnMut(WriteSceneProgress),
 {
-    // Header: the folded mesh name (zero-padded) in
-    // STL_HEADER_BYTES; see the `write_stlb` doc for the folding
-    // and truncation contract.
+    // Header: the folded mesh name (zero-padded) in STL_HEADER_BYTES; see the
+    // `write_stlb` doc for the folding and truncation contract.
     let mut header = [0u8; STL_HEADER_BYTES];
     if let Some(MeshMetadata {
         name: Some(name), ..
@@ -136,10 +168,10 @@ where
     // Per-triangle records
     let mut tally = SerializeTally::new(mesh.faces().len() as u64);
     tally.begin(&mut progress);
-    for face in mesh.faces() {
-        writer.write_all(&face.normal[0].to_le_bytes())?;
-        writer.write_all(&face.normal[1].to_le_bytes())?;
-        writer.write_all(&face.normal[2].to_le_bytes())?;
+    for (face, normal) in mesh.faces().iter().zip(normals) {
+        for bits in normal {
+            writer.write_all(&bits.to_le_bytes())?;
+        }
 
         for vi in face.vertices {
             let v = mesh.vertices()[usize::from(vi)];
@@ -180,10 +212,10 @@ mod encode_triangle_count_tests {
         );
     }
 
-    // Face counts that exceed `u32::MAX` cannot be represented in the
-    // 4-byte STL header. The writer must reject them outright instead
-    // of silently writing the low 32 bits (which would yield an STL
-    // file whose header lies about the body).
+    // Face counts that exceed `u32::MAX` cannot be represented in the 4-byte
+    // STL header. The writer must reject them outright instead of silently
+    // writing the low 32 bits (which would yield an STL file whose header lies
+    // about the body).
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn count_above_u32_max_errors() {
@@ -225,8 +257,8 @@ mod test_write_stla {
         let result_str = str::from_utf8(&result_vec).unwrap();
 
         assert_eq!(
-            "solid 
-  facet normal -1e0 0e0 0e0
+            "solid\x20
+  facet normal -1e0 -0e0 -0e0
     outer loop
       vertex 0e0 1e2 1e2
       vertex 0e0 1e2 0e0
@@ -264,7 +296,7 @@ endsolid",
 
         assert_eq!(
             "solid my_mesh
-  facet normal -1e0 0e0 0e0
+  facet normal -1e0 -0e0 -0e0
     outer loop
       vertex 0e0 1e2 1e2
       vertex 0e0 1e2 0e0
@@ -278,9 +310,9 @@ endsolid my_mesh",
 
     #[test]
     fn empty_mesh_round_trips_through_writer_and_reader() {
-        // Zero faces, zero vertices. Writer must produce a well-formed
-        // `solid` / `endsolid` skeleton; reader must parse it back to
-        // an empty mesh without errors.
+        // 0 faces, 0 vertices. The writer must produce a well-formed `solid`
+        // and `endsolid` skeleton; the reader must parse it back to an empty
+        // mesh without errors.
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![],
@@ -297,8 +329,8 @@ endsolid my_mesh",
         assert_eq!(round_tripped.faces().len(), 0);
     }
 
-    /// Writes a one-facet mesh carrying `name` and returns the whole
-    /// ASCII output as text.
+    /// Writes a 1-facet mesh carrying `name` and returns the whole ASCII output
+    /// as text.
     fn written_stla_text(name: &str) -> String {
         let mesh = IndexedMesh {
             meta: Some(MeshMetadata {
@@ -379,10 +411,10 @@ endsolid my_mesh",
 
     #[test]
     fn extreme_coordinates_round_trip_through_scientific_format() {
-        // The writer formats every coordinate with `{:e}` (Rust's
-        // canonical scientific notation for f32). Pin that the
-        // resulting text re-parses back to the same f32 values,
-        // including non-trivial exponents and a negative coordinate.
+        // The writer formats every coordinate with `{:e}` (Rust's canonical
+        // scientific notation for f32). Pin that the resulting text re-parses
+        // back to the same f32 values, including non-trivial exponents and a
+        // negative coordinate.
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -402,8 +434,8 @@ endsolid my_mesh",
         let leaf = scene.first_leaf_id().expect("one leaf");
         let round_tripped = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
 
-        // Three vertices, one face. Vertex ordering inside the mesh
-        // is first-seen so it matches the input.
+        // 3 vertices, 1 face. Vertex ordering inside the mesh is first-seen so
+        // it matches the input.
         assert_eq!(round_tripped.vertices().len(), 3);
         assert_eq!(round_tripped.faces().len(), 1);
         assert_eq!(
@@ -510,10 +542,10 @@ mod test_write_stlb {
 
     #[test]
     fn header_truncates_name_longer_than_80_bytes() {
-        // STL binary's 80-byte header is fixed-width. Names longer
-        // than that must be cut to the first 80 bytes; the surplus
-        // is silently dropped (with no NUL terminator inside the 80
-        // bytes when the name fills it completely).
+        // STL binary's 80-byte header is fixed-width. Names longer than that
+        // must be cut to the first 80 bytes; the surplus is silently dropped
+        // (with no NUL terminator inside the 80 bytes when the name fills it
+        // completely).
         let name = "a".repeat(100);
         let mesh = make_mesh(Some(MeshMetadata {
             name: Some(name),
@@ -531,7 +563,7 @@ mod test_write_stlb {
 
     #[test]
     fn empty_mesh_round_trips_through_writer() {
-        // Zero faces, zero vertices. Header alone + zero count = 84
+        // 0 faces, 0 vertices. The header alone plus a count of 0 makes 84
         // bytes of output, no triangle records.
         let mesh = IndexedMesh {
             meta: None,

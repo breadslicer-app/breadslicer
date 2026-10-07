@@ -3,17 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scene aggregate for the resin pipeline: nodes, mesh resources,
-//! subtree references, expansion, bake, validation and repair
-//! orchestration over `sc-mesh-core` types.
+//! Scene aggregate for the resin pipeline: nodes, mesh resources, subtree
+//! references, expansion, bake, validation and repair orchestration over
+//! `sc-mesh-core` types.
 //!
 //! # Conventions
 //!
-//! - **Coordinate frame:** right-handed, with **Z up**. The XY plane is
-//!   the build platform; +Z points away from it.
-//! - **Units:** every coordinate, length, and translation in this crate
-//!   is in **millimetres**, matching `sc-mesh-core` (`f32` vertex
-//!   positions, `f64` transform matrices, one shared scale).
+//! - **Coordinate frame:** right-handed, with **Z up**. The XY plane is the
+//!   build platform; +Z points away from it.
+//! - **Units:** every coordinate, length, and translation in this crate is in
+//!   **millimetres**, matching `sc-mesh-core` (`f32` vertex positions, `f64`
+//!   transform matrices, the same scale).
 
 pub mod aabb;
 pub mod bake;
@@ -30,7 +30,7 @@ pub mod traverse;
 pub mod validate;
 pub mod volume;
 
-pub use crate::bake::{bake_leaf_to_world, bake_mesh_to_world};
+pub use crate::bake::{LeafOccurrence, MergedMeshes, bake_leaf_to_world, bake_mesh_to_world};
 pub use crate::error::SceneError;
 pub use crate::expand::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT};
 pub use crate::node::{

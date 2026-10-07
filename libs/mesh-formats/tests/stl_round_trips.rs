@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_fixtures::with_stored_normals_declared;
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_scene::Scene;
 
-/// STL readers wrap the on-disk mesh in a single-leaf graph
-/// (`Scene::from<IndexedMesh>`). Pull that mesh back out by
-/// reading the first reachable leaf; round-trip tests then compare
-/// the recovered `IndexedMesh` to the input directly.
+/// Returns the mesh of the only leaf of `graph`: STL readers wrap the on-disk
+/// mesh in a single-leaf graph (`Scene::from<IndexedMesh>`), and round-trip
+/// tests compare the recovered `IndexedMesh` to the input directly.
 fn single_leaf_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(graph.reachable_leaf_count(), 1);
     let id = graph
@@ -35,7 +36,7 @@ fn get_mesh_without_meta() -> IndexedMesh {
 }
 
 fn get_unnamed_mesh() -> IndexedMesh {
-    IndexedMesh {
+    with_stored_normals_declared(IndexedMesh {
         meta: Some(MeshMetadata::default()),
         vertices: vec![
             Vertex::new([0.0, 100.0, 100.0]),
@@ -46,7 +47,20 @@ fn get_unnamed_mesh() -> IndexedMesh {
             Normal::new([-1.0, 0.0, 0.0]),
             [0, 1, 2],
         )],
-    }
+    })
+}
+
+/// Returns the mesh that a write of [`get_mesh_without_meta`] reads back as: no
+/// name, and the normal the writers compute for its face declared.
+fn read_back_mesh_without_meta() -> IndexedMesh {
+    let mut mesh = get_mesh_without_meta();
+    let computed = [0xbf80_0000, 0x8000_0000, 0x8000_0000];
+    let declared = DeclaredFacetNormals::capture(&mesh, vec![computed]).expect("1 normal per face");
+    mesh.set_meta(Some(MeshMetadata {
+        declared_facet_normals: Some(declared),
+        ..Default::default()
+    }));
+    mesh
 }
 
 fn get_named_mesh() -> IndexedMesh {
@@ -54,7 +68,7 @@ fn get_named_mesh() -> IndexedMesh {
 }
 
 fn get_mesh_named(name: &str) -> IndexedMesh {
-    IndexedMesh {
+    with_stored_normals_declared(IndexedMesh {
         meta: Some(MeshMetadata {
             name: Some(String::from(name)),
             ..Default::default()
@@ -68,11 +82,11 @@ fn get_mesh_named(name: &str) -> IndexedMesh {
             Normal::new([-1.0, 0.0, 0.0]),
             [0, 1, 2],
         )],
-    }
+    })
 }
 
-/// Writes the mesh as ASCII STL and reads it back, returning the
-/// recovered mesh name.
+/// Writes the mesh as ASCII STL and reads it back, returning the recovered mesh
+/// name.
 fn stla_round_tripped_name(mesh: &IndexedMesh) -> Option<String> {
     let mut out: Vec<u8> = vec![];
     write_stla(mesh, &mut out).expect("write_stla succeeds");
@@ -103,9 +117,9 @@ mod stla_tests {
         let recovered_graph = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
-        // Even if there is no metadata loaded, we still create the Metadata object.
-        let mesh_unnamed = get_unnamed_mesh();
-        assert_eq!(recovered_mesh, &mesh_unnamed);
+        // Even if there is no metadata loaded, we still create the Metadata
+        // object.
+        assert_eq!(recovered_mesh, &read_back_mesh_without_meta());
     }
 
     #[test]
@@ -160,18 +174,18 @@ mod stla_tests {
 
     #[test]
     fn newline_in_name_is_normalized_on_write_and_round_trips() {
-        // The writer collapses whitespace runs (line breaks included)
-        // into single spaces, so the document stays well-formed and
-        // the recovered name is the normalized form.
+        // The writer collapses whitespace runs (line breaks included) into
+        // single spaces, so the document stays well-formed and the recovered
+        // name is the normalized form.
         let name = stla_round_tripped_name(&get_mesh_named("a\nb"));
         assert_eq!(name.as_deref(), Some("a b"));
     }
 
     #[test]
     fn unicode_name_round_trips_transliterated() {
-        // The writer emits ASCII-only names; the umlaut folds to its
-        // base letter. The reader itself accepts non-ASCII names
-        // (ingestion stays tolerant), so this pins the writer alone.
+        // The writer emits ASCII-only names; the umlaut folds to its base
+        // letter. The reader itself accepts non-ASCII names (ingestion stays
+        // tolerant), so this pins the writer alone.
         let name = stla_round_tripped_name(&get_mesh_named("Küche"));
         assert_eq!(name.as_deref(), Some("Kuche"));
     }
@@ -196,9 +210,9 @@ mod stlb_tests {
         let (recovered_graph, _) = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
-        // Even if there is no metadata loaded, we still create the Metadata object.
-        let mesh_unnamed = get_unnamed_mesh();
-        assert_eq!(recovered_mesh, &mesh_unnamed);
+        // Even if there is no metadata loaded, we still create the Metadata
+        // object.
+        assert_eq!(recovered_mesh, &read_back_mesh_without_meta());
     }
 
     #[test]
@@ -262,8 +276,8 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn unicode_name_round_trips_transliterated_through_stlb() {
-        // The writer emits ASCII-only names; the umlaut folds to its
-        // base letter.
+        // The writer emits ASCII-only names; the umlaut folds to its base
+        // letter.
         let loaded = stlb_write_then_load(&get_mesh_named("Küche"));
         assert_eq!(loaded_name(&loaded).as_deref(), Some("Kuche"));
         assert!(loaded.warnings.is_empty());
@@ -271,10 +285,10 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn overlong_name_folds_to_exactly_80_bytes_and_survives() {
-        // 79 ASCII bytes plus a 2-byte char: folded, the accented
-        // char becomes its base letter and the name fits the 80-byte
-        // header exactly. The raw writer used to cut the char in 2
-        // and produce a non-text header (nameless load + warning).
+        // 79 ASCII bytes plus a 2-byte char: folded, the accented char becomes
+        // its base letter and the name fits the 80-byte header exactly. The raw
+        // writer used to cut the char in 2 and produce a non-text header
+        // (nameless load + warning).
         let loaded = stlb_write_then_load(&get_mesh_named(&format!("{}é", "a".repeat(79))));
         assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
         assert_eq!(
@@ -286,8 +300,8 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn long_ascii_name_truncates_silently_to_the_80_byte_header() {
-        // The 80-byte cap is the format's; the cut is deliberate and
-        // carries no warning (there is no write-warning channel).
+        // The 80-byte cap is the format's; the cut is deliberate and carries no
+        // warning (there is no write-warning channel).
         let loaded = stlb_write_then_load(&get_mesh_named(&"a".repeat(100)));
         assert_eq!(
             loaded_name(&loaded).as_deref(),
@@ -298,10 +312,9 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn tab_name_round_trips_collapsed() {
-        // Unfolded, the tab is a control character in the header and
-        // the whole name used to come back as a nameless load plus
-        // the header warning; folded, it collapses to a space like
-        // in the ASCII STL writer.
+        // Unfolded, the tab is a control character in the header and the whole
+        // name used to come back as a nameless load plus the header warning;
+        // folded, it collapses to a space like in the ASCII STL writer.
         let loaded = stlb_write_then_load(&get_mesh_named("a\tb"));
         assert_eq!(loaded_name(&loaded).as_deref(), Some("a b"));
         assert!(loaded.warnings.is_empty());
@@ -309,8 +322,8 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn nul_name_round_trips_with_the_nul_removed() {
-        // Unfolded, the NUL used to act as the header terminator and
-        // silently amputate the name to "a".
+        // Unfolded, the NUL used to act as the header terminator and silently
+        // amputate the name to "a".
         let loaded = stlb_write_then_load(&get_mesh_named("a\0b"));
         assert_eq!(loaded_name(&loaded).as_deref(), Some("ab"));
         assert!(loaded.warnings.is_empty());

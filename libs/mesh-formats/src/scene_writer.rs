@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sc_mesh_core::IndexedMesh;
-use sc_scene::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
+use sc_scene::{CsgPolicy, LeafOccurrence, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
@@ -187,6 +187,9 @@ impl FlattenWarning {
 #[derive(Debug)]
 pub struct FlattenedScene {
     pub mesh: IndexedMesh,
+    /// The occurrences baked into `mesh`, in this order: each owns as many
+    /// consecutive faces as its leaf's mesh holds.
+    pub occurrences: Vec<LeafOccurrence>,
     pub warnings: Vec<FlattenWarning>,
 }
 
@@ -216,23 +219,34 @@ pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
     match expanded {
         0 => Err(WriteSceneError::EmptyScene),
         1 => {
-            let mut single: Option<IndexedMesh> = None;
-            graph.for_each_expanded_leaf(CsgPolicy::Refuse, |_, world, mesh| {
+            let mut single: Option<(IndexedMesh, LeafOccurrence)> = None;
+            graph.for_each_expanded_leaf(CsgPolicy::Refuse, |leaf, world, mesh| {
                 let mut baked = bake_mesh_to_world(mesh, world)?;
                 baked.set_meta(mesh.meta().clone());
-                single = Some(baked);
+                single = Some((
+                    baked,
+                    LeafOccurrence {
+                        leaf,
+                        world: *world,
+                    },
+                ));
                 Ok::<(), WriteSceneError>(())
             })?;
-            let mesh = single.expect("expanded_leaf_count == 1 implies one occurrence");
+            let (mesh, occurrence) =
+                single.expect("expanded_leaf_count == 1 implies one occurrence");
             Ok(FlattenedScene {
                 mesh,
+                occurrences: vec![occurrence],
                 warnings: vec![],
             })
         }
         n => {
-            let merged = graph.merge_meshes()?.ok_or(WriteSceneError::EmptyScene)?;
+            let merged = graph
+                .merge_meshes_with_occurrences()?
+                .ok_or(WriteSceneError::EmptyScene)?;
             Ok(FlattenedScene {
-                mesh: merged,
+                mesh: merged.mesh,
+                occurrences: merged.occurrences,
                 warnings: vec![FlattenWarning::MultiObjectMerge { object_count: n }],
             })
         }
@@ -340,7 +354,7 @@ mod flatten_scene_to_mesh_tests {
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
-    use sc_scene::{LeafPayload, Scene};
+    use sc_scene::{LeafOccurrence, LeafPayload, Scene};
     use sc_scene_fixtures::leaves_as_roots;
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
@@ -426,6 +440,43 @@ mod flatten_scene_to_mesh_tests {
         assert_eq!(
             result.warnings,
             vec![FlattenWarning::MultiObjectMerge { object_count: 2 }]
+        );
+    }
+
+    #[test]
+    fn flatten_lists_the_single_occurrence() {
+        let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        let graph = leaves_as_roots([(unit_triangle_mesh(None), t)]);
+        let result = flatten_graph_to_mesh(&graph).unwrap();
+        assert_eq!(
+            result.occurrences,
+            vec![LeafOccurrence {
+                leaf: graph.roots()[0],
+                world: t,
+            }]
+        );
+    }
+
+    #[test]
+    fn flatten_lists_every_occurrence_in_order() {
+        let shift = Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
+        let graph = leaves_as_roots([
+            (unit_triangle_mesh(Some("A")), Transform3D::Identity),
+            (unit_triangle_mesh(Some("B")), shift),
+        ]);
+        let result = flatten_graph_to_mesh(&graph).unwrap();
+        assert_eq!(
+            result.occurrences,
+            vec![
+                LeafOccurrence {
+                    leaf: graph.roots()[0],
+                    world: Transform3D::Identity,
+                },
+                LeafOccurrence {
+                    leaf: graph.roots()[1],
+                    world: shift,
+                },
+            ]
         );
     }
 

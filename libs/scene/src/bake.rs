@@ -14,29 +14,61 @@ use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 
+/// A visit of [`Scene::for_each_expanded_leaf`]: the leaf node and the composed
+/// world transform of that visit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeafOccurrence {
+    pub leaf: NodeId,
+    pub world: Transform3D,
+}
+
+/// A merged mesh and the occurrences baked into it, in the order of their
+/// faces: each occurrence owns as many consecutive faces as its leaf's mesh
+/// holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedMeshes {
+    pub mesh: IndexedMesh,
+    pub occurrences: Vec<LeafOccurrence>,
+}
+
 impl Scene {
-    /// Merges all leaf meshes reachable from scene roots into a single
-    /// [`IndexedMesh`], baking the composed ancestor-chain transform
-    /// into each leaf's vertices and normals. Runs on
-    /// [`Scene::for_each_expanded_leaf`], so `Group` and `Reference`
-    /// nodes are traversed (an referenced subtree contributes one baked
-    /// copy per occurrence). `Csg` nodes are an error
-    /// ([`CsgPolicy::Refuse`]): there is no evaluator yet, so any
-    /// caller that wants to flatten a graph containing CSG must first
-    /// resolve those nodes through a kernel.
+    /// Merges all leaf meshes reachable from the scene roots into a single
+    /// [`IndexedMesh`], baking the composed ancestor-chain transform into each
+    /// leaf's vertices and normals, or returns `None` when no leaf has a face.
+    /// Runs on [`Scene::for_each_expanded_leaf`], so `Group` and `Reference`
+    /// nodes are traversed (a referenced subtree contributes 1 baked copy per
+    /// occurrence). `Csg` nodes are an error ([`CsgPolicy::Refuse`]): without
+    /// an evaluator, a caller that flattens a graph with CSG must first resolve
+    /// those nodes through a kernel.
     pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneError> {
+        Ok(self
+            .merge_meshes_with_occurrences()?
+            .map(|merged| merged.mesh))
+    }
+
+    /// Merges as [`Scene::merge_meshes`] does, and also returns the occurrences
+    /// it baked.
+    pub fn merge_meshes_with_occurrences(&self) -> Result<Option<MergedMeshes>, SceneError> {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut faces: Vec<IndexedTriangle> = Vec::new();
-        self.for_each_expanded_leaf(CsgPolicy::Refuse, |_, world, mesh| {
+        let mut occurrences: Vec<LeafOccurrence> = Vec::new();
+        self.for_each_expanded_leaf(CsgPolicy::Refuse, |leaf, world, mesh| {
+            occurrences.push(LeafOccurrence {
+                leaf,
+                world: *world,
+            });
             bake_into(mesh, world, &mut vertices, &mut faces)
         })?;
         if faces.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(IndexedMesh {
-                meta: None,
-                vertices,
-                faces,
+            Ok(Some(MergedMeshes {
+                mesh: IndexedMesh {
+                    meta: None,
+                    vertices,
+                    faces,
+                },
+                occurrences,
             }))
         }
     }
@@ -53,14 +85,13 @@ impl Scene {
         }
     }
 
-    /// Resolve the mesh a leaf addresses by stable [`NodeId`]: for
+    /// Resolves the mesh a leaf addresses by stable [`NodeId`]: for
     /// `LeafPayload::Mesh` returns the inline mesh; for
-    /// `LeafPayload::MeshResource` returns the resource it points at.
-    /// Errors with [`SceneError::DanglingNodeId`] if `id` does
-    /// not name a live node, [`SceneError::NotALeaf`] if the
-    /// addressed node is not a `Leaf`, and
-    /// [`SceneError::DanglingMeshResource`] if the leaf
-    /// references a missing resource.
+    /// `LeafPayload::MeshResource` returns the resource it points at. Errors
+    /// with [`SceneError::DanglingNodeId`] if `id` does not name a live node,
+    /// [`SceneError::NotALeaf`] if the addressed node is not a `Leaf`, and
+    /// [`SceneError::DanglingMeshResource`] if the leaf references a missing
+    /// resource.
     pub fn mesh_at_leaf(&self, id: NodeId) -> Result<&IndexedMesh, SceneError> {
         let node = self.node(id).ok_or(SceneError::DanglingNodeId { id })?;
         let payload = match &node.kind {
@@ -71,11 +102,11 @@ impl Scene {
     }
 }
 
-/// Bakes a single leaf into its ancestor-chain frame. For a leaf under
-/// a scene root, the result is in world space. For a leaf inside a
-/// subtree resource, the result is in the subtree's own external frame
-/// (the reference call site is not consulted), which is the natural
-/// per-leaf invariant of stable [`NodeId`] addressing.
+/// Bakes a single leaf into its ancestor-chain frame. For a leaf under a scene
+/// root, the result is in world space. For a leaf inside a subtree resource,
+/// the result is in the subtree's own external frame (the reference call site
+/// is not consulted), which is the natural per-leaf invariant of stable
+/// [`NodeId`] addressing.
 ///
 /// Errors if `node_id` does not resolve to a `Leaf`.
 pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh, SceneError> {
@@ -97,15 +128,14 @@ pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh,
 }
 
 /// Bakes `mesh` under the frame `world`: vertices and face normals are
-/// transformed, and triangle winding is reversed when `world` mirrors
-/// (negative determinant). The result carries no metadata; callers
-/// that want the source mesh's name re-attach it themselves.
+/// transformed, and triangle winding is reversed when `world` mirrors (negative
+/// determinant). The result carries no metadata; callers that want the source
+/// mesh's name re-attach it themselves.
 ///
-/// This is the per-occurrence companion of
-/// [`Scene::for_each_expanded_leaf`]: the walk hands each occurrence's
-/// composed world transform to its callback, and this bakes the
-/// occurrence's mesh under that transform. [`bake_leaf_to_world`]
-/// covers the ancestor-chain case instead.
+/// This is the per-occurrence companion of [`Scene::for_each_expanded_leaf`]:
+/// the walk hands each occurrence's composed world transform to its callback,
+/// and this bakes the occurrence's mesh under that transform.
+/// [`bake_leaf_to_world`] covers the ancestor-chain case instead.
 ///
 /// Errors when `world` cannot map normals (singular linear part).
 pub fn bake_mesh_to_world(
@@ -286,9 +316,9 @@ mod scene_bake_tests {
     }
 
     #[test]
-    fn merge_meshes_duplicates_geometry_for_two_references() {
-        // Subtree contains one triangle. Two references at different
-        // translations should each contribute a baked copy.
+    fn merge_meshes_duplicates_geometry_for_two_references_and_lists_the_occurrences() {
+        // Subtree contains 1 triangle. 2 references at different translations
+        // should each contribute a baked copy.
         let mut g = Scene::new();
         let res_leaf = g
             .add_leaf(
@@ -325,6 +355,24 @@ mod scene_bake_tests {
         assert_eq!(merged.faces.len(), 2);
         // Second occurrence's first vertex is at (100, 0, 0).
         assert_approx_eq!(f32, merged.vertices[3][0], 100.0, epsilon = 1e-6);
+
+        let with_occurrences = g.merge_meshes_with_occurrences().unwrap().unwrap();
+        assert_eq!(with_occurrences.mesh, merged);
+        assert_eq!(
+            with_occurrences.occurrences,
+            vec![
+                LeafOccurrence {
+                    leaf: res_leaf,
+                    world: Transform3D::Identity,
+                },
+                LeafOccurrence {
+                    leaf: res_leaf,
+                    world: Transform3D::Affine(AffineTransform3D::from_translation([
+                        100.0, 0.0, 0.0
+                    ])),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -372,7 +420,8 @@ mod scene_bake_tests {
         g.add_child(grandparent, parent).unwrap();
         g.add_root(grandparent).unwrap();
         let baked = bake_leaf_to_world(&g, leaf).unwrap();
-        // World = grandparent ∘ parent ∘ leaf = (0,0,100) + (0,10,0) + (1,0,0) = (1,10,100)
+        // World = grandparent ∘ parent ∘ leaf = (0,0,100) + (0,10,0) + (1,0,0)
+        // = (1,10,100)
         assert_approx_eq!(f32, baked.vertices[0][0], 1.0, epsilon = 1e-6);
         assert_approx_eq!(f32, baked.vertices[0][1], 10.0, epsilon = 1e-6);
         assert_approx_eq!(f32, baked.vertices[0][2], 100.0, epsilon = 1e-6);

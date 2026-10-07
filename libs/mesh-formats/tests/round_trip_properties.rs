@@ -24,6 +24,7 @@ use std::io::Cursor;
 
 use proptest::prelude::*;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_fixtures::with_stored_normals_declared;
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_scene::Scene;
 
@@ -37,10 +38,10 @@ fn vertex_strategy() -> impl Strategy<Value = Vertex> {
     (small_int_f32(), small_int_f32(), small_int_f32()).prop_map(|(x, y, z)| Vertex::new([x, y, z]))
 }
 
-/// A mesh with 3..=8 distinct vertices on a small integer grid and
-/// 1..=5 non-degenerate triangles referencing them. Triangles may
-/// share vertices but the three indices in any one triangle are
-/// distinct (degenerate-vertex-index triangles are out of scope).
+/// Returns a strategy of meshes with 3..=8 distinct vertices on a small integer
+/// grid and 1..=5 non-degenerate triangles referencing them. Triangles may
+/// share vertices but the 3 indices in any triangle are distinct
+/// (degenerate-vertex-index triangles are out of scope).
 fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
     proptest::collection::vec(vertex_strategy(), 3..=8)
         .prop_flat_map(|vertices| {
@@ -62,11 +63,10 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
         })
 }
 
-/// Returns the multiset of triangles a mesh denotes, each triangle
-/// expanded to its three vertex coordinates. Order within each
-/// triangle is preserved (winding matters); order across triangles
-/// is sorted so the comparison is independent of how the writer/reader
-/// happens to lay out the face list.
+/// Returns the multiset of triangles a mesh denotes, each triangle expanded to
+/// its 3 vertex coordinates. Order within each triangle is preserved (winding
+/// matters); order across triangles is sorted so the comparison is independent
+/// of how the writer/reader happens to lay out the face list.
 fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     let mut out: Vec<[[u32; 3]; 3]> = mesh
         .faces()
@@ -75,10 +75,9 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
             let v0 = mesh.vertices()[usize::from(face.vertices[0])];
             let v1 = mesh.vertices()[usize::from(face.vertices[1])];
             let v2 = mesh.vertices()[usize::from(face.vertices[2])];
-            // Compare by exact f32 bit pattern: the on-grid values we
-            // generate are exact, and the writers/readers preserve
-            // them bit-for-bit (binary directly, ASCII via `{:e}`
-            // shortest round-trip).
+            // Compare by exact f32 bit pattern: the on-grid values we generate
+            // are exact, and the writers/readers preserve them bit-for-bit
+            // (binary directly, ASCII via `{:e}` shortest round-trip).
             [
                 v0.coords().map(f32::to_bits),
                 v1.coords().map(f32::to_bits),
@@ -133,9 +132,9 @@ proptest! {
 
     #[test]
     fn stla_round_trip_dedups_vertices(mesh in indexed_mesh_strategy()) {
-        // The reader runs every triangle's vertices through dedup, so
-        // the recovered mesh has no more vertices than the source has
-        // distinct vertex bit patterns.
+        // The reader runs every triangle's vertices through dedup, so the
+        // recovered mesh has no more vertices than the source has distinct
+        // vertex bit patterns.
         let mut buf: Vec<u8> = Vec::new();
         write_stla(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
@@ -152,10 +151,10 @@ proptest! {
 
     #[test]
     fn stlb_round_trip_preserves_normal(mesh in indexed_mesh_strategy()) {
-        // Binary STL stores the normal as three f32s; the recovered
-        // normal must match bit-for-bit.
+        // Binary STL stores the normal as 3 f32s; a declared normal must come
+        // back bit-for-bit.
         let mut buf: Vec<u8> = Vec::new();
-        write_stlb(&mesh, &mut buf).unwrap();
+        write_stlb(&with_stored_normals_declared(mesh), &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
         let (graph, _) = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&graph);

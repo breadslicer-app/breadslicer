@@ -5,28 +5,28 @@
 
 //! ASCII STL reader.
 //!
-//! Keyword matching is case-insensitive. The original 3D Systems
-//! specification uses lowercase keywords (`solid`, `facet`, `vertex`,
-//! ...), but at least one widely distributed STL utility, admesh,
-//! has emitted files with uppercase keywords. Slic3r adopted
-//! case-insensitive parsing after a real-world crash report against
-//! such a file: https://github.com/slic3r/Slic3r/issues/2971. This
-//! reader follows the same convention: keywords are compared with
-//! `eq_ignore_ascii_case`, in the facet grammar and in the `solid`
-//! header recognition alike.
+//! Keyword matching is case-insensitive. The original 3D Systems specification
+//! uses lowercase keywords (`solid`, `facet`, `vertex`, ...), but at least 1
+//! widely distributed STL utility, admesh, has emitted files with uppercase
+//! keywords. Slic3r adopted case-insensitive parsing after a real-world crash
+//! report against such a file: <https://github.com/slic3r/Slic3r/issues/2971>.
+//! This reader follows the same convention: keywords are compared with
+//! `eq_ignore_ascii_case`, in the facet grammar and in the `solid` header
+//! recognition alike.
 //!
-//! The parser works over the whole document as one in-memory `str`;
-//! the facet grammar allocates nothing per line or per token.
+//! The parser works over the whole document as a single in-memory `str`; the
+//! facet grammar allocates nothing per line or per token.
 
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::str::Lines;
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex, indexed_mesh_from_soup};
+use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
 use sc_scene::Scene;
 
 use crate::error::LoadStlError;
+use crate::stl::{Facet, mesh_from_facets};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
@@ -35,20 +35,19 @@ pub(crate) struct SolidHeader<'t> {
     pub(crate) name: Option<&'t str>,
 }
 
-/// Recognizes an ASCII STL `solid` header line. The single routine
-/// behind the probe, the document gate, and the name capture, so the
-/// 3 can never disagree on the same bytes.
+/// Recognizes an ASCII STL `solid` header line. The single routine behind the
+/// probe, the document gate, and the name capture, so the 3 can never disagree
+/// on the same bytes.
 ///
-/// `line` is one line without its `\n`; a trailing `\r` (CRLF input)
-/// is stripped here, so callers may hand in either a `str::lines`
-/// item or raw `read_line` output minus the final `\n`. Acceptance
-/// follows the de facto grammar of widely used readers (admesh,
-/// assimp, trimesh): optional leading spaces or tabs, the keyword
-/// `solid` compared case-insensitively, then either end-of-line or
-/// an ASCII whitespace separator. The remainder, trimmed of
-/// surrounding whitespace, is the free-text name; its charset is
-/// unrestricted because real exporters put dots, commas, parentheses
-/// and arbitrary words there.
+/// `line` is a line without its `\n`; a trailing `\r` (CRLF input) is stripped
+/// here, so callers may hand in either a `str::lines` item or raw `read_line`
+/// output minus the final `\n`. Acceptance follows the de facto grammar of
+/// widely used readers (admesh, assimp, trimesh): optional leading spaces or
+/// tabs, the keyword `solid` compared case-insensitively, then either
+/// end-of-line or an ASCII whitespace separator. The remainder, trimmed of
+/// surrounding whitespace, is the free-text name; its charset is unrestricted
+/// because real exporters put dots, commas, parentheses and arbitrary words
+/// there.
 pub(crate) fn parse_solid_header(line: &str) -> Option<SolidHeader<'_>> {
     let line = line.strip_suffix('\r').unwrap_or(line);
     let rest = line.trim_start_matches([' ', '\t']);
@@ -56,8 +55,7 @@ pub(crate) fn parse_solid_header(line: &str) -> Option<SolidHeader<'_>> {
     if bytes.len() < 5 || !bytes[..5].eq_ignore_ascii_case(b"solid") {
         return None;
     }
-    // The first 5 bytes are ASCII letters, so index 5 sits on a char
-    // boundary.
+    // The first 5 bytes are ASCII letters, so index 5 sits on a char boundary.
     let after = &rest[5..];
     if after.is_empty() {
         return Some(SolidHeader { name: None });
@@ -72,7 +70,7 @@ pub(crate) fn parse_solid_header(line: &str) -> Option<SolidHeader<'_>> {
     })
 }
 
-/// True when the stream's first line is an ASCII STL `solid` header.
+/// Reports whether the stream's first line is an ASCII STL `solid` header.
 /// Seeks back to the start of the stream before returning.
 pub(crate) fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
     let mut header = String::new();
@@ -90,23 +88,22 @@ pub(crate) fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
     }
 }
 
-/// Reads an ASCII STL document from an in-memory byte slice into a
-/// one-leaf scene.
+/// Reads an ASCII STL document from an in-memory byte slice into a 1-leaf
+/// scene.
 ///
-/// UTF-8 validity is only required up to the `endsolid` line: the
-/// retired line-streaming reader stopped there and never read the
-/// rest, so files carrying binary junk after the closing line load
-/// fine and must keep doing so.
+/// UTF-8 validity is only required up to the `endsolid` line: the retired
+/// line-streaming reader stopped there and never read the rest, so files
+/// carrying binary junk after the closing line load fine and must keep doing
+/// so.
 pub(crate) fn read_stla_slice(bytes: &[u8]) -> Result<Scene> {
     match str::from_utf8(bytes) {
         Ok(text) => parse_document(text),
         Err(utf8_error) => {
-            // Parse the complete lines before the first invalid
-            // sequence. If the grammar concludes (via `endsolid`) or
-            // fails inside them, that outcome stands; only a document
-            // that needs the line holding the invalid sequence
-            // reports the invalid-data error the old line reader
-            // produced when it reached that line.
+            // Parse the complete lines before the first invalid sequence. If
+            // the grammar concludes (via `endsolid`) or fails inside them, that
+            // outcome stands; only a document that needs the line holding the
+            // invalid sequence reports the invalid-data error the old line
+            // reader produced when it reached that line.
             let valid = str::from_utf8(&bytes[..utf8_error.valid_up_to()])
                 .map_err(|_| invalid_utf8_error())?;
             let complete = match valid.rfind('\n') {
@@ -123,7 +120,7 @@ pub(crate) fn read_stla_slice(bytes: &[u8]) -> Result<Scene> {
     }
 }
 
-/// The invalid-UTF-8 error value the retired reader surfaced from
+/// Returns the invalid-UTF-8 error value the retired reader surfaced from
 /// `BufRead::read_line`: same variant, same kind, same message.
 fn invalid_utf8_error() -> LoadStlError {
     LoadStlError::Io(std::io::Error::new(
@@ -132,8 +129,8 @@ fn invalid_utf8_error() -> LoadStlError {
     ))
 }
 
-/// Parses a full ASCII STL document: `solid` header line, facet
-/// blocks, `endsolid`. Lines past `endsolid` are never examined.
+/// Parses a full ASCII STL document: `solid` header line, facet blocks,
+/// `endsolid`. Lines past `endsolid` are never examined.
 fn parse_document(text: &str) -> Result<Scene> {
     match text.lines().next() {
         None => return Err(LoadStlError::AsciiEmptyInput),
@@ -144,30 +141,28 @@ fn parse_document(text: &str) -> Result<Scene> {
     }
     let body_start = text.find('\n').map_or(text.len(), |i| i + 1);
     let body = &text[body_start..];
-    // Tokenization dispatch. ASCII documents (every real STL file)
-    // take the byte-level scanner; a document holding any non-ASCII
-    // byte falls back to char-level `split_whitespace`, whose Unicode
-    // whitespace handling the retired reader exposed. Each tokenizer
-    // produces exactly `split_whitespace`'s token boundaries for the
-    // text class it is chosen for, so the dispatch is invisible in
-    // the output.
-    let soup = if text.is_ascii() {
+    // Tokenization dispatch. ASCII documents (every real STL file) take the
+    // byte-level scanner; a document holding any non-ASCII byte falls back to
+    // char-level `split_whitespace`, whose Unicode whitespace handling the
+    // retired reader exposed. Each tokenizer produces exactly
+    // `split_whitespace`'s token boundaries for the text class it is chosen
+    // for, so the dispatch is invisible in the output.
+    let facets = if text.is_ascii() {
         parse_body(body, |line| AsciiWhitespaceSplit { rest: line })?
     } else {
         parse_body(body, str::split_whitespace)?
     };
-    let mesh = indexed_mesh_from_soup(Some(metadata_from_text(text)), soup, u32::MAX as usize)?;
+    let mesh = mesh_from_facets(metadata_from_text(text), facets)?;
     Ok(Scene::from(mesh))
 }
 
-/// Sequential/parallel crossover for the body parse. Measured with
-/// the lab parsers: the chunk split starts winning between 10 KiB and
-/// 14 KiB of body text; below that the fork/join overhead is on par
-/// with the parsing work.
+/// Sequential/parallel crossover for the body parse. Measured: the chunk split
+/// starts winning between 10 KiB and 14 KiB of body text; below that the
+/// fork/join overhead is on par with the parsing work.
 pub(super) const PARALLEL_PARSE_MIN_BODY_BYTES: usize = 16 * 1024;
 
-/// How a run of facet blocks ended: at an `endsolid` line, or by
-/// running out of lines.
+/// How a run of facet blocks ended: at an `endsolid` line, or by running out of
+/// lines.
 enum BlocksEnd {
     EndSolid,
     Exhausted,
@@ -175,16 +170,15 @@ enum BlocksEnd {
 
 /// Parses the document body (everything after the header line).
 ///
-/// Bodies above the parallel threshold split at facet-block
-/// boundaries into thread-count chunks, parsed with rayon and
-/// concatenated in chunk order; chunks behind the first `endsolid`
-/// are dropped, like the sequential pass never reads them. Any
-/// deviation from that clean shape (a chunk error, no `endsolid`
-/// anywhere) discards the chunk output and re-parses sequentially,
-/// so the reported error is the canonical first one in file order
-/// and damage confined behind an `endsolid` stays invisible.
-/// Well-formed documents never pay the second pass.
-fn parse_body<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Triangle>>
+/// Bodies above the parallel threshold split at facet-block boundaries into
+/// thread-count chunks, parsed with rayon and concatenated in chunk order;
+/// chunks behind the first `endsolid` are dropped, like the sequential pass
+/// never reads them. Any deviation from that clean shape (a chunk error, no
+/// `endsolid` anywhere) discards the chunk output and re-parses sequentially,
+/// so the reported error is the canonical first one in file order and damage
+/// confined behind an `endsolid` stays invisible. Well-formed documents never
+/// pay the second pass.
+fn parse_body<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Facet>>
 where
     I: Iterator<Item = &'t str>,
     F: Fn(&'t str) -> I + Copy + Send + Sync,
@@ -192,7 +186,7 @@ where
     if body.len() < PARALLEL_PARSE_MIN_BODY_BYTES {
         return parse_body_sequential(body, tokenize);
     }
-    let outcomes: Vec<Result<(Vec<Triangle>, BlocksEnd)>> = chunk_at_facet_boundaries(body)
+    let outcomes: Vec<Result<(Vec<Facet>, BlocksEnd)>> = chunk_at_facet_boundaries(body)
         .into_par_iter()
         .map(|chunk| parse_facet_blocks(&mut chunk.lines(), tokenize))
         .collect();
@@ -200,7 +194,7 @@ where
         .iter()
         .map(|outcome| outcome.as_ref().map_or(0, |(part, _)| part.len()))
         .sum();
-    let mut soup: Vec<Triangle> = Vec::with_capacity(capacity);
+    let mut soup: Vec<Facet> = Vec::with_capacity(capacity);
     for outcome in outcomes {
         match outcome {
             Ok((part, BlocksEnd::EndSolid)) => {
@@ -211,13 +205,14 @@ where
             Err(_) => return parse_body_sequential(body, tokenize),
         }
     }
-    // Every chunk ran dry without an `endsolid`: the sequential pass
-    // owns the canonical outcome for such a document.
+    // Every chunk ran dry without an `endsolid`: the sequential pass owns the
+    // canonical outcome for such a document.
     parse_body_sequential(body, tokenize)
 }
 
-/// The authoritative single-pass parse of a document body.
-fn parse_body_sequential<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Triangle>>
+/// Parses a document body in a single pass, the parse whose outcome is
+/// authoritative.
+fn parse_body_sequential<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Facet>>
 where
     I: Iterator<Item = &'t str>,
     F: Fn(&'t str) -> I + Copy,
@@ -230,13 +225,12 @@ where
     }
 }
 
-/// Splits the body into up to thread-count pieces, each cut placed
-/// right after the line holding an `endfacet` occurrence, so chunks
-/// of well-formed documents start at facet-block boundaries. The
-/// search is a byte-level substring match: an uppercase spelling
-/// simply yields fewer cuts and less parallelism, never a wrong
-/// result (a chunk that starts mid-block fails to parse, and the
-/// sequential fallback takes over).
+/// Splits the body into up to thread-count pieces, each cut placed right after
+/// the line holding an `endfacet` occurrence, so chunks of well-formed
+/// documents start at facet-block boundaries. The search is a byte-level
+/// substring match: an uppercase spelling simply yields fewer cuts and less
+/// parallelism, never a wrong result (a chunk that starts mid-block fails to
+/// parse, and the sequential fallback takes over).
 fn chunk_at_facet_boundaries(body: &str) -> Vec<&str> {
     const KEYWORD: &[u8] = b"endfacet";
     let bytes = body.as_bytes();
@@ -257,8 +251,8 @@ fn chunk_at_facet_boundaries(body: &str) -> Vec<&str> {
             .iter()
             .position(|&b| b == b'\n')
             .map_or(bytes.len(), |newline| after_keyword + newline + 1);
-        // `end` sits right after an ASCII newline (or at EOF), so the
-        // cut is a char boundary even in non-ASCII text.
+        // `end` sits right after an ASCII newline (or at EOF), so the cut is a
+        // char boundary even in non-ASCII text.
         chunks.push(&body[start..end]);
         start = end;
     }
@@ -272,16 +266,16 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// The ASCII subset of `char::is_whitespace`: `u8::is_ascii_whitespace`
-/// plus vertical tab (0x0B), which Unicode counts as whitespace but
-/// the ASCII helper does not. Splitting on this byte set over
+/// Reports whether `byte` is in the ASCII subset of `char::is_whitespace`:
+/// `u8::is_ascii_whitespace` plus vertical tab (0x0B), which Unicode counts as
+/// whitespace but the ASCII helper does not. Splitting on this byte set over
 /// ASCII-only text yields exactly the tokens of `split_whitespace`.
 fn is_ascii_separator(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
 }
 
-/// Byte-level `split_whitespace` stand-in for ASCII lines: same
-/// tokens, without the per-char UTF-8 decoding.
+/// Byte-level `split_whitespace` stand-in for ASCII lines: same tokens, without
+/// the per-char UTF-8 decoding.
 struct AsciiWhitespaceSplit<'t> {
     rest: &'t str,
 }
@@ -302,9 +296,9 @@ impl<'t> Iterator for AsciiWhitespaceSplit<'t> {
     }
 }
 
-/// Mesh name from the document's first line, captured through the
-/// same routine the header gate uses: CRLF terminators and missing
-/// terminators make no difference to the captured name.
+/// Returns the mesh metadata, with the name from the document's first line,
+/// captured through the same routine the header gate uses: CRLF terminators and
+/// missing terminators make no difference to the captured name.
 fn metadata_from_text(text: &str) -> MeshMetadata {
     match text.lines().next().and_then(parse_solid_header) {
         Some(header) => MeshMetadata {
@@ -315,17 +309,17 @@ fn metadata_from_text(text: &str) -> MeshMetadata {
     }
 }
 
-/// Parses facet blocks until an `endsolid` line or the end of the
-/// line run, collecting the triangle soup.
+/// Parses facet blocks until an `endsolid` line or the end of the line run,
+/// collecting the facets.
 fn parse_facet_blocks<'t, I, F>(
     lines: &mut Lines<'t>,
     tokenize: F,
-) -> Result<(Vec<Triangle>, BlocksEnd)>
+) -> Result<(Vec<Facet>, BlocksEnd)>
 where
     I: Iterator<Item = &'t str>,
     F: Fn(&'t str) -> I + Copy,
 {
-    let mut soup: Vec<Triangle> = Vec::new();
+    let mut soup: Vec<Facet> = Vec::new();
     loop {
         let Some(mut content) = next_content_line_opt(lines, tokenize) else {
             return Ok((soup, BlocksEnd::Exhausted));
@@ -354,11 +348,12 @@ where
                 tokens: lowercased_tokens(content.line),
             });
         }
-        let mut normal = Normal::new([
+        let declared = [
             parse_finite_f32(x, "facet normal component")?,
             parse_finite_f32(y, "facet normal component")?,
             parse_finite_f32(z, "facet normal component")?,
-        ]);
+        ];
+        let mut normal = Normal::new(declared);
 
         expect_keywords(lines, tokenize, &["outer", "loop"], "outer loop")?;
 
@@ -370,21 +365,25 @@ where
         expect_keywords(lines, tokenize, &["endloop"], "endloop")?;
         expect_keywords(lines, tokenize, &["endfacet"], "endfacet")?;
 
-        // We interpret a zero-length normal vector as a hint to compute it at load time.
-        // If the triangle is truly degenerate the recomputation can't produce a meaningful
-        // direction; leave the zero normal in place so `validate_normal_vectors` flags it
-        // as `ZeroAreaTriangle` rather than the parser bailing on the whole file.
+        // We interpret a zero-length normal vector as a hint to compute it at
+        // load time. If the triangle is truly degenerate the recomputation
+        // can't produce a meaningful direction; leave the zero normal in place
+        // so `validate_normal_vectors` flags it as `ZeroAreaTriangle` rather
+        // than the parser bailing on the whole file.
         if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
             && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
         {
             normal = recomputed;
         }
 
-        soup.push(Triangle::new(normal, vertices));
+        soup.push(Facet {
+            declared_normal: declared.map(f32::to_bits),
+            triangle: Triangle::new(normal, vertices),
+        });
     }
 }
 
-/// One `vertex x y z` line.
+/// Parses a `vertex x y z` line.
 fn parse_vertex_line<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Result<Vertex>
 where
     I: Iterator<Item = &'t str>,
@@ -413,7 +412,7 @@ where
     ]))
 }
 
-/// The next content line must hold exactly `expectation`, compared
+/// Checks that the next content line holds exactly `expectation`, compared
 /// token by token, case-insensitively.
 fn expect_keywords<'t, I, F>(
     lines: &mut Lines<'t>,
@@ -442,16 +441,16 @@ where
     }
 }
 
-/// A non-blank line together with its already-started token iterator,
-/// so no line is tokenized twice on the hot path.
+/// A non-blank line together with its already-started token iterator, so no
+/// line is tokenized twice on the hot path.
 struct ContentLine<'t, I> {
     line: &'t str,
     first: &'t str,
     rest: I,
 }
 
-/// The next line holding at least one token, skipping blank lines
-/// like the retired reader's token-level filter did.
+/// Returns the next line holding at least 1 token, skipping blank lines like
+/// the retired reader's token-level filter did.
 fn next_content_line_opt<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Option<ContentLine<'t, I>>
 where
     I: Iterator<Item = &'t str>,
@@ -470,8 +469,8 @@ where
     None
 }
 
-/// [`next_content_line_opt`], with line-run exhaustion turned into
-/// the EOF error for `expecting`.
+/// Returns the next content line as [`next_content_line_opt`] does, with
+/// line-run exhaustion turned into the EOF error for `expecting`.
 fn next_content_line<'t, I, F>(
     lines: &mut Lines<'t>,
     tokenize: F,
@@ -486,10 +485,10 @@ where
 }
 
 /// Parses a finite f32 straight from a token sub-slice. Acceptance is
-/// unaffected by case (f32 parsing already treats the inf/nan
-/// spellings case-insensitively), so lowercasing survives only here,
-/// on the error path: the retired reader lowercased every token up
-/// front and its error payloads carried the lowercased form.
+/// unaffected by case (f32 parsing already treats the inf/nan spellings
+/// case-insensitively), so lowercasing survives only here, on the error path:
+/// the retired reader lowercased every token up front and its error payloads
+/// carried the lowercased form.
 fn parse_finite_f32(token: &str, what: &'static str) -> Result<f32> {
     let value = token
         .parse::<f32>()
@@ -503,8 +502,8 @@ fn parse_finite_f32(token: &str, what: &'static str) -> Result<f32> {
     Ok(value)
 }
 
-/// Error-payload helper: token vectors in the lowercased form the
-/// retired reader produced. Cold path only.
+/// Returns the tokens of `line`, lowercased as the retired reader put them in
+/// error payloads. Cold path only.
 fn lowercased_tokens(line: &str) -> Vec<String> {
     line.split_whitespace()
         .map(|t| t.to_ascii_lowercase())
@@ -514,6 +513,7 @@ fn lowercased_tokens(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod test_ascii_stl_reader {
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_fixtures::with_stored_normals_declared;
     use sc_scene::Scene;
 
     use super::{metadata_from_text, probe, read_stla_slice};
@@ -575,10 +575,10 @@ endsolid";
 
     #[test]
     fn metadata_preserves_original_case_of_name() {
-        // The keyword `SOLID` matches case-insensitively but the
-        // captured name retains its original case (it is a verbatim
-        // slice of the input). A user who exports an STL with a name
-        // like "PartA" must see it as "PartA", not "parta".
+        // The keyword `SOLID` matches case-insensitively but the captured name
+        // retains its original case (it is a verbatim slice of the input). A
+        // user who exports an STL with a name like "PartA" must see it as
+        // "PartA", not "parta".
         let scene = read_stla_slice(b"SOLID PartA-001\nendsolid PartA-001").unwrap();
         let mesh = single_leaf_mesh(&scene);
         let meta = mesh.meta.expect("reader attaches metadata");
@@ -587,8 +587,8 @@ endsolid";
 
     #[test]
     fn crlf_header_line_yields_the_name() {
-        // A `\r\n`-terminated header line names the mesh exactly like
-        // an LF-terminated one; the `\r` never reaches the name.
+        // A `\r\n`-terminated header line names the mesh exactly like an
+        // LF-terminated one; the `\r` never reaches the name.
         assert_eq!(
             metadata_from_text("solid foobar\r\nendsolid foobar\r\n"),
             MeshMetadata {
@@ -610,8 +610,9 @@ endsolid";
         );
     }
 
+    /// Returns the mesh of `STL_1`, its declared normal included.
     fn expected_mesh() -> IndexedMesh {
-        IndexedMesh {
+        with_stored_normals_declared(IndexedMesh {
             meta: Some(MeshMetadata {
                 name: Some("foobar".into()),
                 ..Default::default()
@@ -625,7 +626,7 @@ endsolid";
                 Normal::new([-1.0, 0.0, 0.0]),
                 [0, 1, 2],
             )],
-        }
+        })
     }
 
     #[test]
@@ -647,9 +648,9 @@ endsolid";
    ENDFACET
 ENDSOLID foobar";
 
-    /// Same geometry as STL_1, keywords in title case. Catches the
-    /// in-between of "all lower" and "all upper", in case any
-    /// downstream comparison still uses an exact-match pattern.
+    /// Same geometry as STL_1, keywords in title case. Catches the in-between
+    /// of "all lower" and "all upper", in case any downstream comparison still
+    /// uses an exact-match pattern.
     static STL_1_MIXED: &str = "Solid foobar
    Facet Normal -1.000000e+000 0.000000e+000 0.000000e+000
       Outer Loop
@@ -686,9 +687,9 @@ EndSolid foobar";
 
     #[test]
     fn binary_junk_after_the_endsolid_line_is_ignored() {
-        // The retired streaming reader stopped at `endsolid` and never
-        // read further, so trailing binary garbage (invalid UTF-8
-        // included) does not fail the load.
+        // The retired streaming reader stopped at `endsolid` and never read
+        // further, so trailing binary garbage (invalid UTF-8 included) does not
+        // fail the load.
         let mut bytes = STL_1.as_bytes().to_vec();
         bytes.extend_from_slice(b"\n\xFF\x00\xFE binary junk");
         let scene = read_stla_slice(&bytes).unwrap();
@@ -708,9 +709,9 @@ EndSolid foobar";
 
     #[test]
     fn earlier_grammar_error_wins_over_later_invalid_utf8() {
-        // The grammar fails on the facet line before the line holding
-        // the invalid sequence is ever needed, exactly like the
-        // line-by-line reader behaved.
+        // The grammar fails on the facet line before the line holding the
+        // invalid sequence is ever needed, exactly like the line-by-line reader
+        // behaved.
         let err = read_stla_slice(b"solid foo\n  facet banana 0 0 0\n\xFF").unwrap_err();
         assert!(matches!(err, LoadStlError::AsciiInvalidFacetHeader { .. }));
     }
@@ -729,8 +730,8 @@ EndSolid foobar";
     #[test]
     fn vertical_tab_separates_tokens_on_the_ascii_path() {
         // 0x0B is whitespace for `char::is_whitespace` but not for
-        // `u8::is_ascii_whitespace`; the byte-level tokenizer must
-        // treat it as a separator to match the retired reader.
+        // `u8::is_ascii_whitespace`; the byte-level tokenizer must treat it as
+        // a separator to match the retired reader.
         let doc = b"solid s\nfacet normal 0 0 1\nouter loop\nvertex\x0B0 0 0\n\
             vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s";
         let scene = read_stla_slice(doc).unwrap();
@@ -739,9 +740,9 @@ EndSolid foobar";
 
     #[test]
     fn nbsp_separates_tokens_on_the_unicode_path() {
-        // A no-break space is Unicode whitespace, so the retired
-        // reader split on it; the non-ASCII byte routes the document
-        // to the char-level tokenizer, which does the same.
+        // A no-break space is Unicode whitespace, so the retired reader split
+        // on it; the non-ASCII byte routes the document to the char-level
+        // tokenizer, which does the same.
         let doc = "solid s\nfacet normal 0 0 1\nouter loop\nvertex\u{00A0}0 0 0\n\
             vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s";
         let scene = read_stla_slice(doc.as_bytes()).unwrap();
@@ -750,9 +751,9 @@ EndSolid foobar";
 
     #[test]
     fn invalid_float_error_carries_the_lowercased_token() {
-        // The retired reader lowercased every token up front, so its
-        // error payloads carried the lowercased form; that payload
-        // shape is preserved.
+        // The retired reader lowercased every token up front, so its error
+        // payloads carried the lowercased form; that payload shape is
+        // preserved.
         let doc = b"solid foo\n facet normal 0 0 1\n outer loop\n vertex NOPE 0 0\n";
         let err = read_stla_slice(doc).unwrap_err();
         match err {
@@ -761,8 +762,8 @@ EndSolid foobar";
         }
     }
 
-    /// One-facet body shared by the header-grammar tests below; only
-    /// the header line varies across them.
+    /// 1-facet body shared by the header-grammar tests below; only the header
+    /// line varies across them.
     static HEADER_TEST_BODY: &str = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\n\
         vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid\n";
 

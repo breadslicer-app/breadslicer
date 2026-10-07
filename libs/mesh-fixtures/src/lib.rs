@@ -20,8 +20,11 @@
 //! test the pipeline on meshes that bound a valid solid but are not a manifold
 //! surface.
 
+use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
+#[cfg(test)]
+mod tests_declared;
 #[cfg(test)]
 mod tests_flipped;
 #[cfg(test)]
@@ -416,6 +419,23 @@ pub fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
     mesh.set_meta(Some(MeshMetadata {
         name: Some(name.to_string()),
         ..Default::default()
+    }));
+    mesh
+}
+
+/// Returns `mesh` with the bits of its stored face normals as its declared
+/// facet normals, and its other metadata unchanged.
+pub fn with_stored_normals_declared(mut mesh: IndexedMesh) -> IndexedMesh {
+    let normals = mesh
+        .faces
+        .iter()
+        .map(|face| face.normal.coords().map(f32::to_bits))
+        .collect();
+    let declared = DeclaredFacetNormals::capture(&mesh, normals).expect("1 normal per face");
+    let meta = mesh.meta.take().unwrap_or_default();
+    mesh.set_meta(Some(MeshMetadata {
+        declared_facet_normals: Some(declared),
+        ..meta
     }));
     mesh
 }
