@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
@@ -34,40 +33,12 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
     LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch, guard_worker,
-    panic_message, parse_source, place_on_plate, start_load_with_ticket,
+    panic_message, parse_source, start_load_with_ticket,
 };
 use crate::mesh_render::DeviceToken;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::test_support::gpu_devices::shared_test_device;
 use crate::test_support::projects::project_with_in_sync_slices;
-
-fn unit_triangle_mesh() -> IndexedMesh {
-    IndexedMesh {
-        meta: None,
-        vertices: vec![
-            Vertex::new([0.0, 0.0, 0.0]),
-            Vertex::new([1.0, 0.0, 0.0]),
-            Vertex::new([0.0, 1.0, 0.0]),
-        ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
-    }
-}
-
-fn scene_with_one_triangle_at_origin() -> Scene {
-    let mut s = Scene::new();
-    let leaf = s
-        .add_leaf(
-            None,
-            Transform3D::Identity,
-            LeafPayload::Mesh(unit_triangle_mesh().into()),
-        )
-        .expect("add_leaf");
-    s.add_root(leaf).expect("add_root");
-    s
-}
 
 fn loader() -> SceneLoader {
     SceneLoader::new_for_test(DialogManager::new())
@@ -105,38 +76,6 @@ fn check_file_size_returns_err_for_a_file_over_the_cap() {
 fn check_file_size_returns_ok_for_a_missing_path_so_the_worker_can_report_the_real_error() {
     let path = PathBuf::from("/this/path/does/not/exist/scene.stl");
     assert!(check_file_size(&path).is_ok());
-}
-
-// --- place_on_plate ---------------------------------------------------
-
-#[test]
-fn place_on_plate_is_a_no_op_on_an_empty_scene() {
-    let mut scene = Scene::new();
-    let bv = BuildVolume::new(100.0, 60.0, 80.0);
-    place_on_plate(&mut scene, bv).expect("place ok");
-    assert!(scene.roots().is_empty());
-}
-
-#[test]
-fn place_on_plate_translates_a_scene_with_geometry() {
-    let mut scene = scene_with_one_triangle_at_origin();
-    let bv = BuildVolume::new(100.0, 60.0, 80.0);
-    let root_id_before = *scene.roots().first().expect("one root");
-    let xform_before = scene
-        .node(root_id_before)
-        .expect("root present")
-        .local_transform;
-    assert_eq!(xform_before, Transform3D::Identity);
-    place_on_plate(&mut scene, bv).expect("place ok");
-    let xform_after = scene
-        .node(root_id_before)
-        .expect("root still present")
-        .local_transform;
-    assert_ne!(
-        xform_after,
-        Transform3D::Identity,
-        "root must carry an outer translation"
-    );
 }
 
 // --- start_load_with_ticket ------------------------------------------

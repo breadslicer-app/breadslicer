@@ -18,12 +18,12 @@ use std::path::{Path, PathBuf};
 
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_spatial::SceneSpatial;
+use sc_print_glue::place_on_plate;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
     LoadSceneError, LoadedContent, LoadedScene, ProjectContent, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
 };
-use sc_scene::Scene;
 use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -137,21 +137,9 @@ pub(crate) fn start_load_with_ticket(
         device,
         device_token,
         loader.device_loss(),
-        build_volume,
+        build_volume.volume(),
         sink,
     );
-}
-
-/// Drops the graph onto the plate at the envelope's XY centre with its bottom
-/// resting on the envelope's Z floor, via [`Scene::drop_at`] (which preserves
-/// the roots' relative layout and no-ops on empty or already-placed graphs).
-pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> anyhow::Result<()> {
-    let env_min = build_volume.envelope_min_mm();
-    let env_max = build_volume.envelope_max_mm();
-    let target_xy = [0.5 * (env_min.x + env_max.x), 0.5 * (env_min.y + env_max.y)];
-    let floor_z = env_min.z;
-    graph.drop_at(target_xy, floor_z)?;
-    Ok(())
 }
 
 /// Reads the file at `path`, reporting parse-phase progress through `sink`.
@@ -173,7 +161,7 @@ pub(crate) fn spawn_load(
     device: wgpu::Device,
     device_token: crate::mesh_render::DeviceToken,
     device_loss: DeviceLoss,
-    build_volume: BuildVolume,
+    build_volume: sc_print_primitives::BuildVolume,
     sink: LoadProgressSink,
 ) {
     std::thread::spawn(move || {
@@ -198,7 +186,7 @@ pub(crate) fn spawn_load(
 fn prepare_scene(
     path: &Path,
     sink: &LoadProgressSink,
-    build_volume: BuildVolume,
+    build_volume: sc_print_primitives::BuildVolume,
     device: &wgpu::Device,
     device_token: crate::mesh_render::DeviceToken,
     device_loss: &DeviceLoss,
@@ -213,7 +201,7 @@ fn prepare_scene(
             // Drop the scene onto the build plate before the GPU upload and
             // cache priming run on it, so both observe the placed world
             // coordinates.
-            place_on_plate(&mut scene, build_volume)?;
+            place_on_plate(&mut scene, &build_volume)?;
             (scene, None, Vec::new(), None)
         }
         LoadedContent::Project(ProjectContent {
@@ -341,82 +329,5 @@ mod is_supported_mesh_extension_tests {
         // no dot: guards against accidentally treating a dropped directory as a
         // loadable file.
         assert!(!is_supported_mesh_extension(Path::new("/tmp/")));
-    }
-}
-
-#[cfg(test)]
-mod place_on_plate_tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::transform::Transform3D;
-    use sc_scene::node::LeafPayload;
-
-    fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
-        let v = |x, y, z| Vertex::new([x, y, z]);
-        let vertices = vec![
-            v(min[0], min[1], min[2]),
-            v(max[0], min[1], min[2]),
-            v(max[0], max[1], min[2]),
-            v(min[0], max[1], min[2]),
-            v(min[0], min[1], max[2]),
-            v(max[0], min[1], max[2]),
-            v(max[0], max[1], max[2]),
-            v(min[0], max[1], max[2]),
-        ];
-        let n = Normal::new([0.0, 0.0, 1.0]);
-        let faces = vec![
-            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
-        ];
-        IndexedMesh {
-            meta: None,
-            vertices,
-            faces,
-        }
-    }
-
-    /// Builds a graph that wraps the supplied leaves under 1 identity group
-    /// root.
-    fn group_rooted_graph(leaves: Vec<(IndexedMesh, Transform3D)>) -> Scene {
-        let mut g = Scene::new();
-        let root = g.add_group(None, Transform3D::Identity);
-        g.add_root(root).expect("group as root");
-        for (mesh, transform) in leaves {
-            let leaf = g
-                .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
-                .expect("add leaf");
-            g.add_child(root, leaf).expect("attach leaf under root");
-        }
-        g
-    }
-
-    fn small_envelope() -> BuildVolume {
-        // Plate centred on the origin in XY, floor at Z=0: placement reads only
-        // the envelope's centre and floor, so the target is (0, 0, 0).
-        BuildVolume::new(100.0, 80.0, 200.0)
-    }
-
-    // The translation mechanics (no-op cases, formation preservation,
-    // composition with existing transforms, multi-root scenes) are pinned by
-    // Scene::drop_at's own suite in sc-scene; what stays here is the
-    // envelope-to-target derivation.
-
-    #[test]
-    fn off_origin_single_object_gets_centred_with_bottom_on_plate() {
-        // Local cube [100, 200, 50] -> [110, 220, 60], identity transform. The
-        // envelope is centred on the origin with its floor at Z=0, so after
-        // placement the world AABB must be centred on (0, 0) in XY and resting
-        // on Z=0: world min should be (-5, -10, 0).
-        let mut graph = group_rooted_graph(vec![(
-            cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
-            Transform3D::Identity,
-        )]);
-        place_on_plate(&mut graph, small_envelope()).unwrap();
-        let world_aabb = graph.aabb().unwrap().unwrap();
-        assert_eq!(world_aabb.min().coords(), [-5.0, -10.0, 0.0]);
-        assert_eq!(world_aabb.max().coords(), [5.0, 10.0, 10.0]);
     }
 }
