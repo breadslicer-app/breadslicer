@@ -8,16 +8,15 @@ use std::fmt;
 use crate::geometry::{SINGULARITY_THRESHOLD, gt_strict};
 use crate::primitives::{Normal, Vector3D, Vertex};
 
-/// Failure modes of `AffineTransform3D` / `Transform3D` operations that
-/// can encounter degenerate inputs.
+/// Failure modes of `AffineTransform3D` / `Transform3D` operations that can
+/// encounter degenerate inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransformError {
     /// The linear part has a determinant whose magnitude is below the
-    /// singularity threshold, so it has no inverse and no
-    /// inverse-transpose.
+    /// singularity threshold, so it has no inverse and no inverse-transpose.
     SingularLinear,
-    /// A rotation axis was given with magnitude at or below the
-    /// singularity threshold, so it cannot be normalised.
+    /// A rotation axis was given with magnitude at or below the singularity
+    /// threshold, so it cannot be normalised.
     ZeroAxis,
     /// Applying the inverse-transpose to a unit normal produced a
     /// zero-magnitude vector, so no direction can be recovered.
@@ -38,9 +37,8 @@ impl std::error::Error for TransformError {}
 
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
 ///
-/// Stored as `f64` to keep precision under repeated composition (GUI
-/// nudges, gizmo drags). Values are downcast to `f32` only when applying
-/// the transform to mesh data.
+/// Stored as `f64` to keep precision under repeated composition. Values are
+/// downcast to `f32` only when applying the transform to mesh data.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AffineTransform3D {
     /// Row-major 3×3 linear part.
@@ -50,12 +48,12 @@ pub struct AffineTransform3D {
 }
 
 impl AffineTransform3D {
-    /// Row-major 3×3 linear part.
+    /// Returns the row-major 3×3 linear part.
     pub fn linear(&self) -> &[[f64; 3]; 3] {
         &self.linear
     }
 
-    /// Translation applied after the linear part.
+    /// Returns the translation, applied after the linear part.
     pub fn translation(&self) -> &[f64; 3] {
         &self.translation
     }
@@ -88,7 +86,7 @@ impl AffineTransform3D {
         }
     }
 
-    /// Rotation about the X axis by `angle` radians, right-handed.
+    /// Builds a rotation about the X axis by `angle` radians, right-handed.
     pub fn from_rotation_x(angle: f64) -> Self {
         let (s, c) = angle.sin_cos();
         Self {
@@ -97,7 +95,7 @@ impl AffineTransform3D {
         }
     }
 
-    /// Rotation about the Y axis by `angle` radians, right-handed.
+    /// Builds a rotation about the Y axis by `angle` radians, right-handed.
     pub fn from_rotation_y(angle: f64) -> Self {
         let (s, c) = angle.sin_cos();
         Self {
@@ -106,7 +104,7 @@ impl AffineTransform3D {
         }
     }
 
-    /// Rotation about the Z axis by `angle` radians, right-handed.
+    /// Builds a rotation about the Z axis by `angle` radians, right-handed.
     pub fn from_rotation_z(angle: f64) -> Self {
         let (s, c) = angle.sin_cos();
         Self {
@@ -115,9 +113,9 @@ impl AffineTransform3D {
         }
     }
 
-    /// Rodrigues rotation about an arbitrary axis by `angle` radians,
-    /// right-handed. The axis is normalised internally; passing a zero
-    /// (or near-zero) axis returns [`TransformError::ZeroAxis`].
+    /// Builds a rotation about an arbitrary axis by `angle` radians,
+    /// right-handed (Rodrigues' formula). The axis is normalised internally;
+    /// passing a zero (or near-zero) axis returns [`TransformError::ZeroAxis`].
     pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Result<Self, TransformError> {
         let norm_sq = axis[0].mul_add(axis[0], axis[1].mul_add(axis[1], axis[2] * axis[2]));
         if !gt_strict(norm_sq, SINGULARITY_THRESHOLD) {
@@ -160,8 +158,6 @@ impl AffineTransform3D {
     }
 
     /// Builds an affine transform from a raw linear part and translation.
-    /// Intended for tests and import paths; prefer the dedicated
-    /// constructors when applicable.
     pub const fn from_linear_and_translation(linear: [[f64; 3]; 3], translation: [f64; 3]) -> Self {
         Self {
             linear,
@@ -169,9 +165,8 @@ impl AffineTransform3D {
         }
     }
 
-    /// Applies the transform to a point: `M · v + t`.
-    /// Math is performed in `f64`; the result is downcast to `f32` to fit
-    /// the mesh's storage type.
+    /// Applies the transform to a point: `M · v + t`. Math is performed in
+    /// `f64`; the result is downcast to `f32` to fit the mesh's storage type.
     pub fn apply_to_vertex(&self, v: Vertex) -> Vertex {
         let v = v.coords();
         let v = [v[0] as f64, v[1] as f64, v[2] as f64];
@@ -183,11 +178,10 @@ impl AffineTransform3D {
         Vertex::new([x as f32, y as f32, z as f32])
     }
 
-    /// Applies the linear part of the transform to a direction or
-    /// displacement, ignoring the translation. Use this for tangents and
-    /// other vectors that should not be affected by translation. For
-    /// surface normals see `apply_to_normal`, which uses the
-    /// inverse-transpose.
+    /// Applies the linear part of the transform to a direction or displacement,
+    /// ignoring the translation. Use this for tangents and other vectors that
+    /// should not be affected by translation. For surface normals see
+    /// `apply_to_normal`, which uses the inverse-transpose.
     pub fn apply_to_vector(&self, v: Vector3D<f32>) -> Vector3D<f32> {
         let v: [f32; 3] = v.into();
         let v = [v[0] as f64, v[1] as f64, v[2] as f64];
@@ -198,16 +192,15 @@ impl AffineTransform3D {
         Vector3D::new([x as f32, y as f32, z as f32])
     }
 
-    /// Determinant of the 3×3 linear part.
+    /// Returns the determinant of the 3×3 linear part.
     ///
-    /// The translation does not affect the determinant. A negative
-    /// determinant indicates the transform mirrors space (reverses
-    /// orientation); zero indicates a singular transform that cannot be
-    /// inverted.
+    /// The translation does not affect the determinant. A negative determinant
+    /// indicates the transform mirrors space (reverses orientation); 0
+    /// indicates a singular transform that cannot be inverted.
     pub fn determinant(&self) -> f64 {
         let m = &self.linear;
-        // Cofactor expansion along the first row, written with `mul_add`
-        // chains to keep precision consistent with the rest of the module.
+        // Cofactor expansion along the first row, written with `mul_add` chains
+        // to keep precision consistent with the rest of the module.
         let c0 = m[1][1].mul_add(m[2][2], -m[1][2] * m[2][1]);
         let c1 = m[1][0].mul_add(m[2][2], -m[1][2] * m[2][0]);
         let c2 = m[1][0].mul_add(m[2][1], -m[1][1] * m[2][0]);
@@ -216,20 +209,18 @@ impl AffineTransform3D {
 
     /// Applies the transform to a unit surface normal.
     ///
-    /// The mathematically correct way to transform a normal under a
-    /// general affine map is to multiply by the **inverse-transpose** of
-    /// the linear part and then re-normalise. For a pure rotation or
-    /// uniform scale the inverse-transpose equals the linear part up to a
-    /// positive scalar, so the renormalised result is identical; for
-    /// non-uniform scale, shear, or mirror it is not, and using the
-    /// linear part directly would yield a normal that is no longer
-    /// perpendicular to the transformed surface.
+    /// The mathematically correct way to transform a normal under a general
+    /// affine map is to multiply by the **inverse-transpose** of the linear
+    /// part and then re-normalise. For a pure rotation or uniform scale the
+    /// inverse-transpose equals the linear part up to a positive scalar, so the
+    /// renormalised result is identical; for non-uniform scale, shear, or
+    /// mirror it is not, and using the linear part directly would yield a
+    /// normal that is no longer perpendicular to the transformed surface.
     ///
     /// Returns [`TransformError::SingularLinear`] if the linear part is
-    /// singular (determinant zero to within [`SINGULARITY_THRESHOLD`]),
-    /// or [`TransformError::ZeroMagnitudeNormal`] if the resulting
-    /// normal has zero magnitude (which can happen for pathological
-    /// inputs).
+    /// singular (determinant 0 to within [`SINGULARITY_THRESHOLD`]), or
+    /// [`TransformError::ZeroMagnitudeNormal`] if the resulting normal has zero
+    /// magnitude (which can happen for pathological inputs).
     pub fn apply_to_normal(&self, n: Normal) -> Result<Normal, TransformError> {
         let det = self.determinant();
         if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
@@ -237,10 +228,9 @@ impl AffineTransform3D {
         }
 
         // The (i, j) entry of M⁻ᵀ is the (j, i) cofactor of M divided by
-        // det(M). The 1/|det| factor is removed by the final
-        // renormalisation, but its sign is not; a mirror (det < 0)
-        // must flip the normal, so the sign is reapplied explicitly
-        // after the matrix multiply.
+        // det(M). The 1/|det| factor is removed by the final renormalisation,
+        // but its sign is not; a mirror (det < 0) must flip the normal, so the
+        // sign is reapplied explicitly after the matrix multiply.
         let m = &self.linear;
         let cof = [
             [
@@ -269,9 +259,8 @@ impl AffineTransform3D {
             cof[2][0].mul_add(n64[0], cof[2][1].mul_add(n64[1], cof[2][2] * n64[2])),
         ];
 
-        // Apply the sign of det so that a mirror (det < 0) genuinely
-        // flips the normal. The magnitude is removed by renormalisation
-        // below.
+        // Apply the sign of det so that a mirror (det < 0) genuinely flips the
+        // normal. The magnitude is removed by renormalisation below.
         if det < 0.0 {
             out = [-out[0], -out[1], -out[2]];
         }
@@ -288,8 +277,8 @@ impl AffineTransform3D {
         ]))
     }
 
-    /// Composes two transforms: `self.compose(other)` is the transform
-    /// that applies `other` first and then `self`. That is,
+    /// Composes 2 transforms: `self.compose(other)` is the transform that
+    /// applies `other` first and then `self`. That is,
     /// `self.compose(other).apply_to_vertex(v)` equals
     /// `self.apply_to_vertex(other.apply_to_vertex(v))`.
     pub fn compose(&self, other: &Self) -> Self {
@@ -305,8 +294,8 @@ impl AffineTransform3D {
             }
         }
 
-        // Translation: A · t_b + t_a (because (A·B)·v + A·t_b + t_a =
-        // A·(B·v + t_b) + t_a, i.e. apply `other` first, then `self`).
+        // Translation: A · t_b + t_a (because (A·B)·v + A·t_b + t_a = A·(B·v +
+        // t_b) + t_a, i.e. apply `other` first, then `self`).
         let tb = &other.translation;
         let ta = &self.translation;
         let translation = [
@@ -588,9 +577,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_zero_angle_is_exact_identity() {
-        // sin(0) and cos(0) are both representable exactly in IEEE 754,
-        // so one_minus_c = 0 and every Rodrigues term collapses; the
-        // matrix is bit-identical to the identity regardless of axis.
+        // sin(0) and cos(0) are both representable exactly in IEEE 754, so
+        // one_minus_c = 0 and every Rodrigues term collapses; the matrix is
+        // bit-identical to the identity regardless of axis.
         let identity = AffineTransform3D::identity();
         for axis in [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [1.0, 1.0, 1.0]] {
             let t = AffineTransform3D::from_axis_angle(axis, 0.0).unwrap();
@@ -600,10 +589,10 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_subnormal_angle_is_near_identity() {
-        // Angle 1e-9 rad: sin ≈ 1e-9, 1 - cos ≈ 5e-19 (below f64 precision
-        // for 1.0). The resulting linear part must differ from identity
-        // only on the order of the angle, with no catastrophic
-        // cancellation in the Rodrigues formula.
+        // Angle 1e-9 rad: sin ≈ 1e-9, 1 - cos ≈ 5e-19 (below f64 precision for
+        // 1.0). The resulting linear part must differ from identity only on the
+        // order of the angle, with no catastrophic cancellation in the
+        // Rodrigues formula.
         let t = AffineTransform3D::from_axis_angle([0.0, 0.0, 1.0], 1.0e-9).unwrap();
         let identity = AffineTransform3D::identity();
         assert_linear_approx(&t.linear, &identity.linear, 1.0e-8);
@@ -611,10 +600,10 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_two_pi_is_near_identity() {
-        // 2π is not exactly representable in f64; sin(2π) ≈ -2.4e-16,
-        // 1 - cos(2π) ≈ 1.7e-16. The resulting linear part must be
-        // identity to within that residual, with no axis-dependent
-        // drift introduced by the cofactor-style cross terms.
+        // 2π is not exactly representable in f64; sin(2π) ≈ -2.4e-16, 1 -
+        // cos(2π) ≈ 1.7e-16. The resulting linear part must be identity to
+        // within that residual, with no axis-dependent drift introduced by the
+        // cofactor-style cross terms.
         let t = AffineTransform3D::from_axis_angle([0.0, 0.0, 1.0], 2.0 * PI).unwrap();
         let identity = AffineTransform3D::identity();
         assert_linear_approx(&t.linear, &identity.linear, 1.0e-14);
@@ -680,8 +669,8 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_vertex_translation_then_rotation_uses_correct_order() {
-        // The transform is applied as `M·v + t`, so the linear part acts on
-        // `v` first and the translation is added after.
+        // The transform is applied as `M·v + t`, so the linear part acts on `v`
+        // first and the translation is added after.
         let t = AffineTransform3D::from_linear_and_translation(
             // Rotation by π/2 about Z.
             [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
@@ -694,9 +683,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_vertex_far_from_origin_keeps_precision() {
-        // A short edge anchored far from the origin: in pure-f32 arithmetic
-        // the rotated direction would lose several bits of precision, but
-        // f64 internals preserve it.
+        // A short edge anchored far from the origin: in pure-f32 arithmetic the
+        // rotated direction would lose several bits of precision, but f64
+        // internals preserve it.
         let base = 1.0e6_f32;
         let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
         let near = Vertex::new([base, 0.0, 0.0]);
@@ -713,9 +702,9 @@ mod affine_transform_3d_tests {
     fn apply_to_vertex_overflow_produces_inf_caught_by_validate_vertices() {
         // f64 product 1e30 * 1e15 = 1e45 saturates to f32::INFINITY on
         // downcast. The transformed mesh must remain constructible; the
-        // contract is that the next `validate_vertices()` call reports
-        // the affected vertex / axis. Downstream callers rely on this
-        // catch instead of an inline `apply_to_vertex` error path.
+        // contract is that the next `validate_vertices()` call reports the
+        // affected vertex / axis. Downstream callers rely on this catch instead
+        // of an inline `apply_to_vertex` error path.
         let t = AffineTransform3D::from_uniform_scale(1.0e30);
         let v = t.apply_to_vertex(Vertex::new([1.0e15, 0.0, 0.0]));
         assert!(v[0].is_infinite());
@@ -782,8 +771,8 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_rotation_rotates_the_normal() {
-        // A π/2 rotation about Z sends +X to +Y; a normal pointing along
-        // +X should be rotated identically.
+        // A π/2 rotation about Z sends +X to +Y; a normal pointing along +X
+        // should be rotated identically.
         let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
         let n = Normal::new([1.0, 0.0, 0.0]);
         assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 1.0, 0.0], 1e-6);
@@ -791,8 +780,8 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_uniform_scale_does_not_change_normal() {
-        // Uniform scale: M⁻ᵀ = (1/s)·I, so the normal direction is
-        // unchanged after renormalisation.
+        // Uniform scale: M⁻ᵀ = (1/s)·I, so the normal direction is unchanged
+        // after renormalisation.
         let t = AffineTransform3D::from_uniform_scale(7.5);
         let n = Normal::new([0.0, 0.0, 1.0]);
         assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, 1.0], 1e-6);
@@ -800,19 +789,19 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_non_uniform_scale_uses_inverse_transpose() {
-        // Surface in the XY plane (normal = +Z), tilted by stretching
-        // along X. With non-uniform scale s = (s_x, 1, 1), naively
-        // applying the linear part would give (s_x, 0, 0)·n = (0, 0, 1)
-        // (correct here because the normal has no X component), so a
-        // more meaningful test uses a tilted plane.
+        // Surface in the XY plane (normal = +Z), tilted by stretching along X.
+        // With non-uniform scale s = (s_x, 1, 1), naively applying the linear
+        // part would give (s_x, 0, 0)·n = (0, 0, 1) (correct here because the
+        // normal has no X component), so a more meaningful test uses a tilted
+        // plane.
         //
-        // Consider the surface containing (1,0,0), (0,1,0), (0,0,0).
-        // Its (unit) normal is (1, 1, 0)/√2. Apply non-uniform scale
-        // s = (2, 1, 1). The transformed surface contains (2,0,0),
-        // (0,1,0), (0,0,0); its true normal is (1, 2, 0)/√5.
+        // Consider the surface containing (1,0,0), (0,1,0), (0,0,0). Its (unit)
+        // normal is (1, 1, 0)/√2. Apply non-uniform scale s = (2, 1, 1). The
+        // transformed surface contains (2,0,0), (0,1,0), (0,0,0); its true
+        // normal is (1, 2, 0)/√5.
         //
-        // Using the linear part naively would give
-        // (2,1,0)/√5 ≠ (1,2,0)/√5; the inverse-transpose is required.
+        // Using the linear part naively would give (2,1,0)/√5 ≠ (1,2,0)/√5; the
+        // inverse-transpose is required.
         let t = AffineTransform3D::from_non_uniform_scale([2.0, 1.0, 1.0]);
         let n = Normal::new([
             std::f32::consts::FRAC_1_SQRT_2,
@@ -840,12 +829,11 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_mirror_along_z_flips_the_normal() {
-        // A reflection across the XY plane has linear = diag(1, 1, -1)
-        // and det = -1. A surface whose original normal was +Z faces -Z
-        // after the reflection. `apply_to_normal` returns the normal
-        // direction that matches the *winding-reversed* triangle (which
-        // is what `merge_meshes` produces for negative-det transforms),
-        // so the result here is -Z.
+        // A reflection across the XY plane has linear = diag(1, 1, -1) and det
+        // = -1. A surface whose original normal was +Z faces -Z after the
+        // reflection. `apply_to_normal` returns the normal direction that
+        // matches the *winding-reversed* triangle (which is what `merge_meshes`
+        // produces for negative-det transforms), so the result here is -Z.
         let t = AffineTransform3D::from_non_uniform_scale([1.0, 1.0, -1.0]);
         let n = Normal::new([0.0, 0.0, 1.0]);
         assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, -1.0], 1e-6);
@@ -853,11 +841,11 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_mirror_along_x_does_not_flip_z_normal() {
-        // A reflection across the YZ plane (linear = diag(-1, 1, 1)) is
-        // also a negative-determinant transform, but a normal along +Z
-        // remains pointing along +Z because the mirrored +Z face still
-        // faces +Z. The internal sign-flip exactly compensates for the
-        // cofactor's sign change, leaving the +Z direction untouched.
+        // A reflection across the YZ plane (linear = diag(-1, 1, 1)) is also a
+        // negative-determinant transform, but a normal along +Z remains
+        // pointing along +Z because the mirrored +Z face still faces +Z. The
+        // internal sign-flip exactly compensates for the cofactor's sign
+        // change, leaving the +Z direction untouched.
         let t = AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]);
         let n = Normal::new([0.0, 0.0, 1.0]);
         assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, 1.0], 1e-6);
@@ -890,9 +878,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_at_exact_singularity_threshold_returns_error() {
-        // det = SINGULARITY_THRESHOLD exactly. The check uses
-        // `gt_strict`, so equal-to-threshold is treated as singular.
-        // Diagonal scale: det = f64::EPSILON · 1 · 1 = f64::EPSILON.
+        // det = SINGULARITY_THRESHOLD exactly. The check uses `gt_strict`, so
+        // equal-to-threshold is treated as singular. Diagonal scale: det =
+        // f64::EPSILON · 1 · 1 = f64::EPSILON.
         let t = AffineTransform3D::from_linear_and_translation(
             [[f64::EPSILON, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0.0, 0.0, 0.0],
@@ -906,12 +894,11 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_just_above_singularity_threshold_succeeds() {
-        // det = 2 · SINGULARITY_THRESHOLD: the smallest determinant
-        // that should still pass the first guard. The normal is
-        // aligned with the squeezed axis so the cofactor product
-        // (`cof[0] · n = [1, 0, 0]`) has unit magnitude, isolating
-        // the determinant check from the post-multiply magnitude
-        // check that fires for normals perpendicular to a collapsing
+        // det = 2 · SINGULARITY_THRESHOLD: the smallest determinant that should
+        // still pass the first guard. The normal is aligned with the squeezed
+        // axis so the cofactor product (`cof[0] · n = [1, 0, 0]`) has unit
+        // magnitude, isolating the determinant check from the post-multiply
+        // magnitude check that fires for normals perpendicular to a collapsing
         // direction.
         let t = AffineTransform3D::from_linear_and_translation(
             [
@@ -927,9 +914,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_negative_determinant_uses_abs_threshold() {
-        // det = -SINGULARITY_THRESHOLD. The check is on the magnitude,
-        // so this must still be rejected (mirrors with a singular
-        // magnitude are no more invertible than scales are).
+        // det = -SINGULARITY_THRESHOLD. The check is on the magnitude, so this
+        // must still be rejected (mirrors with a singular magnitude are no more
+        // invertible than scales are).
         let t = AffineTransform3D::from_linear_and_translation(
             [[-f64::EPSILON, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0.0, 0.0, 0.0],
@@ -943,11 +930,10 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_normal_nan_determinant_returns_error() {
-        // A NaN entry propagates into the determinant. `gt_strict`
-        // rejects NaN by returning false, so the singular branch
-        // fires. Without this guard a NaN linear part would propagate
-        // through the cofactor matrix and surface as a non-finite
-        // normal much further downstream.
+        // A NaN entry propagates into the determinant. `gt_strict` rejects NaN
+        // by returning false, so the singular branch fires. Without this guard
+        // a NaN linear part would propagate through the cofactor matrix and
+        // surface as a non-finite normal much further downstream.
         let t = AffineTransform3D::from_linear_and_translation(
             [[f64::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0.0, 0.0, 0.0],
@@ -1013,7 +999,7 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn determinant_singular_is_zero() {
-        // Two identical rows ⇒ rank 2 ⇒ determinant 0.
+        // 2 identical rows ⇒ rank 2 ⇒ determinant 0.
         let t = AffineTransform3D::from_linear_and_translation(
             [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
             [0.0, 0.0, 0.0],
@@ -1056,7 +1042,7 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn compose_translates_translations() {
-        // Composing two pure translations adds their offsets.
+        // Composing 2 pure translations adds their offsets.
         let a = AffineTransform3D::from_translation([1.0, 2.0, 3.0]);
         let b = AffineTransform3D::from_translation([10.0, 20.0, 30.0]);
         let composed = a.compose(&b);
@@ -1069,9 +1055,8 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn compose_translation_then_rotation_orders_correctly() {
-        // Apply translation first, then rotation: R ∘ T.
-        // For v = (1, 0, 0): T sends it to (2, 0, 0); R(π/2 about Z)
-        // sends that to (0, 2, 0).
+        // Apply translation first, then rotation: R ∘ T. For v = (1, 0, 0): T
+        // sends it to (2, 0, 0); R(π/2 about Z) sends that to (0, 2, 0).
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_2);
         let t = AffineTransform3D::from_translation([1.0, 0.0, 0.0]);
         let composed = r.compose(&t);
@@ -1081,11 +1066,11 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn compose_chain_of_twenty_subrotations_is_near_full_rotation() {
-        // 20 rotations of π/10 about Z compose to 2π, i.e. identity.
-        // The check stresses matrix-multiply drift across the chain:
-        // each compose introduces ~3·eps per entry; 20 of them should
-        // stay within ~6e-15 of identity. The 1e-12 tolerance leaves
-        // generous headroom for platform variation.
+        // 20 rotations of π/10 about Z compose to 2π, i.e. identity. The check
+        // stresses matrix-multiply drift across the chain: each compose
+        // introduces ~3·eps per entry; 20 of them should stay within ~6e-15 of
+        // identity. The 1e-12 tolerance leaves generous headroom for platform
+        // variation.
         let step = AffineTransform3D::from_rotation_z(PI / 10.0);
         let chain = (0..20).fold(AffineTransform3D::identity(), |acc, _| acc.compose(&step));
         assert_transform_approx(&chain, &AffineTransform3D::identity(), 1e-12);
@@ -1093,10 +1078,10 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn compose_chain_apply_matches_sequential_apply_at_length_twenty() {
-        // Build a 20-element heterogeneous chain (rotation, scale,
-        // translation cycling); applying the composed transform to a
-        // point must match the sequential apply within f32 precision,
-        // even as f64 internals accumulate roundings along the way.
+        // Build a 20-element heterogeneous chain (rotation, scale, translation
+        // cycling); applying the composed transform to a point must match the
+        // sequential apply within f32 precision, even as f64 internals
+        // accumulate roundings along the way.
         let parts: Vec<AffineTransform3D> = (0..20)
             .map(|i| match i % 3 {
                 0 => AffineTransform3D::from_rotation_z(PI / 17.0 + (i as f64) * 0.01),
@@ -1188,14 +1173,13 @@ mod affine_transform_3d_tests {
     }
 }
 
-/// Per-object transform. The `Identity` variant lets callers skip the
-/// matrix application entirely for the (very common) case where an object
-/// has not been moved since import.
+/// Per-object transform. The `Identity` variant lets callers skip the matrix
+/// application entirely for the (very common) case where an object has not been
+/// moved since it was loaded.
 ///
-/// Semantics: parent-relative transform of a graph node, i.e. the
-/// composition of an ancestor chain's `Transform3D`s yields the node's
-/// world transform. For a top-level node, the parent-relative
-/// transform equals the world transform.
+/// Semantics: parent-relative transform of a graph node, i.e. the composition
+/// of an ancestor chain's `Transform3D`s yields the node's world transform. For
+/// a top-level node, the parent-relative transform equals the world transform.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Transform3D {
     #[default]
@@ -1213,11 +1197,10 @@ impl Transform3D {
         }
     }
 
-    /// Applies the transform to a unit surface normal. Identity
-    /// short-circuits; for `Affine`, see
-    /// `AffineTransform3D::apply_to_normal` for the precise semantics
-    /// (inverse-transpose with sign-flip on negative determinant, so that
-    /// the result matches a winding-reversed triangle).
+    /// Applies the transform to a unit surface normal. Identity short-circuits;
+    /// for `Affine`, see `AffineTransform3D::apply_to_normal` for the precise
+    /// semantics (inverse-transpose with sign-flip on negative determinant, so
+    /// that the result matches a winding-reversed triangle).
     pub fn apply_to_normal(&self, n: Normal) -> Result<Normal, TransformError> {
         match self {
             Self::Identity => Ok(n),
@@ -1225,9 +1208,9 @@ impl Transform3D {
         }
     }
 
-    /// Composes two transforms: `self.compose(other)` applies `other`
-    /// first and then `self`. Identity short-circuits on either side
-    /// without touching float arithmetic.
+    /// Composes 2 transforms: `self.compose(other)` applies `other` first and
+    /// then `self`. Identity short-circuits on either side without touching
+    /// float arithmetic.
     pub fn compose(&self, other: &Self) -> Self {
         match (self, other) {
             (Self::Identity, _) => *other,
@@ -1236,7 +1219,7 @@ impl Transform3D {
         }
     }
 
-    /// Inverse of the transform. Identity is its own inverse;
+    /// Returns the inverse of the transform. Identity is its own inverse;
     /// `Affine` propagates the singular-matrix error from
     /// `AffineTransform3D::inverse`.
     pub fn inverse(&self) -> Result<Self, TransformError> {
@@ -1246,8 +1229,8 @@ impl Transform3D {
         }
     }
 
-    /// Determinant of the linear part. Identity returns `1.0` exactly
-    /// without going through the cofactor expansion.
+    /// Returns the determinant of the linear part. Identity returns `1.0`
+    /// exactly without going through the cofactor expansion.
     pub fn determinant(&self) -> f64 {
         match self {
             Self::Identity => 1.0,
@@ -1255,11 +1238,20 @@ impl Transform3D {
         }
     }
 
-    /// Whether the transform is the explicit identity variant. Useful
-    /// for callers that want to take a fast path without doing the full
-    /// match themselves.
+    /// Reports whether the transform is the explicit identity variant.
     pub fn is_identity(&self) -> bool {
         matches!(self, Self::Identity)
+    }
+
+    /// Reports whether the transform only moves points: it is `Identity`, or
+    /// its linear part equals the identity matrix. The comparison is exact, so
+    /// a linear part with rounding error, such as that of a rotation by 360
+    /// degrees, does not count.
+    pub fn is_translation(&self) -> bool {
+        match self {
+            Self::Identity => true,
+            Self::Affine(a) => a.linear == AffineTransform3D::identity().linear,
+        }
     }
 }
 
@@ -1281,6 +1273,49 @@ mod transform_3d_tests {
     fn is_identity_distinguishes_variants() {
         assert!(Transform3D::Identity.is_identity());
         assert!(!Transform3D::Affine(translation_affine()).is_identity());
+    }
+
+    #[test]
+    fn is_translation_holds_for_identity() {
+        assert!(Transform3D::Identity.is_translation());
+    }
+
+    #[test]
+    fn is_translation_holds_for_a_translation() {
+        assert!(Transform3D::Affine(translation_affine()).is_translation());
+    }
+
+    #[test]
+    fn is_translation_holds_for_2_composed_translations() {
+        let a = Transform3D::Affine(AffineTransform3D::from_translation([0.1, -2.5, 3.0]));
+        let b = Transform3D::Affine(AffineTransform3D::from_translation([7.25, 0.3, -1.0]));
+        assert!(a.compose(&b).is_translation());
+    }
+
+    #[test]
+    fn is_translation_fails_for_a_rotation() {
+        let t = Transform3D::Affine(AffineTransform3D::from_rotation_z(
+            std::f64::consts::FRAC_PI_2,
+        ));
+        assert!(!t.is_translation());
+    }
+
+    #[test]
+    fn is_translation_fails_for_a_uniform_scale() {
+        let t = Transform3D::Affine(AffineTransform3D::from_uniform_scale(2.0));
+        assert!(!t.is_translation());
+    }
+
+    #[test]
+    fn is_translation_fails_for_a_mirror() {
+        let t = Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
+        assert!(!t.is_translation());
+    }
+
+    #[test]
+    fn is_translation_fails_for_a_rotation_by_360_degrees() {
+        let t = Transform3D::Affine(AffineTransform3D::from_rotation_z(std::f64::consts::TAU));
+        assert!(!t.is_translation());
     }
 
     #[test]
@@ -1355,8 +1390,8 @@ mod transform_3d_tests {
         let inv = a.inverse().unwrap();
         let composed = a.compose(&inv);
         // The composition equals the affine identity, but the variant is
-        // `Affine`, not `Identity`: `compose` doesn't fold an `Affine`
-        // `Affine` back to `Identity`. Check the action on a point.
+        // `Affine`, not `Identity`: `compose` doesn't fold an `Affine` `Affine`
+        // back to `Identity`. Check the action on a point.
         let v = Vertex::new([5.0, 7.0, -1.0]);
         let round_trip = composed.apply_to_vertex(v);
         assert_approx_eq!(f32, round_trip[0], v[0], epsilon = 1e-5);
