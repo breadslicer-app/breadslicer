@@ -168,6 +168,15 @@ impl BuildVolume {
         [0.5 * self.x.value(), 0.5 * self.y.value(), self.z.value()]
     }
 
+    /// Returns the centre of the plate's floor in printer coordinates. In the
+    /// frame of [`Self::envelope_min_mm`] that is the origin, with +0.0 on
+    /// every axis.
+    #[inline]
+    pub fn floor_centre_mm(&self) -> [f64; 3] {
+        let (min, max) = (self.envelope_min_mm(), self.envelope_max_mm());
+        [0.5 * (min[0] + max[0]), 0.5 * (min[1] + max[1]), min[2]]
+    }
+
     /// Returns the build envelope as a box in f32, the precision of mesh
     /// vertices. Its corners come from the lengths rounded to f32, so they can
     /// differ from the f64 corners of [`Self::envelope_min_mm`] and

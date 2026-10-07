@@ -5,9 +5,9 @@
 
 #![deny(missing_docs)]
 
-//! Application services between the profile bounded context and the slicing
-//! engine. The 2 crates do not know each other; this one maps between them and
-//! hosts the use cases both frontends share.
+//! Application services: use cases that join crates which do not know each
+//! other, such as the print profiles and the slicing engine, or the scene and
+//! the build volume.
 //!
 //! - [`slice_plate`] runs a whole slicing pass: schedule resolution, the engine
 //!   run with progress and cancellation, and the merge of the per-leaf stacks
@@ -25,10 +25,12 @@
 //!   revalidate persisted slices.
 //! - [`fallback_report`] lists the resolved values no profile supplied, for a
 //!   frontend to show before it writes a file.
+//! - [`placement`] drops a scene onto the build plate of a build volume.
 
 pub mod export;
 pub mod fallback_report;
 pub mod fingerprint;
+pub mod placement;
 pub mod prepare;
 pub mod print_program;
 pub mod projection;
@@ -40,6 +42,7 @@ pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
 };
+pub use placement::place_on_plate;
 pub use prepare::{UnsliceableScene, UnsliceableSelection};
 pub use print_program::{SlabTopOutOfRange, UnprojectablePrint};
 pub use projection::{
@@ -57,6 +60,8 @@ mod tests_export;
 mod tests_fallback_report;
 #[cfg(test)]
 mod tests_fingerprint;
+#[cfg(test)]
+mod tests_placement;
 #[cfg(test)]
 mod tests_prepare;
 #[cfg(test)]

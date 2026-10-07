@@ -27,8 +27,9 @@ The software libraries behind our applications:
   mesh files (STL, OBJ, 3MF).
 - [`sc-mesh-spatial`](./libs/mesh-spatial/README.md) - Spatial-query
   acceleration over the core mesh types.
-- [`sc-print-glue`](./libs/print-glue/) - Projects a resolved print
-  configuration onto the slicing engine's input port.
+- [`sc-print-glue`](./libs/print-glue/) - Application services joining crates
+  that do not know each other, such as the print profiles and the slicing
+  engine, or the scene and the build volume.
 - [`sc-print-primitives`](./libs/print-primitives/README.md) - Shared
   primitives for the resin pipeline: build volume, pixel resolution, validated
   millimetre lengths.

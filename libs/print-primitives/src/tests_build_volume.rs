@@ -143,6 +143,21 @@ fn envelope_aabb_floor_is_positive_zero() {
 }
 
 #[test]
+fn floor_centre_is_positive_zero_on_every_axis() {
+    // A scene goes onto the plate by the translation from its box to this
+    // point, so a -0.0 here can give a root a -0.0 translation, whose bits
+    // differ from those of +0.0.
+    for (x, y, z) in [(192.0, 120.0, 200.0), (143.43, 89.6, 175.0)] {
+        let centre = BuildVolume::new(x, y, z).unwrap().floor_centre_mm();
+        assert_eq!(
+            centre.map(f64::to_bits),
+            [0.0_f64.to_bits(); 3],
+            "{x} x {y} x {z}"
+        );
+    }
+}
+
+#[test]
 fn contains_returns_true_for_aabb_strictly_inside() {
     let inside = aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 50.0]);
     assert!(volume().contains(&inside));

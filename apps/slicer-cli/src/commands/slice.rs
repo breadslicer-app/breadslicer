@@ -15,9 +15,9 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_e
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene,
-    UnsliceableSelection, fallback_report_lines, prepare_export, slice_plate,
+    UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export, slice_plate,
 };
-use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
+use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
@@ -109,7 +109,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
                 repair_scene(&mut scene, &mut std::io::stderr());
             }
             if !args.no_auto_place {
-                place_on_build_plate(&mut scene, &printer.hardware.build_volume())?;
+                place_on_plate(&mut scene, &printer.hardware.build_volume())?;
             }
             scene
         }
@@ -281,23 +281,6 @@ fn repair_scene(scene: &mut Scene, out: &mut dyn Write) {
     // Refusals warn but do not abort: the engine's validation gate remains the
     // authority on what can be sliced.
     show_refusal_warnings(&outcomes, out);
-}
-
-/// Drops the scene onto the build plate at the printer envelope's XY centre
-/// with the bottom of its world box on the envelope floor, via
-/// [`Scene::drop_at`] (which preserves the roots' relative layout and no-ops on
-/// empty or already-placed scenes). The target comes from the loaded printer's
-/// envelope.
-fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result<()> {
-    let env_min = build_volume.envelope_min_mm();
-    let env_max = build_volume.envelope_max_mm();
-    let target_xy = [
-        (0.5 * (env_min[0] + env_max[0])) as f32,
-        (0.5 * (env_min[1] + env_max[1])) as f32,
-    ];
-    let floor_z = env_min[2] as f32;
-    scene.drop_at(target_xy, floor_z)?;
-    Ok(())
 }
 
 /// Renders a slice-preparation failure for the terminal.
