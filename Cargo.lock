@@ -4849,6 +4849,7 @@ dependencies = [
  "newtypes",
  "proptest",
  "rayon",
+ "sha2",
 ]
 
 [[package]]

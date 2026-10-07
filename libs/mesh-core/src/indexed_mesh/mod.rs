@@ -5,6 +5,7 @@
 
 pub mod diagnose;
 pub mod error_summary;
+pub mod fingerprint;
 pub mod fix;
 mod half_edges;
 pub mod repair;
@@ -15,12 +16,15 @@ pub mod validated;
 #[cfg(test)]
 mod tests_diagnose;
 #[cfg(test)]
+mod tests_fingerprint;
+#[cfg(test)]
 mod tests_repair;
 #[cfg(test)]
 mod tests_volume;
 
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
+pub use fingerprint::GeometryFingerprint;
 pub use fix::{MeshFix, MeshFixError};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::{EdgeKey, MeshTopology, edge_key};
@@ -41,14 +45,14 @@ pub struct MeshMetadata {
 
 /// Which face-orientation repairs `fix_faces_orientation` should apply.
 ///
-/// Both flags can be set independently; they correspond to two passes
-/// the routine can take over the mesh:
+/// Both flags can be set independently; they correspond to 2 passes the routine
+/// can take over the mesh:
 ///
-/// - `flipped`: detect inconsistently-wound faces (via manifold errors)
-///   and reverse their vertex order.
-/// - `normals`: recompute the stored normal vector from the triangle's
-///   vertices for faces whose normal was wrong (non-unit-length, or
-///   misaligned with the geometric normal).
+/// - `flipped`: detect inconsistently-wound faces (via manifold errors) and
+///   reverse their vertex order.
+/// - `normals`: recompute the stored normal vector from the triangle's vertices
+///   for faces whose normal was wrong (non-unit-length, or misaligned with the
+///   geometric normal).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FixFacesOptions {
     pub flipped: bool,
@@ -56,10 +60,6 @@ pub struct FixFacesOptions {
 }
 
 /// Indexed triangle mesh. Pure data: no derived state, no caches.
-///
-/// Spatial-query acceleration (object-space AABB, triangle clusters,
-/// future BVH / half-edge / ...) lives in the `sc-mesh-spatial` crate
-/// alongside the consumer that owns the cache lifecycle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
     pub meta: Option<MeshMetadata>,
@@ -96,10 +96,8 @@ impl IndexedMesh {
         self.meta = meta;
     }
 
-    /// Bound `self.vertices` in object space. Uncached: each call
-    /// walks the vertex array. Callers that hammer this should hold
-    /// a `SceneSpatial` from `sc-mesh-spatial` instead, which caches
-    /// the result. Returns `None` for an empty mesh.
+    /// Returns the bounds of `self.vertices` in object space, or `None` for an
+    /// empty mesh. Uncached: each call walks the vertex array.
     pub fn local_aabb(&self) -> Option<Aabb> {
         let mut iter = self.vertices.iter();
         let first = *iter.next()?;
@@ -110,36 +108,30 @@ impl IndexedMesh {
         Some(aabb)
     }
 
-    /// Validate face indices and, on success, return a witness whose
-    /// methods can index into `vertices` / `faces` without per-call
-    /// bounds checks. Lifetime-tied to `self`: any later mutation of
-    /// the mesh invalidates the witness.
+    /// Validates face indices and, on success, returns a witness whose methods
+    /// can index into `vertices` / `faces` without per-call bounds checks.
+    /// Lifetime-tied to `self`: any later mutation of the mesh invalidates the
+    /// witness.
     pub fn validated_faces(&self) -> Result<ValidatedFaces<'_>, Vec<MeshFaceError>> {
         self.validate_faces()?;
         Ok(ValidatedFaces::new_unchecked(self))
     }
 
-    /// Validate face indices as [`validated_faces`] does, returning a
-    /// witness that also permits mutation. The returned
-    /// witness exposes only mutations that preserve the in-range
-    /// invariant (winding flips, normal recomputes, etc.); operations
-    /// that could invalidate it (e.g. removing whole faces) live on
-    /// `IndexedMesh` itself.
+    /// Validates face indices as [`Self::validated_faces`] does, returning a
+    /// witness that also permits mutation. The returned witness exposes only
+    /// mutations that preserve the in-range invariant (winding flips, normal
+    /// recomputes, etc.); operations that could invalidate it (e.g. removing
+    /// whole faces) live on `IndexedMesh` itself.
     pub fn validated_faces_mut(&mut self) -> Result<ValidatedFacesMut<'_>, Vec<MeshFaceError>> {
         self.validate_faces()?;
         Ok(ValidatedFacesMut::new_unchecked(self))
     }
 
-    /// Repair the `ZeroLengthEdge` errors in `errors` (other variants
-    /// are ignored), then return a witness for the post-removal mesh.
-    ///
-    /// If every input error is a `ZeroLengthEdge`, the resulting
-    /// mesh's face indices are guaranteed to remain in range:
-    /// removing whole faces does not change `vertices.len()` and does
-    /// not alter any survivor's `face.vertices[k]`, so the witness
-    /// is minted directly without re-running `validate_faces`.
-    /// Otherwise, the post-removal mesh is re-validated and the
-    /// validation result is returned alongside the applied fixes.
+    /// Repairs the `ZeroLengthEdge` errors in `errors` (other variants are
+    /// ignored), then returns the applied fixes and a witness for the repaired
+    /// mesh, or the face errors that remain. `errors` must be the face errors
+    /// of this mesh, as `validate_faces` returns them: when they are all
+    /// `ZeroLengthEdge`, the witness is created without a new validation.
     pub fn fix_zero_length_edges_into_validated(
         &mut self,
         errors: &[MeshFaceError],
@@ -151,6 +143,9 @@ impl IndexedMesh {
             .iter()
             .all(|e| matches!(e, MeshFaceError::ZeroLengthEdge { .. }));
         let fixes = fix::fix_zero_length_edges_impl(self, errors);
+        // With only `ZeroLengthEdge` errors, every index is in range; removing
+        // whole faces changes neither `vertices.len()` nor the indices of the
+        // faces that stay.
         let witness = if only_zero_length {
             Ok(ValidatedFacesMut::new_unchecked(self))
         } else {
