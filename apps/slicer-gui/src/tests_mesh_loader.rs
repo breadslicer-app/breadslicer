@@ -14,9 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, MeshMetadata};
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_print_primitives::PrinterId;
@@ -25,7 +23,8 @@ use sc_project_formats::{
     infer_project_file_type_from_extension, write_project,
 };
 use sc_scene::Scene;
-use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene::node::NodeKind;
+use sc_scene_fixtures::named_trio_under_group_root;
 
 use crate::build_volume::BuildVolume;
 use crate::error_dialog::DialogManager;
@@ -271,44 +270,6 @@ fn panic_message_decodes_a_boxed_error_send_payload() {
 
 // --- parse_source progress -------------------------------------------
 
-fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
-    mesh.set_meta(Some(MeshMetadata {
-        name: Some(name.to_string()),
-        header_comment: None,
-    }));
-    mesh
-}
-
-/// Builds a group root over the cube and both tunnel prisms, as named leaves
-/// with distinct translations, each moved by `offset`.
-fn prism_trio_scene(offset: [f64; 3]) -> Scene {
-    let mut scene = Scene::new();
-    let root = scene.add_group(None, Transform3D::Identity);
-    scene.add_root(root).expect("group root");
-    let sources = [
-        ("Cube", unit_cube_mesh(), [0.0, 0.0, 0.0]),
-        ("ZTunnel", cuboid_with_z_tunnel(), [5.0, 0.0, 0.0]),
-        ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
-    ];
-    for (name, mesh, translation) in sources {
-        let translation: [f64; 3] = std::array::from_fn(|axis| translation[axis] + offset[axis]);
-        let transform = if translation == [0.0, 0.0, 0.0] {
-            Transform3D::Identity
-        } else {
-            Transform3D::Affine(AffineTransform3D::from_translation(translation))
-        };
-        let leaf = scene
-            .add_leaf(
-                None,
-                transform,
-                LeafPayload::Mesh(Arc::new(named(mesh, name))),
-            )
-            .expect("add leaf");
-        scene.add_child(root, leaf).expect("attach leaf");
-    }
-    scene
-}
-
 fn sink_and_cell() -> (LoadProgressSink, Arc<AtomicU32>) {
     let cell = Arc::new(AtomicU32::new(0));
     (LoadProgressSink::new(cell.clone()), cell)
@@ -338,7 +299,7 @@ fn scene_of(content: &LoadedContent) -> &Scene {
 fn parse_source_obj_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.obj");
-    let trio = prism_trio_scene([0.0; 3]);
+    let trio = named_trio_under_group_root([0.0; 3]);
     write_scene(&trio, &path, WriteFormat::Obj).expect("obj writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("obj parses");
@@ -352,7 +313,7 @@ fn parse_source_binary_stl_ends_the_parse_phase_complete() {
     // rewinds: the seek path of the progress reader is on this route.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.stl");
-    let trio = prism_trio_scene([0.0; 3]);
+    let trio = named_trio_under_group_root([0.0; 3]);
     write_scene(&trio, &path, WriteFormat::StlBin).expect("stl writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("stl parses");
@@ -372,7 +333,7 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     let path = dir.path().join("trio.3mf");
     write_project_file(
         &path,
-        &prism_trio_scene([0.0; 3]),
+        &named_trio_under_group_root([0.0; 3]),
         &ProjectPayload::default(),
     );
     let (sink, cell) = sink_and_cell();
@@ -431,7 +392,7 @@ fn deposited_box_of_the_moved_trio(
 ) -> Option<([f32; 3], [f32; 3])> {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(file_name);
-    write_scene(&prism_trio_scene(TRIO_OFFSET), &path, format).expect("the trio writes");
+    write_scene(&named_trio_under_group_root(TRIO_OFFSET), &path, format).expect("the trio writes");
     load_on_the_test_device(&path).map(|prepared| world_box(prepared.spatial.graph()))
 }
 
@@ -508,7 +469,7 @@ fn named_leaf_transforms(scene: &Scene) -> BTreeMap<String, Transform3D> {
 fn a_loaded_project_keeps_its_placement() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.3mf");
-    let trio = prism_trio_scene(TRIO_OFFSET);
+    let trio = named_trio_under_group_root(TRIO_OFFSET);
     write_project_file(&path, &trio, &ProjectPayload::default());
     let Some(prepared) = load_on_the_test_device(&path) else {
         eprintln!("skipping: no wgpu adapter available in this environment");
@@ -530,7 +491,7 @@ fn a_loaded_project_reports_a_printer_that_is_not_installed() {
         printer: Some(id.clone()),
         ..ProjectPayload::default()
     };
-    write_project_file(&path, &prism_trio_scene([0.0; 3]), &payload);
+    write_project_file(&path, &named_trio_under_group_root([0.0; 3]), &payload);
     let Some(prepared) = load_on_the_test_device(&path) else {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;

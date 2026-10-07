@@ -5078,6 +5078,7 @@ dependencies = [
  "sc-project-formats",
  "sc-scene",
  "sc-scene-edit",
+ "sc-scene-fixtures",
  "sc-sl1cer",
  "sc-sla-formats",
  "serde",

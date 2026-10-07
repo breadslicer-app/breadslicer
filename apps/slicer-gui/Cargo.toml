@@ -76,6 +76,7 @@ winresource = "0.1.31"
 [dev-dependencies]
 sc-mesh-fixtures = { workspace = true }
 sc-print-primitives = { workspace = true }
+sc-scene-fixtures = { workspace = true }
 
 float-cmp = { workspace = true }
 tempfile = "3.23.0"
