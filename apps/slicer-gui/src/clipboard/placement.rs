@@ -5,78 +5,70 @@
 
 //! Pure placement algorithm for the paste pipeline.
 //!
-//! Picks a world-space translation for a fragment given the cursor's
-//! projection onto the build plate, how many consecutive pastes the
-//! clipboard has produced, and the AABBs of every existing root in
-//! the target scene. The algorithm is deterministic and side-effect-
-//! free: callers can unit-test the geometry without standing up a
-//! viewport, a window, or a GPU device.
+//! Picks a world-space translation for a fragment given the cursor's projection
+//! onto the build plate, how many consecutive pastes the clipboard has
+//! produced, and the world-space AABBs of the leaves of the target scene. The
+//! algorithm is deterministic and side-effect-free: callers can unit-test the
+//! geometry without standing up a viewport, a window, or a GPU device.
 //!
 //! Inputs:
-//! - `fragment_aabb`: the axis-aligned bounds of the fragment in its
-//!   own local frame (already includes the fragment root's rotation +
-//!   scale, since that is baked into the leaf's local transform on
-//!   copy).
+//! - `fragment_aabb`: the axis-aligned bounds of the fragment in its own local
+//!   frame. They include the rotation and scale that the copy keeps in the
+//!   fragment root's transform.
 //! - `target_world_xy`: the cursor's projection onto `Z = 0`, or the
-//!   viewport-centre fallback when the cursor sits outside the
-//!   viewport.
-//! - `cascade_count`: number of consecutive pastes since the last
-//!   copy. Spaces stacked copies apart so they don't sit on top of
-//!   each other when the user spams `Ctrl+V`.
-//! - `obstacles`: world-space AABBs of every existing root in the
-//!   target scene. Empty AABBs are skipped; everything else is tested
-//!   for 3-axis overlap against the prospective fragment world AABB.
+//!   viewport-centre fallback when the cursor sits outside the viewport.
+//! - `cascade_count`: number of consecutive pastes since the last copy. Spaces
+//!   stacked copies apart so they don't sit on top of each other when the user
+//!   spams `Ctrl+V`.
+//! - `obstacles`: world-space AABBs of the leaves of the target scene. Empty
+//!   AABBs are skipped; everything else is tested for 3-axis overlap against
+//!   the prospective fragment world AABB.
 //!
-//! Output: a `[f64; 3]` translation that becomes the pasted root's
-//! local transform's translation component on the destination scene.
-//! The fragment's floor sits exactly at `Z = 0` regardless of the
-//! fragment's own min.z, so the pasted object lands flat on the
-//! build plate and never crosses it.
+//! Output: a `[f64; 3]` translation that becomes the pasted root's local
+//! transform's translation component on the destination scene. The fragment's
+//! floor sits exactly at `Z = 0` regardless of the fragment's own min.z, so the
+//! pasted object rests on the build plate and never crosses it.
 
 use sc_mesh_core::Aabb;
 use sc_mesh_spatial::SceneSpatial;
 
-/// XY offset added per consecutive paste, in millimetres. Small
-/// enough to keep the cascade visible without scattering copies
-/// across the build platform.
+/// XY offset added per consecutive paste, in millimetres. Small enough to keep
+/// the cascade visible without scattering copies across the build platform.
 const CASCADE_STEP_MM: f64 = 5.0;
 
-/// Lower bound on the ring-search radius, in millimetres. The actual
-/// per-step radius scales with the fragment's XY extent so a single
-/// hop clears the fragment's own footprint; this floor stops the ring
-/// from collapsing to zero on a degenerate (zero-extent) fragment.
+/// Lower bound on the ring-search radius, in millimetres. The actual per-step
+/// radius scales with the fragment's XY extent so a single hop clears the
+/// fragment's own footprint; this floor stops the ring from collapsing to 0 on
+/// a degenerate fragment whose extent is 0.
 const MIN_RING_RADIUS_MM: f64 = 5.0;
 
-/// Radii used by the ring search, in multiples of the per-step
-/// `ring_step`. Three rings of eight angles each cover 24 candidates
-/// before the algorithm gives up; that matches the plan's budget and
-/// keeps the search bounded for tight scenes.
+/// Radii used by the ring search, in multiples of the per-step `ring_step`. 3
+/// rings of 8 angles each cover 24 candidates before the algorithm gives up,
+/// which keeps the search bounded for tight scenes.
 const RING_RADII_MULTIPLIERS: [f64; 3] = [1.0, 2.0, 3.0];
 
-/// Number of angles per ring. Eight is a compromise between
-/// resolution and budget; the angles are evenly spaced around the
-/// circle starting from `+x`.
+/// Number of angles per ring. 8 is a compromise between resolution and budget;
+/// the angles are evenly spaced around the circle starting from `+x`.
 const RING_ANGLE_COUNT: usize = 8;
 
-/// Pick a placement translation for a paste.
+/// Picks a placement translation for a paste.
 ///
 /// Geometry, in order:
-/// 1. Cascade-shift the target by `cascade_count * CASCADE_STEP_MM`
-///    in both X and Y, so consecutive pastes don't pile up.
+/// 1. Cascade-shift the target by `cascade_count * CASCADE_STEP_MM` in both X
+///    and Y, so consecutive pastes don't pile up.
 /// 2. Center the fragment's XY-AABB under the shifted target.
 /// 3. Drop the fragment's floor to `Z = 0` (the build plate).
-/// 4. Test the resulting world-AABB for overlap against `obstacles`.
-///    No overlap → return that translation.
-/// 5. Otherwise walk the ring pattern (8 angles × 3 radii) and
-///    return the first candidate that clears every obstacle.
-/// 6. If every candidate overlaps, return the step-3 translation.
-///    The plan accepts overlap when the budget is exhausted: it is
-///    rare in normal use and the alternative (failing the paste) is
-///    worse.
+/// 4. Test the resulting world-AABB for overlap against `obstacles`. No
+///    overlap: return that translation.
+/// 5. Otherwise walk the ring pattern (8 angles x 3 radii) and return the first
+///    candidate that clears every obstacle.
+/// 6. If every candidate overlaps, return the step-3 translation. Overlap is
+///    accepted when the budget is exhausted: it is rare in normal use, and
+///    failing the paste would be worse.
 ///
-/// Empty obstacles (e.g. an empty-mesh root or the `Aabb::empty()`
-/// sentinel from an unprimed cache) are ignored: they cannot
-/// overlap anything by definition.
+/// Empty obstacles (e.g. an empty-mesh leaf or the `Aabb::empty()` sentinel
+/// from an unprimed cache) are ignored: they cannot overlap anything by
+/// definition.
 pub(crate) fn paste_translation_for_fragment(
     fragment_aabb: &Aabb,
     target_world_xy: [f64; 2],
@@ -93,7 +85,8 @@ pub(crate) fn paste_translation_for_fragment(
     let target_x = target_world_xy[0] + cascade;
     let target_y = target_world_xy[1] + cascade;
 
-    let initial = [target_x - centre_x, target_y - centre_y, -fmin[2]];
+    // `0.0 - z` is +0.0 for a fragment on its floor, where `-z` gives -0.0.
+    let initial = [target_x - centre_x, target_y - centre_y, 0.0 - fmin[2]];
 
     if !overlaps_any(&fmin, &fmax, initial, obstacles) {
         return initial;
@@ -118,17 +111,11 @@ pub(crate) fn paste_translation_for_fragment(
     initial
 }
 
-/// Gather the world-space AABBs of every reachable leaf in
-/// `spatial`. The paste path hands the result to
-/// [`paste_translation_for_fragment`] as the obstacle list, so the
-/// pasted fragment lands somewhere that does not collide with
-/// existing geometry.
+/// Gathers the world-space AABBs of every reachable leaf in `spatial`: the
+/// obstacle list of [`paste_translation_for_fragment`].
 ///
-/// Leaves whose mesh has no vertices are skipped: an empty leaf has
-/// no AABB to overlap against. The walk uses the same pre-order
-/// leaf enumerator the picker relies on, so the obstacle order
-/// matches the picker's iteration order even though the placement
-/// algorithm does not care about ordering.
+/// Leaves whose mesh has no vertices are skipped: an empty leaf has no AABB to
+/// overlap against.
 pub(crate) fn obstacle_aabbs_for_scene(spatial: &SceneSpatial) -> Vec<Aabb> {
     let mut obstacles = Vec::new();
     let mut idx = 0usize;
@@ -143,9 +130,8 @@ pub(crate) fn obstacle_aabbs_for_scene(spatial: &SceneSpatial) -> Vec<Aabb> {
     obstacles
 }
 
-/// Promote an `Aabb`'s f32 corners to f64, matching the precision
-/// used by the placement algorithm and the destination scene's
-/// transform matrices.
+/// Promotes an `Aabb`'s f32 corners to f64, matching the precision used by the
+/// placement algorithm and the destination scene's transform matrices.
 fn aabb_f64(a: &Aabb) -> ([f64; 3], [f64; 3]) {
     let min = a.min().coords();
     let max = a.max().coords();
@@ -155,11 +141,10 @@ fn aabb_f64(a: &Aabb) -> ([f64; 3], [f64; 3]) {
     )
 }
 
-/// True iff the fragment's world AABB at `translation` overlaps any
-/// non-empty obstacle. Uses strict separation on each axis: AABBs
-/// that touch face-to-face count as non-overlapping, which is the
-/// "snug fit" outcome the paste path wants. Two coincident AABBs
-/// still register as overlap (no axis is strictly separated).
+/// Returns whether the fragment's world AABB at `translation` overlaps any
+/// non-empty obstacle. Uses strict separation on each axis: AABBs that touch
+/// face to face do not overlap, so a pasted object can sit snug against
+/// another. 2 coincident AABBs still overlap (no axis is strictly separated).
 fn overlaps_any(
     fmin: &[f64; 3],
     fmax: &[f64; 3],
@@ -202,7 +187,7 @@ mod placement_tests {
         Aabb::from_min_max(Vertex::new(min), Vertex::new(max))
     }
 
-    /// Unit cube centred at origin in XY, floor at Z = 0, height 2.
+    /// Returns a 2 x 2 x 2 box centred on the origin in XY, its floor at Z = 0.
     fn unit_fragment() -> Aabb {
         aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0])
     }
@@ -210,8 +195,8 @@ mod placement_tests {
     #[test]
     fn no_obstacles_returns_centred_initial_delta() {
         let t = paste_translation_for_fragment(&unit_fragment(), [5.0, 7.0], 0, &[]);
-        // centre is (0, 0), so translation = target. floor is already at
-        // 0 in fragment-space, so Z translation is 0.
+        // centre is (0, 0), so translation = target. floor is already at 0 in
+        // fragment-space, so Z translation is 0.
         assert_eq!(t, [5.0, 7.0, 0.0]);
     }
 
@@ -227,6 +212,23 @@ mod placement_tests {
     }
 
     #[test]
+    fn a_fragment_on_its_floor_gets_a_positive_zero_z_translation() {
+        // The slice fingerprint hashes the bits of this translation, and a
+        // later drag that moves nothing turns -0.0 into +0.0 without an edit,
+        // so a project saved after such a drag reopened without its slices.
+        let frag = unit_fragment();
+        let initial = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[]);
+        let obstacle_at_initial = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
+        let ring = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[obstacle_at_initial]);
+        assert!(
+            !initial[2].is_sign_negative(),
+            "initial z: {:?}",
+            initial[2]
+        );
+        assert!(!ring[2].is_sign_negative(), "ring z: {:?}", ring[2]);
+    }
+
+    #[test]
     fn cascade_offset_accumulates_per_paste() {
         let frag = unit_fragment();
         let zero = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[]);
@@ -239,15 +241,15 @@ mod placement_tests {
 
     #[test]
     fn obstacle_at_target_shifts_to_first_ring_along_plus_x() {
-        // Initial delta sits the fragment at the target. An obstacle
-        // that exactly overlaps the initial fragment position forces
-        // the ring search; angle 0 (cos = 1, sin = 0) is the first
-        // candidate and clears at radius == ring_step.
+        // Initial delta sits the fragment at the target. An obstacle that
+        // exactly overlaps the initial fragment position forces the ring
+        // search; angle 0 (cos = 1, sin = 0) is the first candidate and clears
+        // at radius == ring_step.
         let frag = unit_fragment();
         let obstacle_at_initial = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[obstacle_at_initial]);
-        // extent_x = extent_y = 2, MIN_RING_RADIUS_MM = 5, so
-        // ring_step = 5; candidate at angle 0 = (5, 0, 0).
+        // extent_x = extent_y = 2, MIN_RING_RADIUS_MM = 5, so ring_step = 5;
+        // candidate at angle 0 = (5, 0, 0).
         assert_eq!(t, [MIN_RING_RADIUS_MM, 0.0, 0.0]);
     }
 
@@ -262,9 +264,9 @@ mod placement_tests {
 
     #[test]
     fn all_candidates_blocked_returns_initial_overlapping_delta() {
-        // An obstacle large enough to cover every ring candidate
-        // forces the budget-exhausted path: the function returns
-        // the initial (overlapping) delta rather than failing.
+        // An obstacle large enough to cover every ring candidate forces the
+        // budget-exhausted path: the function returns the initial, overlapping
+        // delta.
         let frag = unit_fragment();
         let huge = aabb([-1000.0, -1000.0, -1000.0], [1000.0, 1000.0, 1000.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[huge]);
@@ -273,8 +275,7 @@ mod placement_tests {
 
     #[test]
     fn empty_obstacle_does_not_count_as_overlap() {
-        // The Aabb::empty() sentinel must be skipped: it carries
-        // infinities that would otherwise overlap the entire scene.
+        // An empty box, such as the Aabb::empty() sentinel, overlaps nothing.
         let frag = unit_fragment();
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[Aabb::empty()]);
         assert_eq!(t, [0.0, 0.0, 0.0]);
@@ -282,23 +283,21 @@ mod placement_tests {
 
     #[test]
     fn touching_obstacle_does_not_count_as_overlap() {
-        // Obstacle's max.x == fragment's min.x at the initial position:
-        // they share a face but don't interpenetrate. The plan's
-        // "snug fit" semantics treat this as no overlap, so the
-        // initial delta is accepted without invoking the ring search.
+        // The obstacle's max.x equals the fragment's min.x at the initial
+        // position: the 2 boxes share a face. Boxes that only touch do not
+        // overlap, so the initial delta is accepted without the ring search.
         let frag = unit_fragment();
-        // Initial fragment world AABB = [-1,-1,0]..[1,1,2]. An
-        // obstacle whose max.x = -1 touches that face.
+        // Initial fragment world AABB = [-1,-1,0]..[1,1,2]. An obstacle whose
+        // max.x = -1 touches that face.
         let touching = aabb([-3.0, -1.0, 0.0], [-1.0, 1.0, 2.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[touching]);
         assert_eq!(t, [0.0, 0.0, 0.0]);
     }
 
     fn unit_cube_mesh() -> Arc<IndexedMesh> {
-        // Eight-vertex cube spanning [-0.5, 0.5] on each axis. The
-        // obstacle helper relies on local_aabb being Some, which
-        // requires at least one vertex; a single triangle would do,
-        // but a cube makes the assertions readable.
+        // 8-vertex cube spanning [-0.5, 0.5] on each axis. The obstacle helper
+        // relies on local_aabb being Some, which requires at least 1 vertex; a
+        // single triangle would do, but a cube makes the assertions readable.
         Arc::new(IndexedMesh::new(
             None,
             vec![
@@ -356,10 +355,8 @@ mod placement_tests {
 
     #[test]
     fn obstacle_aabbs_skip_empty_meshes() {
-        // A leaf with an empty mesh has no AABB to overlap against:
-        // the helper must drop it from the obstacle list so the
-        // placement search treats it as nonexistent rather than
-        // surfacing the Aabb::empty() sentinel.
+        // A leaf with an empty mesh has no AABB to overlap against, so the
+        // helper drops it from the obstacle list.
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
@@ -382,14 +379,14 @@ mod placement_tests {
 
     #[test]
     fn obstacle_blocking_first_ring_radius_shifts_to_second() {
-        // One large obstacle blocks every angle at ring 1 (radius 5)
-        // but not ring 2 (radius 10). The function returns the first
-        // candidate at ring 2, angle 0 (= initial + 10 on +x).
+        // 1 large obstacle blocks every angle at ring 1 (radius 5), and ring 2
+        // (radius 10) is clear. The function returns the first candidate at
+        // ring 2, angle 0 (= initial + 10 on +x).
         let frag = unit_fragment();
-        // Obstacle spans the entire ring-1 circle around origin in XY
-        // (radius = 5, so include up to ~6 to keep ring-1 candidates
-        // overlapping after the fragment's ±1 extent is added) and
-        // leaves ring-2 clear.
+        // The obstacle spans the ring-1 circle around the origin in XY: the
+        // radius is 5 and the fragment reaches 1 further on each side, so the
+        // obstacle must reach past 6 to keep the ring-1 candidates overlapping.
+        // Ring 2 stays clear.
         let ring_blocker = aabb([-7.0, -7.0, 0.0], [7.0, 7.0, 2.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[ring_blocker]);
         // Ring 2 radius = 2 * 5 = 10. Candidate at angle 0 = (10, 0, 0).
