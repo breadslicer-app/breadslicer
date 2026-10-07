@@ -70,6 +70,8 @@ mod slice_selection;
 mod startup_token;
 mod support_gen_run;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]
 mod tests_print_file_preview;

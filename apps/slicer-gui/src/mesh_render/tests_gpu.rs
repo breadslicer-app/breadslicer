@@ -22,6 +22,11 @@ use super::DeviceToken;
 use super::*;
 use crate::build_volume::NO_PRINTER_BUILD_VOLUME;
 use crate::gizmo::axis::Axis;
+use crate::test_support::gpu_devices::{
+    SMALL_BUFFER_LIMIT, SMALL_TEXTURE_LIMIT, destroyed_test_device, logged_test_device,
+    shared_one_bind_group_test_device, shared_small_buffer_test_device,
+    shared_small_texture_test_device, shared_test_device, shared_tiny_buffer_test_device,
+};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
@@ -56,167 +61,6 @@ fn add_inline_leaf(
 /// constant so each test passes the same value to `render` without extra
 /// boilerplate.
 const TEST_BV: BuildVolume = NO_PRINTER_BUILD_VOLUME;
-
-/// `max_buffer_size` of the small-buffer test device.
-const SMALL_BUFFER_LIMIT: u64 = 1024;
-/// `max_buffer_size` of the tiny-buffer test device: below every static buffer
-/// the renderer uploads, so each of them is refused.
-const TINY_BUFFER_LIMIT: u64 = 64;
-/// `max_texture_dimension_2d` of the small-texture test device.
-const SMALL_TEXTURE_LIMIT: u32 = 256;
-
-#[derive(Clone)]
-struct TestDevices {
-    default_limits: (wgpu::Device, wgpu::Queue),
-    small_buffers: (wgpu::Device, wgpu::Queue),
-    tiny_buffers: (wgpu::Device, wgpu::Queue),
-    small_textures: (wgpu::Device, wgpu::Queue),
-    /// `max_bind_groups: 1`: every pipeline with 2 bind groups is refused at
-    /// its layout.
-    one_bind_group: (wgpu::Device, wgpu::Queue),
-    /// Destroyed once per process by [`destroyed_test_device`], for the tests
-    /// that need a lost device; no other test may use it.
-    doomed: (wgpu::Device, wgpu::Queue),
-    /// Gets the uncaptured-error logger installed by the only test that
-    /// exercises it; no other test may use it. Small-buffer limits, so an
-    /// unscoped oversize buffer is refused.
-    logged: (wgpu::Device, wgpu::Queue),
-}
-
-/// Builds the test devices once per process, on 1 adapter, 1 request after the
-/// other. Returns `None` if no adapter is available or a device request fails;
-/// the caller soft-skips so CI without a GPU isn't blocked.
-///
-/// 1 shared adapter across every GPU test, rather than 1 per test: concurrent
-/// `wgpu::Instance::new` plus `request_adapter` against the same Vulkan ICD
-/// raced and crashed RADV reliably at `--test-threads=2`, intermittently at
-/// higher parallelism. wgpu's Device and Queue are `Send + Sync` and
-/// reference-counted, so cloning them out is cheap and concurrent test access
-/// is fine.
-fn shared_test_devices() -> Option<TestDevices> {
-    static DEVICES: std::sync::OnceLock<Option<TestDevices>> = std::sync::OnceLock::new();
-    DEVICES
-        .get_or_init(|| {
-            let instance =
-                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let adapter = pollster::block_on(
-                instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
-            )
-            .ok()?;
-            let request = |label: &'static str, required_limits: wgpu::Limits| {
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                    label: Some(label),
-                    required_features: wgpu::Features::empty(),
-                    required_limits,
-                    memory_hints: wgpu::MemoryHints::default(),
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
-                    trace: wgpu::Trace::Off,
-                }))
-                .ok()
-            };
-            // Default limits are the base profile `run()` asks for.
-            let default_limits = request("mesh-viewer test device", wgpu::Limits::default())?;
-            let small_buffers = request(
-                "mesh-viewer small-buffer test device",
-                wgpu::Limits {
-                    max_buffer_size: SMALL_BUFFER_LIMIT,
-                    ..wgpu::Limits::default()
-                },
-            )?;
-            let tiny_buffers = request(
-                "mesh-viewer tiny-buffer test device",
-                wgpu::Limits {
-                    max_buffer_size: TINY_BUFFER_LIMIT,
-                    ..wgpu::Limits::default()
-                },
-            )?;
-            let small_textures = request(
-                "mesh-viewer small-texture test device",
-                wgpu::Limits {
-                    max_texture_dimension_2d: SMALL_TEXTURE_LIMIT,
-                    ..wgpu::Limits::default()
-                },
-            )?;
-            let one_bind_group = request(
-                "mesh-viewer one-bind-group test device",
-                wgpu::Limits {
-                    max_bind_groups: 1,
-                    ..wgpu::Limits::default()
-                },
-            )?;
-            let doomed = request("mesh-viewer doomed test device", wgpu::Limits::default())?;
-            let logged = request(
-                "mesh-viewer logged test device",
-                wgpu::Limits {
-                    max_buffer_size: SMALL_BUFFER_LIMIT,
-                    ..wgpu::Limits::default()
-                },
-            )?;
-            Some(TestDevices {
-                default_limits,
-                small_buffers,
-                tiny_buffers,
-                small_textures,
-                one_bind_group,
-                doomed,
-                logged,
-            })
-        })
-        .clone()
-}
-
-/// Returns the default-limits test device.
-fn shared_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.default_limits)
-}
-
-/// Returns the test device whose `max_buffer_size` is [`SMALL_BUFFER_LIMIT`].
-fn shared_small_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.small_buffers)
-}
-
-/// Returns the test device whose `max_buffer_size` is [`TINY_BUFFER_LIMIT`].
-fn shared_tiny_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.tiny_buffers)
-}
-
-/// Returns the test device whose `max_texture_dimension_2d` is
-/// [`SMALL_TEXTURE_LIMIT`].
-fn shared_small_texture_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.small_textures)
-}
-
-/// Returns the test device whose `max_bind_groups` is 1.
-fn shared_one_bind_group_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.one_bind_group)
-}
-
-/// Returns the test device reserved for the error-logger test.
-fn logged_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    shared_test_devices().map(|d| d.logged)
-}
-
-/// Returns the doomed test device, destroyed once per process with a lost
-/// callback that marks the returned flag; every caller sees the same destroyed
-/// device and the same marked flag.
-fn destroyed_test_device() -> Option<(wgpu::Device, DeviceLoss)> {
-    static DESTROYED: std::sync::OnceLock<Option<(wgpu::Device, DeviceLoss)>> =
-        std::sync::OnceLock::new();
-    DESTROYED
-        .get_or_init(|| {
-            let (device, _queue) = shared_test_devices()?.doomed;
-            let loss = DeviceLoss::default();
-            let marker = loss.clone();
-            device.set_device_lost_callback(move |reason, message| {
-                marker.mark(format!("{reason:?}: {message}"));
-            });
-            device.destroy();
-            // The lost callback fires from a poll, not from destroy().
-            let _ = device.poll(wgpu::PollType::Poll);
-            Some((device, loss))
-        })
-        .clone()
-}
 
 /// Copies `buffer` back to the CPU (it must carry `COPY_SRC`).
 fn read_buffer_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
@@ -253,7 +97,7 @@ fn read_buffer_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::B
 
 /// Returns the [`NodeId`] of the first reachable leaf in pre-order traversal.
 /// The renderer's selection key is the leaf's stable id, so the render tests
-/// resolve "the only leaf" through this helper instead of fabricating an id.
+/// take the id of "the only leaf" from the graph through this helper.
 fn first_leaf(graph: &Scene) -> NodeId {
     use sc_scene::node::NodeKind;
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
@@ -511,7 +355,7 @@ fn graph_with_one_leaf_of_faces(face_count: usize) -> Scene {
 }
 
 /// Checks that a leaf whose index buffer is over the device's `max_buffer_size`
-/// is refused with an error, not a panic.
+/// is refused with a typed error.
 #[test]
 fn gpu_scene_build_refuses_a_leaf_above_the_device_buffer_limit() {
     let Some((device, _queue)) = shared_small_buffer_test_device() else {
@@ -617,7 +461,7 @@ fn render_succeeds_under_default_limits() {
 }
 
 /// Checks that a buffer the device refuses comes back as `Err`, with the wgpu
-/// error, instead of a panic.
+/// error.
 #[test]
 fn create_buffer_reporting_returns_the_devices_refusal_without_panicking() {
     let Some((device, _queue)) = shared_small_buffer_test_device() else {
@@ -664,8 +508,8 @@ fn create_buffer_reporting_yields_a_usable_buffer_within_the_limit() {
     assert_eq!(buffer.size(), SMALL_BUFFER_LIMIT);
 }
 
-/// Checks that a device that refuses the gizmo buffers answers with `Err`, not
-/// a panic; the gizmo geometry is uploaded without mapping.
+/// Checks that a device that refuses the gizmo buffers answers with `Err`; the
+/// gizmo geometry is uploaded without mapping.
 #[test]
 fn gizmo_buffers_are_refused_typed_on_a_tiny_buffer_device() {
     let Some((device, queue)) = shared_tiny_buffer_test_device() else {
@@ -1586,9 +1430,7 @@ fn count_warning_pixels(rgba: &[u8]) -> usize {
 /// Copies an `Rgba8Unorm` 2D texture back to the CPU and returns the pixel
 /// bytes in row-major RGBA order. Requires `wgpu::TextureUsages::COPY_SRC` on
 /// the texture (the renderer's resolved color target has it). `width * 4` must
-/// satisfy `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes); the test sites pick
-/// widths that already do, so the function asserts rather than padding
-/// silently.
+/// satisfy `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes); the function asserts it.
 fn read_target_back(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1853,9 +1695,8 @@ fn clear_scene_drops_the_installed_scene() {
     assert!(renderer.scene_bounds().is_none());
 }
 
-/// Checks that a graph whose last leaf was deleted uploads cleanly. There is
-/// nothing to mirror, so the renderer ends up holding no scene rather than
-/// reporting a failure the viewport would have to recover from.
+/// Checks that a graph whose last leaf was deleted uploads cleanly: there is
+/// nothing to mirror, so the renderer ends up holding no scene.
 #[test]
 fn upload_scene_on_a_leafless_graph_succeeds_and_installs_nothing() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1921,8 +1762,7 @@ fn render_after_deleting_the_last_leaf_still_produces_a_texture() {
 }
 
 /// Checks that re-uploading a leaf after the scene went empty installs a fresh
-/// mirror, so the empty case is a transition the renderer can come back from
-/// rather than a terminal state.
+/// mirror, so the renderer comes back from the empty case.
 #[test]
 fn upload_after_an_empty_upload_installs_a_scene_again() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1994,9 +1834,9 @@ fn camera_framing_the_scene(renderer: &Renderer) -> OrbitCamera {
     OrbitCamera::new((min + max) * 0.5, radius)
 }
 
-/// Checks that a preview shows the print, not the machine: with no models on
-/// the plate it has nothing to draw, where the viewport's own frame still shows
-/// the plate and its cage.
+/// Checks that a preview draws only the models: with no models on the plate it
+/// has nothing to draw, where the viewport's own frame still shows the plate
+/// and its cage.
 #[test]
 fn a_preview_of_a_scene_without_models_draws_nothing() {
     let Some((device, queue)) = shared_test_device() else {
@@ -2103,9 +1943,8 @@ fn a_preview_at_an_unaligned_width_reads_back_tightly_packed() {
     );
 }
 
-/// Checks that every row carries its own pixels, not the padding the copy
-/// stride inserts: a run of background bytes at a row boundary would show up as
-/// a black band.
+/// Checks that the readback drops the padding that the copy stride inserts
+/// between rows: padding left at a row boundary would show up as a black band.
 #[test]
 fn a_read_back_preview_has_no_padding_left_between_its_rows() {
     let Some((device, queue)) = shared_test_device() else {
