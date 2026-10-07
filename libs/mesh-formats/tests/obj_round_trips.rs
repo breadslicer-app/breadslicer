@@ -3,15 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::sync::Arc;
-
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_formats::messages::LoadObjWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
-use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
+use sc_scene::{NodeId, NodeKind, Scene};
+use sc_scene_fixtures::meshes_as_roots;
 
 fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
     let vertices = vec![
@@ -29,21 +27,6 @@ fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         vertices,
         vec![IndexedTriangle::from_raw_indices(normal, [0, 1, 2])],
     )
-}
-
-fn make_graph(meshes: Vec<IndexedMesh>) -> Scene {
-    let mut g = Scene::new();
-    for mesh in meshes {
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("add leaf");
-        g.add_root(leaf).expect("add root");
-    }
-    g
 }
 
 fn round_trip(graph: &Scene) -> (Scene, Vec<LoadObjWarning>) {
@@ -114,7 +97,7 @@ fn assert_mesh_faces_eq(a: &IndexedMesh, b: &IndexedMesh) {
 #[test]
 fn single_unnamed_mesh_round_trip() {
     let mesh = make_triangle_mesh(None);
-    let graph = make_graph(vec![mesh.clone()]);
+    let graph = meshes_as_roots(vec![mesh.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
@@ -126,7 +109,7 @@ fn single_unnamed_mesh_round_trip() {
 #[test]
 fn single_named_mesh_round_trip() {
     let mesh = make_triangle_mesh(Some("TestObj"));
-    let graph = make_graph(vec![mesh.clone()]);
+    let graph = meshes_as_roots(vec![mesh.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
@@ -165,7 +148,7 @@ fn two_objects_round_trip() {
             [0, 1, 2],
         )],
     );
-    let graph = make_graph(vec![mesh_a.clone(), mesh_b.clone()]);
+    let graph = meshes_as_roots(vec![mesh_a.clone(), mesh_b.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
@@ -195,7 +178,7 @@ fn empty_scene_round_trip() {
 #[test]
 fn newline_name_round_trips_folded() {
     let mesh = make_triangle_mesh(Some("a\nb"));
-    let graph = make_graph(vec![mesh.clone()]);
+    let graph = meshes_as_roots(vec![mesh.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
@@ -213,12 +196,12 @@ fn newline_name_round_trips_folded() {
 
 #[test]
 fn directive_injection_name_round_trips_with_identical_geometry() {
-    // A newline inside a name must never become document structure.
-    // Unfolded, this name injects a `v 9 9 9` line whose extra
-    // vertex displaces every face index the writer computed without
-    // it: the file loads back cleanly with the wrong triangle.
+    // A newline inside a name must not become document structure. Unfolded,
+    // this name adds a `v 9 9 9` line, and its extra vertex shifts every face
+    // index that the writer computed: the file loads back without an error,
+    // with the wrong triangle.
     let mesh = make_triangle_mesh(Some("Injected\nv 9 9 9"));
-    let graph = make_graph(vec![mesh.clone()]);
+    let graph = meshes_as_roots(vec![mesh.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
@@ -237,7 +220,7 @@ fn directive_injection_name_round_trips_with_identical_geometry() {
 #[test]
 fn han_name_round_trips_transliterated() {
     let mesh = make_triangle_mesh(Some("深圳"));
-    let graph = make_graph(vec![mesh.clone()]);
+    let graph = meshes_as_roots(vec![mesh.clone()]);
     let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());

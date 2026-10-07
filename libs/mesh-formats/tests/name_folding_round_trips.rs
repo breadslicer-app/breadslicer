@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Cross-format round trips for hostile mesh names, over the cube
-//! and tunnel-prism fixtures: 3MF keeps the full Unicode charset
-//! but cleans names of structural junk (control characters,
-//! noncharacters, whitespace runs), while the line-oriented writers
-//! (OBJ, both STL flavours) emit them folded all the way to
-//! printable ASCII. Every writer's own reader accepts the result
+//! Cross-format round trips for hostile mesh names, over the cube and
+//! tunnel-prism fixtures: 3MF keeps the full Unicode charset but cleans names
+//! of structural junk (control characters, noncharacters, whitespace runs),
+//! while the line-oriented writers (OBJ, both STL flavours) emit them folded
+//! all the way to printable ASCII. Every writer's own reader accepts the result
 //! with identical geometry.
 
 use std::io::Cursor;
@@ -23,9 +22,8 @@ use sc_mesh_formats::threemf::{read_threemf, write_threemf};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeId, NodeKind};
 
-/// The trio's hostile names with the cleaned (3MF) and folded
-/// (line-format) forms: a directive-injection attempt, a Han name,
-/// and an accented name.
+/// The trio's hostile names with the cleaned (3MF) and folded (line-format)
+/// forms: a directive-injection attempt, a Han name, and an accented name.
 const HOSTILE_TRIO: [(&str, &str, &str); 3] = [
     ("Injected\nv 9 9 9", "Injected v 9 9 9", "Injected v 9 9 9"),
     ("深圳", "深圳", "ShenZhen"),
@@ -49,10 +47,10 @@ fn fixture_meshes() -> [IndexedMesh; 3] {
     ]
 }
 
-/// The trio as one scene: cube and both tunnel prisms as leaves
-/// under a single group root, each carrying its hostile name.
-/// Identity transforms throughout, so baked (OBJ) and native (3MF)
-/// geometry compare against the same source vertices.
+/// Builds the trio as 1 scene: the cube and both tunnel prisms as leaves under
+/// 1 group root, each with its hostile name. Every transform is the identity,
+/// so the baked (OBJ) and native (3MF) geometry compare against the same source
+/// vertices.
 fn hostile_trio_scene() -> Scene {
     let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
@@ -96,9 +94,8 @@ fn leaf_name(scene: &Scene, id: NodeId) -> Option<String> {
         .and_then(|m| m.name.clone())
 }
 
-/// Each face as its 3 vertex positions, in face order: the geometry
-/// comparison that survives the vertex re-indexing STL's soup
-/// dedupe performs.
+/// Returns each face as its 3 vertex positions, in face order: a comparison of
+/// geometry that survives the vertex re-indexing of the STL dedupe.
 fn face_triples(mesh: &IndexedMesh) -> Vec<[[f32; 3]; 3]> {
     mesh.faces()
         .iter()
@@ -111,10 +108,9 @@ fn face_triples(mesh: &IndexedMesh) -> Vec<[[f32; 3]; 3]> {
 
 #[test]
 fn hostile_names_keep_their_charset_but_lose_structural_junk_in_3mf() {
-    // 3MF names stay Unicode (no transliteration, no truncation),
-    // but control characters and whitespace runs are cleaned like
-    // everywhere else: the newline in the injection name collapses,
-    // the Han and accented names pass verbatim.
+    // 3MF names stay Unicode, with control characters and whitespace runs
+    // cleaned as everywhere else: the newline in the injection name collapses,
+    // and the Han and accented names pass as they are.
     let source = hostile_trio_scene();
     let mut buf: Vec<u8> = Vec::new();
     write_threemf(&source, &mut buf).expect("write_threemf succeeds");
@@ -133,9 +129,9 @@ fn hostile_names_keep_their_charset_but_lose_structural_junk_in_3mf() {
     }
 }
 
-/// Names that the clean step reduces further than the trio covers:
-/// each written through 3MF and read back, asserting the cleaned
-/// form (or namelessness when nothing survives).
+/// Checks names that the cleaning reduces further than the trio's: each is
+/// written through 3MF and read back as its cleaned form, or with no name when
+/// nothing is left.
 #[test]
 fn control_and_noncharacter_names_are_cleaned_in_3mf() {
     let cases: [(&str, Option<&str>); 5] = [
@@ -146,16 +142,7 @@ fn control_and_noncharacter_names_are_cleaned_in_3mf() {
         ("\u{7}\u{FDD0}", None),
     ];
     for (hostile, expected) in cases {
-        let mesh = named(unit_cube_mesh(), hostile);
-        let mut g = Scene::new();
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("add leaf");
-        g.add_root(leaf).expect("add root");
+        let g = Scene::from(named(unit_cube_mesh(), hostile));
 
         let mut buf: Vec<u8> = Vec::new();
         write_threemf(&g, &mut buf).expect("write_threemf succeeds");
@@ -173,9 +160,9 @@ fn control_and_noncharacter_names_are_cleaned_in_3mf() {
 
 #[test]
 fn emitted_model_xml_carries_no_xml_illegal_bytes() {
-    // XML 1.0 forbids most C0 controls outright, escaped or not; a
-    // conformant parser refuses the whole document over 1 such
-    // byte. The scene name (Title metadata) is covered too.
+    // XML 1.0 forbids most C0 controls outright, escaped or not; a conformant
+    // parser refuses the whole document over 1 such byte. The scene name (Title
+    // metadata) is covered too.
     let mut source = hostile_trio_scene();
     source.set_meta(Some(sc_scene::SceneMetadata {
         name: Some("Ti\u{7}tle\u{FFFF}".to_string()),

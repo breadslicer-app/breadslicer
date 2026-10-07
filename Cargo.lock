@@ -4871,6 +4871,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-scene",
+ "sc-scene-fixtures",
  "tempfile",
 ]
 

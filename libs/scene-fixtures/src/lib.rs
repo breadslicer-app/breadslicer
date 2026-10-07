@@ -17,21 +17,23 @@ use sc_scene::node::LeafPayload;
 #[cfg(test)]
 mod tests_roots;
 
-/// Builds a scene in which each mesh, in order, is a root leaf with an identity
+/// Builds a scene in which each mesh, in order, is a root leaf with its
 /// transform.
-pub fn meshes_as_roots(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
+pub fn leaves_as_roots(leaves: impl IntoIterator<Item = (IndexedMesh, Transform3D)>) -> Scene {
     let mut scene = Scene::new();
-    for mesh in meshes {
+    for (mesh, transform) in leaves {
         let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("inline-mesh leaf");
         scene.add_root(leaf).expect("fresh leaf becomes a root");
     }
     scene
+}
+
+/// Builds a scene in which each mesh, in order, is a root leaf with an identity
+/// transform.
+pub fn meshes_as_roots(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
+    leaves_as_roots(meshes.into_iter().map(|mesh| (mesh, Transform3D::Identity)))
 }
 
 /// Builds the trio: the unit cube, the Z-tunnel prism and the Y-tunnel prism,

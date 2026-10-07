@@ -3,26 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Flatten a `Scene` and write it to a single-mesh file format
-//! (`.stl` binary / ASCII, `.obj`).
+//! Scene writers for the OBJ, STL (binary or ASCII) and 3MF formats.
 //!
-//! Two layers:
-//! - [`flatten_graph_to_mesh`] bakes the composed transform of every
-//!   expanded leaf occurrence (subtree references expand, one
-//!   occurrence per call site) into a single `IndexedMesh`, returning the
-//!   merged mesh plus any non-fatal warnings (currently only
-//!   [`FlattenWarning::MultiObjectMerge`]).
-//! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
-//!   appropriate format. OBJ preserves per-object boundaries, while
-//!   the STL variants route through `flatten_graph_to_mesh` first.
+//! - [`flatten_graph_to_mesh`] bakes the composed transform of every expanded
+//!   leaf occurrence into 1 `IndexedMesh`, where a subtree reference gives 1
+//!   occurrence per call site, and returns it with its warnings.
+//! - [`write_scene`] writes the format that [`WriteFormat`] names. OBJ and 3MF
+//!   keep the objects apart; an STL file holds 1 mesh, so the STL formats write
+//!   the flattened scene.
 //!
-//! Expanding paths bound their work against
-//! [`sc_scene::MAX_EXPANDED_LEAF_COUNT`] before walking, so a
-//! construction describing an exponential occurrence count
-//! is refused with a typed error instead of wedging an export.
-//!
-//! Warnings are returned to the caller. The CLI surfaces them via
-//! `eprintln!`; the GUI may surface them through its dialog stack.
+//! The paths that expand references refuse a scene that expands to more than
+//! [`sc_scene::MAX_EXPANDED_LEAF_COUNT`] leaf occurrences, with an error,
+//! before they walk it.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -41,9 +33,8 @@ use crate::threemf::ThreeMf;
 
 type Result<T> = std::result::Result<T, WriteSceneError>;
 
-// Process-wide counter that disambiguates concurrent atomic writes
-// from inside the same process (e.g. multiple parallel test threads
-// or several scene exports running on a worker pool).
+// Counter that gives distinct temp file names to concurrent writes in 1
+// process, such as writes from parallel test threads or from a worker pool.
 static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn next_atomic_write_token() -> u64 {
@@ -65,19 +56,19 @@ fn atomic_temp_path(target: &Path) -> Result<PathBuf> {
     Ok(parent.join(format!(".{file_name}.tmp.{pid}.{token}")))
 }
 
-// Writes to `target_path` atomically: opens a temp file in the same
-// parent directory with `create_new(true)` (which never follows
-// symlinks), runs `write_fn`, fsyncs, then renames over the target.
-// On any error the temp file is removed and the existing target is
-// left untouched. Closes the TOCTOU/symlink window the CLI used to
-// expose AND the truncate-on-partial-write hazard a pre-existing
-// target faced.
+/// Replaces `target_path` with what `write_fn` writes, through a temp file in
+/// the same directory that is synced and then renamed over the target. On any
+/// error the temp file is removed and an existing target keeps its content. A
+/// symlink at `target_path` is replaced by the new file, and the file it points
+/// to keeps its content.
 fn write_atomically<F>(target_path: &Path, write_fn: F) -> Result<()>
 where
     F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let temp_path = atomic_temp_path(target_path)?;
 
+    // `create_new` fails on any existing path, a symlink included, so the write
+    // never goes through a link planted at the temp path.
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -116,12 +107,9 @@ where
     }
 }
 
-/// Atomically replaces `target_path` with `bytes`: temp file in the
-/// same directory, fsync, then rename, with the same guarantees as
-/// the scene writers (an existing target survives any failure).
-/// Public so callers that serialize their own file contents
-/// (project-file writers) can reuse the machinery instead of
-/// re-implementing it.
+/// Replaces `target_path` with `bytes` through a synced temp file in the same
+/// directory and a rename: on any failure, an existing target keeps its
+/// content.
 pub fn write_bytes_atomically(target_path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomically(target_path, |writer| {
         writer.write_all(bytes)?;
@@ -129,16 +117,14 @@ pub fn write_bytes_atomically(target_path: &Path, bytes: &[u8]) -> Result<()> {
     })
 }
 
-// Target number of progress reports per serialise phase. Consumers
-// display progress at permille resolution, so reporting more often
-// than 1000 times per phase cannot change what is shown and only adds
-// callback overhead to the per-element serialisation loops.
+// The number of progress reports per serialise phase. A progress display in
+// steps of 0.1% changes at most 1000 times, so more reports change nothing that
+// it shows.
 const SERIALIZE_REPORT_SLOTS: u64 = 1000;
 
 /// Running `done` / `total` counter for a per-element serialise phase,
-/// throttled to about [`SERIALIZE_REPORT_SLOTS`] reports plus the
-/// completion report regardless of the element count. Shared by the
-/// STL and OBJ writers; the 3MF writer counts bytes instead.
+/// throttled to about [`SERIALIZE_REPORT_SLOTS`] reports plus the completion
+/// report, whatever the element count.
 pub(crate) struct SerializeTally {
     done: u64,
     total: u64,
@@ -150,15 +136,14 @@ impl SerializeTally {
         Self {
             done: 0,
             total,
-            // Elements per report; at least 1 so meshes smaller than
-            // the slot count report on every element instead of
-            // dividing by zero in `tick`.
+            // Elements per report, at least 1, so a total below the slot count
+            // reports every element.
             step: (total / SERIALIZE_REPORT_SLOTS).max(1),
         }
     }
 
-    /// Reports `0 / total` so the serialise phase becomes visible
-    /// before the first throttle step lands.
+    /// Reports `0 / total` so the serialise phase becomes visible before the
+    /// first throttle step lands.
     pub(crate) fn begin(&self, progress: &mut impl FnMut(WriteSceneProgress)) {
         progress(WriteSceneProgress::Serialize {
             done: 0,
@@ -166,8 +151,8 @@ impl SerializeTally {
         });
     }
 
-    /// Counts one serialised element, reporting at every throttle step
-    /// and at completion.
+    /// Counts 1 serialised element, reporting at every throttle step and at
+    /// completion.
     pub(crate) fn tick(&mut self, progress: &mut impl FnMut(WriteSceneProgress)) {
         self.done += 1;
         if self.done.is_multiple_of(self.step) || self.done == self.total {
@@ -179,14 +164,12 @@ impl SerializeTally {
     }
 }
 
-/// A warning produced by `flatten_graph_to_mesh` that the caller may
-/// want to surface to the user (or ignore). Distinct from errors:
-/// warnings do not prevent the flattened mesh from being usable.
+/// A condition of [`flatten_graph_to_mesh`] that leaves the flattened mesh
+/// usable and that the caller may report to the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlattenWarning {
-    /// The scene contained more than one object, so the flatten step
-    /// merged them and dropped per-object names and boundaries (which
-    /// the target format (typically STL) cannot represent anyway).
+    /// The scene held more than 1 object: the flattened mesh merges them and
+    /// has no per-object names or boundaries.
     MultiObjectMerge { object_count: usize },
 }
 
@@ -201,33 +184,28 @@ impl FlattenWarning {
     }
 }
 
-/// The result of flattening a scene to a single mesh: the mesh itself
-/// plus any non-fatal warnings the caller may want to surface.
 #[derive(Debug)]
 pub struct FlattenedScene {
     pub mesh: IndexedMesh,
     pub warnings: Vec<FlattenWarning>,
 }
 
-/// Produces a single `IndexedMesh` representing the whole graph with
-/// composed transforms baked into vertices and face normals.
-/// `Reference` nodes expand: every occurrence of an referenced subtree
-/// contributes its geometry under its composed call-site transform,
-/// and the dispatch below counts occurrences, not leaf nodes.
+/// Builds 1 `IndexedMesh` from the whole scene, with the world transform of
+/// each leaf occurrence baked into its vertices and face normals. A subtree
+/// referenced N times gives N occurrences, each under its composed call-site
+/// transform.
 ///
-/// - With exactly one occurrence, returns that occurrence baked to
-///   world space with the source mesh's metadata (notably its name,
-///   which the ASCII STL writer puts in the `solid <name>` header)
-///   preserved, even when the occurrence sits behind a reference.
-/// - With more occurrences, returns the result of
-///   `Scene::merge_meshes`, which concatenates baked
-///   vertices/faces and drops per-leaf names, plus a
-///   `MultiObjectMerge` warning so the caller can inform the user.
+/// - With 1 occurrence, the mesh keeps the metadata of its source mesh, also
+///   when the occurrence sits behind a reference: the ASCII STL writer puts its
+///   name in the `solid <name>` line.
+/// - With more occurrences, the mesh is the result of `Scene::merge_meshes`:
+///   the baked vertices and faces of every occurrence, without a name. A
+///   [`FlattenWarning::MultiObjectMerge`] comes with it.
 ///
-/// Errors out with [`WriteSceneError::LeafBudgetExceeded`] when the
-/// scene expands past [`MAX_EXPANDED_LEAF_COUNT`], and with
-/// [`WriteSceneError::Graph`] on a graph containing an unevaluated
-/// `Csg` node, since there is no kernel yet to reduce it.
+/// Fails with [`WriteSceneError::EmptyScene`] when the scene has no occurrence,
+/// with [`WriteSceneError::LeafBudgetExceeded`] when it expands past
+/// [`MAX_EXPANDED_LEAF_COUNT`], and with [`WriteSceneError::Graph`] when it
+/// holds a `Csg` node, which has no evaluated geometry.
 pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
     let expanded = graph.expanded_leaf_count(CsgPolicy::Refuse)?;
     if expanded > MAX_EXPANDED_LEAF_COUNT {
@@ -261,12 +239,10 @@ pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
     }
 }
 
-/// Writes `graph` to `target_path` in the given `target_format`.
-///
-/// Returns the warnings that surfaced during flatten; the caller
-/// decides how to surface them (CLI -> `eprintln!`; GUI -> dialog or
-/// log). For OBJ the per-leaf boundaries are preserved, so no
-/// flatten happens and the warning vec is always empty.
+/// Writes `graph` to `target_path` in `target_format`, replacing the file
+/// atomically: on any failure an existing target keeps its content. Returns the
+/// warnings of the flattening that the STL formats need; OBJ and 3MF keep the
+/// objects apart and give none.
 pub fn write_scene(
     graph: &Scene,
     target_path: &Path,
@@ -275,11 +251,11 @@ pub fn write_scene(
     write_scene_with_progress(graph, target_path, target_format, |_| {})
 }
 
-/// [`write_scene`], reporting phase progress through `progress`: the
-/// format's own phases while serialising into the temp file (see
-/// [`WriteSceneProgress`] for which phases each format visits), then
-/// `Write { 0, 1 }` before the flush + fsync + rename and
-/// `Write { 1, 1 }` once the rename lands.
+/// Writes `graph` as [`write_scene`] does, and reports its phases through
+/// `progress`: the phases of the format while it is written to the temp file
+/// (see [`WriteSceneProgress`] for the phases of each format), then a `Write`
+/// report of 0 of 1 before the temp file is synced and renamed, and of 1 of 1
+/// after the rename.
 pub fn write_scene_with_progress(
     graph: &Scene,
     target_path: &Path,
@@ -306,8 +282,8 @@ mod serialize_tally_tests {
     use super::{SERIALIZE_REPORT_SLOTS, SerializeTally};
     use crate::ports::WriteSceneProgress;
 
-    /// Runs `begin` plus `ticks` ticks against a fresh tally and
-    /// returns the `(done, total)` pairs it reported.
+    /// Runs `begin` plus `ticks` ticks against a fresh tally and returns the
+    /// `(done, total)` pairs it reported.
     fn collect(total: u64, ticks: u64) -> Vec<(u64, u64)> {
         let mut reports = Vec::new();
         let mut push = |p: WriteSceneProgress| {
@@ -335,8 +311,8 @@ mod serialize_tally_tests {
     fn large_totals_throttle_to_the_slot_count() {
         let total = SERIALIZE_REPORT_SLOTS * 7;
         let reports = collect(total, total);
-        // The begin report plus one report per full step; the
-        // completion tick lands exactly on the last step.
+        // The begin report plus 1 report per full step; the completion tick
+        // lands exactly on the last step.
         assert_eq!(reports.len() as u64, 1 + SERIALIZE_REPORT_SLOTS);
         assert_eq!(reports.first(), Some(&(0, total)));
         assert_eq!(reports.last(), Some(&(total, total)));
@@ -365,6 +341,7 @@ mod flatten_scene_to_mesh_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use sc_scene::{LeafPayload, Scene};
+    use sc_scene_fixtures::leaves_as_roots;
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -384,15 +361,6 @@ mod flatten_scene_to_mesh_tests {
         }
     }
 
-    fn single_leaf_graph(mesh: IndexedMesh, t: Transform3D) -> Scene {
-        let mut g = Scene::new();
-        let leaf = g
-            .add_leaf(None, t, LeafPayload::Mesh(Arc::new(mesh)))
-            .expect("add leaf");
-        g.add_root(leaf).expect("add root");
-        g
-    }
-
     #[test]
     fn empty_scene_returns_error() {
         let graph = Scene::new();
@@ -401,7 +369,7 @@ mod flatten_scene_to_mesh_tests {
 
     #[test]
     fn single_object_identity_preserves_vertices_and_name() {
-        let graph = single_leaf_graph(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
+        let graph = Scene::from(unit_triangle_mesh(Some("MyMesh")));
         let result = flatten_graph_to_mesh(&graph).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [1.0, 0.0, 0.0]);
@@ -416,7 +384,7 @@ mod flatten_scene_to_mesh_tests {
     #[test]
     fn single_object_affine_bakes_translation() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
-        let graph = single_leaf_graph(unit_triangle_mesh(None), t);
+        let graph = leaves_as_roots([(unit_triangle_mesh(None), t)]);
         let result = flatten_graph_to_mesh(&graph).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [11.0, -5.0, 2.0]);
@@ -427,11 +395,11 @@ mod flatten_scene_to_mesh_tests {
     #[test]
     fn single_object_affine_preserves_source_name() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
-        let graph = single_leaf_graph(unit_triangle_mesh(Some("Translated")), t);
+        let graph = leaves_as_roots([(unit_triangle_mesh(Some("Translated")), t)]);
         let result = flatten_graph_to_mesh(&graph).unwrap();
-        // The transform was baked into the vertices, but the source
-        // mesh's name was preserved (so STL writers can put it in the
-        // `solid <name>` / 80-byte header).
+        // The transform was baked into the vertices, but the source mesh's name
+        // was preserved (so STL writers can put it in the `solid <name>` /
+        // 80-byte header).
         assert_eq!(
             result.mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some("Translated")
@@ -440,23 +408,13 @@ mod flatten_scene_to_mesh_tests {
 
     #[test]
     fn multi_object_scene_merges_and_emits_warning() {
-        let mut graph = Scene::new();
-        let leaf_a = graph
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_triangle_mesh(Some("A")))),
-            )
-            .expect("add leaf A");
-        graph.add_root(leaf_a).expect("add root A");
-        let leaf_b = graph
-            .add_leaf(
-                None,
+        let graph = leaves_as_roots([
+            (unit_triangle_mesh(Some("A")), Transform3D::Identity),
+            (
+                unit_triangle_mesh(Some("B")),
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
-                LeafPayload::Mesh(Arc::new(unit_triangle_mesh(Some("B")))),
-            )
-            .expect("add leaf B");
-        graph.add_root(leaf_b).expect("add root B");
+            ),
+        ]);
 
         let result = flatten_graph_to_mesh(&graph).unwrap();
         // Both objects' vertices are present; the second is translated.
@@ -477,15 +435,14 @@ mod flatten_scene_to_mesh_tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let graph = single_leaf_graph(unit_triangle_mesh(None), Transform3D::Affine(singular));
+        let graph = leaves_as_roots([(unit_triangle_mesh(None), Transform3D::Affine(singular))]);
         assert!(flatten_graph_to_mesh(&graph).is_err());
     }
 
     #[test]
     fn csg_scene_is_refused_even_with_a_single_leaf() {
-        // Flatten's CSG stance is uniform: without a kernel, any
-        // reachable CSG node refuses, including one holding a
-        // single leaf operand.
+        // Without a CSG kernel, flattening refuses every reachable CSG node,
+        // also a CSG node with 1 leaf operand.
         use sc_scene::{CsgOp, SceneError};
 
         let mut graph = Scene::new();
@@ -519,9 +476,9 @@ mod atomic_temp_path_tests {
     #[test]
     fn parent_less_target_resolves_parent_to_dot() {
         let temp = atomic_temp_path(Path::new("foo.stl")).expect("temp path");
-        // The helper must use `.` as the parent when the target has no
-        // parent directory component, so the temp file lands next to
-        // where the caller will eventually rename it (the cwd).
+        // The helper must use `.` as the parent when the target has no parent
+        // directory component, so the temp file lands next to where the caller
+        // will eventually rename it (the cwd).
         assert_eq!(temp.parent(), Some(Path::new(".")));
         let file_name = temp
             .file_name()
@@ -566,13 +523,8 @@ mod write_scene_atomicity_tests {
         })
     }
 
-    // A graph whose OBJ writer fails mid-stream. The face vertex index
-    // is deliberately set to `u32::MAX` so `write_obj` returns an
-    // error after the `v` lines and `o` marker have already been
-    // emitted to the underlying writer. With the buggy direct-create
-    // path, that leaves the on-disk target truncated to the partial
-    // bytes; the atomic-temp-and-rename fix must keep the original
-    // file intact.
+    /// Builds a scene whose OBJ write fails after its `v` line is written: the
+    /// face index `u32::MAX` overflows.
     fn graph_that_fails_mid_obj_write() -> Scene {
         Scene::from(IndexedMesh {
             meta: None,
@@ -596,15 +548,13 @@ mod write_scene_atomicity_tests {
         assert!(contents.contains("v 0 0 0"));
         assert!(contents.contains("f 1 2 3"));
 
-        // Exactly one entry in the parent dir: the target itself, no
-        // dangling `.output.obj.tmp.*` left over.
+        // The directory holds only the target.
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1);
     }
 
-    // Pre-existing target file plus a writer that errors after writing
-    // some bytes. The original file must survive intact and no
-    // half-written temp must remain.
+    // An existing target and a write that fails after some bytes: the target
+    // keeps its content and the directory holds no temp file.
     #[test]
     fn existing_target_is_preserved_when_writer_fails_mid_stream() {
         let dir = tempfile::tempdir().unwrap();
@@ -627,10 +577,10 @@ mod write_scene_atomicity_tests {
     }
 
     // A read-only parent directory must surface as
-    // `WriteSceneError::CreateTempFile` (the `OpenOptions::create_new`
-    // call inside `write_atomically` fails with EACCES), and the
-    // attached `path` must point at the temp file the helper tried to
-    // create inside that read-only directory.
+    // `WriteSceneError::CreateTempFile` (the `OpenOptions::create_new` call
+    // inside `write_atomically` fails with EACCES), and the attached `path`
+    // must point at the temp file the helper tried to create inside that
+    // read-only directory.
     #[cfg(unix)]
     #[test]
     fn readonly_parent_dir_yields_create_temp_file_error() {
@@ -666,13 +616,8 @@ mod write_scene_atomicity_tests {
         assert!(entries.is_empty(), "no temp file should remain");
     }
 
-    // A symlink planted at the target path between validation and
-    // write must not be followed. With the buggy `File::create`,
-    // the write transparently follows the symlink and clobbers the
-    // pointed-to file; the fix opens the temp file with
-    // `create_new(true)` (which never follows symlinks) and renames
-    // over the symlink, leaving the original target of the symlink
-    // untouched.
+    // A symlink at the target path is replaced by the written file, and the
+    // file it points to keeps its content.
     #[cfg(unix)]
     #[test]
     fn symlink_at_target_is_replaced_not_followed() {
@@ -690,8 +635,7 @@ mod write_scene_atomicity_tests {
         // The pointed-to file is untouched.
         assert_eq!(std::fs::read(&secret).unwrap(), secret_bytes);
 
-        // The target is no longer a symlink, it's a regular file with
-        // the OBJ output.
+        // The target is a regular file with the OBJ output.
         let meta = std::fs::symlink_metadata(&target).unwrap();
         assert!(
             !meta.file_type().is_symlink(),

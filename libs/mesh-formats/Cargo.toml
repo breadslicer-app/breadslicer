@@ -24,4 +24,5 @@ sc-scene.workspace = true
 anyhow.workspace = true
 proptest.workspace = true
 sc-mesh-fixtures.workspace = true
+sc-scene-fixtures.workspace = true
 tempfile = "3.23.0"

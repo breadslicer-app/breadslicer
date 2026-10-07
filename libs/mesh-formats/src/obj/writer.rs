@@ -11,11 +11,9 @@ use crate::error::WriteObjError;
 use crate::ports::WriteSceneProgress;
 use crate::scene_writer::SerializeTally;
 
-// OBJ face indices are 1-based, so the writer emits `local + offset + 1`
-// for every vertex reference. `to_global_face_index` performs that math
-// with overflow checks; both the addition and the implicit `+1` must
-// stay within `u32`, otherwise the resulting OBJ file would point at a
-// wrapped index and silently decode to garbage.
+/// Returns the 1-based OBJ index of vertex `local` of a mesh whose vertices
+/// follow `offset` written vertices. Fails when the index does not fit in
+/// `u32`.
 fn to_global_face_index(local: u32, offset: u32) -> Result<u32, WriteObjError> {
     local
         .checked_add(offset)
@@ -38,20 +36,17 @@ where
     write_obj_with_progress(graph, writer, |_| {})
 }
 
-/// [`write_obj`], reporting one `Serialize` unit per emitted vertex or
-/// face line through `progress` (throttled by [`SerializeTally`]). The
-/// total is precomputed over the expanded leaf occurrences, skipping
-/// faceless meshes with the same rule the section writer applies, so
-/// `done` reaches `total` exactly when the last line lands.
+/// Writes `graph` as [`write_obj`] does, and reports 1 `Serialize` unit per
+/// vertex or face line through `progress`, throttled by [`SerializeTally`]. The
+/// total counts the lines of every expanded leaf occurrence, so `done` reaches
+/// `total` with the last line.
 ///
-/// The walk expands `Reference` nodes: a subtree referenced N times
-/// serialises N times, each occurrence under its composed call-site
-/// transform. Expansion can multiply occurrences exponentially in the
-/// node count, so the scene's expanded occurrence count is checked
-/// against [`MAX_EXPANDED_LEAF_COUNT`] first and an over-budget scene
-/// is refused with [`WriteObjError::LeafBudgetExceeded`] before any
-/// byte is written. CSG nodes descend: their operands serialise as
-/// plain objects.
+/// The walk expands `Reference` nodes: a subtree referenced N times is written
+/// N times, each occurrence under its composed call-site transform. Expansion
+/// can multiply the occurrences exponentially in the node count, so a scene
+/// that expands past [`MAX_EXPANDED_LEAF_COUNT`] occurrences is refused with
+/// [`WriteObjError::LeafBudgetExceeded`] before any byte is written. The
+/// operands of a CSG node are written as plain objects.
 pub fn write_obj_with_progress<W, F>(
     graph: &Scene,
     writer: &mut W,
@@ -71,11 +66,9 @@ where
     if let Some(meta) = graph.meta()
         && let Some(comment) = &meta.comment
     {
-        // The reader joins multi-line headers with `\n`, so each
-        // segment must be re-prefixed on write. Without this, an
-        // imported file's continuation lines round-trip back as
-        // bare `Coordinates use ...` lines and the next reader
-        // rejects them as unrecognised directives.
+        // The reader joins the lines of a multi-line header with `\n`, so each
+        // line gets its own `#` prefix here. A line without it would fail the
+        // next read as an unknown directive.
         for line in comment.split('\n') {
             writeln!(writer, "# {line}")?;
         }
@@ -95,13 +88,11 @@ where
 
     let mut vertex_offset: u32 = 0;
     graph.for_each_expanded_leaf(CsgPolicy::Descend, |_, world, mesh| {
-        // OBJ has no per-object transform, so each occurrence's
-        // composed world transform is baked into its vertices and
-        // face normals. The source mesh's name reaches the `o`
-        // marker folded to printable ASCII (the marker is
-        // line-oriented, so raw names could terminate their own
-        // line and become document structure); the baked mesh drops
-        // metadata by design.
+        // OBJ has no per-object transform, so each occurrence is written with
+        // its world transform baked into its vertices and face normals. The
+        // baked mesh has no metadata, so the `o` marker takes the name of the
+        // source mesh, folded to printable ASCII: a raw name could end its own
+        // line and become document structure.
         let name = mesh
             .meta()
             .as_ref()
@@ -197,9 +188,8 @@ mod helper_tests {
         assert!(advance_vertex_offset(u32::MAX - 2, 5).is_err());
     }
 
-    // On 64-bit targets, `usize` can exceed `u32::MAX`. This pins the
-    // try_from path even though we cannot allocate that many vertices
-    // in a real test.
+    // On 64-bit targets a vertex count can exceed `u32::MAX`; the test passes
+    // such a count without allocating the vertices.
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn advance_offset_vertex_count_exceeds_u32_errors() {
@@ -210,11 +200,10 @@ mod helper_tests {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use sc_scene::{LeafPayload, Scene, SceneMetadata};
+    use sc_scene_fixtures::{leaves_as_roots, meshes_as_roots};
 
     use super::write_obj;
 
@@ -234,28 +223,6 @@ mod tests {
                 [0, 1, 2],
             )],
         }
-    }
-
-    fn single_leaf_graph(transform: Transform3D, payload: LeafPayload) -> Scene {
-        let mut g = Scene::new();
-        let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
-        g.add_root(leaf).expect("add root");
-        g
-    }
-
-    fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> Scene {
-        let mut g = Scene::new();
-        for mesh in meshes {
-            let leaf = g
-                .add_leaf(
-                    None,
-                    Transform3D::Identity,
-                    LeafPayload::Mesh(Arc::new(mesh)),
-                )
-                .expect("add leaf");
-            g.add_root(leaf).expect("add root");
-        }
-        g
     }
 
     fn write_to_string(graph: &Scene) -> String {
@@ -291,10 +258,6 @@ mod tests {
 
     #[test]
     fn multi_line_scene_comment_prefixes_every_line() {
-        // The reader joins consecutive `#` header lines with `\n`.
-        // The writer must re-prefix each segment so the output stays
-        // a valid OBJ file; bare continuation lines fail the next
-        // load with `unrecognized directive`.
         let mut graph = Scene::from(make_triangle_mesh(None));
         graph.set_meta(Some(SceneMetadata {
             name: None,
@@ -306,7 +269,7 @@ mod tests {
 
     #[test]
     fn two_objects_have_global_vertex_indices() {
-        let graph = multi_mesh_graph(vec![
+        let graph = meshes_as_roots(vec![
             make_triangle_mesh(Some("A")),
             make_triangle_mesh(Some("B")),
         ]);
@@ -319,7 +282,7 @@ mod tests {
 
     #[test]
     fn two_unnamed_objects_get_bare_o_markers() {
-        let graph = multi_mesh_graph(vec![make_triangle_mesh(None), make_triangle_mesh(None)]);
+        let graph = meshes_as_roots(vec![make_triangle_mesh(None), make_triangle_mesh(None)]);
         let out = write_to_string(&graph);
         assert_eq!(
             out,
@@ -329,7 +292,7 @@ mod tests {
 
     #[test]
     fn two_objects_mixed_named_and_unnamed() {
-        let graph = multi_mesh_graph(vec![
+        let graph = meshes_as_roots(vec![
             make_triangle_mesh(Some("Named")),
             make_triangle_mesh(None),
         ]);
@@ -372,10 +335,7 @@ mod tests {
         use sc_mesh_core::transform::AffineTransform3D;
 
         let transform = Transform3D::Affine(AffineTransform3D::from_translation([10.0, 5.0, -2.0]));
-        let graph = single_leaf_graph(
-            transform,
-            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
-        );
+        let graph = leaves_as_roots([(make_triangle_mesh(None), transform)]);
         let out = write_to_string(&graph);
         // Original vertices were (1,0,0), (0,1,0), (0,0,1); after the
         // translation each becomes the original plus (10, 5, -2).
@@ -388,13 +348,10 @@ mod tests {
 
         let transform =
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
-        let graph = single_leaf_graph(
-            transform,
-            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
-        );
+        let graph = leaves_as_roots([(make_triangle_mesh(None), transform)]);
         let out = write_to_string(&graph);
-        // Vertex 0 was (1,0,0); after x -> -x it's (-1,0,0). Winding goes
-        // from [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
+        // Vertex 0 was (1,0,0); after x -> -x it's (-1,0,0). Winding goes from
+        // [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
         assert_eq!(out, "v -1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\n");
     }
 
@@ -403,21 +360,16 @@ mod tests {
         use sc_mesh_core::transform::AffineTransform3D;
 
         let transform = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
-        let graph = single_leaf_graph(
-            transform,
-            LeafPayload::Mesh(Arc::new(make_triangle_mesh(Some("MyObj")))),
-        );
+        let graph = leaves_as_roots([(make_triangle_mesh(Some("MyObj")), transform)]);
         let out = write_to_string(&graph);
-        // The `o MyObj` marker comes from the source mesh's metadata even
-        // though `baked_mesh` strips its own metadata.
+        // The baked mesh has no metadata, so the `o MyObj` marker shows that
+        // the name comes from the source mesh.
         assert!(out.starts_with("o MyObj\n"));
     }
 
-    // A face index near `u32::MAX` combined with the implicit `+1`
-    // (OBJ is 1-based) overflows the `local + offset + 1` addition
-    // the writer uses for face emission. Release builds wrap silently
-    // and produce a garbage OBJ; debug builds panic. The contract is
-    // that the writer must surface a clean error on either profile.
+    // A face index near `u32::MAX` overflows `u32` when the writer adds the
+    // vertex offset and 1 (OBJ indices are 1-based). The writer must return an
+    // error in debug and release builds.
     #[test]
     fn face_index_plus_offset_overflow_returns_error() {
         let mesh = IndexedMesh {
@@ -433,10 +385,9 @@ mod tests {
         assert!(write_obj(&graph, &mut buf).is_err());
     }
 
-    // Same overflow shape, but split across two meshes: a small first
-    // mesh advances `vertex_offset`, and the second mesh's face index
-    // overflows once the offset is added. Covers the cross-mesh path
-    // that a single-mesh test alone can miss after the fix.
+    // The same overflow across 2 meshes: the first mesh moves the vertex
+    // offset, and the face index of the second overflows when the offset is
+    // added.
     #[test]
     fn cross_mesh_face_index_overflow_returns_error() {
         let first = make_triangle_mesh(None);
@@ -448,7 +399,7 @@ mod tests {
                 [u32::MAX - 2, 0, 0],
             )],
         };
-        let graph = multi_mesh_graph(vec![first, second]);
+        let graph = meshes_as_roots(vec![first, second]);
         let mut buf: Vec<u8> = Vec::new();
         assert!(write_obj(&graph, &mut buf).is_err());
     }
@@ -461,10 +412,7 @@ mod tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let graph = single_leaf_graph(
-            Transform3D::Affine(singular),
-            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
-        );
+        let graph = leaves_as_roots([(make_triangle_mesh(None), Transform3D::Affine(singular))]);
         let mut buf: Vec<u8> = Vec::new();
         assert!(write_obj(&graph, &mut buf).is_err());
     }
@@ -494,8 +442,8 @@ mod tests {
 
     #[test]
     fn name_folding_to_nothing_writes_the_nameless_shape() {
-        // U+FE0F has no ASCII rendering, so the whole name folds
-        // away; a single mesh then needs no `o` marker at all.
+        // U+FE0F has no ASCII rendering, so the whole name folds away; a single
+        // mesh then needs no `o` marker at all.
         let graph = Scene::from(make_triangle_mesh(Some("\u{FE0F}")));
         let out = write_to_string(&graph);
         assert_eq!(out, "v 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
@@ -503,7 +451,7 @@ mod tests {
 
     #[test]
     fn name_folding_to_nothing_gets_bare_o_marker_in_multi_object_output() {
-        let graph = multi_mesh_graph(vec![
+        let graph = meshes_as_roots(vec![
             make_triangle_mesh(Some("\u{FE0F}")),
             make_triangle_mesh(Some("B")),
         ]);
