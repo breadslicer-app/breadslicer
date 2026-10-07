@@ -5,11 +5,9 @@
 
 use std::fmt;
 
-use newtypes::{newtype_array, newtype_from_only, newtype_ord};
+use newtypes::{newtype_array, newtype_array_readonly, newtype_from_only, newtype_ord};
 
-/// Which coordinate of a 3D point is being referred to. Used both as
-/// an iteration helper (`CoordAxis::ALL`) and as a diagnostic field
-/// in vertex-validation errors.
+/// Which coordinate of a 3D point is being referred to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CoordAxis {
@@ -21,7 +19,7 @@ pub enum CoordAxis {
 impl CoordAxis {
     pub const ALL: [Self; 3] = [Self::X, Self::Y, Self::Z];
 
-    /// 0/1/2 index into a `[T; 3]` coordinate array.
+    /// Returns the index of the axis in a `[T; 3]` coordinate array: 0, 1 or 2.
     #[inline]
     pub const fn as_index(self) -> usize {
         self as usize
@@ -46,7 +44,7 @@ impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
         Self(v)
     }
 
-    /// Components as a fixed-size array, by value.
+    /// Returns the components as a fixed-size array, by value.
     pub fn coords(&self) -> [F; 3] {
         self.0
     }
@@ -115,37 +113,38 @@ impl<F: Copy + PartialEq + PartialOrd> From<Vector3D<F>> for [F; 3] {
 impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
     type Output = F;
     fn index(&self, i: usize) -> &Self::Output {
-        assert!(i < 3); // TODO: Replace with debug_assert once we have proper tests in place
+        // TODO: Replace with debug_assert once we have proper tests in place
+        assert!(i < 3);
         &self.0[i]
     }
 }
 
-// Distinct newtypes around `[f32; 3]` so a `Normal` cannot silently
-// flow through `apply_to_vertex` and vice versa. `newtype_array!` emits
-// `pub struct $name([f32; 3])` `#[repr(transparent)]`, plus Debug, Clone,
-// Copy, PartialEq, Index<I> (single index + ranges), AsRef<[f32]>,
-// AsMut<[f32]>, IntoIterator for `Self` / `&Self` / `&mut Self`,
-// From<Self> for [f32; 3], and inherent `len`, `is_empty`, `iter`,
-// `iter_mut`, `as_array`, `as_array_mut`. We add only the constructors
-// and the few math accessors below.
+// Distinct newtypes around `[f32; 3]` so a `Normal` cannot silently flow
+// through `apply_to_vertex` and vice versa. For `Vertex`, `newtype_array!`
+// emits `pub struct Vertex([f32; 3])` with `#[repr(transparent)]`, plus Debug,
+// Clone, Copy, PartialEq, Index<I> and IndexMut<I> (single index and ranges),
+// AsRef<[f32]>, AsMut<[f32]>, IntoIterator for `Self`, `&Self` and `&mut Self`,
+// From<Self> for [f32; 3], and inherent `len`, `is_empty`, `iter`, `iter_mut`,
+// `as_array` and `as_array_mut`. `newtype_array_readonly!` emits the same for
+// `Normal`, without the mutable items.
 newtype_array!(Vertex, f32, 3);
-newtype_array!(Normal, f32, 3);
+newtype_array_readonly!(Normal, f32, 3);
 
 impl Vertex {
-    /// Construct from the three coordinates.
+    /// Constructs a vertex from its 3 coordinates.
     #[inline]
     pub const fn new(coords: [f32; 3]) -> Self {
         Self(coords)
     }
 
-    /// Coordinates as a fixed-size array, by value.
+    /// Returns the coordinates as a fixed-size array, by value.
     #[inline]
     pub fn coords(self) -> [f32; 3] {
         self.into()
     }
 
-    /// Widen to f64 for cancellation-safe math (used in geometry/transform
-    /// hot paths where f32 differences lose precision).
+    /// Widens the coordinates to f64 for cancellation-safe math, where
+    /// differences of f32 values lose precision.
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
         Vector3D::new(self.coords()).into()
@@ -153,35 +152,32 @@ impl Vertex {
 }
 
 impl Normal {
-    /// Construct from the three components.
+    /// Constructs a normal from its 3 components.
     #[inline]
     pub const fn new(components: [f32; 3]) -> Self {
         Self(components)
     }
 
-    /// Components as a fixed-size array, by value.
+    /// Returns the components as a fixed-size array, by value.
     #[inline]
     pub fn coords(self) -> [f32; 3] {
         self.into()
     }
 
-    /// Widen to f64 for cancellation-safe math.
+    /// Widens the components to f64 for cancellation-safe math.
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
         Vector3D::new(self.coords()).into()
     }
 
-    /// Reverse direction (component-wise negation). Used when a face's
-    /// winding is flipped without recomputing from vertex positions.
+    /// Returns the opposite direction (component-wise negation).
     #[inline]
     pub fn negate(self) -> Self {
         Self::new(self.coords().map(|c| -c))
     }
 
-    /// Magnitude (Euclidean length). For a well-formed unit normal this
-    /// is ≈ 1.0 within f32 precision; deviations larger than
-    /// [`UNIT_NORM_TOLERANCE`](crate::geometry::UNIT_NORM_TOLERANCE) are
-    /// flagged by `validate_normal_vectors`.
+    /// Returns the magnitude (Euclidean length). For a well-formed unit normal
+    /// this is 1.0 within f32 precision.
     #[inline]
     pub fn norm(self) -> f32 {
         self.iter().map(|c| c * c).sum::<f32>().sqrt()
@@ -213,15 +209,13 @@ newtype_ord!(VertexIndex, u32);
 newtype_from_only!(VertexIndex, u32);
 
 impl VertexIndex {
-    /// The raw `u32` index into `IndexedMesh::vertices`.
+    /// Returns the raw `u32` index into `IndexedMesh::vertices`.
     #[inline]
     pub fn get(self) -> u32 {
         self.into()
     }
 
-    /// Adds an integer offset to the index. Used when re-basing a
-    /// face's vertex indices into a merged vertex array (see
-    /// `Scene::merge_meshes`).
+    /// Adds an integer offset to the index.
     #[inline]
     pub fn offset(self, by: u32) -> Self {
         Self::from(u32::from(self) + by)
@@ -246,7 +240,7 @@ newtype_ord!(FaceIndex, usize);
 newtype_from_only!(FaceIndex, usize);
 
 impl FaceIndex {
-    /// The raw `usize` index into `IndexedMesh::faces`.
+    /// Returns the raw `usize` index into `IndexedMesh::faces`.
     #[inline]
     pub fn get(self) -> usize {
         self.into()
@@ -259,9 +253,7 @@ impl fmt::Display for FaceIndex {
     }
 }
 
-/// Which of a triangle's three corners is being referred to. Used as
-/// an iteration helper (`TriVertexSlot::ALL`) and as a diagnostic
-/// field in face-validation errors.
+/// Which of a triangle's 3 corners is being referred to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum TriVertexSlot {
@@ -273,7 +265,7 @@ pub enum TriVertexSlot {
 impl TriVertexSlot {
     pub const ALL: [Self; 3] = [Self::V0, Self::V1, Self::V2];
 
-    /// 0/1/2 index into a triangle's `vertices: [u32; 3]` array.
+    /// Returns the corner's index in a triangle's `vertices` array: 0, 1 or 2.
     #[inline]
     pub const fn as_index(self) -> usize {
         self as usize
@@ -299,11 +291,8 @@ pub struct IndexedTriangle {
 }
 
 impl IndexedTriangle {
-    /// Builds an `IndexedTriangle` from a normal and three raw `u32`
-    /// vertex indices. Used at format-loader and test boundaries where
-    /// the indices arrive as raw integers; production code that already
-    /// holds typed `VertexIndex` values should construct the struct
-    /// directly.
+    /// Builds an `IndexedTriangle` from a normal and 3 raw `u32` vertex
+    /// indices.
     #[inline]
     pub fn from_raw_indices(normal: Normal, vertices: [u32; 3]) -> Self {
         Self {
@@ -355,9 +344,9 @@ mod vector3d_conversion_tests {
 
     #[test]
     fn f64_to_f32_truncates_components() {
-        // 0.1 + 0.2 in f64 cannot be represented exactly in f32; the
-        // conversion is a plain `as f32` cast, so this checks that the
-        // component-wise cast is what's happening (no rounding mode tweak).
+        // 0.1 + 0.2 in f64 cannot be represented exactly in f32; the conversion
+        // is a plain `as f32` cast, so this checks that the component-wise cast
+        // is what's happening (no rounding mode tweak).
         let v64: Vector3D<f64> = Vector3D::new([0.1 + 0.2, 1.0e30, -1.0e-30]);
         let v32: Vector3D<f32> = v64.into();
         assert_eq!(
@@ -368,9 +357,9 @@ mod vector3d_conversion_tests {
 
     #[test]
     fn f32_to_f64_to_f32_is_identity_for_normal_finite() {
-        // Casting f32 -> f64 -> f32 is lossless for any non-NaN finite f32:
-        // f64 can exactly represent every f32, and the back cast picks the
-        // exact same value.
+        // Casting f32 -> f64 -> f32 is lossless for any non-NaN finite f32: f64
+        // can exactly represent every f32, and the back cast picks the exact
+        // same value.
         for &c in &[0.0_f32, 1.0, -1.0, 1.234e10, -7.5e-12, f32::MIN, f32::MAX] {
             let v32: Vector3D<f32> = Vector3D::new([c, c, c]);
             let v64: Vector3D<f64> = v32.into();

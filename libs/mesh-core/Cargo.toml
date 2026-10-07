@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 float-cmp.workspace = true
-newtypes = "0.5.0"
+newtypes = "0.6.0"
 rayon.workspace = true
 
 [dev-dependencies]
