@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Unit tests for the 3MF adapter, both directions: document-to-scene
-//! mapping, transform orientation, unit scaling, warnings, error
-//! paths, and the scene-to-document writer. Packages are built in
-//! memory through `sc-3mf` so every test goes through the real
-//! container path.
+//! Unit tests for the 3MF adapter, both directions: document-to-scene mapping,
+//! transform orientation, unit scaling, warnings, error paths, and the
+//! scene-to-document writer. Packages are built in memory through `sc-3mf` so
+//! every test goes through the real container path.
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -20,6 +19,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata};
 use sc_scene::{CsgOp, Scene, bake_leaf_to_world};
+use sc_scene_fixtures::{add_mesh_leaf, leaves_under_group_root};
 
 use crate::error::{LoadMeshError, LoadThreeMfError, WriteThreeMfError};
 use crate::filetypes::MeshFileType;
@@ -27,8 +27,8 @@ use crate::loader::load_mesh_from_reader;
 use crate::messages::{LoadMeshWarning, LoadThreeMfWarning};
 use crate::threemf::{MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf, write_threemf};
 
-/// Tetrahedron with vertices at the origin and 10 units along each
-/// axis, following the manifold winding used across the workspace.
+/// Tetrahedron with vertices at the origin and 10 units along each axis,
+/// following the manifold winding used across the workspace.
 const TETRA_OBJECT: &str = r#"<object id="1" name="Tetra"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="0" v2="3" v3="2"/><triangle v1="1" v2="2" v3="3"/></triangles></mesh></object>"#;
 
 fn model_xml(unit: &str, body: &str) -> String {
@@ -75,8 +75,8 @@ fn read_sliced(body: &str) -> (Scene, Vec<LoadThreeMfWarning>) {
     read_threemf(&mut cursor).expect("load succeeds")
 }
 
-/// Asserts the loader's root convention (a single identity Group)
-/// and returns its children.
+/// Asserts the loader's root convention (a single identity Group) and returns
+/// its children.
 fn root_children(scene: &Scene) -> Vec<NodeId> {
     assert_eq!(scene.roots().len(), 1, "expected one scene root");
     let root = scene.roots()[0];
@@ -196,8 +196,8 @@ mod mapping_tests {
         let (scene, _) = read("millimeter", &body);
         let children = root_children(&scene);
         let mesh = resource_mesh(&scene, leaf_resource(&scene, children[0]));
-        // Triangle 0 spans (0,0,0), (0,10,0), (10,0,0): the base of
-        // the tetrahedron, whose outward normal points down.
+        // Triangle 0 spans (0,0,0), (0,10,0), (10,0,0): the base of the
+        // tetrahedron, whose outward normal points down.
         assert_eq!(mesh.faces[0].normal, Normal::new([0.0, 0.0, -1.0]));
     }
 }
@@ -208,10 +208,10 @@ mod transform_tests {
 
     #[test]
     fn transform_orientation_matches_the_row_vector_convention() {
-        // Rotation of 90 degrees about +Z followed by a translation,
-        // written in 3MF row-vector form: the first matrix row is the
-        // image of the x axis, so e_x maps to +Y. A reader that
-        // transposes the wrong way would send e_x to -Y instead.
+        // Rotation of 90 degrees about +Z followed by a translation, written in
+        // 3MF row-vector form: the first matrix row is the image of the x axis,
+        // so e_x maps to +Y. A reader that transposes the wrong way would send
+        // e_x to -Y instead.
         let body = format!(
             r#"<resources>{TETRA_OBJECT}</resources><build><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 5 6 7"/></build>"#,
         );
@@ -292,9 +292,9 @@ mod transform_tests {
 
     #[test]
     fn references_resolve_by_id_not_by_declaration_order() {
-        // Non-contiguous ids, a build that names them in the reverse
-        // of declaration order, and a components object reaching past
-        // its immediate predecessor.
+        // Non-contiguous ids, a build that names them in the reverse of
+        // declaration order, and a components object reaching past its
+        // immediate predecessor.
         let triangle = r#"<object id="5"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>"#;
         let tetra = r#"<object id="2"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="0" v2="3" v3="2"/><triangle v1="1" v2="2" v3="3"/></triangles></mesh></object>"#;
         let group = r#"<object id="9"><components><component objectid="5"/></components></object>"#;
@@ -467,8 +467,8 @@ mod error_tests {
 
     #[test]
     fn coordinates_overflowing_f32_after_scaling_are_refused() {
-        // 1e37 metres scale to 1e40 mm: finite in f64, infinite once
-        // downcast to the mesh's f32 coordinates.
+        // 1e37 metres scale to 1e40 mm: finite in f64, infinite once downcast
+        // to the mesh's f32 coordinates.
         let body = r#"<resources><object id="1"><mesh><vertices><vertex x="1e37" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build>"#;
         let err = read_err("meter", body);
         assert!(matches!(
@@ -511,9 +511,8 @@ mod error_tests {
 
     #[test]
     fn component_expansions_beyond_the_leaf_budget_are_refused() {
-        // Each level holds 2 components of the previous object, so
-        // level n expands to 2^(n-1) leaves; 18 levels overshoot the
-        // 100_000 budget.
+        // Each level holds 2 components of the previous object, so level n
+        // expands to 2^(n-1) leaves; 18 levels overshoot the 100_000 budget.
         let mut body = String::from("<resources>");
         body.push_str(TETRA_OBJECT);
         for k in 2_u32..=18 {
@@ -553,29 +552,15 @@ mod writer_tests {
         }
     }
 
-    /// Writes the scene and parses the resulting package back into a
-    /// document, so assertions run on the emitted structure. A
-    /// successful parse also proves definition-before-use ordering,
-    /// which `parse_model` enforces.
+    /// Writes the scene and parses the resulting package back into a document,
+    /// so assertions run on the emitted structure. A successful parse also
+    /// proves definition-before-use ordering, which `parse_model` enforces.
     fn written_document(scene: &Scene) -> ModelDocument {
         let mut bytes = Vec::new();
         write_threemf(scene, &mut bytes).expect("write succeeds");
         let package = Package::read_from(Cursor::new(bytes)).expect("package parses");
         let start = package.start_part().expect("start part resolves");
         parse_model(package.part_data(&start).expect("start part present")).expect("model parses")
-    }
-
-    /// Loader-shape scene: anonymous identity Group root with the
-    /// given leaf payloads as children.
-    fn loader_shape_scene(payloads: Vec<(LeafPayload, Transform3D)>) -> Scene {
-        let mut g = Scene::new();
-        let root = g.add_group(None, Transform3D::Identity);
-        g.add_root(root).expect("group root");
-        for (payload, transform) in payloads {
-            let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
-            g.add_child(root, leaf).expect("attach leaf");
-        }
-        g
     }
 
     #[test]
@@ -599,19 +584,16 @@ mod writer_tests {
 
     #[test]
     fn loader_shaped_root_group_collapses_into_build_items() {
-        let scene = loader_shape_scene(vec![
+        let scene = leaves_under_group_root([
+            (tri_mesh(Some("A")), Transform3D::Identity),
             (
-                LeafPayload::Mesh(Arc::new(tri_mesh(Some("A")))),
-                Transform3D::Identity,
-            ),
-            (
-                LeafPayload::Mesh(Arc::new(tri_mesh(Some("B")))),
+                tri_mesh(Some("B")),
                 Transform3D::Affine(AffineTransform3D::from_translation([4.0, 0.0, 0.0])),
             ),
         ]);
         let document = written_document(&scene);
-        // The wrapping group vanishes: 2 mesh objects, 2 items, no
-        // components object.
+        // The wrapping group vanishes: 2 mesh objects, 2 items, no components
+        // object.
         assert_eq!(document.objects.len(), 2);
         assert!(
             document
@@ -642,14 +624,7 @@ mod writer_tests {
             Transform3D::Identity,
         );
         g.add_root(root).expect("group root");
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
+        add_mesh_leaf(&mut g, root, tri_mesh(None), Transform3D::Identity);
 
         let document = written_document(&g);
         assert_eq!(document.build.len(), 1);
@@ -671,14 +646,7 @@ mod writer_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 9.0])),
         );
         g.add_root(root).expect("group root");
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
+        add_mesh_leaf(&mut g, root, tri_mesh(None), Transform3D::Identity);
 
         let document = written_document(&g);
         assert_eq!(document.build.len(), 1);
@@ -722,17 +690,14 @@ mod writer_tests {
 
     #[test]
     fn rotation_transform_writes_in_row_vector_form() {
-        // Exact 90-degree rotation about +Z in our column-vector
-        // layout; the written attribute must transpose into the
-        // row-vector layout the reader test pins from the other side.
+        // Exact 90-degree rotation about +Z in our column-vector layout; the
+        // written attribute must transpose into the row-vector layout that the
+        // reader test checks from the other side.
         let rotation = AffineTransform3D::from_linear_and_translation(
             [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
             [5.0, 6.0, 7.0],
         );
-        let scene = loader_shape_scene(vec![(
-            LeafPayload::Mesh(Arc::new(tri_mesh(None))),
-            Transform3D::Affine(rotation),
-        )]);
+        let scene = leaves_under_group_root([(tri_mesh(None), Transform3D::Affine(rotation))]);
         let document = written_document(&scene);
         assert_eq!(
             document.build[0].transform,
@@ -786,17 +751,10 @@ mod writer_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         );
         g.add_child(outer, inner).expect("attach inner");
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
-            )
-            .expect("add leaf");
-        g.add_child(inner, leaf).expect("attach leaf");
+        add_mesh_leaf(&mut g, inner, tri_mesh(None), Transform3D::Identity);
 
-        // `written_document` parsing succeeding is itself the
-        // definition-before-use proof; pin the id order too.
+        // A successful parse in `written_document` proves the
+        // definition-before-use order; the id order is checked too.
         let document = written_document(&g);
         assert_eq!(document.objects.len(), 3);
         assert!(matches!(
@@ -814,8 +772,8 @@ mod writer_tests {
         assert!(document.objects.is_empty());
         assert!(document.build.is_empty());
 
-        // Reading the same bytes back surfaces the empty build as the
-        // reader's EmptyBuild warning.
+        // Reading the same bytes back surfaces the empty build as the reader's
+        // EmptyBuild warning.
         let mut bytes = Vec::new();
         write_threemf(&scene, &mut bytes).expect("write succeeds");
         let (_, warnings) = read_threemf(&mut Cursor::new(bytes)).expect("read succeeds");
@@ -845,8 +803,8 @@ mod writer_tests {
         ));
     }
 
-    /// Subtree resource holding one triangle leaf under an identity
-    /// group; returns the resource id.
+    /// Registers a subtree resource that holds 1 triangle leaf under an
+    /// identity group, and returns its id.
     fn triangle_subtree(g: &mut Scene) -> sc_scene::SubtreeResourceId {
         let leaf = g
             .add_leaf(
@@ -867,9 +825,9 @@ mod writer_tests {
 
     #[test]
     fn references_write_as_build_items_sharing_one_object() {
-        // 2 references to the same subtree: the geometry serialises
-        // once, and each occurrence is a build item referencing the
-        // shared object under its own transform.
+        // 2 references to the same subtree: the geometry serialises once, and
+        // each occurrence is a build item referencing the shared object under
+        // its own transform.
         let mut g = Scene::new();
         let rid = triangle_subtree(&mut g);
         let root = g.add_group(None, Transform3D::Identity);
@@ -908,10 +866,10 @@ mod writer_tests {
 
     #[test]
     fn nested_references_write_as_nested_components() {
-        // Outer subtree holds 2 references to the inner subtree; the
-        // scene holds 2 references to the outer. 4 expanded
-        // occurrences, but the geometry serialises exactly once and
-        // the document stays proportional to the node count.
+        // Outer subtree holds 2 references to the inner subtree; the scene
+        // holds 2 references to the outer. 4 expanded occurrences, but the
+        // geometry serialises exactly once and the document stays proportional
+        // to the node count.
         let mut g = Scene::new();
         let inner = triangle_subtree(&mut g);
         let outer_root = g.add_group(None, Transform3D::Identity);
@@ -944,8 +902,8 @@ mod writer_tests {
         }
 
         let document = written_document(&g);
-        // 1 mesh object, the inner subtree object, the outer subtree
-        // object; nothing per occurrence.
+        // 3 objects: the mesh, the inner subtree and the outer subtree. An
+        // occurrence adds no object.
         assert_eq!(document.objects.len(), 3);
         let mesh_objects = document
             .objects
@@ -975,9 +933,9 @@ mod writer_tests {
 
     #[test]
     fn reference_transform_composes_with_the_subtree_root_transform() {
-        // A 3MF reference carries a single matrix, so the reference's
-        // call-site transform and the subtree root's own transform
-        // must compose into it, in call-site-first order.
+        // A 3MF reference carries a single matrix, so the reference's call-site
+        // transform and the subtree root's own transform must compose into it,
+        // in call-site-first order.
         let mut g = Scene::new();
         let leaf = g
             .add_leaf(
@@ -1013,9 +971,8 @@ mod writer_tests {
 
     #[test]
     fn a_referenced_subtree_round_trips_through_the_reader() {
-        // The reader expands components into per-occurrence leaves,
-        // so the written package loads back as 2 triangles at the 2
-        // call sites.
+        // The reader expands components into per-occurrence leaves, so the
+        // written package loads back as 2 triangles at the 2 call sites.
         let mut g = Scene::new();
         let rid = triangle_subtree(&mut g);
         let root = g.add_group(None, Transform3D::Identity);
@@ -1042,8 +999,8 @@ mod writer_tests {
             .expect("merge succeeds")
             .expect("geometry present");
         assert_eq!(merged.faces.len(), 2);
-        // tri_mesh's first vertex sits at (1, 0, 0); the occurrences
-        // place it at x = 11 and x = 21.
+        // The first vertex of tri_mesh sits at (1, 0, 0); the occurrences place
+        // it at x = 11 and x = 21.
         assert!(
             merged
                 .vertices

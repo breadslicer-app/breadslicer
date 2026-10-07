@@ -12,8 +12,10 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_scene::Scene;
-use sc_scene::node::LeafPayload;
+use sc_scene::node::{LeafPayload, NodeId};
 
+#[cfg(test)]
+mod tests_group;
 #[cfg(test)]
 mod tests_roots;
 
@@ -34,6 +36,38 @@ pub fn leaves_as_roots(leaves: impl IntoIterator<Item = (IndexedMesh, Transform3
 /// transform.
 pub fn meshes_as_roots(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
     leaves_as_roots(meshes.into_iter().map(|mesh| (mesh, Transform3D::Identity)))
+}
+
+/// Adds `mesh` as an inline-mesh leaf of `parent` under `transform`, and
+/// returns the leaf's id. `parent` must be a group or a CSG node of `scene`;
+/// the call panics on any other node.
+pub fn add_mesh_leaf(
+    scene: &mut Scene,
+    parent: NodeId,
+    mesh: IndexedMesh,
+    transform: Transform3D,
+) -> NodeId {
+    let leaf = scene
+        .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
+        .expect("inline-mesh leaf");
+    scene
+        .add_child(parent, leaf)
+        .expect("a fresh leaf attaches to a group or a CSG node");
+    leaf
+}
+
+/// Builds a scene whose only root is a group with an identity transform,
+/// holding each mesh, in order, as a leaf with its transform.
+pub fn leaves_under_group_root(
+    leaves: impl IntoIterator<Item = (IndexedMesh, Transform3D)>,
+) -> Scene {
+    let mut scene = Scene::new();
+    let root = scene.add_group(None, Transform3D::Identity);
+    scene.add_root(root).expect("fresh group becomes a root");
+    for (mesh, transform) in leaves {
+        add_mesh_leaf(&mut scene, root, mesh, transform);
+    }
+    scene
 }
 
 /// Builds the trio: the unit cube, the Z-tunnel prism and the Y-tunnel prism,

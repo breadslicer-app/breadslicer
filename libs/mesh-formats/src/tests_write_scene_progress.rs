@@ -3,23 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Phase-ordering and completion coverage for
-//! [`write_scene_with_progress`] across the 4 write formats, pinned on
-//! the shared manifold fixtures.
-
-use std::sync::Arc;
+//! Phase-ordering and completion coverage for [`write_scene_with_progress`]
+//! across the 4 write formats, checked on the shared manifold fixtures.
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
-use sc_scene::{LeafPayload, Scene};
+use sc_scene::Scene;
+use sc_scene_fixtures::leaves_under_group_root;
 
 use crate::filetypes::WriteFormat;
 use crate::ports::WriteSceneProgress;
 use crate::scene_writer::{FlattenWarning, write_scene, write_scene_with_progress};
 
-/// The 3 standing fixtures every format test writes: the cube plus
-/// the Z-tunnel and Y-tunnel prisms.
+/// Returns the 3 meshes that every format test writes: the cube and the
+/// Z-tunnel and Y-tunnel prisms.
 fn fixture_meshes() -> Vec<IndexedMesh> {
     vec![
         unit_cube_mesh(),
@@ -28,27 +26,14 @@ fn fixture_meshes() -> Vec<IndexedMesh> {
     ]
 }
 
-/// Loader-shape graph: every mesh becomes a translated leaf under one
-/// anonymous identity-Group root.
+/// Builds a scene whose identity group root holds the meshes as leaves, the
+/// mesh at index i translated by 30 i mm along x.
 fn scene_with_leaves(meshes: Vec<IndexedMesh>) -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    for (i, mesh) in meshes.into_iter().enumerate() {
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Affine(AffineTransform3D::from_translation([
-                    i as f64 * 30.0,
-                    0.0,
-                    0.0,
-                ])),
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
-    }
-    g
+    leaves_under_group_root(meshes.into_iter().enumerate().map(|(i, mesh)| {
+        let x = i as f64 * 30.0;
+        let translation = AffineTransform3D::from_translation([x, 0.0, 0.0]);
+        (mesh, Transform3D::Affine(translation))
+    }))
 }
 
 fn face_total(meshes: &[IndexedMesh]) -> u64 {
@@ -59,8 +44,8 @@ fn vertex_total(meshes: &[IndexedMesh]) -> u64 {
     meshes.iter().map(|m| m.vertices().len() as u64).sum()
 }
 
-/// Writes `graph` with progress reporting and returns the reports,
-/// the flatten warnings, and the written bytes.
+/// Writes `graph` with progress reporting and returns the reports, the flatten
+/// warnings, and the written bytes.
 fn write_collecting(
     graph: &Scene,
     format: WriteFormat,
@@ -75,7 +60,7 @@ fn write_collecting(
     (reports, warnings, bytes)
 }
 
-/// Position of a phase in execution order.
+/// Returns the position of a phase in execution order.
 fn phase_rank(report: &WriteSceneProgress) -> u8 {
     match report {
         WriteSceneProgress::Flatten { .. } => 0,
@@ -94,8 +79,8 @@ fn done_of(report: &WriteSceneProgress) -> u64 {
     }
 }
 
-/// Phases must run in declaration order and `done` must never regress
-/// inside a phase.
+/// Asserts that the phases run in declaration order and that `done` never goes
+/// back inside a phase.
 fn assert_phases_monotone(reports: &[WriteSceneProgress]) {
     for pair in reports.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
@@ -164,8 +149,8 @@ fn stl_ascii_single_object_reports_every_facet() {
     assert_phases_monotone(&reports);
     assert!(reports.contains(&WriteSceneProgress::Flatten { done: 1, total: 1 }));
     assert_eq!(last_serialize(&reports), (faces, faces));
-    // Fewer facets than the throttle slots, so every facet reports:
-    // the begin report plus one per facet.
+    // Fewer facets than the throttle slots, so every facet reports: the begin
+    // report plus 1 per facet.
     let serialize_reports = reports.iter().filter(|r| phase_rank(r) == 1).count() as u64;
     assert_eq!(serialize_reports, faces + 1);
     assert_eq!(
@@ -196,9 +181,9 @@ fn obj_reports_serialize_across_leaves_without_flatten() {
 
 #[test]
 fn obj_total_skips_faceless_meshes() {
-    // A faceless mesh emits no lines (the section writer skips it),
-    // so its vertices must not count toward the serialise total or
-    // `done` could never reach it.
+    // A faceless mesh emits no lines (the section writer skips it), so its
+    // vertices must not count toward the serialise total or `done` could never
+    // reach it.
     let faceless = IndexedMesh {
         meta: None,
         vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
@@ -256,8 +241,8 @@ fn threemf_reports_serialize_compress_write_in_order() {
 
 #[test]
 fn progress_reporting_keeps_output_bytes_identical() {
-    // The 3MF container embeds zip metadata that is not pinned here;
-    // its output equivalence is covered by the roundtrip suites.
+    // 3MF is left out: its container holds zip metadata that this test does not
+    // check byte for byte, and the round-trip tests cover its output.
     for (format, file_name) in [
         (WriteFormat::Obj, "plain.obj"),
         (WriteFormat::StlBin, "plain.stl"),

@@ -11,7 +11,6 @@
 //! with identical geometry.
 
 use std::io::Cursor;
-use std::sync::Arc;
 
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
@@ -20,7 +19,8 @@ use sc_mesh_formats::obj::{read_obj, write_obj};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
 use sc_scene::Scene;
-use sc_scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_scene::node::{NodeId, NodeKind};
+use sc_scene_fixtures::leaves_under_group_root;
 
 /// The trio's hostile names with the cleaned (3MF) and folded (line-format)
 /// forms: a directive-injection attempt, a Han name, and an accented name.
@@ -52,20 +52,12 @@ fn fixture_meshes() -> [IndexedMesh; 3] {
 /// so the baked (OBJ) and native (3MF) geometry compare against the same source
 /// vertices.
 fn hostile_trio_scene() -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    for ((hostile, _, _), mesh) in HOSTILE_TRIO.iter().zip(fixture_meshes()) {
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(named(mesh, hostile))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
-    }
-    g
+    leaves_under_group_root(
+        HOSTILE_TRIO
+            .iter()
+            .zip(fixture_meshes())
+            .map(|((hostile, _, _), mesh)| (named(mesh, hostile), Transform3D::Identity)),
+    )
 }
 
 fn leaf_ids_in_order(scene: &Scene) -> Vec<NodeId> {
