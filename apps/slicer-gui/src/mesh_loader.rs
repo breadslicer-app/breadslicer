@@ -217,10 +217,9 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
     })
 }
 
-/// Spawns a worker thread that parses the file at `path`, uploads its
-/// vertex+index buffers to `device`, and deposits the outcome via `ticket`. A
-/// panic anywhere in the worker is deposited as an error (via the ticket), like
-/// any other load failure.
+/// Prepares the file at `path` on a worker thread and deposits the outcome via
+/// `ticket`. A panic in the worker is deposited as an error, like any other
+/// load failure.
 pub(crate) fn spawn_load(
     ticket: LoadTicket,
     path: PathBuf,
@@ -232,62 +231,76 @@ pub(crate) fn spawn_load(
 ) {
     std::thread::spawn(move || {
         let result = guard_worker(|| {
-            let ParsedSource {
-                mut graph,
-                warnings,
-                project_payload,
-                project_warnings,
-                profile_warnings,
-                reloaded_slices,
-            } = parse_source(&path, &sink)?;
-            // Drop the parsed graph onto the build plate before the GPU upload
-            // and cache priming run on it, so both observe the placed world
-            // coordinates. A project's placement is part of its saved content,
-            // so a file whose project data this build reads skips this and
-            // reopens as saved.
-            if project_payload.is_none() {
-                place_on_plate(&mut graph, build_volume)?;
-            }
-            // Validate every mesh (faces + manifold) on the worker so the UI
-            // thread receives a ready health verdict; the initial workspace
-            // section is derived from it. Placement changes only transforms, so
-            // the verdict is the same whether or not the graph was placed
-            // above.
-            let mesh_health = scene_mesh_health(&graph);
-            // Eager priming: build the per-mesh spatial caches on this worker
-            // thread, so the UI thread receives a fully-primed `SceneSpatial`
-            // and the first picker click / gizmo attachment doesn't pay the
-            // build cost synchronously.
-            let spatial = SceneSpatial::primed_graph_with_progress(graph, |p| {
-                sink.set(LoadPhase::Priming, p.primed_triangles, p.total_triangles)
-            });
-            let gpu_scene = GpuScene::build_with_progress(
+            prepare_scene(
+                &path,
+                &sink,
+                build_volume,
                 &device,
                 device_token,
-                spatial.graph(),
                 &device_loss,
-                |p| {
-                    sink.set(
-                        LoadPhase::GpuUpload,
-                        p.processed_triangles,
-                        p.total_triangles,
-                    )
-                },
-            )?;
-            Ok(PreparedScene {
-                spatial,
-                gpu_scene,
-                warnings,
-                project_payload,
-                project_warnings,
-                profile_warnings,
-                reloaded_slices,
-                source_path: path.clone(),
-                mesh_health,
-            })
+            )
         });
         ticket.deposit(path, result);
     });
+}
+
+/// Builds the scene that a window installs from the file at `path`. A file
+/// without readable project data is dropped onto the plate of `build_volume`,
+/// and the scene is uploaded to `device`. Each phase reports its progress
+/// through `sink`.
+fn prepare_scene(
+    path: &Path,
+    sink: &LoadProgressSink,
+    build_volume: BuildVolume,
+    device: &wgpu::Device,
+    device_token: crate::mesh_render::DeviceToken,
+    device_loss: &DeviceLoss,
+) -> anyhow::Result<PreparedScene> {
+    let ParsedSource {
+        mut graph,
+        warnings,
+        project_payload,
+        project_warnings,
+        profile_warnings,
+        reloaded_slices,
+    } = parse_source(path, sink)?;
+    // Drop the parsed graph onto the build plate before the GPU upload and
+    // cache priming run on it, so both observe the placed world coordinates. A
+    // project's placement is part of its saved content, so a file whose project
+    // data this build reads skips this and reopens as saved.
+    if project_payload.is_none() {
+        place_on_plate(&mut graph, build_volume)?;
+    }
+    // Validate every mesh (faces + manifold) on the worker so the UI thread
+    // receives a ready health verdict; the initial workspace section is derived
+    // from it. Placement changes only transforms, so the verdict is the same
+    // whether or not the graph was placed above.
+    let mesh_health = scene_mesh_health(&graph);
+    // Eager priming: build the per-mesh spatial caches on this worker thread,
+    // so the UI thread receives a fully-primed `SceneSpatial` and the first
+    // picker click / gizmo attachment doesn't pay the build cost synchronously.
+    let spatial = SceneSpatial::primed_graph_with_progress(graph, |p| {
+        sink.set(LoadPhase::Priming, p.primed_triangles, p.total_triangles)
+    });
+    let gpu_scene =
+        GpuScene::build_with_progress(device, device_token, spatial.graph(), device_loss, |p| {
+            sink.set(
+                LoadPhase::GpuUpload,
+                p.processed_triangles,
+                p.total_triangles,
+            )
+        })?;
+    Ok(PreparedScene {
+        spatial,
+        gpu_scene,
+        warnings,
+        project_payload,
+        project_warnings,
+        profile_warnings,
+        reloaded_slices,
+        source_path: path.to_path_buf(),
+        mesh_health,
+    })
 }
 
 /// Runs `body`, turning a panic into an error that carries the panic message.
