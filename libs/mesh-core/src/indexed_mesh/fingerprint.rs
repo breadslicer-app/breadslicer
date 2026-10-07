@@ -8,8 +8,16 @@ use sha2::{Digest, Sha384};
 
 use super::IndexedMesh;
 
-// SHA-384 digest returned by `IndexedMesh::geometry_fingerprint`.
+// SHA-384 digest of the bytes from `IndexedMesh::encode_geometry`.
 newtype_array_readonly!(GeometryFingerprint, u8, 48);
+
+impl GeometryFingerprint {
+    /// Returns the fingerprint whose digest is `bytes`, for a digest read back
+    /// from storage.
+    pub fn from_bytes(bytes: [u8; 48]) -> Self {
+        Self(bytes)
+    }
+}
 
 impl IndexedMesh {
     /// Passes the canonical byte encoding of the geometry to `sink`: the vertex

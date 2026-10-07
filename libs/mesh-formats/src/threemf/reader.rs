@@ -24,31 +24,28 @@ use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 use crate::error::LoadThreeMfError;
 use crate::messages::LoadThreeMfWarning;
 
-/// The shared expansion budget, re-exported from `sc-mesh-core`
-/// (which owns the expansion vocabulary). The parser's
-/// definition-before-use rule makes reference cycles impossible, but
-/// a component DAG can still multiply, so the expanded leaf count is
-/// computed up front and an oversized document is refused before any
-/// scene node is built, in the same spirit as
+/// The shared expansion budget, re-exported from `sc-scene` (which owns the
+/// expansion vocabulary). The parser's definition-before-use rule makes
+/// reference cycles impossible, but a component DAG can still multiply, so the
+/// expanded leaf count is computed up front and an oversized document is
+/// refused before any scene node is built, in the same spirit as
 /// [`crate::MAX_MESH_ELEMENT_COUNT`].
 pub use sc_scene::MAX_EXPANDED_LEAF_COUNT;
 
-/// Hard ceiling on component nesting depth. The conversion recurses
-/// one frame per `<components>` level; the parser's
-/// definition-before-use rule bounds depth by the object count, which
-/// a crafted file can push high enough to overflow the stack. Real
-/// assemblies nest a handful of levels.
+/// Hard ceiling on component nesting depth. The conversion recurses 1 frame per
+/// `<components>` level; the parser's definition-before-use rule bounds depth
+/// by the object count, which a crafted file can push high enough to overflow
+/// the stack. Real assemblies nest a handful of levels.
 pub const MAX_COMPONENT_DEPTH: usize = 64;
 
 /// Reads a 3MF package into a [`Scene`].
 ///
-/// The scene mirrors the loader convention for multi-object formats:
-/// one identity-Group root whose children are the build items, in
-/// document order. Every mesh object referenced by the build becomes
-/// one shared mesh resource; each referencing item (or component)
-/// contributes a [`LeafPayload::MeshResource`] leaf. Objects made of
-/// components become Group nodes. All lengths are converted from the
-/// document unit to millimetres.
+/// The scene mirrors the loader convention for multi-object formats: a single
+/// identity-Group root whose children are the build items, in document order.
+/// Every mesh object referenced by the build becomes a single shared mesh
+/// resource; each referencing item (or component) contributes a
+/// [`LeafPayload::MeshResource`] leaf. Objects made of components become Group
+/// nodes. All lengths are converted from the document unit to millimetres.
 pub fn read_threemf<R>(read: &mut R) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError>
 where
     R: Read + Seek,
@@ -57,10 +54,8 @@ where
     read_threemf_from_package(&package)
 }
 
-/// Converts an already-parsed OPC package into a [`Scene`], with the
-/// same semantics as [`read_threemf`]. Public so package-level
-/// callers (project-file readers) can parse the container once and
-/// consume other parts from the same [`Package`].
+/// Converts an already-parsed OPC package into a [`Scene`], with the same
+/// semantics as [`read_threemf`].
 pub fn read_threemf_from_package(
     package: &Package,
 ) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError> {
@@ -81,27 +76,26 @@ pub fn read_threemf_from_package(
 }
 
 struct Converter<'doc> {
-    /// Every object in the document, keyed by id, so resolving a build
-    /// item or a component does not rescan the object list.
+    /// Every object in the document, keyed by id, so resolving a build item or
+    /// a component does not rescan the object list.
     objects: HashMap<ResourceId, &'doc ObjectResource>,
     scale: f64,
     scene: Scene,
-    /// Object id -> registered mesh resource, so N references to one
-    /// object share one resource.
+    /// Object id -> registered mesh resource, so N references to the same
+    /// object share 1 resource.
     resources: HashMap<u32, MeshResourceId>,
-    /// Object ids reached from the build, for the unbuilt-object
-    /// warning and the once-per-object type warning.
+    /// Object ids reached from the build, for the unbuilt-object warning and
+    /// the once-per-object type warning.
     reached: HashSet<u32>,
     warnings: Vec<LoadThreeMfWarning>,
 }
 
-/// Counts the leaves the build section would expand to, without
-/// building anything. One forward pass suffices: components only
-/// reference earlier objects, so each object's count is ready when a
-/// later object needs it. Saturating arithmetic keeps a doubling
-/// chain from overflowing; a saturated total still compares correctly
-/// against the cap.
+/// Counts the leaves the build section would expand to, without building
+/// anything. The count saturates instead of overflowing; a saturated total
+/// still compares correctly against the cap.
 fn expanded_leaf_count(document: &ModelDocument) -> usize {
+    // A single forward pass suffices: components only reference earlier
+    // objects, so each object's count is ready when a later object needs it.
     let mut counts: HashMap<u32, usize> = HashMap::new();
     for object in &document.objects {
         let count = match &object.payload {
@@ -215,10 +209,9 @@ fn convert_document(
 }
 
 impl Converter<'_> {
-    /// Converts one object reference into a scene node carrying
-    /// `local_transform`: a mesh object becomes a resource-backed
-    /// leaf, a components object becomes a Group with one converted
-    /// child per component.
+    /// Converts an object reference into a scene node carrying
+    /// `local_transform`: a mesh object becomes a resource-backed leaf, a
+    /// components object becomes a Group with 1 converted child per component.
     fn convert_object(
         &mut self,
         object: &ObjectResource,
@@ -270,8 +263,8 @@ impl Converter<'_> {
         }
     }
 
-    /// Returns the mesh resource for `object`, converting and
-    /// registering its mesh on first use.
+    /// Returns the mesh resource for `object`, converting and registering its
+    /// mesh on first use.
     fn mesh_resource_for(
         &mut self,
         object: &ObjectResource,
@@ -287,8 +280,8 @@ impl Converter<'_> {
     }
 }
 
-/// Converts mesh data to an [`IndexedMesh`], scaling document units
-/// to millimetres and downcasting to the mesh's f32 coordinates.
+/// Converts mesh data to an [`IndexedMesh`], scaling document units to
+/// millimetres and downcasting to the mesh's f32 coordinates.
 fn convert_mesh(
     object: &ObjectResource,
     data: &MeshData,
@@ -299,8 +292,8 @@ fn convert_mesh(
         let x = (vertex.x * scale) as f32;
         let y = (vertex.y * scale) as f32;
         let z = (vertex.z * scale) as f32;
-        // The document values are finite f64, but a magnitude beyond
-        // f32 range overflows to infinity in the downcast.
+        // The document values are finite f64, but a magnitude beyond f32 range
+        // overflows to infinity in the downcast.
         if !(x.is_finite() && y.is_finite() && z.is_finite()) {
             return Err(LoadThreeMfError::NonFiniteVertex {
                 object_id: object.id.get(),
@@ -311,40 +304,38 @@ fn convert_mesh(
     let mut faces = Vec::with_capacity(data.triangles.len());
     for triangle in &data.triangles {
         let indices = [triangle.v1.get(), triangle.v2.get(), triangle.v3.get()];
-        // parse_model range-checked every index against the vertex
-        // count, so direct indexing cannot go out of bounds.
+        // parse_model range-checked every index against the vertex count, so
+        // direct indexing cannot go out of bounds.
         let corners = [
             vertices[indices[0] as usize],
             vertices[indices[1] as usize],
             vertices[indices[2] as usize],
         ];
-        // 3MF stores no normals; recompute from the CCW winding. A
-        // degenerate triangle keeps a zero-normal sentinel so the
-        // geometry is not silently dropped; downstream validation
-        // flags it as ZeroAreaTriangle.
+        // 3MF stores no normals; recompute from the CCW winding. A degenerate
+        // triangle keeps a zero-normal sentinel so the geometry is not silently
+        // dropped; downstream validation flags it as `ZeroAreaTriangle`.
         let normal = compute_normal_from_triangle_vertices(&corners)
             .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
         faces.push(IndexedTriangle::from_raw_indices(normal, indices));
     }
     let meta = object.name.as_ref().map(|name| MeshMetadata {
         name: Some(name.clone()),
-        header_comment: None,
+        ..Default::default()
     });
     Ok(IndexedMesh::new(meta, vertices, faces))
 }
 
 /// Converts a 3MF transform to a [`Transform3D`].
 ///
-/// 3MF uses the row-vector convention: a point is a row on the left
-/// of the 4x3 matrix, whose rows are m00..m02, m10..m12, m20..m22 and
-/// the translation m30..m32. Our transforms multiply column vectors,
-/// so the 3x3 part transposes: linear[i][j] = m[j*3 + i]. The pinning
-/// test lives in the sibling unit tests.
+/// 3MF uses the row-vector convention: a point is a row on the left of the 4x3
+/// matrix, whose rows are m00..m02, m10..m12, m20..m22 and the translation
+/// m30..m32. Our transforms multiply column vectors, so the 3x3 part
+/// transposes: linear[i][j] = m[j*3 + i].
 ///
-/// Translations are document lengths and get the millimetre scale;
-/// the linear part is unitless. Scaling vertices and translations by
-/// the same uniform factor commutes with every linear part, so the
-/// composed world geometry comes out in millimetres exactly.
+/// Translations are document lengths and get the millimetre scale; the linear
+/// part is unitless. Scaling vertices and translations by the same uniform
+/// factor commutes with every linear part, so the composed world geometry comes
+/// out in millimetres exactly.
 fn convert_transform(matrix: Option<Matrix3D>, scale: f64) -> Transform3D {
     let Some(matrix) = matrix else {
         return Transform3D::Identity;

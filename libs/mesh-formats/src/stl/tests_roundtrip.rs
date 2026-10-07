@@ -4,8 +4,8 @@
  */
 
 //! write_stlb -> read_stlb round-trip coverage: shared fixtures plus a
-//! generated torus, pinning that the slice-based reader reproduces the
-//! written geometry bit for bit.
+//! generated torus, pinning that the slice-based reader reproduces the written
+//! geometry bit for bit.
 
 use std::io::Cursor;
 
@@ -15,8 +15,8 @@ use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mes
 
 use crate::stl::{read_stlb, write_stlb};
 
-/// Round-trips `mesh` through write_stlb and the public read_stlb
-/// entry, returning the single leaf mesh of the resulting scene.
+/// Round-trips `mesh` through write_stlb and the public read_stlb entry,
+/// returning the single leaf mesh of the resulting scene.
 fn round_trip(mesh: &IndexedMesh) -> IndexedMesh {
     let mut buf: Vec<u8> = Vec::new();
     write_stlb(mesh, &mut buf).expect("write_stlb succeeds");
@@ -30,8 +30,8 @@ fn round_trip(mesh: &IndexedMesh) -> IndexedMesh {
         .clone()
 }
 
-/// Per-face resolved geometry: normal bits plus the three vertex
-/// coordinate bit patterns, independent of vertex-list order.
+/// Returns, for each face, its normal bits and the coordinate bit patterns of
+/// its 3 vertices, independent of vertex-list order.
 fn resolved_faces(mesh: &IndexedMesh) -> Vec<([u32; 3], [[u32; 3]; 3])> {
     mesh.faces()
         .iter()
@@ -45,10 +45,10 @@ fn resolved_faces(mesh: &IndexedMesh) -> Vec<([u32; 3], [[u32; 3]; 3])> {
         .collect()
 }
 
-/// The STL soup format keeps per-face geometry, so a round-trip must
-/// preserve every resolved face bit for bit and, for fixtures without
-/// duplicate vertices, dedup back to the same vertex count. A second
-/// round-trip must then be an exact fixed point.
+/// Asserts that `mesh` round-trips: the STL soup format keeps per-face
+/// geometry, so a round-trip must preserve every resolved face bit for bit and,
+/// for fixtures without duplicate vertices, dedup back to the same vertex
+/// count. A second round-trip must then be an exact fixed point.
 fn assert_fixture_round_trips(mesh: &IndexedMesh) {
     let first = round_trip(mesh);
     assert_eq!(resolved_faces(&first), resolved_faces(mesh));
@@ -73,10 +73,10 @@ fn y_tunnel_prism_round_trips() {
     assert_fixture_round_trips(&cuboid_with_y_tunnel());
 }
 
-/// A generated torus: n x m quads, vertices shared across rings and
-/// segments. Built through `indexed_mesh_from_soup`, so its vertex
-/// order IS first-appearance order and the round-trip must reproduce
-/// the full `IndexedMesh` exactly, metadata included.
+/// Returns a generated torus: n x m quads, vertices shared across rings and
+/// segments. Built through `indexed_mesh_from_soup`, so its vertex order IS
+/// first-appearance order and the round-trip must reproduce the full
+/// `IndexedMesh` exactly, metadata included.
 fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
     let (major, minor) = (10.0_f32, 3.0_f32);
     let point = |i: usize, j: usize| -> Vertex {
@@ -104,7 +104,7 @@ fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
     }
     let meta = MeshMetadata {
         name: Some("torus".to_string()),
-        header_comment: None,
+        ..Default::default()
     };
     indexed_mesh_from_soup(Some(meta), soup, u32::MAX as usize).expect("torus builds")
 }
@@ -118,8 +118,8 @@ fn generated_torus_round_trips_exactly() {
 
 #[test]
 fn large_generated_torus_round_trips_exactly() {
-    // 8640 faces: exercises the parallel record-parse path, whose
-    // output must stay positionally identical to the sequential one.
+    // 8640 faces: exercises the parallel record-parse path, whose output must
+    // stay positionally identical to the sequential one.
     const { assert!(2 * 72 * 60 > crate::stl::stlb::PARALLEL_PARSE_MIN_RECORDS) };
     let mesh = torus_mesh(72, 60);
     assert_eq!(round_trip(&mesh), mesh);

@@ -66,7 +66,7 @@ fn the_named_trio_holds_the_3_named_meshes_in_order_at_their_places() {
                 IndexedMesh {
                     meta: Some(MeshMetadata {
                         name: Some("Cube".to_string()),
-                        header_comment: None,
+                        ..Default::default()
                     }),
                     ..unit_cube_mesh()
                 },
@@ -76,7 +76,7 @@ fn the_named_trio_holds_the_3_named_meshes_in_order_at_their_places() {
                 IndexedMesh {
                     meta: Some(MeshMetadata {
                         name: Some("ZTunnel".to_string()),
-                        header_comment: None,
+                        ..Default::default()
                     }),
                     ..cuboid_with_z_tunnel()
                 },
@@ -86,7 +86,7 @@ fn the_named_trio_holds_the_3_named_meshes_in_order_at_their_places() {
                 IndexedMesh {
                     meta: Some(MeshMetadata {
                         name: Some("YTunnel".to_string()),
-                        header_comment: None,
+                        ..Default::default()
                     }),
                     ..cuboid_with_y_tunnel()
                 },

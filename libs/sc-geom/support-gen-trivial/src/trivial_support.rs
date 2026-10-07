@@ -568,6 +568,7 @@ pub(crate) fn hex_prism(
         Some(MeshMetadata {
             name: Some("trivial-support-v0".to_string()),
             header_comment: None,
+            declared_facet_normals: None,
         }),
         vertices,
         faces,

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
+use crate::indexed_mesh::{GeometryFingerprint, IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
 
 const TRIANGLE: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
@@ -59,6 +59,13 @@ fn geometry_fingerprint_of_a_triangle_matches_the_sha384_oracle() {
 }
 
 #[test]
+fn from_bytes_returns_the_fingerprint_with_those_bytes() {
+    let fingerprint = mesh(&TRIANGLE, &[[0, 1, 2]]).geometry_fingerprint();
+    let bytes: [u8; 48] = fingerprint.into();
+    assert_eq!(GeometryFingerprint::from_bytes(bytes), fingerprint);
+}
+
+#[test]
 fn geometry_fingerprint_changes_when_a_coordinate_turns_from_0_to_negative_0() {
     let negative_zero = [[-0.0, 0.0, 0.0], TRIANGLE[1], TRIANGLE[2]];
     assert_ne!(
@@ -98,6 +105,7 @@ fn geometry_fingerprint_ignores_the_metadata() {
     named.set_meta(Some(MeshMetadata {
         name: Some("named".to_string()),
         header_comment: Some("comment".to_string()),
+        ..Default::default()
     }));
     assert_eq!(
         named.geometry_fingerprint(),

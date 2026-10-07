@@ -415,7 +415,7 @@ pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
 pub fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
     mesh.set_meta(Some(MeshMetadata {
         name: Some(name.to_string()),
-        header_comment: None,
+        ..Default::default()
     }));
     mesh
 }

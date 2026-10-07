@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Equivalence coverage for the sort-based soup deduplication against
-//! the retired streaming hash-based builder, plus pinned behavior for
-//! the `indexed_mesh_from_soup` entry point (zero-spelling folding,
-//! NaN identity, cap boundaries, metadata passthrough).
+//! Equivalence coverage for the sort-based soup deduplication against the
+//! retired streaming hash-based builder, plus pinned behavior for the
+//! `indexed_mesh_from_soup` entry point (zero-spelling folding, NaN identity,
+//! cap boundaries, metadata passthrough).
 
 use std::collections::HashMap;
 
@@ -16,11 +16,11 @@ use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Normal, Triangle, Vertex, VertexIndex};
 use crate::triangle_iterator::{IndexedMeshBuildError, indexed_mesh_from_soup};
 
-/// The retired streaming hash-based builder, kept verbatim as the
-/// reference the sort-based implementation must reproduce bit for bit
-/// (vertex order, vertex bits, index values, normal bits). Only the
-/// iteration wrapper differs: the original drew from a fallible
-/// triangle stream, this copy walks an already-collected soup.
+/// Builds the mesh with the retired streaming hash-based builder, kept verbatim
+/// as the reference the sort-based implementation must reproduce bit for bit
+/// (vertex order, vertex bits, index values, normal bits). Only the iteration
+/// wrapper differs: the original drew from a fallible triangle stream, this
+/// copy walks an already-collected soup.
 fn reference_build(
     meta: Option<MeshMetadata>,
     soup: &[Triangle],
@@ -73,11 +73,10 @@ fn reference_build(
     })
 }
 
-/// Coordinate palette exercising exact-bit dedup: a small set of
-/// distinct values so generated soups share vertices often, including
-/// both zero spellings. NaN is excluded here because `IndexedMesh`
-/// equality goes through `f32` PartialEq; NaN identity has its own
-/// pinned test below.
+/// Returns a coordinate palette exercising exact-bit dedup: a small set of
+/// distinct values so generated soups share vertices often, including both zero
+/// spellings. NaN is excluded here because `IndexedMesh` equality goes through
+/// `f32` PartialEq; NaN identity has its own pinned test below.
 fn coord_strategy() -> impl Strategy<Value = f32> {
     prop_oneof![
         Just(0.0_f32),
@@ -111,9 +110,9 @@ fn soup_strategy() -> impl Strategy<Value = Vec<Triangle>> {
     proptest::collection::vec(triangle_strategy(), 0..40)
 }
 
-/// Grid soup large enough for the parallel sorts to fork for real:
-/// 2 * n * m triangles over a shared-vertex height-field grid, with
-/// the first quad duplicated so duplicate triangles are represented.
+/// Returns a grid soup of 2 * n * m triangles over a shared-vertex height-field
+/// grid, large enough for the parallel sorts to fork for real, with the first
+/// quad duplicated so duplicate triangles are represented.
 fn grid_soup(n: usize, m: usize) -> Vec<Triangle> {
     let vert =
         |i: usize, j: usize| Vertex::new([i as f32 * 0.5, j as f32 * 0.5, ((i * j) % 7) as f32]);
@@ -152,8 +151,8 @@ fn matches_the_reference_on_a_large_grid() {
 
 #[test]
 fn keeps_the_bits_of_the_first_zero_spelling() {
-    // -0.0 seen first: the later +0.0 dedups onto it and the stored
-    // vertex keeps the -0.0 bits.
+    // -0.0 seen first: the later +0.0 dedups onto it and the stored vertex
+    // keeps the -0.0 bits.
     let soup = vec![Triangle::new(
         Normal::new([0.0, 0.0, 1.0]),
         [
@@ -241,7 +240,7 @@ fn soup_above_cap_reports_too_many_vertices() {
 fn passes_metadata_through_an_empty_soup() {
     let meta = MeshMetadata {
         name: Some("torus".to_string()),
-        header_comment: None,
+        ..Default::default()
     };
     let mesh = indexed_mesh_from_soup(Some(meta.clone()), Vec::new(), 0)
         .expect("an empty soup fits a cap of 0");

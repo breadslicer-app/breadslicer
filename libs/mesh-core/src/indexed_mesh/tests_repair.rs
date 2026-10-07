@@ -3,19 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Pins for the per-mesh repair policy: pass gating, refusal
-//! boundaries (mesh-level refusals leave the mesh byte-identical,
-//! pass-level refusals keep earlier passes' fixes), the fix log, and
-//! the post-repair edge-manifold verdict.
+//! Pins for the per-mesh repair policy: pass gating, refusal boundaries
+//! (mesh-level refusals leave the mesh byte-identical, pass-level refusals keep
+//! earlier passes' fixes), the fix log, and the post-repair edge-manifold
+//! verdict.
 
 use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
 use crate::indexed_mesh::validate::MeshFaceError;
-use crate::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
+use crate::indexed_mesh::{
+    DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, RepairPasses, RepairRefusal,
+};
 use crate::primitives::{FaceIndex, IndexedTriangle, Normal, Vertex};
 
-/// A closed, consistently wound tetrahedron with correct normals.
+/// Returns a closed, consistently wound tetrahedron with correct normals.
 fn tetrahedron() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([1.0, 1.0, 1.0]),
@@ -42,11 +44,11 @@ fn tetrahedron() -> IndexedMesh {
     }
 }
 
-/// An open strip of 2 consistently wound triangles sharing one edge:
-/// the 4 outer edges are boundary edges (a hole), and with 2 faces
-/// the flip pass's inside-out threshold (`faces / 2 = 1`) is above
-/// the zero flips detected, so the strip exercises the hole verdict
-/// without tripping the primitive's lone-face threshold quirk.
+/// Returns an open strip of 2 consistently wound triangles sharing 1 edge: the
+/// 4 outer edges are boundary edges (a hole), and with 2 faces the flip pass's
+/// inside-out threshold (`faces / 2 = 1`) is above the 0 flips detected, so the
+/// strip exercises the hole verdict without tripping the primitive's lone-face
+/// threshold quirk.
 fn open_strip() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([0.0, 0.0, 0.0]),
@@ -73,8 +75,8 @@ fn open_strip() -> IndexedMesh {
     }
 }
 
-/// Appends a face whose 2nd and 3rd slots repeat a vertex index, so
-/// face validation reports exactly one `ZeroLengthEdge` for it.
+/// Appends a face whose 2nd and 3rd slots repeat a vertex index, so face
+/// validation reports exactly 1 `ZeroLengthEdge` for it.
 fn append_zero_length_edge_face(mesh: &mut IndexedMesh) -> FaceIndex {
     let idx = mesh.faces.len();
     mesh.faces.push(IndexedTriangle::from_raw_indices(
@@ -155,6 +157,38 @@ fn zero_length_edge_faces_are_removed_with_a_pinned_log() {
     assert_eq!(mesh.faces.len(), 4);
 }
 
+/// Returns `mesh` with 1 declared facet normal per face in its metadata.
+fn with_declared_facet_normals(mut mesh: IndexedMesh) -> IndexedMesh {
+    let normals = vec![[0, 0, 0x3f80_0000]; mesh.faces.len()];
+    let declared = DeclaredFacetNormals::capture(&mesh, normals).expect("1 normal per face");
+    mesh.set_meta(Some(MeshMetadata {
+        declared_facet_normals: Some(declared),
+        ..Default::default()
+    }));
+    mesh
+}
+
+#[test]
+fn a_repair_that_applies_a_fix_drops_the_declared_facet_normals() {
+    let mut mesh = tetrahedron();
+    append_zero_length_edge_face(&mut mesh);
+    let mut mesh = with_declared_facet_normals(mesh);
+    let report = mesh.repair(RepairPasses::default_repair());
+    assert!(!report.fixes.is_empty());
+    assert_eq!(mesh.meta, Some(MeshMetadata::default()));
+}
+
+#[test]
+fn a_repair_without_a_fix_keeps_the_declared_facet_normals() {
+    let mut mesh = with_declared_facet_normals(tetrahedron());
+    let report = mesh.repair(RepairPasses::default_repair());
+    assert!(report.fixes.is_empty());
+    assert_eq!(
+        mesh.declared_facet_normals(),
+        Some(&[[0, 0, 0x3f80_0000]; 4][..])
+    );
+}
+
 #[test]
 fn nan_vertices_refuse_with_the_mesh_untouched() {
     let mut mesh = tetrahedron();
@@ -166,11 +200,11 @@ fn nan_vertices_refuse_with_the_mesh_untouched() {
         Some(RepairRefusal::InvalidVertices(errors)) => assert!(!errors.is_empty()),
         other => panic!("expected InvalidVertices, got {other:?}"),
     }
-    // The verdict is purely combinatorial: a NaN coordinate does not
-    // change edge-manifoldness.
+    // The verdict is purely combinatorial: a NaN coordinate does not change
+    // edge-manifoldness.
     assert!(report.edge_manifold_after);
-    // `PartialEq` cannot pin an untouched NaN mesh (NaN != NaN), so
-    // the vertices are compared bit for bit.
+    // `PartialEq` cannot pin an untouched NaN mesh (NaN != NaN), so the
+    // vertices are compared bit for bit.
     assert_eq!(mesh.faces, original.faces);
     assert_eq!(mesh.vertices.len(), original.vertices.len());
     for (kept, expected) in mesh.vertices.iter().zip(original.vertices.iter()) {
@@ -200,9 +234,9 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
     assert_eq!(mesh, original);
 }
 
-/// Mesh-level refusal boundary: face errors the enabled passes cannot
-/// address refuse the run BEFORE any mutation, and the refusal
-/// carries exactly the unaddressable residue.
+/// Pins the mesh-level refusal boundary: face errors the enabled passes cannot
+/// address refuse the run BEFORE any mutation, and the refusal carries exactly
+/// the unaddressable residue.
 #[test]
 fn mixed_face_errors_refuse_with_the_mesh_byte_identical() {
     let mut mesh = tetrahedron();
@@ -230,14 +264,14 @@ fn mixed_face_errors_refuse_with_the_mesh_byte_identical() {
     assert_eq!(mesh, original, "mesh-level refusal must not mutate");
 }
 
-/// Pass-level refusal boundary: an orientation failure keeps the
-/// zero-length-edge fixes already applied; the mesh holds exactly the
-/// completed passes' state.
+/// Pins the pass-level refusal boundary: an orientation failure keeps the
+/// zero-length-edge fixes already applied; the mesh holds exactly the completed
+/// passes' state.
 #[test]
 fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
     let mut mesh = tetrahedron();
-    // 2 of 4 faces flipped puts every face at 2 winding complaints,
-    // so the flip pass refuses with TooManyFlippedFaces.
+    // 2 of 4 faces flipped puts every face at 2 winding complaints, so the flip
+    // pass refuses with TooManyFlippedFaces.
     mesh.faces[0].vertices.reverse();
     mesh.faces[1].vertices.reverse();
     let degenerate = append_zero_length_edge_face(&mut mesh);
@@ -301,9 +335,9 @@ fn a_hole_is_reported_by_the_verdict_not_a_refusal() {
     assert_eq!(mesh, original);
 }
 
-/// The shared-borrow assessment and the mutating run can never
-/// disagree: for every fixture class, `assess_repair` predicts
-/// exactly what `repair` reports on a clone of the same mesh.
+/// Pins that the shared-borrow assessment and the mutating run never disagree:
+/// for every fixture class, `assess_repair` predicts exactly what `repair`
+/// reports on a clone of the same mesh.
 #[test]
 fn assessment_matches_the_repair_report_for_every_fixture_class() {
     let flipped = {
@@ -330,9 +364,9 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         mesh.vertices[0] = Vertex::new([f32::NAN, 1.0, 1.0]);
         mesh
     };
-    // A lone open triangle trips the flip pass's zero threshold
-    // (faces / 2 = 0), a pre-existing primitive quirk; the pin here
-    // is only that assessment and run agree about it.
+    // A lone open triangle trips the flip pass's threshold of 0 (half its face
+    // count, rounded down), a pre-existing primitive quirk; the pin here is
+    // only that assessment and run agree about it.
     let lone_triangle = {
         let mut mesh = open_strip();
         mesh.faces.truncate(1);
@@ -373,8 +407,8 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
             }
         }
     }
-    // The matrix covers all 3 assessment kinds; pin the per-case
-    // kinds so a fixture drifting into another class is caught.
+    // The matrix covers all 3 assessment kinds; pin the per-case kinds so a
+    // fixture drifting into another class is caught.
     let passes = RepairPasses::default_repair();
     assert_eq!(
         assess_repair(&tetrahedron(), passes),

@@ -206,19 +206,18 @@ fn upload_buffer(
     Ok(buffer)
 }
 
-/// GPU mirror of a `Scene`. Holds 1 [`ObjectDraw`] per leaf in pre-order
-/// traversal of the graph's roots, plus a uniform buffer of [`ModelEntry`]
-/// slots, padded to the device's `min_uniform_buffer_offset_alignment` so the
-/// render loop can address each slot via a dynamic-offset bind. The world-space
-/// AABB is captured at build time from `Scene::aabb`; it is used once for
-/// camera framing and is not refreshed on per-frame transform updates (the
-/// camera persists across edits, so a post-edit AABB is irrelevant for
-/// framing).
+/// GPU mirror of a `Scene`. Holds 1 `ObjectDraw` per leaf in pre-order
+/// traversal of the graph's roots, plus a uniform buffer of `ModelEntry` slots,
+/// padded to the device's `min_uniform_buffer_offset_alignment` so the render
+/// loop can address each slot via a dynamic-offset bind. The world-space AABB
+/// is captured at build time from `Scene::aabb`; it is used once for camera
+/// framing and is not refreshed on per-frame transform updates (the camera
+/// persists across edits, so a post-edit AABB is irrelevant for framing).
 ///
 /// Construction ([`GpuScene::build`]) touches a `wgpu::Device` but not the UI
 /// loop, so it can run on the worker thread that parsed the scene; the UI
 /// thread then attaches the matching bind group via
-/// [`Renderer::install_scene`].
+/// [`Renderer::install_scene`](super::Renderer::install_scene).
 pub struct GpuScene {
     objects: Vec<ObjectDraw>,
     model_buffer: wgpu::Buffer,
@@ -1390,7 +1389,7 @@ mod leaf_buffer_limit_tests {
         IndexedMesh {
             meta: name.map(|n| MeshMetadata {
                 name: Some(n.to_string()),
-                header_comment: None,
+                ..Default::default()
             }),
             vertices: (0..vertex_count)
                 .map(|i| Vertex::new([i as f32, 0.0, 0.0]))

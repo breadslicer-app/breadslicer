@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod declared_facet_normals;
 pub mod diagnose;
 pub mod error_summary;
 pub mod fingerprint;
@@ -14,6 +15,8 @@ pub mod validate;
 pub mod validated;
 
 #[cfg(test)]
+mod tests_declared_facet_normals;
+#[cfg(test)]
 mod tests_diagnose;
 #[cfg(test)]
 mod tests_fingerprint;
@@ -22,6 +25,7 @@ mod tests_repair;
 #[cfg(test)]
 mod tests_volume;
 
+pub use declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fingerprint::GeometryFingerprint;
@@ -41,6 +45,7 @@ use crate::primitives::{IndexedTriangle, Vertex};
 pub struct MeshMetadata {
     pub name: Option<String>,
     pub header_comment: Option<String>,
+    pub declared_facet_normals: Option<DeclaredFacetNormals>,
 }
 
 /// Which face-orientation repairs `fix_faces_orientation` should apply.
