@@ -4,18 +4,15 @@
  */
 
 use std::num::NonZeroU32;
-use std::sync::Arc;
 
-use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal};
-use sc_mesh_core::transform::Transform3D;
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
 };
-use sc_scene::node::LeafPayload;
-use sc_scene::{Scene, SceneError};
+use sc_scene::SceneError;
+use sc_scene_fixtures::{meshes_as_roots, trio_as_roots};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 use sc_sla_formats::{CreationTime, PrintProgram};
 
@@ -131,8 +128,8 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
-/// The same resin again, with the bottom layers' waits calibrated
-/// apart from the normal ones.
+/// The same resin again, with the bottom layers' waits calibrated apart from
+/// the normal ones.
 const MATERIAL_WITH_BOTTOM_WAITS_TOML: &str = r#"
 [identity]
 id = "sirayatech-blu"
@@ -162,8 +159,8 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
-/// The same resin again, with the bottom layers' travel calibrated
-/// apart from the normal one.
+/// The same resin again, with the bottom layers' travel calibrated apart from
+/// the normal one.
 const MATERIAL_WITH_BOTTOM_MOTION_TOML: &str = r#"
 [identity]
 id = "sirayatech-blu"
@@ -190,9 +187,9 @@ bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 90.0
 "#;
 
-/// A resin whose travel splits in two, carrying the numbers ELEGOO's
-/// own slicer wrote for the normal layers of a Mars 5 and Lychee
-/// wrote for its bottom layers.
+/// A resin whose travel splits into 2 stages, carrying the numbers ELEGOO's own
+/// slicer wrote for the normal layers of a Mars 5 and Lychee wrote for its
+/// bottom layers.
 const MATERIAL_WITH_SPLIT_TRAVEL_TOML: &str = r#"
 [identity]
 id = "elegoo-standard-grey"
@@ -221,8 +218,8 @@ bottom_retract_speed_mm_min = 60.0
 bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 120.0 }
 "#;
 
-/// The same split travel with round numbers, so a 2 layer schedule
-/// adds up by hand.
+/// The same split travel with round numbers, so a 2 layer schedule adds up by
+/// hand.
 const MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML: &str = r#"
 [identity]
 id = "elegoo-standard-grey"
@@ -251,7 +248,7 @@ bottom_retract_speed_mm_min = 120.0
 bottom_second_travel = { lift_distance_mm = 2.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 120.0 }
 "#;
 
-/// The same resin again, driving the light at two different duties.
+/// The same resin again, driving the light at 2 different duties.
 const MATERIAL_WITH_LIGHT_PWM_TOML: &str = r#"
 [identity]
 id = "sirayatech-blu"
@@ -277,9 +274,8 @@ light_pwm = 80.0
 bottom_light_pwm = 60.0
 "#;
 
-/// The same resin again, with a single bottom layer and every pause
-/// and travel calibrated apart, so a 2 layer schedule adds up by
-/// hand.
+/// The same resin again, with a single bottom layer and every pause and travel
+/// calibrated apart, so a 2 layer schedule adds up by hand.
 const MATERIAL_FOR_TIMING_TOML: &str = r#"
 [identity]
 id = "sirayatech-blu"
@@ -333,32 +329,9 @@ fn slice_profile(config: &ResolvedPrintConfig, total_layers: u32) -> SliceProfil
     )
 }
 
-/// The 3 fixture solids together: a unit cube, plus 2 prisms of 8
-/// mm3 each holding a 0.8 x 0.8 x 2 tunnel.
+/// The 3 fixture solids together: a unit cube, plus 2 prisms of 8 mm3 each
+/// holding a 0.8 x 0.8 x 2 tunnel.
 const SCENE_VOLUME_MM3: f64 = 1.0 + 2.0 * (8.0 - 1.28);
-
-fn plate_of(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
-    let mut scene = Scene::new();
-    for mesh in meshes {
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("add leaf");
-        scene.add_root(leaf).expect("leaf as root");
-    }
-    scene
-}
-
-fn scene() -> Scene {
-    plate_of([
-        unit_cube_mesh(),
-        cuboid_with_z_tunnel(),
-        cuboid_with_y_tunnel(),
-    ])
-}
 
 const CREATED_AT: &str = "2026-09-04 17:31:02";
 const CREATED_AT_UNIX_SEC: u64 = 1_788_708_662;
@@ -373,7 +346,7 @@ fn created_at() -> CreationTime {
 fn program(printer_toml: &str, total_layers: u32) -> PrintProgram {
     let config = resolved_config(printer_toml);
     let profile = slice_profile(&config, total_layers);
-    project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap()
+    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 fn exposures(program: &PrintProgram) -> Vec<f64> {
@@ -462,7 +435,8 @@ fn every_layer_records_its_slab_top() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     let scheduled: Vec<f64> = profile.layer_schedule().iter_slab_tops().collect();
     let recorded: Vec<f64> = program
@@ -478,7 +452,8 @@ fn the_raster_setup_comes_from_the_slice_profile() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     assert_eq!(program.raster.build_volume(), profile.build_volume());
     assert_eq!(
@@ -562,7 +537,8 @@ fn the_bottom_motion_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_MOTION_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -584,7 +560,8 @@ fn a_split_travel_lands_as_the_vendor_files_record_it() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     for layer in &program.layers[BOTTOM_LAYER_COUNT as usize..] {
         assert_eq!(layer.lift.distance_mm.value(), 2.0);
@@ -605,7 +582,8 @@ fn a_split_travel_rises_and_returns_the_same_distance() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     for layer in &program.layers {
         let up = layer.lift.distance_mm.value()
@@ -625,7 +603,8 @@ fn the_bottom_layers_take_their_own_split_travel() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     for layer in &program.layers[..BOTTOM_LAYER_COUNT as usize] {
         assert_eq!(layer.lift.distance_mm.value(), 3.0);
@@ -669,7 +648,8 @@ fn the_calibrated_waits_reach_every_record() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     for layer in &program.layers {
         assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
@@ -683,7 +663,8 @@ fn the_bottom_waits_stop_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -703,7 +684,8 @@ fn the_transition_band_holds_the_normal_waits_while_its_exposure_still_ramps() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
     let band = BOTTOM_LAYER_COUNT as usize..(BOTTOM_LAYER_COUNT + TRANSITION_COUNT) as usize;
 
     for layer in &program.layers[band] {
@@ -727,7 +709,8 @@ fn the_bottom_light_pwm_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_LIGHT_PWM_TOML);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -759,8 +742,8 @@ fn a_layer_beyond_the_representable_height_names_itself() {
         PackingMode::None,
     );
 
-    let err =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap_err();
+    let err = project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        .unwrap_err();
     match err {
         UnprojectablePrint::SlabTop(err) => {
             assert_eq!(err.layer_index, 1);
@@ -779,8 +762,8 @@ fn the_program_reports_the_material_the_plate_encloses() {
 
 #[test]
 fn the_program_weighs_that_material_at_the_resins_cured_density() {
-    // The fixture resin states none, so the resolver's typical
-    // photopolymer stands in: 14.44 mm3 at 1.17 g/cm3.
+    // The fixture resin states none, so the resolver's typical photopolymer
+    // stands in: 14.44 mm3 at 1.17 g/cm3.
     let program = program(PRINTER_TOML, 20);
     let expected = SCENE_VOLUME_MM3 / 1_000.0 * 1.17;
     let mass = program.mass_g.value();
@@ -796,7 +779,8 @@ fn a_denser_resin_weighs_more_for_the_same_plate() {
     let config = resolved_config_for(PRINTER_TOML, &dense);
     let profile = slice_profile(&config, 20);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     let expected = SCENE_VOLUME_MM3 / 1_000.0 * 2.0;
     let mass = program.mass_g.value();
@@ -807,20 +791,25 @@ fn a_denser_resin_weighs_more_for_the_same_plate() {
 fn an_empty_plate_weighs_nothing() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program =
-        project_to_print_program(&plate_of([]), &config, &profile, created_at(), "0.0.12").unwrap();
+    let program = project_to_print_program(
+        &meshes_as_roots([]),
+        &config,
+        &profile,
+        created_at(),
+        "0.0.12",
+    )
+    .unwrap();
     assert_eq!(program.mass_g.value(), 0.0);
 }
 
-/// What [`MATERIAL_FOR_TIMING_TOML`] asks of a 2 layer schedule:
-/// 30 + 21 + 12 + 5 seconds for the bottom layer, 2.5 + 4.1 + 2.5 + 2
-/// for the normal one.
+/// What [`MATERIAL_FOR_TIMING_TOML`] asks of a 2 layer schedule: 30 + 21 + 12 +
+/// 5 seconds for the bottom layer, 2.5 + 4.1 + 2.5 + 2 for the normal one.
 const SCHEDULE_SEC: f64 = 68.0 + 11.1;
 
 fn timed_program(printer_toml: &str) -> PrintProgram {
     let config = resolved_config_for(printer_toml, MATERIAL_FOR_TIMING_TOML);
     let profile = slice_profile(&config, 2);
-    project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap()
+    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 #[test]
@@ -834,9 +823,9 @@ fn an_uncalibrated_printer_reports_what_the_schedule_itself_asks_for() {
     );
 }
 
-/// What [`MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML`] asks of a 2 layer
-/// schedule: 30 seconds of light and 6 of travel for the bottom
-/// layer, 2 and 4 for the normal one.
+/// What [`MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML`] asks of a 2 layer schedule:
+/// 30 seconds of light and 6 of travel for the bottom layer, 2 and 4 for the
+/// normal one.
 const SPLIT_TRAVEL_SCHEDULE_SEC: f64 = 36.0 + 6.0;
 
 #[test]
@@ -847,7 +836,8 @@ fn the_reported_time_counts_both_halves_of_a_split_travel() {
     );
     let profile = slice_profile(&config, 2);
     let program =
-        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+        project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+            .unwrap();
 
     let reported = program.print_time_sec.value();
     assert!(
@@ -877,8 +867,14 @@ fn a_calibration_that_subtracts_more_than_the_print_takes_reports_no_time() {
 fn an_empty_plate_encloses_nothing() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program =
-        project_to_print_program(&plate_of([]), &config, &profile, created_at(), "0.0.12").unwrap();
+    let program = project_to_print_program(
+        &meshes_as_roots([]),
+        &config,
+        &profile,
+        created_at(),
+        "0.0.12",
+    )
+    .unwrap();
     assert_eq!(program.volume_mm3.value(), 0.0);
 }
 
@@ -886,7 +882,7 @@ fn an_empty_plate_encloses_nothing() {
 fn a_scene_that_cannot_be_measured_stops_the_projection() {
     let mut mesh = unit_cube_mesh();
     mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
-    let scene = plate_of([mesh]);
+    let scene = meshes_as_roots([mesh]);
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
 
@@ -938,8 +934,8 @@ fn the_creation_time_counts_the_same_moment_in_seconds() {
         .expect("4 leading digits");
 
     assert!(now.unix_sec > A_PAST_MOMENT, "seconds: {}", now.unix_sec);
-    // 2 renderings of one instant, so the epoch seconds must land in
-    // the year the text names.
+    // 2 renderings of 1 instant, so the epoch seconds must land in the year the
+    // text names.
     let seconds_in_year = 365 * 24 * 60 * 60;
     let years_since_1970 = (now.unix_sec / seconds_in_year) as i32 + 1970;
     assert!(

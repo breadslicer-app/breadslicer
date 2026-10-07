@@ -3,17 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{EffectiveMaterial, MaterialProfile, PrinterProfile};
 use sc_scene::Scene;
-use sc_scene::node::LeafPayload;
+use sc_scene_fixtures::{meshes_as_roots, trio_as_roots};
 use sc_sl1cer::CancelToken;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::error::SliceSceneError;
@@ -102,29 +100,14 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
 
-/// Request 0.25 mm layers: the cube (top at z = 0.5) takes 2 layers, the prisms
-/// (top at z = 2) take 8.
+/// Requests 0.25 mm layers: the cube (top at z = 0.5) takes 2 layers, the
+/// prisms (top at z = 2) take 8.
 fn params() -> SlicingParams {
     SlicingParams {
         layer_height_request: Some(mm(0.25)),
         first_layer_height: None,
         aa_level: AaLevel::Off,
     }
-}
-
-fn scene_with(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
-    let mut scene = Scene::new();
-    for mesh in meshes {
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-    }
-    scene
 }
 
 fn completed(scene: &Scene) -> SlicedPlate {
@@ -145,7 +128,7 @@ fn completed(scene: &Scene) -> SlicedPlate {
 
 #[test]
 fn the_cube_slices_to_the_requested_layer_grid() {
-    let plate = completed(&scene_with([unit_cube_mesh()]));
+    let plate = completed(&meshes_as_roots([unit_cube_mesh()]));
     assert_eq!(plate.schedule().total_layers(), 2);
     assert_eq!(plate.leaves().len(), 1);
     let stack = plate.leaves()[0].stack();
@@ -158,7 +141,7 @@ fn the_cube_slices_to_the_requested_layer_grid() {
 
 #[test]
 fn the_z_tunnel_prism_carries_one_polygon_with_one_hole_in_every_layer() {
-    let plate = completed(&scene_with([cuboid_with_z_tunnel()]));
+    let plate = completed(&meshes_as_roots([cuboid_with_z_tunnel()]));
     let stack = plate.leaves()[0].stack();
     assert_eq!(stack.layers().len(), 8);
     for layer in stack.layers() {
@@ -169,7 +152,7 @@ fn the_z_tunnel_prism_carries_one_polygon_with_one_hole_in_every_layer() {
 
 #[test]
 fn the_y_tunnel_prism_transitions_between_one_and_two_polygons() {
-    let plate = completed(&scene_with([cuboid_with_y_tunnel()]));
+    let plate = completed(&meshes_as_roots([cuboid_with_y_tunnel()]));
     let stack = plate.leaves()[0].stack();
     assert_eq!(stack.layers().len(), 8);
     let counts: Vec<usize> = stack
@@ -191,11 +174,7 @@ fn the_y_tunnel_prism_transitions_between_one_and_two_polygons() {
 
 #[test]
 fn the_trio_merges_into_one_plate_stack() {
-    let plate = completed(&scene_with([
-        unit_cube_mesh(),
-        cuboid_with_z_tunnel(),
-        cuboid_with_y_tunnel(),
-    ]));
+    let plate = completed(&trio_as_roots());
     assert_eq!(plate.leaves().len(), 3);
     let contours = plate.merge().expect("stacks share one schedule");
     let merged = contours.stack();
@@ -209,11 +188,7 @@ fn the_trio_merges_into_one_plate_stack() {
 
 #[test]
 fn the_merged_contours_keep_the_schedule_the_run_sliced_on() {
-    let plate = completed(&scene_with([
-        unit_cube_mesh(),
-        cuboid_with_z_tunnel(),
-        cuboid_with_y_tunnel(),
-    ]));
+    let plate = completed(&trio_as_roots());
     let contours = plate.merge().expect("stacks share one schedule");
     let expected = LayerSchedule::uniform(0.25, 0.25, 8).expect("a positive, non-empty schedule");
     assert_eq!(contours.schedule(), &expected);
@@ -225,7 +200,7 @@ fn a_pre_cancelled_token_yields_cancelled() {
     let cancel = CancelToken::new();
     cancel.cancel();
     let run = slice_plate(
-        &scene_with([unit_cube_mesh()]),
+        &meshes_as_roots([unit_cube_mesh()]),
         &printer(),
         &material(),
         &params(),
@@ -241,7 +216,7 @@ fn progress_ends_complete() {
     let last_completed = AtomicU32::new(0);
     let last_total = AtomicU32::new(0);
     let run = slice_plate(
-        &scene_with([unit_cube_mesh()]),
+        &meshes_as_roots([unit_cube_mesh()]),
         &printer(),
         &material(),
         &params(),
@@ -265,7 +240,7 @@ fn an_unresolvable_layer_height_is_a_prepare_error() {
         aa_level: AaLevel::Off,
     };
     let err = slice_plate(
-        &scene_with([unit_cube_mesh()]),
+        &meshes_as_roots([unit_cube_mesh()]),
         &printer(),
         &heightless_material(),
         &no_request,
@@ -311,7 +286,7 @@ fn an_invalid_leaf_is_an_engine_error() {
         )],
     };
     let err = slice_plate(
-        &scene_with([broken]),
+        &meshes_as_roots([broken]),
         &printer(),
         &material(),
         &params(),
@@ -327,9 +302,9 @@ fn an_invalid_leaf_is_an_engine_error() {
 
 #[test]
 fn stacks_from_different_schedules_refuse_to_merge() {
-    let cube = completed(&scene_with([unit_cube_mesh()]));
-    let prism = completed(&scene_with([cuboid_with_z_tunnel()]));
-    // Splice leaves sliced under 2-layer and 8-layer grids into one plate; only
+    let cube = completed(&meshes_as_roots([unit_cube_mesh()]));
+    let prism = completed(&meshes_as_roots([cuboid_with_z_tunnel()]));
+    // Splice leaves sliced under 2-layer and 8-layer grids into 1 plate; only
     // reachable by hand, and merge must refuse, typed.
     let mut leaves = cube.leaves;
     leaves.extend(prism.leaves);
@@ -342,7 +317,7 @@ fn stacks_from_different_schedules_refuse_to_merge() {
 
 #[test]
 fn schedule_for_selection_matches_the_sliced_schedule() {
-    let scene = scene_with([unit_cube_mesh()]);
+    let scene = meshes_as_roots([unit_cube_mesh()]);
     let schedule = schedule_for_selection(&scene, &printer(), &material(), &params())
         .expect("the schedule resolves");
     let plate = completed(&scene);

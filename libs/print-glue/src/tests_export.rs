@@ -4,19 +4,16 @@
  */
 
 use std::error::Error;
-use std::sync::Arc;
 
-use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal};
-use sc_mesh_core::transform::Transform3D;
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolveError, ResolvedField,
     SceneOverrides, resolve_layer_height,
 };
 use sc_scene::Scene;
-use sc_scene::node::LeafPayload;
+use sc_scene_fixtures::{meshes_as_roots, trio_as_roots};
 use sc_sl1cer::CancelToken;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::LayerSchedule;
@@ -112,31 +109,6 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
 
-fn scene_with(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
-    let mut scene = Scene::new();
-    for mesh in meshes {
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-    }
-    scene
-}
-
-/// Builds the cube with the Z-tunnel and Y-tunnel prisms, whose tops at z = 2
-/// set the plate's height.
-fn trio() -> Scene {
-    scene_with([
-        unit_cube_mesh(),
-        cuboid_with_z_tunnel(),
-        cuboid_with_y_tunnel(),
-    ])
-}
-
 fn resin_defaults() -> SlicingParams {
     SlicingParams {
         layer_height_request: None,
@@ -201,7 +173,7 @@ fn requesting(layer_height: f64) -> SceneOverrides {
 
 #[test]
 fn contours_cut_at_a_requested_layer_height_export_under_the_same_request() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let contours = contours_of(&scene, &quarter_mm_layers());
 
     let job =
@@ -220,7 +192,7 @@ fn contours_cut_at_a_requested_layer_height_export_under_the_same_request() {
 
 #[test]
 fn the_same_contours_exported_without_the_request_are_refused() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let contours = contours_of(&scene, &quarter_mm_layers());
 
     let err = export(&scene, contours, &calibrated(), &SceneOverrides::default())
@@ -252,8 +224,13 @@ fn a_first_layer_off_the_z_step_is_refused() {
     .expect("z is strictly increasing");
     let contours = PlateContours::new(stack, schedule).expect("3 layers pair with 3");
 
-    let err = export(&trio(), contours, &calibrated(), &SceneOverrides::default())
-        .expect_err("a 0.057 mm first layer is off a 0.01 mm step");
+    let err = export(
+        &trio_as_roots(),
+        contours,
+        &calibrated(),
+        &SceneOverrides::default(),
+    )
+    .expect_err("a 0.057 mm first layer is off a 0.01 mm step");
 
     match err {
         UnexportableSlice::FirstLayerOffZStep {
@@ -269,7 +246,7 @@ fn a_first_layer_off_the_z_step_is_refused() {
 
 #[test]
 fn a_first_layer_that_slicing_snapped_onto_the_z_step_is_accepted() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let params = SlicingParams {
         first_layer_height: Some(mm(0.057)),
         ..resin_defaults()
@@ -285,7 +262,7 @@ fn a_first_layer_that_slicing_snapped_onto_the_z_step_is_accepted() {
 
 #[test]
 fn a_fresh_slice_exports_with_the_raster_and_the_layers_it_was_sliced_with() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let params = SlicingParams {
         aa_level: AaLevel::X4,
         ..resin_defaults()
@@ -318,7 +295,7 @@ fn a_fresh_slice_exports_with_the_raster_and_the_layers_it_was_sliced_with() {
 
 #[test]
 fn the_program_carries_a_record_for_each_contour_layer() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
     let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
@@ -332,7 +309,7 @@ fn the_program_carries_a_record_for_each_contour_layer() {
 
 #[test]
 fn the_program_names_the_machine_and_the_resin_it_was_sliced_for() {
-    let scene = trio();
+    let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
     let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
@@ -346,7 +323,7 @@ fn the_program_names_the_machine_and_the_resin_it_was_sliced_for() {
 fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
     // The fixture resin names what resolution requires and none of the optional
     // values, so the whole optional set falls back.
-    let scene = trio();
+    let scene = trio_as_roots();
     let contours = contours_of(&scene, &resin_defaults());
 
     let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
@@ -359,7 +336,7 @@ fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
 fn a_resin_without_print_calibration_is_refused_by_the_resolver() {
     // The same pairing slices geometry: a printer file also needs the
     // exposures, which this resin carries for no printer.
-    let scene = trio();
+    let scene = trio_as_roots();
     let uncalibrated = material(UNCALIBRATED_MATERIAL_TOML);
     let contours = slice(&scene, &uncalibrated, &resin_defaults())
         .merge()
@@ -375,12 +352,12 @@ fn a_resin_without_print_calibration_is_refused_by_the_resolver() {
 fn a_scene_that_cannot_be_measured_is_refused_by_the_program() {
     // Only the program's volume reads the scene, so contours cut from a sound
     // scene reach that measure.
-    let contours = contours_of(&trio(), &resin_defaults());
+    let contours = contours_of(&trio_as_roots(), &resin_defaults());
     let mut broken = unit_cube_mesh();
     broken.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
 
     let err = export(
-        &scene_with([broken]),
+        &meshes_as_roots([broken]),
         contours,
         &calibrated(),
         &SceneOverrides::default(),

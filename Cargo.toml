@@ -17,6 +17,7 @@ members = [
     "libs/project-formats",
     "libs/scene",
     "libs/scene-edit",
+    "libs/scene-fixtures",
     "libs/sl1cer",
     "libs/sla-formats",
 ]
@@ -54,6 +55,7 @@ sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
 sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
 sc-scene = { path = "libs/scene", version = "0.2.0" }
 sc-scene-edit = { path = "libs/scene-edit", version = "0.2.0" }
+sc-scene-fixtures = { path = "libs/scene-fixtures", version = "0.2.0" }
 sc-sl1cer = { path = "libs/sl1cer", version = "0.2.0" }
 sc-sla-formats = { path = "libs/sla-formats", version = "0.2.0" }
 
@@ -83,8 +85,8 @@ toml_edit = { version = "0.25.12", features = ["serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
-# "deny" instead of "forbid": slicer-cli's Windows file-identity read
-# carries a scoped allow.
+# "deny" instead of "forbid": slicer-cli's Windows file-identity read carries
+# a scoped allow.
 unsafe_code = "deny"
 
 # Block non-ASCII and visually confusable identifiers (homoglyph and
