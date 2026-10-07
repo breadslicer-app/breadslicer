@@ -32,8 +32,8 @@ fn part(name: &str) -> PartName {
     PartName::new(name).expect("test part name is valid")
 }
 
-/// A package holding just the tetrahedron model part and its
-/// start-part relationship.
+/// Returns a package holding just the tetrahedron model part and its start-part
+/// relationship.
 fn model_only_package() -> Package {
     let mut package = Package::new();
     package
@@ -267,6 +267,30 @@ mod profile_part_classification_tests {
                 id: material_id("test-resin"),
                 bytes: b"kind = \"extension\"".to_vec(),
             }],
+        );
+    }
+
+    #[test]
+    fn profile_directory_parts_without_an_id_and_toml_are_reported_and_skipped() {
+        let names = [
+            "/Metadata/profiles/printers/.toml",
+            "/Metadata/profiles/printers/test-printer.TOML",
+            "/Metadata/profiles/printers/test-printer.json",
+        ];
+        let mut package = model_only_package();
+        add_project_part(&mut package, PAYLOAD_V1_FULL.as_bytes());
+        for name in names {
+            add_profile_part(&mut package, name, b"junk");
+        }
+
+        let loaded = read(&package).expect("the project loads");
+        let payload = loaded.payload.expect("the payload is present");
+        assert_eq!(payload.embedded, vec![]);
+        assert_eq!(
+            loaded.warnings,
+            names.map(|name| ReadProjectWarning::UnrecognizedProfilePart {
+                part_name: name.to_string(),
+            }),
         );
     }
 }

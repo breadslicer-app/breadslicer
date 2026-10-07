@@ -3,20 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! OPC (Open Packaging Conventions) container layer: a ZIP archive
-//! holding named parts with content types, plus relationship parts
-//! that link them. This layer knows nothing about 3MF documents; it
-//! stores and retrieves bytes.
+//! OPC (Open Packaging Conventions) container layer: a ZIP archive holding
+//! named parts with content types, plus relationship parts that link them. This
+//! layer knows nothing about 3MF documents; it stores and retrieves bytes.
 //!
-//! Scope notes: content types support both Default (by extension) and
-//! Override (by part) entries in both directions; relationship
-//! targets are resolved against the source part's directory when
-//! relative. Interleaved packages and ZIP64 writing are out of scope
-//! (ZIP64 reading comes with the `zip` crate).
+//! Scope notes: content types support both Default (by extension) and Override
+//! (by part) entries in both directions; relationship targets are resolved
+//! against the source part's directory when relative. Interleaved packages and
+//! ZIP64 writing are out of scope (ZIP64 reading comes with the `zip` crate).
 //!
-//! Reading refuses archives whose decompressed size exceeds fixed
-//! ceilings (2 GiB per part, 4 GiB per package) instead of exhausting
-//! memory on a crafted or corrupt file; see `PackageReadLimits`.
+//! Reading refuses archives whose decompressed size exceeds fixed ceilings
+//! (2 GiB per part, 4 GiB per package) instead of exhausting memory on a
+//! crafted or corrupt file; see `PackageReadLimits`.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
@@ -32,22 +30,21 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 
-/// Chunk size for feeding a part's bytes to the deflater, so a large
-/// part reports progress as it compresses rather than in one step.
+/// Chunk size for feeding a part's bytes to the deflater, so a large part
+/// reports progress as it compresses rather than in 1 step.
 const COMPRESS_CHUNK_BYTES: usize = 256 * 1024;
 
 /// Parts at least this large are compressed across threads (see
-/// [`crate::deflate`]) instead of on the writing thread. Smaller parts
-/// (the content-type map, relationship parts, modest models) stay on
-/// the single-threaded path, where the parallel setup would not pay for
-/// itself.
+/// [`crate::deflate`]) instead of on the writing thread. Smaller parts (the
+/// content-type map, relationship parts, modest models) stay on the
+/// single-threaded path, where the parallel setup would not pay for itself.
 const PARALLEL_PART_THRESHOLD: usize = 4 * 1024 * 1024;
 
-/// Upper bound on a part compressed across threads. The spliced entry
-/// carries 32-bit ZIP sizes, so a part near the 4 GiB limit stays on
-/// the single-threaded path. Such a part is far larger than any real
-/// 3MF model and could not be read back (the reader caps parts at
-/// 2 GiB), so this only avoids a malformed header at the boundary.
+/// Upper bound on a part compressed across threads. The spliced entry carries
+/// 32-bit ZIP sizes, so a part near the 4 GiB limit stays on the
+/// single-threaded path. Such a part is far larger than any real 3MF model and
+/// could not be read back (the reader caps parts at 2 GiB), so this only avoids
+/// a malformed header at the boundary.
 const MAX_PARALLEL_PART: usize = (u32::MAX as usize) - 64 * 1024 * 1024;
 
 /// Absolute, `/`-rooted name of a part inside the package.
@@ -81,13 +78,27 @@ impl PartName {
         &self.0
     }
 
-    /// The name as a ZIP entry path (no leading slash).
+    /// Returns the stem of this part's file name when the part sits directly in
+    /// `directory` and its file name ends in `.` and `extension`, both matched
+    /// exactly. `directory` is absolute and ends with `/`, as `/Metadata/`. An
+    /// empty stem gives `None`.
+    pub fn file_stem_in(&self, directory: &str, extension: &str) -> Option<&str> {
+        if self.directory() != directory {
+            return None;
+        }
+        let stem = self.0[directory.len()..]
+            .strip_suffix(extension)?
+            .strip_suffix('.')?;
+        (!stem.is_empty()).then_some(stem)
+    }
+
+    /// Returns the name as a ZIP entry path (no leading slash).
     #[inline]
     pub(crate) fn zip_entry(&self) -> &str {
         &self.0[1..]
     }
 
-    /// The extension of the final segment, lowercased, if any.
+    /// Returns the extension of the final segment, lowercased, if any.
     fn extension_lowercase(&self) -> Option<String> {
         let file = self.0.rsplit('/').next()?;
         let (stem, ext) = file.rsplit_once('.')?;
@@ -97,8 +108,8 @@ impl PartName {
         Some(ext.to_ascii_lowercase())
     }
 
-    /// The directory prefix including the trailing slash (`"/3D/"`
-    /// for `"/3D/3dmodel.model"`, `"/"` for a root-level part).
+    /// Returns the directory prefix including the trailing slash (`"/3D/"` for
+    /// `"/3D/3dmodel.model"`, `"/"` for a root-level part).
     fn directory(&self) -> &str {
         match self.0.rfind('/') {
             Some(idx) => &self.0[..=idx],
@@ -106,7 +117,7 @@ impl PartName {
         }
     }
 
-    /// The name of this part's relationships part
+    /// Returns the name of this part's relationships part
     /// (`/3D/_rels/3dmodel.model.rels`).
     fn rels_part_name(&self) -> String {
         let dir = self.directory();
@@ -121,14 +132,14 @@ impl std::fmt::Display for PartName {
     }
 }
 
-/// One OPC relationship: a typed, identified link from a source (the
-/// package root or a part) to a target part.
+/// An OPC relationship: a typed, identified link from a source (the package
+/// root or a part) to a target part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Relationship {
     pub id: String,
     pub rel_type: String,
-    /// Target part name; absolute (`/`-rooted) or relative to the
-    /// source's directory.
+    /// Target part name; absolute (`/`-rooted) or relative to the source's
+    /// directory.
     pub target: String,
 }
 
@@ -139,16 +150,16 @@ struct Part {
     data: Vec<u8>,
 }
 
-/// Ceilings on the decompressed size of a package being read. Every
-/// entry counts (parts, relationship parts, `[Content_Types].xml`);
-/// directories contribute nothing. Since a `Package` holds all parts
-/// in memory, the total ceiling is this layer's peak-memory bound.
+/// Ceilings on the decompressed size of a package being read. Every entry
+/// counts (parts, relationship parts, `[Content_Types].xml`); directories
+/// contribute nothing. Since a `Package` holds all parts in memory, the total
+/// ceiling is this layer's peak-memory bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PackageReadLimits {
     /// A single entry whose decompressed bytes exceed this is refused.
     pub(crate) max_part_bytes: u64,
-    /// The package is refused once the decompressed bytes of all its
-    /// entries together exceed this.
+    /// The package is refused once the decompressed bytes of all its entries
+    /// together exceed this.
     pub(crate) max_total_bytes: u64,
 }
 
@@ -162,17 +173,15 @@ impl Default for PackageReadLimits {
     }
 }
 
-/// Cumulative decompressed-byte counts reported while a package is
-/// read.
+/// Cumulative decompressed-byte counts reported while a package is read.
 ///
-/// `total_bytes` is the sum of the decompressed sizes announced in
-/// the ZIP central directory and stays fixed for the whole read.
-/// Announced sizes are claims: a forged entry can announce sizes that
-/// differ from what inflation actually yields, and extraction stops
-/// early on refused archives, so `decompressed_bytes` can end short
-/// of `total_bytes`, or step past it right before a refusal. When the
-/// announced sizes are accurate, the final tick has the two equal.
-/// Consumers that derive a fraction should clamp it.
+/// `total_bytes` is the sum of the decompressed sizes announced in the ZIP
+/// central directory and stays fixed for the whole read. Announced sizes are
+/// claims: a forged entry can announce sizes that differ from what inflation
+/// actually yields, and extraction stops early on refused archives, so
+/// `decompressed_bytes` can end short of `total_bytes`, or step past it right
+/// before a refusal. When the announced sizes are accurate, the final tick has
+/// both equal. Consumers that derive a fraction should clamp it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DecompressionProgress {
     /// Bytes inflated so far, summed across all file entries.
@@ -196,7 +205,7 @@ impl Package {
         Self::default()
     }
 
-    /// Add a part. Part names must be unique.
+    /// Adds a part. Part names must be unique.
     pub fn add_part(
         &mut self,
         name: PartName,
@@ -256,8 +265,7 @@ impl Package {
             .unwrap_or(&[])
     }
 
-    /// Resolve the StartPart relationship to the primary 3D Model
-    /// part's name.
+    /// Resolves the StartPart relationship to the primary 3D Model part's name.
     pub fn start_part(&self) -> Result<PartName, PackageReadError> {
         let rel = self
             .root_relationships
@@ -276,23 +284,22 @@ impl Package {
         Ok(name)
     }
 
-    /// Serialize the package as a plain deflate-compressed ZIP.
+    /// Serializes the package as a plain deflate-compressed ZIP.
     pub fn write_to<W: Write + Seek>(&self, writer: W) -> Result<(), PackageWriteError> {
         self.write_to_with_progress(writer, |_, _| {})
     }
 
-    /// [`Package::write_to`], reporting compression progress.
+    /// Writes as [`Package::write_to`] does, and reports compression progress.
     ///
-    /// `progress` carries `(bytes_compressed, total_bytes)` where
-    /// `total_bytes` is the sum of the raw byte lengths of the content
-    /// parts (the small content-type and relationship entries are not
-    /// counted). The count climbs monotonically and ends at
-    /// `total_bytes`. Consumers that derive a fraction should clamp it,
-    /// matching the read side.
+    /// `progress` carries `(bytes_compressed, total_bytes)` where `total_bytes`
+    /// is the sum of the raw byte lengths of the content parts (the small
+    /// content-type and relationship entries are not counted). The count climbs
+    /// monotonically and ends at `total_bytes`. Consumers that derive a
+    /// fraction should clamp it, matching the read side.
     ///
-    /// A part small enough to compress on the writing thread ticks as
-    /// its bytes are fed to the deflater; a part large enough to be
-    /// compressed across threads ticks once its stream is spliced in.
+    /// A part small enough to compress on the writing thread ticks as its bytes
+    /// are fed to the deflater; a part large enough to be compressed across
+    /// threads ticks once its stream is spliced in.
     pub fn write_to_with_progress<W: Write + Seek>(
         &self,
         writer: W,
@@ -322,14 +329,14 @@ impl Package {
         for part in &self.parts {
             let len = part.data.len();
             if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&len) {
-                // Compress the part across threads, then splice the
-                // finished stream in verbatim (no recompression).
+                // Compress the part across threads, then splice the finished
+                // stream in verbatim (no recompression).
                 let entry = crate::deflate::parallel_entry(part.name.zip_entry(), &part.data)?;
                 let mut source = ZipArchive::new(Cursor::new(entry))?;
                 archive.raw_copy_file(source.by_index(0)?)?;
                 // Report the part's bytes in the same chunk steps the
-                // single-threaded path uses, so the count climbs the
-                // same way regardless of which path compressed the part.
+                // single-threaded path uses, so the count climbs the same way
+                // regardless of which path compressed the part.
                 for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
                     compressed += chunk.len() as u64;
                     progress(compressed, total);
@@ -337,8 +344,7 @@ impl Package {
             } else {
                 archive.start_file(part.name.zip_entry(), options)?;
                 // Feed each part in chunks so a large part still yields
-                // intermediate progress instead of one jump from empty
-                // to done.
+                // intermediate progress instead of 1 jump from empty to done.
                 for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
                     archive.write_all(chunk)?;
                     compressed += chunk.len() as u64;
@@ -351,23 +357,22 @@ impl Package {
         Ok(())
     }
 
-    /// Read a package from a ZIP stream.
+    /// Reads a package from a ZIP stream.
     ///
-    /// The decompressed size of the archive is capped: 2 GiB for any
-    /// single part and 4 GiB for the package as a whole. An archive
-    /// exceeding a ceiling is refused with
-    /// [`PackageReadError::OversizedPart`] or
+    /// The decompressed size of the archive is capped: 2 GiB for any single
+    /// part and 4 GiB for the package as a whole. An archive exceeding a
+    /// ceiling is refused with [`PackageReadError::OversizedPart`] or
     /// [`PackageReadError::OversizedPackage`].
     pub fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PackageReadError> {
         Self::read_from_impl(reader, PackageReadLimits::default(), |_| {})
     }
 
-    /// [`Package::read_from`], reporting decompression progress.
+    /// Reads as [`Package::read_from`] does, and reports decompression
+    /// progress.
     ///
-    /// `progress` is invoked from inside the extraction loop as entry
-    /// bytes are inflated, carrying cumulative counts across the whole
-    /// archive; see [`DecompressionProgress`] for what the counts can
-    /// and cannot promise.
+    /// `progress` is invoked from inside the extraction loop as entry bytes are
+    /// inflated, carrying cumulative counts across the whole archive; see
+    /// [`DecompressionProgress`] for what the counts can and cannot promise.
     pub fn read_from_with_progress<R: Read + Seek>(
         reader: R,
         progress: impl FnMut(DecompressionProgress),
@@ -375,9 +380,9 @@ impl Package {
         Self::read_from_impl(reader, PackageReadLimits::default(), progress)
     }
 
-    /// [`Package::read_from`] with caller-chosen size ceilings; the
-    /// public entry points always apply the defaults. Only the cap
-    /// tests need to pick their own ceilings.
+    /// Reads as [`Package::read_from`] does, under caller-chosen size ceilings;
+    /// the public entry points always apply the defaults. Only the cap tests
+    /// need to pick their own ceilings.
     #[cfg(test)]
     pub(crate) fn read_from_with_limits<R: Read + Seek>(
         reader: R,
@@ -392,10 +397,9 @@ impl Package {
         mut progress: impl FnMut(DecompressionProgress),
     ) -> Result<Self, PackageReadError> {
         let mut archive = ZipArchive::new(reader)?;
-        // Central-directory pre-pass: sum the announced decompressed
-        // sizes so every progress tick can carry the total. Announced
-        // sizes are claims; the extraction below still enforces the
-        // real ceilings.
+        // Central-directory pre-pass: sum the announced decompressed sizes so
+        // every progress tick can carry the total. Announced sizes are claims;
+        // the extraction below still enforces the real ceilings.
         let mut announced_total: u64 = 0;
         for index in 0..archive.len() {
             let file = archive.by_index_raw(index)?;
@@ -471,9 +475,9 @@ impl Package {
         Ok(package)
     }
 
-    /// Build the `[Content_Types].xml` payload: Default entries for
-    /// extensions whose parts all share one content type, Override
-    /// entries for everything else.
+    /// Builds the `[Content_Types].xml` payload: Default entries for extensions
+    /// whose parts all share the same content type, Override entries for
+    /// everything else.
     fn content_types_xml(&self) -> Result<Vec<u8>, PackageWriteError> {
         // extension -> unanimous content type (None once conflicting).
         let mut defaults: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -528,16 +532,10 @@ impl Package {
     }
 }
 
-/// Read one entry's decompressed bytes, refusing the package when the
-/// entry would push memory use past a ceiling. The check has 2
-/// layers: the header's claimed size is tested before allocating
-/// (bounding pre-allocation when the header lies high), and the bytes
-/// actually inflated are counted through a `take` bound (bounding
-/// buffering when the header lies low).
-/// `Read` wrapper that reports cumulative decompressed byte counts
-/// through a progress callback as an archive entry is inflated.
-/// `base` carries the bytes of the entries already extracted, so one
-/// wrapper per entry still yields archive-wide cumulative ticks.
+/// `Read` wrapper that reports cumulative decompressed byte counts through a
+/// progress callback as an archive entry is inflated. `base` carries the bytes
+/// of the entries already extracted, so 1 wrapper per entry still yields
+/// archive-wide cumulative ticks.
 struct TickingReader<'a, R, F> {
     inner: R,
     base: u64,
@@ -560,6 +558,11 @@ impl<R: Read, F: FnMut(DecompressionProgress)> Read for TickingReader<'_, R, F> 
     }
 }
 
+/// Reads an entry's decompressed bytes, refusing the package when the entry
+/// would push memory use past a ceiling. The check has 2 layers: the header's
+/// claimed size is tested before allocating (bounding pre-allocation when the
+/// header lies high), and the bytes actually inflated are counted through a
+/// `take` bound (bounding buffering when the header lies low).
 fn read_part_bytes<R: Read>(
     reader: R,
     claimed_size: u64,
@@ -619,8 +622,8 @@ impl ContentTypes {
 }
 
 fn attr_value(attr: &Attribute<'_>) -> Option<String> {
-    // 3MF mandates XML 1.0; the reader never checks the declaration,
-    // so the 1.0 rules are assumed.
+    // 3MF mandates XML 1.0; the reader never checks the declaration, so the 1.0
+    // rules are assumed.
     attr.normalized_value(XmlVersion::Implicit1_0)
         .ok()
         .map(|v| v.into_owned())
@@ -751,7 +754,7 @@ fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageW
     Ok(buffer)
 }
 
-/// Whether a part is a relationships part (`.../_rels/<name>.rels`).
+/// Returns whether a part is a relationships part (`.../_rels/<name>.rels`).
 fn is_relationships_part(name: &PartName) -> bool {
     name.as_str().ends_with(".rels")
         && name
@@ -761,7 +764,7 @@ fn is_relationships_part(name: &PartName) -> bool {
             .is_some_and(|dir| dir == "_rels")
 }
 
-/// The source a relationships part describes: `None` for the package
+/// Returns the source a relationships part describes: `None` for the package
 /// root (`/_rels/.rels`), otherwise the part name.
 fn relationships_source(rels: &PartName) -> Option<PartName> {
     if rels.as_str() == "/_rels/.rels" {
@@ -777,8 +780,8 @@ fn relationships_source(rels: &PartName) -> Option<PartName> {
     PartName::new(&format!("{dir}{source_file}")).ok()
 }
 
-/// Resolve a relationship target against its source directory.
-/// Absolute targets pass through; relative ones are joined.
+/// Resolves a relationship target against its source directory. Absolute
+/// targets pass through; relative ones are joined.
 fn resolve_target(source_dir: &str, target: &str) -> String {
     if target.starts_with('/') {
         target.to_string()

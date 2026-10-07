@@ -25,8 +25,8 @@ fn start_part_relationship(target: &str) -> Relationship {
     }
 }
 
-/// A package with one model part, one extra part, a root StartPart
-/// relationship, and one part-level relationship.
+/// Returns a package with 1 model part, 1 extra part, a root StartPart
+/// relationship, and 1 part-level relationship.
 fn sample_package() -> Package {
     let mut package = Package::new();
     package
@@ -72,10 +72,10 @@ fn write_to_bytes(package: &Package) -> Vec<u8> {
 const MINIMAL_CONTENT_TYPES: &str = include_str!("../tests/fixtures/opc/minimal_content_types.xml");
 const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
 
-/// A hand-built archive holding the minimal fixture entries (content
-/// types, root rels, `<model/>`), so tests know the exact decompressed
-/// size of every entry. `model_options` styles the model entry (e.g.
-/// forcing ZIP64 structures via `large_file`).
+/// Returns a hand-built archive holding the minimal fixture entries (content
+/// types, root rels, `<model/>`), so tests know the exact decompressed size of
+/// every entry. `model_options` styles the model entry (e.g. forcing ZIP64
+/// structures via `large_file`).
 fn minimal_package_bytes(model_options: zip::write::SimpleFileOptions) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     let mut archive = zip::write::ZipWriter::new(&mut cursor);
@@ -92,12 +92,12 @@ fn minimal_package_bytes(model_options: zip::write::SimpleFileOptions) -> Vec<u8
     cursor.into_inner()
 }
 
-/// Decompressed size of every entry `minimal_package_bytes` writes.
+/// Returns the decompressed size of every entry `minimal_package_bytes` writes.
 fn minimal_package_decompressed_len() -> u64 {
     (MINIMAL_CONTENT_TYPES.len() + MINIMAL_RELS.len() + b"<model/>".len()) as u64
 }
 
-/// A ZIP archive holding one deflated entry named `big.bin`.
+/// Returns a ZIP archive holding 1 deflated entry named `big.bin`.
 fn single_entry_archive(payload: Vec<u8>) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     let mut archive = zip::write::ZipWriter::new(&mut cursor);
@@ -109,14 +109,14 @@ fn single_entry_archive(payload: Vec<u8>) -> Vec<u8> {
     cursor.into_inner()
 }
 
-/// Forge the entry's 4-byte uncompressed-size field, in both the
-/// local file header and the central directory, to claim `claimed`
-/// bytes. Single-entry archives only.
+/// Forges the entry's 4-byte uncompressed-size field, in both the local file
+/// header and the central directory, to claim `claimed` bytes. Single-entry
+/// archives only.
 fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
     assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
     bytes[22..26].copy_from_slice(&claimed.to_le_bytes());
-    // The last central-directory signature is the real one: the
-    // entry's payload can only appear before the directory.
+    // The last central-directory signature is the real one: the entry's payload
+    // can only appear before the directory.
     let central = bytes
         .windows(4)
         .rposition(|w| w == b"PK\x01\x02")
@@ -160,6 +160,72 @@ mod part_name_tests {
             PartName::new("/3D/model."),
             Err(MalformedPartNameError::TrailingDot),
         );
+    }
+}
+
+#[cfg(test)]
+mod part_name_file_stem_tests {
+    use super::*;
+
+    #[test]
+    fn gives_the_stem_of_a_file_in_the_directory_with_the_extension() {
+        let name = part("/Metadata/profiles/printers/a-b.toml");
+        assert_eq!(
+            name.file_stem_in("/Metadata/profiles/printers/", "toml"),
+            Some("a-b"),
+        );
+    }
+
+    #[test]
+    fn gives_the_stem_of_a_root_level_part() {
+        assert_eq!(part("/x.bin").file_stem_in("/", "bin"), Some("x"));
+    }
+
+    #[test]
+    fn keeps_the_dots_inside_the_stem() {
+        let name = part("/Metadata/a/x.y.toml");
+        assert_eq!(name.file_stem_in("/Metadata/a/", "toml"), Some("x.y"));
+    }
+
+    #[test]
+    fn refuses_a_part_outside_the_directory() {
+        for (name, directory) in [
+            ("/Metadata/a/b/c.toml", "/Metadata/a/"),
+            ("/Metadata/b/c.toml", "/Metadata/a/"),
+            ("/Metadata/a/c.toml", "/Metadata/a"),
+        ] {
+            assert_eq!(
+                part(name).file_stem_in(directory, "toml"),
+                None,
+                "{name} in {directory}",
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_another_extension() {
+        for name in [
+            "/Metadata/a/c.json",
+            "/Metadata/a/c.TOML",
+            "/Metadata/a/ctoml",
+        ] {
+            assert_eq!(
+                part(name).file_stem_in("/Metadata/a/", "toml"),
+                None,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_a_file_name_without_a_stem() {
+        for name in ["/Metadata/a/.toml", "/Metadata/a/toml"] {
+            assert_eq!(
+                part(name).file_stem_in("/Metadata/a/", "toml"),
+                None,
+                "{name}"
+            );
+        }
     }
 }
 
@@ -312,8 +378,8 @@ mod error_tests {
 
     #[test]
     fn part_without_content_type_is_rejected() {
-        // Hand-build an archive whose content-types map does not cover
-        // the stored part.
+        // Hand-build an archive whose content-types map does not cover the
+        // stored part.
         let mut cursor = Cursor::new(Vec::new());
         let mut archive = zip::write::ZipWriter::new(&mut cursor);
         let options = zip::write::SimpleFileOptions::default();
@@ -337,9 +403,9 @@ mod error_tests {
 mod read_limits_tests {
     use super::*;
 
-    /// A serialized package whose only user part is the model part,
-    /// carrying `data`. The content-types and rels entries it also
-    /// contains stay well under a kilobyte each.
+    /// Returns a serialized package whose only user part is the model part,
+    /// carrying `data`. The content-types and rels entries it also contains
+    /// stay well under a kilobyte each.
     fn package_bytes_with_model_part(data: Vec<u8>) -> Vec<u8> {
         let mut package = Package::new();
         package
@@ -389,9 +455,9 @@ mod read_limits_tests {
 
     #[test]
     fn highly_compressible_oversized_part_is_refused() {
-        // 1 MiB of zeros deflates to about a kilobyte: the archive
-        // stays tiny on disk while its decompressed size dwarfs the
-        // cap, so an on-disk size gate alone would not catch it.
+        // 1 MiB of zeros deflates to about a kilobyte: the archive stays tiny
+        // on disk while its decompressed size dwarfs the cap, so an on-disk
+        // size gate alone would not catch it.
         let bytes = package_bytes_with_model_part(vec![0u8; 1 << 20]);
         assert!(bytes.len() < 64 * 1024, "archive must stay small on disk");
         let limits = PackageReadLimits {
@@ -430,8 +496,8 @@ mod read_limits_tests {
 
     #[test]
     fn forged_header_claiming_huge_size_is_refused() {
-        // A tiny entry whose forged header claims 1 GiB: the
-        // claimed-size check must refuse it before allocating.
+        // A tiny entry whose forged header claims 1 GiB: the claimed-size check
+        // must refuse it before allocating.
         let mut bytes = single_entry_archive(b"0123456789".to_vec());
         forge_claimed_size(&mut bytes, 1 << 30);
         let limits = PackageReadLimits {
@@ -447,9 +513,9 @@ mod read_limits_tests {
 
     #[test]
     fn forged_header_claiming_fewer_bytes_than_real_is_still_capped() {
-        // The header claims 10 bytes, so the claimed-size check
-        // passes; the bytes actually inflated must still be counted
-        // and refused through the take bound.
+        // The header claims 10 bytes, so the claimed-size check passes; the
+        // bytes actually inflated must still be counted and refused through the
+        // take bound.
         let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
         forge_claimed_size(&mut bytes, 10);
         let limits = PackageReadLimits {
@@ -465,9 +531,8 @@ mod read_limits_tests {
 
     #[test]
     fn forged_header_cannot_sneak_past_the_total_cap_either() {
-        // Same lying-low header, but here the total ceiling is the
-        // tighter one, so the overrun must surface as a package-level
-        // refusal.
+        // Same lying-low header, but here the total ceiling is the tighter one,
+        // so the overrun must surface as a package-level refusal.
         let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
         forge_claimed_size(&mut bytes, 10);
         let limits = PackageReadLimits {
@@ -486,8 +551,8 @@ mod read_limits_tests {
 mod zip64_tests {
     use super::*;
 
-    /// Byte offset right after a local file header's name, where the
-    /// entry's extra field begins.
+    /// Returns the byte offset right after a local file header's name, where
+    /// the entry's extra field begins.
     fn local_extra_field_offset(bytes: &[u8], name: &[u8]) -> usize {
         let name_pos = (30..=bytes.len() - name.len())
             .find(|&p| &bytes[p - 30..p - 26] == b"PK\x03\x04" && &bytes[p..p + name.len()] == name)
@@ -497,15 +562,15 @@ mod zip64_tests {
 
     #[test]
     fn zip64_entries_are_read_intact() {
-        // The writer's large_file option forces ZIP64 structures
-        // onto the entry even though its real size is small, which
-        // pins ZIP64 reading without a multi-gigabyte fixture.
+        // The writer's large_file option forces ZIP64 structures onto the entry
+        // even though its real size is small, which pins ZIP64 reading without
+        // a multi-gigabyte fixture.
         let zip64 = zip::write::SimpleFileOptions::default().large_file(true);
         let bytes = minimal_package_bytes(zip64);
 
         // The model entry's local header must carry the ZIP64
-        // extended-information extra field (id 0x0001); without it
-        // this test would no longer pin ZIP64 reading.
+        // extended-information extra field (id 0x0001); without it this test
+        // would no longer pin ZIP64 reading.
         let extra = local_extra_field_offset(&bytes, b"3D/3dmodel.model");
         assert_eq!(
             &bytes[extra..extra + 2],
@@ -542,10 +607,10 @@ mod progress_tests {
         (result, ticks)
     }
 
-    /// Shared assertions for archives whose announced sizes are
-    /// accurate: at least one tick, a fixed total on every tick,
-    /// strictly growing counts (ticks only fire when bytes were
-    /// inflated), and a final count equal to the total.
+    /// Asserts the ticks of an archive whose announced sizes are accurate: at
+    /// least 1 tick, a fixed total on every tick, strictly growing counts
+    /// (ticks only fire when bytes were inflated), and a final count equal to
+    /// the total, which it returns.
     fn assert_monotone_ending_at_total(ticks: &[DecompressionProgress]) -> u64 {
         assert!(!ticks.is_empty(), "reading a package must tick");
         let total = ticks[0].total_bytes;
@@ -586,19 +651,18 @@ mod progress_tests {
         let (result, ticks) = read_collecting_ticks(bytes);
         result.expect("package reads");
         let total = assert_monotone_ending_at_total(&ticks);
-        // The 3 payloads of `sample_package` plus the generated
-        // content-types and relationship entries: the exact XML sizes
-        // are the writer's business, but the total must cover at
-        // least the payload bytes.
+        // The 3 payloads of `sample_package` plus the generated content-types
+        // and relationship entries: the exact XML sizes are the writer's
+        // business, but the total must cover at least the payload bytes.
         let payload_bytes = (b"<model/>".len() + b"<model2/>".len() + 3) as u64;
         assert!(total > payload_bytes, "total covers the non-part entries");
     }
 
     #[test]
     fn oversized_claim_is_refused_before_any_tick() {
-        // 3 GiB claimed against the default 2 GiB per-part ceiling:
-        // the claimed-size check refuses the entry before a single
-        // byte is inflated, so no tick may fire.
+        // 3 GiB claimed against the default 2 GiB per-part ceiling: the
+        // claimed-size check refuses the entry before a single byte is
+        // inflated, so no tick may fire.
         let mut bytes = single_entry_archive(b"0123456789".to_vec());
         forge_claimed_size(&mut bytes, 3 << 30);
         let (result, ticks) = read_collecting_ticks(bytes);
@@ -611,12 +675,11 @@ mod progress_tests {
 
     #[test]
     fn lying_low_claim_ticks_past_the_announced_total() {
-        // The header claims 10 bytes but inflation yields 100 KiB;
-        // under the default ceilings the entry itself is accepted, so
-        // the counts step past the claimed total exactly as the
-        // `DecompressionProgress` docs warn. The read still fails
-        // later (no content-types entry), which must not retract the
-        // ticks already delivered.
+        // The header claims 10 bytes but inflation yields 100 KiB; under the
+        // default ceilings the entry itself is accepted, so the counts step
+        // past the claimed total exactly as the `DecompressionProgress` docs
+        // warn. The read still fails later (no content-types entry), which must
+        // not retract the ticks already delivered.
         let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
         forge_claimed_size(&mut bytes, 10);
         let (result, ticks) = read_collecting_ticks(bytes);
@@ -646,7 +709,7 @@ mod write_progress_tests {
         (cursor.into_inner(), ticks)
     }
 
-    /// A package whose single part is larger than the compression
+    /// Returns a package whose single part is larger than the compression
     /// chunk, so writing it yields several intermediate ticks.
     fn large_part_package(part_bytes: usize) -> Package {
         let mut package = Package::new();
@@ -682,8 +745,8 @@ mod write_progress_tests {
 
     #[test]
     fn the_total_sums_every_part_and_ignores_generated_entries() {
-        // Three parts of 8, 9, and 3 bytes; the content-type and
-        // relationship entries the writer generates are not counted.
+        // 3 parts of 8, 9, and 3 bytes; the content-type and relationship
+        // entries the writer generates are not counted.
         let (_, ticks) = write_collecting_ticks(&sample_package());
         let total = ticks[0].1;
         assert_eq!(total, (b"<model/>".len() + b"<model2/>".len() + 3) as u64);
@@ -708,9 +771,9 @@ mod write_progress_tests {
 
     #[test]
     fn a_part_compressed_across_threads_still_ticks_to_total() {
-        // 5 MiB is past the threshold that routes a part to the
-        // parallel deflater, so this exercises the progress reporting
-        // of that path rather than the single-threaded one.
+        // 5 MiB is past the threshold that routes a part to the parallel
+        // deflater, so this exercises the progress reporting of that path
+        // rather than the single-threaded one.
         let part_bytes = 5 * 1024 * 1024;
         let (_, ticks) = write_collecting_ticks(&large_part_package(part_bytes));
 
@@ -732,9 +795,9 @@ mod write_progress_tests {
 mod parallel_compression_tests {
     use super::*;
 
-    /// Bytes with local structure, so the compressor finds cross-chunk
-    /// back-references (exercising the dictionary priming) instead of
-    /// the degenerate all-same case.
+    /// Returns bytes with local structure, so the compressor finds cross-chunk
+    /// back-references (exercising the dictionary priming) instead of the
+    /// degenerate all-same case.
     fn varied_bytes(len: usize) -> Vec<u8> {
         let mut data = Vec::with_capacity(len + 64);
         let mut state = 0x2545_f491u32;
@@ -756,9 +819,9 @@ mod parallel_compression_tests {
 
     #[test]
     fn a_large_part_round_trips_through_the_parallel_path() {
-        // 5 MiB is past PARALLEL_PART_THRESHOLD, so the big part is
-        // deflated across threads and spliced in, while the small part
-        // stays on the single-threaded path. Both must read back exact.
+        // 5 MiB is past PARALLEL_PART_THRESHOLD, so the big part is deflated
+        // across threads and spliced in, while the small part stays on the
+        // single-threaded path. Both must read back exact.
         let big = varied_bytes(5 * 1024 * 1024);
         let small = b"<model/>".to_vec();
 

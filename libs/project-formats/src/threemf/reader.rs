@@ -5,12 +5,11 @@
 
 //! Reading of 3MF project packages.
 //!
-//! The container is parsed once; the scene loads through the
-//! package-level entry of `sc-mesh-formats`, and the project data is
-//! then extracted from the same [`Package`]. Extraction never fails
-//! a load for data we merely do not understand: an absent project
-//! part means a plain model, an unknown payload version or a foreign
-//! slicer's project data becomes a warning.
+//! The container is parsed once; the scene loads through the package-level
+//! entry of `sc-mesh-formats`, and the project data is then extracted from the
+//! same [`Package`]. Extraction never fails a load for data we merely do not
+//! understand: an absent project part means a plain model, an unknown payload
+//! version or a foreign slicer's project data becomes a warning.
 
 use std::io::{Read, Seek};
 
@@ -32,8 +31,8 @@ use crate::threemf::{
     PROFILES_PART_PREFIX, PROJECT_PART_NAME, SLICE_PART_NAME,
 };
 
-/// Reads a 3MF package as a project: the scene plus the project
-/// payload when the package carries our project part.
+/// Reads a 3MF package as a project: the scene plus the project payload when
+/// the package carries our project part.
 pub fn read_threemf_project<R>(reader: &mut R) -> Result<LoadedProject, ReadThreeMfProjectError>
 where
     R: Read + Seek,
@@ -41,9 +40,9 @@ where
     read_threemf_project_with_progress(reader, |_| {})
 }
 
-/// [`read_threemf_project`], reporting container decompression
-/// progress. The ticks cover the package extraction only; the model
-/// and payload parsing that follow run on the already-inflated bytes.
+/// Reads as [`read_threemf_project`] does, and reports container decompression
+/// progress. The ticks cover the package extraction only; the model and payload
+/// parsing that follow run on the already-inflated bytes.
 pub fn read_threemf_project_with_progress<R>(
     reader: &mut R,
     progress: impl FnMut(DecompressionProgress),
@@ -71,13 +70,13 @@ where
     })
 }
 
-/// Reads the standalone slice model part and maps it back to a contour
-/// stack, or `None` when the package carries no slice part. A slice part
-/// that does not parse or does not map back (a corrupt or foreign-shaped
-/// part) is also treated as absent, silently: the scene loads slice-less,
-/// which is exactly what the caller does when the slices fail their
-/// fingerprint check, so a bad part only ever drops slices that would not
-/// have survived revalidation anyway.
+/// Reads the standalone slice model part and maps it back to a contour stack,
+/// or `None` when the package carries no slice part. A slice part that does not
+/// parse or does not map back (a corrupt or foreign-shaped part) is also
+/// treated as absent, silently: the scene loads slice-less, which is exactly
+/// what the caller does when the slices fail their fingerprint check, so a bad
+/// part only ever drops slices that would not have survived revalidation
+/// anyway.
 fn extract_slices(package: &Package) -> Option<ContourStack> {
     let part = PartName::new(SLICE_PART_NAME).expect("constant part name is valid");
     let bytes = package.part_data(&part)?;
@@ -86,9 +85,8 @@ fn extract_slices(package: &Package) -> Option<ContourStack> {
     contours_from_slice_stack(stack).ok()
 }
 
-/// Extracts the project payload and the opaque persisted-slices token
-/// from the package, if present and of a version this build
-/// understands.
+/// Extracts the project payload and the opaque persisted-slices token from the
+/// package, if present and of a version this build understands.
 fn extract_payload(
     package: &Package,
     warnings: &mut Vec<ReadProjectWarning>,
@@ -122,9 +120,9 @@ fn extract_payload(
     }
 }
 
-/// Collects the embedded profile documents, in part order. Parts
-/// under the profiles prefix that do not match the expected naming
-/// are reported and skipped.
+/// Collects the embedded profile documents, in part order. Parts under the
+/// profiles prefix that do not match the expected naming are reported and
+/// skipped.
 fn collect_embedded(
     package: &Package,
     warnings: &mut Vec<ReadProjectWarning>,
@@ -135,7 +133,7 @@ fn collect_embedded(
         if !raw.starts_with(PROFILES_PART_PREFIX) {
             continue;
         }
-        match classify_profile_part(raw) {
+        match classify_profile_part(name) {
             Some(kind) => {
                 let bytes = package
                     .part_data(name)
@@ -164,33 +162,21 @@ enum ProfilePartKind {
     MaterialExtension(MaterialId),
 }
 
-/// Classifies a part name against the embedded-profile naming: one
-/// of the three profile directories, a valid id slug as the stem,
-/// and a `.toml` suffix. The extensions directory nests inside the
-/// materials directory, so it is checked first; the no-slash rule in
-/// [`part_stem`] keeps nested names out of the shallower matches.
-fn classify_profile_part(name: &str) -> Option<ProfilePartKind> {
-    if let Some(stem) = part_stem(name, MATERIAL_EXTENSION_PART_PREFIX) {
+const PROFILE_PART_EXTENSION: &str = "toml";
+
+/// Classifies a part name against the embedded-profile naming: 1 of the 3
+/// profile directories, a valid id slug as the stem, and a `.toml` suffix.
+fn classify_profile_part(name: &PartName) -> Option<ProfilePartKind> {
+    if let Some(stem) = name.file_stem_in(MATERIAL_EXTENSION_PART_PREFIX, PROFILE_PART_EXTENSION) {
         return MaterialId::new(stem)
             .ok()
             .map(ProfilePartKind::MaterialExtension);
     }
-    if let Some(stem) = part_stem(name, MATERIAL_PROFILE_PART_PREFIX) {
+    if let Some(stem) = name.file_stem_in(MATERIAL_PROFILE_PART_PREFIX, PROFILE_PART_EXTENSION) {
         return MaterialId::new(stem).ok().map(ProfilePartKind::Material);
     }
-    if let Some(stem) = part_stem(name, PRINTER_PROFILE_PART_PREFIX) {
+    if let Some(stem) = name.file_stem_in(PRINTER_PROFILE_PART_PREFIX, PROFILE_PART_EXTENSION) {
         return PrinterId::new(stem).ok().map(ProfilePartKind::Printer);
     }
     None
-}
-
-/// Strips `prefix` and a trailing `.toml` from a part name,
-/// rejecting names with a further path separator (nested
-/// directories).
-fn part_stem<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = name.strip_prefix(prefix)?;
-    if rest.contains('/') {
-        return None;
-    }
-    rest.strip_suffix(".toml")
 }
