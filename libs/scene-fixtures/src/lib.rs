@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::transform::Transform3D;
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, named, unit_cube_mesh};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeId};
 
@@ -79,4 +79,26 @@ pub fn trio_as_roots() -> Scene {
         cuboid_with_z_tunnel(),
         cuboid_with_y_tunnel(),
     ])
+}
+
+/// Builds the named trio: a scene whose only root is a group with an identity
+/// transform, holding the unit cube, the Z-tunnel prism and the Y-tunnel prism,
+/// in that order, named "Cube", "ZTunnel" and "YTunnel", and translated along x
+/// by 0, 5 and -5 mm plus `offset`. A leaf whose translation is 0 on every axis
+/// gets `Transform3D::Identity`.
+pub fn named_trio_under_group_root(offset: [f64; 3]) -> Scene {
+    let sources = [
+        ("Cube", unit_cube_mesh(), [0.0, 0.0, 0.0]),
+        ("ZTunnel", cuboid_with_z_tunnel(), [5.0, 0.0, 0.0]),
+        ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
+    ];
+    leaves_under_group_root(sources.map(|(name, mesh, place)| {
+        let translation: [f64; 3] = std::array::from_fn(|axis| place[axis] + offset[axis]);
+        let transform = if translation == [0.0; 3] {
+            Transform3D::Identity
+        } else {
+            Transform3D::Affine(AffineTransform3D::from_translation(translation))
+        };
+        (named(mesh, name), transform)
+    }))
 }

@@ -12,9 +12,9 @@
 
 use std::io::Cursor;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, MeshMetadata};
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, named, unit_cube_mesh};
 use sc_mesh_formats::obj::{read_obj, write_obj};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
@@ -29,15 +29,6 @@ const HOSTILE_TRIO: [(&str, &str, &str); 3] = [
     ("深圳", "深圳", "ShenZhen"),
     ("Küche", "Küche", "Kuche"),
 ];
-
-fn named(mesh: IndexedMesh, name: &str) -> IndexedMesh {
-    let mut mesh = mesh;
-    mesh.set_meta(Some(MeshMetadata {
-        name: Some(name.to_string()),
-        header_comment: None,
-    }));
-    mesh
-}
 
 fn fixture_meshes() -> [IndexedMesh; 3] {
     [

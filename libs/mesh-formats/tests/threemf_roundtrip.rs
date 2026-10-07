@@ -3,18 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Write-then-load round trips for 3MF through the public
-//! `write_scene` / `load_mesh_from_path` entry points, using the
-//! workspace's cube and tunnel-prism fixtures and a vendored official
-//! sample as sources.
+//! Write-then-load round trips for 3MF through the public `write_scene` /
+//! `load_mesh_from_path` entry points, using the workspace's cube and
+//! tunnel-prism fixtures and a vendored official sample as sources.
 
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use sc_3mf::package::Package;
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, MeshMetadata};
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
@@ -22,44 +19,7 @@ use sc_mesh_formats::threemf::{read_threemf, read_threemf_from_package, write_th
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
-
-fn named(mesh: IndexedMesh, name: &str) -> IndexedMesh {
-    let mut mesh = mesh;
-    mesh.set_meta(Some(MeshMetadata {
-        name: Some(name.to_string()),
-        header_comment: None,
-    }));
-    mesh
-}
-
-/// Loader-shape scene carrying the cube and both tunnel prisms as
-/// named leaves with distinct translations.
-fn prism_trio_scene() -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    let sources = [
-        ("Cube", unit_cube_mesh(), [0.0, 0.0, 0.0]),
-        ("ZTunnel", cuboid_with_z_tunnel(), [5.0, 0.0, 0.0]),
-        ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
-    ];
-    for (name, mesh, translation) in sources {
-        let transform = if translation == [0.0, 0.0, 0.0] {
-            Transform3D::Identity
-        } else {
-            Transform3D::Affine(AffineTransform3D::from_translation(translation))
-        };
-        let leaf = g
-            .add_leaf(
-                None,
-                transform,
-                LeafPayload::Mesh(Arc::new(named(mesh, name))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
-    }
-    g
-}
+use sc_scene_fixtures::named_trio_under_group_root;
 
 fn root_children(scene: &Scene) -> Vec<NodeId> {
     assert_eq!(scene.roots().len(), 1, "expected one scene root");
@@ -78,7 +38,7 @@ fn leaf_resource(scene: &Scene, id: NodeId) -> MeshResourceId {
 
 #[test]
 fn prism_trio_survives_a_write_load_cycle() {
-    let source_scene = prism_trio_scene();
+    let source_scene = named_trio_under_group_root([0.0; 3]);
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join("trio.3mf");
 
@@ -106,9 +66,8 @@ fn prism_trio_survives_a_write_load_cycle() {
             mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some(*name),
         );
-        // Millimetre coordinates round-trip bitwise: f32 -> f64
-        // widening is exact and the XML carries shortest
-        // round-trip decimals.
+        // Millimetre coordinates round-trip bitwise: f32 -> f64 widening is
+        // exact and the XML carries shortest round-trip decimals.
         assert_eq!(mesh.vertices, source_mesh.vertices, "vertices of {name}");
         let indices: Vec<_> = mesh.faces.iter().map(|f| f.vertices).collect();
         let source_indices: Vec<_> = source_mesh.faces.iter().map(|f| f.vertices).collect();
@@ -158,7 +117,7 @@ fn official_box_sample_survives_a_load_write_load_cycle() {
 #[test]
 fn the_package_level_reader_matches_the_stream_reader() {
     let mut bytes = Vec::new();
-    write_threemf(&prism_trio_scene(), &mut bytes).expect("write succeeds");
+    write_threemf(&named_trio_under_group_root([0.0; 3]), &mut bytes).expect("write succeeds");
 
     let package = Package::read_from(Cursor::new(bytes.clone())).expect("package parses");
     let (package_scene, package_warnings) =

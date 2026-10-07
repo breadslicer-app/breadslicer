@@ -3,38 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Hand-rolled, manifold-by-construction 3D mesh fixtures.
+//! Hand-rolled, manifold-by-construction 3D mesh fixtures, shared between the
+//! workspace's tests. Each builder is deterministic, and its mesh is closed and
+//! orientable.
 //!
-//! Shared between the workspace's tests and any tooling that needs
-//! a stable, well-understood input mesh (e.g. STL fixture prep for
-//! integration tests). Each builder is deterministic and the
-//! resulting mesh is closed and orientable.
+//! The cuboid family holds a unit cube and 2 rectangular prisms with a
+//! rectangular tunnel along Z or along Y, and variants of the 3 with some faces
+//! turned inside out. 3 tetrahedra cover the slicer's cases at `z = 0`: a
+//! vertex on the plane (saddle), a mesh edge on the plane that the surface
+//! crosses, and a mesh edge along which the surface only touches the plane.
 //!
-//! Initial population covers the cuboid family: a unit cube and two
-//! rectangular prisms with a rectangular tunnel (Z-axis and Y-axis
-//! tunnel orientations). Three tetrahedron fixtures exercise the
-//! slicer's plane-touching cases at `z = 0`: one with a vertex on
-//! the plane (saddle), one with a whole mesh edge on the plane that
-//! the surface crosses, and one where the surface only skims the
-//! plane along the on-edge. More fixtures land here as duplicates in
-//! other crates migrate over.
-//!
-//! Two fixtures are deliberate exceptions to the "manifold by
-//! construction" rule: [`bowtie_tetrahedra`] and
-//! [`cuboid_with_pinched_z_tunnel`] are edge-manifold (closed,
-//! every edge shared by exactly 2 consistently wound faces) but
-//! vertex-pinched: one vertex whose incident faces form 2 disjoint
-//! fans. They exist to pin the pipeline's behaviour on meshes that
-//! bound a valid solid while not being a manifold surface.
+//! 2 fixtures are deliberate exceptions to the "manifold by construction" rule:
+//! [`bowtie_tetrahedra`] and [`cuboid_with_pinched_z_tunnel`] are edge-manifold
+//! (closed, every edge shared by exactly 2 consistently wound faces) but
+//! vertex-pinched: 1 vertex whose incident faces form 2 disjoint fans. They
+//! test the pipeline on meshes that bound a valid solid but are not a manifold
+//! surface.
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
 #[cfg(test)]
 mod tests_flipped;
 #[cfg(test)]
 mod tests_pinch;
 
-/// Closed unit cube centred at the origin (side 1). Manifold by
+/// Returns a closed unit cube centred at the origin (side 1), manifold by
 /// construction.
 pub fn unit_cube_mesh() -> IndexedMesh {
     let vertices = vec![
@@ -74,10 +67,10 @@ pub fn unit_cube_mesh() -> IndexedMesh {
     }
 }
 
-/// Rectangular prism with a vertical rectangular tunnel (axis = Z).
-/// Outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The
-/// tunnel spans x in [-0.4, 0.4], y in [-0.4, 0.4], full z. 16
-/// vertices, 32 triangles, genus 1 (Euler V - E + F = 16 - 48 + 32 = 0).
+/// Returns a rectangular prism with a vertical rectangular tunnel (axis = Z).
+/// The outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The tunnel
+/// spans x in [-0.4, 0.4], y in [-0.4, 0.4], full z. 16 vertices, 32 triangles,
+/// genus 1 (Euler V - E + F = 16 - 48 + 32 = 0).
 pub fn cuboid_with_z_tunnel() -> IndexedMesh {
     let vertices = vec![
         // 0..7 outer box corners.
@@ -145,12 +138,11 @@ pub fn cuboid_with_z_tunnel() -> IndexedMesh {
     }
 }
 
-/// Rectangular prism with a horizontal rectangular tunnel (axis = Y).
-/// Outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The
-/// tunnel spans x in [-0.4, 0.4], full y, z in [0.6, 1.4]. The y =
-/// +/- 1 faces become annuli (rectangle with a rectangular hole);
-/// the other four outer faces stay solid. 16 vertices, 32 triangles,
-/// genus 1.
+/// Returns a rectangular prism with a horizontal rectangular tunnel (axis = Y).
+/// The outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The tunnel
+/// spans x in [-0.4, 0.4], full y, z in [0.6, 1.4]. The 2 outer faces normal to
+/// Y become annuli (rectangles with a rectangular hole); the other 4 stay
+/// solid. 16 vertices, 32 triangles, genus 1.
 pub fn cuboid_with_y_tunnel() -> IndexedMesh {
     let vertices = vec![
         // 0..7 outer box corners.
@@ -226,12 +218,11 @@ pub fn cuboid_with_y_tunnel() -> IndexedMesh {
     }
 }
 
-/// Tetrahedron whose vertex V0 sits exactly on the plane `z = 0`,
-/// with V1 and V2 above and V3 below. Drives the slicer's AOB
-/// (one above, one on, one below) case: at `z = 0` two of the four
-/// faces are AOBs incident to V0 and emit through-vertex segments.
-/// Face winding follows the manifold tetrahedron pattern in
-/// `sc-mesh-core`.
+/// Returns a tetrahedron whose vertex V0 sits exactly on the plane `z = 0`,
+/// with V1 and V2 above and V3 below. It drives the slicer's AOB case (1 vertex
+/// above, 1 on, 1 below): at `z = 0`, 2 of the 4 faces are AOBs incident to V0
+/// and emit through-vertex segments. Face winding follows the manifold
+/// tetrahedron pattern in `sc-mesh-core`.
 pub fn aob_saddle_tetrahedron() -> IndexedMesh {
     let placeholder = Normal::new([0.0, 0.0, 1.0]);
     let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
@@ -247,12 +238,11 @@ pub fn aob_saddle_tetrahedron() -> IndexedMesh {
     }
 }
 
-/// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
-/// `z = 0`, V2 above and V3 below. The mesh edge V0-V1 lies on the
-/// plane and is shared by F0 (third vertex above) and F1 (third
-/// vertex below): the surface crosses the plane along the on-edge,
-/// so the on-edge contributes a contour segment. F2 and F3 are AOBs
-/// at V0 and V1 respectively. Face winding follows the manifold
+/// Returns a tetrahedron with V0 and V1 exactly on the plane `z = 0`, V2 above
+/// and V3 below. The mesh edge V0-V1 lies on the plane and is shared by F0
+/// (third vertex above) and F1 (third vertex below): the surface crosses the
+/// plane along the on-edge, so the on-edge contributes a contour segment. F2
+/// and F3 are AOBs at V0 and V1 respectively. Face winding follows the manifold
 /// tetrahedron pattern in `sc-mesh-core`.
 pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
     let placeholder = Normal::new([0.0, 0.0, 1.0]);
@@ -269,16 +259,16 @@ pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
     }
 }
 
-/// Two closed tetrahedra sharing a single vertex (a "bowtie").
+/// Returns 2 closed tetrahedra that share a single vertex (a "bowtie").
 ///
-/// The lower lobe has its base triangle at `z = 0` and its apex at
-/// V3 = (0, 0, 1); the upper lobe mirrors it, base at `z = 2`, same
-/// apex. V3 is the pinch: its 6 incident faces form 2 disjoint
-/// fans, so the mesh is edge-manifold with consistent winding but
-/// deliberately NOT vertex-manifold. The 2 lobes share no edge, so
-/// they are 2 separate edge-connected components joined only
-/// through the pinch point. 7 vertices, 8 triangles, 12 edges
-/// (Euler V - E + F = 3, two spheres sharing a point).
+/// The lower lobe has its apex V3 at (0, 0, 1) and its base triangle at
+/// `z = 0`; the upper lobe mirrors it, with the same apex and its base at
+/// `z = 2`. V3 is the pinch: its 6 incident faces form 2 disjoint fans, so the
+/// mesh is edge-manifold with consistent winding but deliberately NOT
+/// vertex-manifold. The 2 lobes share no edge, so they are 2 separate
+/// edge-connected components joined only through the pinch point. It has 7
+/// vertices, 8 triangles and 12 edges: its Euler characteristic, V - E + F, is
+/// 3, that of 2 spheres that share a point.
 pub fn bowtie_tetrahedra() -> IndexedMesh {
     let placeholder = Normal::new([0.0, 0.0, 1.0]);
     let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
@@ -311,36 +301,35 @@ pub fn bowtie_tetrahedra() -> IndexedMesh {
     }
 }
 
-/// Variant of [`cuboid_with_z_tunnel`] whose square tunnel pinches
+/// Returns a variant of [`cuboid_with_z_tunnel`] whose square tunnel pinches
 /// shut at mid-height.
 ///
-/// Same outer box (x, y in [-1, 1], z in [0, 2]) and the same
-/// square tunnel mouths at z = 0 and z = 2, but the tunnel walls
-/// are replaced by 2 square pyramids meeting apex-to-apex at
-/// V16 = (0, 0, 1): the tunnel narrows linearly to a point at
-/// mid-height and reopens above it. Topologically this is a pinched
-/// torus (the tunnel's genus-1 loop strangled at one point): a
-/// SINGLE edge-connected component, edge-manifold with consistent
-/// winding, deliberately NOT vertex-manifold at the pinch (8
-/// incident faces in 2 fans of 4). 17 vertices, 32 triangles, 48
-/// edges (Euler V - E + F = 1, the pinched torus).
+/// Same outer box (x, y in [-1, 1], z in [0, 2]) and the same square tunnel
+/// mouths at z = 0 and z = 2, but the tunnel walls are replaced by 2 square
+/// pyramids meeting apex-to-apex at V16 = (0, 0, 1): the tunnel narrows
+/// linearly to a point at mid-height and reopens above it. Topologically this
+/// is a pinched torus (the genus-1 loop of the tunnel strangled at 1 point): a
+/// SINGLE edge-connected component, edge-manifold with consistent winding,
+/// deliberately NOT vertex-manifold at the pinch, where 8 incident faces form 2
+/// fans of 4. It has 17 vertices, 32 triangles and 48 edges: its Euler
+/// characteristic, V - E + F, is 1, that of the pinched torus.
 pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
     let mut mesh = cuboid_with_z_tunnel();
     mesh.vertices.push(Vertex::new([0.0, 0.0, 1.0]));
     let placeholder = Normal::new([0.0, 0.0, 1.0]);
     let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
-    // The straight tunnel walls are the last 8 faces of the donor
-    // fixture; everything else (annuli, outer sides) carries over.
+    // The straight tunnel walls are the last 8 faces of the donor fixture;
+    // everything else (annuli, outer sides) carries over.
     mesh.faces.truncate(24);
     mesh.faces.extend([
-        // Lower cavity pyramid (base = bottom tunnel square 8..11,
-        // apex = 16; normals point into the cavity).
+        // Lower cavity pyramid (base = bottom tunnel square 8..11, apex = 16;
+        // normals point into the cavity).
         f([8, 16, 9]),
         f([9, 16, 10]),
         f([10, 16, 11]),
         f([11, 16, 8]),
-        // Upper cavity pyramid (base = top tunnel square 12..15,
-        // apex = 16; normals point into the cavity).
+        // Upper cavity pyramid (base = top tunnel square 12..15, apex = 16;
+        // normals point into the cavity).
         f([13, 16, 12]),
         f([14, 16, 13]),
         f([15, 16, 14]),
@@ -349,16 +338,14 @@ pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
     mesh
 }
 
-/// Turns the faces at `indices` inside out: vertex order reversed
-/// AND stored normal negated, the state a genuinely inverted face
-/// arrives in. The shared implementation behind the
-/// `*_with_flipped_faces` variants. The orientation repair pass
-/// reverses both again, restoring the donor fixture byte for byte.
+/// Turns the faces at `indices` inside out: vertex order reversed AND stored
+/// normal negated, the state in which an inverted face arrives from a file. The
+/// orientation repair pass reverses both again, restoring the donor fixture
+/// byte for byte.
 ///
-/// The chosen faces must have pairwise disjoint edge-neighbourhoods:
-/// a face adjacent to 2 inside-out faces would itself accumulate 2
-/// winding disagreements and be misread as flipped by the repair
-/// planner.
+/// The chosen faces must have pairwise disjoint edge-neighbourhoods: a face
+/// adjacent to 2 inside-out faces would itself accumulate 2 winding
+/// disagreements and be misread as flipped by the repair planner.
 fn with_flipped_faces(mut mesh: IndexedMesh, indices: &[usize]) -> IndexedMesh {
     for &idx in indices {
         let face = &mut mesh.faces[idx];
@@ -368,51 +355,47 @@ fn with_flipped_faces(mut mesh: IndexedMesh, indices: &[usize]) -> IndexedMesh {
     mesh
 }
 
-/// Faces turned inside out by [`unit_cube_with_flipped_faces`]: one
-/// bottom and one top face, whose edge-neighbourhoods are disjoint.
+/// Faces turned inside out by [`unit_cube_with_flipped_faces`]: 1 bottom and 1
+/// top face, whose edge-neighbourhoods are disjoint.
 pub const UNIT_CUBE_FLIPPED_FACES: [usize; 2] = [0, 2];
 
-/// [`unit_cube_mesh`] with 2 of its 12 faces deliberately turned
-/// inside out: repairable-by-construction (2 is below the
-/// orientation pass's inside-out threshold of faces / 2), and
-/// repairing restores the pristine cube byte for byte. Shared by
-/// the frontends' repair pipelines' tests so they exercise the same
-/// defect.
+/// Returns [`unit_cube_mesh`] with 2 of its 12 faces deliberately turned inside
+/// out: repairable by construction (2 is below the inside-out threshold of the
+/// orientation pass, faces / 2), and repairing restores the pristine cube byte
+/// for byte.
 pub fn unit_cube_with_flipped_faces() -> IndexedMesh {
     with_flipped_faces(unit_cube_mesh(), &UNIT_CUBE_FLIPPED_FACES)
 }
 
-/// Faces turned inside out by
-/// [`cuboid_with_z_tunnel_and_flipped_faces`]: one bottom-annulus,
-/// one top-annulus, and one tunnel-wall face, with pairwise disjoint
-/// edge-neighbourhoods.
+/// Faces turned inside out by [`cuboid_with_z_tunnel_and_flipped_faces`]: 1
+/// face of the bottom annulus, 1 of the top annulus and 1 tunnel-wall face,
+/// with pairwise disjoint edge-neighbourhoods.
 pub const Z_TUNNEL_FLIPPED_FACES: [usize; 3] = [0, 12, 26];
 
-/// [`cuboid_with_z_tunnel`] with 3 of its 32 faces deliberately
-/// turned inside out: repairable-by-construction, and repairing
-/// restores the pristine prism byte for byte.
+/// Returns [`cuboid_with_z_tunnel`] with 3 of its 32 faces deliberately turned
+/// inside out: repairable by construction, and repairing restores the pristine
+/// prism byte for byte.
 pub fn cuboid_with_z_tunnel_and_flipped_faces() -> IndexedMesh {
     with_flipped_faces(cuboid_with_z_tunnel(), &Z_TUNNEL_FLIPPED_FACES)
 }
 
-/// Faces turned inside out by
-/// [`cuboid_with_y_tunnel_and_flipped_faces`]: the first solid-bottom
-/// face, one front-annulus face, and one tunnel-wall face, with
-/// pairwise disjoint edge-neighbourhoods.
+/// Faces turned inside out by [`cuboid_with_y_tunnel_and_flipped_faces`]: the
+/// first face of the solid bottom, 1 face of the front annulus and 1
+/// tunnel-wall face, with pairwise disjoint edge-neighbourhoods.
 pub const Y_TUNNEL_FLIPPED_FACES: [usize; 3] = [0, 10, 24];
 
-/// [`cuboid_with_y_tunnel`] with 3 of its 32 faces deliberately
-/// turned inside out: repairable-by-construction, and repairing
-/// restores the pristine prism byte for byte.
+/// Returns [`cuboid_with_y_tunnel`] with 3 of its 32 faces deliberately turned
+/// inside out: repairable by construction, and repairing restores the pristine
+/// prism byte for byte.
 pub fn cuboid_with_y_tunnel_and_flipped_faces() -> IndexedMesh {
     with_flipped_faces(cuboid_with_y_tunnel(), &Y_TUNNEL_FLIPPED_FACES)
 }
 
-/// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
-/// `z = 0`, with V2 AND V3 BOTH above. The surface only skims the
-/// plane along the on-edge V0-V1 (it never crosses it), so the
-/// slicer must drop the on-edge segment entirely. Face winding
-/// follows the manifold tetrahedron pattern in `sc-mesh-core`.
+/// Returns a tetrahedron with V0 and V1 exactly on the plane `z = 0`, and V2
+/// and V3 both above. The surface only touches the plane along the on-edge
+/// V0-V1 and never crosses it, so the slicer must drop the on-edge segment
+/// entirely. Face winding follows the manifold tetrahedron pattern in
+/// `sc-mesh-core`.
 pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
     let placeholder = Normal::new([0.0, 0.0, 1.0]);
     let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
@@ -426,4 +409,13 @@ pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
         ],
         faces: vec![f([0, 1, 2]), f([0, 3, 1]), f([0, 2, 3]), f([1, 3, 2])],
     }
+}
+
+/// Returns `mesh` with `name` as its name and no other metadata.
+pub fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
+    mesh.set_meta(Some(MeshMetadata {
+        name: Some(name.to_string()),
+        header_comment: None,
+    }));
+    mesh
 }
