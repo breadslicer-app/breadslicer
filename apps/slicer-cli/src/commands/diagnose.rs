@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{
-    FaceDiagnosis, MeshDiagnosis, MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError,
-    MeshVertexError,
+    FaceDiagnosis, MeshDiagnosis, MeshEdgeManifoldError, MeshFaceError, MeshVertexError,
+    ZeroAreaFace,
 };
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::MeshFileType;
@@ -47,10 +47,9 @@ pub(crate) fn diagnose(
     Ok(())
 }
 
-/// Renders one mesh's diagnosis with the historical block layout:
-/// vertex errors, then either the face errors (whose gate failure
-/// left the witness-gated findings absent) or the normal-vector and
-/// edge-manifold blocks. Blocks without findings are omitted.
+/// Renders a mesh's diagnosis block by block: vertex errors, then either the
+/// face errors (whose gate failure left the witness-gated findings absent) or
+/// the zero-area and edge-manifold blocks. Blocks without findings are omitted.
 fn show_diagnosis(diagnosis: &MeshDiagnosis, out: &mut dyn Write) {
     if !diagnosis.vertex_errors.is_empty() {
         show_vertex_errors(&diagnosis.vertex_errors, out);
@@ -58,11 +57,11 @@ fn show_diagnosis(diagnosis: &MeshDiagnosis, out: &mut dyn Write) {
     match &diagnosis.faces {
         FaceDiagnosis::Invalid(face_errors) => show_face_errors(face_errors, out),
         FaceDiagnosis::Valid {
-            normal_vector_errors,
+            zero_area_faces,
             edge_manifold_errors,
         } => {
-            if !normal_vector_errors.is_empty() {
-                show_normal_vector_errors(normal_vector_errors, out);
+            if !zero_area_faces.is_empty() {
+                show_zero_area_faces(zero_area_faces, out);
             }
             if !edge_manifold_errors.is_empty() {
                 show_manifold_errors(edge_manifold_errors, out);
@@ -85,13 +84,10 @@ pub(crate) fn show_face_errors(face_errors: &[MeshFaceError], out: &mut dyn Writ
     }
 }
 
-pub(crate) fn show_normal_vector_errors(
-    vector_errors: &[MeshNormalVectorError],
-    out: &mut dyn Write,
-) {
-    let _ = writeln!(out, "Normal vector errors ({}):", vector_errors.len());
-    for vector_error in vector_errors {
-        let _ = writeln!(out, "\t- {vector_error}");
+pub(crate) fn show_zero_area_faces(zero_area_faces: &[ZeroAreaFace], out: &mut dyn Write) {
+    let _ = writeln!(out, "Zero-area faces ({}):", zero_area_faces.len());
+    for zero_area_face in zero_area_faces {
+        let _ = writeln!(out, "\t- {zero_area_face}");
     }
 }
 

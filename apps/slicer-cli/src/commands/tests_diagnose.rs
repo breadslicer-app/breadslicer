@@ -10,12 +10,12 @@
 //! drops a case can be caught.
 
 use sc_mesh_core::indexed_mesh::{
-    MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError, MeshVertexError,
+    MeshEdgeManifoldError, MeshFaceError, MeshVertexError, ZeroAreaFace,
 };
 use sc_mesh_core::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
 use crate::commands::diagnose::{
-    show_face_errors, show_manifold_errors, show_normal_vector_errors, show_vertex_errors,
+    show_face_errors, show_manifold_errors, show_vertex_errors, show_zero_area_faces,
 };
 
 fn render<F: FnOnce(&mut Vec<u8>)>(write: F) -> String {
@@ -74,14 +74,14 @@ fn show_face_errors_covers_every_variant() {
 }
 
 #[test]
-fn show_normal_vector_errors_covers_every_variant() {
-    let errors = vec![MeshNormalVectorError::ZeroAreaTriangle {
+fn show_zero_area_faces_lists_each_face() {
+    let faces = vec![ZeroAreaFace {
         face_idx: FaceIndex::from(1_usize),
     }];
-    let out = render(|w| show_normal_vector_errors(&errors, w));
+    let out = render(|w| show_zero_area_faces(&faces, w));
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2, "header + 1 entry; got: {out}");
-    assert_eq!(lines[0], "Normal vector errors (1):");
+    assert_eq!(lines[0], "Zero-area faces (1):");
     assert_eq!(lines[1], "\t- face #1 is degenerate: zero area");
 }
 
@@ -133,8 +133,8 @@ fn empty_input_only_writes_header() {
     let face_out = render(|w| show_face_errors(&[], w));
     assert_eq!(face_out.trim(), "Face errors (0):");
 
-    let normal_out = render(|w| show_normal_vector_errors(&[], w));
-    assert_eq!(normal_out.trim(), "Normal vector errors (0):");
+    let zero_area_out = render(|w| show_zero_area_faces(&[], w));
+    assert_eq!(zero_area_out.trim(), "Zero-area faces (0):");
 
     let manifold_out = render(|w| show_manifold_errors(&[], w));
     assert_eq!(manifold_out.trim(), "Manifold errors (0):");

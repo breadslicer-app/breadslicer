@@ -329,7 +329,7 @@ fn convert_mesh(
         ];
         // 3MF stores no normals; recompute from the CCW winding. A degenerate
         // triangle keeps a zero-normal sentinel so the geometry is not silently
-        // dropped; downstream validation flags it as `ZeroAreaTriangle`.
+        // dropped; downstream validation flags it as `ZeroAreaFace`.
         let normal = compute_normal_from_triangle_vertices(&corners)
             .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
         faces.push(IndexedTriangle::from_raw_indices(normal, indices));

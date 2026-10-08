@@ -442,7 +442,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         assert!(
             mesh.validated_faces()
                 .unwrap()
-                .validate_normal_vectors()
+                .validate_face_areas()
                 .is_ok()
         );
     }

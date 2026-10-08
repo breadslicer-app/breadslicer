@@ -10,11 +10,11 @@
 
 use super::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
-use super::validated::{MeshEdgeManifoldError, MeshNormalVectorError};
+use super::validated::{MeshEdgeManifoldError, ZeroAreaFace};
 
-/// The face gate's result. The normal-vector and edge-manifold validators run
-/// on the witness face validation mints, so when the gate fails their findings
-/// do not exist for this mesh: absent by construction, not empty.
+/// The face gate's result. The face-area and edge-manifold validators run on
+/// the witness face validation mints, so when the gate fails their findings do
+/// not exist for this mesh: absent by construction, not empty.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FaceDiagnosis {
     /// Face validation failed; the witness-gated validators could not run.
@@ -23,7 +23,7 @@ pub enum FaceDiagnosis {
     /// independent of each other).
     Valid {
         /// Faces with zero area.
-        normal_vector_errors: Vec<MeshNormalVectorError>,
+        zero_area_faces: Vec<ZeroAreaFace>,
         /// Edges breaking the 2-faces-per-edge or consistent-winding rules.
         edge_manifold_errors: Vec<MeshEdgeManifoldError>,
     },
@@ -49,9 +49,9 @@ impl MeshDiagnosis {
         match &self.faces {
             FaceDiagnosis::Invalid(_) => true,
             FaceDiagnosis::Valid {
-                normal_vector_errors,
+                zero_area_faces,
                 edge_manifold_errors,
-            } => !normal_vector_errors.is_empty() || !edge_manifold_errors.is_empty(),
+            } => !zero_area_faces.is_empty() || !edge_manifold_errors.is_empty(),
         }
     }
 }
@@ -59,17 +59,14 @@ impl MeshDiagnosis {
 impl IndexedMesh {
     /// Runs every validator over this mesh in the order the frontends present
     /// them: vertices first (they never gate the rest), then the face gate;
-    /// when the gate passes, the normal-vector and edge-manifold validators
-    /// both run.
+    /// when the gate passes, the face-area and edge-manifold validators both
+    /// run.
     pub fn diagnose(&self) -> MeshDiagnosis {
         let vertex_errors = self.validate_vertices().err().unwrap_or_default();
         let faces = match self.validated_faces() {
             Err(face_errors) => FaceDiagnosis::Invalid(face_errors),
             Ok(validated) => FaceDiagnosis::Valid {
-                normal_vector_errors: validated
-                    .validate_normal_vectors()
-                    .err()
-                    .unwrap_or_default(),
+                zero_area_faces: validated.validate_face_areas().err().unwrap_or_default(),
                 edge_manifold_errors: validated.validate_edge_manifold().err().unwrap_or_default(),
             },
         };

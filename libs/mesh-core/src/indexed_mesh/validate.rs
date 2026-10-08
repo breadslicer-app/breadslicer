@@ -495,9 +495,10 @@ mod indexed_mesh_validate_faces_tests {
 }
 
 #[cfg(test)]
-mod indexed_mesh_validate_normal_vectors_tests {
+mod indexed_mesh_validate_face_areas_tests {
     use super::*;
-    use crate::indexed_mesh::validated::MeshNormalVectorError;
+    use crate::geometry::compute_normal_from_triangle_vertices;
+    use crate::indexed_mesh::validated::ZeroAreaFace;
     use crate::primitives::Normal;
 
     fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -523,7 +524,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
     }
 
     #[test]
-    fn ok_for_correct_normal() {
+    fn ok_for_a_non_degenerate_triangle() {
         let mesh = make_mesh(
             xy_triangle_vertices(),
             vec![face([0.0, 0.0, 1.0], [0, 1, 2])],
@@ -531,7 +532,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert!(
             mesh.validated_faces()
                 .unwrap()
-                .validate_normal_vectors()
+                .validate_face_areas()
                 .is_ok()
         );
     }
@@ -542,16 +543,15 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert!(
             mesh.validated_faces()
                 .unwrap()
-                .validate_normal_vectors()
+                .validate_face_areas()
                 .is_ok()
         );
     }
 
     #[test]
     fn ok_for_small_but_valid_triangle() {
-        // Sub-millimetre detail (~1 µm edges). Pre-fix this would have been
-        // flagged ZeroAreaTriangle by the absolute-area threshold an earlier
-        // version of the validator used.
+        // Sub-millimetre detail (~1 µm edges). An absolute-area threshold that
+        // an earlier version of the validator used flagged this face.
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
             Vertex::new([1e-3, 0.0, 0.0]),
@@ -561,7 +561,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert!(
             mesh.validated_faces()
                 .unwrap()
-                .validate_normal_vectors()
+                .validate_face_areas()
                 .is_ok()
         );
     }
@@ -577,11 +577,11 @@ mod indexed_mesh_validate_normal_vectors_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_normal_vectors()
+            .validate_face_areas()
             .unwrap_err();
         assert_eq!(
             errors,
-            vec![MeshNormalVectorError::ZeroAreaTriangle {
+            vec![ZeroAreaFace {
                 face_idx: 0_usize.into()
             }]
         );
@@ -598,11 +598,11 @@ mod indexed_mesh_validate_normal_vectors_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_normal_vectors()
+            .validate_face_areas()
             .unwrap_err();
         assert_eq!(
             errors,
-            vec![MeshNormalVectorError::ZeroAreaTriangle {
+            vec![ZeroAreaFace {
                 face_idx: 0_usize.into()
             }]
         );
@@ -623,10 +623,85 @@ mod indexed_mesh_validate_normal_vectors_tests {
         for normal in stored_normals {
             let mesh = make_mesh(xy_triangle_vertices(), vec![face(normal, [0, 1, 2])]);
             assert_eq!(
-                mesh.validated_faces().unwrap().validate_normal_vectors(),
+                mesh.validated_faces().unwrap().validate_face_areas(),
                 Ok(()),
                 "stored normal {normal:?}"
             );
+        }
+    }
+
+    /// Pins that the zero-area check and the normal computation agree on every
+    /// triangle of the degeneracy tests in `geometry.rs`.
+    #[test]
+    fn flags_a_face_exactly_when_it_has_no_normal() {
+        let cases: [(&str, [[f32; 3]; 3], bool); 11] = [
+            (
+                "xy",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                false,
+            ),
+            (
+                "small",
+                [[0.0, 0.0, 0.0], [1e-4, 0.0, 0.0], [0.0, 1e-4, 0.0]],
+                false,
+            ),
+            (
+                "sliver 1e-7",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1e-7, 0.0]],
+                true,
+            ),
+            (
+                "sliver 4e-7",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 4e-7, 0.0]],
+                true,
+            ),
+            (
+                "sliver 6e-7",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 6e-7, 0.0]],
+                false,
+            ),
+            (
+                "sliver 1e-5",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1e-5, 0.0]],
+                false,
+            ),
+            (
+                "collinear",
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                true,
+            ),
+            (
+                "3 equal",
+                [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]],
+                true,
+            ),
+            (
+                "2 equal",
+                [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+                true,
+            ),
+            (
+                "NaN",
+                [[f32::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                true,
+            ),
+            (
+                "infinite",
+                [[f32::INFINITY, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                true,
+            ),
+        ];
+        for (name, corners, degenerate) in cases {
+            let vertices = corners.map(Vertex::new);
+            let has_no_normal = compute_normal_from_triangle_vertices(&vertices).is_err();
+            let mesh = make_mesh(vertices.to_vec(), vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+            let flagged = mesh
+                .validated_faces()
+                .unwrap()
+                .validate_face_areas()
+                .is_err();
+            assert_eq!(has_no_normal, degenerate, "{name}: normal computation");
+            assert_eq!(flagged, degenerate, "{name}: zero-area check");
         }
     }
 
@@ -643,18 +718,18 @@ mod indexed_mesh_validate_normal_vectors_tests {
             vec![
                 // Wrong stored normal, not flagged.
                 face([0.0, 0.0, -1.0], [0, 1, 2]),
-                // ZeroAreaTriangle (collinear).
+                // Zero area (collinear).
                 face([0.0, 0.0, 1.0], [0, 1, 3]),
             ],
         );
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_normal_vectors()
+            .validate_face_areas()
             .unwrap_err();
         assert_eq!(
             errors,
-            vec![MeshNormalVectorError::ZeroAreaTriangle {
+            vec![ZeroAreaFace {
                 face_idx: 1_usize.into()
             }]
         );
@@ -674,7 +749,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert!(
             mesh.validated_faces()
                 .unwrap()
-                .validate_normal_vectors()
+                .validate_face_areas()
                 .is_ok()
         );
     }

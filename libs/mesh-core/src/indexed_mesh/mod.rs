@@ -34,8 +34,8 @@ pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::{EdgeKey, MeshTopology, edge_key};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{
-    MeshEdgeManifoldError, MeshNormalVectorError, ValidatedEdgeManifoldMesh, ValidatedFaces,
-    ValidatedFacesMut,
+    MeshEdgeManifoldError, ValidatedEdgeManifoldMesh, ValidatedFaces, ValidatedFacesMut,
+    ZeroAreaFace,
 };
 
 use crate::aabb::Aabb;

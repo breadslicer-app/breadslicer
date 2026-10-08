@@ -1121,8 +1121,7 @@ mod diagnose_tests {
             .unwrap()
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
-            .success()
-            .stderr(predicate::str::contains("Normal vector errors").not());
+            .success();
     }
 
     #[test]

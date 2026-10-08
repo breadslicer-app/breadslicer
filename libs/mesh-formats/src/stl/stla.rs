@@ -368,8 +368,8 @@ where
         // We interpret a zero-length normal vector as a hint to compute it at
         // load time. If the triangle is truly degenerate the recomputation
         // can't produce a meaningful direction; leave the zero normal in place
-        // so `validate_normal_vectors` flags it as `ZeroAreaTriangle` rather
-        // than the parser bailing on the whole file.
+        // so `validate_face_areas` flags it as `ZeroAreaFace` rather than the
+        // parser bailing on the whole file.
         if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
             && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
         {

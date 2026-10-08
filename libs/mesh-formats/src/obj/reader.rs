@@ -19,20 +19,20 @@ use crate::error::LoadObjError;
 use crate::messages::LoadObjWarning;
 use crate::slurp::slurp;
 
-/// Hard ceiling on the number of vertex tokens a single `f` directive
-/// may carry. Bounds the fan-triangulation amplification for one
-/// pathological line; real OBJ exporters stay well below this.
+/// Hard ceiling on the number of vertex tokens a single `f` directive may
+/// carry. Bounds the fan-triangulation amplification for 1 pathological line;
+/// real OBJ exporters stay well below this.
 const MAX_FACE_TOKENS: usize = 1024;
 
-/// Hard ceiling on the number of objects (scene leaves) a single OBJ
-/// document may produce. Mirrors the 3MF reader's expanded-leaf cap,
-/// so no loaded scene exceeds this leaf count regardless of format.
+/// Hard ceiling on the number of objects (scene leaves) a single OBJ document
+/// may produce. Mirrors the 3MF reader's expanded-leaf cap, so no loaded scene
+/// exceeds this leaf count regardless of format.
 const MAX_OBJECTS: usize = 100_000;
 
-/// Resource caps applied while parsing an OBJ. The public `read_obj`
-/// always uses the production values via `Caps::DEFAULT`; the internal
-/// `read_obj_with_caps` lets tests drive small caps so we can exercise
-/// the cap branches without materialising 200 M vertices.
+/// Resource caps applied while parsing an OBJ. The public `read_obj` always
+/// uses the production values via `Caps::DEFAULT`; the internal
+/// `read_obj_with_caps` lets tests drive small caps so we can exercise the cap
+/// branches without materialising 200 M vertices.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Caps {
     pub(super) max_vertices: usize,
@@ -48,18 +48,17 @@ impl Caps {
     };
 }
 
-/// Marks a table slot the object being flushed has not referenced yet.
-/// Local vertex counts stay below [`MAX_MESH_ELEMENT_COUNT`], so this
-/// value can never collide with a real local index.
+/// Marks a table slot the object being flushed has not referenced yet. Local
+/// vertex counts stay below [`MAX_MESH_ELEMENT_COUNT`], so this value can never
+/// collide with a real local index.
 const UNASSIGNED_LOCAL_INDEX: u32 = u32::MAX;
 
-/// Global-to-local vertex map for the object being flushed, indexed by
-/// global vertex id. Dense integer keys never needed hashing.
+/// Global-to-local vertex map for the object being flushed, indexed by global
+/// vertex id. Dense integer keys never needed hashing.
 ///
-/// `touched` lists the slots the current object filled in, so the
-/// reset after a flush costs one write per referenced vertex instead
-/// of a walk over the whole table. That is what lets a single
-/// allocation serve every object in the file.
+/// `touched` lists the slots the current object filled in, so the reset after a
+/// flush costs 1 write per referenced vertex instead of a walk over the whole
+/// table. That is what lets a single allocation serve every object in the file.
 struct VertexRemap {
     local_of: Vec<u32>,
     touched: Vec<u32>,
@@ -73,9 +72,8 @@ impl VertexRemap {
         }
     }
 
-    /// Drains `faces` (global indices) into per-object faces carrying
-    /// local indices, alongside the local vertex list in
-    /// first-appearance order.
+    /// Drains `faces` (global indices) into per-object faces carrying local
+    /// indices, alongside the local vertex list in first-appearance order.
     fn take_object(
         &mut self,
         global_vertices: &[Vertex],
@@ -135,10 +133,10 @@ fn flush_pending_object_as_mesh(
     Some(IndexedMesh::new(meta, local_vertices, remapped_faces))
 }
 
-/// Flushes the pending object as an inline-mesh leaf under `root`.
-/// Returns `true` when a leaf was attached. Cross-object vertex
-/// sharing is a scene-level observation now and is detected
-/// post-load by [`Scene::detect_shared_vertices`], not here.
+/// Flushes the pending object as an inline-mesh leaf under `root`. Returns
+/// `true` when a leaf was attached. Cross-object vertex sharing is a
+/// scene-level observation now and is detected post-load by
+/// [`Scene::detect_shared_vertices`], not here.
 fn flush_pending_object(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
@@ -186,8 +184,8 @@ where
     read_obj_slice(&bytes, caps)
 }
 
-/// Drops trailing NULs: ZBrush 2020 ends its OBJ exports with a lone
-/// NUL after the final newline.
+/// Drops trailing NULs: ZBrush 2020 ends its OBJ exports with a lone NUL after
+/// the final newline.
 pub(super) fn strip_trailing_nuls(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
     while end > 0 && bytes[end - 1] == 0 {
@@ -198,10 +196,10 @@ pub(super) fn strip_trailing_nuls(bytes: &[u8]) -> &[u8] {
 
 /// Reads an OBJ document from an in-memory byte slice.
 ///
-/// UTF-8 validity is only required up to the line the parse stops at:
-/// the retired line-streaming reader decoded one line at a time, so a
-/// grammar error in an earlier line still wins over an invalid
-/// sequence further down the file.
+/// UTF-8 validity is only required up to the line the parse stops at: the
+/// retired line-streaming reader decoded 1 line at a time, so a grammar error
+/// in an earlier line still wins over an invalid sequence further down the
+/// file.
 fn read_obj_slice(bytes: &[u8], caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
     let bytes = strip_trailing_nuls(bytes);
     match str::from_utf8(bytes) {
@@ -213,17 +211,17 @@ fn read_obj_slice(bytes: &[u8], caps: Caps) -> Result<(Scene, Vec<LoadObjWarning
                 Some(newline) => &valid[..=newline],
                 None => "",
             };
-            // The complete lines before the invalid sequence are parsed
-            // for their errors alone: getting through them means the
-            // retired reader would have reached the offending line next
-            // and failed to decode it.
+            // The complete lines before the invalid sequence are parsed for
+            // their errors alone: getting through them means the retired reader
+            // would have reached the offending line next and failed to decode
+            // it.
             parse_document(complete, caps)?;
             Err(invalid_utf8_error())
         }
     }
 }
 
-/// The invalid-UTF-8 error value the retired reader surfaced from
+/// Returns the invalid-UTF-8 error value the retired reader surfaced from
 /// `BufRead::lines`: same variant, same kind, same message.
 fn invalid_utf8_error() -> LoadObjError {
     LoadObjError::Io(std::io::Error::new(
@@ -233,17 +231,16 @@ fn invalid_utf8_error() -> LoadObjError {
 }
 
 /// Vertical tab: whitespace for `char::is_whitespace`, but not for
-/// `u8::is_ascii_whitespace`. A document free of it splits into the
-/// same tokens either way.
+/// `u8::is_ascii_whitespace`. A document free of it splits into the same tokens
+/// either way.
 const VERTICAL_TAB: u8 = 0x0B;
 
 fn parse_document(text: &str, caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
-    // Tokenization dispatch. An ASCII document with no vertical tab
-    // (every real OBJ file) takes the byte-level splitter; anything
-    // else falls back to the char-level one, whose Unicode whitespace
-    // handling the retired reader exposed. Both produce the same
-    // tokens for the text class they are chosen for, so the dispatch
-    // is invisible in the output.
+    // Tokenization dispatch. An ASCII document with no vertical tab (every real
+    // OBJ file) takes the byte-level splitter; anything else falls back to the
+    // char-level one, whose Unicode whitespace handling the retired reader
+    // exposed. Both produce the same tokens for the text class they are chosen
+    // for, so the dispatch is invisible in the output.
     if text.is_ascii() && !text.as_bytes().contains(&VERTICAL_TAB) {
         parse_lines(text, caps, str::split_ascii_whitespace)
     } else {
@@ -251,9 +248,9 @@ fn parse_document(text: &str, caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>)
     }
 }
 
-/// Parses the document line by line, allocating nothing per line: the
-/// vertex arity check counts tokens in place, and the `f` directive
-/// scratch buffers are cleared rather than reallocated.
+/// Parses the document line by line, allocating nothing per line: the vertex
+/// arity check counts tokens in place, and the `f` directive scratch buffers
+/// are cleared rather than reallocated.
 fn parse_lines<'t, I, F>(
     text: &'t str,
     caps: Caps,
@@ -264,9 +261,8 @@ where
     F: Fn(&'t str) -> I,
 {
     let mut warnings: Vec<LoadObjWarning> = Vec::new();
-    // Loader-faithful topology: every leaf attaches under one
-    // identity-Group root, matching the shape downstream tests and
-    // viewport code expect.
+    // Loader-faithful topology: every leaf attaches under 1 identity-Group
+    // root, matching the shape downstream tests and viewport code expect.
     let mut graph = Scene::new();
     let root = graph.add_group(None, Transform3D::Identity);
     graph
@@ -283,24 +279,25 @@ where
     // Name from the most recent `o` directive.
     let mut current_name: Option<String> = None;
 
-    // Count of leaves actually attached to the graph; drives the
-    // empty-file NoVertices / NoFaces warnings emitted at the end.
+    // Count of leaves actually attached to the graph; drives the empty-file
+    // NoVertices / NoFaces warnings emitted at the end.
     let mut leaf_count: usize = 0;
 
-    // File-level header: leading `#` comments before the first non-comment line.
+    // File-level header: leading `#` comments before the first non-comment
+    // line.
     let mut header_comment: Option<String> = None;
     let mut header_ended = false;
 
     // Reused across objects: one allocation for the whole file.
     let mut remap = VertexRemap::new();
 
-    // Reused across `f` directives: cleared per line, so only the
-    // widest face in the file pays for an allocation.
+    // Reused across `f` directives: cleared per line, so only the widest face
+    // in the file pays for an allocation.
     let mut face_tokens: Vec<&str> = Vec::new();
     let mut face_indices: Vec<VertexIndex> = Vec::new();
 
-    // Last consumed line, 1-based: the line the end-of-file flush
-    // reports if the final object trips the object cap.
+    // Last consumed line, 1-based: the line the end-of-file flush reports if
+    // the final object trips the object cap.
     let mut last_line = 0_usize;
 
     for (line_num, line) in text.lines().enumerate() {
@@ -337,10 +334,10 @@ where
             "o" => {
                 header_ended = true;
 
-                // Finalise the previous pending object (if it has faces).
-                // The cap is checked before the flush so the scene never
-                // holds more than `max_objects` leaves; faceless groups
-                // never reach the guard.
+                // Finalise the previous pending object (if it has faces). The
+                // cap is checked before the flush so the scene never holds more
+                // than `max_objects` leaves; faceless groups never reach the
+                // guard.
                 if !current_faces.is_empty() && leaf_count >= caps.max_objects {
                     return Err(LoadObjError::ObjectCountExceedsLimit {
                         line: line_num + 1,
@@ -374,9 +371,9 @@ where
                         limit: caps.max_vertices,
                     });
                 }
-                // Every coordinate token is counted so the arity error
-                // keeps reporting the real count, but only the 4 the
-                // grammar can use are kept.
+                // Every coordinate token is counted so the arity error keeps
+                // reporting the real count, but only the 4 the grammar can use
+                // are kept.
                 let mut coords: [&str; 4] = [""; 4];
                 let mut num_coords = 0_usize;
                 for token in tokens {
@@ -399,10 +396,9 @@ where
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
                         return Err(LoadObjError::VertexWZero { line: line_num + 1 });
                     }
-                    // The operands are individually finite, but the
-                    // quotient can still overflow f32 (e.g. 1e38 over
-                    // a small w), so it gets the same finiteness gate
-                    // as the raw tokens.
+                    // The operands are individually finite, but the quotient
+                    // can still overflow f32 (e.g. 1e38 over a small w), so it
+                    // gets the same finiteness gate as the raw tokens.
                     let divided = [x / w, y / w, z / w];
                     for value in divided {
                         if !value.is_finite() {
@@ -423,11 +419,11 @@ where
             }
             "f" => {
                 header_ended = true;
-                // The vertex tokens are buffered before any of them is
-                // parsed, so an arity error still wins over a malformed
-                // index. `take(cap + 1)` stops one past the cap: enough
-                // to tell "at cap" from "over cap" without walking a
-                // pathological line to its end.
+                // The vertex tokens are buffered before any of them is parsed,
+                // so an arity error still wins over a malformed index.
+                // `take(cap + 1)` stops 1 past the cap: enough to tell "at cap"
+                // from "over cap" without walking a pathological line to its
+                // end.
                 face_tokens.clear();
                 face_tokens.extend(tokens.take(caps.max_face_tokens + 1));
                 if face_tokens.len() < 3 {
@@ -450,7 +446,8 @@ where
                 }
 
                 // Reserve exactly the number of triangles this fan will emit;
-                // we already know `face_indices.len() >= 3` from the check above.
+                // we already know `face_indices.len() >= 3` from the check
+                // above.
                 let new_faces = face_indices.len() - 2;
                 current_faces
                     .try_reserve_exact(new_faces)
@@ -467,8 +464,8 @@ where
                     // vertices. If the triangle is truly degenerate (collinear
                     // or coincident vertices), no direction is recoverable.
                     // Keep the face with a zero-normal sentinel so the user's
-                    // geometry is not silently dropped; `validate_normal_vectors`
-                    // flags the face as `ZeroAreaTriangle`.
+                    // geometry is not silently dropped; `validate_face_areas`
+                    // flags the face as `ZeroAreaFace`.
                     let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])
                         .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
 
@@ -583,8 +580,8 @@ fn parse_face_vertex_index(
     vertex_count: usize,
     line_num: usize,
 ) -> Result<VertexIndex, LoadObjError> {
-    // OBJ face indices can be: v, v/vt, v/vt/vn, or v//vn
-    // We only care about the vertex index (first component).
+    // OBJ face indices can be: v, v/vt, v/vt/vn, or v//vn. We only care about
+    // the vertex index (first component).
     let index_str = token.split('/').next().unwrap();
 
     let index = index_str
@@ -599,8 +596,8 @@ fn parse_face_vertex_index(
         (index - 1) as usize // OBJ is 1-based
     } else if index < 0 {
         // Negative indices are relative to the current vertex list end.
-        // `checked_neg` covers the `i64::MIN` overflow; `try_from`
-        // catches 32-bit targets where the magnitude exceeds `usize::MAX`.
+        // `checked_neg` covers the `i64::MIN` overflow; `try_from` catches
+        // 32-bit targets where the magnitude exceeds `usize::MAX`.
         let abs_index: usize = index
             .checked_neg()
             .and_then(|n| usize::try_from(n).ok())
@@ -631,10 +628,10 @@ fn parse_face_vertex_index(
     Ok(VertexIndex::from(resolved as u32))
 }
 
-/// Returns `true` when the directive is part of the OBJ specification but
-/// this reader does not process it.  Used by the catch-all branch so
-/// real-world OBJ files (Blender exports with `l` line segments, free-form
-/// surfaces, rendering hints) load with a warning instead of failing.
+/// Returns `true` when the directive is part of the OBJ specification but this
+/// reader does not process it. Used by the catch-all branch so real-world OBJ
+/// files (Blender exports with `l` line segments, free-form surfaces, rendering
+/// hints) load with a warning instead of failing.
 fn is_known_obj_spec_directive(token: &str) -> bool {
     matches!(
         token,
@@ -809,10 +806,10 @@ mod parse_face_vertex_index_tests {
         assert!(err.to_string().contains("out of range"));
     }
 
-    // `-i64::MIN` overflows. The release profile has no overflow checks
-    // and the wrapped value happens to fail the bounds check, but a
-    // debug build (or any future profile with overflow checks enabled)
-    // would panic on `(-index) as usize`. This test pins the contract.
+    // `-i64::MIN` overflows. The release profile has no overflow checks and the
+    // wrapped value happens to fail the bounds check, but a debug build (or any
+    // future profile with overflow checks enabled) would panic on
+    // `(-index) as usize`. This test pins the contract.
     #[test]
     fn i64_min_negative_index_is_error_not_panic() {
         let token = i64::MIN.to_string();
@@ -1163,9 +1160,9 @@ f 1 2 3
     #[test]
     fn line_segment_directive_warns_and_skips() {
         // `l` is an OBJ-spec directive (line segments). The reader does not
-        // process it, but the file is otherwise valid: the surrounding
-        // vertices and face must still load, and a warning must surface
-        // the skipped line.
+        // process it, but the file is otherwise valid: the surrounding vertices
+        // and face must still load, and a warning must surface the skipped
+        // line.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1189,8 +1186,8 @@ f 1 2 3
 
     #[test]
     fn multiple_spec_directives_each_produce_warning() {
-        // Mixed bag of spec directives the reader doesn't process. Each
-        // gets its own warning carrying the original token and 1-based line.
+        // Mixed bag of spec directives the reader doesn't process. Each gets
+        // its own warning carrying the original token and 1-based line.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1291,10 +1288,10 @@ f 1 2 3
         assert_eq!(mesh.vertices()[0], Vertex::new([2.0, 4.0, 6.0]));
     }
 
-    /// Every token of `v 1e38 1.0 2.6 0.1` is individually finite,
-    /// but the homogeneous division `1e38 / 0.1 = 1e39` overflows
-    /// f32. The quotient must be rejected like any other non-finite
-    /// coordinate; each axis takes a turn as the overflowing one.
+    /// Pins the overflow check on the homogeneous division: every token of
+    /// `v 1e38 1.0 2.6 0.1` is finite, but `1e38 / 0.1 = 1e39` overflows f32.
+    /// The quotient must be rejected like any other non-finite coordinate; each
+    /// axis takes a turn as the overflowing one.
     #[test]
     fn vertex_with_overflowing_quotient_is_error_on_every_axis() {
         for obj in [
@@ -1315,9 +1312,9 @@ f 1 2 3
         }
     }
 
-    /// A subnormal `w` sits tens of thousands of ULPs away from zero,
-    /// so the dedicated near-zero check does not fire; the overflow
-    /// still happens in the division and must be caught there.
+    /// Pins the overflow check for a subnormal `w`: it sits tens of thousands
+    /// of ULPs away from zero, so the dedicated near-zero check does not fire;
+    /// the overflow still happens in the division and must be caught there.
     #[test]
     fn vertex_with_subnormal_w_overflowing_quotient_is_error() {
         let err = read_obj_from_str("v 1.0 1.0 1.0 1e-40\n")
@@ -1399,10 +1396,10 @@ f 1 2 3
 
     #[test]
     fn collinear_face_is_preserved_with_zero_normal_for_validation() {
-        // A face whose three vertices are collinear: the normal recompute
-        // can't produce a meaningful direction. The reader keeps the face
-        // with a zero normal so `validate_normal_vectors` flags it later
-        // rather than failing the whole file at parse time.
+        // A face whose 3 vertices are collinear: the normal recompute can't
+        // produce a meaningful direction. The reader keeps the face with a zero
+        // normal so `validate_face_areas` flags it later rather than failing
+        // the whole file at parse time.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1418,23 +1415,21 @@ f 1 2 3
         let errors = mesh
             .validated_faces()
             .expect("face indices in range")
-            .validate_normal_vectors()
+            .validate_face_areas()
             .expect_err("collinear face is degenerate");
         assert_eq!(
             errors,
-            vec![
-                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
-                    face_idx: 0_usize.into(),
-                }
-            ]
+            vec![sc_mesh_core::indexed_mesh::ZeroAreaFace {
+                face_idx: 0_usize.into(),
+            }]
         );
     }
 
     #[test]
     fn reader_continues_past_a_degenerate_face() {
-        // Three faces in order: valid, degenerate (collinear), valid. The
-        // reader must keep going past the degenerate face so an isolated
-        // bad face in a multi-face file doesn't fail the whole load.
+        // 3 faces in order: valid, degenerate (collinear), valid. The reader
+        // must keep going past the degenerate face so an isolated bad face in a
+        // multi-face file doesn't fail the whole load.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1449,8 +1444,8 @@ f 1 3 5
         let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
 
-        // All three faces survive; only the middle one carries a zero
-        // normal (the recompute couldn't produce a direction).
+        // All 3 faces survive; only the middle one carries a zero normal (the
+        // recompute couldn't produce a direction).
         assert_eq!(mesh.faces().len(), 3);
         assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
         assert_eq!(mesh.faces()[1].normal, Normal::new([0.0, 0.0, 0.0]));
@@ -1460,15 +1455,13 @@ f 1 3 5
         let errors = mesh
             .validated_faces()
             .expect("face indices in range")
-            .validate_normal_vectors()
+            .validate_face_areas()
             .expect_err("middle face is degenerate");
         assert_eq!(
             errors,
-            vec![
-                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
-                    face_idx: 1_usize.into(),
-                }
-            ]
+            vec![sc_mesh_core::indexed_mesh::ZeroAreaFace {
+                face_idx: 1_usize.into(),
+            }]
         );
     }
 
@@ -1476,7 +1469,7 @@ f 1 3 5
 
     #[test]
     fn two_named_objects() {
-        // Two triangles in separate objects sharing no vertices.
+        // 2 triangles in separate objects sharing no vertices.
         let obj = "\
 o TriA
 v 0.0 0.0 0.0
@@ -1510,9 +1503,9 @@ f 4 5 6
     #[test]
     fn two_objects_sharing_global_vertices() {
         // ObjectB's face references vertices defined before ObjectA's `o` line.
-        // Vertex re-indexing must produce correct local indices for both objects.
-        // Cross-object sharing is a scene-level observation now and is not
-        // surfaced by `read_obj`; the dispatcher tests in
+        // Vertex re-indexing must produce correct local indices for both
+        // objects. Cross-object sharing is a scene-level observation now and is
+        // not surfaced by `read_obj`; the dispatcher tests in
         // `tests/load_mesh_dispatch.rs` pin that variant.
         let obj = "\
 v 0.0 0.0 0.0
@@ -1548,9 +1541,9 @@ f 1 3 4
 
     #[test]
     fn three_objects_can_reuse_the_same_global_vertices() {
-        // The per-object remap table is reused across objects, so a
-        // later object referencing vertices an earlier one already
-        // claimed must still get local indices from 0.
+        // The per-object remap table is reused across objects, so a later
+        // object referencing vertices an earlier one already claimed must still
+        // get local indices from 0.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1592,17 +1585,17 @@ f 2 3 1
 
     #[test]
     fn vertex_coord_count_error_reports_every_token() {
-        // The arity check counts all coordinate tokens, not just the
-        // 4 the grammar can use.
+        // The arity check counts all coordinate tokens, not just the 4 the
+        // grammar can use.
         let err = read_obj_from_str("v 1 2 3 4 5 6 7\n").unwrap_err();
         assert!(err.to_string().contains("got 7"), "{err}");
     }
 
     #[test]
     fn vertical_tab_separates_tokens() {
-        // Vertical tab is whitespace for `char::is_whitespace` but not
-        // for its ASCII counterpart, so it routes the document off the
-        // byte-level tokenizer.
+        // Vertical tab is whitespace for `char::is_whitespace` but not for its
+        // ASCII counterpart, so it routes the document off the byte-level
+        // tokenizer.
         let obj = "v 0.0\u{0B}0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
         let (graph, _) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&graph);
@@ -1611,8 +1604,8 @@ f 2 3 1
 
     #[test]
     fn non_ascii_whitespace_separates_tokens() {
-        // A no-break space is Unicode whitespace: the document takes
-        // the char-level tokenizer and the coordinates still split.
+        // A no-break space is Unicode whitespace: the document takes the
+        // char-level tokenizer and the coordinates still split.
         let obj = "v 0.0\u{A0}0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
         let (graph, _) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&graph);
@@ -1758,8 +1751,8 @@ f 1 2 3
 
     #[test]
     fn vertex_count_above_cap_is_error() {
-        // Cap of 2 lets the first two `v` lines through; the third
-        // line trips the cap and returns a line-numbered error.
+        // Cap of 2 lets the first 2 `v` lines through; the third line trips the
+        // cap and returns a line-numbered error.
         let caps = Caps {
             max_vertices: 2,
             ..Caps::DEFAULT
@@ -1777,8 +1770,8 @@ v 0.0 1.0 0.0
 
     #[test]
     fn face_token_count_at_cap_succeeds() {
-        // Cap of 4 admits an `f` with exactly 4 tokens; the fan emits
-        // 2 triangles.
+        // Cap of 4 admits an `f` with exactly 4 tokens; the fan emits 2
+        // triangles.
         let caps = Caps {
             max_face_tokens: 4,
             ..Caps::DEFAULT
@@ -1816,17 +1809,16 @@ f 1 2 3 4
 
     #[test]
     fn face_token_overflow_does_not_collect_unbounded() {
-        // The cap-exceeded branch fires off `take(cap + 1)` so the
-        // intermediate token Vec is bounded even when the line has
-        // many more tokens than the cap. Direct memory check is not
-        // possible from a test, but we can at least confirm the
-        // error fires before any allocation could explode.
+        // The cap-exceeded branch fires off `take(cap + 1)` so the intermediate
+        // token Vec is bounded even when the line has many more tokens than the
+        // cap. Direct memory check is not possible from a test, but we can at
+        // least confirm the error fires before any allocation could explode.
         let caps = Caps {
             max_face_tokens: 3,
             ..Caps::DEFAULT
         };
-        // 50 tokens, well above the cap; with `take(4)` the parser sees
-        // at most 4 of them before bailing.
+        // 50 tokens, well above the cap; with `take(4)` the parser sees at most
+        // 4 of them before bailing.
         let many_tokens: String = (1..=50)
             .map(|n| n.to_string())
             .collect::<Vec<_>>()
@@ -1866,8 +1858,8 @@ f 1 2 3
 
     #[test]
     fn object_count_above_cap_is_error() {
-        // Cap of 2 admits objects A and B; C's flush at end of file
-        // trips the cap and reports the file's last line.
+        // Cap of 2 admits objects A and B; C's flush at end of file trips the
+        // cap and reports the file's last line.
         let caps = Caps {
             max_objects: 2,
             ..Caps::DEFAULT
@@ -1891,8 +1883,8 @@ f 1 2 3
 
     #[test]
     fn object_flush_at_o_directive_reports_its_line() {
-        // Cap of 1 admits object A; B's flush is triggered by the
-        // `o C` directive, whose line the error must carry.
+        // Cap of 1 admits object A; B's flush is triggered by the `o C`
+        // directive, whose line the error must carry.
         let caps = Caps {
             max_objects: 1,
             ..Caps::DEFAULT
@@ -1916,8 +1908,8 @@ f 1 2 3
 
     #[test]
     fn empty_o_directives_do_not_count_toward_object_cap() {
-        // Faceless `o` groups produce no leaf and must not consume
-        // cap budget: only Real flushes, under a cap of 1.
+        // Faceless `o` groups produce no leaf and must not consume cap budget:
+        // only Real flushes, under a cap of 1.
         let caps = Caps {
             max_objects: 1,
             ..Caps::DEFAULT
@@ -1938,8 +1930,8 @@ o Empty3
 
     #[test]
     fn objectless_obj_loads_under_cap_one() {
-        // No `o` directive: the implicit single object is the only
-        // leaf and fits a cap of 1.
+        // No `o` directive: the implicit single object is the only leaf and
+        // fits a cap of 1.
         let caps = Caps {
             max_objects: 1,
             ..Caps::DEFAULT

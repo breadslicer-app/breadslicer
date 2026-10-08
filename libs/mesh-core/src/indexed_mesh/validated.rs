@@ -29,16 +29,18 @@
 
 use std::fmt;
 
-use crate::geometry::{DEGENERACY_SIN_SQ_THRESHOLD, gt_strict};
+use crate::geometry::compute_reference_normal_f64;
 use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
 use super::IndexedMesh;
 use super::fix::{MeshFix, MeshFixError};
 use super::half_edges;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum MeshNormalVectorError {
-    ZeroAreaTriangle { face_idx: FaceIndex },
+/// A face with zero area: its vertices are collinear or coincide, so it has no
+/// normal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZeroAreaFace {
+    pub face_idx: FaceIndex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,13 +64,9 @@ pub enum MeshEdgeManifoldError {
     },
 }
 
-impl fmt::Display for MeshNormalVectorError {
+impl fmt::Display for ZeroAreaFace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroAreaTriangle { face_idx } => {
-                write!(f, "face #{face_idx} is degenerate: zero area",)
-            }
-        }
+        write!(f, "face #{} is degenerate: zero area", self.face_idx)
     }
 }
 
@@ -128,8 +126,8 @@ impl<'a> ValidatedFaces<'a> {
         &self.mesh.faces
     }
 
-    pub fn validate_normal_vectors(&self) -> Result<(), Vec<MeshNormalVectorError>> {
-        validate_normal_vectors_impl(self.mesh)
+    pub fn validate_face_areas(&self) -> Result<(), Vec<ZeroAreaFace>> {
+        validate_face_areas_impl(self.mesh)
     }
 
     pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
@@ -188,10 +186,8 @@ impl<'a> ValidatedFaces<'a> {
 ///   touch at a single point, its incident faces then forming several disjoint
 ///   fans. Such a mesh still bounds a well-defined solid; consumers that need
 ///   the per-vertex fan structure get it from `MeshTopology`.
-/// - Per-face normal vectors are correct (covered by
-///   [`ValidatedFaces::validate_normal_vectors`]).
-/// - Every triangle has non-zero area / no zero-length edges (covered by
-///   `validate_faces`).
+/// - Every triangle has non-zero area (covered by
+///   [`ValidatedFaces::validate_face_areas`]).
 /// - Any particular global winding convention (CCW outward, etc.):
 ///   edge-manifold inputs may still be globally inside-out.
 #[derive(Debug)]
@@ -233,8 +229,8 @@ impl<'a> ValidatedFacesMut<'a> {
         &self.mesh.faces
     }
 
-    pub fn validate_normal_vectors(&self) -> Result<(), Vec<MeshNormalVectorError>> {
-        validate_normal_vectors_impl(self.mesh)
+    pub fn validate_face_areas(&self) -> Result<(), Vec<ZeroAreaFace>> {
+        validate_face_areas_impl(self.mesh)
     }
 
     pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
@@ -254,34 +250,21 @@ impl<'a> ValidatedFacesMut<'a> {
     }
 }
 
-/// Carries out `validate_normal_vectors` for both `ValidatedFaces` and
+/// Carries out `validate_face_areas` for both `ValidatedFaces` and
 /// `ValidatedFacesMut`. The in-range invariant is what makes the unguarded
 /// `mesh.vertices[i]` indexing inside this routine safe; both witness types
 /// only call this on a mesh whose `validate_faces` returned `Ok`.
-fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormalVectorError>> {
-    let mut errors: Vec<MeshNormalVectorError> = vec![];
+fn validate_face_areas_impl(mesh: &IndexedMesh) -> Result<(), Vec<ZeroAreaFace>> {
+    let mut errors: Vec<ZeroAreaFace> = vec![];
 
     for (idx, face) in mesh.faces.iter().enumerate() {
-        let face_idx = FaceIndex::from(idx);
-        let [i0, i1, i2] = face.vertices.map(usize::from);
-
-        let v0 = mesh.vertices[i0].to_f64();
-        let v1 = mesh.vertices[i1].to_f64();
-        let v2 = mesh.vertices[i2].to_f64();
-
-        let e1 = v1.diff(&v0);
-        let e2 = v2.diff(&v0);
-
-        let cross = e1.cross_product(&e2);
-        let cross_mag_sq = cross.squared_norm();
-        let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
-
-        // Catches degenerate (zero-area) triangles, NaN coordinates included.
-        if !gt_strict(
-            cross_mag_sq,
-            DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
-        ) {
-            errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx });
+        let corners = face.vertices.map(|i| mesh.vertices[usize::from(i)]);
+        // A face has zero area exactly when it has no normal; a NaN coordinate
+        // also leaves it without one.
+        if compute_reference_normal_f64(&corners).is_err() {
+            errors.push(ZeroAreaFace {
+                face_idx: FaceIndex::from(idx),
+            });
         }
     }
 
@@ -296,7 +279,7 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 /// indexes into `mesh.vertices` (it only uses `face.vertices` values as
 /// half-edge keys), so the in-range invariant is not a soundness requirement
 /// here: the witness gates this method only for API symmetry with
-/// `validate_normal_vectors`.
+/// `validate_face_areas`.
 ///
 /// The directed half-edges are sorted so each undirected edge forms 1
 /// contiguous run: run length 1 is a boundary edge, more than 2 an over-shared
@@ -505,14 +488,14 @@ mod indexed_mesh_validated_faces_tests {
 }
 
 #[cfg(test)]
-mod mesh_normal_vector_error_display_tests {
+mod zero_area_face_display_tests {
     use super::*;
 
     #[test]
-    fn zero_area_triangle_renders_face_id() {
+    fn zero_area_face_renders_face_id() {
         let msg = format!(
             "{}",
-            MeshNormalVectorError::ZeroAreaTriangle {
+            ZeroAreaFace {
                 face_idx: 17_usize.into(),
             },
         );

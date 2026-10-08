@@ -86,10 +86,7 @@ fn expected_diagnosis(mesh: &IndexedMesh) -> MeshDiagnosis {
     let faces = match mesh.validated_faces() {
         Err(face_errors) => FaceDiagnosis::Invalid(face_errors),
         Ok(validated) => FaceDiagnosis::Valid {
-            normal_vector_errors: validated
-                .validate_normal_vectors()
-                .err()
-                .unwrap_or_default(),
+            zero_area_faces: validated.validate_face_areas().err().unwrap_or_default(),
             edge_manifold_errors: validated.validate_edge_manifold().err().unwrap_or_default(),
         },
     };
@@ -106,7 +103,7 @@ fn clean_mesh_diagnoses_clean() {
     assert_eq!(
         diagnosis.faces,
         FaceDiagnosis::Valid {
-            normal_vector_errors: vec![],
+            zero_area_faces: vec![],
             edge_manifold_errors: vec![],
         }
     );
@@ -145,13 +142,13 @@ fn an_open_strip_reports_its_boundary_edges() {
     let mesh = open_strip();
     let diagnosis = mesh.diagnose();
     let FaceDiagnosis::Valid {
-        normal_vector_errors,
+        zero_area_faces,
         edge_manifold_errors,
     } = &diagnosis.faces
     else {
         panic!("open strip has valid faces; got {:?}", diagnosis.faces);
     };
-    assert!(normal_vector_errors.is_empty());
+    assert!(zero_area_faces.is_empty());
     assert_eq!(
         *edge_manifold_errors,
         mesh.validated_faces()
@@ -163,21 +160,21 @@ fn an_open_strip_reports_its_boundary_edges() {
 }
 
 #[test]
-fn a_zero_area_face_reports_normal_vector_errors() {
+fn a_zero_area_face_is_reported() {
     let mesh = tetrahedron_with_a_zero_area_face();
     let diagnosis = mesh.diagnose();
     let FaceDiagnosis::Valid {
-        normal_vector_errors,
+        zero_area_faces,
         edge_manifold_errors,
     } = &diagnosis.faces
     else {
         panic!("faces stay valid; got {:?}", diagnosis.faces);
     };
     assert_eq!(
-        *normal_vector_errors,
+        *zero_area_faces,
         mesh.validated_faces()
             .expect("valid faces")
-            .validate_normal_vectors()
+            .validate_face_areas()
             .unwrap_err()
     );
     assert!(edge_manifold_errors.is_empty());
@@ -195,7 +192,7 @@ fn an_empty_mesh_reports_the_empty_manifold_error() {
     assert_eq!(
         diagnosis.faces,
         FaceDiagnosis::Valid {
-            normal_vector_errors: vec![],
+            zero_area_faces: vec![],
             edge_manifold_errors: vec![MeshEdgeManifoldError::EmptyMesh],
         }
     );
