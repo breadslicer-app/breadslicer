@@ -23,6 +23,9 @@ use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 
 use crate::error::LoadThreeMfError;
 use crate::messages::LoadThreeMfWarning;
+use crate::threemf::declared_normals::{
+    StoredFacetNormals, read_declared_facet_normals_parts, restore,
+};
 
 /// The shared expansion budget, re-exported from `sc-scene` (which owns the
 /// expansion vocabulary). The parser's definition-before-use rule makes
@@ -72,7 +75,10 @@ pub fn read_threemf_from_package(
         .part_data(&start_part)
         .expect("start_part only resolves to parts present in the package");
     let document = parse_model(bytes)?;
-    convert_document(&document)
+    let (declared, mut warnings) = read_declared_facet_normals_parts(package);
+    let (scene, conversion_warnings) = convert_document(&document, declared)?;
+    warnings.extend(conversion_warnings);
+    Ok((scene, warnings))
 }
 
 struct Converter<'doc> {
@@ -87,6 +93,9 @@ struct Converter<'doc> {
     /// Object ids reached from the build, for the unbuilt-object warning and
     /// the once-per-object type warning.
     reached: HashSet<u32>,
+    /// Declared facet normals read from the package, by object id, until the
+    /// mesh of their object is converted.
+    declared: HashMap<u32, StoredFacetNormals>,
     warnings: Vec<LoadThreeMfWarning>,
 }
 
@@ -124,6 +133,7 @@ fn expanded_leaf_count(document: &ModelDocument) -> usize {
 
 fn convert_document(
     document: &ModelDocument,
+    declared: HashMap<u32, StoredFacetNormals>,
 ) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError> {
     if expanded_leaf_count(document) > MAX_EXPANDED_LEAF_COUNT {
         return Err(LoadThreeMfError::LeafBudgetExceeded {
@@ -137,6 +147,7 @@ fn convert_document(
         scene: Scene::new(),
         resources: HashMap::new(),
         reached: HashSet::new(),
+        declared,
         warnings: Vec::new(),
     };
 
@@ -273,7 +284,12 @@ impl Converter<'_> {
         if let Some(&resource) = self.resources.get(&object.id.get()) {
             return Ok(resource);
         }
-        let mesh = convert_mesh(object, data, self.scale)?;
+        let mut mesh = convert_mesh(object, data, self.scale)?;
+        if let Some(stored) = self.declared.remove(&object.id.get())
+            && let Err(warning) = restore(&mut mesh, object.id.get(), stored)
+        {
+            self.warnings.push(warning);
+        }
         let resource = self.scene.add_mesh_resource(mesh);
         self.resources.insert(object.id.get(), resource);
         Ok(resource)

@@ -12,7 +12,7 @@ use sc_3mf::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE,
 };
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_formats::threemf::scene_to_model_document;
+use sc_mesh_formats::threemf::{add_declared_facet_normals_parts, scene_to_model_document};
 use sc_scene::Scene;
 
 use crate::error::WriteThreeMfProjectError;
@@ -27,20 +27,19 @@ use crate::threemf::{
 };
 use crate::write::WriteProgress;
 
-/// Report an accumulated serialized-byte count no more often than every
-/// this many bytes, so a large mesh yields a moving bar without a
-/// callback per XML event.
+/// Report an accumulated serialized-byte count no more often than every this
+/// many bytes, so a large mesh yields a moving bar without a callback per XML
+/// event.
 const SERIALIZE_REPORT_STEP: u64 = 256 * 1024;
 
-/// Writes `scene` and `payload` as a 3MF project package: the model
-/// part a plain 3MF export would carry, plus the project part and,
-/// with [`EmbedProfiles::Yes`], one part per embedded profile
-/// document. When `slices` is `Some`, the merged slice result is
-/// written to its own model part, standalone from the scene, and
-/// `slice_fingerprint`, when present, is recorded in the project part
-/// as that slice data's opaque validity token. The zip layer needs a
-/// seekable sink, so the package is serialized into memory first and
-/// then copied to `writer`.
+/// Writes `scene` and `payload` as a 3MF project package: the parts a plain 3MF
+/// export would carry, plus the project part and, with [`EmbedProfiles::Yes`],
+/// 1 part per embedded profile document. When `slices` is `Some`, the merged
+/// slice result is written to its own model part, standalone from the scene,
+/// and `slice_fingerprint`, when present, is recorded in the project part as
+/// that slice data's opaque validity token. The zip layer needs a seekable
+/// sink, so the package is serialized into memory first and then copied to
+/// `writer`.
 pub fn write_threemf_project<W>(
     scene: &Scene,
     payload: &ProjectPayload,
@@ -63,8 +62,8 @@ where
     )
 }
 
-/// [`write_threemf_project`], reporting serialize and compress progress
-/// through `progress`.
+/// Writes as [`write_threemf_project`] does, and reports serialize and compress
+/// progress through `progress`.
 pub fn write_threemf_project_with_progress<W>(
     scene: &Scene,
     payload: &ProjectPayload,
@@ -77,10 +76,10 @@ pub fn write_threemf_project_with_progress<W>(
 where
     W: Write,
 {
-    let document = scene_to_model_document(scene)?;
+    let model = scene_to_model_document(scene)?;
 
-    // Build the standalone slice document up front, if present, so its
-    // size feeds the serialize estimate before any XML is written.
+    // Build the standalone slice document up front, if present, so its size
+    // feeds the serialize estimate before any XML is written.
     let slice_document = match slices {
         Some(plate) => {
             // The sole resource in the standalone slice document.
@@ -95,11 +94,16 @@ where
         None => None,
     };
 
-    let serialize_total =
-        estimate_model_bytes(&document) + slice_document.as_ref().map_or(0, estimate_model_bytes);
+    let serialize_total = estimate_model_bytes(&model.document)
+        + slice_document.as_ref().map_or(0, estimate_model_bytes);
     let mut serialized: u64 = 0;
 
-    let model_xml = serialize_ticking(&document, serialize_total, &mut serialized, &mut progress)?;
+    let model_xml = serialize_ticking(
+        &model.document,
+        serialize_total,
+        &mut serialized,
+        &mut progress,
+    )?;
 
     let mut package = Package::new();
     let model_part = known_part_name(DEFAULT_MODEL_PART_NAME);
@@ -129,6 +133,7 @@ where
         rel_type: MUST_PRESERVE_REL_TYPE.to_string(),
         target: PROJECT_PART_NAME.to_string(),
     });
+    add_declared_facet_normals_parts(&mut package, &model.mesh_objects)?;
 
     if let Some(slice_document) = &slice_document {
         let slice_xml = serialize_ticking(
@@ -174,11 +179,11 @@ where
     Ok(())
 }
 
-/// Serialize `document` to XML in memory, reporting the running total of
+/// Serializes `document` to XML in memory, reporting the running total of
 /// serialized bytes as a [`WriteProgress::Serialize`] against
-/// `serialize_total`. `serialized` accumulates across successive calls
-/// (the mesh model, then the slice model), so the phase advances once
-/// across both rather than restarting.
+/// `serialize_total`. `serialized` accumulates across successive calls (the
+/// mesh model, then the slice model), so the phase advances once across both
+/// rather than restarting.
 fn serialize_ticking(
     document: &ModelDocument,
     serialize_total: u64,
@@ -188,16 +193,15 @@ fn serialize_ticking(
     let mut writer = SerializeTicker::new(*serialized, serialize_total, progress);
     write_model(document, &mut writer)?;
     // Force a report at the document boundary, so the serialize phase is
-    // visible even when the whole document is smaller than one report
-    // step.
+    // visible even when the whole document is smaller than 1 report step.
     writer.report_now();
     *serialized = writer.emitted();
     Ok(writer.into_inner())
 }
 
-/// A `Write` sink that serializes into a `Vec` while reporting the
-/// running serialized-byte total to a progress callback, throttled to
-/// one report per [`SERIALIZE_REPORT_STEP`].
+/// A `Write` sink that serializes into a `Vec` while reporting the running
+/// serialized-byte total to a progress callback, throttled to 1 report per
+/// [`SERIALIZE_REPORT_STEP`].
 struct SerializeTicker<'a, F> {
     inner: Vec<u8>,
     base: u64,
@@ -217,14 +221,14 @@ impl<'a, F: FnMut(WriteProgress)> SerializeTicker<'a, F> {
         }
     }
 
-    /// Total serialized bytes emitted through this sink, counting the
-    /// base carried in from earlier documents.
+    /// Returns the total serialized bytes emitted through this sink, counting
+    /// the base carried in from earlier documents.
     fn emitted(&self) -> u64 {
         self.base + self.inner.len() as u64
     }
 
-    /// Emit a report at the current emitted total, regardless of the
-    /// throttle step.
+    /// Emits a report at the current emitted total, regardless of the throttle
+    /// step.
     fn report_now(&mut self) {
         let emitted = self.emitted();
         self.last_reported = emitted;
@@ -258,9 +262,9 @@ impl<F: FnMut(WriteProgress)> Write for SerializeTicker<'_, F> {
     }
 }
 
-/// Rough estimate of the XML byte size `write_model` produces for
-/// `document`, used only as the serialize phase's denominator. Real
-/// output can run over or under; a consumer clamps the fraction.
+/// Returns a rough estimate of the XML byte size `write_model` produces for
+/// `document`, used only as the serialize phase's denominator. Real output can
+/// run over or under; a consumer clamps the fraction.
 fn estimate_model_bytes(document: &ModelDocument) -> u64 {
     // Per-element byte guesses for the `<vertex>`, `<triangle>`, slice
     // `<vertex>`, and `<segment>` markup plus their numeric payloads.
@@ -302,18 +306,17 @@ impl RelationshipIds {
     }
 }
 
-/// Builds a package part name from a string that is statically known to
-/// be well-formed: the module's part-name constants, and profile part
-/// names assembled from already-validated id slugs. A malformed name
-/// here is a programming error, not a runtime input, so it is not a
-/// write failure mode.
+/// Builds a package part name from a string that is statically known to be
+/// well-formed: the module's part-name constants, and profile part names
+/// assembled from already-validated id slugs. A malformed name here is a
+/// programming error, not a runtime input, so it is not a write failure mode.
 fn known_part_name(name: &str) -> PartName {
     PartName::new(name).expect("part name built from a known-good source is well-formed")
 }
 
-/// The part name and bytes of one embedded profile document. The id
-/// slug grammar (lowercase alphanumerics and hyphens) keeps every
-/// generated part name well-formed.
+/// Returns the part name and bytes of an embedded profile document. The id slug
+/// grammar (lowercase alphanumerics and hyphens) keeps every generated part
+/// name well-formed.
 fn profile_part(profile: &EmbeddedProfile) -> (PartName, &[u8]) {
     let (raw_name, bytes) = match profile {
         EmbeddedProfile::Printer { id, bytes } => (

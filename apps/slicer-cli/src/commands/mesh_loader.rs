@@ -111,6 +111,18 @@ pub(crate) fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dy
         LoadThreeMfWarning::EmptyBuild => {
             let _ = writeln!(out, "WARNING: The 3MF build section lists no items");
         }
+        LoadThreeMfWarning::DeclaredFacetNormalsMismatch { object_id } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Dropped the declared facet normals of object {object_id}: its mesh changed after they were saved"
+            );
+        }
+        LoadThreeMfWarning::DeclaredFacetNormalsMalformed { part } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Ignored the malformed declared-facet-normals part '{part}'"
+            );
+        }
     }
 }
 
@@ -143,8 +155,8 @@ mod display_warnings_tests {
     };
     use sc_scene::{NodeId, Scene};
 
-    /// Allocates `count` fresh NodeIds out of a throw-away scene so
-    /// tests don't depend on NodeId having a public raw constructor.
+    /// Allocates `count` fresh NodeIds out of a throw-away scene so tests don't
+    /// depend on NodeId having a public raw constructor.
     fn fresh_node_ids(count: usize) -> Vec<NodeId> {
         let mut graph = Scene::new();
         (0..count)
@@ -240,6 +252,10 @@ mod display_warnings_tests {
             },
             LoadThreeMfWarning::SliceDataIgnored { stack_count: 3 },
             LoadThreeMfWarning::EmptyBuild,
+            LoadThreeMfWarning::DeclaredFacetNormalsMismatch { object_id: 4 },
+            LoadThreeMfWarning::DeclaredFacetNormalsMalformed {
+                part: "/Metadata/declared-facet-normals/x.bin".to_string(),
+            },
         ]
         .into_iter()
         .map(LoadMeshWarning::ThreeMf)
@@ -247,13 +263,23 @@ mod display_warnings_tests {
 
         let out = render(&warnings);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 6, "one line per warning, got: {out}");
+        assert_eq!(lines.len(), 8, "one line per warning, got: {out}");
         assert!(lines[0].contains("2 material group"));
         assert!(lines[1].contains("'Spare'") && lines[1].contains("id 7"));
         assert!(lines[2].contains("id 8"));
         assert!(lines[3].contains("9") && lines[3].contains("'support'"));
         assert!(lines[4].contains("3 slice stack"));
         assert!(lines[5].contains("no items"));
+        assert_eq!(
+            lines[6],
+            "WARNING: Dropped the declared facet normals of object 4: its mesh changed after \
+             they were saved"
+        );
+        assert_eq!(
+            lines[7],
+            "WARNING: Ignored the malformed declared-facet-normals part \
+             '/Metadata/declared-facet-normals/x.bin'"
+        );
     }
 
     #[test]

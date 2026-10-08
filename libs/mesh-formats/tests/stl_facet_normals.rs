@@ -4,8 +4,9 @@
  */
 
 //! The facet normals an STL file declares are written back as read while the
-//! mesh is unchanged and placed by a translation; otherwise the STL writers
-//! compute each facet normal from the written geometry.
+//! mesh is unchanged and placed by a translation, also after a round trip
+//! through a 3MF package; otherwise the STL writers compute each facet normal
+//! from the written geometry.
 
 use std::f64::consts::FRAC_PI_2;
 use std::io::Cursor;
@@ -15,6 +16,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_formats::ports::MeshWriter;
 use sc_mesh_formats::stl::{StlAscii, StlBin, read_stla, read_stlb, write_stla, write_stlb};
+use sc_mesh_formats::threemf::{read_threemf, write_threemf};
 use sc_scene::Scene;
 use sc_scene_fixtures::leaves_as_roots;
 
@@ -176,6 +178,16 @@ fn a_2_object_scene_resolves_the_normals_of_each_object_on_its_own() {
     let normals = binary_normals(&write_binary(&scene));
     assert_eq!(normals[..4], DECLARED);
     assert_close(&normals[4..], &ROTATED);
+}
+
+#[test]
+fn the_declared_normals_survive_a_3mf_round_trip() {
+    let (scene, _) = read_stlb(&mut Cursor::new(BINARY_FIXTURE)).expect("the fixture reads");
+    let mut package = Vec::new();
+    write_threemf(&scene, &mut package).expect("the 3MF writes");
+    let (scene, warnings) = read_threemf(&mut Cursor::new(package)).expect("the 3MF reads");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(binary_normals(&write_binary(&scene)), DECLARED);
 }
 
 #[test]

@@ -5,19 +5,19 @@
 
 //! Typed errors for `sc-mesh-formats`.
 //!
-//! Adapters (CLI, GUI) absorb these into their own error currency at
-//! the boundary; the library itself never depends on `anyhow`.
+//! Adapters (CLI, GUI) absorb these into their own error currency at the
+//! boundary; the library itself never depends on `anyhow`.
 //!
 //! Hierarchy:
-//! - [`LoadMeshError`] aggregates every failure mode of the
-//!   `load_mesh_from_*` entry points: I/O, size cap, format inference,
-//!   per-format [`LoadStlError`] / [`LoadObjError`].
-//! - [`WriteSceneError`] aggregates every failure mode of
-//!   `write_scene`: I/O, filesystem atomic-write steps, empty-scene,
-//!   the graph's [`SceneError`], and per-format
-//!   [`WriteStlError`] / [`WriteObjError`].
-//! - [`InferFileTypeError`] is also exposed standalone for callers
-//!   that drive `infer_mesh_file_format_from_extension` directly.
+//! - [`LoadMeshError`] aggregates every failure mode of the `load_mesh_from_*`
+//!   entry points: I/O, size cap, format inference, per-format [`LoadStlError`]
+//!   / [`LoadObjError`] / [`LoadThreeMfError`].
+//! - [`WriteSceneError`] aggregates every failure mode of `write_scene`: I/O,
+//!   filesystem atomic-write steps, empty-scene, the graph's [`SceneError`],
+//!   and per-format [`WriteStlError`] / [`WriteObjError`] /
+//!   [`WriteThreeMfError`].
+//! - [`InferFileTypeError`] is also exposed standalone for callers that drive
+//!   `infer_mesh_file_format_from_extension` directly.
 
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
@@ -111,11 +111,11 @@ impl From<LoadThreeMfError> for LoadMeshError {
 pub enum WriteSceneError {
     Io(std::io::Error),
     EmptyScene,
-    /// The scene expands to more leaf occurrences than the flatten
-    /// path accepts (see `sc_scene::MAX_EXPANDED_LEAF_COUNT`).
-    /// Mirrors the 3MF reader's load-side budget: referenced
-    /// subtrees can multiply occurrences exponentially in the node
-    /// count, so the writers bound the work before walking.
+    /// The scene expands to more leaf occurrences than the flatten path accepts
+    /// (see `sc_scene::MAX_EXPANDED_LEAF_COUNT`). Mirrors the 3MF reader's
+    /// load-side budget: referenced subtrees can multiply occurrences
+    /// exponentially in the node count, so the writers bound the work before
+    /// walking.
     LeafBudgetExceeded {
         limit: usize,
     },
@@ -500,28 +500,27 @@ impl From<IndexedMeshBuildError> for LoadObjError {
 
 #[derive(Debug)]
 pub enum LoadThreeMfError {
-    /// The OPC container could not be read (ZIP damage, missing
-    /// content types, missing or dangling start-part relationship).
+    /// The OPC container could not be read (ZIP damage, missing content types,
+    /// missing or dangling start-part relationship).
     Package(PackageReadError),
     /// The 3D Model part's XML violates the core specification.
     Model(ModelParseError),
-    /// The start-part relationship points at a part whose declared
-    /// content type is not the 3D Model type.
+    /// The start-part relationship points at a part whose declared content type
+    /// is not the 3D Model type.
     StartPartNotAModel { content_type: String },
-    /// A vertex coordinate overflowed to infinity when the
-    /// millimetre-scaled f64 value was downcast to f32.
+    /// A vertex coordinate overflowed to infinity when the millimetre-scaled
+    /// f64 value was downcast to f32.
     NonFiniteVertex { object_id: u32 },
-    /// Component expansion produced more leaves than the reader
-    /// accepts (see `crate::threemf::MAX_EXPANDED_LEAF_COUNT`).
+    /// Component expansion produced more leaves than the reader accepts (see
+    /// `crate::threemf::MAX_EXPANDED_LEAF_COUNT`).
     LeafBudgetExceeded { limit: usize },
     /// Component objects nest deeper than the reader accepts (see
     /// `crate::threemf::MAX_COMPONENT_DEPTH`).
     ComponentDepthExceeded { limit: usize },
-    /// An object in the build is marked `s:meshresolution="lowres"`:
-    /// its mesh is a decimated stand-in and the real shape lives in
-    /// the slice data, which this loader does not consume yet.
-    /// Loading the stand-in as the model would misrepresent the
-    /// geometry, so the file is refused.
+    /// An object in the build is marked `s:meshresolution="lowres"`: its mesh
+    /// is a decimated stand-in and the real shape lives in the slice data,
+    /// which this loader does not consume yet. Loading the stand-in as the
+    /// model would misrepresent the geometry, so the file is refused.
     LowresMeshUnsupported { object_id: u32 },
 }
 
@@ -618,11 +617,10 @@ impl From<std::io::Error> for WriteStlError {
 pub enum WriteObjError {
     Io(std::io::Error),
     Graph(SceneError),
-    /// The scene expands to more leaf occurrences than the writer
-    /// accepts (see `sc_scene::MAX_EXPANDED_LEAF_COUNT`).
-    /// Mirrors the 3MF reader's load-side budget: referenced
-    /// subtrees can multiply occurrences exponentially in the node
-    /// count, so the writer bounds the work before walking.
+    /// The scene expands to more leaf occurrences than the writer accepts (see
+    /// `sc_scene::MAX_EXPANDED_LEAF_COUNT`). Mirrors the 3MF reader's load-side
+    /// budget: referenced subtrees can multiply occurrences exponentially in
+    /// the node count, so the writer bounds the work before walking.
     LeafBudgetExceeded {
         limit: usize,
     },
@@ -698,10 +696,12 @@ pub enum WriteThreeMfError {
     Io(std::io::Error),
     /// A graph accessor failed while walking the scene.
     Graph(SceneError),
-    /// The scene contains a CSG node. 3MF has no CSG concept, and
-    /// exporting the operands as plain objects would misrepresent
-    /// the geometry the user sees.
+    /// The scene contains a CSG node. 3MF has no CSG concept, and exporting the
+    /// operands as plain objects would misrepresent the geometry the user sees.
     CsgUnrepresentable { node_id: NodeId },
+    /// A mesh object has more declared facet normals than the u32 count field
+    /// of their package part can hold.
+    FacetCountExceedsU32 { object_id: u32, count: usize },
 }
 
 impl fmt::Display for WriteThreeMfError {
@@ -716,6 +716,12 @@ impl fmt::Display for WriteThreeMfError {
                 "3MF writer: node {} is a CSG operation, which 3MF cannot represent",
                 node_id.get(),
             ),
+            Self::FacetCountExceedsU32 { object_id, count } => write!(
+                f,
+                "3MF writer: object {object_id} has {count} declared facet normals, more than \
+                 the {} a declared-facet-normals part can hold",
+                u32::MAX,
+            ),
         }
     }
 }
@@ -727,7 +733,7 @@ impl std::error::Error for WriteThreeMfError {
             Self::Model(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::Graph(e) => Some(e),
-            Self::CsgUnrepresentable { .. } => None,
+            Self::CsgUnrepresentable { .. } | Self::FacetCountExceedsU32 { .. } => None,
         }
     }
 }

@@ -39,23 +39,22 @@ mod tests_write_scene_error;
 mod tests_write_scene_progress;
 #[cfg(test)]
 mod tests_write_stl_error;
+#[cfg(test)]
+mod tests_write_threemf_error;
 
 pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
 
-/// Default hard upper bound on the on-disk size of a mesh file the
-/// loader will accept, in bytes. 2 GiB sits well beyond anything a
-/// resin-printer slice job needs and protects callers (CLI argv, GUI
-/// drag-and-drop) from spending arbitrary time on an accidental huge
-/// pick. Callers may pass a smaller cap to
-/// [`load_mesh_from_path`](crate::loader::load_mesh_from_path) if
-/// their use case warrants it.
+/// Default hard upper bound on the on-disk size of a mesh file the loader will
+/// accept, in bytes. 2 GiB sits well beyond anything a resin-printer slice job
+/// needs and protects callers (CLI argv, GUI drag-and-drop) from spending
+/// arbitrary time on an accidental huge pick. Callers may pass a smaller cap to
+/// [`load_mesh_from_path`] if their use case warrants it.
 pub const DEFAULT_MAX_MESH_FILE_SIZE_BYTES: u64 = 2048 * 1024 * 1024;
 
-/// Hard ceiling on the count of a single mesh-element kind a format
-/// reader will allow before refusing the input: declared-triangle
-/// count for binary STL, vertex count for OBJ, etc. Shared across the
-/// readers so every format imposes the same memory-exhaustion
-/// backstop. 200M elements is well above any legitimate engineering
-/// or scan mesh; the cap is a defence against malicious or corrupt
-/// inputs whose upstream file-size gate is absent or set higher.
+/// Hard ceiling on the count of a single mesh-element kind a format reader will
+/// allow before refusing the input: declared-triangle count for binary STL,
+/// vertex count for OBJ, etc. Shared across the readers so every format imposes
+/// the same memory-exhaustion backstop. 200M elements is well above any
+/// legitimate engineering or scan mesh; the cap is a defence against malicious
+/// or corrupt inputs whose upstream file-size gate is absent or set higher.
 pub const MAX_MESH_ELEMENT_COUNT: usize = 200_000_000;

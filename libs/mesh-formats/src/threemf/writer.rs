@@ -5,12 +5,11 @@
 
 //! Conversion from [`Scene`] graphs to 3MF packages.
 //!
-//! Unlike the STL/OBJ writers, nothing is flattened or baked: meshes
-//! stay shared (one object per unique mesh), groups become component
-//! objects, referenced subtrees serialise once and are referenced per
-//! occurrence, and node transforms become 3MF item/component
-//! transforms. Coordinates are written as millimetres, the workspace
-//! unit.
+//! Unlike the STL/OBJ writers, nothing is flattened or baked: meshes stay
+//! shared (1 object per unique mesh), groups become component objects,
+//! referenced subtrees serialise once and are referenced per occurrence, and
+//! node transforms become 3MF item/component transforms. Coordinates are
+//! written as millimetres, the workspace unit.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -32,31 +31,32 @@ use sc_scene::{Scene, SceneError};
 use crate::clean_name::CleanName;
 use crate::error::WriteThreeMfError;
 use crate::ports::WriteSceneProgress;
+use crate::threemf::declared_normals::add_declared_facet_normals_parts;
 
-/// Object and Title names as emitted into the model XML: cleaned
-/// ([`CleanName`]: control characters and noncharacters removed,
-/// whitespace runs collapsed, trimmed), charset untouched. Beyond
-/// name hygiene this is what keeps the document well-formed: XML
-/// 1.0 forbids most control characters outright, and quick-xml
-/// escapes markup, not illegal characters. A name that cleans to
-/// nothing is emitted as no name at all.
+/// Returns an Object or Title name as emitted into the model XML: cleaned
+/// ([`CleanName`]: control characters and noncharacters removed, whitespace
+/// runs collapsed, trimmed), charset untouched. Beyond name hygiene this is
+/// what keeps the document well-formed: XML 1.0 forbids most control characters
+/// outright, and quick-xml escapes markup, not illegal characters. A name that
+/// cleans to nothing is emitted as no name at all.
 fn cleaned_name(name: Option<&str>) -> Option<String> {
     name.and_then(CleanName::clean).map(CleanName::into_string)
 }
 
-// Serialized-byte distance between 2 consecutive serialise-phase
-// reports. Matches the throttle the project-file writer uses for the
-// same XML serialisation.
+// Serialized-byte distance between 2 consecutive serialise-phase reports.
+// Matches the throttle the project-file writer uses for the same XML
+// serialisation.
 const SERIALIZE_REPORT_STEP: u64 = 256 * 1024;
 
 /// Writes `graph` as a complete 3MF package.
 ///
-/// Scene roots map to build items through the collapse rule that
-/// inverts the loader convention: an anonymous identity-transform
-/// Group root contributes each of its children as one build item,
-/// while any other root becomes a build item itself. The zip layer
-/// needs a seekable sink, so the package is serialized into memory
-/// first and then copied to `writer`.
+/// Scene roots map to build items through the collapse rule that inverts the
+/// loader convention: an anonymous identity-transform Group root contributes
+/// each of its children as a build item, while any other root becomes a build
+/// item itself. The zip layer needs a seekable sink, so the package is
+/// serialized into memory first and then copied to `writer`. Meshes that hold
+/// declared facet normals matching their geometry also get a
+/// declared-facet-normals part.
 pub fn write_threemf<W>(graph: &Scene, writer: &mut W) -> Result<(), WriteThreeMfError>
 where
     W: Write,
@@ -64,10 +64,10 @@ where
     write_threemf_with_progress(graph, writer, |_| {})
 }
 
-/// [`write_threemf`], reporting `Serialize` progress in XML bytes
-/// against an estimated total (real output can run over or under, so
-/// a consumer deriving a fraction should clamp it) and `Compress`
-/// progress in raw part bytes as the zip layer consumes them.
+/// Writes as [`write_threemf`] does, and reports `Serialize` progress in XML
+/// bytes against an estimated total (real output can run over or under, so a
+/// consumer deriving a fraction should clamp it) and `Compress` progress in raw
+/// part bytes as the zip layer consumes them.
 pub fn write_threemf_with_progress<W, F>(
     graph: &Scene,
     writer: &mut W,
@@ -77,10 +77,10 @@ where
     W: Write,
     F: FnMut(WriteSceneProgress),
 {
-    let document = scene_to_model_document(graph)?;
+    let model = scene_to_model_document(graph)?;
 
-    let mut ticker = SerializeTicker::new(estimate_model_bytes(&document), &mut progress);
-    write_model(&document, &mut ticker)?;
+    let mut ticker = SerializeTicker::new(estimate_model_bytes(&model.document), &mut progress);
+    write_model(&model.document, &mut ticker)?;
     ticker.report_now();
     let model_xml = ticker.into_inner();
 
@@ -92,6 +92,7 @@ where
         rel_type: START_PART_REL_TYPE.to_string(),
         target: DEFAULT_MODEL_PART_NAME.to_string(),
     });
+    add_declared_facet_normals_parts(&mut package, &model.mesh_objects)?;
 
     let mut buffer = Cursor::new(Vec::new());
     package.write_to_with_progress(&mut buffer, |done, total| {
@@ -101,9 +102,9 @@ where
     Ok(())
 }
 
-/// A `Write` sink that serializes into a `Vec` while reporting the
-/// running serialized-byte total as `Serialize` progress, throttled
-/// to one report per [`SERIALIZE_REPORT_STEP`].
+/// A `Write` sink that serializes into a `Vec` while reporting the running
+/// serialized-byte total as `Serialize` progress, throttled to 1 report per
+/// [`SERIALIZE_REPORT_STEP`].
 struct SerializeTicker<'a, F> {
     inner: Vec<u8>,
     total: u64,
@@ -122,9 +123,9 @@ impl<'a, F: FnMut(WriteSceneProgress)> SerializeTicker<'a, F> {
         }
     }
 
-    /// Emit a report at the current emitted total, regardless of the
-    /// throttle step, so the phase end is visible even when the whole
-    /// document is smaller than one step.
+    /// Emits a report at the current emitted total, regardless of the throttle
+    /// step, so the phase end is visible even when the whole document is
+    /// smaller than 1 step.
     fn report_now(&mut self) {
         let done = self.inner.len() as u64;
         self.last_reported = done;
@@ -158,12 +159,12 @@ impl<F: FnMut(WriteSceneProgress)> Write for SerializeTicker<'_, F> {
     }
 }
 
-/// Rough estimate of the XML byte size `write_model` produces for
-/// `document`, used only as the serialise phase's denominator. Real
-/// output can run over or under; a consumer clamps the fraction.
+/// Returns a rough estimate of the XML byte size `write_model` produces for
+/// `document`, used only as the serialise phase's denominator. Real output can
+/// run over or under; a consumer clamps the fraction.
 fn estimate_model_bytes(document: &ModelDocument) -> u64 {
-    // Per-element byte guesses for the `<vertex>` and `<triangle>`
-    // markup plus their numeric payloads.
+    // Per-element byte guesses for the `<vertex>` and `<triangle>` markup plus
+    // their numeric payloads.
     const BYTES_PER_VERTEX: u64 = 64;
     const BYTES_PER_TRIANGLE: u64 = 48;
 
@@ -180,26 +181,38 @@ fn estimate_model_bytes(document: &ModelDocument) -> u64 {
 struct DocumentBuilder<'graph> {
     graph: &'graph Scene,
     document: ModelDocument,
-    /// Mesh identity (Arc pointer) -> the object id it was emitted
-    /// as, so every leaf sharing a mesh references one object.
+    /// Mesh identity (Arc pointer) -> the object id it was emitted as, so every
+    /// leaf sharing a mesh references the same object.
     mesh_objects: HashMap<*const IndexedMesh, ResourceId>,
-    /// Subtree resource -> the object id its root was emitted as,
-    /// so every reference to a subtree names one object.
+    /// Subtree resource -> the object id its root was emitted as, so every
+    /// reference to a subtree names the same object.
     subtree_objects: HashMap<SubtreeResourceId, ResourceId>,
+    /// Each mesh object emitted so far, with the mesh it was converted from.
+    emitted_mesh_objects: Vec<(ResourceId, &'graph IndexedMesh)>,
     next_id: u32,
 }
 
-/// Converts `graph` into a 3MF model document without touching any
-/// container concerns. Scene roots map to build items through the
-/// same collapse rule as [`write_threemf`]. Public so writers that
-/// assemble their own packages (project files, slice packages) can
-/// reuse the scene conversion.
-pub fn scene_to_model_document(graph: &Scene) -> Result<ModelDocument, WriteThreeMfError> {
+/// A scene converted to a 3MF model document, with the mesh that each mesh
+/// object of the document was converted from, in document order.
+#[derive(Debug)]
+pub struct SceneModel<'graph> {
+    pub document: ModelDocument,
+    pub mesh_objects: Vec<(ResourceId, &'graph IndexedMesh)>,
+}
+
+/// Converts `graph` into a 3MF model document without touching any container
+/// concerns, and returns with it the mesh of each mesh object, which
+/// [`add_declared_facet_normals_parts`] reads. Scene roots map to build items
+/// through the same collapse rule as [`write_threemf`]. Public so writers that
+/// assemble their own packages (project files, slice packages) can reuse the
+/// scene conversion.
+pub fn scene_to_model_document(graph: &Scene) -> Result<SceneModel<'_>, WriteThreeMfError> {
     let mut builder = DocumentBuilder {
         graph,
         document: ModelDocument::default(),
         mesh_objects: HashMap::new(),
         subtree_objects: HashMap::new(),
+        emitted_mesh_objects: Vec::new(),
         next_id: 1,
     };
 
@@ -237,13 +250,16 @@ pub fn scene_to_model_document(graph: &Scene) -> Result<ModelDocument, WriteThre
         }
     }
 
-    Ok(builder.document)
+    Ok(SceneModel {
+        document: builder.document,
+        mesh_objects: builder.emitted_mesh_objects,
+    })
 }
 
-/// The loader wraps every build item under one anonymous
-/// identity-transform Group; such a root unwraps back into its
-/// children on write. A named or transformed group carries meaning
-/// of its own and stays a component object instead.
+/// Returns whether `node` is the anonymous identity-transform Group that the
+/// loader wraps every build item under; such a root unwraps back into its
+/// children on write. A named or transformed group carries meaning of its own
+/// and stays a component object instead.
 fn is_anonymous_identity_group(node: &Node) -> bool {
     node.meta.is_none()
         && node.local_transform.is_identity()
@@ -273,11 +289,10 @@ impl<'graph> DocumentBuilder<'graph> {
         Ok(())
     }
 
-    /// Emits (or reuses) the object resource representing the
-    /// geometry at `node_id` and returns its id together with the
-    /// node's transform in attribute form. Children are emitted
-    /// before the components object that references them, which
-    /// satisfies the spec's definition-before-use rule.
+    /// Emits (or reuses) the object resource representing the geometry at
+    /// `node_id` and returns its id together with the node's transform in
+    /// attribute form. Children are emitted before the components object that
+    /// references them, which satisfies the spec's definition-before-use rule.
     fn object_for_node(
         &mut self,
         node_id: NodeId,
@@ -307,6 +322,7 @@ impl<'graph> DocumentBuilder<'graph> {
                     payload: ObjectPayload::Mesh(mesh_to_model_data(mesh)),
                 });
                 self.mesh_objects.insert(key, id);
+                self.emitted_mesh_objects.push((id, mesh));
                 Ok((id, transform))
             }
             NodeKind::Group { children } => {
@@ -334,12 +350,11 @@ impl<'graph> DocumentBuilder<'graph> {
             }
             NodeKind::Csg { .. } => Err(WriteThreeMfError::CsgUnrepresentable { node_id }),
             NodeKind::Reference { resource } => {
-                // The referenced subtree serialises once (its root
-                // becomes an object, recursively) and every reference
-                // site names that object. A 3MF reference carries a
-                // single matrix, so the call-site transform composes
-                // with the subtree root's own transform, call site
-                // first, matching the expanding walk.
+                // The referenced subtree serialises once (its root becomes an
+                // object, recursively) and every reference site names that
+                // object. A 3MF reference carries a single matrix, so the
+                // call-site transform composes with the subtree root's own
+                // transform, call site first, matching the expanding walk.
                 let resource = *resource;
                 let root_id =
                     self.graph
@@ -363,12 +378,11 @@ impl<'graph> DocumentBuilder<'graph> {
     }
 }
 
-/// Converts an [`IndexedMesh`] into the 3MF mesh payload: vertices
-/// widened to f64 (millimetres both sides) and faces mapped to
-/// vertex-index triples. Face normals are not part of the 3MF data
-/// model and are dropped; readers rederive them from the CCW
-/// winding. Public so slice-format writers can embed meshes without
-/// re-implementing the mapping.
+/// Converts an [`IndexedMesh`] into the 3MF mesh payload: vertices widened to
+/// f64 (millimetres both sides) and faces mapped to vertex-index triples. Face
+/// normals are not part of the 3MF data model and are dropped; readers rederive
+/// them from the CCW winding. Public so slice-format writers can embed meshes
+/// without re-implementing the mapping.
 pub fn mesh_to_model_data(mesh: &IndexedMesh) -> MeshData {
     MeshData {
         vertices: mesh
@@ -396,10 +410,10 @@ fn vertex_index(raw: u32) -> ResourceIndex {
     ResourceIndex::new(raw).expect("mesh vertex counts stay below 2^31")
 }
 
-/// Inverse of the reader's matrix conversion: our column-vector
-/// linear part transposes back into 3MF's row-vector layout, row j
-/// holding linear[0][j], linear[1][j], linear[2][j], with the
-/// translation as the final row. Identity transforms omit the
+/// Returns the 3MF matrix of `transform`, the inverse of the reader's matrix
+/// conversion: our column-vector linear part transposes back into 3MF's
+/// row-vector layout, row j holding linear[0][j], linear[1][j], linear[2][j],
+/// with the translation as the final row. Identity transforms omit the
 /// attribute entirely.
 fn transform_to_matrix(transform: &Transform3D) -> Option<Matrix3D> {
     match transform {

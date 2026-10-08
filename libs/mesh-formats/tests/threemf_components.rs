@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! End-to-end coverage over the vendored consortium components test
-//! case (`P_XXX_0910_02.3mf`): one mesh object referenced 5 times
-//! through the components of a single build object. The file must
-//! load with all 5 shared-geometry occurrences and re-export through
-//! every write format: expanded for the flattening formats, sharing
-//! preserved for 3MF. Permanent capability pins; a refusal or
-//! reference-skipping walk on any of these paths must turn them red.
+//! End-to-end coverage over the vendored consortium components test case
+//! (`P_XXX_0910_02.3mf`): 1 mesh object referenced 5 times through the
+//! components of a single build object. The file must load with all 5
+//! shared-geometry occurrences and re-export through every write format:
+//! expanded for the flattening formats, sharing preserved for 3MF. Permanent
+//! capability pins; a refusal or reference-skipping walk on any of these paths
+//! must turn them red.
 
 use std::path::PathBuf;
 
@@ -23,9 +23,9 @@ use sc_mesh_formats::threemf::scene_to_model_document;
 use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use sc_scene::{CsgPolicy, Scene};
 
-/// Ground truth for `P_XXX_0910_02.3mf`, read off the vendored file:
-/// 5 component references to one mesh object of 3664 vertices and
-/// 7384 triangles, under one translated build item.
+/// Ground truth for `P_XXX_0910_02.3mf`, read off the vendored file: 5
+/// component references to 1 mesh object of 3664 vertices and 7384 triangles,
+/// under 1 translated build item.
 const OCCURRENCES: usize = 5;
 const VERTICES_PER_COPY: usize = 3664;
 const FACES_PER_COPY: usize = 7384;
@@ -38,9 +38,8 @@ fn fixture_path() -> PathBuf {
 
 fn load_fixture() -> Scene {
     let loaded = load_mesh_from_path(&fixture_path(), None, None).expect("fixture loads");
-    // The 5 occurrences share one mesh resource, which the loader
-    // reports through its shared-vertices notice; nothing else may
-    // surface.
+    // The 5 occurrences share 1 mesh resource, which the loader reports through
+    // its shared-vertices notice; nothing else may surface.
     assert_eq!(loaded.warnings.len(), 1, "warnings: {:?}", loaded.warnings);
     match &loaded.warnings[0] {
         LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices { leaves }) => {
@@ -76,8 +75,8 @@ fn the_fixture_loads_as_five_shared_occurrences() {
         OCCURRENCES
     );
 
-    // Loader shape: the build item's component object becomes one
-    // group whose 5 leaves share a single mesh resource.
+    // Loader shape: the build item's component object becomes 1 group whose 5
+    // leaves share a single mesh resource.
     let children = root_children(&graph);
     assert_eq!(children.len(), 1);
     let item = graph.node(children[0]).expect("item node lives");
@@ -98,8 +97,8 @@ fn the_fixture_loads_as_five_shared_occurrences() {
     assert_eq!(mesh.vertices().len(), VERTICES_PER_COPY);
     assert_eq!(mesh.faces().len(), FACES_PER_COPY);
 
-    // First occurrence: the item translation composed with the first
-    // component translation lands at (33.8, 30.25, 50.1).
+    // First occurrence: the item translation composed with the first component
+    // translation lands at (33.8, 30.25, 50.1).
     let leaf0 = graph.node(leaves[0]).expect("leaf lives");
     let world = item.local_transform.compose(&leaf0.local_transform);
     let Transform3D::Affine(affine) = world else {
@@ -126,8 +125,8 @@ fn the_fixture_merges_to_the_full_expanded_geometry() {
         .expect("geometry present");
     assert_eq!(merged.faces.len(), OCCURRENCES * FACES_PER_COPY);
 
-    // Expanded axis-aligned bounds, computed from the fixture's
-    // transforms and vertices; f32 baking allows a small tolerance.
+    // Expanded axis-aligned bounds, computed from the fixture's transforms and
+    // vertices; f32 baking allows a small tolerance.
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
     for v in merged.vertices() {
@@ -158,9 +157,11 @@ fn the_fixture_merges_to_the_full_expanded_geometry() {
 fn the_fixture_rewrites_to_threemf_preserving_the_sharing() {
     let graph = load_fixture();
 
-    // Document structure: the geometry serialises once, referenced 5
-    // times from one components object, built by one item.
-    let document = scene_to_model_document(&graph).expect("document builds");
+    // Document structure: the geometry serialises once, referenced 5 times from
+    // 1 components object, built by 1 item.
+    let document = scene_to_model_document(&graph)
+        .expect("document builds")
+        .document;
     let mesh_object_ids: Vec<_> = document
         .objects
         .iter()

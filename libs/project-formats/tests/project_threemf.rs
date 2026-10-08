@@ -374,3 +374,44 @@ mod slice_persistence_tests {
         assert_eq!(loaded.slice_fingerprint, None);
     }
 }
+
+mod declared_facet_normals_tests {
+    use sc_mesh_core::MeshMetadata;
+    use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
+    use sc_mesh_fixtures::unit_cube_mesh;
+
+    use super::*;
+
+    #[test]
+    fn the_declared_facet_normals_survive_a_project_round_trip() {
+        // Bit patterns that no geometry gives, 1 per face of the cube.
+        let crafted: Vec<[u32; 3]> = (1..=12).map(|k| [k, k, k]).collect();
+        let mut cube = unit_cube_mesh();
+        let declared =
+            DeclaredFacetNormals::capture(&cube, crafted.clone()).expect("1 normal per face");
+        cube.set_meta(Some(MeshMetadata {
+            declared_facet_normals: Some(declared),
+            ..Default::default()
+        }));
+        let mut bytes = Vec::new();
+        write_project(
+            &Scene::from(cube),
+            &ProjectPayload::default(),
+            EmbedProfiles::No,
+            None,
+            None,
+            project_file_type(),
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+
+        let loaded = read_back(bytes);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let leaf = loaded.scene.first_leaf_id().expect("the scene has a leaf");
+        let mesh = loaded
+            .scene
+            .mesh_at_leaf(leaf)
+            .expect("the leaf holds a mesh");
+        assert_eq!(mesh.declared_facet_normals(), Some(&crafted[..]));
+    }
+}
