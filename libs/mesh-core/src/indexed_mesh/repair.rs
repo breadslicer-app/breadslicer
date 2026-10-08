@@ -10,9 +10,9 @@
 
 use std::fmt;
 
+use super::IndexedMesh;
 use super::fix::{MeshFix, MeshFixError};
 use super::validate::{MeshFaceError, MeshVertexError};
-use super::{FixFacesOptions, IndexedMesh};
 
 /// Which repair passes [`IndexedMesh::repair`] runs. Each flag enables an
 /// independent pass; passes that find nothing to repair are no-ops. `Default`
@@ -23,18 +23,15 @@ pub struct RepairPasses {
     pub zero_length_edges: bool,
     /// Reverses the vertex order of inconsistently wound faces.
     pub flipped_faces: bool,
-    /// Recomputes stored normal vectors that disagree with the geometry.
-    pub face_normals: bool,
 }
 
 impl RepairPasses {
     /// Returns the default pass set: zero-length-edge face removal and flipped
-    /// face correction, without normal recomputation.
+    /// face correction.
     pub const fn default_repair() -> Self {
         Self {
             zero_length_edges: true,
             flipped_faces: true,
-            face_normals: false,
         }
     }
 }
@@ -143,24 +140,16 @@ pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessme
             return RepairAssessment::Work;
         }
     };
-    let normal_vector_errors = witness.validate_normal_vectors().err().unwrap_or_default();
-    let manifold_errors = witness.validate_edge_manifold().err().unwrap_or_default();
-    if normal_vector_errors.is_empty() && manifold_errors.is_empty() {
-        return RepairAssessment::Clean;
+    if passes.flipped_faces
+        && let Err(manifold_errors) = witness.validate_edge_manifold()
+    {
+        return match super::fix::plan_faces_orientation_impl(mesh, &manifold_errors) {
+            Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
+            Ok(faces_to_flip) if faces_to_flip.is_empty() => RepairAssessment::Clean,
+            Ok(_) => RepairAssessment::Work,
+        };
     }
-    match super::fix::plan_faces_orientation_impl(
-        mesh,
-        &manifold_errors,
-        &normal_vector_errors,
-        FixFacesOptions {
-            flipped: passes.flipped_faces,
-            normals: passes.face_normals,
-        },
-    ) {
-        Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
-        Ok(plan) if plan.is_empty() => RepairAssessment::Clean,
-        Ok(_) => RepairAssessment::Work,
-    }
+    RepairAssessment::Clean
 }
 
 impl IndexedMesh {
@@ -173,10 +162,9 @@ impl IndexedMesh {
     ///    and the enabled passes cannot address every error, the run is refused
     ///    with the mesh untouched.
     /// 3. Zero-length-edge pass: removes the offending faces.
-    /// 4. Orientation stage: winding and normal validations always run; the
-    ///    flip and normal fixes fire per `passes`. A failure here refuses the
-    ///    rest of the run but keeps the fixes already applied; the mesh never
-    ///    holds a half-applied pass.
+    /// 4. Flipped-face pass: reverses the winding of inconsistently wound
+    ///    faces. A failure here refuses the rest of the run but keeps the fixes
+    ///    already applied; the mesh never holds a half-applied pass.
     ///
     /// When a pass changes the mesh, the declared facet normals in its metadata
     /// are dropped.
@@ -240,21 +228,10 @@ impl IndexedMesh {
             }
         };
 
-        let normal_vector_errors = validated
-            .validate_normal_vectors()
-            .err()
-            .unwrap_or_default();
-        let manifold_errors = validated.validate_edge_manifold().err().unwrap_or_default();
-
-        if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-            match validated.fix_faces_orientation(
-                &manifold_errors,
-                &normal_vector_errors,
-                FixFacesOptions {
-                    flipped: passes.flipped_faces,
-                    normals: passes.face_normals,
-                },
-            ) {
+        if passes.flipped_faces
+            && let Err(manifold_errors) = validated.validate_edge_manifold()
+        {
+            match validated.fix_faces_orientation(&manifold_errors) {
                 Ok(orientation_fixes) => fixes.extend(orientation_fixes),
                 // Pass-level refusal: the orientation primitive is
                 // transactional, so the mesh holds exactly the completed

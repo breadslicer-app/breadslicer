@@ -1415,36 +1415,10 @@ mod fix_tests {
     }
 }
 
-/// CLI-level no-panic contract for the `fix` subcommand.
-///
-/// `IndexedMesh::validate_normal_vectors` and
-/// `IndexedMesh::fix_faces_orientation` both index into `self.vertices` /
-/// `self.faces` without bounds checks, on the assumption that an earlier
-/// `validate_faces` has guaranteed the indices are in range. In
-/// `slicer-cli fix`, that earlier `validate_faces` only runs when
-/// `--fix-zero-length-edges=true` (the default). With
-/// `--fix-zero-length-edges=false` the gate is bypassed: any mesh produced by
-/// the bundled loaders flows directly into `validate_normal_vectors` and then
-/// into `fix_faces_orientation`.
-///
-/// These are **contract tests**, not regression tests. The bundled STL/OBJ
-/// loaders dedupe vertices densely, so no file-driven input the CLI accepts
-/// today can carry out-of-range face indices, and the unchecked-index
-/// assumption holds; the tests are expected to pass against the unmodified
-/// library. They serve 2 purposes:
-///
-/// 1. Lock the property "the CLI does not panic on any loader-acceptable mesh
-///    under any `--fix-*` flag combination", end-to-end through the binary, for
-///    clean inputs and for inputs that exercise each fix sub-path (winding
-///    flip, normal recompute, degenerate face). A regression in any layer
-///    (loader, validate, fix, writer) that lets a panic escape will fail one of
-///    these tests.
-///
-/// 2. Future-proof the unchecked-index assumption: if a new file format, a
-///    custom binary loader, or a library refactor ever produces an
-///    `IndexedMesh` with out-of-range indices, these tests will surface the
-///    resulting library-level panic as a CI-visible CLI abort rather than a
-///    silent data crash.
+/// CLI-level no-panic contract for the `fix` subcommand: a mesh that the
+/// bundled loaders accept never makes the binary panic, under any `--fix-*`
+/// flag combination. A regression in any layer (loader, validation, fix,
+/// writer) that lets a panic escape fails 1 of these tests.
 ///
 /// Tests labelled "_does_not_panic_on_*" assert *only* the absence of a Rust
 /// panic in stderr; the exit code (success vs. graceful failure) is left
@@ -1455,7 +1429,7 @@ mod fix_no_panic_contract_tests {
     use super::*;
 
     #[test]
-    fn fix_with_validate_faces_skipped_does_not_panic_on_clean_input() {
+    fn fix_without_the_zero_length_edge_pass_does_not_panic_on_clean_input() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("clean.stla");
         let target = tmp.path().join("out.stla");
@@ -1478,9 +1452,8 @@ mod fix_no_panic_contract_tests {
 
     #[test]
     fn fix_with_all_fix_passes_disabled_is_a_clean_no_op() {
-        // All 3 `--fix-*` flags off: `fix_mesh` skips every validate/fix
-        // sub-pass. The pipeline must still succeed (the writer runs
-        // unconditionally) and must not panic.
+        // Every `--fix-*` flag off: the repair runs no pass. The pipeline must
+        // still succeed (the writer runs unconditionally) and must not panic.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("clean.stla");
         let target = tmp.path().join("out.stla");
@@ -1496,7 +1469,6 @@ mod fix_no_panic_contract_tests {
                 target.to_str().unwrap(),
                 "--fix-zero-length-edges=false",
                 "--fix-flipped-faces=false",
-                "--fix-face-normals=false",
             ])
             .assert()
             .success()
@@ -1505,13 +1477,11 @@ mod fix_no_panic_contract_tests {
     }
 
     #[test]
-    fn fix_with_validate_faces_skipped_does_not_panic_on_winding_errors() {
+    fn fix_without_the_zero_length_edge_pass_does_not_panic_on_winding_errors() {
         // Face 0 is wound backwards relative to its neighbours, so
         // `validate_edge_manifold` returns `InconsistentWindingOrder` errors
-        // and `validate_normal_vectors` returns an `ExpectationMismatch` for
-        // face 0. With `--fix-zero-length-edges=false`, `validate_faces` is
-        // skipped: the fix routine receives these errors and exercises the flip
-        // and normal-recompute branch end-to-end through the binary.
+        // and the flipped-face pass reverses face 0, end to end through the
+        // binary.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("flipped.stla");
         let target = tmp.path().join("out.stla");
@@ -1527,7 +1497,6 @@ mod fix_no_panic_contract_tests {
                 target.to_str().unwrap(),
                 "--fix-zero-length-edges=false",
                 "--fix-flipped-faces=true",
-                "--fix-face-normals=true",
             ])
             .assert()
             .success()
@@ -1536,44 +1505,10 @@ mod fix_no_panic_contract_tests {
     }
 
     #[test]
-    fn fix_with_validate_faces_skipped_does_not_panic_on_nonunit_normal() {
-        // Face 1's normal is stretched to magnitude 2.
-        // `validate_normal_vectors` returns a `NonUnitNorm` error;
-        // `fix_faces_orientation` puts the face in the second-pass
-        // (normals-only) loop and recomputes the normal. With `validate_faces`
-        // skipped, this drives the second-pass path end-to-end through the
-        // binary.
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("nonunit.stla");
-        let target = tmp.path().join("out.stla");
-        write_stla_to(&source, &nonunit_normal_tetrahedron_mesh());
-
-        Command::cargo_bin(BIN)
-            .unwrap()
-            .args([
-                "fix",
-                "-s",
-                source.to_str().unwrap(),
-                "-t",
-                target.to_str().unwrap(),
-                "--fix-zero-length-edges=false",
-                "--fix-flipped-faces=false",
-                "--fix-face-normals=true",
-            ])
-            .assert()
-            .success()
-            .stderr(no_panic_in_stderr().not());
-        assert!(target.exists());
-    }
-
-    #[test]
-    fn fix_with_validate_faces_skipped_does_not_panic_on_degenerate_face() {
-        // The hardest input the bundled loaders can hand to the fix routine: a
-        // mesh where a face is geometrically degenerate (collinear vertices).
-        // `validate_normal_vectors` emits `ZeroAreaTriangle`; if
-        // `fix_faces_orientation` later tries to recompute that face's normal,
-        // the recompute fails. The pipeline must surface that as a clean exit,
-        // not a panic.
+    fn fix_without_the_zero_length_edge_pass_does_not_panic_on_degenerate_face() {
+        // A face with collinear vertices: no zero-length edge, so face
+        // validation passes it, and its boundary edges reach the flipped-face
+        // pass.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("degenerate.stla");
         let target = tmp.path().join("out.stla");
@@ -1589,22 +1524,18 @@ mod fix_no_panic_contract_tests {
                 target.to_str().unwrap(),
                 "--fix-zero-length-edges=false",
                 "--fix-flipped-faces=true",
-                "--fix-face-normals=true",
             ])
             .assert()
-            // Either a graceful non-zero exit (the fix routine refuses to
-            // recompute the degenerate face's normal) or a success (the routine
-            // chose to skip it). Both are acceptable; only a Rust panic is a
-            // regression.
+            // Either a graceful non-zero exit or a success is acceptable; only
+            // a Rust panic is a regression.
             .stderr(no_panic_in_stderr().not());
     }
 
     #[test]
-    fn fix_with_validate_faces_skipped_does_not_panic_on_malformed_input() {
-        // Loader rejects the input; the validate/fix pipeline is never reached.
-        // Pin that skipping `--fix-zero-length-edges` does not change the
-        // failure shape: the binary still exits non-zero with no Rust panic in
-        // stderr.
+    fn fix_without_the_zero_length_edge_pass_does_not_panic_on_malformed_input() {
+        // Loader rejects the input; the repair is never reached. Pin that
+        // turning the zero-length-edge pass off does not change the failure
+        // shape: the binary still exits non-zero with no Rust panic in stderr.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("garbage.stl");
         let target = tmp.path().join("out.stla");

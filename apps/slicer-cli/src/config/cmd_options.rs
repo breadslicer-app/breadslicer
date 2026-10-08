@@ -34,7 +34,7 @@ impl FromStr for ListKind {
     }
 }
 
-/// A `X,Y,Z` triple of `f64`s, parsed from one CLI argument. Used by
+/// A `X,Y,Z` triple of `f64`s, parsed from 1 CLI argument. Used by
 /// `support-gen` for gravity, boundary corners, and anchor points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point3(pub f64, pub f64, pub f64);
@@ -82,7 +82,6 @@ pub(crate) enum CmdOptions {
         target_format: Option<MeshFileType>,
         fix_zero_length_edges: bool,
         fix_flipped_faces: bool,
-        fix_face_normals: bool,
     },
     Help,
     Inspect {},
@@ -193,9 +192,8 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .argument::<MeshFileType>("TARGET_FORMAT")
         .optional();
 
-    // Flag fallbacks come from the shared default pass set, so the
-    // `fix` defaults, `slice --repair`, and any other frontend cannot
-    // drift apart.
+    // Flag fallbacks come from the shared default pass set, so the `fix`
+    // defaults, `slice --repair`, and any other frontend cannot drift apart.
     let fix_zero_length_edges = long("fix-zero-length-edges")
         .help("Removes faces with zero-length edges")
         .argument::<bool>("FIX_ZERO_LENGTH_EDGES")
@@ -208,12 +206,6 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .adjacent()
         .fallback(RepairPasses::default_repair().flipped_faces);
 
-    let fix_face_normals = long("fix-face-normals")
-        .help("Fixes face normal vectors")
-        .argument::<bool>("FIX_FACE_NORMALS")
-        .adjacent()
-        .fallback(RepairPasses::default_repair().face_normals);
-
     construct!(CmdOptions::Fix {
         source,
         source_format,
@@ -221,7 +213,6 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         target_format,
         fix_zero_length_edges,
         fix_flipped_faces,
-        fix_face_normals,
     })
 }
 

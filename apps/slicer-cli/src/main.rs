@@ -7,9 +7,9 @@
 
 #![deny(missing_docs)]
 
-//! Command-line frontend for the SoulCrafted Slicer. Slices plates,
-//! converts between mesh formats, diagnoses and repairs meshes, and
-//! imports, exports and lists printer and material profiles.
+//! Command-line frontend for the SoulCrafted Slicer. Slices plates, converts
+//! between mesh formats, diagnoses and repairs meshes, and imports, exports and
+//! lists printer and material profiles.
 
 mod commands;
 mod config;
@@ -51,7 +51,6 @@ fn main() -> Result<()> {
             target_format,
             fix_zero_length_edges,
             fix_flipped_faces,
-            fix_face_normals,
         } => fix(
             source,
             source_format,
@@ -60,7 +59,6 @@ fn main() -> Result<()> {
             RepairPasses {
                 zero_length_edges: fix_zero_length_edges,
                 flipped_faces: fix_flipped_faces,
-                face_normals: fix_face_normals,
             },
             &mut std::io::stderr(),
         ),

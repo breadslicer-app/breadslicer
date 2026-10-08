@@ -91,13 +91,11 @@ fn default_repair_enables_zle_and_flips_only() {
     let passes = RepairPasses::default_repair();
     assert!(passes.zero_length_edges);
     assert!(passes.flipped_faces);
-    assert!(!passes.face_normals);
     assert_eq!(
         RepairPasses::default(),
         RepairPasses {
             zero_length_edges: false,
             flipped_faces: false,
-            face_normals: false,
         }
     );
 }
@@ -224,7 +222,6 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
     let report = mesh.repair(RepairPasses {
         zero_length_edges: false,
         flipped_faces: true,
-        face_normals: false,
     });
     assert!(report.fixes.is_empty());
     assert_eq!(
@@ -306,22 +303,37 @@ fn unaddressed_normal_errors_do_not_refuse() {
     assert_eq!(mesh, original);
 }
 
+/// Pins the flip pass gate in both functions: with the pass off, a lone
+/// triangle, which trips the flip threshold when the pass is on, assesses as
+/// clean and is left untouched, as is a flipped face.
 #[test]
-fn normals_pass_recomputes_a_wrong_normal() {
-    let mut mesh = tetrahedron();
-    mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
-    let report = mesh.repair(RepairPasses {
-        zero_length_edges: false,
-        flipped_faces: false,
-        face_normals: true,
-    });
-    assert_eq!(report.fixes.len(), 1);
-    assert!(matches!(
-        report.fixes[0],
-        MeshFix::RecomputedNormal { face_idx, .. } if face_idx == FaceIndex::from(0_usize)
-    ));
-    assert_eq!(report.refusal, None);
-    assert!(report.edge_manifold_after);
+fn a_disabled_flip_pass_assesses_winding_problems_as_clean() {
+    let passes = RepairPasses {
+        zero_length_edges: true,
+        ..RepairPasses::default()
+    };
+    let flipped = {
+        let mut mesh = tetrahedron();
+        mesh.faces[0].vertices.reverse();
+        mesh
+    };
+    let lone_triangle = {
+        let mut mesh = open_strip();
+        mesh.faces.truncate(1);
+        mesh
+    };
+    for (name, mesh) in [("flipped", flipped), ("lone-triangle", lone_triangle)] {
+        assert_eq!(
+            assess_repair(&mesh, passes),
+            RepairAssessment::Clean,
+            "{name}"
+        );
+        let mut repaired = mesh.clone();
+        let report = repaired.repair(passes);
+        assert!(report.fixes.is_empty(), "{name}");
+        assert_eq!(report.refusal, None, "{name}");
+        assert_eq!(repaired, mesh, "{name}");
+    }
 }
 
 #[test]

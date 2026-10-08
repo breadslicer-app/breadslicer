@@ -5,25 +5,23 @@
 
 //! Per-window driver for the Repair action.
 //!
-//! The Repair button clones the scene on the UI thread and runs the
-//! mesh-core repair policy on a worker thread so the event loop stays
-//! responsive; the finished result is deposited into a slot and picked
-//! up on the UI thread via `invoke_repair_finished`. No progress bar
-//! or cancel: the run is one validation pass per mesh, the same cost
-//! the load worker absorbs silently.
+//! The Repair button clones the scene on the UI thread and runs the mesh-core
+//! repair policy on a worker thread so the event loop stays responsive; the
+//! finished result is deposited into a slot and picked up on the UI thread via
+//! `invoke_repair_finished`. No progress bar or cancel: the run is 1 validation
+//! pass per mesh, the same cost the load worker absorbs silently.
 //!
-//! The window's `repairing-in-progress` property is the single gate:
-//! the button and undo/redo are disabled while it is set (an undo
-//! landing mid-run would invalidate the worker's Arc diff), and it is
-//! cleared on every exit path. The scene revision captured at launch
-//! guards the apply: a result computed against geometry that changed
-//! mid-run, or against a scene the user has replaced since, is
-//! discarded, never merged.
+//! The window's `repairing-in-progress` property is the single gate: the button
+//! and undo/redo are disabled while it is set (an undo landing mid-run would
+//! invalidate the worker's Arc diff), and it is cleared on every exit path. The
+//! scene revision captured at launch guards the apply: a result computed
+//! against geometry that changed mid-run, or against a scene the user has
+//! replaced since, is discarded, never merged.
 //!
-//! The applied result is ONE `SceneEdit::Compound` of mesh-content
-//! replace edits (one undo unit): only meshes the policy actually
-//! changed appear in it, because the driver forks storage on fix so
-//! clean and refused targets keep their Arc identity.
+//! The applied result is a single `SceneEdit::Compound` of mesh-content replace
+//! edits (1 undo unit): only meshes the policy actually changed appear in it,
+//! because the driver forks storage on fix so clean and refused targets keep
+//! their Arc identity.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -44,8 +42,8 @@ use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
 use crate::workspace_section::allows_repair;
 
-/// One mesh the repair run rewrote: the storage place plus the exact
-/// Arcs before and after, ready to become a replace edit.
+/// A mesh the repair run rewrote: the storage place plus the exact Arcs before
+/// and after, ready to become a replace edit.
 struct MeshReplacement {
     target: MeshTarget,
     before: Arc<IndexedMesh>,
@@ -85,7 +83,7 @@ enum RepairSettlement {
     DiscardedStale,
     /// Nothing needed applying (clean scene, or refusals only).
     NothingApplied,
-    /// The replacements landed as one undoable Compound edit.
+    /// The replacements landed as a single undoable Compound edit.
     Applied,
     /// The scene rejected the replacement edit; nothing was recorded.
     Rejected(SceneError),
@@ -101,8 +99,8 @@ pub(crate) struct RepairRun {
 }
 
 impl RepairRun {
-    /// Wires the Repair / finished callbacks and returns the driver,
-    /// which the caller keeps alive for the window's lifetime.
+    /// Wires the Repair / finished callbacks and returns the driver, which the
+    /// caller keeps alive for the window's lifetime.
     pub(crate) fn install(
         ui: &MainWindow,
         document: Rc<SceneDocument>,
@@ -126,9 +124,9 @@ impl RepairRun {
         run
     }
 
-    /// Handles a Repair press: gate, clone, capture, spawn. The
-    /// button gates most of this too; the checks keep the path safe
-    /// against racing shortcuts.
+    /// Handles a Repair press: gate, clone, capture, spawn. The button gates
+    /// most of this too; the checks keep the path safe against racing
+    /// shortcuts.
     fn start(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -156,10 +154,10 @@ impl RepairRun {
         });
     }
 
-    /// Drains the deposited result on the UI thread, applies it when
-    /// it is still current, and reports through the info dialog. The
-    /// section deliberately stays Prepare: the user switches via the
-    /// pill once they have read the results.
+    /// Drains the deposited result on the UI thread, applies it when it is
+    /// still current, and reports through the info dialog. The section
+    /// deliberately stays Prepare: the user switches via the pill once they
+    /// have read the results.
     fn finish(&self) {
         let taken = self
             .slot
@@ -225,10 +223,10 @@ impl RepairRun {
     }
 }
 
-/// Worker body: repair every stored mesh of the cloned scene and
-/// derive the replacements from the Arc diff. The clone shares its
-/// mesh storage with the live scene, so an Arc that survived the run
-/// unchanged proves the live mesh needs no replacing.
+/// Repairs every stored mesh of the cloned scene, on the worker, and derives
+/// the replacements from the Arc diff. The clone shares its mesh storage with
+/// the live scene, so an Arc that survived the run unchanged proves the live
+/// mesh needs no replacing.
 fn run_repair(mut scene: Scene) -> CompletedRepair {
     let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = scene
         .mesh_targets()
@@ -257,7 +255,8 @@ fn run_repair(mut scene: Scene) -> CompletedRepair {
     }
 }
 
-/// The `Arc` stored at `target`, cloned. `None` for a dead target.
+/// Returns a clone of the `Arc` stored at `target`, or `None` for a dead
+/// target.
 fn target_arc(scene: &Scene, target: MeshTarget) -> Option<Arc<IndexedMesh>> {
     match target {
         MeshTarget::Resource(rid) => scene.mesh_resource_arc(rid).cloned(),
@@ -265,9 +264,9 @@ fn target_arc(scene: &Scene, target: MeshTarget) -> Option<Arc<IndexedMesh>> {
     }
 }
 
-/// Applies a still-current result to the document: stale results are
-/// discarded, an empty replacement set applies nothing, and anything
-/// else lands as ONE undoable Compound edit.
+/// Applies a still-current result to the document: stale results are discarded,
+/// an empty replacement set applies nothing, and anything else lands as a
+/// single undoable Compound edit.
 fn settle(
     document: &Rc<SceneDocument>,
     completed: &CompletedRepair,
@@ -291,14 +290,14 @@ fn settle(
             document.push_edit(edit);
             RepairSettlement::Applied
         }
-        // The scene disappearing mid-settle is the stale case; the
-        // revision guard above makes it unreachable in practice.
+        // The scene disappearing mid-settle is the stale case; the revision
+        // guard above makes it unreachable in practice.
         Err(EditNotApplied::NoSceneLoaded) => RepairSettlement::DiscardedStale,
         Err(EditNotApplied::Rejected(error)) => RepairSettlement::Rejected(error),
     }
 }
 
-/// One-line rollup for the dialog's message.
+/// Builds the 1-line rollup for the dialog's message.
 fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
     let repaired = outcomes
         .iter()
@@ -339,9 +338,9 @@ fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
     format!("{}.", parts.join(", "))
 }
 
-/// Per-mesh detail lines: one line per target with something to say
-/// (fixes, a refusal, or a remaining edge-manifold failure); clean
-/// targets stay silent.
+/// Builds the per-mesh detail lines: 1 line per target with something to say
+/// (fixes, a refusal, or a remaining edge-manifold failure); clean targets stay
+/// silent.
 fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
     outcomes
         .iter()
@@ -350,12 +349,10 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
             let mut notes: Vec<String> = Vec::new();
             let mut removed = 0usize;
             let mut reoriented = 0usize;
-            let mut renormaled = 0usize;
             for fix in &outcome.fixes {
                 match fix {
                     MeshFix::RemovedZeroLengthEdgeFace { .. } => removed += 1,
                     MeshFix::FlippedFaceOrientation { .. } => reoriented += 1,
-                    MeshFix::RecomputedNormal { .. } => renormaled += 1,
                 }
             }
             if removed > 0 {
@@ -365,9 +362,6 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
             }
             if reoriented > 0 {
                 notes.push(ctr!("RepairDialog", "reoriented {} face(s)", reoriented).to_string());
-            }
-            if renormaled > 0 {
-                notes.push(ctr!("RepairDialog", "recomputed {} normal(s)", renormaled).to_string());
             }
             if let Some(refusal) = &outcome.refusal {
                 notes.push(
@@ -389,9 +383,9 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
         .collect()
 }
 
-/// Display name for a target: the first referencing leaf's scene
-/// name, else the mesh's own name, else a 1-based fallback, the same
-/// resolution order the object list uses.
+/// Returns the display name of a target: the first referencing leaf's scene
+/// name, else the mesh's own name, else a 1-based fallback, the same resolution
+/// order the object list uses.
 fn target_display_name(graph: &Scene, target: MeshTarget, ordinal: usize) -> String {
     let node_name = graph
         .leaves_referencing(target)
@@ -423,8 +417,8 @@ mod repair_run_tests {
     use super::*;
     use crate::mesh_health::{MeshHealth, scene_mesh_health};
 
-    /// The shared broken trio as one scene: cube and Z-tunnel inline,
-    /// Y-tunnel behind a shared resource, plus one clean inline cube.
+    /// Returns the shared broken trio as 1 scene: cube and Z-tunnel inline,
+    /// Y-tunnel behind a shared resource, plus 1 clean inline cube.
     fn broken_trio_scene() -> Scene {
         let mut graph = Scene::new();
         let root = graph.add_group(None, Transform3D::Identity);
@@ -531,8 +525,8 @@ mod repair_run_tests {
             doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
             MeshHealth::ProblemFree
         );
-        // The apply moved the revision: a slice captured before the
-        // repair reads as stale.
+        // The apply moved the revision: a slice captured before the repair
+        // reads as stale.
         assert!(doc.slice_geometry_changed(captured));
 
         assert!(doc.undo().unwrap());
@@ -598,9 +592,9 @@ mod repair_run_tests {
         let completed = doc
             .with_scene(|spatial| run_repair(spatial.graph().clone()))
             .unwrap();
-        // The user opens another file while the worker runs. The
-        // replacement numbers its targets exactly like the outgoing
-        // scene, so nothing but the scene's identity separates them.
+        // The user opens another file while the worker runs. The replacement
+        // numbers its targets exactly like the outgoing scene, so nothing but
+        // the scene's identity separates them.
         doc.install_graph(
             broken_trio_scene(),
             PathBuf::from("/tmp/repair-run-other.obj"),

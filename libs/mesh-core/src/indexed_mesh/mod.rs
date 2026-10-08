@@ -48,22 +48,6 @@ pub struct MeshMetadata {
     pub declared_facet_normals: Option<DeclaredFacetNormals>,
 }
 
-/// Which face-orientation repairs `fix_faces_orientation` should apply.
-///
-/// Both flags can be set independently; they correspond to 2 passes the routine
-/// can take over the mesh:
-///
-/// - `flipped`: detect inconsistently-wound faces (via manifold errors) and
-///   reverse their vertex order.
-/// - `normals`: recompute the stored normal vector from the triangle's vertices
-///   for faces whose normal was wrong (non-unit-length, or misaligned with the
-///   geometric normal).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FixFacesOptions {
-    pub flipped: bool,
-    pub normals: bool,
-}
-
 /// Indexed triangle mesh. Pure data: no derived state, no caches.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {

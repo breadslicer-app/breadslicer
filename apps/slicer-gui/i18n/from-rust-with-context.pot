@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-04 12:44+0200\n"
+"POT-Creation-Date: 2026-10-08 23:07+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,107 +17,107 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:550 src/preferences_window.rs:575
+#: src/preferences_window.rs:546 src/preferences_window.rs:570
 msgctxt "FileDialog"
 msgid "Profile package"
 msgstr ""
 
-#: src/preferences_window.rs:596
+#: src/preferences_window.rs:591
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:598
+#: src/preferences_window.rs:593
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:602 src/preferences_window.rs:1386
+#: src/preferences_window.rs:597 src/preferences_window.rs:1379
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:794 src/preferences_window.rs:1617
+#: src/preferences_window.rs:787 src/preferences_window.rs:1606
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:1020
+#: src/preferences_window.rs:1013
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1119
+#: src/preferences_window.rs:1112
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1368
+#: src/preferences_window.rs:1361
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1375
+#: src/preferences_window.rs:1368
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1380
+#: src/preferences_window.rs:1373
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1382
+#: src/preferences_window.rs:1375
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1716
+#: src/preferences_window.rs:1705
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1742
+#: src/preferences_window.rs:1730
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: src/viewport/controller.rs:769
+#: src/viewport/controller.rs:728
 msgctxt "ErrorDialog"
 msgid "Edit failed"
 msgstr ""
 
-#: src/viewport/controller.rs:773
+#: src/viewport/controller.rs:732
 msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr ""
 
-#: src/viewport/controller.rs:1132
+#: src/viewport/controller.rs:1099
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr ""
 
-#: src/viewport/controller.rs:1133
+#: src/viewport/controller.rs:1100
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr ""
 
-#: src/viewport/controller.rs:1381
+#: src/viewport/controller.rs:1347
 msgctxt "MeshViewer"
 msgid "FRONT"
 msgstr ""
 
-#: src/viewport/controller.rs:1464
+#: src/viewport/controller.rs:1430
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1468
+#: src/viewport/controller.rs:1434
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -128,86 +128,86 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
-#: src/wiring.rs:349
+#: src/wiring.rs:339
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:352 src/wiring.rs:598 src/wiring.rs:757
+#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:704
 msgctxt "FileDialog"
 msgid "3MF files"
 msgstr ""
 
-#: src/wiring.rs:353 src/wiring.rs:753
+#: src/wiring.rs:343 src/wiring.rs:700
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:355
+#: src/wiring.rs:345
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:358
+#: src/wiring.rs:348
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:607
+#: src/wiring.rs:559
 msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:608 src/wiring.rs:730 src/scene_loader.rs:580
-#: src/app_state.rs:748 src/export_print_file.rs:264
+#: src/wiring.rs:560 src/wiring.rs:678 src/scene_loader.rs:563
+#: src/app_state.rs:718 src/export_print_file.rs:264
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:729
+#: src/wiring.rs:677
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:745
+#: src/wiring.rs:692
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:749
+#: src/wiring.rs:696
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:505
+#: src/scene_loader.rs:490
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:509
+#: src/scene_loader.rs:494
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:531
+#: src/scene_loader.rs:516
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr ""
 
-#: src/scene_loader.rs:535
+#: src/scene_loader.rs:520
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:539
+#: src/scene_loader.rs:524
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:579
+#: src/scene_loader.rs:562
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -586,117 +586,111 @@ msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/app_state.rs:452 src/lib.rs:291
+#: src/app_state.rs:434 src/lib.rs:292
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
 
-#: src/app_state.rs:747
+#: src/app_state.rs:717
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:751
+#: src/app_state.rs:721
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
 msgstr ""
 
-#: src/app_state.rs:999
+#: src/app_state.rs:952
 msgctxt "SaveDialog"
 msgid "Scene not replaced"
 msgstr ""
 
-#: src/app_state.rs:1002
+#: src/app_state.rs:955
 msgctxt "SaveDialog"
 msgid ""
 "The scene changed while saving, so the file does not hold its current state. "
 "Nothing was replaced."
 msgstr ""
 
-#: src/repair_run.rs:180 src/repair_run.rs:214
+#: src/repair_run.rs:178 src/repair_run.rs:212
 msgctxt "RepairDialog"
 msgid "Repair failed"
 msgstr ""
 
-#: src/repair_run.rs:182
+#: src/repair_run.rs:180
 msgctxt "RepairDialog"
 msgid "The repair worker crashed."
 msgstr ""
 
-#: src/repair_run.rs:191
+#: src/repair_run.rs:189
 msgctxt "RepairDialog"
 msgid "Repair discarded"
 msgstr ""
 
-#: src/repair_run.rs:194
+#: src/repair_run.rs:192
 msgctxt "RepairDialog"
 msgid "The scene changed while repairing; nothing was applied."
 msgstr ""
 
-#: src/repair_run.rs:207
+#: src/repair_run.rs:205
 msgctxt "RepairDialog"
 msgid "Mesh repair"
 msgstr ""
 
-#: src/repair_run.rs:218
+#: src/repair_run.rs:216
 msgctxt "RepairDialog"
 msgid "The scene rejected the repair edit; nothing was changed."
 msgstr ""
 
-#: src/repair_run.rs:313
+#: src/repair_run.rs:312
 msgctxt "RepairDialog"
 msgid "No problems found."
 msgstr ""
 
-#: src/repair_run.rs:317
+#: src/repair_run.rs:316
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) repaired"
 msgstr ""
 
-#: src/repair_run.rs:323
+#: src/repair_run.rs:322
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) could not be fully repaired"
 msgstr ""
 
-#: src/repair_run.rs:333
+#: src/repair_run.rs:332
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:363
+#: src/repair_run.rs:360
 #, rust-format
 msgctxt "RepairDialog"
 msgid "removed {} degenerate face(s)"
 msgstr ""
 
-#: src/repair_run.rs:367
+#: src/repair_run.rs:364
 #, rust-format
 msgctxt "RepairDialog"
 msgid "reoriented {} face(s)"
 msgstr ""
 
-#: src/repair_run.rs:370
-#, rust-format
-msgctxt "RepairDialog"
-msgid "recomputed {} normal(s)"
-msgstr ""
-
-#: src/repair_run.rs:374
+#: src/repair_run.rs:368
 #, rust-format
 msgctxt "RepairDialog"
 msgid "could not be fully repaired: {}"
 msgstr ""
 
-#: src/repair_run.rs:378
+#: src/repair_run.rs:372
 msgctxt "RepairDialog"
 msgid "still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:409
+#: src/repair_run.rs:403
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"
@@ -812,13 +806,13 @@ msgid ""
 "The graphics device was lost. Save your work and restart the application."
 msgstr ""
 
-#: src/mesh_loader.rs:70
+#: src/mesh_loader.rs:66
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:296
+#: src/lib.rs:297
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

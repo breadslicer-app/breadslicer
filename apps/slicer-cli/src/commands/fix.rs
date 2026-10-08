@@ -63,12 +63,11 @@ pub(crate) fn fix(
         show_applied_fixes(&all_fixes, out);
     }
 
-    // The unconditional write leans on the repair driver's
-    // never-worse guarantee: refused meshes are byte-identical to
-    // their input and applied passes only shrink a mesh's problem
-    // set, so the file written below is always at least as valid as
-    // the source. If a future pass broke that guarantee, this write
-    // would have to become conditional.
+    // The unconditional write leans on the repair driver's never-worse
+    // guarantee: refused meshes are byte-identical to their input and applied
+    // passes only shrink a mesh's problem set, so the file written below is
+    // always at least as valid as the source. If a future pass broke that
+    // guarantee, this write would have to become conditional.
     write_scene(&graph, &target_path, target_format)?;
 
     if refused > 0 {
@@ -80,14 +79,12 @@ pub(crate) fn fix(
     Ok(())
 }
 
-/// Render one warning line per refused target of a
-/// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes)
-/// run, keeping the historical per-refusal wording, and return how
-/// many targets were refused. Vertex errors are listed before their
-/// warning, as the abort path used to do. When the scene stores more
-/// than 1 mesh the warning names the target by its 1-based position
-/// in the outcome order. Shared between the `fix` subcommand and the
-/// `slice --repair` path.
+/// Renders 1 warning line per refused target of a
+/// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes) run, and returns
+/// how many targets were refused. Vertex errors are listed before their
+/// warning. When the scene stores more than 1 mesh, the warning names the
+/// target by its 1-based position in the outcome order. Shared between the
+/// `fix` subcommand and the `slice --repair` path.
 pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut dyn Write) -> usize {
     let total = outcomes.len();
     let mut refused = 0usize;
@@ -130,20 +127,6 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
             MeshFix::FlippedFaceOrientation { face_idx } => {
                 let _ = writeln!(out, "\t- Flipped orientation of face with ID '{face_idx}'");
             }
-            MeshFix::RecomputedNormal {
-                face_idx,
-                old_normal,
-                new_normal,
-            } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Recomputed normal vector for face with ID '{face_idx}', from {:?} (with norm {}) to {:?} (with norm {})",
-                    old_normal.coords(),
-                    old_normal.norm(),
-                    new_normal.coords(),
-                    new_normal.norm()
-                );
-            }
         }
     }
 }
@@ -151,7 +134,7 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
 #[cfg(test)]
 mod show_applied_fixes_tests {
     use sc_mesh_core::indexed_mesh::MeshFix;
-    use sc_mesh_core::primitives::{FaceIndex, Normal};
+    use sc_mesh_core::primitives::FaceIndex;
 
     use super::show_applied_fixes;
 
@@ -175,16 +158,11 @@ mod show_applied_fixes_tests {
             MeshFix::FlippedFaceOrientation {
                 face_idx: FaceIndex::from(5_usize),
             },
-            MeshFix::RecomputedNormal {
-                face_idx: FaceIndex::from(6_usize),
-                old_normal: Normal::new([1.0, 0.0, 0.0]),
-                new_normal: Normal::new([0.0, 1.0, 0.0]),
-            },
         ];
         let out = render(&fixes);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 4, "header + 3 entries; got: {out}");
-        assert!(lines[0].contains("Applied fixes (3)"));
+        assert_eq!(lines.len(), 3, "header + 2 entries; got: {out}");
+        assert!(lines[0].contains("Applied fixes (2)"));
         assert!(
             lines[1].contains("Removed face") && lines[1].contains("'4'"),
             "{}",
@@ -194,14 +172,6 @@ mod show_applied_fixes_tests {
             lines[2].contains("Flipped orientation") && lines[2].contains("'5'"),
             "{}",
             lines[2]
-        );
-        assert!(
-            lines[3].contains("Recomputed normal")
-                && lines[3].contains("'6'")
-                && lines[3].contains("[1.0, 0.0, 0.0]")
-                && lines[3].contains("[0.0, 1.0, 0.0]"),
-            "{}",
-            lines[3]
         );
     }
 }

@@ -78,8 +78,7 @@ sc-slicer-cli convert --source model.obj --target model.3mf
 
 `diagnose` reports what is wrong with a mesh and leaves it alone. `fix`
 writes a repaired copy: it removes faces with zero-length edges and flips
-faces pointing the wrong way, both on by default, and can recompute face
-normals with `--fix-face-normals true`.
+faces pointing the wrong way, both on by default.
 
 ## Profiles
 
