@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Coverage for the four `show_*` helpers in
-//! `commands::diagnose`. Each helper emits a header line with the
-//! variant count followed by one `\t- {error}\n` line per entry,
-//! using each error type's canonical `Display` impl. The tests pin
-//! the header shape and one body line per variant so a future
-//! refactor that drops a case can be caught.
+//! Coverage for the 4 `show_*` helpers in `commands::diagnose`. Each helper
+//! emits a header line with the variant count followed by 1 `\t- {error}\n`
+//! line per entry, using each error type's canonical `Display` impl. The tests
+//! pin the header shape and 1 body line per variant so a future refactor that
+//! drops a case can be caught.
 
 use sc_mesh_core::indexed_mesh::{
     MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError, MeshVertexError,
@@ -76,31 +75,14 @@ fn show_face_errors_covers_every_variant() {
 
 #[test]
 fn show_normal_vector_errors_covers_every_variant() {
-    let errors = vec![
-        MeshNormalVectorError::ZeroAreaTriangle {
-            face_idx: FaceIndex::from(1_usize),
-        },
-        MeshNormalVectorError::NonUnitNorm {
-            face_idx: FaceIndex::from(2_usize),
-            norm: 1.25,
-        },
-        MeshNormalVectorError::ExpectationMismatch {
-            face_idx: FaceIndex::from(3_usize),
-        },
-    ];
+    let errors = vec![MeshNormalVectorError::ZeroAreaTriangle {
+        face_idx: FaceIndex::from(1_usize),
+    }];
     let out = render(|w| show_normal_vector_errors(&errors, w));
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 4, "header + 3 entries; got: {out}");
-    assert_eq!(lines[0], "Normal vector errors (3):");
+    assert_eq!(lines.len(), 2, "header + 1 entry; got: {out}");
+    assert_eq!(lines[0], "Normal vector errors (1):");
     assert_eq!(lines[1], "\t- face #1 is degenerate: zero area");
-    assert_eq!(
-        lines[2],
-        "\t- face #2 has a non-unit normal vector (norm = 1.25)",
-    );
-    assert_eq!(
-        lines[3],
-        "\t- face #3 declares a normal vector that disagrees with the triangle plane",
-    );
 }
 
 #[test]

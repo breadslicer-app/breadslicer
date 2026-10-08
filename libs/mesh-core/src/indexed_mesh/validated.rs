@@ -29,12 +29,8 @@
 
 use std::fmt;
 
-use float_cmp::approx_eq;
-
-use crate::geometry::{
-    DEGENERACY_SIN_SQ_THRESHOLD, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE, gt_strict,
-};
-use crate::primitives::{FaceIndex, IndexedTriangle, Vector3D, Vertex, VertexIndex};
+use crate::geometry::{DEGENERACY_SIN_SQ_THRESHOLD, gt_strict};
+use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
 use super::IndexedMesh;
 use super::fix::{MeshFix, MeshFixError};
@@ -43,8 +39,6 @@ use super::half_edges;
 #[derive(Clone, Debug, PartialEq)]
 pub enum MeshNormalVectorError {
     ZeroAreaTriangle { face_idx: FaceIndex },
-    NonUnitNorm { face_idx: FaceIndex, norm: f32 },
-    ExpectationMismatch { face_idx: FaceIndex },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,14 +68,6 @@ impl fmt::Display for MeshNormalVectorError {
             Self::ZeroAreaTriangle { face_idx } => {
                 write!(f, "face #{face_idx} is degenerate: zero area",)
             }
-            Self::NonUnitNorm { face_idx, norm } => write!(
-                f,
-                "face #{face_idx} has a non-unit normal vector (norm = {norm})",
-            ),
-            Self::ExpectationMismatch { face_idx } => write!(
-                f,
-                "face #{face_idx} declares a normal vector that disagrees with the triangle plane",
-            ),
         }
     }
 }
@@ -296,30 +282,6 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
             DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
         ) {
             errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx });
-            continue;
-        }
-
-        let n = face.normal.to_f64();
-        let n_mag_sq = n.squared_norm();
-
-        if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = UNIT_NORM_TOLERANCE) {
-            errors.push(MeshNormalVectorError::NonUnitNorm {
-                face_idx,
-                norm: n_mag_sq.sqrt() as f32,
-            });
-            continue;
-        }
-
-        let cross_mag = cross_mag_sq.sqrt();
-        let cross = Vector3D::new([
-            cross[0] / cross_mag,
-            cross[1] / cross_mag,
-            cross[2] / cross_mag,
-        ]);
-
-        let dot = cross.dot_product(&n);
-        if dot < NORMAL_ANGLE_TOLERANCE_COS {
-            errors.push(MeshNormalVectorError::ExpectationMismatch { face_idx });
         }
     }
 
@@ -555,32 +517,6 @@ mod mesh_normal_vector_error_display_tests {
             },
         );
         assert_eq!(msg, "face #17 is degenerate: zero area");
-    }
-
-    #[test]
-    fn non_unit_norm_renders_face_id_and_norm() {
-        let msg = format!(
-            "{}",
-            MeshNormalVectorError::NonUnitNorm {
-                face_idx: 17_usize.into(),
-                norm: 1.5,
-            },
-        );
-        assert_eq!(msg, "face #17 has a non-unit normal vector (norm = 1.5)",);
-    }
-
-    #[test]
-    fn expectation_mismatch_renders_face_id() {
-        let msg = format!(
-            "{}",
-            MeshNormalVectorError::ExpectationMismatch {
-                face_idx: 42_usize.into(),
-            },
-        );
-        assert_eq!(
-            msg,
-            "face #42 declares a normal vector that disagrees with the triangle plane",
-        );
     }
 }
 

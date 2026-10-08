@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Pins for the per-mesh diagnosis policy: validator ordering, the
-//! face gate making the witness-gated results structurally absent,
-//! and `has_problems` over every finding class. Each list is pinned
-//! equal to the underlying validator's own output, so the policy can
-//! never drift from the validators it reports on.
+//! Pins for the per-mesh diagnosis policy: validator ordering, the face gate
+//! making the witness-gated results structurally absent, and `has_problems`
+//! over every finding class. Each list is pinned equal to the underlying
+//! validator's own output, so the policy can never drift from the validators it
+//! reports on.
 
 use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::IndexedMesh;
@@ -15,7 +15,7 @@ use crate::indexed_mesh::diagnose::{FaceDiagnosis, MeshDiagnosis};
 use crate::indexed_mesh::validated::MeshEdgeManifoldError;
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
 
-/// A closed, consistently wound tetrahedron with correct normals.
+/// Returns a closed, consistently wound tetrahedron with correct normals.
 fn tetrahedron() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([1.0, 1.0, 1.0]),
@@ -42,8 +42,16 @@ fn tetrahedron() -> IndexedMesh {
     }
 }
 
-/// An open strip of 2 consistently wound triangles sharing one edge:
-/// the 4 outer edges are boundary edges (a hole).
+/// Returns the tetrahedron with vertex 3 moved to (1, 0, 0), the midpoint of
+/// vertices 0 and 1: face 1 has zero area and the mesh stays edge-manifold.
+fn tetrahedron_with_a_zero_area_face() -> IndexedMesh {
+    let mut mesh = tetrahedron();
+    mesh.vertices[3] = Vertex::new([1.0, 0.0, 0.0]);
+    mesh
+}
+
+/// Returns an open strip of 2 consistently wound triangles sharing 1 edge: the
+/// 4 outer edges are boundary edges (a hole).
 fn open_strip() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([0.0, 0.0, 0.0]),
@@ -70,9 +78,9 @@ fn open_strip() -> IndexedMesh {
     }
 }
 
-/// The diagnosis the validators themselves dictate for `mesh`,
-/// assembled from direct calls: the equivalence oracle every test
-/// below compares against.
+/// Returns the diagnosis the validators themselves dictate for `mesh`,
+/// assembled from direct calls: the equivalence oracle every test below
+/// compares against.
 fn expected_diagnosis(mesh: &IndexedMesh) -> MeshDiagnosis {
     let vertex_errors = mesh.validate_vertices().err().unwrap_or_default();
     let faces = match mesh.validated_faces() {
@@ -114,8 +122,8 @@ fn invalid_vertices_do_not_gate_the_face_results() {
         diagnosis.vertex_errors,
         mesh.validate_vertices().unwrap_err()
     );
-    // A NaN coordinate breaks no face-index rule: the gate passes
-    // and the witness-gated validators still run and report.
+    // A NaN coordinate breaks no face-index rule: the gate passes and the
+    // witness-gated validators still run and report.
     assert!(matches!(diagnosis.faces, FaceDiagnosis::Valid { .. }));
     assert!(diagnosis.has_problems());
 }
@@ -155,10 +163,8 @@ fn an_open_strip_reports_its_boundary_edges() {
 }
 
 #[test]
-fn a_non_unit_normal_reports_normal_vector_errors() {
-    let mut mesh = tetrahedron();
-    let doubled = mesh.faces[0].normal.coords().map(|c| c * 2.0);
-    mesh.faces[0].normal = Normal::new(doubled);
+fn a_zero_area_face_reports_normal_vector_errors() {
+    let mesh = tetrahedron_with_a_zero_area_face();
     let diagnosis = mesh.diagnose();
     let FaceDiagnosis::Valid {
         normal_vector_errors,
@@ -225,6 +231,7 @@ fn diagnosis_equals_the_validators_for_every_fixture_class() {
         ("out_of_range", out_of_range),
         ("open_strip", open_strip()),
         ("bad_normal", bad_normal),
+        ("zero_area", tetrahedron_with_a_zero_area_face()),
         ("empty", empty),
     ];
     for (name, mesh) in fixtures {

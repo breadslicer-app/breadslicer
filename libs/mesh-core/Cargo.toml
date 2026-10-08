@@ -13,10 +13,10 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-float-cmp.workspace = true
 newtypes = "0.6.0"
 rayon.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+float-cmp.workspace = true
 proptest.workspace = true

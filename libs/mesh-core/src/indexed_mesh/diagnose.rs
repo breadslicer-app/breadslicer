@@ -3,49 +3,45 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Per-mesh diagnosis policy: which validators run, in which order,
-//! and what happens when the face gate fails. The validators
-//! themselves live in [`super::validate`] and [`super::validated`];
-//! this module owns the read-side decisions around them so every
-//! frontend diagnoses meshes the same way.
+//! Per-mesh diagnosis policy: which validators run, in which order, and what
+//! happens when the face gate fails. The validators themselves live in
+//! [`super::validate`] and [`super::validated`]; this module owns the read-side
+//! decisions around them so every frontend diagnoses meshes the same way.
 
 use super::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::{MeshEdgeManifoldError, MeshNormalVectorError};
 
-/// The face gate's result. The normal-vector and edge-manifold
-/// validators run on the witness face validation mints, so when the
-/// gate fails their findings do not exist for this mesh: absent by
-/// construction, not empty.
+/// The face gate's result. The normal-vector and edge-manifold validators run
+/// on the witness face validation mints, so when the gate fails their findings
+/// do not exist for this mesh: absent by construction, not empty.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FaceDiagnosis {
-    /// Face validation failed; the witness-gated validators could
-    /// not run.
+    /// Face validation failed; the witness-gated validators could not run.
     Invalid(Vec<MeshFaceError>),
-    /// Face validation passed; both witness-gated validators ran
-    /// (they are independent of each other).
+    /// Face validation passed; both witness-gated validators ran (they are
+    /// independent of each other).
     Valid {
-        /// Stored normal vectors that disagree with the geometry.
+        /// Faces with zero area.
         normal_vector_errors: Vec<MeshNormalVectorError>,
-        /// Edges breaking the 2-faces-per-edge or consistent-winding
-        /// rules.
+        /// Edges breaking the 2-faces-per-edge or consistent-winding rules.
         edge_manifold_errors: Vec<MeshEdgeManifoldError>,
     },
 }
 
-/// Everything one diagnosis found in one mesh. Produced by
+/// Everything a diagnosis found in a mesh. Produced by
 /// [`IndexedMesh::diagnose`]; diagnosing never mutates the mesh.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshDiagnosis {
     /// Non-finite vertex coordinates.
     pub vertex_errors: Vec<MeshVertexError>,
-    /// The face gate's result, carrying the witness-gated
-    /// validators' findings when the gate passed.
+    /// The face gate's result, carrying the witness-gated validators' findings
+    /// when the gate passed.
     pub faces: FaceDiagnosis,
 }
 
 impl MeshDiagnosis {
-    /// Whether the diagnosis found anything at all.
+    /// Returns whether the diagnosis found anything at all.
     pub fn has_problems(&self) -> bool {
         if !self.vertex_errors.is_empty() {
             return true;
@@ -61,10 +57,10 @@ impl MeshDiagnosis {
 }
 
 impl IndexedMesh {
-    /// Run every validator over this mesh in the order the frontends
-    /// present them: vertices first (they never gate the rest), then
-    /// the face gate; when the gate passes, the normal-vector and
-    /// edge-manifold validators both run.
+    /// Runs every validator over this mesh in the order the frontends present
+    /// them: vertices first (they never gate the rest), then the face gate;
+    /// when the gate passes, the normal-vector and edge-manifold validators
+    /// both run.
     pub fn diagnose(&self) -> MeshDiagnosis {
         let vertex_errors = self.validate_vertices().err().unwrap_or_default();
         let faces = match self.validated_faces() {

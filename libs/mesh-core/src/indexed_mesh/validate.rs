@@ -28,7 +28,7 @@ pub enum MeshFaceError {
     ZeroLengthEdge {
         /// Index for the problematic face
         face_idx: FaceIndex,
-        /// One of the two corners that share the same vertex.
+        /// 1 of the 2 corners that share the same vertex.
         vertex_pos_a: TriVertexSlot,
         /// The other corner that shares the same vertex.
         vertex_pos_b: TriVertexSlot,
@@ -425,7 +425,7 @@ mod indexed_mesh_validate_faces_tests {
 
     #[test]
     fn degenerate_triangle_reports_all_collapsed_edges() {
-        // All three vertices are the same -> all three edges are collapsed
+        // All 3 vertices are the same -> all 3 edges are collapsed
         let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 1)]);
         let errors = mesh.validate_faces().unwrap_err();
         assert_eq!(errors.len(), 3);
@@ -512,8 +512,8 @@ mod indexed_mesh_validate_normal_vectors_tests {
         IndexedTriangle::from_raw_indices(Normal::new(normal), v)
     }
 
-    // A right triangle in the XY plane: (0,0,0), (1,0,0), (0,1,0).
-    // Cross product = (0,0,1), so the correct unit normal is [0, 0, 1].
+    // A right triangle in the XY plane: (0,0,0), (1,0,0), (0,1,0). Cross
+    // product = (0,0,1), so the correct unit normal is [0, 0, 1].
     fn xy_triangle_vertices() -> Vec<Vertex> {
         vec![
             Vertex::new([0.0, 0.0, 0.0]),
@@ -549,9 +549,9 @@ mod indexed_mesh_validate_normal_vectors_tests {
 
     #[test]
     fn ok_for_small_but_valid_triangle() {
-        // Sub-millimetre detail (~1 µm edges). Pre-fix this would have
-        // been flagged ZeroAreaTriangle by the absolute-area threshold
-        // an earlier version of the validator used.
+        // Sub-millimetre detail (~1 µm edges). Pre-fix this would have been
+        // flagged ZeroAreaTriangle by the absolute-area threshold an earlier
+        // version of the validator used.
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
             Vertex::new([1e-3, 0.0, 0.0]),
@@ -609,231 +609,29 @@ mod indexed_mesh_validate_normal_vectors_tests {
     }
 
     #[test]
-    fn detects_non_unit_norm_too_large() {
-        // Normal with magnitude 2
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 2.0], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
-                assert_eq!(*face_idx, 0_usize.into());
-                assert!((*norm - 2.0).abs() < 1e-6);
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn detects_non_unit_norm_too_small() {
-        // Normal with magnitude 0.5
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 0.5], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
-                assert_eq!(*face_idx, 0_usize.into());
-                assert!((*norm - 0.5).abs() < 1e-6);
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn detects_non_unit_norm_zero_vector() {
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 0.0], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
-                assert_eq!(*face_idx, 0_usize.into());
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn accepts_normal_just_inside_unit_norm_tolerance() {
-        // n_mag_sq = 0.9999998² ≈ 0.99999960 in f64 after f32 round-trip.
-        // Deviation from 1.0 is ~4e-7, comfortably inside the 1e-6
-        // tolerance. The normal is Z-aligned so the direction check
-        // following the magnitude check also passes.
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 0.999_999_8], [0, 1, 2])],
-        );
-        assert!(
-            mesh.validated_faces()
-                .unwrap()
-                .validate_normal_vectors()
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn rejects_normal_just_outside_unit_norm_tolerance_below() {
-        // n_mag_sq = 0.999998² ≈ 0.999996. Deviation ~4e-6, four times
-        // the 1e-6 tolerance: must fire NonUnitNorm without falling
-        // through to the direction check.
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 0.999_998], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
-                assert_eq!(*face_idx, 0_usize.into());
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn rejects_normal_just_outside_unit_norm_tolerance_above() {
-        // n_mag_sq = 1.000002² ≈ 1.000004. Same ~4e-6 deviation as
-        // the below case but on the other side; pins that the
-        // tolerance check is symmetric.
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 1.000_002], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
-                assert_eq!(*face_idx, 0_usize.into());
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn rejects_nan_magnitude_normal() {
-        // NaN propagates through the squared-norm sum and lands at
-        // n_mag_sq = NaN. `approx_eq` returns false for any NaN
-        // operand, so the magnitude check rejects without ever
-        // reaching the direction check.
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, f32::NAN], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
-                assert_eq!(*face_idx, 0_usize.into());
-            }
-            other => panic!("expected NonUnitNorm, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn detects_expectation_mismatch_opposite_direction() {
-        // Correct normal is [0,0,1], but we provide [0,0,-1] (unit, but wrong direction)
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, -1.0], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(
-            errors,
-            vec![MeshNormalVectorError::ExpectationMismatch {
-                face_idx: 0_usize.into()
-            }]
-        );
-    }
-
-    #[test]
-    fn detects_expectation_mismatch_perpendicular() {
-        // Correct normal is [0,0,1], but we provide [1,0,0] (unit, but wrong axis)
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([1.0, 0.0, 0.0], [0, 1, 2])],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(
-            errors,
-            vec![MeshNormalVectorError::ExpectationMismatch {
-                face_idx: 0_usize.into()
-            }]
-        );
-    }
-
-    #[test]
-    fn reports_correct_face_idx_across_faces() {
-        let vertices = vec![
-            Vertex::new([0.0, 0.0, 0.0]),
-            Vertex::new([1.0, 0.0, 0.0]),
-            Vertex::new([0.0, 1.0, 0.0]),
-            Vertex::new([0.0, 0.0, 1.0]),
+    fn ignores_the_stored_normal() {
+        let stored_normals = [
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 0.5],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.999_998],
+            [0.0, 0.0, 1.000_002],
+            [0.0, 0.0, f32::NAN],
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0],
         ];
-        // Face 0: XY plane, correct normal [0,0,1]
-        // Face 1: XZ plane, vertices (0,0,0),(0,0,1),(1,0,0)
-        //   cross = (0,0,1)-(0,0,0) × (1,0,0)-(0,0,0) = (0,0,1)×(1,0,0) = (0·0-1·0, 1·1-0·0, 0·0-0·1) = (0,1,0)
-        //   correct normal is [0,1,0], but we give [0,-1,0]
-        let mesh = make_mesh(
-            vertices,
-            vec![
-                face([0.0, 0.0, 1.0], [0, 1, 2]),
-                face([0.0, -1.0, 0.0], [0, 3, 1]),
-            ],
-        );
-        let errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_normal_vectors()
-            .unwrap_err();
-        assert_eq!(
-            errors,
-            vec![MeshNormalVectorError::ExpectationMismatch {
-                face_idx: 1_usize.into()
-            }]
-        );
+        for normal in stored_normals {
+            let mesh = make_mesh(xy_triangle_vertices(), vec![face(normal, [0, 1, 2])]);
+            assert_eq!(
+                mesh.validated_faces().unwrap().validate_normal_vectors(),
+                Ok(()),
+                "stored normal {normal:?}"
+            );
+        }
     }
 
     #[test]
-    fn reports_multiple_errors_across_faces() {
+    fn reports_zero_area_faces_by_index_across_faces() {
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
             Vertex::new([1.0, 0.0, 0.0]),
@@ -843,8 +641,10 @@ mod indexed_mesh_validate_normal_vectors_tests {
         let mesh = make_mesh(
             vertices,
             vec![
-                face([0.0, 0.0, -1.0], [0, 1, 2]), // ExpectationMismatch
-                face([0.0, 0.0, 1.0], [0, 1, 3]),  // ZeroAreaTriangle (collinear)
+                // Wrong stored normal, not flagged.
+                face([0.0, 0.0, -1.0], [0, 1, 2]),
+                // ZeroAreaTriangle (collinear).
+                face([0.0, 0.0, 1.0], [0, 1, 3]),
             ],
         );
         let errors = mesh
@@ -854,14 +654,9 @@ mod indexed_mesh_validate_normal_vectors_tests {
             .unwrap_err();
         assert_eq!(
             errors,
-            vec![
-                MeshNormalVectorError::ExpectationMismatch {
-                    face_idx: 0_usize.into()
-                },
-                MeshNormalVectorError::ZeroAreaTriangle {
-                    face_idx: 1_usize.into()
-                },
-            ]
+            vec![MeshNormalVectorError::ZeroAreaTriangle {
+                face_idx: 1_usize.into()
+            }]
         );
     }
 
@@ -911,7 +706,7 @@ mod indexed_mesh_validate_edge_manifold_tests {
     ///   2: (-1, 1, -1)
     ///   3: (-1, -1, 1)
     ///
-    /// Each shared edge is traversed in opposite directions by its two faces.
+    /// Each shared edge is traversed in opposite directions by its 2 faces.
     fn tetrahedron() -> IndexedMesh {
         IndexedMesh {
             meta: None,
@@ -955,7 +750,8 @@ mod indexed_mesh_validate_edge_manifold_tests {
 
     #[test]
     fn detects_boundary_edge_single_triangle() {
-        // A single triangle has 3 boundary edges (each edge belongs to only one face)
+        // A single triangle has 3 boundary edges (each edge belongs to only 1
+        // face)
         let mesh = make_mesh(3, vec![face([0, 1, 2])]);
         let errors = mesh
             .validated_faces()
@@ -972,7 +768,7 @@ mod indexed_mesh_validate_edge_manifold_tests {
 
     #[test]
     fn detects_boundary_edge_open_surface() {
-        // Two triangles sharing one edge, leaving 4 boundary edges
+        // 2 triangles sharing 1 edge, leaving 4 boundary edges
         // Face 0: 0->1, 1->2, 2->0
         // Face 1: 1->0, 0->3, 3->1
         // Edge (0,1) is shared with consistent winding (0->1 and 1->0) : OK
@@ -992,10 +788,10 @@ mod indexed_mesh_validate_edge_manifold_tests {
 
     #[test]
     fn detects_inconsistent_winding_order() {
-        // Two triangles sharing edge (0,1) but both traverse it as 0->1
+        // 2 triangles sharing edge (0,1) but both traverse it as 0->1
         // Face 0: 0->1, 1->2, 2->0
         // Face 1: 0->1, 1->3, 3->0
-        // Edge (0,1) appears twice in the same direction -> inconsistent winding
+        // Edge (0,1) appears twice in the same direction: inconsistent winding
         let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
         let errors = mesh
             .validated_faces()
@@ -1020,7 +816,7 @@ mod indexed_mesh_validate_edge_manifold_tests {
 
     #[test]
     fn detects_non_manifold_edge() {
-        // Three faces all sharing edge (0,1)
+        // 3 faces all sharing edge (0,1)
         // Face 0: 0->1, 1->2, 2->0
         // Face 1: 1->0, 0->3, 3->1
         // Face 2: 0->1, 1->4, 4->0
@@ -1051,7 +847,7 @@ mod indexed_mesh_validate_edge_manifold_tests {
 
     #[test]
     fn tetrahedron_with_one_flipped_face_detects_inconsistent_winding() {
-        // Take a valid tetrahedron and flip one face's winding
+        // Take a valid tetrahedron and flip 1 face's winding
         let mut mesh = tetrahedron();
         // Flip face 0: [0, 1, 2] -> [0, 2, 1]
         // This reverses edges 0->1 to 0->2, 1->2 to 2->1, 2->0 to 1->0
@@ -1066,14 +862,15 @@ mod indexed_mesh_validate_edge_manifold_tests {
             .iter()
             .filter(|e| matches!(e, MeshEdgeManifoldError::InconsistentWindingOrder { .. }))
             .collect();
-        // Flipping one face of a tetrahedron causes inconsistent winding on all 3 of its edges
+        // Flipping 1 face of a tetrahedron causes inconsistent winding on all 3
+        // of its edges
         assert_eq!(winding_errors.len(), 3);
     }
 
     #[test]
     fn reports_multiple_error_types() {
-        // Face 0 and Face 1 share edge (0,1) with inconsistent winding (both 0->1),
-        // plus all other edges are boundary.
+        // Face 0 and Face 1 share edge (0,1) with inconsistent winding (both
+        // 0->1), plus all other edges are boundary.
         let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
         let errors = mesh
             .validated_faces()
@@ -1184,9 +981,9 @@ mod manifold_sort_equivalence_tests {
         VertexIndex::from(i)
     }
 
-    /// The previous hash-based validator, kept verbatim as the
-    /// reference the sort-based implementation must agree with (up to
-    /// the error order, which the reference never fixed).
+    /// Runs the previous hash-based validator, kept verbatim as the reference
+    /// the sort-based implementation must agree with (up to the error order,
+    /// which the reference never fixed).
     fn reference_validate_edge_manifold(
         mesh: &IndexedMesh,
     ) -> Result<(), Vec<MeshEdgeManifoldError>> {
@@ -1253,10 +1050,10 @@ mod manifold_sort_equivalence_tests {
         }
     }
 
-    /// Total order over errors so both validators' outputs can be
-    /// compared as sets: variant rank, canonical edge, then the face
-    /// list sorted (the implementations may legitimately disagree on
-    /// face order inside one error).
+    /// Returns a total-order key over errors so both validators' outputs can be
+    /// compared as sets: variant rank, canonical edge, then the face list
+    /// sorted (the implementations may legitimately disagree on face order
+    /// inside 1 error).
     fn sort_key(e: &MeshEdgeManifoldError) -> (u8, u32, u32, Vec<usize>) {
         match e {
             MeshEdgeManifoldError::EmptyMesh => (0, 0, 0, vec![]),
@@ -1289,9 +1086,9 @@ mod manifold_sort_equivalence_tests {
         }
     }
 
-    /// Closed grid torus: an n x m wrap-around lattice, two triangles
-    /// per cell, consistent winding. The manifold check only reads
-    /// face indices, so vertex placement is a trivial lattice.
+    /// Builds a closed grid torus: an n x m wrap-around lattice, 2 triangles
+    /// per cell, consistent winding. The manifold check only reads face
+    /// indices, so vertex placement is a trivial lattice.
     fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
         let mut vertices = Vec::with_capacity(n * m);
         for i in 0..n {
@@ -1344,7 +1141,7 @@ mod manifold_sort_equivalence_tests {
                 0 => {
                     mesh.faces.remove(f);
                 }
-                // The duplicated face over-shares all three edges.
+                // The duplicated face over-shares all 3 edges.
                 1 => {
                     let dup = mesh.faces[f];
                     mesh.faces.push(dup);
@@ -1364,8 +1161,8 @@ mod manifold_sort_equivalence_tests {
 
     #[test]
     fn errors_are_sorted_by_canonical_edge_and_deterministic() {
-        // A single triangle: three boundary edges, reported in
-        // canonical edge order.
+        // A single triangle: 3 boundary edges, reported in canonical edge
+        // order.
         let mesh = make_mesh(3, vec![face([0, 1, 2])]);
         let errors = validate(&mesh).unwrap_err();
         let edges: Vec<_> = errors
@@ -1400,8 +1197,8 @@ mod manifold_sort_equivalence_tests {
 
     #[test]
     fn non_manifold_edge_lists_faces_ascending() {
-        // Faces 0, 1, 2 all share edge (0, 1); the old validator
-        // listed them grouped by direction, the sorted one ascending.
+        // Faces 0, 1, 2 all share edge (0, 1); the old validator listed them
+        // grouped by direction, the sorted one ascending.
         let mesh = make_mesh(5, vec![face([0, 1, 2]), face([1, 0, 3]), face([0, 1, 4])]);
         let errors = validate(&mesh).unwrap_err();
         let shared = errors

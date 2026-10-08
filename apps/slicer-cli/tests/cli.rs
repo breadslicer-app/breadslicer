@@ -160,9 +160,7 @@ fn write_clean_3mf(path: &Path) {
 /// Returns the tetrahedron with face 0's winding reversed. The other 3 faces
 /// keep their original winding, so the result is internally inconsistent:
 /// `validate_edge_manifold` flags every edge of face 0 with
-/// `InconsistentWindingOrder`. The stored normal is left as-is so
-/// `validate_normal_vectors` flags `ExpectationMismatch` on the same face. All
-/// vertex indices remain in range.
+/// `InconsistentWindingOrder`. All vertex indices remain in range.
 fn flipped_winding_tetrahedron_mesh() -> IndexedMesh {
     let mut mesh = tetrahedron_mesh(None);
     mesh.faces[0].vertices.reverse();
@@ -180,11 +178,12 @@ fn two_flipped_faces_tetrahedron_mesh() -> IndexedMesh {
     mesh
 }
 
-/// Returns the tetrahedron with face 1 carrying a non-unit-magnitude normal
-/// (scaled by 2). `validate_normal_vectors` flags `NonUnitNorm`. All vertex
-/// indices remain in range.
-fn nonunit_normal_tetrahedron_mesh() -> IndexedMesh {
+/// Returns the tetrahedron with declared normals that disagree with its
+/// geometry: face 0's normal negated and face 1's scaled by 2. The winding and
+/// the vertices are unchanged.
+fn wrong_declared_normals_tetrahedron_mesh() -> IndexedMesh {
     let mut mesh = tetrahedron_mesh(None);
+    mesh.faces[0].normal = mesh.faces[0].normal.negate();
     let n = mesh.faces[1].normal.coords();
     mesh.faces[1].normal = Normal::new([n[0] * 2.0, n[1] * 2.0, n[2] * 2.0]);
     mesh
@@ -1113,36 +1112,17 @@ mod diagnose_tests {
     }
 
     #[test]
-    fn diagnose_reports_non_unit_norm() {
+    fn diagnose_accepts_declared_normals_that_disagree_with_the_geometry() {
         let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("nun.stla");
-        write_stla_to(&source, &nonunit_normal_tetrahedron_mesh());
+        let source = tmp.path().join("wrong-normals.stla");
+        write_stla_to(&source, &wrong_declared_normals_tetrahedron_mesh());
 
         Command::cargo_bin(BIN)
             .unwrap()
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
-            .failure()
-            .stderr(predicate::str::contains("non-unit norm"));
-    }
-
-    #[test]
-    fn diagnose_reports_expectation_mismatch() {
-        // The flipped-winding fixture also triggers `InconsistentWindingOrder`;
-        // this test only pins that the expectation-mismatch fragment appears
-        // alongside it.
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("em.stla");
-        write_stla_to(&source, &flipped_winding_tetrahedron_mesh());
-
-        Command::cargo_bin(BIN)
-            .unwrap()
-            .args(["diagnose", "-s", source.to_str().unwrap()])
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(
-                "disagrees with the triangle plane",
-            ));
+            .success()
+            .stderr(predicate::str::contains("Normal vector errors").not());
     }
 
     #[test]
@@ -1928,8 +1908,7 @@ mod slice_repair_tests {
     }
 
     /// Writes the tetrahedron with 1 face's winding reversed, which triggers
-    /// `InconsistentWindingOrder` (manifold check) and `ExpectationMismatch`
-    /// (normal-vector check). The `fix` subcommand's default flags
+    /// `InconsistentWindingOrder`. The `fix` subcommand's default flags
     /// (`flipped-faces=true`) repair this; `--repair` on slice should do the
     /// same.
     fn write_flipped_winding_tetrahedron(path: &Path) {

@@ -26,57 +26,32 @@ impl fmt::Display for GeometryError {
 
 impl std::error::Error for GeometryError {}
 
-/// Threshold on `sin²(θ)` between two edges of a triangle. Below this
-/// the triangle is treated as degenerate.
+/// Threshold on `sin²(θ)` between 2 edges of a triangle. Below this the
+/// triangle is treated as degenerate.
 ///
-/// Equivalent to `‖e1 × e2‖² / (‖e1‖² · ‖e2‖²) > THRESHOLD`. The
-/// criterion is dimensionless, scale-invariant, so a sub-millimeter
-/// detail mesh is judged on the same footing as a printer-bed-scale
-/// one. An earlier absolute-area threshold flagged every triangle in a
-/// small mesh as degenerate.
+/// Equivalent to `‖e1 × e2‖² / (‖e1‖² · ‖e2‖²) > THRESHOLD`. The criterion is
+/// dimensionless, scale-invariant, so a sub-millimeter detail mesh is judged on
+/// the same footing as a printer-bed-scale one. An earlier absolute-area
+/// threshold flagged every triangle in a small mesh as degenerate.
 ///
 /// θ ≳ 5.7×10⁻⁵° at this value: well above f64 noise (~1e-16) and the
-/// f32-quantisation floor of the inputs (~1e-14), well below the
-/// smallest corner angle a real mesh would have.
+/// f32-quantisation floor of the inputs (~1e-14), well below the smallest
+/// corner angle a real mesh would have.
 pub const DEGENERACY_SIN_SQ_THRESHOLD: f64 = 1e-12;
 
-/// Tolerance for "is this f64 magnitude squared close enough to 1?" in
-/// the unit-norm check on stored f32 normals widened to f64.
-///
-/// f32 unit normals widened to f64 can have squared magnitude deviating
-/// from 1.0 by up to ~3·2⁻²³ ≈ 3.6e-7 due to f32 quantisation of each
-/// component. 1e-6 leaves headroom above that.
-pub(crate) const UNIT_NORM_TOLERANCE: f64 = 1e-6;
-
-/// Cosine of the maximum tolerated angle (5°) between a stored normal
-/// and the normal recomputed from the triangle's vertices.
-///
-/// Per-component epsilon comparisons are too sensitive: small triangles
-/// and high-aspect-ratio triangles accumulate enough floating-point
-/// error that their normals diverge by a few degrees from the stored
-/// value. 5° filters numerical noise while still catching meaningfully
-/// wrong normals. Stored as the precomputed cosine because the check is
-/// against the dot product of two unit vectors.
-pub(crate) const NORMAL_ANGLE_TOLERANCE_COS: f64 = 0.9961946980917455;
-
 /// Threshold used to reject near-singular linear parts of an
-/// `AffineTransform3D` (zero-magnitude rotation axis, near-zero
-/// determinant, or zero-magnitude transformed normal).
+/// `AffineTransform3D` (zero-magnitude rotation axis, near-zero determinant, or
+/// zero-magnitude transformed normal).
 ///
-/// `f64::EPSILON` is relative to 1.0 and may be too tight for
-/// millimetre-scale matrices whose legitimate determinants can sit
-/// around 1e-9. TODO: revisit and consider scaling by the matrix entries.
+/// `f64::EPSILON` is relative to 1.0 and may be too tight for millimetre-scale
+/// matrices whose legitimate determinants can sit around 1e-9. TODO: revisit
+/// and consider scaling by the matrix entries.
 pub(crate) const SINGULARITY_THRESHOLD: f64 = f64::EPSILON;
 
-/// Strict ordered comparison that returns `false` for NaN inputs.
+/// Returns whether `value > threshold`, and `false` when either operand is NaN.
 ///
-/// Equivalent to `value > threshold` for ordered finite inputs, with one
-/// crucial difference: when either operand is NaN, `partial_cmp` returns
-/// `None` and this function returns `false`. Used as a safety guard in
-/// degeneracy / singularity checks where NaN must be rejected (treated as
-/// "not strictly greater") rather than propagated through `>`'s
-/// always-false NaN behaviour, which is the same value but makes the
-/// intent explicit at every call site.
+/// `>` already returns `false` for NaN; the degeneracy and singularity checks
+/// call this function so the rejection of NaN is explicit at every call site.
 #[inline]
 pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
     matches!(value.partial_cmp(&threshold), Some(Ordering::Greater))
@@ -87,12 +62,12 @@ pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
 /// The f32 vertex coordinates are promoted to f64 before subtracting, taking
 /// the cross product, and normalizing. This mitigates the catastrophic
 /// cancellation that happens when vertices are far from the origin but the
-/// triangle edges are relatively short: in f32, the difference `v_i - v_0`
-/// can lose several bits of precision, and the resulting normal can differ
-/// from the "true" one by as much as 1e-3 or so.
+/// triangle edges are relatively short: in f32, the difference `v_i - v_0` can
+/// lose several bits of precision, and the resulting normal can differ from the
+/// "true" one by as much as 1e-3 or so.
 ///
-/// The result is returned as an f64 array so callers that want to compare it
-/// against a stored f32 normal can do so at f64 precision.
+/// The result stays in f64; `compute_normal_from_triangle_vertices` rounds it
+/// to f32 once.
 pub(crate) fn compute_reference_normal_f64(
     vertices: &[Vertex; 3],
 ) -> Result<[f64; 3], GeometryError> {
@@ -108,10 +83,9 @@ pub(crate) fn compute_reference_normal_f64(
     let cross_mag_sq = cross.squared_norm();
     let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
 
-    // `cross_mag_sq / edges_mag_sq_product = sin²(θ)`. Multiplying
-    // through avoids dividing by zero on collapsed edges; NaN inputs
-    // flow into both sides, and `gt_strict(NaN, _) == false` keeps
-    // them rejected.
+    // `cross_mag_sq / edges_mag_sq_product = sin²(θ)`. Multiplying through
+    // avoids dividing by zero on collapsed edges; NaN inputs flow into both
+    // sides, and `gt_strict(NaN, _) == false` keeps them rejected.
     if !gt_strict(
         cross_mag_sq,
         DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
@@ -205,10 +179,10 @@ mod geometry_tests {
 
     #[test]
     fn small_but_valid_triangle_is_accepted() {
-        // Edge length ~1e-4 mm. Far below the absolute-area threshold
-        // an earlier version of this routine used (~3.4e-4 mm side for
-        // an equilateral) but sin²(θ) is still ~0.5, so the relative
-        // criterion accepts it.
+        // Edge length ~1e-4 mm. Far below the absolute-area threshold an
+        // earlier version of this routine used (~3.4e-4 mm side for an
+        // equilateral) but sin²(θ) is still ~0.5, so the relative criterion
+        // accepts it.
         let verts = [v(0.0, 0.0, 0.0), v(1e-4, 0.0, 0.0), v(0.0, 1e-4, 0.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
         assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
@@ -216,11 +190,10 @@ mod geometry_tests {
 
     #[test]
     fn scale_invariance_yields_same_normal() {
-        // Geometrically-identical triangles at very different scales
-        // produce the same unit normal, the dimensionless criterion
-        // doesn't care about the absolute size. An earlier
-        // absolute-area threshold rejected the small one and accepted
-        // the large one.
+        // Geometrically-identical triangles at very different scales produce
+        // the same unit normal, the dimensionless criterion doesn't care about
+        // the absolute size. An earlier absolute-area threshold rejected the
+        // small one and accepted the large one.
         let small = [v(0.0, 0.0, 0.0), v(1e-4, 0.0, 0.0), v(0.0, 1e-4, 0.0)];
         let large = [v(0.0, 0.0, 0.0), v(1e3, 0.0, 0.0), v(0.0, 1e3, 0.0)];
         let n_small = compute_normal_from_triangle_vertices(&small).unwrap();
@@ -232,18 +205,17 @@ mod geometry_tests {
     #[test]
     fn sliver_below_threshold_returns_error() {
         // e1 = (1, 0, 0), e2 = (0.5, 1e-7, 0). cross = (0, 0, 1e-7),
-        // ‖cross‖² = 1e-14, ‖e1‖²·‖e2‖² ≈ 0.25, so sin²(θ) ≈ 4e-14
-        // below the 1e-12 threshold. Pins the threshold against
-        // accidental loosening.
+        // ‖cross‖² = 1e-14, ‖e1‖²·‖e2‖² ≈ 0.25, so sin²(θ) ≈ 4e-14 below the
+        // 1e-12 threshold. Pins the threshold against accidental loosening.
         let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 1e-7, 0.0)];
         assert!(compute_normal_from_triangle_vertices(&verts).is_err());
     }
 
     #[test]
     fn sliver_above_threshold_is_accepted() {
-        // Same shape as the rejection test but with the corner offset
-        // grown so sin²(θ) ≈ 4e-10, two orders above the 1e-12
-        // threshold. Pins the threshold against accidental tightening.
+        // Same shape as the rejection test but with the corner offset grown so
+        // sin²(θ) ≈ 4e-10, 2 orders above the 1e-12 threshold. Pins the
+        // threshold against accidental tightening.
         let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 1e-5, 0.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
         assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
@@ -276,20 +248,20 @@ mod geometry_tests {
     #[test]
     fn sliver_just_below_threshold_returns_error() {
         // e1 = (1, 0, 0), e2 = (0.5, 4e-7, 0). cross_mag² ≈ 1.6e-13,
-        // edges_product ≈ 0.25, so sin²(θ) ≈ 6.4e-13. That is below
-        // the 1e-12 threshold by less than one order of magnitude;
-        // tighter than the existing well-below test, intended to
-        // catch an accidental loosening of the threshold.
+        // edges_product ≈ 0.25, so sin²(θ) ≈ 6.4e-13. That is below the 1e-12
+        // threshold by less than 1 order of magnitude; tighter than the
+        // existing well-below test, intended to catch an accidental loosening
+        // of the threshold.
         let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 4e-7, 0.0)];
         assert!(compute_normal_from_triangle_vertices(&verts).is_err());
     }
 
     #[test]
     fn sliver_just_above_threshold_is_accepted() {
-        // Same geometry with the corner grown to 6e-7. sin²(θ) ≈
-        // 1.44e-12, less than half an order of magnitude above the
-        // threshold; tighter than the existing well-above test,
-        // intended to catch an accidental tightening of the threshold.
+        // Same geometry with the corner grown to 6e-7. sin²(θ) ≈ 1.44e-12, less
+        // than half an order of magnitude above the threshold; tighter than the
+        // existing well-above test, intended to catch an accidental tightening
+        // of the threshold.
         let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 6e-7, 0.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
         assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
@@ -298,10 +270,9 @@ mod geometry_tests {
     #[test]
     fn infinite_coordinate_returns_error() {
         // Any non-finite coordinate propagates into the cross-product
-        // arithmetic. The cross-mag and edges-product both go to
-        // infinity (or NaN via 0·∞), so `gt_strict` rejects; the
-        // routine must surface the degeneracy rather than emit a
-        // non-finite normal.
+        // arithmetic. The cross-mag and edges-product both go to infinity (or
+        // NaN via 0·∞), so `gt_strict` rejects; the routine must surface the
+        // degeneracy rather than emit a non-finite normal.
         let verts = [
             v(f32::INFINITY, 0.0, 0.0),
             v(1.0, 0.0, 0.0),
