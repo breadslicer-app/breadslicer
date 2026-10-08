@@ -8,10 +8,11 @@
 //! orientable.
 //!
 //! The cuboid family holds a unit cube and 2 rectangular prisms with a
-//! rectangular tunnel along Z or along Y, and variants of the 3 with some faces
-//! turned inside out. 3 tetrahedra cover the slicer's cases at `z = 0`: a
-//! vertex on the plane (saddle), a mesh edge on the plane that the surface
-//! crosses, and a mesh edge along which the surface only touches the plane.
+//! rectangular tunnel along Z or along Y, variants of the 3 with some faces
+//! turned inside out, and a variant of the cube with 2 zero-area faces. 3
+//! tetrahedra cover the slicer's cases at `z = 0`: a vertex on the plane
+//! (saddle), a mesh edge on the plane that the surface crosses, and a mesh edge
+//! along which the surface only touches the plane.
 //!
 //! 2 fixtures are deliberate exceptions to the "manifold by construction" rule:
 //! [`bowtie_tetrahedra`] and [`cuboid_with_pinched_z_tunnel`] are edge-manifold
@@ -23,6 +24,8 @@
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
+#[cfg(test)]
+mod tests_collinear;
 #[cfg(test)]
 mod tests_declared;
 #[cfg(test)]
@@ -392,6 +395,33 @@ pub const Y_TUNNEL_FLIPPED_FACES: [usize; 3] = [0, 10, 24];
 /// prism byte for byte.
 pub fn cuboid_with_y_tunnel_and_flipped_faces() -> IndexedMesh {
     with_flipped_faces(cuboid_with_y_tunnel(), &Y_TUNNEL_FLIPPED_FACES)
+}
+
+/// Returns [`unit_cube_mesh`] with 2 zero-area faces, 14 and 15. Vertex 8, the
+/// middle of the top edge 4-5, splits the top face on that edge, and vertex 9,
+/// the middle of the vertical edge 1-5, splits the -Y face on that edge. The
+/// face across each edge stays whole, so a face with 3 collinear vertices
+/// closes the mesh along it. The mesh stays closed and edge-manifold, with the
+/// volume of the cube. The collinear faces store the zero normal, as the 3MF
+/// and OBJ readers do for a face without a normal.
+pub fn unit_cube_with_collinear_faces() -> IndexedMesh {
+    let mut mesh = unit_cube_mesh();
+    mesh.vertices
+        .extend([Vertex::new([0.0, -0.5, 0.5]), Vertex::new([0.5, -0.5, 0.0])]);
+    let pz = Normal::new([0.0, 0.0, 1.0]);
+    let ny = Normal::new([0.0, -1.0, 0.0]);
+    let zero = Normal::new([0.0, 0.0, 0.0]);
+    let f = |n: Normal, abc: [u32; 3]| IndexedTriangle::from_raw_indices(n, abc);
+    // Faces 2 and 6 of the donor are (4, 5, 6) and (0, 1, 5).
+    mesh.faces[2] = f(pz, [4, 8, 6]);
+    mesh.faces[6] = f(ny, [0, 1, 9]);
+    mesh.faces.extend([
+        f(pz, [8, 5, 6]),
+        f(ny, [0, 9, 5]),
+        f(zero, [4, 5, 8]),
+        f(zero, [1, 5, 9]),
+    ]);
+    mesh
 }
 
 /// Returns a tetrahedron with V0 and V1 exactly on the plane `z = 0`, and V2
