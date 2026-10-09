@@ -5,13 +5,12 @@
 
 //! Typed scene mutation vocabulary.
 //!
-//! [`SceneEdit`] covers leaf and mesh-resource arena membership,
-//! local transforms, and mesh swaps. Group / CSG / Reference
-//! construction, reparenting, node metadata edits and mesh repair
-//! are outside the undo vocabulary today. Headless callers apply
-//! edits directly with [`SceneEdit::apply_to_scene`]; cache layers
-//! dispatch the same enum and add invalidation hooks for the cached
-//! state that the variant affects.
+//! [`SceneEdit`] covers leaf and mesh-resource arena membership, local
+//! transforms, and mesh swaps. Group, CSG and Reference construction,
+//! reparenting, node metadata edits and mesh repair are outside the undo
+//! vocabulary. Headless callers apply edits directly with
+//! [`SceneEdit::apply_to_scene`]; cache layers dispatch the same enum and add
+//! invalidation hooks for the cached state that the variant affects.
 
 use std::sync::Arc;
 
@@ -22,39 +21,36 @@ use sc_scene::node::{
 };
 use sc_scene::{Scene, SceneError};
 
-/// Typed scene mutation. The shared edit shape across the workspace:
-/// the GUI's undo/redo stack, the headless apply paths, and any
-/// cache layer's `apply_edit` all speak this enum.
+/// Typed scene mutation. The shared edit shape across the workspace: the GUI's
+/// undo/redo stack, the headless apply paths, and any cache layer's
+/// `apply_edit` all speak this enum.
 ///
-/// Every variant is keyed by a stable [`NodeId`] or
-/// [`MeshResourceId`] on a [`Scene`]. Variants come in `Add` / `Remove`
-/// pairs that carry the same fields, so each is the
-/// [`Self::inverse`] of the other; [`Self::Compound`] bundles several
-/// edits as a single undo / redo unit (used for paste, which adds
+/// Every variant is keyed by a stable [`NodeId`] or [`MeshResourceId`] on a
+/// [`Scene`]. Variants come in `Add` and `Remove` pairs that carry the same
+/// fields, so each is the [`Self::inverse`] of the other; [`Self::Compound`]
+/// bundles several edits as a single undo/redo unit (used for paste, which adds
 /// both a mesh resource and a root leaf atomically).
 ///
-/// `Clone` rather than `Copy`: variants like
-/// [`Self::AddMeshResource`] carry `Arc<IndexedMesh>` so the
-/// underlying mesh storage can be shared across undo / redo states
-/// and across scenes without deep-cloning vertex / index buffers; an
-/// `Arc` is `Clone` but never `Copy`. Existing call sites pass edits
-/// by value and clone them explicitly when needed.
+/// `Clone` and not `Copy`: variants like [`Self::AddMeshResource`] carry
+/// `Arc<IndexedMesh>`, so the underlying mesh storage can be shared across
+/// undo/redo states and across scenes without deep-cloning vertex and index
+/// buffers; an `Arc` is `Clone` but never `Copy`. Existing call sites pass
+/// edits by value and clone them explicitly when needed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SceneEdit {
-    /// `node.local_transform` for the node at `node_id` was changed
-    /// from `before` to `after`. Stable id, so the edit stays valid
-    /// across intervening edits.
+    /// `node.local_transform` for the node at `node_id` was changed from
+    /// `before` to `after`. Stable id, so the edit stays valid across
+    /// intervening edits.
     SetLocalTransform {
         node_id: NodeId,
         before: Transform3D,
         after: Transform3D,
     },
-    /// Install a leaf at `node_id` with the given payload,
-    /// attachment, and transform, covering inline-mesh and
-    /// mesh-resource payloads and root and parented attachments
-    /// alike. The id must come from
-    /// [`Scene::allocate_unbound_node_id`] so the arena slot exists
-    /// and is empty when the edit is applied.
+    /// Installs a leaf at `node_id` with the given payload, attachment, and
+    /// transform, covering inline-mesh and mesh-resource payloads and root and
+    /// parented attachments alike. The id must come from
+    /// [`Scene::allocate_unbound_node_id`], so the arena slot exists and is
+    /// empty when the edit is applied.
     AddLeaf {
         node_id: NodeId,
         attachment: LeafAttachment,
@@ -62,11 +58,10 @@ pub enum SceneEdit {
         local_transform: Transform3D,
         meta: Option<SceneMetadata>,
     },
-    /// Tombstone the leaf at `node_id`. `attachment`, `payload`,
-    /// `local_transform`, and `meta` snapshot the state so the
-    /// inverse [`Self::AddLeaf`] re-installs it identically,
-    /// including the position within the parent's children list and
-    /// the leaf's name.
+    /// Tombstones the leaf at `node_id`. `attachment`, `payload`,
+    /// `local_transform`, and `meta` snapshot the state, so the inverse
+    /// [`Self::AddLeaf`] re-installs it identically, including the position
+    /// within the children list of the parent and the name of the leaf.
     RemoveLeaf {
         node_id: NodeId,
         attachment: LeafAttachment,
@@ -74,62 +69,56 @@ pub enum SceneEdit {
         local_transform: Transform3D,
         meta: Option<SceneMetadata>,
     },
-    /// Install a mesh resource at `rid` carrying the given `Arc`.
-    /// The id must come from
-    /// [`Scene::allocate_unbound_mesh_resource_id`] so the arena
+    /// Installs a mesh resource at `rid` carrying the given `Arc`. The id must
+    /// come from [`Scene::allocate_unbound_mesh_resource_id`], so the arena
     /// slot exists and is empty when the edit is applied.
     AddMeshResource {
         rid: MeshResourceId,
         mesh: Arc<IndexedMesh>,
     },
-    /// Tombstone the mesh resource at `rid`. `mesh` snapshots the
-    /// `Arc` so the inverse [`Self::AddMeshResource`] re-installs the
-    /// same storage.
+    /// Tombstones the mesh resource at `rid`. `mesh` snapshots the `Arc`, so
+    /// the inverse [`Self::AddMeshResource`] re-installs the same storage.
     RemoveMeshResource {
         rid: MeshResourceId,
         mesh: Arc<IndexedMesh>,
     },
-    /// Swap the mesh stored at the live resource slot `rid` from
-    /// `before` to `after`. Both `Arc`s are snapshotted, so the
-    /// inverse swap restores the exact previous storage, pointer
-    /// identity included. `before` is also the precondition:
-    /// applying the edit to a scene whose slot has moved past it is
-    /// refused.
+    /// Swaps the mesh stored at the live resource slot `rid` from `before` to
+    /// `after`. Both `Arc`s are snapshotted, so the inverse swap restores the
+    /// exact previous storage, pointer identity included. `before` is also the
+    /// precondition: applying the edit to a scene whose slot has moved past it
+    /// is refused.
     ReplaceMeshResource {
         rid: MeshResourceId,
         before: Arc<IndexedMesh>,
         after: Arc<IndexedMesh>,
     },
-    /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `node_id`
-    /// from `before` to `after`. Both `Arc`s are snapshotted, so the
-    /// inverse swap restores the exact previous storage, pointer
-    /// identity included. `before` is also the precondition:
-    /// applying the edit to a scene whose leaf has moved past it is
-    /// refused.
+    /// Swaps the inline mesh of the `Leaf(Mesh(_))` node at `node_id` from
+    /// `before` to `after`. Both `Arc`s are snapshotted, so the inverse swap
+    /// restores the exact previous storage, pointer identity included. `before`
+    /// is also the precondition: applying the edit to a scene whose leaf has
+    /// moved past it is refused.
     ReplaceLeafMesh {
         node_id: NodeId,
         before: Arc<IndexedMesh>,
         after: Arc<IndexedMesh>,
     },
-    /// Apply a sequence of edits as a single undo / redo unit. The
-    /// inverse is the reversed sequence of inverses, so e.g. a paste
-    /// that emits `Compound([AddMeshResource, AddLeaf])` undoes
-    /// as `Compound([RemoveLeaf, RemoveMeshResource])` (which
-    /// is the order that satisfies the
-    /// [`SceneError::MeshResourceInUse`] precondition).
+    /// Applies a sequence of edits as a single undo/redo unit. The inverse is
+    /// the reversed sequence of inverses, so for example a paste that emits
+    /// `Compound([AddMeshResource, AddLeaf])` undoes as
+    /// `Compound([RemoveLeaf, RemoveMeshResource])` (the order that satisfies
+    /// the [`SceneError::MeshResourceInUse`] precondition).
     Compound(Vec<SceneEdit>),
 }
 
 impl SceneEdit {
-    /// True when applying this edit would not change the target.
-    /// Useful for filtering no-op gestures from the undo stack.
+    /// Returns true when applying this edit would not change the target. Useful
+    /// for filtering no-op gestures from the undo stack.
     pub fn is_noop(&self) -> bool {
         match self {
             Self::SetLocalTransform { before, after, .. } => before == after,
-            // Pointer identity, not content equality: the stored
-            // `Arc` is observable state (`find_mesh_resource_by_arc`,
-            // cache keys), so swapping in a content-equal but
-            // distinct `Arc` IS a change.
+            // Pointer identity, not content equality: the stored `Arc` is
+            // observable state (`find_mesh_resource_by_arc`, cache keys), so
+            // swapping in a content-equal but distinct `Arc` is a change.
             Self::ReplaceMeshResource { before, after, .. }
             | Self::ReplaceLeafMesh { before, after, .. } => Arc::ptr_eq(before, after),
             Self::AddLeaf { .. }
@@ -140,18 +129,16 @@ impl SceneEdit {
         }
     }
 
-    /// True when applying this edit changes the node or
-    /// mesh-resource arena membership (a leaf appears or
-    /// disappears, or a mesh resource is registered or removed) or
-    /// swaps the mesh stored at an existing slot (the vertex data
-    /// behind the slot changes). `SetLocalTransform` is
-    /// non-structural: it perturbs an existing leaf's transform
-    /// without touching arena slots or their meshes.
+    /// Returns true when applying this edit changes the node or mesh-resource
+    /// arena membership (a leaf appears or disappears, or a mesh resource is
+    /// registered or removed) or swaps the mesh stored at an existing slot (the
+    /// vertex data behind the slot changes). `SetLocalTransform` is
+    /// non-structural: it changes the transform of an existing leaf without
+    /// touching arena slots or their meshes.
     ///
-    /// Downstream caches that mirror the arena (the GPU scene's
-    /// per-leaf model buffer, the spatial caches' parallel vecs)
-    /// use this to decide whether they need a re-upload after the
-    /// edit lands.
+    /// Downstream caches that mirror the arena (the per-leaf model buffer of
+    /// the GPU scene, the parallel vecs of the spatial caches) use this to
+    /// decide whether they need a re-upload after the edit lands.
     pub fn is_structural(&self) -> bool {
         match self {
             Self::SetLocalTransform { .. } => false,
@@ -165,8 +152,8 @@ impl SceneEdit {
         }
     }
 
-    /// Inverse edit: applying `self` then `self.inverse()` returns
-    /// the target to its pre-edit state.
+    /// Returns the inverse edit: applying `self` then `self.inverse()` returns
+    /// the target to its state before the edit.
     pub fn inverse(&self) -> Self {
         match self {
             Self::SetLocalTransform {
@@ -232,13 +219,12 @@ impl SceneEdit {
         }
     }
 
-    /// Apply this edit to a [`Scene`]. Each variant calls the
-    /// matching scene mutator and propagates its precondition error
-    /// (dangling id, occupied slot, kind mismatch, a `Replace*` whose
-    /// `before` is no longer stored); on error the scene is unchanged. A [`Self::Compound`] is atomic: when an
-    /// inner edit fails, the already-applied prefix is undone before
-    /// the error is returned, so a failed Compound also leaves the
-    /// scene unchanged.
+    /// Applies this edit to a [`Scene`]. Each variant calls the matching scene
+    /// mutator and propagates its precondition error (dangling id, occupied
+    /// slot, kind mismatch, a `Replace*` whose `before` is no longer stored);
+    /// on error the scene is unchanged. A [`Self::Compound`] is atomic: when an
+    /// inner edit fails, the already-applied prefix is undone before the error
+    /// is returned, so a failed Compound also leaves the scene unchanged.
     pub fn apply_to_scene(&self, graph: &mut Scene) -> Result<(), SceneError> {
         match self {
             Self::SetLocalTransform { node_id, after, .. } => {
@@ -273,9 +259,8 @@ impl SceneEdit {
             Self::Compound(edits) => {
                 for (applied, edit) in edits.iter().enumerate() {
                     if let Err(error) = edit.apply_to_scene(graph) {
-                        // A prefix inverse applies against exactly the
-                        // state its edit produced, so rollback cannot
-                        // fail.
+                        // A prefix inverse applies against exactly the state
+                        // its edit produced, so rollback cannot fail.
                         for done in edits[..applied].iter().rev() {
                             let _ = done.inverse().apply_to_scene(graph);
                         }
@@ -287,22 +272,20 @@ impl SceneEdit {
         }
     }
 
-    /// Build the edit that removes the leaf at `node_id`, or `None`
-    /// if the node is not a leaf or its graph attachment cannot be
-    /// determined.
+    /// Builds the edit that removes the leaf at `node_id`, or `None` if the
+    /// node is not a leaf or its graph attachment cannot be determined.
     ///
     /// The returned edit is:
     /// - a plain [`Self::RemoveLeaf`] for inline-mesh leaves, or for
-    ///   mesh-resource leaves where at least one other live leaf
-    ///   still references the same [`MeshResourceId`];
-    /// - a `Compound([RemoveLeaf, RemoveMeshResource])` when a
-    ///   mesh-resource leaf was the last live reference, so the
-    ///   inverse `Compound([AddMeshResource, AddLeaf])` re-installs
-    ///   both on undo.
+    ///   mesh-resource leaves where at least 1 other live leaf still references
+    ///   the same [`MeshResourceId`];
+    /// - a `Compound([RemoveLeaf, RemoveMeshResource])` when a mesh-resource
+    ///   leaf was the last live reference, so the inverse
+    ///   `Compound([AddMeshResource, AddLeaf])` re-installs both on undo.
     ///
-    /// The compound order matters: `RemoveMeshResource` requires
-    /// that no leaf still references the rid, and the preceding
-    /// `RemoveLeaf` satisfies that precondition.
+    /// The compound order matters: `RemoveMeshResource` requires that no leaf
+    /// still references the rid, and the preceding `RemoveLeaf` satisfies that
+    /// precondition.
     pub fn remove_leaf_with_gc(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
         let node = graph.node(node_id)?;
         let local_transform = node.local_transform;
@@ -456,8 +439,8 @@ mod scene_edit_tests {
     #[test]
     fn set_local_transform_on_dangling_node_id_errors_and_changes_nothing() {
         let mut g = Scene::new();
-        // An id allocated by another scene is out of range for `g`,
-        // whose arena is empty.
+        // An id allocated by another scene is out of range for `g`, whose arena
+        // is empty.
         let bogus = Scene::new().allocate_unbound_node_id();
         let err = SceneEdit::SetLocalTransform {
             node_id: bogus,
@@ -472,7 +455,7 @@ mod scene_edit_tests {
 
     fn fresh_scene_with_one_resource() -> (Scene, NodeId, MeshResourceId, Transform3D) {
         use sc_mesh_core::indexed_mesh::IndexedMesh;
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         let mut g = Scene::new();
         let mesh = IndexedMesh {
             meta: None,
@@ -481,10 +464,7 @@ mod scene_edit_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let rid = g.add_mesh_resource(mesh);
         let id = g.allocate_unbound_node_id();
@@ -549,8 +529,8 @@ mod scene_edit_tests {
     #[test]
     fn add_leaf_with_out_of_range_id_errors_and_changes_nothing() {
         let mut g = Scene::new();
-        // Ids allocated by another scene are out of range for `g`,
-        // whose arenas are empty.
+        // Ids allocated by another scene are out of range for `g`, whose arenas
+        // are empty.
         let mut scratch = Scene::new();
         let bogus = scratch.allocate_unbound_node_id();
         let bogus_rid = scratch.allocate_unbound_mesh_resource_id();
@@ -580,7 +560,7 @@ mod scene_edit_tests {
     }
 
     fn fresh_scene_with_unbound_mesh_slot() -> (Scene, MeshResourceId, Arc<IndexedMesh>) {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         let mut g = Scene::new();
         let mesh = Arc::new(IndexedMesh {
             meta: None,
@@ -589,10 +569,7 @@ mod scene_edit_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         });
         let rid = g.allocate_unbound_mesh_resource_id();
         (g, rid, mesh)
@@ -660,7 +637,7 @@ mod scene_edit_tests {
     }
 
     fn triangle_mesh_arc() -> Arc<IndexedMesh> {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -668,15 +645,12 @@ mod scene_edit_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         })
     }
 
-    /// A live resource slot and a live inline-mesh leaf, each holding
-    /// its own `Arc`: the 2 storage shapes the Replace* edits target.
+    /// Builds a live resource slot and a live inline-mesh leaf, each with its
+    /// own `Arc`: the 2 storage shapes that the Replace* edits target.
     fn scene_with_replaceable_targets() -> (
         Scene,
         MeshResourceId,
@@ -707,8 +681,8 @@ mod scene_edit_tests {
             after: Arc::clone(&resource_mesh),
         };
         assert!(same_arc.is_noop());
-        // Content-equal but pointer-distinct is a real change: the
-        // stored Arc's identity is observable state.
+        // Content-equal but pointer-distinct is a real change: the stored Arc's
+        // identity is observable state.
         let content_equal = Arc::new((*resource_mesh).clone());
         let distinct = SceneEdit::ReplaceMeshResource {
             rid,
@@ -819,8 +793,8 @@ mod scene_edit_tests {
     #[test]
     fn apply_replace_mesh_resource_refuses_a_stale_before() {
         let (mut g, rid, original, _, _) = scene_with_replaceable_targets();
-        // Something else already swapped the slot, so the edit's
-        // recorded `before` is no longer what the scene stores.
+        // Something else already swapped the slot, so the edit's recorded
+        // `before` is no longer what the scene stores.
         let current = triangle_mesh_arc();
         SceneEdit::ReplaceMeshResource {
             rid,
@@ -901,10 +875,10 @@ mod scene_edit_tests {
 
     #[test]
     fn compound_is_noop_iff_all_inner_are_noop() {
-        // Identity-only SetLocalTransform and same-Arc Replace*
-        // edits are the only noop shapes in the enum's vocabulary;
-        // everything else is unconditionally mutating.
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        // Identity-only SetLocalTransform and same-Arc Replace* edits are the
+        // only noop shapes in the enum's vocabulary; everything else is
+        // unconditionally mutating.
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         let mut g = Scene::new();
         let nid = g.add_group(None, Transform3D::Identity);
         let noop = SceneEdit::SetLocalTransform {
@@ -916,10 +890,7 @@ mod scene_edit_tests {
         let mesh = Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 0, 0])],
         });
         let rid = g.allocate_unbound_mesh_resource_id();
         let mutating = SceneEdit::AddMeshResource { rid, mesh };
@@ -962,8 +933,8 @@ mod scene_edit_tests {
 
     #[test]
     fn compound_apply_runs_edits_in_order_and_round_trips_via_inverse() {
-        // The paste shape: AddMeshResource then AddLeaf. The
-        // first edit's id allocations are visible to the second.
+        // The paste shape: AddMeshResource then AddLeaf. The first edit's id
+        // allocations are visible to the second.
         let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
         let nid = g.allocate_unbound_node_id();
         let xform = Transform3D::Affine(AffineTransform3D::from_translation([4.0, 5.0, 6.0]));
@@ -984,10 +955,10 @@ mod scene_edit_tests {
 
     #[test]
     fn compound_failure_rolls_back_the_applied_prefix() {
-        // The second edit targets an occupied slot, so it fails after
-        // the first has installed the mesh resource. The Compound must
-        // return that error with the resource uninstalled again: a
-        // failed Compound leaves the scene exactly as it found it.
+        // The second edit targets an occupied slot, so it fails after the first
+        // has installed the mesh resource. The Compound must return that error
+        // with the resource uninstalled again: a failed Compound leaves the
+        // scene exactly as it found it.
         let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
         let occupied = g.add_group(None, Transform3D::Identity);
         let snapshot_before = g.clone();
@@ -1008,7 +979,7 @@ mod scene_edit_tests {
     }
 
     fn triangle_arc() -> Arc<IndexedMesh> {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1016,10 +987,7 @@ mod scene_edit_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         })
     }
 
@@ -1114,8 +1082,8 @@ mod scene_edit_tests {
         let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         g.add_root(parent).unwrap();
-        // Pre-existing sibling so the inserted leaf at position 0
-        // shifts it to position 1.
+        // Pre-existing sibling so the inserted leaf at position 0 shifts it to
+        // position 1.
         let sibling = g
             .add_leaf(
                 None,
@@ -1283,8 +1251,8 @@ mod scene_edit_tests {
             panic!("the sole reference must produce a Compound");
         };
         assert_eq!(parts.len(), 2);
-        // RemoveLeaf first: RemoveMeshResource requires that no leaf
-        // still references the rid.
+        // RemoveLeaf first: RemoveMeshResource requires that no leaf still
+        // references the rid.
         assert!(matches!(
             &parts[0],
             SceneEdit::RemoveLeaf { node_id, attachment, meta, .. }
@@ -1327,8 +1295,8 @@ mod scene_edit_tests {
 
     #[test]
     fn remove_leaf_with_gc_and_its_inverse_restore_a_head_root_position() {
-        // Delete then undo in the GUI, on a scene with several root
-        // leaves. Scene equality catches a permuted roots list.
+        // Delete then undo in the GUI, on a scene with several root leaves.
+        // Scene equality catches a permuted roots list.
         let mut g = Scene::new();
         let rid_a = g.add_mesh_resource_arc(triangle_arc());
         let a = root_resource_leaf(&mut g, rid_a);

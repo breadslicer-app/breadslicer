@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 use crate::Scene;
@@ -25,10 +25,7 @@ fn triangle_arc() -> Arc<IndexedMesh> {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     })
 }
 
@@ -41,10 +38,10 @@ fn mesh_leaf(g: &mut Scene, local: Transform3D) -> NodeId {
         .expect("fresh leaf installs")
 }
 
-/// Two scene roots plus a registered subtree referenced twice:
+/// 2 scene roots plus a registered subtree referenced twice:
 ///
-/// - `g_outer` (Group): `leaf_a`, `g_inner` (Group: `leaf_b`,
-///   a tombstoned leaf, `csg` (Union: `op1`, `op2`)), `ref1`, `ref2`
+/// - `g_outer` (Group): `leaf_a`, `g_inner` (Group: `leaf_b`, a tombstoned
+///   leaf, `csg` (Union: `op1`, `op2`)), `ref1`, `ref2`
 /// - `leaf_r` (root leaf)
 /// - registered subtree: `sub_root` (Group) holding `sub_leaf`
 struct Fixture {
@@ -220,9 +217,9 @@ fn world_transform_of_agrees_with_the_expansion_walk_on_attached_leaves() {
     let f = fixture();
     let mut checked = 0usize;
     f.g.for_each_expanded_leaf::<SceneError, _>(CsgPolicy::Descend, |id, world, _mesh| {
-        // Occurrences under a Reference carry call-site transforms
-        // the structural chain cannot know; compare attached leaves
-        // only (the fixture's referenced subtree hangs off ref1/ref2).
+        // Occurrences under a Reference carry call-site transforms that the
+        // structural chain cannot know; compare attached leaves only (the
+        // referenced subtree of the fixture hangs off ref1 and ref2).
         if id != f.sub_leaf {
             assert_eq!(f.g.world_transform_of(id), Ok(*world));
             checked += 1;

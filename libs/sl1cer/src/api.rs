@@ -5,12 +5,11 @@
 
 //! Public slicer entry points.
 //!
-//! [`slice_leaf`] turns one baked, edge-manifold leaf into a vector
-//! [`ContourStack`]; [`slice_scene`] applies the same pipeline to
-//! every mesh leaf reachable from the scene roots and returns one
-//! stack per leaf. Both compose the per-Z slice, stitch, winding
-//! canonicalisation, and outer/hole grouping steps from the rest of
-//! the crate into one end-to-end pipeline.
+//! [`slice_leaf`] turns 1 baked, edge-manifold leaf into a vector
+//! [`ContourStack`]; [`slice_scene`] applies the same pipeline to every mesh
+//! leaf reachable from the scene roots and returns 1 stack per leaf. Both
+//! compose the per-Z slice, stitch, winding canonicalisation, and outer and
+//! hole grouping steps from the rest of the crate into 1 end-to-end pipeline.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -30,41 +29,37 @@ use crate::profile::SliceProfile;
 use crate::stitch::{normalise_to_ccw, stitch_layer};
 use crate::z_bins::LayerBuckets;
 
-/// Slice the leaf identified by `leaf` in `scene` into a
-/// [`ContourStack`] using the per-layer schedule and other parameters
-/// carried by `profile`.
+/// Slices the leaf identified by `leaf` in `scene` into a [`ContourStack`],
+/// using the per-layer schedule and the other parameters carried by `profile`.
 ///
-/// The leaf is baked to world space, validated for vertex
-/// finiteness, face-index integrity and edge-manifoldness, then each
-/// scheduled Z plane is intersected with the mesh's triangles. The
-/// resulting crossing segments are stitched into closed rings,
-/// canonicalised to CCW, and grouped into outer-plus-holes polygons.
+/// The leaf is baked to world space, validated for vertex finiteness,
+/// face-index integrity and edge-manifoldness, then each scheduled Z plane is
+/// intersected with the triangles of the mesh. The resulting crossing segments
+/// are stitched into closed rings, canonicalised to CCW, and grouped into
+/// outer-plus-holes polygons.
 ///
-/// The returned stack has strictly monotone Z by construction: the
-/// schedule yields Z values in strict-monotone order and each is
-/// emitted at most once.
+/// The returned stack has strictly monotone Z by construction: the schedule
+/// yields Z values in strict-monotone order and each is emitted at most once.
 ///
 /// # Determinism
 ///
-/// For a fixed `(scene, leaf, profile)` and a fixed code revision,
-/// the output is bitwise identical across runs. No iteration order
-/// in the implementation depends on hash-map traversal order of
-/// values the user can observe.
+/// For a fixed `(scene, leaf, profile)` and a fixed code revision, the output
+/// is bitwise identical across runs. No iteration order in the implementation
+/// depends on the hash-map traversal order of values the user can observe.
 ///
 /// # Errors
 ///
 /// - [`SliceError::NodeNotFound`] if `leaf` does not resolve.
 /// - [`SliceError::NotALeaf`] if it resolves to a [`NodeKind::Group`].
-/// - [`SliceError::CsgNotYetSupported`] /
+/// - [`SliceError::CsgNotYetSupported`] or
 ///   [`SliceError::SubtreeReferenceNotYetSupported`] for the deferred kinds.
 /// - [`SliceError::BakeFailed`] when [`bake_leaf_to_world`] fails.
-/// - [`SliceError::VerticesValidationFailed`] /
-///   [`SliceError::FacesValidationFailed`] /
-///   [`SliceError::ManifoldCheckFailed`] when the baked mesh fails
-///   validation.
-/// - [`SliceError::NonManifoldDuringStitching`] if a layer's segment
-///   list has dangling endpoints (a runtime safety net for input
-///   that slipped the manifold check).
+/// - [`SliceError::VerticesValidationFailed`],
+///   [`SliceError::FacesValidationFailed`] or
+///   [`SliceError::ManifoldCheckFailed`] when the baked mesh fails validation.
+/// - [`SliceError::NonManifoldDuringStitching`] if the segment list of a layer
+///   has dangling endpoints (a runtime safety net for input that got past the
+///   manifold check).
 pub fn slice_leaf(
     scene: &Scene,
     leaf: NodeId,
@@ -89,7 +84,7 @@ pub fn slice_leaf(
     slice_manifold_mesh(&mesh, profile)
 }
 
-/// Contours produced for one leaf of a scene by [`slice_scene`].
+/// Contours produced for 1 leaf of a scene by [`slice_scene`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct LeafSlices {
     leaf: NodeId,
@@ -98,13 +93,13 @@ pub struct LeafSlices {
 }
 
 impl LeafSlices {
-    /// The leaf node these contours belong to.
+    /// Returns the leaf node these contours belong to.
     #[inline]
     pub fn leaf(&self) -> NodeId {
         self.leaf
     }
 
-    /// The leaf's display name from its scene metadata, when present.
+    /// Returns the display name of the leaf, when present.
     #[inline]
     pub fn leaf_name(&self) -> Option<&str> {
         self.leaf_name.as_deref()
@@ -115,22 +110,22 @@ impl LeafSlices {
         &self.stack
     }
 
-    /// Consume the record, keeping only the contour stack.
+    /// Consumes the record and keeps only the contour stack.
     #[inline]
     pub fn into_stack(self) -> ContourStack {
         self.stack
     }
 }
 
-/// Cooperative cancellation flag for a slicing run. Cheap to clone;
-/// clones share one underlying flag, so a caller can hand a clone to a
-/// worker thread and trip the original to request a stop. The slicer
-/// polls it between layers; cancellation is a clean stop, not an error.
+/// Cooperative cancellation flag for a slicing run. Cheap to clone; clones
+/// share 1 underlying flag, so a caller can hand a clone to a worker thread and
+/// trip the original to request a stop. The slicer polls it between layers;
+/// cancellation is a clean stop, not an error.
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
 
 impl CancelToken {
-    /// A fresh token that has not been cancelled.
+    /// Returns a fresh token that has not been cancelled.
     #[inline]
     pub fn new() -> Self {
         Self::default()
@@ -142,16 +137,16 @@ impl CancelToken {
         self.0.store(true, Ordering::Relaxed);
     }
 
-    /// Whether cancellation has been requested.
+    /// Returns whether cancellation has been requested.
     #[inline]
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
 }
 
-/// Progress of a slicing run: the number of layer-slices finished out of
-/// the total across every leaf (leaves times the schedule's layer
-/// count). Reported once per completed layer.
+/// Progress of a slicing run: the number of layer-slices finished out of the
+/// total across every leaf (leaves times the layer count of the schedule).
+/// Reported once per completed layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SliceProgress {
     pub completed: usize,
@@ -159,7 +154,8 @@ pub struct SliceProgress {
 }
 
 impl SliceProgress {
-    /// Completed fraction in `[0.0, 1.0]`; `0.0` when there is no work.
+    /// Returns the completed fraction in `[0.0, 1.0]`; `0.0` when there is no
+    /// work.
     #[inline]
     pub fn fraction(&self) -> f32 {
         if self.total == 0 {
@@ -170,82 +166,76 @@ impl SliceProgress {
     }
 }
 
-/// Outcome of a cancellable slicing run: the finished per-leaf stacks,
-/// or a clean cancellation. Cancellation carries no partial data: a
-/// cancelled run's contours are discarded.
+/// Outcome of a cancellable slicing run: the finished per-leaf stacks, or a
+/// clean cancellation. Cancellation carries no partial data: the contours of a
+/// cancelled run are discarded.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SliceOutcome {
     Completed(Vec<LeafSlices>),
     Cancelled,
 }
 
-/// Slice every mesh leaf reachable from the roots of `scene` into its
-/// own [`ContourStack`], all under the single layer schedule carried
-/// by `profile`.
+/// Slices every mesh leaf reachable from the roots of `scene` into its own
+/// [`ContourStack`], all under the single layer schedule carried by `profile`.
 ///
-/// Leaves are discovered by a pre-order walk over `roots()`, entering
-/// `Group` containers at any depth. The returned records preserve
-/// that discovery order, and every stack has the same layer count and
-/// the same per-layer Z values (the schedule is shared), so stacks
-/// can be merged layer-by-layer with
-/// [`merge_stacks`](crate::contour::merge_stacks). A leaf shorter
-/// than the schedule's span simply carries empty layers above its
-/// top.
+/// Leaves are discovered by a pre-order walk over `roots()`, entering `Group`
+/// containers at any depth. The returned records keep that discovery order, and
+/// every stack has the same layer count and the same per-layer Z values (the
+/// schedule is shared), so stacks can be merged layer by layer with
+/// [`merge_stacks`](crate::contour::merge_stacks). A leaf shorter than the span
+/// of the schedule carries empty layers above its top.
 ///
-/// Geometry validation aggregates: every leaf is baked and validated
-/// even after a failure is found, so
-/// [`SliceSceneError::LeavesValidationFailed`] lists all invalid
-/// leaves of the scene in one round trip. Slicing work stops at the
-/// first failure; the other error variants abort immediately.
+/// Geometry validation aggregates: every leaf is baked and validated even after
+/// a failure is found, so [`SliceSceneError::LeavesValidationFailed`] lists all
+/// invalid leaves of the scene in 1 round trip. Slicing work stops at the first
+/// failure; the other error variants abort immediately.
 ///
 /// # Determinism
 ///
-/// Same guarantee as [`slice_leaf`]: for a fixed `(scene, profile)`
-/// and code revision the output is bitwise identical across runs.
+/// Same guarantee as [`slice_leaf`]: for a fixed `(scene, profile)` and code
+/// revision the output is bitwise identical across runs.
 ///
 /// # Errors
 ///
 /// - [`SliceSceneError::EmptyScene`] when no mesh leaf is reachable.
-/// - [`SliceSceneError::CsgNotYetSupported`] /
+/// - [`SliceSceneError::CsgNotYetSupported`] or
 ///   [`SliceSceneError::SubtreeReferenceNotYetSupported`] when discovery
-///   reaches one of the deferred node kinds, anywhere in the scene.
-/// - [`SliceSceneError::LeavesValidationFailed`] with every invalid
-///   leaf when geometry validation rejects at least one of them.
-/// - [`SliceSceneError::LeafSlicingFailed`] when baking or stitching
-///   one leaf fails.
+///   reaches a deferred node kind, anywhere in the scene.
+/// - [`SliceSceneError::LeavesValidationFailed`] with every invalid leaf when
+///   geometry validation rejects at least 1 of them.
+/// - [`SliceSceneError::LeafSlicingFailed`] when baking or stitching a leaf
+///   fails.
 pub fn slice_scene(
     scene: &Scene,
     profile: &SliceProfile,
 ) -> Result<Vec<LeafSlices>, SliceSceneError> {
     match slice_scene_core(scene, profile, &CancelToken::new(), &|_| {})? {
         SliceOutcome::Completed(slices) => Ok(slices),
-        // The token created above is never cancelled, so a completed run
-        // is the only reachable outcome here; the arm exists only to
-        // satisfy the type (panic-free per this crate's no-panic rule).
+        // The token created above is never cancelled, so a completed run is the
+        // only reachable outcome here; the arm exists only to satisfy the type
+        // (panic-free per the no-panic rule of this crate).
         SliceOutcome::Cancelled => Ok(Vec::new()),
     }
 }
 
-/// Like [`slice_scene`], but reports per-layer progress and can be
+/// Slices as [`slice_scene`] does, but reports per-layer progress and can be
 /// cancelled cooperatively through `cancel`.
 ///
-/// Each leaf's layers are sliced in parallel and the results are
-/// assembled in schedule order, so parallelism never affects the
-/// output bytes. `on_progress` is called once per completed
-/// layer-slice with the running count and the total
-/// (`leaves * schedule layers`); it is invoked from worker threads
-/// (hence the `Fn + Sync` bound) and reports can reach the observer
-/// out of order. Over a completed run the reported counts are a
-/// permutation of `1..=total`.
+/// The layers of each leaf are sliced in parallel and the results are assembled
+/// in schedule order, so parallelism never affects the output bytes.
+/// `on_progress` is called once per completed layer-slice with the running
+/// count and the total (`leaves * schedule layers`); it is invoked from worker
+/// threads (hence the `Fn + Sync` bound) and reports can reach the observer out
+/// of order. Over a completed run the reported counts are a permutation of
+/// `1..=total`.
 ///
-/// `cancel` is polled when each layer task starts and between leaves:
-/// once tripped, no further layer starts; layers already in flight
-/// finish (and may still report progress) and the call returns
-/// [`SliceOutcome::Cancelled`] with no partial contours. Leaf
-/// discovery, validation aggregation, determinism, and the error
-/// variants are exactly those of [`slice_scene`]; a validation failure
-/// still returns [`SliceSceneError::LeavesValidationFailed`]
-/// regardless of `cancel`.
+/// `cancel` is polled when each layer task starts and between leaves: once
+/// tripped, no further layer starts; layers already in flight finish (and may
+/// still report progress) and the call returns [`SliceOutcome::Cancelled`] with
+/// no partial contours. Leaf discovery, validation aggregation, determinism,
+/// and the error variants are exactly those of [`slice_scene`]; a validation
+/// failure still returns [`SliceSceneError::LeavesValidationFailed`] regardless
+/// of `cancel`.
 pub fn slice_scene_with_progress<F>(
     scene: &Scene,
     profile: &SliceProfile,
@@ -258,10 +248,10 @@ where
     slice_scene_core(scene, profile, cancel, &on_progress)
 }
 
-/// The shared slice-scene body for both public entry points: collect
-/// leaves, aggregate validation over all of them, then slice each valid
-/// leaf under the shared schedule while polling `cancel` and reporting
-/// each completed layer through `on_progress`.
+/// Runs the slice-scene body that both public entry points share: collects the
+/// leaves, aggregates validation over all of them, then slices each valid leaf
+/// under the shared schedule while it polls `cancel` and reports each completed
+/// layer through `on_progress`.
 fn slice_scene_core<F>(
     scene: &Scene,
     profile: &SliceProfile,
@@ -300,9 +290,9 @@ where
                 continue;
             }
         };
-        // Once any leaf has failed validation the loop keeps
-        // validating (the failure report must be complete) but stops
-        // slicing: those contours would be discarded anyway.
+        // Once any leaf has failed validation the loop keeps validating (the
+        // failure report must be complete) but stops slicing: those contours
+        // would be discarded anyway.
         if failures.is_empty() {
             let sliced = slice_manifold_mesh_observed(
                 &mesh,
@@ -335,15 +325,14 @@ where
     }
 }
 
-/// List the mesh leaves reachable from the scene roots, in the
-/// pre-order the slicer visits them. [`slice_scene`] and any caller
-/// that must reason about the same leaf set without slicing share this
-/// one walk, so they cannot disagree on which leaves a scene slices.
-/// The walk is [`Scene::reachable_leaves`] with both policies at
-/// `Refuse`: `Csg` and `Reference` nodes abort it, since their leaves
-/// are operands, not independent solids, and slicing them as such
-/// would silently apply union semantics regardless of the operator. An
-/// empty result is reported as [`SliceSceneError::EmptyScene`].
+/// Lists the mesh leaves reachable from the scene roots, in the pre-order the
+/// slicer visits them. [`slice_scene`] and any caller that must reason about
+/// the same leaf set without slicing share this walk, so they cannot disagree
+/// on which leaves a scene slices. The walk is [`Scene::reachable_leaves`] with
+/// both policies at `Refuse`: `Csg` and `Reference` nodes abort it, since their
+/// leaves are operands, not independent solids, and slicing them as such would
+/// silently apply union semantics regardless of the operator. An empty result
+/// is reported as [`SliceSceneError::EmptyScene`].
 pub fn sliceable_leaves(scene: &Scene) -> Result<Vec<NodeId>, SliceSceneError> {
     let leaves = scene
         .reachable_leaves(CsgPolicy::Refuse, ReferencePolicy::Refuse)
@@ -364,8 +353,8 @@ pub fn sliceable_leaves(scene: &Scene) -> Result<Vec<NodeId>, SliceSceneError> {
     Ok(leaves)
 }
 
-/// The sliceable leaves paired with each one's display name, in the
-/// same order as [`sliceable_leaves`].
+/// Returns the sliceable leaves, each with its display name, in the same order
+/// as [`sliceable_leaves`].
 fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, SliceSceneError> {
     let leaves = sliceable_leaves(scene)?;
     Ok(leaves
@@ -374,9 +363,9 @@ fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, S
         .collect())
 }
 
-/// A leaf's display name: the node's metadata name when present, else
-/// the name on the leaf's mesh (where format readers such as OBJ attach
-/// object names).
+/// Returns the display name of a leaf: the metadata name of the node when
+/// present, else the name on the mesh of the leaf (where format readers such as
+/// OBJ attach object names).
 fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
     scene
         .node(id)
@@ -391,15 +380,15 @@ fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
         })
 }
 
-/// Run the 3 geometry validation stages on a baked mesh, in order:
-/// vertices (NaN/inf coordinates), faces (index range, collapsed
-/// edges), edge-manifoldness. Each stage short-circuits, so a leaf
-/// reports exactly one stage's errors.
+/// Runs the 3 geometry validation stages on a baked mesh, in order: vertices
+/// (NaN or infinite coordinates), faces (index range, collapsed edges),
+/// edge-manifoldness. Each stage short-circuits, so a leaf reports the errors
+/// of exactly 1 stage.
 ///
-/// The vertex stage runs on the BAKED vertices deliberately: the
-/// f64 transform chain downcasts to f32 per vertex, and a finite
-/// transform can saturate coordinates to infinity, so validating the
-/// source mesh alone would miss overflow introduced by the bake.
+/// The vertex stage runs on the baked vertices on purpose: the f64 transform
+/// chain downcasts to f32 per vertex, and a finite transform can saturate
+/// coordinates to infinity, so validating the source mesh alone would miss
+/// overflow introduced by the bake.
 fn validate_baked(
     baked: &IndexedMesh,
 ) -> Result<ValidatedEdgeManifoldMesh<'_>, InvalidLeafGeometry> {
@@ -414,11 +403,11 @@ fn validate_baked(
         .map_err(InvalidLeafGeometry::Manifold)
 }
 
-/// The shared per-leaf pipeline: intersect every scheduled Z plane
-/// with the validated mesh, stitch the crossing segments into rings,
-/// canonicalise winding, and group outers with their holes. Wraps
-/// [`slice_manifold_mesh_observed`] with a token that is never
-/// cancelled and a no-op progress callback.
+/// Runs the shared per-leaf pipeline: intersects every scheduled Z plane with
+/// the validated mesh, stitches the crossing segments into rings, canonicalises
+/// the winding, and groups outers with their holes. Wraps
+/// [`slice_manifold_mesh_observed`] with a token that is never cancelled and a
+/// no-op progress callback.
 fn slice_manifold_mesh(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     profile: &SliceProfile,
@@ -434,27 +423,25 @@ fn slice_manifold_mesh(
     )?;
     match sliced {
         Some(stack) => Ok(stack),
-        // The token created above is never cancelled, so a finished
-        // stack is the only reachable outcome here; the arm exists only
-        // to satisfy the type (panic-free per this crate's no-panic
-        // rule).
+        // The token created above is never cancelled, so a finished stack is
+        // the only reachable outcome here; the arm exists only to satisfy the
+        // type (panic-free per the no-panic rule of this crate).
         None => Ok(ContourStack::new_unchecked(Vec::new())),
     }
 }
 
-/// [`slice_manifold_mesh`] with a cancellation poll and a per-layer
-/// progress callback. Layers are sliced in parallel, one task per
-/// scheduled Z; the finished layers are assembled in schedule order,
-/// so the stack is bitwise identical to a sequential pass. When more
-/// than one layer fails, the error of the lowest failing layer is
-/// returned, matching the first failure a sequential pass would hit.
+/// Runs [`slice_manifold_mesh`] with a cancellation poll and a per-layer
+/// progress callback. Layers are sliced in parallel, 1 task per scheduled Z;
+/// the finished layers are assembled in schedule order, so the stack is bitwise
+/// identical to a sequential pass. When more than 1 layer fails, the error of
+/// the lowest failing layer is returned, matching the first failure a
+/// sequential pass would hit.
 ///
-/// `cancel` is polled when each layer task starts. Returns `Ok(None)`
-/// when the poll saw a tripped token before every layer was computed
-/// (the finished layers are dropped); tasks already past the poll
-/// still complete and report progress. `completed` accumulates across
-/// every leaf of the run so the reported progress spans the whole
-/// scene.
+/// `cancel` is polled when each layer task starts. Returns `Ok(None)` when the
+/// poll saw a tripped token before every layer was computed (the finished
+/// layers are dropped); tasks already past the poll still complete and report
+/// progress. `completed` accumulates across every leaf of the run, so the
+/// reported progress spans the whole scene.
 fn slice_manifold_mesh_observed<F>(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     profile: &SliceProfile,
@@ -469,8 +456,8 @@ where
     let topology = MeshTopology::from_edge_manifold(mesh);
     let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
     let buckets = LayerBuckets::build(mesh, &zs);
-    // `Ok(None)` marks a layer skipped by the cancellation poll. The
-    // collect is positional, so `outcomes` is in schedule order.
+    // `Ok(None)` marks a layer skipped by the cancellation poll. The collect is
+    // positional, so `outcomes` is in schedule order.
     let outcomes: Vec<Result<Option<ContourLayer>, SliceError>> = zs
         .par_iter()
         .enumerate()
@@ -498,12 +485,11 @@ where
     Ok(Some(ContourStack::new_unchecked(layers)))
 }
 
-/// Slice one scheduled Z plane of a validated mesh into a
-/// [`ContourLayer`], testing only the faces listed in `candidates`
-/// (ascending; the production pipeline passes the plane's Z-bucket,
-/// the test reference passes every face). Pure function of its
-/// arguments: the layer tasks run in parallel and rely on this
-/// producing the same bytes no matter which thread or order runs
+/// Slices 1 scheduled Z plane of a validated mesh into a [`ContourLayer`],
+/// testing only the faces listed in `candidates` (ascending; the production
+/// pipeline passes the Z-bucket of the plane, the test reference passes every
+/// face). Pure function of its arguments: the layer tasks run in parallel and
+/// rely on this producing the same bytes no matter which thread or order runs
 /// them.
 pub(crate) fn slice_layer(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
@@ -523,7 +509,7 @@ mod api_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
     use sc_scene::Scene;
     use sc_scene::node::LeafPayload;
 
@@ -533,9 +519,9 @@ mod api_tests {
 
     use super::*;
 
-    /// Closed unit cube centred at origin (side 1). Manifold by
-    /// construction. Inline copy of the fixture in `tests_mesh_slice`
-    /// because the smoke test must stay self-contained.
+    /// Returns a closed unit cube centred at the origin (side 1). Manifold by
+    /// construction. Inline copy of the fixture in `tests_mesh_slice`, because
+    /// the smoke test must stay self-contained.
     fn unit_cube_mesh() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([-0.5, -0.5, -0.5]),
@@ -547,29 +533,23 @@ mod api_tests {
             Vertex::new([0.5, 0.5, 0.5]),
             Vertex::new([-0.5, 0.5, 0.5]),
         ];
-        let nz = Normal::new([0.0, 0.0, -1.0]);
-        let pz = Normal::new([0.0, 0.0, 1.0]);
-        let ny = Normal::new([0.0, -1.0, 0.0]);
-        let py = Normal::new([0.0, 1.0, 0.0]);
-        let nx = Normal::new([-1.0, 0.0, 0.0]);
-        let px = Normal::new([1.0, 0.0, 0.0]);
-        let f = |n: Normal, abc: [u32; 3]| IndexedTriangle::from_raw_indices(n, abc);
+        let f = IndexedTriangle::from_raw_indices;
         IndexedMesh {
             meta: None,
             vertices,
             faces: vec![
-                f(nz, [0, 3, 2]),
-                f(nz, [0, 2, 1]),
-                f(pz, [4, 5, 6]),
-                f(pz, [4, 6, 7]),
-                f(py, [3, 7, 6]),
-                f(py, [3, 6, 2]),
-                f(ny, [0, 1, 5]),
-                f(ny, [0, 5, 4]),
-                f(px, [1, 2, 6]),
-                f(px, [1, 6, 5]),
-                f(nx, [0, 4, 7]),
-                f(nx, [0, 7, 3]),
+                f([0, 3, 2]),
+                f([0, 2, 1]),
+                f([4, 5, 6]),
+                f([4, 6, 7]),
+                f([3, 7, 6]),
+                f([3, 6, 2]),
+                f([0, 1, 5]),
+                f([0, 5, 4]),
+                f([1, 2, 6]),
+                f([1, 6, 5]),
+                f([0, 4, 7]),
+                f([0, 7, 3]),
             ],
         }
     }

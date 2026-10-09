@@ -4,7 +4,7 @@
  */
 
 use crate::indexed_mesh::{GeometryFingerprint, IndexedMesh, MeshMetadata};
-use crate::primitives::{IndexedTriangle, Normal, Vertex};
+use crate::primitives::{IndexedTriangle, Vertex};
 
 const TRIANGLE: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
 
@@ -15,16 +15,13 @@ const SQUARE: [[f32; 3]; 4] = [
     [1.0, 1.0, 0.0],
 ];
 
-/// Builds a mesh with the same placeholder normal on every face.
 fn mesh(vertices: &[[f32; 3]], faces: &[[u32; 3]]) -> IndexedMesh {
     IndexedMesh::new(
         None,
         vertices.iter().copied().map(Vertex::new).collect(),
         faces
             .iter()
-            .map(|&indices| {
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), indices)
-            })
+            .map(|&indices| IndexedTriangle::from_raw_indices(indices))
             .collect(),
     )
 }
@@ -109,16 +106,6 @@ fn geometry_fingerprint_ignores_the_metadata() {
     }));
     assert_eq!(
         named.geometry_fingerprint(),
-        mesh(&TRIANGLE, &[[0, 1, 2]]).geometry_fingerprint(),
-    );
-}
-
-#[test]
-fn geometry_fingerprint_ignores_the_stored_face_normals() {
-    let mut flipped_normal = mesh(&TRIANGLE, &[[0, 1, 2]]);
-    flipped_normal.faces[0].normal = Normal::new([0.0, 0.0, -1.0]);
-    assert_eq!(
-        flipped_normal.geometry_fingerprint(),
         mesh(&TRIANGLE, &[[0, 1, 2]]).geometry_fingerprint(),
     );
 }

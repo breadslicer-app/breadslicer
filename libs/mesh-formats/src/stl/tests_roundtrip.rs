@@ -12,7 +12,7 @@ use std::io::Cursor;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{IndexedMesh, MeshMetadata, Triangle, Vertex, indexed_mesh_from_soup};
 use sc_mesh_fixtures::{
-    cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh, with_stored_normals_declared,
+    cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh, with_declared_facet_normals,
 };
 
 use crate::stl::{read_stlb, write_stlb};
@@ -32,28 +32,23 @@ fn round_trip(mesh: &IndexedMesh) -> IndexedMesh {
         .clone()
 }
 
-/// Returns, for each face, its normal bits and the coordinate bit patterns of
-/// its 3 vertices, independent of vertex-list order.
-fn resolved_faces(mesh: &IndexedMesh) -> Vec<([u32; 3], [[u32; 3]; 3])> {
+/// Returns, for each face, the coordinate bit patterns of its 3 vertices,
+/// independent of vertex-list order.
+fn resolved_faces(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     mesh.faces()
         .iter()
         .map(|face| {
-            let normal = face.normal.coords().map(f32::to_bits);
-            let corners = face
-                .vertices
-                .map(|idx| mesh.vertices()[usize::from(idx)].coords().map(f32::to_bits));
-            (normal, corners)
+            face.vertices
+                .map(|idx| mesh.vertices()[usize::from(idx)].coords().map(f32::to_bits))
         })
         .collect()
 }
 
-/// Asserts that `mesh`, with its stored normals declared, round-trips: the STL
-/// soup format keeps per-face geometry, so a round-trip must preserve every
-/// resolved face bit for bit and, for fixtures without duplicate vertices,
-/// dedup back to the same vertex count. A second round-trip must then be an
-/// exact fixed point.
+/// Asserts that `mesh` round-trips: the STL soup format keeps per-face
+/// geometry, so a round-trip must preserve every resolved face bit for bit and,
+/// for fixtures without duplicate vertices, dedup back to the same vertex
+/// count. A second round-trip must then be an exact fixed point.
 fn assert_fixture_round_trips(mesh: IndexedMesh) {
-    let mesh = with_stored_normals_declared(mesh);
     let first = round_trip(&mesh);
     assert_eq!(resolved_faces(&first), resolved_faces(&mesh));
     assert_eq!(first.vertices().len(), mesh.vertices().len());
@@ -79,7 +74,7 @@ fn y_tunnel_prism_round_trips() {
 
 /// Returns a generated torus with its normals declared: n x m quads, vertices
 /// shared across rings and segments. Built through `indexed_mesh_from_soup`, so
-/// its vertex order IS first-appearance order and the round-trip must reproduce
+/// its vertex order is first-appearance order and the round-trip must reproduce
 /// the full `IndexedMesh` exactly, metadata included.
 fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
     let (major, minor) = (10.0_f32, 3.0_f32);
@@ -93,6 +88,7 @@ fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
         ])
     };
     let mut soup: Vec<Triangle> = Vec::with_capacity(2 * n * m);
+    let mut normals: Vec<[u32; 3]> = Vec::with_capacity(2 * n * m);
     for i in 0..n {
         for j in 0..m {
             let quads = [
@@ -102,7 +98,8 @@ fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
             for vertices in quads {
                 let normal = compute_normal_from_triangle_vertices(&vertices)
                     .expect("torus faces are not degenerate");
-                soup.push(Triangle::new(normal, vertices));
+                normals.push(normal.coords().map(f32::to_bits));
+                soup.push(Triangle::new(vertices));
             }
         }
     }
@@ -110,8 +107,9 @@ fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
         name: Some("torus".to_string()),
         ..Default::default()
     };
-    with_stored_normals_declared(
+    with_declared_facet_normals(
         indexed_mesh_from_soup(Some(meta), soup, u32::MAX as usize).expect("torus builds"),
+        normals,
     )
 }
 

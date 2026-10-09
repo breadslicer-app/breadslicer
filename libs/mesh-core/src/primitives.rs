@@ -113,7 +113,6 @@ impl<F: Copy + PartialEq + PartialOrd> From<Vector3D<F>> for [F; 3] {
 impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
     type Output = F;
     fn index(&self, i: usize) -> &Self::Output {
-        // TODO: Replace with debug_assert once we have proper tests in place
         assert!(i < 3);
         &self.0[i]
     }
@@ -186,17 +185,12 @@ impl Normal {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Triangle {
-    pub(crate) normal: Normal,
     pub(crate) vertices: [Vertex; 3],
 }
 
 impl Triangle {
-    pub const fn new(normal: Normal, vertices: [Vertex; 3]) -> Self {
-        Self { normal, vertices }
-    }
-
-    pub fn normal(&self) -> Normal {
-        self.normal
+    pub const fn new(vertices: [Vertex; 3]) -> Self {
+        Self { vertices }
     }
 
     pub fn vertices(&self) -> [Vertex; 3] {
@@ -286,17 +280,14 @@ impl fmt::Display for TriVertexSlot {
 /// vertices are indexed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IndexedTriangle {
-    pub normal: Normal,
     pub vertices: [VertexIndex; 3],
 }
 
 impl IndexedTriangle {
-    /// Builds an `IndexedTriangle` from a normal and 3 raw `u32` vertex
-    /// indices.
+    /// Builds an `IndexedTriangle` from 3 raw `u32` vertex indices.
     #[inline]
-    pub fn from_raw_indices(normal: Normal, vertices: [u32; 3]) -> Self {
+    pub fn from_raw_indices(vertices: [u32; 3]) -> Self {
         Self {
-            normal,
             vertices: [
                 VertexIndex::from(vertices[0]),
                 VertexIndex::from(vertices[1]),
@@ -345,8 +336,8 @@ mod vector3d_conversion_tests {
     #[test]
     fn f64_to_f32_truncates_components() {
         // 0.1 + 0.2 in f64 cannot be represented exactly in f32; the conversion
-        // is a plain `as f32` cast, so this checks that the component-wise cast
-        // is what's happening (no rounding mode tweak).
+        // is a plain `as f32` cast, so this checks that the conversion is a
+        // component-wise cast (no rounding mode tweak).
         let v64: Vector3D<f64> = Vector3D::new([0.1 + 0.2, 1.0e30, -1.0e-30]);
         let v32: Vector3D<f32> = v64.into();
         assert_eq!(

@@ -6,17 +6,15 @@
 use std::sync::Arc;
 
 use float_cmp::assert_approx_eq;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::indexed_mesh::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 use crate::Scene;
 use crate::error::SceneError;
 use crate::node::{CsgOp, LeafPayload};
 
-/// Build a closed axis-aligned box, outward-wound, spanning
-/// `min`..`max`.
+/// Builds a closed axis-aligned box, outward-wound, that spans `min`..`max`.
 fn box_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
     let corners = [
         [min[0], min[1], min[2]],
@@ -44,16 +42,7 @@ fn box_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         [1, 6, 5],
     ]
     .into_iter()
-    .map(|indices: [u32; 3]| {
-        let corner = |i: u32| vertices[i as usize];
-        let normal = compute_normal_from_triangle_vertices(&[
-            corner(indices[0]),
-            corner(indices[1]),
-            corner(indices[2]),
-        ])
-        .expect("a box face is never degenerate");
-        IndexedTriangle::from_raw_indices(normal, indices)
-    })
+    .map(IndexedTriangle::from_raw_indices)
     .collect();
 
     IndexedMesh::new(None, vertices, faces)
@@ -63,7 +52,7 @@ fn unit_cube() -> IndexedMesh {
     box_mesh([0.0; 3], [1.0; 3])
 }
 
-/// Attach one leaf carrying `mesh` under `transform` as a scene root.
+/// Builds a scene with 1 root leaf that carries `mesh` under `transform`.
 fn scene_with_leaf(mesh: IndexedMesh, transform: Transform3D) -> Scene {
     let mut scene = Scene::new();
     let leaf = scene
@@ -147,7 +136,7 @@ fn an_inward_wound_mesh_still_reports_material() {
 
 #[test]
 fn two_leaves_add_rather_than_cancel() {
-    // One outward-wound, one inward-wound: a signed sum would give 0.
+    // 1 outward-wound, 1 inward-wound: a signed sum would give 0.
     let mut inverted = unit_cube();
     for face in &mut inverted.faces {
         let [a, b, c] = face.vertices;
@@ -169,8 +158,8 @@ fn two_leaves_add_rather_than_cancel() {
 
 #[test]
 fn nested_transforms_compose_before_scaling() {
-    // Group scales by 2, leaf scales by 3: the leaf sees 6x on each
-    // axis, so 216x the volume, not 8 + 27 or 8 * 3.
+    // Group scales by 2, leaf scales by 3: the leaf sees 6x on each axis, so
+    // 216x the volume, not 8 + 27 or 8 * 3.
     let mut scene = Scene::new();
     let leaf = scene
         .add_leaf(
@@ -233,8 +222,8 @@ fn a_referenced_subtree_counts_once_per_occurrence() {
 
 #[test]
 fn csg_children_are_summed_conservatively() {
-    // A Difference of 2 overlapping cubes reports both, an upper
-    // bound, exactly as the AABB query treats CSG.
+    // A Difference of 2 overlapping cubes reports both, an upper bound, exactly
+    // as the AABB query treats CSG.
     let mut scene = Scene::new();
     let big = scene
         .add_leaf(
@@ -265,7 +254,7 @@ fn csg_children_are_summed_conservatively() {
 #[test]
 fn a_leaf_whose_faces_do_not_validate_is_reported_with_its_node() {
     let mut mesh = unit_cube();
-    mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
+    mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
     let scene = scene_with_leaf(mesh, Transform3D::Identity);
     let root = scene.roots()[0];
 

@@ -5,7 +5,7 @@
 
 use std::num::NonZeroU32;
 
-use sc_mesh_core::primitives::{IndexedTriangle, Normal};
+use sc_mesh_core::primitives::IndexedTriangle;
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm};
 use sc_print_profiles::{
@@ -881,7 +881,7 @@ fn an_empty_plate_encloses_nothing() {
 #[test]
 fn a_scene_that_cannot_be_measured_stops_the_projection() {
     let mut mesh = unit_cube_mesh();
-    mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
+    mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
     let scene = meshes_as_roots([mesh]);
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);

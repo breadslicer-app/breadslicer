@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::iter::ParallelIterator;
 use rayon::slice::ParallelSlice;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
+use sc_mesh_core::{MeshMetadata, Triangle, Vertex};
 use sc_scene::Scene;
 
 use crate::MAX_MESH_ELEMENT_COUNT;
@@ -112,10 +111,9 @@ pub(crate) fn extract_metadata(bytes: &[u8]) -> Result<(MeshMetadata, Option<Loa
 /// Parses the triangle records that follow the declared triangle count
 /// (bounds-checked against the cap), in declaration order.
 ///
-/// Truncation is reported only after the records that ARE present have parsed
+/// Truncation is reported only after the records that are present have parsed
 /// cleanly, so a file that is both truncated and malformed reports the first
-/// error in file order, exactly like the retired record-by-record streaming
-/// reader.
+/// error in file order.
 fn parse_triangle_records(bytes: &[u8]) -> Result<Vec<Facet>> {
     let Some(count_bytes) = bytes.get(STL_HEADER_BYTES..PREAMBLE_BYTES) else {
         return Err(LoadStlError::Truncated {
@@ -147,8 +145,8 @@ fn parse_triangle_records(bytes: &[u8]) -> Result<Vec<Facet>> {
         // collect and cost more than the sequential parse (measured 5x).
         // Instead the parallel pass is infallible with a shared validity flag,
         // and a flagged document is re-parsed sequentially so the reported
-        // error is the first one in file order. Well-formed files never touch
-        // the flag or pay the second pass.
+        // error is the first one in file order. Well-formed files never set the
+        // flag or run the second pass.
         let saw_non_finite = AtomicBool::new(false);
         let soup: Vec<Facet> = records
             .par_chunks(STL_TRIANGLE_RECORD_BYTES)
@@ -168,9 +166,9 @@ fn parse_triangle_records(bytes: &[u8]) -> Result<Vec<Facet>> {
     Ok(soup)
 }
 
-/// Sequential/parallel crossover for the record parse. Measured: the parallel
-/// split starts winning between 4k and 8k records; below that the fork/join
-/// overhead is on par with the parsing work.
+/// Crossover between the sequential and the parallel record parse. Measured:
+/// the parallel split starts to be faster between 4k and 8k records; below that
+/// the fork-join overhead is about equal to the parsing work.
 pub(super) const PARALLEL_PARSE_MIN_RECORDS: usize = 8192;
 
 fn parse_records_sequential(records: &[u8]) -> Result<Vec<Facet>> {
@@ -214,21 +212,15 @@ fn parse_triangle_record_lenient(record: &[u8], saw_non_finite: &AtomicBool) -> 
     }
 
     let declared = [fields[0], fields[1], fields[2]];
-    let mut normal = Normal::new(declared);
     let vertices = [
         Vertex::new([fields[3], fields[4], fields[5]]),
         Vertex::new([fields[6], fields[7], fields[8]]),
         Vertex::new([fields[9], fields[10], fields[11]]),
     ];
-    if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
-        && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
-    {
-        normal = recomputed;
-    }
 
     Facet {
         declared_normal: declared.map(f32::to_bits),
-        triangle: Triangle::new(normal, vertices),
+        triangle: Triangle::new(vertices),
     }
 }
 
@@ -248,7 +240,6 @@ fn parse_triangle_record(record: &[u8]) -> Result<Facet> {
     };
 
     let declared = [f(0, "normal.x")?, f(4, "normal.y")?, f(8, "normal.z")?];
-    let mut normal = Normal::new(declared);
     let vertices = [
         Vertex::new([f(12, "v0.x")?, f(16, "v0.y")?, f(20, "v0.z")?]),
         Vertex::new([f(24, "v1.x")?, f(28, "v1.y")?, f(32, "v1.z")?]),
@@ -256,26 +247,15 @@ fn parse_triangle_record(record: &[u8]) -> Result<Facet> {
     ];
     // record[48..50] is the per-triangle attribute byte count, discarded. The
     // standard prescribes 0, but 2 real conventions store colour data here:
-    //   VisCAM / SolidView: 15-bit RGB packed as R (bits 10-14),
-    //     G (5-9), B (0-4) plus a validity bit (bit 15).
-    //   Materialise Magics: per-facet colour in addition to a
-    //     `COLOR=RGBA` field in the header, with R/G/B order
-    //     reversed relative to the VisCAM convention.
-
-    // We interpret a zero-length normal vector as a hint to compute it at load
-    // time. If the triangle is truly degenerate the recomputation can't produce
-    // a meaningful direction; leave the zero normal in place so
-    // `validate_face_areas` flags it as `ZeroAreaFace` rather than the parser
-    // bailing on the whole file.
-    if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
-        && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
-    {
-        normal = recomputed;
-    }
+    //   VisCAM and SolidView: 15-bit RGB packed as R (bits 10-14), G (5-9),
+    //     B (0-4) plus a validity bit (bit 15).
+    //   Materialise Magics: per-facet colour in addition to a `COLOR=RGBA`
+    //     field in the header, with the red, green and blue order reversed
+    //     relative to the VisCAM convention.
 
     Ok(Facet {
         declared_normal: declared.map(f32::to_bits),
-        triangle: Triangle::new(normal, vertices),
+        triangle: Triangle::new(vertices),
     })
 }
 
@@ -287,10 +267,9 @@ mod binary_stl_reader_tests {
     };
     use crate::error::LoadStlError;
 
-    /// Builds an 84-byte binary STL preamble: a zero-padded name field followed
-    /// by a little-endian declared triangle count. The payload is left empty so
-    /// the parser runs out of bytes the first time it looks for a triangle
-    /// record.
+    /// Builds an 84-byte binary STL preamble: an all-zero header followed by a
+    /// little-endian declared triangle count, with no triangle records after
+    /// it.
     fn header_with_declared_count(count: u32) -> Vec<u8> {
         let mut buf = vec![0u8; PREAMBLE_BYTES];
         buf[STL_HEADER_BYTES..PREAMBLE_BYTES].copy_from_slice(&count.to_le_bytes());
@@ -320,9 +299,9 @@ mod binary_stl_reader_tests {
         // Too short to even hold the count field.
         assert!(!matches_exact_binary_layout(&[0u8; STL_HEADER_BYTES]));
 
-        // A count whose layout cannot fit in memory never matches; on 64-bit
-        // this exercises the checked arithmetic staying finite rather than
-        // wrapping.
+        // A declared count of `u32::MAX` never matches the 84-byte input. On
+        // 32-bit targets the record length overflows `usize`, and the checked
+        // arithmetic gives no match instead of a wrapped length.
         assert!(!matches_exact_binary_layout(&header_with_declared_count(
             u32::MAX
         )));
@@ -341,9 +320,8 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn rejects_max_u32_declared_count() {
-        // The pathological case: without the cap this produced billions of
-        // failed reads before propagating an EOF; with the cap it errors before
-        // touching any record.
+        // The largest declared count: the cap check rejects it before the
+        // parser touches any record.
         let bytes = header_with_declared_count(u32::MAX);
         assert!(
             matches!(
@@ -356,9 +334,9 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn accepts_declared_count_at_exact_cap() {
-        // Boundary: equal to the cap must pass the check (the check is `>`, not
-        // `>=`). The body is empty, so the parse then reports a truncated
-        // record, NOT the cap error.
+        // Boundary: a count equal to the cap passes the check (the check is
+        // `>`, not `>=`). The body is empty, so the parse then reports a
+        // truncated record, not the cap error.
         let bytes = header_with_declared_count(MAX_MESH_ELEMENT_COUNT as u32);
         assert!(
             matches!(
@@ -384,10 +362,10 @@ mod binary_stl_reader_tests {
         assert!(mesh.vertices().is_empty());
     }
 
-    /// Builds a single-triangle binary STL whose attribute-byte-count (the
-    /// trailing u16 in the triangle record) is non-zero. The rest of the record
-    /// describes a unit XY triangle with normal +Z, so the parser has no excuse
-    /// to fail.
+    /// Builds a single-triangle binary STL whose attribute byte count (the
+    /// trailing u16 of the triangle record) is `attr_bytes`. The rest of the
+    /// record is a valid unit triangle in the XY plane that declares the normal
+    /// +Z.
     fn single_triangle_with_attribute_bytes(attr_bytes: u16) -> Vec<u8> {
         let mut bytes = header_with_declared_count(1);
         // Normal: (0, 0, 1).
@@ -413,17 +391,19 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn non_zero_attribute_bytes_are_silently_discarded() {
-        // VisCAM / Magics colour conventions stash data in the attribute bytes.
-        // This reader does not surface them today; the test pins that behaviour
-        // so a future change adding a warning channel updates this expectation
-        // deliberately.
+        // The VisCAM and Magics colour conventions store data in the attribute
+        // bytes. The reader discards them without a warning; this test pins
+        // that behaviour.
         let bytes = single_triangle_with_attribute_bytes(0x8421);
         let (scene, warnings) = read_stlb_slice(&bytes).expect("document parses cleanly");
         assert!(warnings.is_empty());
         let leaf = scene.first_leaf_id().expect("one leaf");
         let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].normal.coords(), [0.0, 0.0, 1.0]);
+        assert_eq!(
+            mesh.declared_facet_normals(),
+            Some(&[[0, 0, 0x3f80_0000]][..])
+        );
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.vertices()[0].coords(), [0.0, 0.0, 0.0]);
         assert_eq!(mesh.vertices()[1].coords(), [1.0, 0.0, 0.0]);
@@ -495,8 +475,7 @@ mod binary_stl_reader_tests {
     #[test]
     fn first_error_in_file_order_wins_in_the_parallel_path() {
         // 2 bad records in different regions of an above-threshold document:
-        // the reported error must be the earlier one, even though the parallel
-        // collect may surface either.
+        // the reported error must be the earlier one.
         let n = PARALLEL_PARSE_MIN_RECORDS + 1000;
         let mut bytes = repeated_record_document(n as u32, n);
         corrupt_float(&mut bytes, 5, 44); // v2.z
@@ -509,7 +488,7 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn parallel_path_bad_float_wins_over_truncation() {
-        // Above-threshold document that is BOTH truncated (1 record short) and
+        // Above-threshold document that is both truncated (1 record short) and
         // malformed earlier: the record error comes first in file order.
         let n = PARALLEL_PARSE_MIN_RECORDS + 1000;
         let mut bytes = repeated_record_document(n as u32, n - 1);
@@ -522,9 +501,8 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn earlier_bad_float_wins_over_later_truncation() {
-        // Record 0 carries a NaN normal.x AND the file is missing its second
-        // declared record. The record error comes first in file order, matching
-        // the retired streaming reader.
+        // Record 0 carries a NaN normal.x, and the file is missing its second
+        // declared record. The record error comes first in file order.
         let mut bytes = single_triangle_with_attribute_bytes(0);
         bytes[STL_HEADER_BYTES..PREAMBLE_BYTES].copy_from_slice(&2u32.to_le_bytes());
         bytes[PREAMBLE_BYTES..PREAMBLE_BYTES + 4].copy_from_slice(&f32::NAN.to_le_bytes());

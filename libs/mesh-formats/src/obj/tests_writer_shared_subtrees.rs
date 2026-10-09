@@ -3,18 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Capability pins for the OBJ writer over scenes with subtree references:
-//! every occurrence of an referenced subtree serialises in full, in
-//! scene pre-order, under the occurrence's composed transform, with
-//! mesh names taken verbatim (duplicate `o` markers are the standing
-//! representation for repeated names). These pins are permanent:
-//! a refusal, witness, or reference-skipping walk on this path must
-//! turn them red, never ship green.
+//! Pins for the OBJ writer over scenes with subtree references: every
+//! occurrence of a referenced subtree is written in full, in scene pre-order,
+//! under its composed transform, with the mesh names as they are (a repeated
+//! name gives a repeated `o` marker). A walk on this path that refuses or skips
+//! a reference must make these pins fail.
 
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_scene::{CsgPolicy, LeafPayload, MAX_EXPANDED_LEAF_COUNT, NodeId, Scene, SubtreeResourceId};
 
@@ -33,15 +31,12 @@ fn triangle(name: Option<&str>) -> IndexedMesh {
             Vertex::new([0.0, 1.0, 0.0]),
             Vertex::new([0.0, 0.0, 1.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.577, 0.577, 0.577]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
-/// Registers a single-triangle subtree resource (identity group over
-/// one leaf) and returns its id.
+/// Registers a subtree resource that holds 1 triangle leaf under an identity
+/// group.
 fn register_triangle_subtree(scene: &mut Scene, name: Option<&str>) -> SubtreeResourceId {
     let leaf = scene
         .add_leaf(
@@ -103,9 +98,9 @@ fn two_references_serialise_two_occurrences_with_verbatim_names() {
 
 #[test]
 fn nested_references_serialise_the_full_product_of_occurrences() {
-    // Inner: one triangle. Outer: 2 inner references at x = +2 / +4.
-    // Scene: 2 outer references at y = 0 / +10. Expansion: 2 x 2 = 4
-    // occurrences, pre-order, each under its composed translation.
+    // Inner: 1 triangle. Outer: 2 inner references at x = +2 and +4. Scene: 2
+    // outer references at y = 0 and +10. Expansion: 2 x 2 = 4 occurrences, in
+    // pre-order, each under its composed translation.
     let mut g = Scene::new();
     let inner = register_triangle_subtree(&mut g, None);
     let outer_root = g.add_group(None, Transform3D::Identity);
@@ -202,8 +197,8 @@ fn a_referenced_prism_trio_serialises_every_occurrence_in_full() {
         2 * face_lines
     );
 
-    // Both occurrences of the cube's first vertex are present: the
-    // first verbatim, the second shifted 100mm along +Y.
+    // Both occurrences of the cube's first vertex are present: the first
+    // unchanged, the second moved 100 mm along +Y.
     let c = unit_cube_mesh().vertices()[0];
     let shifted = AffineTransform3D::from_translation([0.0, 100.0, 0.0]).apply_to_vertex(c);
     let first = format!("v {} {} {}", c[0], c[1], c[2]);
@@ -212,9 +207,9 @@ fn a_referenced_prism_trio_serialises_every_occurrence_in_full() {
     assert!(out.contains(&second), "second cube occurrence missing");
 }
 
-/// Registers a chain of subtree resources whose top resource expands
-/// to 10^levels triangle occurrences, using O(levels) nodes: each
-/// level is a group of 10 references to the previous one.
+/// Registers a chain of subtree resources whose top resource expands to
+/// 10^levels triangle occurrences, using O(levels) nodes: each level is a group
+/// of 10 references to the previous one.
 fn register_power_of_ten_chain(g: &mut Scene, levels: u32) -> SubtreeResourceId {
     let mut rid = register_triangle_subtree(g, None);
     for _ in 0..levels {
@@ -235,10 +230,10 @@ fn register_power_of_ten_chain(g: &mut Scene, levels: u32) -> SubtreeResourceId 
 
 #[test]
 fn at_cap_expansion_serialises() {
-    // The budget is inclusive: a scene expanding to exactly
-    // MAX_EXPANDED_LEAF_COUNT occurrences serialises. The count
-    // assertion also pins the cap's value through this path, so a
-    // lowered cap cannot ship unnoticed.
+    // The budget is inclusive: a scene that expands to exactly
+    // `MAX_EXPANDED_LEAF_COUNT` occurrences is written. The count assertion
+    // also pins the value of the cap through this path, so a lower cap makes
+    // this test fail.
     let mut g = Scene::new();
     let rid = register_power_of_ten_chain(&mut g, 5);
     let root = g.add_group(None, Transform3D::Identity);
@@ -258,7 +253,7 @@ fn over_cap_expansion_is_refused_before_any_output() {
     let rid = register_power_of_ten_chain(&mut g, 5);
     let root = g.add_group(None, Transform3D::Identity);
     add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
-    // One plain leaf pushes the expansion to the cap plus 1.
+    // An extra plain leaf takes the expansion to the cap plus 1.
     let extra = g
         .add_leaf(
             None,
@@ -282,8 +277,8 @@ fn over_cap_expansion_is_refused_before_any_output() {
 
 #[test]
 fn csg_operands_serialise_as_plain_objects() {
-    // The OBJ writer's standing CSG stance: descend into the
-    // operands and serialise them as plain objects.
+    // By design, the OBJ writer descends into the operands of a CSG node and
+    // writes them as plain objects.
     use sc_scene::CsgOp;
 
     let mut g = Scene::new();

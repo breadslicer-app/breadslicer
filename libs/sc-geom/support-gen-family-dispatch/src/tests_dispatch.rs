@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
 use crate::dispatch::{normalize, suggest_support_regions};
 
-fn single_triangle_mesh(normal: [f32; 3]) -> IndexedMesh {
+fn single_triangle_mesh(indices: [u32; 3]) -> IndexedMesh {
     IndexedMesh::new(
         Some(MeshMetadata::default()),
         vec![
@@ -15,10 +15,7 @@ fn single_triangle_mesh(normal: [f32; 3]) -> IndexedMesh {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        vec![IndexedTriangle::from_raw_indices(
-            Normal::new(normal),
-            [0, 1, 2],
-        )],
+        vec![IndexedTriangle::from_raw_indices(indices)],
     )
 }
 
@@ -35,7 +32,7 @@ fn normalize_rejects_the_zero_vector() {
 
 #[test]
 fn a_downward_facing_triangle_scores_high_under_downward_gravity() {
-    let mesh = single_triangle_mesh([0.0, 0.0, -1.0]);
+    let mesh = single_triangle_mesh([0, 2, 1]);
     let gravity = sc_mesh_core::Vector3D::new([0.0, 0.0, -1.0]);
     let scores = suggest_support_regions(&mesh, gravity);
     assert_eq!(scores.len(), 3);
@@ -46,7 +43,7 @@ fn a_downward_facing_triangle_scores_high_under_downward_gravity() {
 
 #[test]
 fn an_upward_facing_triangle_scores_zero_under_downward_gravity() {
-    let mesh = single_triangle_mesh([0.0, 0.0, 1.0]);
+    let mesh = single_triangle_mesh([0, 1, 2]);
     let gravity = sc_mesh_core::Vector3D::new([0.0, 0.0, -1.0]);
     let scores = suggest_support_regions(&mesh, gravity);
     for score in scores {

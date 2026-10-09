@@ -4,9 +4,9 @@
  */
 
 //! "Export As" support: pure functions over `&SceneDocument` plus the
-//! worker-side write step. The viewport stays out of this module; the
-//! wiring layer drives the file dialog and the worker thread, then
-//! calls in here to snapshot the scene and produce the file.
+//! worker-side write step. The viewport stays out of this module; the wiring
+//! layer drives the file dialog and the worker thread, then calls in here to
+//! snapshot the scene and produce the file.
 
 use std::path::Path;
 
@@ -19,27 +19,27 @@ use sc_scene::Scene;
 use crate::export_progress::ExportPhase;
 use crate::scene_document::SceneDocument;
 
-/// Fallback extension used when we can't infer a better one from the
-/// source path. STL binary is the project's default export format.
+/// Fallback extension for a source path that gives no better one. Binary STL is
+/// the default export format of the project.
 const DEFAULT_EXPORT_EXTENSION: &str = "stl";
 
-/// Default filename stem to seed the file-save dialog with: the
-/// original load path's stem (e.g. `gear.obj` -> `gear`). `None` when
-/// no scene is loaded or the source path has no recognisable stem.
+/// Returns the default filename stem to seed the file-save dialog with: the
+/// original load path's stem (for example `gear.obj` -> `gear`). `None` when no
+/// scene is loaded or the source path has no recognisable stem.
 pub(crate) fn default_export_stem(doc: &SceneDocument) -> Option<String> {
     doc.with_source_path(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
         .flatten()
 }
 
-/// Default extension to seed the dialog with. Matches the source
-/// path's extension when it's one of the formats this app can write
-/// back out (`.obj`, `.stl`, `.stla`, `.3mf`); otherwise falls back
-/// to the project default of binary STL.
+/// Returns the default extension to seed the dialog with. Matches the source
+/// path's extension when it is among the formats this app can write back out
+/// (`.obj`, `.stl`, `.stla`, `.3mf`); otherwise falls back to the project
+/// default of binary STL.
 ///
-/// rfd 0.17 does not expose which filter the user actually picked, so
-/// the seeded extension is the only signal that tells the user which
-/// format they're about to write. Matching the source preserves the
-/// "Export As" sensible default of "same format unless I change it".
+/// rfd 0.17 does not expose which filter the user actually picked, so the
+/// seeded extension is the only signal that tells the user which format they
+/// are about to write. Matching the source preserves the "Export As" sensible
+/// default of "same format unless I change it".
 pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
     let from_source = doc
         .with_source_path(|p| {
@@ -58,20 +58,19 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
     }
 }
 
-/// Snapshots the document's scene for an off-thread export: one
-/// borrow, one clone. The clone shares mesh payloads through `Arc`,
-/// so it is cheap relative to the write, and taking it releases the
-/// scene borrow so the document stays usable while a worker writes
-/// the clone. Returns `None` when no scene is loaded.
+/// Snapshots the document's scene for an off-thread export: 1 borrow, 1 clone.
+/// The clone shares mesh payloads through `Arc`, so it is cheap relative to the
+/// write, and taking it releases the scene borrow so the document stays usable
+/// while a worker writes the clone. Returns `None` when no scene is loaded.
 pub(crate) fn prepare_export(doc: &SceneDocument) -> Option<Scene> {
     doc.with_scene(|spatial| spatial.graph().clone())
 }
 
-/// Writes a snapshotted scene to `target` in `format`, reporting each
-/// phase through `progress`. Pure with respect to the document, so it
-/// runs on a worker thread; the caller surfaces warnings and errors on
-/// the UI thread. Returns the warnings the flatten step produced
-/// (currently `MultiObjectMerge` for STL with >1 object).
+/// Writes a snapshotted scene to `target` in `format`, reporting each phase
+/// through `progress`. Pure with respect to the document, so it runs on a
+/// worker thread; the caller surfaces warnings and errors on the UI thread.
+/// Returns the flatten warnings: `MultiObjectMerge` when an STL export merges
+/// more than 1 object.
 pub(crate) fn write_export(
     scene: &Scene,
     target: &Path,
@@ -91,10 +90,10 @@ pub(crate) fn write_export(
     .map_err(anyhow::Error::from)
 }
 
-/// The synchronous form of a full export against `target`: snapshot
-/// plus write in the caller's thread. The GUI drives the write off the
-/// UI thread instead; this direct composition backs the format
-/// round-trip tests. Errors when no scene is loaded.
+/// Exports the document's scene to `target` in the caller's thread: snapshot
+/// plus write. The GUI drives the write off the UI thread instead; this direct
+/// composition backs the export tests of this module. Errors when no scene is
+/// loaded.
 #[cfg(test)]
 pub(crate) fn export_scene_as(
     doc: &SceneDocument,
@@ -113,7 +112,7 @@ mod scene_export_tests {
 
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
     use sc_scene::{LeafPayload, Scene};
 
     fn unit_triangle() -> IndexedMesh {
@@ -124,15 +123,12 @@ mod scene_export_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
-    /// Loader-shape one-object graph: a single inline-mesh leaf
-    /// under an identity-Group root.
+    /// Returns a loader-shape 1-object graph: a single inline-mesh leaf under
+    /// an identity-Group root.
     fn one_object_graph() -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -148,9 +144,9 @@ mod scene_export_tests {
         g
     }
 
-    /// Graph with a registered single-triangle subtree, one plain
-    /// leaf at the origin, and 2 references to the subtree at
-    /// x = +10 / +20: 3 expanded occurrences in total.
+    /// Returns a graph with a registered single-triangle subtree, 1 plain leaf
+    /// at the origin, and 2 references to the subtree at x = +10 and x = +20: 3
+    /// expanded occurrences in total.
     fn graph_with_subtree_references() -> Scene {
         let mut g = Scene::new();
         let sub_leaf = g
@@ -189,7 +185,7 @@ mod scene_export_tests {
         g
     }
 
-    /// Loader-shape two-object graph: both leaves attached under a
+    /// Returns a loader-shape 2-object graph: both leaves attached under a
     /// shared identity-Group root.
     fn two_object_graph() -> Scene {
         let mut g = Scene::new();
@@ -307,9 +303,8 @@ mod scene_export_tests {
 
     #[test]
     fn prepare_export_releases_the_scene_borrow() {
-        // The snapshot exists so a worker can write it while the
-        // document stays usable; holding it must not keep the scene
-        // borrowed.
+        // The snapshot exists so a worker can write it while the document stays
+        // usable; holding it must not keep the scene borrowed.
         let doc = SceneDocument::new();
         doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
         let snapshot = prepare_export(&doc).expect("scene is loaded");
@@ -323,8 +318,8 @@ mod scene_export_tests {
         doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
         let snapshot = prepare_export(&doc).expect("scene is loaded");
 
-        // Replace the document's scene after the snapshot; the write
-        // must still produce the snapshotted single-object scene.
+        // Replace the document's scene after the snapshot; the write must still
+        // produce the snapshotted single-object scene.
         doc.install_graph(two_object_graph(), PathBuf::from("/tmp/other.obj"));
 
         let target = tmp_path("snapshot_3mf");
@@ -421,8 +416,8 @@ mod scene_export_tests {
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::ThreeMf).expect("write should succeed");
         assert!(warnings.is_empty(), "3MF export preserves everything");
-        // The tmp_path helper appends `.tmp`, so extension inference
-        // cannot run; name the format explicitly for the load-back.
+        // The tmp_path helper appends `.tmp`, so extension inference cannot
+        // run; name the format explicitly for the load-back.
         let loaded = sc_mesh_formats::load_mesh_from_path(
             &target,
             Some(sc_mesh_formats::filetypes::MeshFileType::_3mf),
@@ -447,14 +442,13 @@ mod scene_export_tests {
         let _ = std::fs::remove_file(&target);
     }
 
-    // Capability pins on write_export, the worker-side write path
-    // the GUI drives: it must expand scenes with subtree references.
-    // Permanent pins; a refusal or skipping walk below this seam
-    // turns them red. They call write_export on a bare Scene rather
-    // than going through a SceneDocument because SceneSpatial's
-    // cached walks do not expand references and its construction
-    // rejects scenes with subtree references in debug builds; the export write
-    // path operates on the raw graph and carries no such limit.
+    // These tests check that write_export, the write path that the GUI worker
+    // runs, expands scenes with subtree references; a refusal, or a walk below
+    // write_export that skips references, makes them fail. They call
+    // write_export on a bare Scene and not through a SceneDocument, because the
+    // cached walks of SceneSpatial do not expand references and its
+    // construction rejects scenes with subtree references in debug builds; the
+    // export write path works on the raw graph and has no such limit.
 
     #[test]
     fn export_expands_subtree_references_for_obj() {
@@ -504,9 +498,8 @@ mod scene_export_tests {
 
     #[test]
     fn export_expands_subtree_references_for_threemf() {
-        // 3MF keeps the sharing native; the expanding
-        // reader loads the written package back as all 3
-        // occurrences.
+        // 3MF keeps the sharing native; the expanding reader loads the written
+        // package back as all 3 occurrences.
         let scene = graph_with_subtree_references();
         let target = tmp_path("referenced_3mf");
         let warnings = write_export(&scene, &target, WriteFormat::ThreeMf, |_, _, _| {})
@@ -524,9 +517,8 @@ mod scene_export_tests {
 
     #[test]
     fn export_multi_object_obj_does_not_emit_merge_warning() {
-        // OBJ preserves per-object boundaries, so the flatten step
-        // doesn't run and the warning vec is empty regardless of object
-        // count.
+        // OBJ keeps the objects apart, so the flatten step does not run and the
+        // warning list is empty for any object count.
         let doc = SceneDocument::new();
         doc.install_graph(two_object_graph(), PathBuf::from("/tmp/multi.obj"));
         let target = tmp_path("multi_obj");

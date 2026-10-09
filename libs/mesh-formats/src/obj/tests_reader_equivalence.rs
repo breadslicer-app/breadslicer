@@ -3,15 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Equivalence coverage for the slice-based OBJ reader against a
-//! verbatim copy of the retired line-streaming reader. Any byte
-//! sequence must produce the same outcome through both: same scene
-//! shape, same per-leaf mesh bits (metadata, vertex order and bit
-//! patterns, face normals and index values), same warning list on
-//! success, and the same error value on failure. Two concessions: the
-//! invalid-UTF-8 io error compares by kind and message only, and the
-//! reference reader gets its input with trailing NULs pre-stripped,
-//! since it has no strip of its own.
+//! Equivalence coverage for the slice-based OBJ reader against a reference
+//! line-streaming reader kept in this file. Any byte sequence must produce the
+//! same outcome through both: same scene shape, same per-leaf mesh bits
+//! (metadata, vertex order and bit patterns, and face index values), same
+//! warning list on success, and the same error value on failure. 2 concessions:
+//! the invalid-UTF-8 io error compares by kind and message only, and the
+//! reference reader gets its input with trailing NULs pre-stripped, since it
+//! has no strip of its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Cursor, Read};
@@ -19,10 +18,9 @@ use std::sync::Arc;
 
 use float_cmp::approx_eq;
 use proptest::prelude::*;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::node::LeafPayload;
 use sc_scene::{NodeId, NodeKind, Scene, SceneMetadata};
 
@@ -32,13 +30,11 @@ use crate::messages::LoadObjWarning;
 
 type Result<T> = std::result::Result<T, LoadObjError>;
 
-// --- verbatim copy of the retired streaming reader -------------------
-// Kept as it was in `reader.rs` before the slice rewrite: line
-// streaming through `BufRead::lines`, a `HashMap` vertex remap, and a
-// fresh token `Vec` per directive. Only the item names carry a
-// `reference_` prefix; the caps type comes from the production module
-// so both sides run under the same limits. This is the behavioral
-// reference.
+// --- reference streaming reader --------------------------------------
+// Line streaming through `BufRead::lines`, a `HashMap` vertex remap, and a
+// fresh token `Vec` per directive. Only the item names carry a `reference_`
+// prefix; the caps type comes from the production module so both sides run
+// under the same limits.
 
 fn reference_flush_pending_object_as_mesh(
     global_vertices: &[Vertex],
@@ -66,7 +62,6 @@ fn reference_flush_pending_object_as_mesh(
     let remapped_faces: Vec<IndexedTriangle> = current_faces
         .drain(..)
         .map(|f| IndexedTriangle {
-            normal: f.normal,
             vertices: [
                 global_to_local[&f.vertices[0]],
                 global_to_local[&f.vertices[1]],
@@ -206,9 +201,9 @@ where
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
                         return Err(LoadObjError::VertexWZero { line: line_num + 1 });
                     }
-                    // Mirrors the production reader's post-division
-                    // finiteness gate; the equivalence contract needs
-                    // both sides to reject the same quotients.
+                    // Mirrors the production reader's post-division finiteness
+                    // gate; the equivalence contract needs both sides to reject
+                    // the same quotients.
                     let divided = [x / w, y / w, z / w];
                     for value in divided {
                         if !value.is_finite() {
@@ -260,15 +255,7 @@ where
 
                 for i in 1..indices.len() - 1 {
                     let tri_vertices = [indices[0], indices[i], indices[i + 1]];
-                    let v0 = global_vertices[usize::from(tri_vertices[0])];
-                    let v1 = global_vertices[usize::from(tri_vertices[1])];
-                    let v2 = global_vertices[usize::from(tri_vertices[2])];
-
-                    let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])
-                        .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
-
                     current_faces.push(IndexedTriangle {
-                        normal,
                         vertices: tri_vertices,
                     });
                 }
@@ -448,17 +435,13 @@ fn reference_is_known_obj_spec_directive(token: &str) -> bool {
 
 // --- outcome comparison ----------------------------------------------
 
-type MeshBits = (
-    Option<MeshMetadata>,
-    Vec<[u32; 3]>,
-    Vec<([u32; 3], [usize; 3])>,
-);
+type MeshBits = (Option<MeshMetadata>, Vec<[u32; 3]>, Vec<[usize; 3]>);
 
 type SceneBits = (Option<SceneMetadata>, usize, Vec<MeshBits>);
 
-/// Bit-level projection of a mesh: metadata, vertex bit patterns in
-/// list order, per-face normal bits plus index values. f32 PartialEq
-/// would fold `-0.0` onto `0.0`; the projection must not.
+/// Returns the bit-level projection of a mesh: metadata, vertex bit patterns in
+/// list order, and per-face index values. f32 PartialEq would fold `-0.0` onto
+/// `0.0`; the projection must not.
 fn mesh_bits(mesh: &IndexedMesh) -> MeshBits {
     (
         mesh.meta.clone(),
@@ -468,17 +451,13 @@ fn mesh_bits(mesh: &IndexedMesh) -> MeshBits {
             .collect(),
         mesh.faces()
             .iter()
-            .map(|face| {
-                (
-                    face.normal.coords().map(f32::to_bits),
-                    face.vertices.map(usize::from),
-                )
-            })
+            .map(|face| face.vertices.map(usize::from))
             .collect(),
     )
 }
 
-/// Scene metadata, root count, and every leaf mesh in document order.
+/// Returns the scene metadata, the root count, and every leaf mesh in document
+/// order.
 fn scene_bits(scene: &Scene) -> SceneBits {
     let mut leaves: Vec<MeshBits> = Vec::new();
     let mut stack: Vec<NodeId> = scene.roots().iter().rev().copied().collect();
@@ -503,15 +482,14 @@ fn scene_bits(scene: &Scene) -> SceneBits {
     (scene.meta().clone(), scene.roots().len(), leaves)
 }
 
-/// Runs both readers and asserts the outcomes match: scene bits plus
-/// warnings on success, error values (via their
-/// Debug form) on failure. Io errors compare by kind and message,
-/// since the internal representation of the invalid-UTF-8 error
-/// differs between `BufRead::lines` and the slice reader's
+/// Runs both readers and asserts the outcomes match: scene bits plus warnings
+/// on success, error values (via their Debug form) on failure. Io errors
+/// compare by kind and message, since the internal representation of the
+/// invalid-UTF-8 error differs between `BufRead::lines` and the slice reader's
 /// reconstruction.
 fn assert_equivalent_with_caps(bytes: &[u8], caps: Caps) {
-    // The reference reader has no internal NUL strip; pre-strip its
-    // input so both sides parse the same document.
+    // The reference reader has no internal NUL strip; pre-strip its input so
+    // both sides parse the same document.
     let expected = reference_read_obj(&mut Cursor::new(strip_trailing_nuls(bytes)), caps);
     let actual = read_obj_with_caps(&mut Cursor::new(bytes), caps);
     match (&expected, &actual) {
@@ -624,10 +602,10 @@ fn face_spelling_strategy() -> impl Strategy<Value = FaceSpelling> {
     ]
 }
 
-/// Renders directives into an OBJ document, tracking the running
-/// vertex count so face references usually land in range. A face
-/// emitted before any vertex still renders (out of range), because
-/// both readers must agree on that error too.
+/// Renders directives into an OBJ document, tracking the running vertex count
+/// so face references usually land in range. A face emitted before any vertex
+/// still renders (out of range), because both readers must agree on that error
+/// too.
 fn render_document(directives: &[Directive]) -> Vec<u8> {
     let mut text = String::new();
     let mut vertex_count = 0_usize;
@@ -655,10 +633,10 @@ fn render_document(directives: &[Directive]) -> Vec<u8> {
                 seed,
             } => {
                 if vertex_count == 0 {
-                    // Nothing to reference yet. A face here would fail
-                    // the whole document at its first line and leave
-                    // the rest of the directives unexercised; the
-                    // deterministic tests cover that error instead.
+                    // Nothing to reference yet. A face here would fail the
+                    // whole document at its first line and leave the rest of
+                    // the directives unexercised; the deterministic tests cover
+                    // that error instead.
                     continue;
                 }
                 text.push('f');
@@ -698,9 +676,9 @@ fn document_strategy() -> impl Strategy<Value = Vec<u8>> {
     proptest::collection::vec(directive_strategy(), 0..24).prop_map(|d| render_document(&d))
 }
 
-/// Document mutations. Semantics preservation is irrelevant here: the
-/// contract under test is that both readers agree on the SAME bytes,
-/// whatever those bytes are.
+/// Document mutations. Semantics preservation is irrelevant here: the contract
+/// under test is that both readers agree on the SAME bytes, whatever those
+/// bytes are.
 #[derive(Debug, Clone)]
 enum Mutation {
     Identity,
@@ -730,16 +708,15 @@ fn mutation_strategy() -> impl Strategy<Value = Mutation> {
         ((0_usize..1_000_000), any::<u8>())
             .prop_map(|(at, value)| Mutation::CorruptByte(at, value)),
         proptest::collection::vec(any::<u8>(), 0..20).prop_map(Mutation::AppendJunk),
-        // Whitespace-identity probes: vertical tab is the one ASCII
-        // char where `char::is_whitespace` and `u8::is_ascii_whitespace`
-        // disagree; a no-break space routes the document down the
-        // non-ASCII tokenizer path.
+        // Whitespace-identity probes: vertical tab is the only ASCII char where
+        // `char::is_whitespace` and `u8::is_ascii_whitespace` disagree; a
+        // no-break space routes the document down the non-ASCII tokenizer path.
         (0_usize..1_000_000).prop_map(Mutation::SpaceToVerticalTab),
         (0_usize..1_000_000).prop_map(Mutation::SpaceToNbsp),
     ]
 }
 
-/// Byte offset of the `seed`-th space character, wrapping around.
+/// Returns the byte offset of the `seed`-th space character, wrapping around.
 fn nth_space(doc: &[u8], seed: usize) -> Option<usize> {
     let spaces: Vec<usize> = (0..doc.len()).filter(|&i| doc[i] == b' ').collect();
     if spaces.is_empty() {
@@ -813,11 +790,11 @@ fn apply_mutation(mut doc: Vec<u8>, mutation: Mutation) -> Vec<u8> {
 
 // --- deterministic sweeps --------------------------------------------
 
-/// One document exercising every branch the readers share: header
-/// comments, a mid-file comment, objects with and without names,
-/// shared vertices across objects, a `w` coordinate, a quad, negative
-/// indices, composite face tokens, a degenerate face, the warned
-/// directives, and a spec directive the reader skips.
+/// A document exercising every branch the readers share: header comments, a
+/// mid-file comment, objects with and without names, shared vertices across
+/// objects, a `w` coordinate, a quad, negative indices, composite face tokens,
+/// a degenerate face, the warned directives, and a spec directive the reader
+/// skips.
 const MATRIX_DOC: &str = "\
 # exported by hand
 # second header line
@@ -848,9 +825,9 @@ fn load(doc: &[u8]) -> (Scene, Vec<LoadObjWarning>) {
     read_obj_with_caps(&mut Cursor::new(doc), Caps::DEFAULT).expect("document loads")
 }
 
-/// The sweeps below are only meaningful if the unmutated document
-/// loads as a multi-object scene with warnings: two readers agreeing
-/// on a first-line error would prove nothing.
+/// Pins that the unmutated document loads as a multi-object scene with
+/// warnings. The sweeps below need it: 2 readers agreeing on a first-line error
+/// would prove nothing.
 #[test]
 fn the_matrix_document_loads_as_three_objects_with_warnings() {
     let (scene, warnings) = load(MATRIX_DOC.as_bytes());
@@ -865,7 +842,7 @@ fn the_matrix_document_loads_as_three_objects_with_warnings() {
     assert_equivalent(MATRIX_DOC.as_bytes());
 }
 
-/// Same for the generated documents: the renderer must be able to
+/// Pins the same for the generated documents: the renderer must be able to
 /// produce loadable OBJ, not only inputs both readers reject.
 #[test]
 fn rendered_directives_produce_a_loadable_document() {
@@ -893,8 +870,8 @@ fn rendered_directives_produce_a_loadable_document() {
     assert_equivalent(&doc);
 }
 
-/// The projection has to be sensitive enough for the comparison to
-/// mean something: index order and signed zero must both show up.
+/// Pins that the projection is sensitive enough for the comparison to mean
+/// something: index order and signed zero must both show up.
 #[test]
 fn the_scene_projection_separates_documents_that_differ() {
     let base = "v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
@@ -962,8 +939,8 @@ fn matches_the_reference_under_whitespace_substitution() {
 
 #[test]
 fn matches_the_reference_under_small_caps() {
-    // Small caps turn the matrix document's own lines into cap
-    // errors, so both readers must agree on which line trips first.
+    // Small caps turn the matrix document's own lines into cap errors, so both
+    // readers must agree on which line trips first.
     for max_vertices in [0_usize, 1, 3, 5] {
         for max_face_tokens in [3_usize, 4, 8] {
             assert_equivalent_with_caps(
@@ -987,13 +964,13 @@ fn matches_the_reference_on_an_empty_document() {
 
 #[test]
 fn matches_the_reference_on_overflowing_homogeneous_quotients() {
-    // Individually finite tokens whose w division overflows f32:
-    // both sides must reject with the same error value.
+    // Individually finite tokens whose w division overflows f32: both sides
+    // must reject with the same error value.
     assert_equivalent(b"v 1e38 1.0 2.6 0.1\n");
     assert_equivalent(b"v -1e38 1.0 2.6 0.1\n");
     assert_equivalent(b"v 1.0 1.0 1.0 1e-40\n");
-    // Near-miss control: the same shape with a quotient inside f32
-    // range must load identically on both sides.
+    // Near-miss control: the same shape with a quotient inside f32 range must
+    // load identically on both sides.
     assert_equivalent(b"v 1e30 1.0 2.6 0.1\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
 }
 

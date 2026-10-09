@@ -2,33 +2,29 @@
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
  * SPDX-License-Identifier: Apache-2.0
  *
- * Property tests: write a generated mesh, read it back, assert it is
- * the same mesh modulo the format's reindexing/dedup behaviour. The
- * goal is to catch encoder/decoder drift that example-based tests
- * structurally can't (e.g. a quirky float that survives one format
- * but not another, or a triangle ordering that changes after a
- * refactor).
+ * Property tests: write a generated mesh, read it back, and check that it holds
+ * the same triangles, each with its vertex order kept, in any face order. They
+ * catch encoder and decoder drift that example-based tests cannot catch (for
+ * example a float that survives 1 format but not another, or a winding that
+ * changes after a refactor).
  *
  * Bounds:
- * - Vertex coordinates come from a small integer grid so they are
- *   exactly representable in f32 and survive `{:e}` formatting.
- * - Triangles always carry an explicit non-zero normal, so the
- *   readers' "zero-normal -> recompute" fallback is not exercised
- *   here (the malformed-input suite covers that).
- * - PROPTEST_CASES is capped at 32 because writing a Vec<u8>,
- *   parsing it back, and comparing meshes is heavier than a pure
- *   algebra property.
+ * - Vertex coordinates come from a small integer grid, so they are exactly
+ *   representable in f32 and survive `{:e}` formatting.
+ * - The proptest config runs 32 cases, because writing a `Vec<u8>`, parsing it
+ *   back and comparing meshes costs more than a pure algebra property.
  */
 
 use std::io::Cursor;
 
 use proptest::prelude::*;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
-use sc_mesh_fixtures::with_stored_normals_declared;
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
+use sc_mesh_fixtures::with_declared_facet_normals;
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_scene::Scene;
 
-const NORMAL: Normal = Normal::new([1.0, 0.0, 0.0]);
+// The bits of (1, 0, 0).
+const NORMAL: [u32; 3] = [0x3f80_0000, 0, 0];
 
 fn small_int_f32() -> impl Strategy<Value = f32> {
     (-10i32..=10i32).prop_map(|i| i as f32)
@@ -38,10 +34,9 @@ fn vertex_strategy() -> impl Strategy<Value = Vertex> {
     (small_int_f32(), small_int_f32(), small_int_f32()).prop_map(|(x, y, z)| Vertex::new([x, y, z]))
 }
 
-/// Returns a strategy of meshes with 3..=8 distinct vertices on a small integer
-/// grid and 1..=5 non-degenerate triangles referencing them. Triangles may
-/// share vertices but the 3 indices in any triangle are distinct
-/// (degenerate-vertex-index triangles are out of scope).
+/// Returns a strategy of meshes with 3..=8 vertices on a small integer grid and
+/// 1..=5 triangles that reference them. The 3 indices of a triangle are
+/// distinct, but its vertices can coincide or be collinear.
 fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
     proptest::collection::vec(vertex_strategy(), 3..=8)
         .prop_flat_map(|vertices| {
@@ -55,9 +50,7 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
         .prop_map(|(vertices, faces)| {
             let faces = faces
                 .into_iter()
-                .map(|(a, b, c)| {
-                    IndexedTriangle::from_raw_indices(NORMAL, [a as u32, b as u32, c as u32])
-                })
+                .map(|(a, b, c)| IndexedTriangle::from_raw_indices([a as u32, b as u32, c as u32]))
                 .collect();
             IndexedMesh::new(None, vertices, faces)
         })
@@ -66,7 +59,7 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
 /// Returns the multiset of triangles a mesh denotes, each triangle expanded to
 /// its 3 vertex coordinates. Order within each triangle is preserved (winding
 /// matters); order across triangles is sorted so the comparison is independent
-/// of how the writer/reader happens to lay out the face list.
+/// of how the writer and the reader lay out the face list.
 fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     let mut out: Vec<[[u32; 3]; 3]> = mesh
         .faces()
@@ -76,8 +69,8 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
             let v1 = mesh.vertices()[usize::from(face.vertices[1])];
             let v2 = mesh.vertices()[usize::from(face.vertices[2])];
             // Compare by exact f32 bit pattern: the on-grid values we generate
-            // are exact, and the writers/readers preserve them bit-for-bit
-            // (binary directly, ASCII via `{:e}` shortest round-trip).
+            // are exact, and the writers and readers preserve them bit for bit
+            // (binary directly, ASCII through `{:e}` shortest round-trip).
             [
                 v0.coords().map(f32::to_bits),
                 v1.coords().map(f32::to_bits),
@@ -153,14 +146,13 @@ proptest! {
     fn stlb_round_trip_preserves_normal(mesh in indexed_mesh_strategy()) {
         // Binary STL stores the normal as 3 f32s; a declared normal must come
         // back bit-for-bit.
+        let declared = vec![NORMAL; mesh.faces().len()];
         let mut buf: Vec<u8> = Vec::new();
-        write_stlb(&with_stored_normals_declared(mesh), &mut buf).unwrap();
+        write_stlb(&with_declared_facet_normals(mesh, declared.clone()), &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
         let (graph, _) = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&graph);
 
-        for face in recovered.faces() {
-            prop_assert_eq!(face.normal, NORMAL);
-        }
+        prop_assert_eq!(recovered.declared_facet_normals(), Some(&declared[..]));
     }
 }

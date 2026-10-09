@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Hierarchical [`Scene`] aggregate and its mutation / validation
-//! API. Arena-backed; per-mesh AABB and bake helpers live in the
-//! sibling [`sc_mesh_core::aabb`] / [`crate::bake`] modules.
+//! Hierarchical [`Scene`] aggregate and its mutation and validation API, over
+//! arenas. The per-mesh AABB helpers live in [`sc_mesh_core::aabb`], the bake
+//! helpers in [`crate::bake`].
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
@@ -19,27 +19,27 @@ use crate::node::{
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 
-/// Recover the [`NodeId`] for the slot at index `i` in the node
-/// arena. Slots are append-only and never reused, so the id at
-/// index `i` is always `NodeId(NonZeroU32::new(i + 1))`.
+/// Recovers the [`NodeId`] for the slot at index `i` in the node arena. Slots
+/// are append-only and never reused, so the id at index `i` is always
+/// `NodeId(NonZeroU32::new(i + 1))`.
 pub(crate) fn node_id_at_index(i: usize) -> NodeId {
     let raw = u32::try_from(i + 1).expect("node index overflow");
     NodeId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
 }
 
-/// Recover the [`MeshResourceId`] for the slot at index `i` in the
-/// resource arena. Slots are append-only and never reused, so the
-/// id at index `i` is always `MeshResourceId(NonZeroU32::new(i + 1))`.
+/// Recovers the [`MeshResourceId`] for the slot at index `i` in the resource
+/// arena. Slots are append-only and never reused, so the id at index `i` is
+/// always `MeshResourceId(NonZeroU32::new(i + 1))`.
 fn mesh_resource_id_at_index(i: usize) -> MeshResourceId {
     let raw = u32::try_from(i + 1).expect("mesh resource index overflow");
     MeshResourceId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
 }
 
-/// Hierarchical scene aggregate. Arena-based: nodes, mesh resources and
-/// subtree resources each live in a `Vec<Option<_>>` indexed by their
-/// `NonZeroU32`-backed identifier minus one. Identifiers are never
-/// reused, so handles held across mutations stay valid (or surface a
-/// dangling-id error rather than silently aliasing a different entity).
+/// Hierarchical scene aggregate. Arena-based: nodes, mesh resources and subtree
+/// resources each live in a `Vec<Option<_>>` indexed by their
+/// `NonZeroU32`-backed identifier minus 1. Identifiers are never reused, so
+/// handles held across mutations stay valid (or surface a dangling-id error
+/// instead of silently aliasing a different entity).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub(crate) meta: Option<SceneMetadata>,
@@ -60,8 +60,8 @@ impl Default for Scene {
 }
 
 /// Snapshot of a leaf taken by [`Scene::remove_leaf`]: everything
-/// [`Scene::install_leaf_at`] needs to re-install the leaf exactly
-/// as it was, metadata included.
+/// [`Scene::install_leaf_at`] needs to re-install the leaf exactly as it was,
+/// metadata included.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemovedLeaf {
     pub attachment: LeafAttachment,
@@ -97,16 +97,16 @@ impl Scene {
         &self.roots
     }
 
-    /// Number of slots in the node arena, including tombstones for
-    /// deleted nodes. Always `>=` the count of live nodes. Useful as
-    /// the size for parallel-`Vec` caches indexed by `NodeId::index()`.
+    /// Returns the number of slots in the node arena, the tombstones of deleted
+    /// nodes included. Always `>=` the count of live nodes. Useful as the size
+    /// for parallel-`Vec` caches indexed by `NodeId::index()`.
     pub fn nodes_len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Number of slots in the mesh-resource arena, including
-    /// tombstones for deleted resources. Useful as the size for
-    /// parallel-`Vec` caches indexed by `MeshResourceId::index()`.
+    /// Returns the number of slots in the mesh-resource arena, the tombstones
+    /// of deleted resources included. Useful as the size for parallel-`Vec`
+    /// caches indexed by `MeshResourceId::index()`.
     pub fn mesh_resources_len(&self) -> usize {
         self.mesh_resources.len()
     }
@@ -119,27 +119,26 @@ impl Scene {
         self.mesh_resources.get(id.index())?.as_deref()
     }
 
-    /// Borrow the `Arc<IndexedMesh>` itself for the addressed mesh
-    /// resource, not the inner mesh. Used by the copy / paste path
-    /// when it needs to dedupe by `Arc::as_ptr` identity or pipe the
-    /// `Arc` straight into a new scene without deep-cloning.
+    /// Borrows the `Arc<IndexedMesh>` itself for the addressed mesh resource,
+    /// not the inner mesh. Used by the copy and paste path when it needs to
+    /// dedupe by `Arc::as_ptr` identity or to pass the `Arc` straight into a
+    /// new scene without a deep clone.
     pub fn mesh_resource_arc(&self, id: MeshResourceId) -> Option<&Arc<IndexedMesh>> {
         self.mesh_resources.get(id.index())?.as_ref()
     }
 
-    /// Mutable borrow into the addressed mesh resource. `None` on a
-    /// dangling or tombstoned id. Uses [`Arc::make_mut`] semantics:
-    /// if the `Arc` is shared (refcount > 1, e.g. an inline leaf
-    /// also holds it), the call deep-clones the mesh into a fresh
-    /// `Arc` first, leaving every other holder pointing at the
-    /// original bytes.
+    /// Returns a mutable borrow into the addressed mesh resource. `None` on a
+    /// dangling or tombstoned id. Uses [`Arc::make_mut`] semantics: if the
+    /// `Arc` is shared (refcount > 1, for example when an inline leaf also
+    /// holds it), the call deep-clones the mesh into a fresh `Arc` first, and
+    /// every other holder keeps the original bytes.
     pub fn mesh_resource_mut(&mut self, id: MeshResourceId) -> Option<&mut IndexedMesh> {
         let slot = self.mesh_resources.get_mut(id.index())?.as_mut()?;
         Some(Arc::make_mut(slot))
     }
 
-    /// Iterate every live mesh resource as `(id, &mesh)` pairs.
-    /// Tombstoned slots are skipped.
+    /// Iterates every live mesh resource as `(id, &mesh)` pairs. Tombstoned
+    /// slots are skipped.
     pub fn mesh_resources_iter(&self) -> impl Iterator<Item = (MeshResourceId, &IndexedMesh)> + '_ {
         self.mesh_resources
             .iter()
@@ -150,9 +149,10 @@ impl Scene {
             })
     }
 
-    /// Mutable variant of [`Self::mesh_resources_iter`]. Each yielded
-    /// `&mut IndexedMesh` is obtained through [`Arc::make_mut`], so a
-    /// shared mesh is forked into a unique `Arc` on first mutation.
+    /// Iterates every live mesh resource as [`Self::mesh_resources_iter`] does,
+    /// with mutable borrows. Each yielded `&mut IndexedMesh` comes through
+    /// [`Arc::make_mut`], so a shared mesh is forked into a unique `Arc` on
+    /// first mutation.
     pub fn mesh_resources_iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (MeshResourceId, &mut IndexedMesh)> + '_ {
@@ -165,11 +165,10 @@ impl Scene {
             })
     }
 
-    /// Search the mesh-resource arena for a slot whose `Arc` shares
-    /// pointer identity with `arc`. Returns the resource id of the
-    /// match, or `None` if no live slot holds the same `Arc`. Used
-    /// by the cross-scene paste path to dedupe a mesh that's already
-    /// registered in the target scene.
+    /// Searches the mesh-resource arena for a slot whose `Arc` shares pointer
+    /// identity with `arc`. Returns the resource id of the match, or `None` if
+    /// no live slot holds the same `Arc`. Used by the cross-scene paste path to
+    /// dedupe a mesh that is already registered in the target scene.
     pub fn find_mesh_resource_by_arc(&self, arc: &Arc<IndexedMesh>) -> Option<MeshResourceId> {
         let target = Arc::as_ptr(arc);
         self.mesh_resources
@@ -186,14 +185,11 @@ impl Scene {
             })
     }
 
-    /// Count of reachable leaves under `roots()`, traversed in
-    /// pre-order. Mirrors what callers see if they enumerate via
-    /// repeated `leaf_id_at_index(0..)` calls but does it in a
-    /// single O(n) walk.
+    /// Counts the leaves reachable from `roots()`, in a single pre-order walk.
     ///
-    /// `Reference` nodes are not descended: leaves inside referenced
-    /// subtrees do not count. Contrast with [`Scene::merge_meshes`]
-    /// and [`Scene::aabb`], which expand references.
+    /// `Reference` nodes are not descended: leaves inside referenced subtrees
+    /// do not count. Compare with [`Scene::merge_meshes`] and [`Scene::aabb`],
+    /// which expand references.
     pub fn reachable_leaf_count(&self) -> usize {
         let mut count = 0usize;
         self.for_each_reachable_leaf::<SceneError, _>(
@@ -208,12 +204,10 @@ impl Scene {
         count
     }
 
-    /// The first reachable leaf in `roots()` pre-order traversal, or
-    /// `None` when the graph has no leaves. Format writers that walk
-    /// the graph and have already verified `reachable_leaf_count() == 1`
-    /// use this to grab the only leaf without re-walking via an index.
+    /// Returns the first leaf in the pre-order of `roots()`, or `None` when the
+    /// graph has no leaves.
     ///
-    /// `Reference` nodes are not descended, matching
+    /// `Reference` nodes are not descended, as in
     /// [`Scene::reachable_leaf_count`].
     pub fn first_leaf_id(&self) -> Option<NodeId> {
         let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
@@ -234,13 +228,12 @@ impl Scene {
         None
     }
 
-    /// The id of the first live `Reference` node in arena slot order,
-    /// or `None` when the scene holds none. Scans the whole node
-    /// arena, so references detached from `roots()` count too: the
-    /// question answered is "does this scene use sharing at all",
-    /// not "is a reference reachable". Intended for callers that do
-    /// not support subtree references yet and refuse them at their own
-    /// boundary; the returned id lets their error name the node.
+    /// Returns the id of the first live `Reference` node in arena slot order,
+    /// or `None` when the scene holds none. Scans the whole node arena, so
+    /// references detached from `roots()` count too: the question answered is
+    /// "does this scene use sharing at all", not "is a reference reachable".
+    /// For callers that do not support subtree references and refuse them at
+    /// their own boundary; the returned id lets their error name the node.
     pub fn first_reference_node(&self) -> Option<NodeId> {
         self.nodes.iter().enumerate().find_map(|(i, slot)| {
             slot.as_ref().and_then(|node| match &node.kind {
@@ -250,18 +243,16 @@ impl Scene {
         })
     }
 
-    /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
+    /// Returns a mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
     /// `None` for any other node kind (groups, CSG, references,
-    /// mesh-resource-backed leaves) or a dangling id. Focused
-    /// accessor: callers can repair the mesh in place without being
-    /// handed `&mut Node` (which would let them change `kind` and
-    /// break parent / child invariants).
+    /// mesh-resource-backed leaves) or a dangling id. Callers can repair the
+    /// mesh in place without a `&mut Node`, which would let them change `kind`
+    /// and break the parent and child invariants.
     ///
-    /// Uses [`Arc::make_mut`] semantics: if the inline `Arc` is
-    /// shared with another holder (the mesh-resource arena, another
-    /// inline leaf), the first mutation forks a fresh copy for this
-    /// leaf so the other holders keep observing the pre-mutation
-    /// bytes.
+    /// Uses [`Arc::make_mut`] semantics: if the inline `Arc` is shared with
+    /// another holder (the mesh-resource arena, another inline leaf), the first
+    /// mutation forks a fresh copy for this leaf, so the other holders keep the
+    /// bytes from before the mutation.
     pub fn inline_mesh_mut(&mut self, id: NodeId) -> Option<&mut IndexedMesh> {
         let node = self.nodes.get_mut(id.index())?.as_mut()?;
         match &mut node.kind {
@@ -270,11 +261,11 @@ impl Scene {
         }
     }
 
-    /// Borrow the `Arc<IndexedMesh>` that backs the leaf at `id`,
-    /// regardless of whether the leaf stores its mesh inline or by
-    /// resource id. `None` for any non-leaf node, a dangling id, or a
-    /// resource-backed leaf whose resource slot was tombstoned (which
-    /// would be a graph invariant violation, not a routine case).
+    /// Borrows the `Arc<IndexedMesh>` that backs the leaf at `id`, whether the
+    /// leaf stores its mesh inline or by resource id. `None` for any non-leaf
+    /// node, a dangling id, or a resource-backed leaf whose resource slot was
+    /// tombstoned (which would be a broken graph invariant, not a routine
+    /// case).
     pub fn leaf_mesh_arc(&self, id: NodeId) -> Option<&Arc<IndexedMesh>> {
         let node = self.nodes.get(id.index())?.as_ref()?;
         match &node.kind {
@@ -288,12 +279,11 @@ impl Scene {
         self.subtree_resources.get(id.index())?.as_ref().copied()
     }
 
-    /// Whether any subtree resource is currently registered.
-    /// Complements [`Scene::first_reference_node`] for callers whose
-    /// phase contract excludes the whole sharing vocabulary (subtree resources and references), not
-    /// just `Reference` nodes: a registered subtree without a
-    /// reference to it still puts leaves outside every
-    /// root-based walk.
+    /// Returns whether any subtree resource is registered. Complements
+    /// [`Scene::first_reference_node`] for callers that refuse all sharing
+    /// (subtree resources and references), not only `Reference` nodes: a
+    /// registered subtree without a reference to it still puts leaves outside
+    /// every root-based walk.
     pub fn has_subtree_resources(&self) -> bool {
         self.subtree_resources.iter().any(Option::is_some)
     }
@@ -336,63 +326,61 @@ impl Scene {
         id
     }
 
-    /// Allocate a fresh [`NodeId`] without installing any node. The
-    /// returned id's arena slot is `None` and the id is not registered
-    /// as a scene root.
+    /// Allocates a fresh [`NodeId`] without installing any node. The arena slot
+    /// of the returned id is `None` and the id is not registered as a scene
+    /// root.
     ///
-    /// Use this when the id needs to exist before the node it will
-    /// reference does, so a caller can record the id and later
-    /// install at the same slot.
+    /// Use this when the id needs to exist before the node it will reference
+    /// does, so a caller can record the id and later install at the same slot.
     ///
-    /// The slot is permanently consumed: dropping the id without
-    /// later installing a node at it leaks one arena slot. Slots are
-    /// tombstoned but never reused, so this is benign at the scale of
-    /// user-driven editing.
+    /// The slot is permanently consumed: dropping the id without later
+    /// installing a node at it leaks 1 arena slot. Slots are tombstoned but
+    /// never reused, so this is benign at the scale of user-driven editing.
     pub fn allocate_unbound_node_id(&mut self) -> NodeId {
         self.allocate_node_slot()
     }
 
-    /// Register `mesh` as a shared resource and return its handle.
-    /// The mesh is wrapped in an `Arc` internally; callers that
-    /// already hold an `Arc<IndexedMesh>` and want to share storage
-    /// (typically the paste path) should use
-    /// [`Self::add_mesh_resource_arc`] instead.
+    /// Registers `mesh` as a shared resource and returns its handle. The mesh
+    /// is wrapped in an `Arc` internally; callers that already hold an
+    /// `Arc<IndexedMesh>` and want to share storage (typically the paste path)
+    /// should use [`Self::add_mesh_resource_arc`] instead.
     pub fn add_mesh_resource(&mut self, mesh: IndexedMesh) -> MeshResourceId {
         self.add_mesh_resource_arc(Arc::new(mesh))
     }
 
-    /// `Arc`-handoff variant of [`Self::add_mesh_resource`]. The arena stores
-    /// the exact `Arc` the caller passed in (refcount bumped, no mesh-content
-    /// clone), so a later [`Self::find_mesh_resource_by_arc`] with the same
-    /// `Arc` returns the id allocated here.
+    /// Registers `arc` as a shared resource, as [`Self::add_mesh_resource`]
+    /// does, without cloning the mesh. The arena stores the exact `Arc` the
+    /// caller passed in (refcount bumped), so a later
+    /// [`Self::find_mesh_resource_by_arc`] with the same `Arc` returns the id
+    /// allocated here.
     pub fn add_mesh_resource_arc(&mut self, arc: Arc<IndexedMesh>) -> MeshResourceId {
         let id = self.allocate_mesh_resource_slot();
         self.mesh_resources[id.index()] = Some(arc);
         id
     }
 
-    /// Allocate a fresh [`MeshResourceId`] without populating its slot. The
-    /// returned id's arena slot is `None`.
+    /// Allocates a fresh [`MeshResourceId`] without populating its slot. The
+    /// arena slot of the returned id is `None`.
     ///
     /// Use this when the id needs to exist before the resource it will
     /// reference does, so a caller can record the id and later install at the
-    /// same slot. Mirrors [`Self::allocate_unbound_node_id`] for
-    /// mesh-resource ids.
+    /// same slot. Mirrors [`Self::allocate_unbound_node_id`] for mesh-resource
+    /// ids.
     ///
     /// The slot is permanently consumed: dropping the id without later
-    /// installing a resource at it leaks one arena slot. Slots are tombstoned
-    /// but never reused, so this is benign at the scale of user-driven editing.
+    /// installing a resource at it leaks 1 arena slot. Slots are tombstoned but
+    /// never reused, so this is benign at the scale of user-driven editing.
     pub fn allocate_unbound_mesh_resource_id(&mut self) -> MeshResourceId {
         self.allocate_mesh_resource_slot()
     }
 
-    /// Install a mesh resource at a previously-allocated, currently-empty slot.
-    /// Pairs with [`Self::remove_mesh_resource`]: a remove-then-install round
-    /// trip keeps the same [`MeshResourceId`].
+    /// Installs a mesh resource at a previously-allocated, currently-empty
+    /// slot. Pairs with [`Self::remove_mesh_resource`]: a remove-then-install
+    /// round trip keeps the same [`MeshResourceId`].
     ///
     /// Errors:
-    /// - [`SceneError::DanglingMeshResource`] if `rid` is past the arena's
-    ///   high-water mark.
+    /// - [`SceneError::DanglingMeshResource`] if `rid` is past the high-water
+    ///   mark of the arena.
     /// - [`SceneError::MeshResourceSlotOccupied`] if a resource already lives
     ///   at that id.
     ///
@@ -412,14 +400,14 @@ impl Scene {
         Ok(())
     }
 
-    /// Tombstone the mesh resource at `rid`, returning the `Arc` that lived
-    /// there so the paired [`Self::install_mesh_resource_at`] can re-install
+    /// Tombstones the mesh resource at `rid` and returns the `Arc` that lived
+    /// there, so the paired [`Self::install_mesh_resource_at`] can re-install
     /// the same content.
     ///
     /// Errors:
     /// - [`SceneError::DanglingMeshResource`] if no live resource lives at
     ///   `rid`.
-    /// - [`SceneError::MeshResourceInUse`] if at least one live
+    /// - [`SceneError::MeshResourceInUse`] if at least 1 live
     ///   `Leaf(MeshResource(rid))` still references the resource. Callers must
     ///   remove every referencing leaf first.
     ///
@@ -440,20 +428,19 @@ impl Scene {
         Ok(arc)
     }
 
-    /// Swap the mesh stored at the live resource slot `rid` for
-    /// `mesh`, but only while that slot still holds `expected`.
+    /// Swaps the mesh stored at the live resource slot `rid` for `mesh`, but
+    /// only while that slot still holds `expected`.
     ///
-    /// The caller states what it believes is there, so a swap
-    /// computed against a mesh the scene has since moved past is
-    /// refused instead of overwriting the newer one. `expected` is
-    /// matched by pointer identity, the same identity
-    /// [`Self::find_mesh_resource_by_arc`] resolves.
+    /// The caller states what it believes is there, so a swap computed against
+    /// a mesh the scene has since moved past is refused instead of overwriting
+    /// the newer one. `expected` is matched by pointer identity, the same
+    /// identity [`Self::find_mesh_resource_by_arc`] resolves.
     ///
     /// Errors:
-    /// - [`SceneError::DanglingMeshResource`] if no live resource
-    ///   lives at `rid`.
-    /// - [`SceneError::MeshResourceMismatch`] if the slot holds an
-    ///   `Arc` other than `expected`.
+    /// - [`SceneError::DanglingMeshResource`] if no live resource lives at
+    ///   `rid`.
+    /// - [`SceneError::MeshResourceMismatch`] if the slot holds an `Arc` other
+    ///   than `expected`.
     ///
     /// On error the scene is unchanged.
     pub fn replace_mesh_resource(
@@ -476,21 +463,20 @@ impl Scene {
         Ok(())
     }
 
-    /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `id` for
-    /// `mesh`, but only while that leaf still holds `expected`.
+    /// Swaps the inline mesh of the `Leaf(Mesh(_))` node at `id` for `mesh`,
+    /// but only while that leaf still holds `expected`.
     ///
-    /// The caller states what it believes is there, so a swap
-    /// computed against a mesh the scene has since moved past is
-    /// refused instead of overwriting the newer one. `expected` is
-    /// matched by pointer identity.
+    /// The caller states what it believes is there, so a swap computed against
+    /// a mesh the scene has since moved past is refused instead of overwriting
+    /// the newer one. `expected` is matched by pointer identity.
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
     /// - [`SceneError::NotALeaf`] for Group, Csg, and Reference nodes.
-    /// - [`SceneError::NotAnInlineMeshLeaf`] for a leaf that stores
-    ///   its mesh by resource id.
-    /// - [`SceneError::InlineMeshMismatch`] if the leaf holds an
-    ///   `Arc` other than `expected`.
+    /// - [`SceneError::NotAnInlineMeshLeaf`] for a leaf that stores its mesh by
+    ///   resource id.
+    /// - [`SceneError::InlineMeshMismatch`] if the leaf holds an `Arc` other
+    ///   than `expected`.
     ///
     /// On error the scene is unchanged.
     pub fn replace_inline_leaf_mesh(
@@ -529,7 +515,7 @@ impl Scene {
     /// Use it before removing the leaf at `exclude`:
     /// - False means the removal drops the last live reference, and the caller
     ///   should pair the leaf removal with a mesh-resource removal.
-    /// - True means at least one sibling still holds the resource, so it has to
+    /// - True means at least 1 sibling still holds the resource, so it has to
     ///   stay.
     ///
     /// A dangling `exclude` is harmless: the check still answers correctly for
@@ -722,11 +708,11 @@ impl Scene {
         if self.is_subtree_resource_root(child) {
             return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: child });
         }
-        // The expansion graph is acyclic before this call, so the only
-        // cycle the new edge can close is one completing a path that
-        // already runs from `child` back to `parent`. Deciding it from
-        // `child` costs the reachable subgraph rather than the whole
-        // arena, and answering before linking leaves nothing to undo.
+        // The expansion graph is acyclic before this call, so the only cycle
+        // the new edge can close is one completing a path that already runs
+        // from `child` back to `parent`. Deciding it from `child` costs the
+        // reachable subgraph rather than the whole arena, and answering before
+        // linking leaves nothing to undo.
         if self.expansion_reaches(child, parent) {
             return Err(SceneError::ExpansionCycle { node_id: parent });
         }
@@ -755,11 +741,11 @@ impl Scene {
         Ok(())
     }
 
-    /// Mint the attachment that [`Self::install_leaf_at`] needs to put
-    /// the leaf at `id` back where it sits now.
+    /// Builds the attachment that [`Self::install_leaf_at`] needs to put the
+    /// leaf at `id` back where it is now.
     ///
-    /// `None` for a dangling id, for a non-leaf node, and for a leaf
-    /// that neither has a parent nor appears in the roots list.
+    /// `None` for a dangling id, for a non-leaf node, and for a leaf that
+    /// neither has a parent nor appears in the roots list.
     pub fn attachment_of(&self, id: NodeId) -> Option<LeafAttachment> {
         let node = self.node(id)?;
         if !matches!(node.kind, NodeKind::Leaf(_)) {
@@ -782,23 +768,22 @@ impl Scene {
         }
     }
 
-    /// Tombstone any leaf, returning the [`LeafAttachment`],
-    /// [`LeafPayload`], and [`Transform3D`] needed to re-install it
-    /// identically via [`Self::install_leaf_at`].
+    /// Tombstones any leaf and returns the [`LeafAttachment`], [`LeafPayload`]
+    /// and [`Transform3D`] needed to re-install it identically via
+    /// [`Self::install_leaf_at`].
     ///
     /// Works on:
-    /// - inline-mesh and mesh-resource leaves alike, returning the
-    ///   payload as-is;
-    /// - root and parented leaves alike, with the attachment
-    ///   recording which case applied and the position the leaf held
-    ///   in the roots list or in the parent's children list.
+    /// - inline-mesh and mesh-resource leaves alike, returning the payload
+    ///   as-is;
+    /// - root and parented leaves alike, with the attachment recording which
+    ///   case applied and the position the leaf held in the roots list or in
+    ///   the parent's children list.
     ///
     /// Errors:
-    /// - [`SceneError::DanglingNodeId`] if no live node lives at
-    ///   `id`.
+    /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
     /// - [`SceneError::NotALeaf`] if the node is not a leaf.
-    /// - [`SceneError::NotARoot`] if the leaf has no parent yet is
-    ///   not in `roots()`, signalling a corrupted graph state.
+    /// - [`SceneError::NotARoot`] if the leaf has no parent yet is not in
+    ///   `roots()`, signalling a corrupted graph state.
     ///
     /// On error the scene is unchanged.
     pub fn remove_leaf(&mut self, id: NodeId) -> Result<RemovedLeaf, SceneError> {
@@ -849,26 +834,25 @@ impl Scene {
         })
     }
 
-    /// Re-install a leaf at a previously-allocated `id`, with the
-    /// given payload, attachment, and transform. The inverse of
+    /// Re-installs a leaf at a previously-allocated `id`, with the given
+    /// payload, attachment, and transform. The inverse of
     /// [`Self::remove_leaf`]: re-attaches the leaf at the position the
-    /// attachment records, in the roots list or under the same parent,
-    /// so root and sibling order come back as they were.
+    /// attachment records, in the roots list or under the same parent, so root
+    /// and sibling order come back as they were.
     ///
     /// `id` must come from [`Self::allocate_unbound_node_id`].
     ///
     /// Errors:
-    /// - [`SceneError::DanglingNodeId`] if `id` is out of range, or
-    ///   if the attachment is `Parent` and the parent node is gone.
-    /// - [`SceneError::NodeSlotOccupied`] if the slot already holds
-    ///   a node.
-    /// - [`SceneError::DanglingMeshResource`] if the payload
-    ///   references a missing mesh resource.
-    /// - [`SceneError::NotABranch`] if the attachment is `Parent`
-    ///   and the parent is a leaf or reference.
-    /// - [`SceneError::AttachmentPositionOutOfRange`] if the
-    ///   attachment's position is past the end of the roots list, or
-    ///   of the parent's children list.
+    /// - [`SceneError::DanglingNodeId`] if `id` is out of range, or if the
+    ///   attachment is `Parent` and the parent node is gone.
+    /// - [`SceneError::NodeSlotOccupied`] if the slot already holds a node.
+    /// - [`SceneError::DanglingMeshResource`] if the payload references a
+    ///   missing mesh resource.
+    /// - [`SceneError::NotABranch`] if the attachment is `Parent` and the
+    ///   parent is a leaf or reference.
+    /// - [`SceneError::AttachmentPositionOutOfRange`] if the attachment's
+    ///   position is past the end of the roots list, or of the parent's
+    ///   children list.
     ///
     /// On error the scene is unchanged.
     pub fn install_leaf_at(
@@ -945,9 +929,9 @@ impl Scene {
 }
 
 impl From<IndexedMesh> for Scene {
-    /// Single-leaf graph carrying `mesh` under identity transform.
-    /// Used by format readers whose on-disk model is a single mesh
-    /// (STL) and by test fixtures that need a one-object scene.
+    /// Builds a single-leaf graph that holds `mesh` under the identity
+    /// transform. Used by format readers whose on-disk model is a single mesh
+    /// (STL) and by test fixtures that need a single-object scene.
     fn from(mesh: IndexedMesh) -> Self {
         let mut g = Scene::new();
         let leaf = g
@@ -966,7 +950,7 @@ impl From<IndexedMesh> for Scene {
 #[cfg(test)]
 mod sharing_query_tests {
     use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use std::sync::Arc;
 
     fn unit_triangle() -> IndexedMesh {
@@ -977,10 +961,7 @@ mod sharing_query_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -1032,8 +1013,8 @@ mod sharing_query_tests {
         let reference = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         g.add_child(root, reference).unwrap();
         g.add_root(root).unwrap();
-        // Two group nodes occupy earlier arena slots; the scan must
-        // filter by kind, not return the first live node.
+        // 2 group nodes occupy earlier arena slots; the scan must filter by
+        // kind, not return the first live node.
         assert_eq!(g.first_reference_node(), Some(reference));
     }
 
@@ -1070,7 +1051,7 @@ mod sharing_query_tests {
 #[cfg(test)]
 mod scene_construction_tests {
     use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
 
     fn unit_triangle() -> IndexedMesh {
@@ -1081,10 +1062,7 @@ mod scene_construction_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -1135,8 +1113,8 @@ mod scene_construction_tests {
 
     #[test]
     fn allocate_unbound_node_id_shares_counter_with_installers() {
-        // Mixing the unbound allocator with installer paths must not
-        // collide: each call bumps the same monotonic counter.
+        // Mixing the unbound allocator with installer paths must not collide:
+        // each call bumps the same monotonic counter.
         let mut g = Scene::new();
         let a = g.add_group(None, Transform3D::Identity);
         let b = g.allocate_unbound_node_id();
@@ -1388,7 +1366,8 @@ mod scene_construction_tests {
         // Try to put the Reference inside its own subtree.
         let result = g.add_child(res_root, reference);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
-        // Refused before linking: reference still parent-less, res_root childless.
+        // Refused before linking: reference still parent-less, res_root
+        // childless.
         assert_eq!(g.parent_of(reference), None);
         assert!(matches!(
             &g.node(res_root).unwrap().kind,
@@ -1398,8 +1377,8 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_indirect_reference_cycle_rejected() {
-        // S1 root contains a reference to S2; S2 root would then need
-        // a reference to S1 to close the loop.
+        // S1 root contains a reference to S2; S2 root would then need a
+        // reference to S1 to close the loop.
         let mut g = Scene::new();
         let s1_root = g.add_group(None, Transform3D::Identity);
         let s2_root = g.add_group(None, Transform3D::Identity);
@@ -1414,8 +1393,8 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_children_only_cycle_rejected() {
-        // Floating subtree a -> b (a is never registered as a scene
-        // root); closing b -> a would form a children-only cycle.
+        // Floating subtree a -> b (a is never registered as a scene root);
+        // closing b -> a would form a children-only cycle.
         let mut g = Scene::new();
         let a = g.add_group(None, Transform3D::Identity);
         let b = g.add_group(None, Transform3D::Identity);
@@ -1446,8 +1425,8 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_three_level_reference_cycle_rejected() {
-        // S1 -> S2 -> S3; closing S3 -> S1 needs the walk to follow two
-        // resource hops before it meets the parent again.
+        // S1 -> S2 -> S3; closing S3 -> S1 needs the walk to follow 2 resource
+        // hops before it meets the parent again.
         let mut g = Scene::new();
         let s1_root = g.add_group(None, Transform3D::Identity);
         let s2_root = g.add_group(None, Transform3D::Identity);
@@ -1469,9 +1448,9 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_cycle_through_a_nested_reference_rejected() {
-        // The attached node is a plain Group; the path back to the
-        // parent runs through a Reference buried inside it, so a walk
-        // that only followed children edges would miss the cycle.
+        // The attached node is a plain Group; the path back to the parent runs
+        // through a Reference buried inside it, so a walk that only followed
+        // children edges would miss the cycle.
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
@@ -1487,8 +1466,8 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_accepts_a_reference_that_does_not_reach_the_parent() {
-        // Sibling subtree: the attached Reference expands into S2,
-        // which never reaches the group it is being attached under.
+        // Sibling subtree: the attached Reference expands into S2, which never
+        // reaches the group it is being attached under.
         let mut g = Scene::new();
         let s2_root = g.add_group(None, Transform3D::Identity);
         let s2 = g.register_subtree_resource(s2_root).unwrap();
@@ -1504,9 +1483,9 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_accepts_a_second_reference_to_the_same_subtree() {
-        // Diamond: two references to one subtree under a common
-        // parent. Shared expansion targets are legal, so the walk must
-        // treat an already-seen node as visited, not as a cycle.
+        // Diamond: 2 references to 1 subtree under a common parent. Shared
+        // expansion targets are legal, so the walk must treat an already-seen
+        // node as visited, not as a cycle.
         let mut g = Scene::new();
         let shared_root = g.add_group(None, Transform3D::Identity);
         let shared = g.register_subtree_resource(shared_root).unwrap();
@@ -1528,9 +1507,9 @@ mod scene_construction_tests {
 
     #[test]
     fn add_child_accepts_a_deep_chain_under_a_referenced_subtree() {
-        // The parent sits inside a registered subtree and the attached
-        // chain is several levels deep, but nothing in it points back
-        // at the resource, so the attachment is legal.
+        // The parent sits inside a registered subtree and the attached chain is
+        // several levels deep, but nothing in it points back at the resource,
+        // so the attachment is legal.
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         g.register_subtree_resource(res_root).unwrap();
@@ -1749,7 +1728,7 @@ mod scene_construction_tests {
                 .unwrap();
             g.add_child(root, leaf).unwrap();
         }
-        // Groups are not leaves; only the three leaves count.
+        // Groups are not leaves; only the 3 leaves count.
         assert_eq!(g.reachable_leaf_count(), 3);
     }
 
@@ -2168,8 +2147,8 @@ mod scene_construction_tests {
             }
         );
         assert!(matches!(payload, LeafPayload::Mesh(_)));
-        // Detached from parent: children list is empty, parent slot
-        // is empty for the removed node.
+        // Detached from parent: children list is empty, parent slot is empty
+        // for the removed node.
         let root_node = g.node(root).unwrap();
         assert_eq!(root_node.kind.children(), &[] as &[NodeId]);
         assert!(g.parent_of(leaf).is_none());
@@ -2177,9 +2156,8 @@ mod scene_construction_tests {
 
     #[test]
     fn remove_leaf_preserves_sibling_position_for_round_trip() {
-        // Three siblings under a Group root: removing the middle
-        // one reports position=1 and the remaining children list
-        // is [a, c].
+        // 3 siblings under a Group root: removing the middle one reports
+        // position=1 and the remaining children list is [a, c].
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
@@ -2359,9 +2337,8 @@ mod scene_construction_tests {
 
     #[test]
     fn install_leaf_at_restores_a_head_root_to_its_place_among_the_roots() {
-        // Scene equality is the order-sensitive oracle here: `roots`
-        // is a `Vec<NodeId>`, so a permuted roots list is a scene
-        // inequality.
+        // Scene equality is the order-sensitive oracle here: `roots` is a
+        // `Vec<NodeId>`, so a permuted roots list is a scene inequality.
         let mut g = Scene::new();
         let a = root_inline_leaf(&mut g);
         let _b = root_inline_leaf(&mut g);
@@ -2434,8 +2411,8 @@ mod scene_construction_tests {
 
     #[test]
     fn install_leaf_at_refuses_a_root_position_past_the_roots_count() {
-        // A recorded root position goes stale when another root is
-        // removed before the attachment is redeemed.
+        // A recorded root position goes stale when another root is removed
+        // before the attachment is redeemed.
         let mut g = Scene::new();
         let _a = root_inline_leaf(&mut g);
         let b = root_inline_leaf(&mut g);
@@ -2604,7 +2581,7 @@ mod scene_construction_tests {
 #[cfg(test)]
 mod from_indexed_mesh_tests {
     use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {
@@ -2614,10 +2591,7 @@ mod from_indexed_mesh_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 

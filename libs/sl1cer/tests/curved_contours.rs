@@ -3,20 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! End-to-end tests of [`slice_leaf`] against curved analytical
-//! meshes: a UV sphere and a Z-axis cylinder. The polygon area at
-//! each layer is compared to the analytic cross-section area within
-//! a tessellation-dependent tolerance.
+//! End-to-end tests of [`slice_leaf`] against curved analytical meshes: a UV
+//! sphere and a Z-axis cylinder. The polygon area at each layer is compared to
+//! the analytic cross-section area within a tessellation-dependent tolerance.
 //!
-//! Cap-Z layers (Z exactly on a cap's plane) are not exercised here
-//! because the per-triangle intersection treats coplanar triangles
-//! as empty. Lifting that policy belongs to a follow-on plan.
+//! Cap-Z layers (Z exactly on the plane of a cap) are not exercised here,
+//! because the slicer drops coplanar triangles.
 
 use std::f64::consts::PI;
 use std::sync::Arc;
 
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeId};
 use sc_sl1cer::profile::{
@@ -24,32 +22,29 @@ use sc_sl1cer::profile::{
 };
 use sc_sl1cer::slice_leaf;
 
-/// Longitude segments per ring on the sphere and cylinder. The
-/// circle-vs-inscribed-polygon area error scales as
-/// (2 pi / N)^2 / 6 = pi^2 * 2 / (3 N^2) for a regular N-gon, so
-/// N = 64 keeps the longitude contribution to the area error below
-/// ~0.16% on both meshes.
+/// Longitude segments per ring on the sphere and cylinder. For a regular N-gon,
+/// the circle-vs-inscribed-polygon area error scales as (2pi/N)^2/6 =
+/// 2pi^2/(3N^2), so N = 64 keeps the longitude contribution to the area error
+/// below ~0.16% on both meshes.
 const N_LON: u32 = 64;
 
-/// Latitude bands on the UV sphere. Picked odd so no vertex ring
-/// lands at the equator Z plane: an even count would put a vertex
-/// ring exactly at z = 1 mm (with the equator at z = 1), and the
-/// plane-vertex-on-plane case currently feeds back as `Empty` from
-/// the triangle intersector.
+/// Latitude bands on the UV sphere. Picked odd so that no vertex ring lands on
+/// the equator plane (z = 1 mm): with an even count, a vertex ring would lie on
+/// that plane, and the slice would run through on-plane vertices instead of
+/// crossing edges.
 const N_LAT: u32 = 33;
 
-/// Relative area tolerance for the per-layer cross-section check.
-/// The longitude contribution is ~0.16% (see [`N_LON`]); the
-/// latitude contribution near the sphere's equator is bounded by
-/// the band width (pi / N_LAT)^2 / 8 ~= 0.11%. Real per-band slice
-/// area depends on where in the band the slicing Z falls; 2% leaves
-/// comfortable headroom for f32 vertex storage and accumulated FP
-/// noise.
+/// Relative area tolerance for the per-layer cross-section check. The longitude
+/// contribution is ~0.16% (see [`N_LON`]); the latitude contribution near the
+/// equator of the sphere is bounded by the band width, (pi/N_LAT)^2/8, about
+/// 0.11%. The real per-band slice area depends on where in the band the slicing
+/// Z falls; 2% leaves comfortable headroom for f32 vertex storage and
+/// accumulated FP noise.
 const AREA_REL_TOLERANCE: f64 = 0.02;
 
-/// Generate a UV sphere of `radius` centred at `(cx, cy, cz)` with
-/// `n_lat` latitude bands (poles included) and `n_lon` longitude
-/// segments. Outward-facing winding, manifold by construction.
+/// Generates a UV sphere of `radius` centred at `(cx, cy, cz)` with `n_lat`
+/// latitude bands (poles included) and `n_lon` longitude segments.
+/// Outward-facing winding, manifold by construction.
 fn uv_sphere(cx: f64, cy: f64, cz: f64, radius: f64, n_lat: u32, n_lon: u32) -> IndexedMesh {
     assert!(n_lat >= 2 && n_lon >= 3);
     let mut vertices = Vec::with_capacity(((n_lat - 1) * n_lon + 2) as usize);
@@ -73,9 +68,7 @@ fn uv_sphere(cx: f64, cy: f64, cz: f64, radius: f64, n_lat: u32, n_lon: u32) -> 
     let south_pole = vertices.len() as u32;
     vertices.push(Vertex::new([cx as f32, cy as f32, (cz - radius) as f32]));
 
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f =
-        |abc: [u32; 3]| -> IndexedTriangle { IndexedTriangle::from_raw_indices(placeholder, abc) };
+    let f = IndexedTriangle::from_raw_indices;
     let mut faces = Vec::new();
 
     // Top cap: north pole (0) to first intermediate ring.
@@ -115,9 +108,9 @@ fn uv_sphere(cx: f64, cy: f64, cz: f64, radius: f64, n_lat: u32, n_lon: u32) -> 
     }
 }
 
-/// Generate a closed Z-axis cylinder of `radius` and `height` with
-/// `n_lon` longitude segments. Base at `z = 0`, top at `z = height`.
-/// Outward-facing winding, manifold by construction.
+/// Generates a closed Z-axis cylinder of `radius` and `height` with `n_lon`
+/// longitude segments. Base at `z = 0`, top at `z = height`. Outward-facing
+/// winding, manifold by construction.
 fn cylinder_z(radius: f64, height: f64, n_lon: u32) -> IndexedMesh {
     assert!(n_lon >= 3);
     let mut vertices = Vec::with_capacity((2 * n_lon + 2) as usize);
@@ -144,9 +137,7 @@ fn cylinder_z(radius: f64, height: f64, n_lon: u32) -> IndexedMesh {
     let top_centre = 2 * n_lon + 1;
     vertices.push(Vertex::new([0.0, 0.0, height as f32]));
 
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f =
-        |abc: [u32; 3]| -> IndexedTriangle { IndexedTriangle::from_raw_indices(placeholder, abc) };
+    let f = IndexedTriangle::from_raw_indices;
     let mut faces = Vec::new();
 
     // Side wall.
@@ -209,9 +200,9 @@ fn make_profile(layer_schedule: LayerSchedule) -> SliceProfile {
 
 #[test]
 fn sphere_equator_layer_area_approximates_pi() {
-    // Unit sphere centred at (0, 0, 1), so z spans [0, 2] with the
-    // equator at z = 1. Single-slab schedule h0 = 2.0 puts the only
-    // centred Z at h0 / 2 = 1.0.
+    // Unit sphere centred at (0, 0, 1), so z spans [0, 2] and the equator lies
+    // at z = 1. The single-slab schedule h0 = 2.0 puts the only centred Z at
+    // h0/2 = 1.0.
     let mesh = uv_sphere(0.0, 0.0, 1.0, 1.0, N_LAT, N_LON);
     let (scene, leaf_id) = scene_with_mesh_root(mesh);
     let profile = make_profile(LayerSchedule::uniform(0.5, 2.0, 1).unwrap());
@@ -238,9 +229,9 @@ fn sphere_equator_layer_area_approximates_pi() {
 
 #[test]
 fn cylinder_every_interior_layer_area_approximates_pi_r_squared() {
-    // r = 1 mm, h = 2 mm cylinder along Z, base at z = 0, top at
-    // z = 2. Schedule h0 = h = 0.5, n = 4 yields centred Z values
-    // [0.25, 0.75, 1.25, 1.75], all strictly inside (0, 2).
+    // Cylinder along Z: r = 1 mm, h = 2 mm, base at z = 0, top at z = 2. The
+    // schedule h0 = h = 0.5, n = 4 gives the centred Z values [0.25, 0.75,
+    // 1.25, 1.75], all strictly inside (0, 2).
     let r = 1.0;
     let h = 2.0;
     let mesh = cylinder_z(r, h, N_LON);

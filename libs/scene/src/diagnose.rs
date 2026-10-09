@@ -3,19 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scene-wide diagnosis driver: runs the per-mesh diagnosis policy
-//! over every stored mesh (the [`Scene::mesh_targets`] walk) and
-//! reports one finding set per target. Purely read-side: the shared
-//! borrow guarantees no stored `Arc` is ever forked.
+//! Scene-wide diagnosis driver: runs the per-mesh diagnosis policy over every
+//! stored mesh (the [`Scene::mesh_targets`] walk) and reports 1 finding set per
+//! target. Read-only: the shared borrow forks no stored `Arc`.
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
 use sc_mesh_core::indexed_mesh::MeshDiagnosis;
 
 impl Scene {
-    /// Diagnose every stored mesh and report one
-    /// [`MeshDiagnosis`] per target, in [`Scene::mesh_targets`]
-    /// order.
+    /// Diagnoses every stored mesh and reports 1 [`MeshDiagnosis`] per target,
+    /// in [`Scene::mesh_targets`] order.
     pub fn diagnose_meshes(&self) -> Vec<(MeshTarget, MeshDiagnosis)> {
         self.mesh_targets()
             .into_iter()
@@ -33,7 +31,6 @@ mod scene_diagnose_tests {
 
     use super::*;
     use crate::node::LeafPayload;
-    use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
     use sc_mesh_core::indexed_mesh::{FaceDiagnosis, IndexedMesh};
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
@@ -47,15 +44,7 @@ mod scene_diagnose_tests {
         ];
         let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
             .into_iter()
-            .map(|indices: [u32; 3]| {
-                let tri = [
-                    vertices[indices[0] as usize],
-                    vertices[indices[1] as usize],
-                    vertices[indices[2] as usize],
-                ];
-                let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-                IndexedTriangle::from_raw_indices(normal, indices)
-            })
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -64,7 +53,8 @@ mod scene_diagnose_tests {
         }
     }
 
-    /// 2 consistently wound triangles sharing one edge: a hole.
+    /// Returns 2 consistently wound triangles that share 1 edge, so the mesh is
+    /// open.
     fn open_strip() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
@@ -74,15 +64,7 @@ mod scene_diagnose_tests {
         ];
         let faces = [[0, 1, 2], [2, 1, 3]]
             .into_iter()
-            .map(|indices: [u32; 3]| {
-                let tri = [
-                    vertices[indices[0] as usize],
-                    vertices[indices[1] as usize],
-                    vertices[indices[2] as usize],
-                ];
-                let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-                IndexedTriangle::from_raw_indices(normal, indices)
-            })
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -101,8 +83,8 @@ mod scene_diagnose_tests {
         }
     }
 
-    /// A clean shared resource, a defective reachable inline leaf,
-    /// and a defective inline leaf inside a registered subtree.
+    /// Builds a scene with a clean shared resource, a defective reachable
+    /// inline leaf and a defective inline leaf inside a registered subtree.
     fn combined_scene() -> Scene {
         let mut graph = Scene::new();
         let root = graph.add_group(None, Transform3D::Identity);

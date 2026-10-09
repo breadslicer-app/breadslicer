@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_print_glue::slice_input_fingerprint;
 use sc_print_primitives::{MaterialId, PrinterId};
@@ -36,10 +36,9 @@ pub(crate) fn cube_mesh() -> IndexedMesh {
         v(1.0, 1.0, 2.0),
         v(-1.0, 1.0, 2.0),
     ];
-    let n = Normal::new([0.0, 0.0, 1.0]);
     let faces = vec![
-        IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-        IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
+        IndexedTriangle::from_raw_indices([0, 1, 2]),
+        IndexedTriangle::from_raw_indices([0, 2, 3]),
     ];
     IndexedMesh {
         meta: None,
@@ -58,10 +57,11 @@ pub(crate) fn three_mf() -> ProjectFileType {
 ///
 /// The saved scene has 1 mesh leaf as its root, as the plain-mesh loader builds
 /// it, with a placement written onto the leaf: a non-identity affine transform
-/// (a fit scale plus recentre). It is sliced on the bundled default profiles
-/// and saved with real slice geometry. Reopening from 3MF wraps the leaf under
-/// a fresh identity group, so the saved and the reopened scene place the same
-/// geometry under different nesting.
+/// (a fit scale plus recentre). Its slice token comes from the schedule that
+/// the bundled default profiles resolve, and the file stores hand-built
+/// contours: an empty first layer and a square on every other layer. Reopening
+/// from 3MF wraps the leaf under a fresh identity group, so the saved and the
+/// reopened scene place the same geometry under different nesting.
 pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
     let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
     let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");

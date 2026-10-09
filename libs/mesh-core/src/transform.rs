@@ -8,12 +8,13 @@ use std::fmt;
 use crate::geometry::{SINGULARITY_THRESHOLD, gt_strict};
 use crate::primitives::{Normal, Vector3D, Vertex};
 
-/// Failure modes of `AffineTransform3D` / `Transform3D` operations that can
+/// Failure modes of `AffineTransform3D` and `Transform3D` operations that can
 /// encounter degenerate inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransformError {
-    /// The linear part has a determinant whose magnitude is below the
-    /// singularity threshold, so it has no inverse and no inverse-transpose.
+    /// The linear part has a determinant whose magnitude is at or below the
+    /// singularity threshold, or is NaN, so it has no inverse and no
+    /// inverse-transpose.
     SingularLinear,
     /// A rotation axis was given with magnitude at or below the singularity
     /// threshold, so it cannot be normalised.
@@ -35,7 +36,7 @@ impl fmt::Display for TransformError {
 
 impl std::error::Error for TransformError {}
 
-/// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
+/// 3×4 affine transform: a 3×3 linear part plus a translation vector.
 ///
 /// Stored as `f64` to keep precision under repeated composition. Values are
 /// downcast to `f32` only when applying the transform to mesh data.
@@ -114,8 +115,8 @@ impl AffineTransform3D {
     }
 
     /// Builds a rotation about an arbitrary axis by `angle` radians,
-    /// right-handed (Rodrigues' formula). The axis is normalised internally;
-    /// passing a zero (or near-zero) axis returns [`TransformError::ZeroAxis`].
+    /// right-handed. The axis does not need unit length; a zero (or near-zero)
+    /// axis returns [`TransformError::ZeroAxis`].
     pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Result<Self, TransformError> {
         let norm_sq = axis[0].mul_add(axis[0], axis[1].mul_add(axis[1], axis[2] * axis[2]));
         if !gt_strict(norm_sq, SINGULARITY_THRESHOLD) {
@@ -294,8 +295,8 @@ impl AffineTransform3D {
             }
         }
 
-        // Translation: A · t_b + t_a (because (A·B)·v + A·t_b + t_a = A·(B·v +
-        // t_b) + t_a, i.e. apply `other` first, then `self`).
+        // Translation: A·t_b + t_a. Since (A·B)·v+A·t_b+t_a = A·(B·v+t_b)+t_a,
+        // `other` applies first, then `self`.
         let tb = &other.translation;
         let ta = &self.translation;
         let translation = [
@@ -310,15 +311,26 @@ impl AffineTransform3D {
         }
     }
 
-    /// Returns the inverse transform `T⁻¹` such that
-    /// `self.compose(&self.inverse()?).apply_to_vertex(v) == v` and
-    /// `self.inverse()?.compose(self).apply_to_vertex(v) == v`.
+    /// Reports whether the transform has an inverse: the magnitude of its
+    /// determinant is above the singularity threshold. A NaN entry makes it not
+    /// invertible.
+    pub fn is_invertible(&self) -> bool {
+        Self::invertible_determinant(self.determinant())
+    }
+
+    fn invertible_determinant(det: f64) -> bool {
+        gt_strict(det.abs(), SINGULARITY_THRESHOLD)
+    }
+
+    /// Returns the inverse transform `T⁻¹`: `self.compose(&self.inverse()?)`
+    /// and `self.inverse()?.compose(self)` map every point to itself, up to
+    /// rounding.
     ///
-    /// Returns [`TransformError::SingularLinear`] if the linear part is
-    /// singular (determinant magnitude below [`SINGULARITY_THRESHOLD`]).
+    /// Returns [`TransformError::SingularLinear`] when the transform is not
+    /// [invertible](Self::is_invertible).
     pub fn inverse(&self) -> Result<Self, TransformError> {
         let det = self.determinant();
-        if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
+        if !Self::invertible_determinant(det) {
             return Err(TransformError::SingularLinear);
         }
         let inv_det = 1.0 / det;
@@ -452,8 +464,9 @@ mod affine_transform_3d_tests {
     #[test]
     fn from_uniform_scale_negative_mirrors() {
         // A negative uniform scale is a valid affine transform that mirrors
-        // every axis. We don't reject it here; callers (e.g. the future
-        // determinant check) handle handedness.
+        // every axis. The constructor accepts it; callers check the sign of
+        // `determinant` to handle handedness, as the scene bake does to reverse
+        // the winding.
         let t = AffineTransform3D::from_uniform_scale(-2.0);
         assert_eq!(
             t.linear,
@@ -553,9 +566,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_pi_around_diagonal_swaps_axes() {
-        // Rotation by π about the (1,1,1)/√3 axis cycles (x,y,z) ↦ in a known
-        // pattern. Specifically, the matrix is (2/3)·J - I where J is the
-        // all-ones matrix, giving diagonal entries -1/3 and off-diagonal 2/3.
+        // The matrix of a rotation by π about the axis (1, 1, 1)/√3 is
+        // (2/3)·J-I, where J is the all-ones matrix: diagonal entries -1/3,
+        // off-diagonal entries 2/3.
         let t = AffineTransform3D::from_axis_angle([1.0, 1.0, 1.0], PI).unwrap();
         let third = 1.0 / 3.0;
         assert_linear_approx(
@@ -577,9 +590,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_zero_angle_is_exact_identity() {
-        // sin(0) and cos(0) are both representable exactly in IEEE 754, so
-        // one_minus_c = 0 and every Rodrigues term collapses; the matrix is
-        // bit-identical to the identity regardless of axis.
+        // sin(0) = 0 and cos(0) = 1 exactly, so one_minus_c = 0 and every
+        // Rodrigues term collapses; the matrix compares equal (`==`) to the
+        // identity for any axis.
         let identity = AffineTransform3D::identity();
         for axis in [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [1.0, 1.0, 1.0]] {
             let t = AffineTransform3D::from_axis_angle(axis, 0.0).unwrap();
@@ -600,10 +613,9 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn from_axis_angle_two_pi_is_near_identity() {
-        // 2π is not exactly representable in f64; sin(2π) ≈ -2.4e-16, 1 -
-        // cos(2π) ≈ 1.7e-16. The resulting linear part must be identity to
-        // within that residual, with no axis-dependent drift introduced by the
-        // cofactor-style cross terms.
+        // 2π is not exactly representable in f64: sin(2π) ≈ -2.4e-16 and
+        // cos(2π) rounds to 1.0. The linear part must equal the identity within
+        // that residual.
         let t = AffineTransform3D::from_axis_angle([0.0, 0.0, 1.0], 2.0 * PI).unwrap();
         let identity = AffineTransform3D::identity();
         assert_linear_approx(&t.linear, &identity.linear, 1.0e-14);
@@ -683,9 +695,7 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn apply_to_vertex_far_from_origin_keeps_precision() {
-        // A short edge anchored far from the origin: in pure-f32 arithmetic the
-        // rotated direction would lose several bits of precision, but f64
-        // internals preserve it.
+        // A unit-length edge anchored 1e6 from the origin.
         let base = 1.0e6_f32;
         let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
         let near = Vertex::new([base, 0.0, 0.0]);
@@ -703,8 +713,8 @@ mod affine_transform_3d_tests {
         // f64 product 1e30 * 1e15 = 1e45 saturates to f32::INFINITY on
         // downcast. The transformed mesh must remain constructible; the
         // contract is that the next `validate_vertices()` call reports the
-        // affected vertex / axis. Downstream callers rely on this catch instead
-        // of an inline `apply_to_vertex` error path.
+        // affected vertex and axis. Downstream callers rely on this catch
+        // instead of an inline `apply_to_vertex` error path.
         let t = AffineTransform3D::from_uniform_scale(1.0e30);
         let v = t.apply_to_vertex(Vertex::new([1.0e15, 0.0, 0.0]));
         assert!(v[0].is_infinite());
@@ -1066,11 +1076,11 @@ mod affine_transform_3d_tests {
 
     #[test]
     fn compose_chain_of_twenty_subrotations_is_near_full_rotation() {
-        // 20 rotations of π/10 about Z compose to 2π, i.e. identity. The check
-        // stresses matrix-multiply drift across the chain: each compose
-        // introduces ~3·eps per entry; 20 of them should stay within ~6e-15 of
-        // identity. The 1e-12 tolerance leaves generous headroom for platform
-        // variation.
+        // 20 rotations of π/10 about Z compose to 2π, that is, the identity.
+        // The check stresses matrix-multiply drift across the chain: each
+        // compose introduces ~3·eps per entry; 20 of them should stay within
+        // ~6e-15 of identity. The 1e-12 tolerance leaves generous headroom for
+        // platform variation.
         let step = AffineTransform3D::from_rotation_z(PI / 10.0);
         let chain = (0..20).fold(AffineTransform3D::identity(), |acc, _| acc.compose(&step));
         assert_transform_approx(&chain, &AffineTransform3D::identity(), 1e-12);
@@ -1164,6 +1174,51 @@ mod affine_transform_3d_tests {
     }
 
     #[test]
+    fn is_invertible_is_false_at_the_singularity_threshold() {
+        // det = f64::EPSILON, the threshold itself: the check is strict.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[f64::EPSILON, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(!t.is_invertible());
+    }
+
+    #[test]
+    fn is_invertible_is_true_at_twice_the_singularity_threshold() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [
+                [2.0 * f64::EPSILON, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(t.is_invertible());
+    }
+
+    #[test]
+    fn is_invertible_checks_the_magnitude_of_a_negative_determinant() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [
+                [-2.0 * f64::EPSILON, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(t.is_invertible());
+    }
+
+    #[test]
+    fn is_invertible_is_false_for_a_nan_entry() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[f64::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(!t.is_invertible());
+    }
+
+    #[test]
     fn struct_is_copy() {
         // Compile-time check: assigning a value-typed transform should not
         // require an explicit `.clone()`.
@@ -1177,9 +1232,10 @@ mod affine_transform_3d_tests {
 /// application entirely for the (very common) case where an object has not been
 /// moved since it was loaded.
 ///
-/// Semantics: parent-relative transform of a graph node, i.e. the composition
-/// of an ancestor chain's `Transform3D`s yields the node's world transform. For
-/// a top-level node, the parent-relative transform equals the world transform.
+/// Semantics: parent-relative transform of a graph node, that is, the
+/// composition of an ancestor chain's `Transform3D`s yields the node's world
+/// transform. For a top-level node, the parent-relative transform equals the
+/// world transform.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Transform3D {
     #[default]
@@ -1189,7 +1245,7 @@ pub enum Transform3D {
 }
 
 impl Transform3D {
-    /// Applies the transform to a point. Identity short-circuits.
+    /// Applies the transform to a point.
     pub fn apply_to_vertex(&self, v: Vertex) -> Vertex {
         match self {
             Self::Identity => v,
@@ -1229,8 +1285,8 @@ impl Transform3D {
         }
     }
 
-    /// Returns the determinant of the linear part. Identity returns `1.0`
-    /// exactly without going through the cofactor expansion.
+    /// Returns the determinant of the linear part; exactly `1.0` for
+    /// `Identity`.
     pub fn determinant(&self) -> f64 {
         match self {
             Self::Identity => 1.0,
@@ -1389,8 +1445,8 @@ mod transform_3d_tests {
         let a = Transform3D::Affine(translation_affine());
         let inv = a.inverse().unwrap();
         let composed = a.compose(&inv);
-        // The composition equals the affine identity, but the variant is
-        // `Affine`, not `Identity`: `compose` doesn't fold an `Affine` `Affine`
+        // The composition equals the affine identity, but its variant is
+        // `Affine`, not `Identity`: `compose` does not fold 2 `Affine` operands
         // back to `Identity`. Check the action on a point.
         let v = Vertex::new([5.0, 7.0, -1.0]);
         let round_trip = composed.apply_to_vertex(v);

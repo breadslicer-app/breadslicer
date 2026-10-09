@@ -36,8 +36,7 @@ use sc_geom_transport_inprocess::{
     AlgorithmId, Diagnostic, FieldSource, JobError, JobHandle, JobProgress, JobRecipe,
     ResolutionRecord, Severity, Staged,
 };
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vector3D, Vertex};
+use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, MeshMetadata, Vector3D, Vertex};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 use sha2::{Digest, Sha256};
 use support_gen_family_dispatch::{
@@ -554,14 +553,14 @@ pub(crate) fn hex_prism(
     let mut faces = Vec::with_capacity(SIDES * 2 + (SIDES - 2) * 2);
     for k in 0..SIDES {
         let k2 = (k + 1) % SIDES;
-        push_face(&mut faces, &vertices, k, SIDES + k, SIDES + k2);
-        push_face(&mut faces, &vertices, k, SIDES + k2, k2);
+        push_face(&mut faces, k, SIDES + k, SIDES + k2);
+        push_face(&mut faces, k, SIDES + k2, k2);
     }
     for k in 1..SIDES - 1 {
-        push_face(&mut faces, &vertices, 0, k, k + 1);
+        push_face(&mut faces, 0, k, k + 1);
     }
     for k in 1..SIDES - 1 {
-        push_face(&mut faces, &vertices, SIDES, SIDES + k + 1, SIDES + k);
+        push_face(&mut faces, SIDES, SIDES + k + 1, SIDES + k);
     }
 
     Some(IndexedMesh::new(
@@ -575,11 +574,8 @@ pub(crate) fn hex_prism(
     ))
 }
 
-fn push_face(faces: &mut Vec<IndexedTriangle>, vertices: &[Vertex], a: usize, b: usize, c: usize) {
-    let normal = compute_normal_from_triangle_vertices(&[vertices[a], vertices[b], vertices[c]])
-        .unwrap_or(Normal::new([0.0, 0.0, 1.0]));
-    faces.push(IndexedTriangle::from_raw_indices(
-        normal,
-        [a as u32, b as u32, c as u32],
-    ));
+fn push_face(faces: &mut Vec<IndexedTriangle>, a: usize, b: usize, c: usize) {
+    faces.push(IndexedTriangle::from_raw_indices([
+        a as u32, b as u32, c as u32,
+    ]));
 }

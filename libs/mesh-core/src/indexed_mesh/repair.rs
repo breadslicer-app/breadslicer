@@ -85,18 +85,16 @@ impl std::error::Error for RepairRefusal {
 /// Everything a [`IndexedMesh::repair`] run did, and did not do, to a mesh.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshRepairReport {
-    /// Fixes actually applied, in pass order. Can be non-empty even when
-    /// `refusal` is set: a pass-level refusal keeps the fixes earlier passes
-    /// applied.
+    /// Fixes applied, in pass order. Can be non-empty even when `refusal` is
+    /// set: a pass-level refusal keeps the fixes earlier passes applied.
     pub fixes: Vec<MeshFix>,
     /// Why the run stopped early, if it did. `None` means every enabled pass
-    /// ran to completion; it does NOT mean the mesh is problem-free (problems
+    /// ran to completion; it does not mean the mesh is problem-free (problems
     /// whose pass is disabled, and problems no pass addresses, such as holes,
     /// remain untouched).
     pub refusal: Option<RepairRefusal>,
-    /// Whether the mesh is edge-manifold AFTER the passes ran. Purely
-    /// combinatorial; it says nothing about vertex validity or normal
-    /// correctness.
+    /// Whether the mesh is edge-manifold after the passes ran. Purely
+    /// combinatorial; it says nothing about vertex validity.
     pub edge_manifold_after: bool,
 }
 
@@ -198,7 +196,7 @@ impl IndexedMesh {
         let mut validated = match self.validated_faces_mut() {
             Ok(witness) => witness,
             Err(face_errors) => {
-                // Refusals are decided BEFORE any mutation: with the
+                // Refusals are decided before any mutation: with the
                 // zero-length-edge pass disabled every face error is
                 // unaddressable; with it enabled, any residue that is not a
                 // zero-length edge refuses the run while the mesh is still

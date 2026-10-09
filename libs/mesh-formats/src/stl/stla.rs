@@ -21,8 +21,7 @@ use std::io::{BufRead, BufReader, Read, Seek};
 use std::str::Lines;
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
+use sc_mesh_core::{MeshMetadata, Triangle, Vertex};
 use sc_scene::Scene;
 
 use crate::error::LoadStlError;
@@ -353,7 +352,6 @@ where
             parse_finite_f32(y, "facet normal component")?,
             parse_finite_f32(z, "facet normal component")?,
         ];
-        let mut normal = Normal::new(declared);
 
         expect_keywords(lines, tokenize, &["outer", "loop"], "outer loop")?;
 
@@ -365,20 +363,9 @@ where
         expect_keywords(lines, tokenize, &["endloop"], "endloop")?;
         expect_keywords(lines, tokenize, &["endfacet"], "endfacet")?;
 
-        // We interpret a zero-length normal vector as a hint to compute it at
-        // load time. If the triangle is truly degenerate the recomputation
-        // can't produce a meaningful direction; leave the zero normal in place
-        // so `validate_face_areas` flags it as `ZeroAreaFace` rather than the
-        // parser bailing on the whole file.
-        if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
-            && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
-        {
-            normal = recomputed;
-        }
-
         soup.push(Facet {
             declared_normal: declared.map(f32::to_bits),
-            triangle: Triangle::new(normal, vertices),
+            triangle: Triangle::new(vertices),
         });
     }
 }
@@ -512,8 +499,8 @@ fn lowercased_tokens(line: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod test_ascii_stl_reader {
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
-    use sc_mesh_fixtures::with_stored_normals_declared;
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+    use sc_mesh_fixtures::with_declared_facet_normals;
     use sc_scene::Scene;
 
     use super::{metadata_from_text, probe, read_stla_slice};
@@ -612,7 +599,7 @@ endsolid";
 
     /// Returns the mesh of `STL_1`, its declared normal included.
     fn expected_mesh() -> IndexedMesh {
-        with_stored_normals_declared(IndexedMesh {
+        let mesh = IndexedMesh {
             meta: Some(MeshMetadata {
                 name: Some("foobar".into()),
                 ..Default::default()
@@ -622,11 +609,9 @@ endsolid";
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([-1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
-        })
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+        };
+        with_declared_facet_normals(mesh, vec![[0xbf80_0000, 0, 0]])
     }
 
     #[test]

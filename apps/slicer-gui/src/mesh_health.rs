@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Mesh-health status captured at load time and the initial workspace
-//! section derived from it. A scene whose meshes are all closed and
-//! edge-manifold is safe to edit and slice, so it opens in Transform;
-//! anything with detected problems (or not yet checked) opens in
-//! Prepare, the home of the future mesh-repair tooling.
+//! Mesh-health status captured at load time and the initial workspace section
+//! derived from it. A scene whose meshes are all closed and edge-manifold is
+//! safe to edit and slice, so it opens in Transform; anything with detected
+//! problems (or not yet checked) opens in Prepare, the section that holds the
+//! mesh-repair action.
 
 use sc_scene::Scene;
 
@@ -21,13 +21,13 @@ pub(crate) enum MeshHealth {
     Unknown,
     /// Every leaf is closed and edge-manifold.
     ProblemFree,
-    /// At least one leaf's mesh is not closed and edge-manifold.
+    /// At least 1 leaf's mesh is not closed and edge-manifold.
     HasProblems,
 }
 
-/// Classifies a scene by validating every mesh (faces + edge-manifold). A
-/// scene with no problematic leaves is `ProblemFree`; one or more
-/// defective leaves make it `HasProblems`. An empty scene has no
+/// Classifies a scene by validating every mesh (face validation and the
+/// edge-manifold check). A scene with no problematic leaves is `ProblemFree`; 1
+/// or more defective leaves make it `HasProblems`. An empty scene has no
 /// problematic leaves and so reports `ProblemFree`.
 pub(crate) fn scene_mesh_health(scene: &Scene) -> MeshHealth {
     if scene.non_edge_manifold_leaves().is_empty() {
@@ -37,9 +37,9 @@ pub(crate) fn scene_mesh_health(scene: &Scene) -> MeshHealth {
     }
 }
 
-/// The workspace section a freshly loaded scene should open in, given
-/// its mesh health. Only a confirmed problem-free scene opens straight
-/// into Transform; problems or an unknown status land in Prepare.
+/// Returns the workspace section a freshly loaded scene should open in, given
+/// its mesh health. Only a confirmed problem-free scene opens straight into
+/// Transform; problems or an unknown status land in Prepare.
 pub(crate) fn initial_section(health: MeshHealth) -> WorkspaceSection {
     match health {
         MeshHealth::ProblemFree => WorkspaceSection::Transform,
@@ -52,7 +52,7 @@ mod mesh_health_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, NodeId};
 
@@ -76,7 +76,7 @@ mod mesh_health_tests {
         graph.add_child(parent, leaf).unwrap();
     }
 
-    /// A closed, consistently wound tetrahedron: a valid manifold.
+    /// Returns a closed, consistently wound tetrahedron: a valid manifold.
     fn tetrahedron_mesh() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([1.0, 1.0, 1.0]),
@@ -86,7 +86,7 @@ mod mesh_health_tests {
         ];
         let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
             .into_iter()
-            .map(|indices| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), indices))
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -95,7 +95,7 @@ mod mesh_health_tests {
         }
     }
 
-    /// A lone triangle: every edge is a boundary edge, not a manifold.
+    /// Returns a lone triangle: every edge is a boundary edge, not a manifold.
     fn open_triangle_mesh() -> IndexedMesh {
         IndexedMesh {
             meta: None,
@@ -104,10 +104,7 @@ mod mesh_health_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 

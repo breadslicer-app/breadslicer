@@ -18,9 +18,9 @@
 //! - `target_world_xy`: the cursor's projection onto the plate's floor, or the
 //!   viewport-centre fallback when the cursor sits outside the viewport.
 //! - `floor_z`: the height of the plate's floor.
-//! - `cascade_count`: number of consecutive pastes since the last copy. Spaces
-//!   stacked copies apart so they don't sit on top of each other when the user
-//!   spams `Ctrl+V`.
+//! - `cascade_count`: number of consecutive pastes since the last copy. It
+//!   spaces stacked copies apart so that they do not sit on top of each other
+//!   when the user presses `Ctrl+V` repeatedly.
 //! - `obstacles`: world-space AABBs of the leaves of the target scene. Empty
 //!   AABBs are skipped; everything else is tested for 3-axis overlap against
 //!   the prospective fragment world AABB.
@@ -37,10 +37,10 @@ use sc_mesh_spatial::SceneSpatial;
 /// the cascade visible without scattering copies across the build platform.
 const CASCADE_STEP_MM: f64 = 5.0;
 
-/// Lower bound on the ring-search radius, in millimetres. The actual per-step
-/// radius scales with the fragment's XY extent so a single hop clears the
+/// Lower bound on the ring-search radius, in millimetres. The per-step radius
+/// is the larger XY extent of the fragment, so a hop along X or Y clears the
 /// fragment's own footprint; this floor keeps the ring from shrinking to a
-/// point for a degenerate fragment with no XY extent.
+/// point for a fragment with no XY extent.
 const MIN_RING_RADIUS_MM: f64 = 5.0;
 
 /// Radii used by the ring search, in multiples of the per-step `ring_step`. 3
@@ -56,7 +56,7 @@ const RING_ANGLE_COUNT: usize = 8;
 ///
 /// Geometry, in order:
 /// 1. Cascade-shift the target by `cascade_count * CASCADE_STEP_MM` in both X
-///    and Y, so consecutive pastes don't pile up.
+///    and Y, so consecutive pastes do not pile up.
 /// 2. Center the fragment's XY-AABB under the shifted target.
 /// 3. Drop the fragment's floor to `floor_z`, the floor of the build plate.
 /// 4. Test the resulting world-AABB for overlap against `obstacles`. No
@@ -67,9 +67,8 @@ const RING_ANGLE_COUNT: usize = 8;
 ///    accepted when the budget is exhausted: it is rare in normal use, and
 ///    failing the paste would be worse.
 ///
-/// Empty obstacles (e.g. an empty-mesh leaf or the `Aabb::empty()` sentinel
-/// from an unprimed cache) are ignored: they cannot overlap anything by
-/// definition.
+/// Empty obstacles, such as `Aabb::empty()`, are ignored: they cannot overlap
+/// anything.
 pub(crate) fn paste_translation_for_fragment(
     fragment_aabb: &Aabb,
     target_world_xy: [f64; 2],
@@ -176,7 +175,7 @@ mod placement_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_mesh_spatial::SceneSpatial;
     use sc_scene::Scene;
@@ -228,9 +227,10 @@ mod placement_tests {
 
     #[test]
     fn a_fragment_on_its_floor_gets_a_positive_zero_z_translation() {
-        // The slice fingerprint hashes the bits of this translation, and a
-        // later drag that moves nothing turns -0.0 into +0.0 without an edit,
-        // so a project saved after such a drag reopened without its slices.
+        // The slice fingerprint hashes the bits of this translation. If it were
+        // -0.0, a later drag that moves nothing would turn it into +0.0 without
+        // an edit, and a project saved after that drag would reopen without its
+        // slices.
         let frag = unit_fragment();
         let initial = paste_translation_for_fragment(&frag, [0.0, 0.0], 0.0, 0, &[]);
         let obstacle_at_initial = aabb([-1.0, -1.0, 0.0], [1.0, 1.0, 2.0]);
@@ -311,9 +311,10 @@ mod placement_tests {
     }
 
     fn unit_cube_mesh() -> Arc<IndexedMesh> {
-        // 8-vertex cube spanning [-0.5, 0.5] on each axis. The obstacle helper
-        // relies on local_aabb being Some, which requires at least 1 vertex; a
-        // single triangle would do, but a cube makes the assertions readable.
+        // 8 vertices at the corners of a cube that spans [-0.5, 0.5] on each
+        // axis, and 1 face. The obstacle helper needs `transformed_aabb` to
+        // return Some, which needs at least 1 vertex; the AABB comes from all 8
+        // vertices, so the assertions can use the corners of the cube.
         Arc::new(IndexedMesh::new(
             None,
             vec![
@@ -326,10 +327,7 @@ mod placement_tests {
                 Vertex::new([-0.5, 0.5, 0.5]),
                 Vertex::new([0.5, 0.5, 0.5]),
             ],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         ))
     }
 
@@ -395,14 +393,14 @@ mod placement_tests {
 
     #[test]
     fn obstacle_blocking_first_ring_radius_shifts_to_second() {
-        // 1 large obstacle blocks every angle at ring 1 (radius 5), and ring 2
-        // (radius 10) is clear. The function returns the first candidate at
-        // ring 2, angle 0 (= initial + 10 on +x).
+        // 1 large obstacle blocks every angle at ring 1 (radius 5), and the
+        // angle-0 candidate of ring 2 (radius 10) is clear. The function
+        // returns that candidate: initial + 10 on +x.
         let frag = unit_fragment();
-        // The obstacle spans the ring-1 circle around the origin in XY: the
-        // radius is 5 mm and the fragment reaches 1 mm further on each side, so
-        // the obstacle must reach past 6 mm to keep the ring-1 candidates
-        // overlapping. Ring 2 stays clear.
+        // The obstacle covers every ring-1 candidate in XY: the radius is 5 mm
+        // and the fragment reaches 1 mm further on each side, so each candidate
+        // stays within 6 mm of the origin, inside the 7 mm half-width of the
+        // blocker.
         let ring_blocker = aabb([-7.0, -7.0, 0.0], [7.0, 7.0, 2.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0.0, 0, &[ring_blocker]);
         // Ring 2 radius = 2 * 5 = 10. Candidate at angle 0 = (10, 0, 0).

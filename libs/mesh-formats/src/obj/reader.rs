@@ -7,10 +7,9 @@ use std::io::{Read, Seek};
 use std::sync::Arc;
 
 use float_cmp::approx_eq;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::node::LeafPayload;
 use sc_scene::{NodeId, Scene, SceneMetadata};
 
@@ -98,7 +97,7 @@ impl VertexRemap {
                 }
                 *slot = self.local_of[global_idx];
             }
-            local_faces.push(IndexedTriangle::from_raw_indices(face.normal, local));
+            local_faces.push(IndexedTriangle::from_raw_indices(local));
         }
 
         for global_idx in self.touched.drain(..) {
@@ -288,7 +287,7 @@ where
     let mut header_comment: Option<String> = None;
     let mut header_ended = false;
 
-    // Reused across objects: one allocation for the whole file.
+    // Reused across objects: 1 table for the whole file.
     let mut remap = VertexRemap::new();
 
     // Reused across `f` directives: cleared per line, so only the widest face
@@ -456,21 +455,7 @@ where
                 // Fan triangulation for polygons with more than 3 vertices.
                 for i in 1..face_indices.len() - 1 {
                     let tri_vertices = [face_indices[0], face_indices[i], face_indices[i + 1]];
-                    let v0 = global_vertices[usize::from(tri_vertices[0])];
-                    let v1 = global_vertices[usize::from(tri_vertices[1])];
-                    let v2 = global_vertices[usize::from(tri_vertices[2])];
-
-                    // OBJ has no on-disk face normal; we recompute from the
-                    // vertices. If the triangle is truly degenerate (collinear
-                    // or coincident vertices), no direction is recoverable.
-                    // Keep the face with a zero-normal sentinel so the user's
-                    // geometry is not silently dropped; `validate_face_areas`
-                    // flags the face as `ZeroAreaFace`.
-                    let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])
-                        .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
-
                     current_faces.push(IndexedTriangle {
-                        normal,
                         vertices: tri_vertices,
                     });
                 }
@@ -842,7 +827,7 @@ mod parse_face_vertex_index_tests {
 mod read_obj_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, MeshMetadata, Vertex};
     use sc_scene::SceneMetadata;
     use sc_scene::{NodeId, NodeKind, Scene};
 
@@ -908,7 +893,6 @@ f 1 2 3
         assert_eq!(mesh.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
 
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
-        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
     }
 
     #[test]
@@ -1395,11 +1379,10 @@ f 1 2 3
     // --- Degenerate-face tolerance ---
 
     #[test]
-    fn collinear_face_is_preserved_with_zero_normal_for_validation() {
-        // A face whose 3 vertices are collinear: the normal recompute can't
-        // produce a meaningful direction. The reader keeps the face with a zero
-        // normal so `validate_face_areas` flags it later rather than failing
-        // the whole file at parse time.
+    fn collinear_face_is_preserved_for_validation() {
+        // A face whose 3 vertices are collinear: the reader keeps it so
+        // `validate_face_areas` flags it later rather than failing the whole
+        // file at parse time.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1410,7 +1393,6 @@ f 1 2 3
         let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 0.0]));
 
         let errors = mesh
             .validated_faces()
@@ -1444,12 +1426,7 @@ f 1 3 5
         let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
 
-        // All 3 faces survive; only the middle one carries a zero normal (the
-        // recompute couldn't produce a direction).
         assert_eq!(mesh.faces().len(), 3);
-        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
-        assert_eq!(mesh.faces()[1].normal, Normal::new([0.0, 0.0, 0.0]));
-        assert_eq!(mesh.faces()[2].normal, Normal::new([1.0, 0.0, 0.0]));
 
         // The validator flags exactly the middle face.
         let errors = mesh
@@ -1523,7 +1500,7 @@ f 1 3 4
         assert_eq!(leaf_ids.len(), 2);
 
         let mesh_a = graph.mesh_at_leaf(leaf_ids[0]).expect("leaf A has a mesh");
-        // ObjectA uses global vertices 0, 1, 2 → local 0, 1, 2
+        // ObjectA uses global vertices 0, 1, 2 -> local 0, 1, 2
         assert_eq!(mesh_a.vertices().len(), 3);
         assert_eq!(mesh_a.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
         assert_eq!(mesh_a.vertices()[1], Vertex::new([1.0, 0.0, 0.0]));
@@ -1531,7 +1508,7 @@ f 1 3 4
         assert_eq!(mesh_a.faces()[0].vertices.map(u32::from), [0, 1, 2]);
 
         let mesh_b = graph.mesh_at_leaf(leaf_ids[1]).expect("leaf B has a mesh");
-        // ObjectB's face `f 1 3 4` uses global vertices 0, 2, 3 → local 0, 1, 2
+        // ObjectB's face `f 1 3 4` maps global vertices 0, 2, 3 to local 0, 1, 2
         assert_eq!(mesh_b.vertices().len(), 3);
         assert_eq!(mesh_b.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
         assert_eq!(mesh_b.vertices()[1], Vertex::new([0.0, 1.0, 0.0]));
@@ -1659,7 +1636,7 @@ f 2 3 1
         assert!(warnings.is_empty());
         let mesh = single_mesh(&graph);
         assert_eq!(mesh.meta().as_ref().unwrap().name, Some("Real".into()));
-        // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
+        // `f 2 3 1` -> global indices 1, 2, 0 -> local 0, 1, 2
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }

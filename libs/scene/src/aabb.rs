@@ -15,18 +15,18 @@ use sc_mesh_core::aabb::Aabb;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 impl Scene {
-    /// Axis-aligned bounding box over every scene root in world space.
+    /// Returns the axis-aligned bounding box of every scene root in world
+    /// space.
     ///
-    /// `Group` contributes via the union of its children. `Csg`
-    /// contributes the union of its children's world AABBs (a
-    /// conservative bound: tight for `Union`, an upper bound for
-    /// `Difference` and `Intersection`). `Reference` expands the
-    /// referenced subtree under the reference's local transform.
-    /// `Leaf` contributes the mesh's local AABB, transformed by the
-    /// composed ancestor chain via Arvo's method.
+    /// `Group` contributes via the union of its children. `Csg` contributes the
+    /// union of the world AABBs of its children (a conservative bound: tight
+    /// for `Union`, an upper bound for `Difference` and `Intersection`).
+    /// `Reference` expands the referenced subtree under the local transform of
+    /// the reference. `Leaf` contributes the local AABB of its mesh,
+    /// transformed by the composed ancestor chain with Arvo's method.
     ///
-    /// Returns `None` for a scene whose roots collectively contribute
-    /// no geometry, and propagates dangling-id errors.
+    /// Returns `None` for a scene whose roots contribute no geometry, and
+    /// propagates dangling-id errors.
     pub fn aabb(&self) -> Result<Option<Aabb>, SceneError> {
         let mut accum = Aabb::empty();
         let mut has_any = false;
@@ -36,10 +36,10 @@ impl Scene {
         Ok(has_any.then_some(accum))
     }
 
-    /// Translation that, applied as an outer left-multiplication to
-    /// every scene root's local transform, drops the scene's world
-    /// AABB so its XY centre lands at `target_xy` and its minimum Z
-    /// lands at `floor_z`. Returns `Ok(None)` for an empty scene.
+    /// Returns the translation that, applied as an outer left-multiplication to
+    /// the local transform of every scene root, moves the world AABB of the
+    /// scene so that its XY centre is at `target_xy` and its minimum Z is at
+    /// `floor_z`. Returns `Ok(None)` for an empty scene.
     pub fn translation_to_drop_at(
         &self,
         target_xy: [f32; 2],
@@ -59,15 +59,14 @@ impl Scene {
         ]))
     }
 
-    /// Drop the scene onto the plate: translate every scene root by
-    /// the shared delta from [`Self::translation_to_drop_at`] so the
-    /// world AABB's XY centre lands at `target_xy` and its minimum Z
-    /// at `floor_z`. The translation composes as an outer
-    /// left-multiplication onto each root's local transform, so the
-    /// roots' relative layout is preserved. Returns whether anything
-    /// moved: `false` for an empty scene or one already at the
-    /// target (whose roots keep their exact transforms, including
-    /// `Identity`).
+    /// Drops the scene onto the plate: translates every scene root by the
+    /// shared delta from [`Self::translation_to_drop_at`], so that the XY
+    /// centre of the world AABB is at `target_xy` and its minimum Z is at
+    /// `floor_z`. The translation composes as an outer left-multiplication onto
+    /// the local transform of each root, so the relative layout of the roots is
+    /// kept. Returns whether anything moved: `false` for an empty scene or a
+    /// scene already at the target (whose roots keep their exact transforms,
+    /// `Identity` included).
     pub fn drop_at(&mut self, target_xy: [f32; 2], floor_z: f32) -> Result<bool, SceneError> {
         let Some(delta) = self.translation_to_drop_at(target_xy, floor_z)? else {
             return Ok(false);
@@ -137,7 +136,7 @@ mod scene_aabb_tests {
     use crate::node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
 
     fn unit_cube_mesh() -> IndexedMesh {
@@ -151,8 +150,7 @@ mod scene_aabb_tests {
             Vertex::new([1.0, 1.0, 1.0]),
             Vertex::new([0.0, 1.0, 1.0]),
         ];
-        let n = Normal::new([0.0, 0.0, 1.0]);
-        let face = |a, b, c| IndexedTriangle::from_raw_indices(n, [a, b, c]);
+        let face = |a, b, c| IndexedTriangle::from_raw_indices([a, b, c]);
         IndexedMesh {
             meta: None,
             vertices: v,
@@ -192,8 +190,8 @@ mod scene_aabb_tests {
 
     #[test]
     fn aabb_composes_group_and_leaf_transforms() {
-        // Group with translation T1 contains a leaf with translation T2.
-        // Leaf's world AABB is at T1 + T2 + local AABB.
+        // A group with translation T1 holds a leaf with translation T2: the
+        // world AABB of the leaf is at T1 + T2 + local AABB.
         let mut g = Scene::new();
         let leaf = g
             .add_leaf(
@@ -237,8 +235,8 @@ mod scene_aabb_tests {
 
     #[test]
     fn aabb_treats_csg_children_as_union_conservatively() {
-        // A CSG Difference of two cubes. Conservative bound is the
-        // union of both children's world AABBs, regardless of operator.
+        // A CSG Difference of 2 cubes. The conservative bound is the union of
+        // the world AABBs of both children, whatever the operator.
         let mut g = Scene::new();
         let big = g
             .add_leaf(
@@ -270,8 +268,8 @@ mod scene_aabb_tests {
 
     #[test]
     fn aabb_two_references_to_same_subtree_resource() {
-        // A subtree contains a single unit cube. Instantiated twice
-        // under different transforms; AABB unions both occurrences.
+        // A subtree holds a single unit cube, referenced twice under different
+        // transforms; the AABB is the union of both occurrences.
         let mut g = Scene::new();
         let res_leaf = g
             .add_leaf(
@@ -336,7 +334,8 @@ mod scene_aabb_tests {
         assert_eq!(g.translation_to_drop_at([0.0, 0.0], 0.0).unwrap(), None);
     }
 
-    /// A cuboid spanning `min`..`max`; enough faces for the AABB walk.
+    /// Returns the 8 corners of the cuboid that spans `min`..`max`, with 2
+    /// faces: enough for the AABB walk.
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         let v = |x, y, z| Vertex::new([x, y, z]);
         let vertices = vec![
@@ -349,10 +348,9 @@ mod scene_aabb_tests {
             v(max[0], max[1], max[2]),
             v(min[0], max[1], max[2]),
         ];
-        let n = Normal::new([0.0, 0.0, 1.0]);
         let faces = vec![
-            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(n, [4, 5, 6]),
+            IndexedTriangle::from_raw_indices([0, 1, 2]),
+            IndexedTriangle::from_raw_indices([4, 5, 6]),
         ];
         IndexedMesh {
             meta: None,
@@ -361,8 +359,8 @@ mod scene_aabb_tests {
         }
     }
 
-    /// Group-rooted scene wrapping the supplied leaves under a single
-    /// identity-Group root, the shape file loaders produce.
+    /// Builds a scene with the supplied leaves under a single identity `Group`
+    /// root, the shape that the file loaders produce.
     fn group_rooted_scene(leaves: Vec<(IndexedMesh, Transform3D)>) -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -421,9 +419,9 @@ mod scene_aabb_tests {
 
     #[test]
     fn drop_at_preserves_the_relative_layout_of_leaves() {
-        // 2 unit-ish cubes 9 mm apart on X and Y under 1 group root:
-        // the union lands centred with its bottom on the floor and
-        // the cubes stay 9 mm apart (only the root moves).
+        // 2 unit cubes 9 mm apart on X and Y under 1 group root: the union
+        // lands centred with its bottom on the floor and the cubes stay 9 mm
+        // apart (only the root moves).
         let mut g = group_rooted_scene(vec![
             (
                 cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
@@ -441,9 +439,9 @@ mod scene_aabb_tests {
 
     #[test]
     fn drop_at_translates_every_root_by_the_shared_delta() {
-        // 2 root leaves 10 mm apart on X: both roots receive the same
-        // outer translation, so the union centres while the roots'
-        // relative offset survives.
+        // 2 root leaves 10 mm apart on X: both roots receive the same outer
+        // translation, so the union centres while the relative offset of the
+        // roots stays.
         let mut g = Scene::new();
         let leaf_a = g
             .add_leaf(
@@ -468,9 +466,8 @@ mod scene_aabb_tests {
 
     #[test]
     fn drop_at_composes_with_an_existing_leaf_transform() {
-        // The leaf already carries a translation; the placement delta
-        // lands on the root Group, outside it. World AABB after:
-        // [-0.5, -0.5, 0] .. [0.5, 0.5, 1].
+        // The leaf already carries a translation; the placement delta lands on
+        // the root Group, outside it.
         let mut g = group_rooted_scene(vec![(
             cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),

@@ -3,35 +3,33 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! CPU ray-pick from a logical viewport pixel to a `Scene` leaf
-//! identifier.
+//! CPU ray-pick from a logical viewport pixel to a `Scene` leaf identifier.
 //!
-//! Three-stage strategy:
+//! 3-stage strategy:
 //!
-//! 1. **World AABB pre-pass.** Each object's world-space AABB (Arvo's
-//!    method on the local AABB and the object's `Transform3D`) is
-//!    slab-tested against the ray. Objects whose AABB the ray misses
-//!    are eliminated without ever touching their triangles.
+//! 1. **World AABB pre-pass.** Each object's world-space AABB (Arvo's method on
+//!    the local AABB and the object's `Transform3D`) is slab-tested against the
+//!    ray. Objects whose AABB the ray misses are eliminated without ever
+//!    touching their triangles.
 //!
-//! 2. **Object-space cluster traversal.** Survivors invert the ray
-//!    once into object space, then slab-test each
-//!    [`TriangleClusters`](sc_mesh_core::IndexedMesh::triangle_clusters)
-//!    AABB against the local ray. Clusters the ray misses skip
-//!    the linear MT walk entirely.
+//! 2. **Object-space cluster traversal.** Survivors invert the ray once into
+//!    object space, then slab-test each
+//!    [`TriangleClusters`](sc_mesh_spatial::TriangleClusters) AABB against the
+//!    local ray. Clusters the ray misses skip the linear Möller-Trumbore (MT)
+//!    walk entirely.
 //!
-//! 3. **Sign-aware Möller-Trumbore on cluster survivors.** Faces in
-//!    surviving clusters are tested in object space. The renderer's
-//!    `cull_mode: Some(Face::Back)` with `front_face: FrontFace::Ccw`
-//!    is matched by accepting hits whose MT determinant has the same
-//!    sign as the linear part's determinant: a transform with
-//!    `det < 0` reverses world-space winding, so the object-space
-//!    front face is the world-space back face, and vice versa.
+//! 3. **Sign-aware Möller-Trumbore on cluster survivors.** Faces in surviving
+//!    clusters are tested in object space. The renderer's
+//!    `cull_mode: Some(Face::Back)` with `front_face: FrontFace::Ccw` is
+//!    matched by accepting hits whose MT determinant has the same sign as the
+//!    linear part's determinant: a transform with `det < 0` reverses
+//!    world-space winding, so the object-space front face is the world-space
+//!    back face, and vice versa.
 //!
-//! Iterating in object space turns a per-triangle 3 × `Mat4 * Vec3`
-//! transform (the previous world-space variant) into a per-object
-//! single ray-inversion. The cluster slab-tests then prune the linear
-//! MT walk to roughly `O(F / cluster_size)` AABB tests plus
-//! `O(cluster_size)` MT tests on hit clusters.
+//! Iterating in object space needs 1 ray inversion per object instead of 3
+//! `Mat4 * Vec3` transforms per triangle. The cluster slab tests then reduce
+//! the linear MT walk to about `O(F / cluster_size)` AABB tests, for F faces,
+//! plus `O(cluster_size)` MT tests per hit cluster.
 
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
@@ -44,36 +42,33 @@ use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 
-/// Tolerance for the t-parameter "is this hit in front of the ray
-/// origin?" check at the end of Möller-Trumbore. Avoids spurious
-/// self-intersections at t close to 0. f32 ulps near 1.0 are around
-/// 1.19e-7, so 1e-7 is a few ulps above noise.
+/// Minimum `t` for a hit in front of the ray origin, checked at the end of
+/// Möller-Trumbore; it rejects self-intersections at `t` close to 0.
+/// `local_ray_for_object` also uses it as the minimum length of the
+/// object-space ray direction.
 const EPSILON: f32 = 1e-7;
 
-/// Scale-invariant threshold on `(det / (|edge1| · |edge2|))²` for
-/// the Möller-Trumbore front-face / degeneracy gate. The picker's
-/// determinant `det = edge1 · (direction × edge2)` uses a unit
-/// `direction`, so `|det| <= |edge1| · |edge2|`; the squared ratio
-/// is dimensionless and bounded by 1. Sharing mesh-core's
-/// `DEGENERACY_SIN_SQ_THRESHOLD` lets the picker work uniformly
-/// across mesh scales: the previous absolute 1e-7 floor on `det`
-/// rejected legitimate front-face hits whenever triangle edges were
-/// short (e.g. a model exported in metres but loaded as if in mm),
-/// because `|det|` shrinks with edge length squared. f32 form
-/// because the picker's MT determinant and edge lengths are f32.
+/// Scale-invariant threshold on `(det / (|edge1| · |edge2|))²` for the
+/// Möller-Trumbore front-face and degeneracy gate. The picker's determinant
+/// `det = edge1 · (direction × edge2)` uses a unit `direction`, so
+/// `|det| <= |edge1| · |edge2|` and the squared ratio, which has no unit,
+/// cannot exceed 1. Sharing mesh-core's `DEGENERACY_SIN_SQ_THRESHOLD` makes the
+/// gate independent of mesh scale: `|det|` shrinks with the square of the edge
+/// length, so an absolute floor on `det` rejects valid front-face hits on small
+/// triangles, for example a model exported in metres but loaded as millimetres.
+/// f32 form because the picker's MT determinant and edge lengths are f32.
 const DET_SIN_SQ_THRESHOLD: f32 = DEGENERACY_SIN_SQ_THRESHOLD as f32;
 
-/// Object-space ray plus the conversion factor needed to bring an MT
-/// `t` back to world space. `det_sign` is `+1.0` when the parent
-/// transform's linear part has positive determinant, `-1.0` when
-/// negative; used to flip the MT front-face filter for mirrored
-/// objects so the picker keeps agreeing with the renderer's CCW
-/// culling.
+/// Object-space ray plus the conversion factor needed to bring an MT `t` back
+/// to world space. `det_sign` is `+1.0` when the linear part of the object's
+/// world transform has a positive determinant, `-1.0` when negative; it flips
+/// the MT front-face filter for mirrored objects, so the picker agrees with the
+/// renderer's CCW culling.
 struct LocalRay {
     origin: Vec3,
     direction: Vec3,
-    /// `t_world = t_local / world_to_local_scale`. `1.0` for the
-    /// identity transform.
+    /// `t_world = t_local / world_to_local_scale`. `1.0` for the identity
+    /// transform.
     world_to_local_scale: f32,
     det_sign: f32,
 }
@@ -81,17 +76,19 @@ struct LocalRay {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Ray {
     pub origin: Vec3,
-    /// Always unit length (constructed by [`ray_from_pixel`]).
+    /// Unit length: `ray_from_pixel` and `ray_hits_object_query` normalise it,
+    /// and the scale-invariant triangle gate and `ray_z_plane_intersection`
+    /// rely on it.
     pub direction: Vec3,
 }
 
 /// Builds a world-space ray from a logical-pixel cursor position.
 ///
-/// `(x, y)` are in Slint's logical viewport coordinates: top-left
-/// origin, y growing downward, *not* multiplied by `scale_factor`.
-/// `(viewport_w, viewport_h)` use the same units. `fov_y` is the
-/// vertical FOV in radians, matching the value the renderer feeds
-/// into `Mat4::perspective_rh`.
+/// `(x, y)` are in Slint's logical viewport coordinates: top-left origin, y
+/// growing downward, *not* multiplied by `scale_factor`.
+/// `(viewport_w, viewport_h)` use the same units. `fov_y` is the vertical FOV
+/// in radians, matching the value the renderer feeds into
+/// `Mat4::perspective_rh`.
 pub(crate) fn ray_from_pixel(
     camera: &OrbitCamera,
     fov_y: f32,
@@ -103,14 +100,14 @@ pub(crate) fn ray_from_pixel(
     let aspect = viewport_w / viewport_h;
     let tan_half = (fov_y * 0.5).tan();
 
-    // NDC: x ∈ [-1, +1] (right), y ∈ [-1, +1] (up). Slint's pixel y
-    // grows downward, so it is flipped here.
+    // NDC: x ∈ [-1, +1] (right), y ∈ [-1, +1] (up). Slint's pixel y grows
+    // downward, so it is flipped here.
     let ndc_x = (2.0 * x / viewport_w) - 1.0;
     let ndc_y = 1.0 - (2.0 * y / viewport_h);
 
-    // Right-handed camera-space direction with the camera looking down
-    // -Z. `aspect * tan_half` opens the horizontal extent so that a
-    // pixel at `ndc_x = ±1` lands on the screen edge after projection.
+    // Right-handed camera-space direction with the camera looking down -Z.
+    // `aspect * tan_half` opens the horizontal extent so that a pixel at
+    // `ndc_x = ±1` lands on the screen edge after projection.
     let cs_dir = Vec3::new(ndc_x * aspect * tan_half, ndc_y * tan_half, -1.0).normalize();
 
     // World-space transform. Direction has w = 0 (no translation).
@@ -124,16 +121,9 @@ pub(crate) fn ray_from_pixel(
     }
 }
 
-/// Projects a world-space point onto the viewport in logical-pixel
-/// coordinates (top-left origin, y growing downward; same convention
-/// as `ray_from_pixel`'s input). Returns `None` when the point is
-/// behind the camera.
-///
-/// Used by the gizmo's uniform-scale drag, where the press distance
-/// is measured in screen pixels relative to the projected pivot. The
-/// near/far depths used here are placeholders: the projection
-/// matrix's near/far only affect z, and we discard the z component
-/// after the perspective divide.
+/// Projects a world-space point onto the viewport in logical-pixel coordinates
+/// (top-left origin, y growing downward; same convention as `ray_from_pixel`'s
+/// input). Returns `None` when the point is behind the camera.
 pub(crate) fn project_world_to_screen(
     camera: &OrbitCamera,
     fov_y: f32,
@@ -143,6 +133,8 @@ pub(crate) fn project_world_to_screen(
 ) -> Option<(f32, f32)> {
     let aspect = viewport_w / viewport_h.max(1.0);
     let view = camera.view_matrix();
+    // The near and far depths are placeholders: they only affect z, which the
+    // perspective divide below discards.
     let proj = Mat4::perspective_rh(fov_y, aspect, 0.01, 100.0);
     let clip = (proj * view) * Vec4::new(world_point.x, world_point.y, world_point.z, 1.0);
     if clip.w <= 0.0 {
@@ -151,24 +143,20 @@ pub(crate) fn project_world_to_screen(
     let ndc_x = clip.x / clip.w;
     let ndc_y = clip.y / clip.w;
     let screen_x = (ndc_x + 1.0) * 0.5 * viewport_w;
-    // Slint-y grows downward, NDC-y grows upward → flip.
+    // Slint-y grows downward and NDC-y grows upward, so y flips.
     let screen_y = (1.0 - ndc_y) * 0.5 * viewport_h;
     Some((screen_x, screen_y))
 }
 
-/// Intersect a ray with the axis-aligned plane `Z = z` and return
-/// the `(x, y)` world coordinates of the hit. `None` when the ray
-/// is parallel to the plane (no intersection) or when the plane
-/// sits behind the ray origin (intersection at `t < 0`, which the
-/// paste path treats as "the cursor is pointed away from the build
-/// platform").
-///
-/// `EPSILON_DIR_Z` filters direction vectors that round to zero on
-/// the Z axis. The ray's `direction` is unit length, so this is a
-/// scale-invariant guard: a `direction.z` of 1e-7 means the ray is
-/// pointed roughly along the plane and the intersection is too
-/// far away to be useful as a placement anchor.
+/// Intersects a ray with the axis-aligned plane `Z = z` and returns the
+/// `(x, y)` world coordinates of the hit. `None` when the ray is nearly
+/// parallel to the plane or when the plane sits behind the ray origin
+/// (intersection at `t < 0`, which the paste path treats as "the cursor is
+/// pointed away from the build platform").
 pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> {
+    // `direction` is unit length, so this guard does not depend on scale: a
+    // `direction.z` below 1e-7 means the ray is nearly parallel to the plane
+    // and the hit is too far away to be a useful placement anchor.
     const EPSILON_DIR_Z: f32 = 1e-7;
     if ray.direction.z.abs() < EPSILON_DIR_Z {
         return None;
@@ -181,12 +169,10 @@ pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> 
     Some((hit.x, hit.y))
 }
 
-/// Picks the closest leaf the ray hits, by stable [`NodeId`]. Returns
-/// `None` if every reachable leaf misses (whether by AABB pre-pass or
-/// triangle test). The walk is pre-order over `spatial.graph().roots()`
-/// via the bridge enumerator on [`SceneSpatial`]; the closest-hit
-/// arbitration ties by first-encountered, matching today's
-/// `scene.objects` iteration order.
+/// Picks the closest leaf the ray hits, by stable [`NodeId`]. Returns `None` if
+/// every reachable leaf misses (whether by AABB pre-pass or triangle test).
+/// Leaves are visited in the pre-order of [`SceneSpatial::leaf_id_at_index`];
+/// on equal `t` the first leaf visited wins.
 pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
     let mut best: Option<(NodeId, f32)> = None;
     let mut idx = 0usize;
@@ -212,21 +198,21 @@ pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
     best.map(|(node_id, _)| node_id)
 }
 
-/// Slab test against an axis-aligned box. Branchless variant: zero
-/// direction components produce ±inf, which propagate harmlessly
-/// through the min/max chain when the ray's origin is inside the
-/// slab, and reject when it isn't. Hits with `t_exit < 0` (box
-/// entirely behind the ray) are rejected.
+/// Tests the ray against an axis-aligned box with the slab method. A box
+/// entirely behind the ray origin is a miss.
 pub(crate) fn ray_hits_aabb(ray: &Ray, min: Vec3, max: Vec3) -> bool {
     ray_hits_aabb_t(ray, min, max).is_some()
 }
 
-/// Slab test variant that returns the ray parameter at which the
-/// ray enters the box (`t_enter`), or `None` if the ray misses or
-/// the box is behind the origin. Origin-inside-box returns 0 as the
-/// entry parameter. Used by the gizmo cube hit tests to feed
-/// front-most-`t` arbitration alongside the cylinder / arc tests.
+/// Returns the ray parameter at which the ray enters the box (`t_enter`), from
+/// the slab method, or `None` if the ray misses or the box is behind the
+/// origin. Origin-inside-box returns 0 as the entry parameter. Used by the
+/// gizmo cube hit tests to feed front-most-`t` arbitration alongside the
+/// cylinder and arc tests.
 pub(crate) fn ray_hits_aabb_t(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
+    // Direction components of 0 give ±inf in `inv_dir`, which pass through the
+    // min/max chain: the slab is a hit when the origin is inside it and a miss
+    // when it is not.
     let inv_dir = Vec3::new(
         1.0 / ray.direction.x,
         1.0 / ray.direction.y,
@@ -242,16 +228,14 @@ pub(crate) fn ray_hits_aabb_t(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
     Some(t_enter.max(0.0))
 }
 
-/// Sign-aware Möller-Trumbore intersection. `det_sign = +1.0` is the
-/// classic "front face = CCW winding" rule that matches the renderer's
-/// `front_face: FrontFace::Ccw, cull_mode: Some(Face::Back)` pipeline
-/// state. `det_sign = -1.0` flips the front-face filter, which is
-/// what the picker needs for objects whose `Transform3D` has a
-/// negative-determinant linear part: the world-space winding has been
-/// reversed, so the object-space triangle's *back* face is the
-/// renderer's *front* face. The barycentric and `t > EPSILON` checks
-/// are sign-symmetric, so only the determinant filter at the top
-/// changes.
+/// Intersects the ray with a triangle by the sign-aware Möller-Trumbore method.
+/// `det_sign = +1.0` is the classic "front face = CCW winding" rule that
+/// matches the renderer's
+/// `front_face: FrontFace::Ccw, cull_mode: Some(Face::Back)` pipeline state.
+/// `det_sign = -1.0` flips the front-face filter, which is what the picker
+/// needs for objects whose `Transform3D` has a negative-determinant linear
+/// part: the world-space winding has been reversed, so the object-space
+/// triangle's *back* face is the renderer's *front* face.
 pub(crate) fn ray_hits_triangle_oriented(
     ray: &Ray,
     v0: Vec3,
@@ -264,6 +248,8 @@ pub(crate) fn ray_hits_triangle_oriented(
     let h = ray.direction.cross(edge2);
     let det = edge1.dot(h);
     let det_oriented = det * det_sign;
+    // The barycentric and `t > EPSILON` checks do not depend on the sign, so
+    // only this filter uses `det_sign`.
     if det_oriented <= 0.0 {
         return None;
     }
@@ -286,11 +272,11 @@ pub(crate) fn ray_hits_triangle_oriented(
     if t > EPSILON { Some(t) } else { None }
 }
 
-/// Closest front-face hit `t` for the object behind `query`, in
-/// world-space ray parameters. Returns `None` for malformed scenes
-/// (singular linear part on the object's transform, empty mesh, or
-/// out-of-range face vertex indices). The picker treats every such
-/// case as a clean miss rather than surfacing an error.
+/// Returns the closest front-face hit `t` for the object behind `query`, in
+/// world-space ray parameters, or `None` when the ray misses it. Malformed
+/// objects (singular linear part on the object's transform, empty mesh, or
+/// out-of-range face vertex indices) also give `None`: the picker treats them
+/// as a miss and reports no error.
 pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Option<f32> {
     let local = local_ray_for_object(ray, &query.world_transform())?;
     let local_ray = Ray {
@@ -326,11 +312,10 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
     best
 }
 
-/// Build the object-space form of `ray` for `transform`. Returns
-/// `None` when the transform's linear part is singular; the picker
-/// treats that as a malformed object and skips it. For an identity
-/// transform the local ray equals the world ray, with
-/// `world_to_local_scale = 1` and `det_sign = +1`.
+/// Builds the object-space form of `ray` for `transform`. Returns `None` when
+/// the transform's linear part is singular; the picker treats that as a
+/// malformed object and skips it. For an identity transform the local ray
+/// equals the world ray, with `world_to_local_scale = 1` and `det_sign = +1`.
 fn local_ray_for_object(ray: &Ray, transform: &Transform3D) -> Option<LocalRay> {
     match transform {
         Transform3D::Identity => Some(LocalRay {
@@ -377,9 +362,10 @@ fn local_ray_for_object(ray: &Ray, transform: &Transform3D) -> Option<LocalRay> 
             let local_origin = apply(ray.origin, true);
             let local_dir_unnorm = apply(ray.direction, false);
             let scale = local_dir_unnorm.length();
-            // A finite, non-singular `inverse()` cannot produce a zero
-            // direction from a unit world direction, so `scale > 0`
-            // here; guard anyway to keep the division explicit.
+            // A non-singular inverse cannot map a unit direction to zero, but
+            // its f32 image can be tiny or non-finite, for example for an
+            // object scaled up by more than 1e7. Such an object is treated as a
+            // miss.
             if !scale.is_finite() || scale <= EPSILON {
                 return None;
             }
@@ -401,9 +387,9 @@ fn local_ray_for_object(ray: &Ray, transform: &Transform3D) -> Option<LocalRay> 
     }
 }
 
-/// Apply Arvo's transformed-AABB formula to a cached object-space
-/// AABB and the object's transform. Used by [`pick_object`]'s pre-pass
-/// to slab-test world-space AABBs without re-walking vertex data.
+/// Applies Arvo's transformed-AABB formula to a cached object-space AABB and
+/// the object's transform. Used by [`pick_object`]'s pre-pass to slab-test
+/// world-space AABBs without re-walking vertex data.
 fn world_aabb_from_local(local: Aabb, transform: &Transform3D) -> (Vec3, Vec3) {
     let lmin = Vec3::from(local.min().coords());
     let lmax = Vec3::from(local.max().coords());
@@ -413,11 +399,11 @@ fn world_aabb_from_local(local: Aabb, transform: &Transform3D) -> (Vec3, Vec3) {
     }
 }
 
-/// Arvo's transformed-AABB formula in f32, delegating to mesh-core's
-/// generic implementation. For picking, f32 is adequate: the AABB only
-/// gates the per-triangle test, which itself is f32 throughout.
-/// `AffineTransform3D` stores its linear part / translation as f64, so
-/// the f32 cast happens once per call rather than per term.
+/// Applies Arvo's transformed-AABB formula in f32, delegating to mesh-core's
+/// generic implementation. For picking, f32 is adequate: the AABB only gates
+/// the per-triangle test, which itself is f32 throughout. `AffineTransform3D`
+/// stores its linear part and translation as f64, so the f32 cast happens once
+/// per call rather than per term.
 fn arvo(lmin: Vec3, lmax: Vec3, a: &AffineTransform3D) -> (Vec3, Vec3) {
     let m = a.linear();
     let t = a.translation();
@@ -440,8 +426,8 @@ mod ray_from_pixel_tests {
 
     fn camera_at_origin() -> OrbitCamera {
         // Target at origin, radius 1. The orbit camera defaults to a
-        // non-axis-aligned view (yaw/pitch ≠ 0); fine for our checks
-        // that use the camera's own basis.
+        // non-axis-aligned view (yaw and pitch ≠ 0); fine for our checks that
+        // use the camera's own basis.
         OrbitCamera::new(Vec3::ZERO, 1.0)
     }
 
@@ -473,10 +459,9 @@ mod ray_from_pixel_tests {
 
     #[test]
     fn corner_rays_respect_aspect_ratio() {
-        // For a wide viewport, a horizontal-edge ray must subtend a
-        // wider angle from forward than a vertical-edge ray of the
-        // same NDC magnitude. Compare cos(angle); the wider angle
-        // has the smaller cos.
+        // For a wide viewport, a horizontal-edge ray must subtend a wider angle
+        // from forward than a vertical-edge ray of the same NDC magnitude.
+        // Compare cos(angle); the wider angle has the smaller cos.
         let cam = camera_at_origin();
         let fov = std::f32::consts::FRAC_PI_3;
         let w = 200.0;
@@ -625,7 +610,7 @@ mod pick_object_tests {
 
     use super::*;
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_scene::{LeafPayload, Scene};
 
     fn unit_triangle_mesh() -> IndexedMesh {
@@ -637,10 +622,7 @@ mod pick_object_tests {
                 Vertex::new([0.5, -0.5, 0.0]),
                 Vertex::new([0.0, 0.5, 0.0]),
             ],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         )
     }
 
@@ -652,8 +634,8 @@ mod pick_object_tests {
         ]))
     }
 
-    /// Loader-faithful empty graph: a single identity-Group root
-    /// that will host the leaves attached by helpers below.
+    /// Returns a loader-faithful empty graph: a single identity-Group root that
+    /// will host the leaves attached by helpers below.
     fn graph_with_group_root() -> (Scene, NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -678,9 +660,8 @@ mod pick_object_tests {
 
     #[test]
     fn ray_hits_object_uses_object_transform() {
-        // Same triangle, two scenes: one identity, one translated by
-        // +X. Ray points at the +X position; only the translated copy
-        // should be hit.
+        // Same triangle, 2 scenes: 1 identity, 1 translated by +X. Ray points
+        // at the +X position; only the translated copy should be hit.
         let id_spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0]]);
         let shifted_spatial = spatial_with_unit_triangles(&[[10.0, 0.0, 0.0]]);
         // Ray goes through (10, 0, 0) toward -Z.
@@ -709,7 +690,7 @@ mod pick_object_tests {
     #[test]
     fn returns_none_when_ray_misses_every_object() {
         let spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]);
-        // Ray points to +Y from far above; no triangle is in its path.
+        // Ray starts at y = 100 and points along +Y, away from both triangles.
         let ray = Ray {
             origin: Vec3::new(0.0, 100.0, 5.0),
             direction: Vec3::Y,
@@ -719,7 +700,7 @@ mod pick_object_tests {
 
     #[test]
     fn closest_hit_wins_among_overlapping_along_ray() {
-        // Three triangles along -Z at z = 0, z = -2, z = -4.
+        // 3 triangles along -Z at z = 0, z = -2, z = -4.
         let spatial =
             spatial_with_unit_triangles(&[[0.0, 0.0, 0.0], [0.0, 0.0, -2.0], [0.0, 0.0, -4.0]]);
         let ray = Ray {
@@ -733,11 +714,10 @@ mod pick_object_tests {
 
     #[test]
     fn aabb_pre_pass_skips_off_ray_leaves() {
-        // Two triangles. One in the ray's path, one off to the side
-        // (+Y by a wide margin). The off-axis one's AABB is missed by
-        // the ray, so the picker eliminates it without running its
-        // triangle test. Functionally we observe that the picked leaf
-        // is the on-axis one.
+        // 2 triangles: 1 in the ray's path, 1 off to the side (+Y by a wide
+        // margin). The off-axis one's AABB is missed by the ray, so the picker
+        // eliminates it without running its triangle test. Functionally we
+        // observe that the picked leaf is the on-axis one.
         let spatial = spatial_with_unit_triangles(&[[0.0, 50.0, 0.0], [0.0, 0.0, 0.0]]);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
@@ -746,8 +726,8 @@ mod pick_object_tests {
         let on_axis_id = spatial.leaf_id_at_index(1).unwrap();
         assert_eq!(pick_object(&ray, &spatial), Some(on_axis_id));
 
-        // Confirm the AABB rejector specifically rules out the
-        // off-axis object: its world-space AABB should miss the ray.
+        // Confirm the AABB rejector specifically rules out the off-axis object:
+        // its world-space AABB should miss the ray.
         let q = spatial.leaf(spatial.leaf_id_at_index(0).unwrap()).unwrap();
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
@@ -758,10 +738,9 @@ mod pick_object_tests {
 
     #[test]
     fn back_face_rejection_propagates_through_pick_object() {
-        // A single CCW-front-facing triangle at the origin, with the
-        // ray approaching from the back side. The triangle test
-        // rejects this, so the pick should return None even though
-        // the AABB is intersected.
+        // A single CCW-front-facing triangle at the origin, with the ray
+        // approaching from the back side. The triangle test rejects this, so
+        // the pick should return None even though the AABB is intersected.
         let spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0]]);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, -5.0),
@@ -781,13 +760,12 @@ mod pick_object_tests {
 
     #[test]
     fn mirrored_object_keeps_picker_in_agreement_with_renderer() {
-        // The triangle is CCW when viewed from +Z in object space, so
-        // its object-space front face is +Z. A non-uniform scale of
-        // [-1, 1, 1] has det = -1 and reverses world-space winding;
-        // the *world-space* front face becomes -Z. The picker must
-        // pick that up: a ray from +Z hits the world-space back face
-        // and must be rejected; a ray from -Z hits the world-space
-        // front face and must succeed.
+        // The triangle is CCW when viewed from +Z in object space, so its
+        // object-space front face is +Z. A non-uniform scale of [-1, 1, 1] has
+        // det = -1 and reverses world-space winding; the *world-space* front
+        // face becomes -Z. The picker must pick that up: a ray from +Z hits the
+        // world-space back face and must be rejected; a ray from -Z hits the
+        // world-space front face and must succeed.
         let (mut g, root) = graph_with_group_root();
         add_leaf_under(
             &mut g,
@@ -825,16 +803,14 @@ mod pick_object_tests {
 
     #[test]
     fn sub_millimetre_triangle_is_pickable() {
-        // Regression: `ray_hits_triangle_oriented` rejects hits whose
-        // MT determinant is below an absolute `EPSILON = 1e-7`. The
-        // determinant scales as `edge_length²` for a unit-direction
-        // ray, so on sub-millimetre meshes (e.g. files exported in
-        // metres but loaded as if in mm) it falls under that floor and
-        // a front-face hit is silently dropped. A scale-invariant gate
-        // (relative to `|edge1| · |dir × edge2|`) would let this pass.
+        // Pins that a front-face hit on a sub-millimetre triangle is accepted.
+        // For a unit-direction ray `|det|` scales as `edge_length²`, so an
+        // absolute floor on `det` such as 1e-7 would reject this hit, as for a
+        // model exported in metres but loaded as millimetres; the gate on
+        // `(det / (|edge1| · |edge2|))²` does not depend on scale.
         //
-        // Triangle is a 0.1-mm-wide CCW patch in the z = 0 plane;
-        // |det| for a -Z, unit-direction ray is ≈ 1e-8.
+        // The triangle is a CCW patch 1e-4 mm wide in the z = 0 plane; `|det|`
+        // for a unit-direction ray along -Z is about 1e-8.
         let s = 5e-5_f32;
         let mesh = IndexedMesh::new(
             None,
@@ -843,10 +819,7 @@ mod pick_object_tests {
                 Vertex::new([s, -s, 0.0]),
                 Vertex::new([0.0, s, 0.0]),
             ],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         );
         let (mut g, root) = graph_with_group_root();
         add_leaf_under(&mut g, root, mesh, Transform3D::Identity);
@@ -862,10 +835,10 @@ mod pick_object_tests {
     #[test]
     fn sub_millimetre_back_face_is_rejected() {
         // Companion to `sub_millimetre_triangle_is_pickable`: with the
-        // scale-invariant gate, the sign of `det * det_sign` carries
-        // the front-face filter on its own (`det_oriented <= 0.0`).
-        // Pin that the cull still fires at small scale, so a future
-        // refactor that drops or weakens the sign check surfaces here.
+        // scale-invariant gate, the sign of `det * det_sign` carries the
+        // front-face filter on its own (`det_oriented <= 0.0`). This pins that
+        // the cull fires at small scale, so a change that drops or weakens the
+        // sign check fails here.
         let s = 5e-5_f32;
         let mesh = IndexedMesh::new(
             None,
@@ -874,10 +847,7 @@ mod pick_object_tests {
                 Vertex::new([s, -s, 0.0]),
                 Vertex::new([0.0, s, 0.0]),
             ],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         );
         let (mut g, root) = graph_with_group_root();
         add_leaf_under(&mut g, root, mesh, Transform3D::Identity);
@@ -890,17 +860,11 @@ mod pick_object_tests {
     }
 }
 
-/// Cross-precision consistency between the picker's f32 `arvo` and
-/// `Aabb::transformed_arvo` (f64). The two implement the same Arvo
-/// closed-form formula at different precisions; for the picker's
-/// use (gating a per-triangle f32 test) the f32 result must agree
-/// with the f64 reference within a precision bound that scales with
-/// the AABB diagonal.
-///
-/// Until they share an implementation, this test pins the
-/// equivalence so a drift between the two surfaces immediately
-/// rather than at render time on a mirrored / non-axis-aligned
-/// scene.
+/// Pins that the picker's f32 `arvo` agrees with `Aabb::transformed_arvo`
+/// (f64). Both call the generic `arvo_transformed_aabb`, at different
+/// precisions. For the picker's use (gating a per-triangle f32 test) the f32
+/// result must agree with the f64 result within a bound that scales with the
+/// AABB diagonal, also on mirrored and rotated transforms.
 #[cfg(test)]
 mod arvo_consistency_tests {
     use super::arvo;
@@ -909,10 +873,11 @@ mod arvo_consistency_tests {
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::{Aabb, Vertex};
 
-    /// Per-axis tolerance scaled by the world-AABB diagonal.
-    /// f32 cancellation in the corner-by-corner half-extent
-    /// `mul_add` chain accumulates ~1e-5 relative; 1e-3 absolute
-    /// floor handles small AABBs near the origin.
+    /// Asserts that `arvo` and `Aabb::transformed_arvo` agree on each axis,
+    /// within a tolerance scaled by the world-AABB diagonal. f32 rounding in
+    /// the centre and half-extent `mul_add` chains accumulates about 1e-5
+    /// relative error; the 1e-3 absolute floor covers small AABBs near the
+    /// origin.
     fn assert_arvo_agrees(local: Aabb, t: AffineTransform3D) {
         let f64_world = local.transformed_arvo(&t);
         let lmin = Vec3::from(local.min().coords());
@@ -979,8 +944,8 @@ mod arvo_consistency_tests {
 
     #[test]
     fn mirror_negative_determinant_agrees() {
-        // det = -1 path; both implementations apply the same |M[i][j]|
-        // step, so the mirror should be invisible to the AABB result.
+        // det = -1 path; both implementations apply the same |M[i][j]| step, so
+        // the mirror should be invisible to the AABB result.
         assert_arvo_agrees(
             unit_aabb(),
             AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]),
@@ -997,10 +962,9 @@ mod arvo_consistency_tests {
 
     #[test]
     fn off_origin_aabb_agrees() {
-        // AABB whose corners are all positive: the centre is not at
-        // the origin, so the centre-and-half-extents formula has both
-        // a non-trivial centre transform and a non-trivial half-extent
-        // computation.
+        // AABB whose corners are all positive: the centre is not at the origin,
+        // so the centre-and-half-extents formula has both a non-trivial centre
+        // transform and a non-trivial half-extent computation.
         let off_origin = Aabb::from_min_max(
             Vertex::new([10.0, 20.0, 30.0]),
             Vertex::new([12.0, 25.0, 33.0]),
@@ -1052,8 +1016,8 @@ mod ray_z_plane_intersection_tests {
 
     #[test]
     fn plane_behind_camera_returns_none() {
-        // Origin below plane and aimed downward: the plane sits behind
-        // the ray, so the intersection is at t < 0.
+        // Origin below plane and aimed downward: the plane sits behind the ray,
+        // so the intersection is at t < 0.
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, -2.0),
             direction: Vec3::new(0.0, 0.0, -1.0),

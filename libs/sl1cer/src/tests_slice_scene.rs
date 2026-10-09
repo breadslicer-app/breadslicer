@@ -4,14 +4,14 @@
  */
 
 //! Scene-level tests for [`slice_scene`]: leaf discovery, transform
-//! composition, deferred node kinds, and aggregated validation
-//! reporting. Geometric multi-leaf assertions live in the
-//! `multi_leaf_contours` integration test.
+//! composition, deferred node kinds, and aggregated validation reporting.
+//! Geometric multi-leaf assertions live in the `multi_leaf_contours`
+//! integration test.
 
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_scene::Scene;
 use sc_scene::node::{CsgOp, LeafPayload, NodeId, SceneMetadata};
@@ -25,8 +25,8 @@ use crate::{
     sliceable_leaves,
 };
 
-/// Four uniform 0.25 mm slabs: planes at 0.125, 0.375, 0.625, 0.875.
-/// All four fall inside a unit cube lifted to `z in [0, 1]`.
+/// Returns a profile with 4 uniform slabs of 0.25 mm: planes at 0.125, 0.375,
+/// 0.625, 0.875. All 4 fall inside a unit cube lifted to `z in [0, 1]`.
 fn four_layer_profile() -> SliceProfile {
     SliceProfile::new(
         BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
@@ -45,8 +45,8 @@ fn named(name: &str) -> Option<SceneMetadata> {
     })
 }
 
-/// Translation lifting the origin-centred unit cube onto the plate
-/// (`z in [0, 1]`) at the given XY offset.
+/// Returns the translation that lifts the origin-centred unit cube onto the
+/// plate (`z in [0, 1]`) at the given XY offset.
 fn lift(x: f64, y: f64) -> Transform3D {
     Transform3D::Affine(AffineTransform3D::from_translation([x, y, 0.5]))
 }
@@ -63,8 +63,8 @@ fn add_root_cube(scene: &mut Scene, name: &str, x: f64) -> NodeId {
     leaf
 }
 
-/// Single triangle referencing vertex 0 twice: rejected by the
-/// face-validation stage with `ZeroLengthEdge`.
+/// Returns a single triangle that references vertex 0 twice: the
+/// face-validation stage rejects it with `ZeroLengthEdge`.
 fn zero_length_edge_mesh() -> IndexedMesh {
     IndexedMesh {
         meta: None,
@@ -73,15 +73,12 @@ fn zero_length_edge_mesh() -> IndexedMesh {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 0],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 0])],
     }
 }
 
-/// Single well-formed triangle: passes face validation, fails the
-/// manifold stage with boundary edges.
+/// Returns a single well-formed triangle: it passes face validation and fails
+/// the manifold stage with boundary edges.
 fn open_triangle_mesh() -> IndexedMesh {
     IndexedMesh {
         meta: None,
@@ -90,10 +87,7 @@ fn open_triangle_mesh() -> IndexedMesh {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
@@ -165,8 +159,8 @@ mod discovery_tests {
 
     #[test]
     fn leaf_name_falls_back_to_the_mesh_metadata_name() {
-        // OBJ-shaped topology: nameless group root, nameless leaf,
-        // object name carried on the mesh itself.
+        // OBJ-shaped topology: nameless group root, nameless leaf, object name
+        // carried on the mesh itself.
         let mut scene = Scene::new();
         let group = scene.add_group(None, Transform3D::Identity);
         let mut mesh = unit_cube_mesh();
@@ -284,7 +278,7 @@ mod validation_aggregation_tests {
 
     #[test]
     fn leaves_after_the_first_failure_are_still_validated() {
-        // The invalid leaf comes FIRST; the last leaf is also invalid.
+        // The invalid leaf comes first; the last leaf is also invalid.
         // Aggregation must reach it even though slicing stopped.
         let mut scene = Scene::new();
         let first_bad = add_root_mesh(&mut scene, "first-bad", open_triangle_mesh());
@@ -337,7 +331,8 @@ mod progress_and_cancel_tests {
 
     use super::*;
 
-    /// Two cubes under a four-layer schedule: eight layer-slices total.
+    /// Builds a scene of 2 cubes: 8 layer-slices in total under a 4-layer
+    /// schedule.
     fn two_cube_scene() -> Scene {
         let mut scene = Scene::new();
         add_root_cube(&mut scene, "alpha", -3.0);
@@ -364,9 +359,8 @@ mod progress_and_cancel_tests {
         // 2 leaves * 4 layers.
         assert_eq!(reports.len(), 8);
         assert!(reports.iter().all(|p| p.total == 8));
-        // Layers slice in parallel, so reports can arrive out of
-        // order; the counts over a completed run are a permutation
-        // of 1..=total.
+        // Layers slice in parallel, so reports can arrive out of order; the
+        // counts over a completed run are a permutation of 1..=total.
         let mut counts: Vec<usize> = reports.iter().map(|p| p.completed).collect();
         counts.sort_unstable();
         assert_eq!(counts, (1..=8).collect::<Vec<_>>());
@@ -396,11 +390,11 @@ mod progress_and_cancel_tests {
         .expect("cancellation is a clean stop, not an error");
 
         assert_eq!(outcome, SliceOutcome::Cancelled);
-        // The first report cancels the token, but the first leaf's
-        // layer tasks run in parallel: any of its 4 layers may already
-        // be past the cancellation poll and still report. The second
-        // leaf never starts (the poll between leaves sees the trip),
-        // so between 1 and 4 reports arrive.
+        // The first report cancels the token, but the layer tasks of the first
+        // leaf run in parallel: any of its 4 layers may already be past the
+        // cancellation poll and still report. The second leaf never starts (the
+        // poll between leaves sees the trip), so between 1 and 4 reports
+        // arrive.
         let calls = calls.into_inner();
         assert!((1..=4).contains(&calls), "reports: {calls}");
     }
@@ -472,9 +466,9 @@ mod parallel_equivalence_tests {
 
     use super::*;
 
-    /// 64 uniform 0.03125 mm slabs: plane centres from 0.015625 up to
-    /// 1.984375, covering `z in [0, 2]`. Enough tasks to occupy
-    /// several worker threads.
+    /// Returns a profile with 64 uniform slabs of 0.03125 mm: plane centres
+    /// from 0.015625 up to 1.984375, covering `z in [0, 2]`. Enough tasks to
+    /// occupy several worker threads.
     fn sixty_four_layer_profile() -> SliceProfile {
         SliceProfile::new(
             BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
@@ -486,11 +480,10 @@ mod parallel_equivalence_tests {
         )
     }
 
-    /// The reference result: the leaf sliced by a plain sequential
-    /// loop over [`slice_layer`], one plane after another on this
-    /// thread, with every face as a candidate (a full scan, no
-    /// bucketing). The parallel bucketed pipeline must reproduce it
-    /// exactly.
+    /// Returns the reference result: the leaf sliced by a plain sequential loop
+    /// over [`slice_layer`], 1 plane after another on this thread, with every
+    /// face as a candidate (a full scan, no bucketing). The parallel bucketed
+    /// pipeline must reproduce it exactly.
     fn expected_sequential_stack(
         scene: &Scene,
         leaf: NodeId,
@@ -526,10 +519,9 @@ mod parallel_equivalence_tests {
             assert_eq!(record.stack(), &expected);
         }
 
-        // Guard against a vacuously-empty comparison: the z-tunnel
-        // slices to an annulus (outer ring plus one hole) on every
-        // layer, and the y-tunnel splits into two solid polygons
-        // inside its tunnel band.
+        // Guard against a vacuously-empty comparison: the z-tunnel slices to an
+        // annulus (outer ring plus 1 hole) on every layer, and the y-tunnel
+        // splits into 2 solid polygons inside its tunnel band.
         let z_first = &slices[1].stack().layers()[0];
         assert_eq!(z_first.polygons().len(), 1);
         assert_eq!(z_first.polygons()[0].holes().len(), 1);
@@ -653,8 +645,9 @@ mod pinched_leaf_tests {
 
     use sc_mesh_fixtures::{bowtie_tetrahedra, cuboid_with_pinched_z_tunnel};
 
-    /// One 2 mm slab covering the whole fixture: its plane sits at
-    /// exactly z = 1, the pinch height of both pinch fixtures.
+    /// Returns a profile with a single 2 mm slab that covers the whole fixture:
+    /// its plane sits at exactly z = 1, the pinch height of both pinch
+    /// fixtures.
     fn through_pinch_profile() -> SliceProfile {
         SliceProfile::new(
             BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
@@ -666,8 +659,8 @@ mod pinched_leaf_tests {
         )
     }
 
-    /// Eight 0.25 mm slabs: planes at 0.125 .. 1.875, straddling the
-    /// pinch at z = 1 without ever landing on it.
+    /// Returns a profile with 8 slabs of 0.25 mm: planes at 0.125 .. 1.875,
+    /// straddling the pinch at z = 1 without ever landing on it.
     fn eight_layer_profile() -> SliceProfile {
         SliceProfile::new(
             BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
@@ -681,8 +674,8 @@ mod pinched_leaf_tests {
 
     #[test]
     fn bowtie_leaf_slices_end_to_end_through_the_pinch() {
-        // Regression: this exact call used to panic inside the
-        // topology build before pinch vertices were accepted.
+        // A pinch vertex on the slicing plane must not make the topology build
+        // panic.
         let mut scene = Scene::new();
         let leaf = add_root_mesh(&mut scene, "bowtie", bowtie_tetrahedra());
         let stack =

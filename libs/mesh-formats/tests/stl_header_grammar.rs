@@ -2,19 +2,18 @@
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
  * SPDX-License-Identifier: Apache-2.0
  *
- * Integration tests for ASCII STL header acceptance through the
- * auto-detecting `read_stl` entry point, pinned to real vendored
- * files where they exist. The header grammar accepts `solid` as a
- * keyword (case-insensitive, optional leading spaces/tabs) followed
- * by an optional free-text name; the probe must route CRLF and
- * odd-name ASCII documents to the ASCII parser, while binary files
- * whose 80-byte header happens to start with `solid` keep routing to
- * the binary parser.
+ * Integration tests for ASCII STL header acceptance through the auto-detecting
+ * `read_stl` entry point, pinned to real vendored files where they exist. The
+ * header grammar accepts `solid` as a keyword (case-insensitive, optional
+ * leading spaces or tabs) followed by an optional free-text name; the probe
+ * must route CRLF and odd-name ASCII documents to the ASCII parser, while
+ * binary files whose 80-byte header happens to start with `solid` keep routing
+ * to the binary parser.
  */
 
 use std::io::Cursor;
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_formats::error::LoadStlError;
 use sc_mesh_formats::stl::{read_stl, read_stla, write_stlb};
 use sc_scene::Scene;
@@ -27,7 +26,7 @@ fn single_leaf_mesh(graph: &Scene) -> &IndexedMesh {
     graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
 }
 
-/// A one-facet, well-formed ASCII STL body under the given header
+/// Returns a well-formed ASCII STL document with 1 facet under the given header
 /// line. Only the header varies across these tests.
 fn doc_with_header(header: &str) -> String {
     format!(
@@ -36,14 +35,14 @@ fn doc_with_header(header: &str) -> String {
     )
 }
 
-/// The exact byte transform a Windows text-mode write applies.
+/// Applies the byte transform of a Windows text-mode write to `text`.
 fn crlf(text: &str) -> Vec<u8> {
     text.replace('\n', "\r\n").into_bytes()
 }
 
-/// Reads through the auto-detecting entry, keeping only the scene;
-/// tests that care about warnings go through `load_mesh_from_reader`
-/// in `stl_binary_header_tests` instead.
+/// Reads `bytes` through the auto-detecting entry and keeps only the scene;
+/// tests that check warnings go through `load_mesh_from_reader` in
+/// `stl_binary_header_tests` instead.
 fn read_stl_bytes(bytes: &[u8]) -> Result<Scene, LoadStlError> {
     read_stl(&mut Cursor::new(bytes)).map(|(scene, _)| scene)
 }
@@ -121,8 +120,9 @@ mod stl_autodetect_header_tests {
         assert_eq!(single_leaf_mesh(&scene).faces().len(), 1);
     }
 
-    /// A binary STL whose 80-byte header begins with `solid ` (the
-    /// rest is NUL padding) must keep routing to the binary parser.
+    /// Returns a binary STL of `faces` whose 80-byte header begins with
+    /// `solid part1` and NUL padding, which the probe must route to the binary
+    /// parser.
     fn binary_with_solid_prefixed_header(faces: Vec<IndexedTriangle>) -> Vec<u8> {
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
@@ -145,10 +145,8 @@ mod stl_autodetect_header_tests {
 
     #[test]
     fn binary_file_with_solid_prefixed_header_routes_to_binary() {
-        let bytes = binary_with_solid_prefixed_header(vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )]);
+        let bytes =
+            binary_with_solid_prefixed_header(vec![IndexedTriangle::from_raw_indices([0, 1, 2])]);
         let scene = read_stl_bytes(&bytes).unwrap();
         assert_eq!(single_leaf_mesh(&scene).faces().len(), 1);
     }
@@ -165,8 +163,8 @@ mod stl_autodetect_header_tests {
 mod vendored_fixture_tests {
     use super::*;
 
-    /// Loads one vendored fixture through both entry points and pins
-    /// its facet count (counted once from the file at vendoring time).
+    /// Loads a vendored fixture through both entry points and checks its facet
+    /// count (counted from the file when it was vendored).
     fn assert_fixture_loads(bytes: &[u8], faces: usize) {
         let via_auto = read_stl_bytes(bytes).unwrap();
         assert_eq!(single_leaf_mesh(&via_auto).faces().len(), faces);
@@ -250,8 +248,8 @@ mod stl_binary_header_tests {
     use sc_mesh_formats::messages::{LoadMeshWarning, LoadStlWarning};
     use sc_mesh_formats::{LoadedMesh, load_mesh_from_reader};
 
-    /// One 50-byte binary record: +Z normal, unit XY triangle, zero
-    /// attribute bytes.
+    /// Returns a 50-byte binary record: a +Z normal, the unit XY triangle and
+    /// attribute bytes set to 0.
     fn triangle_record() -> Vec<u8> {
         let mut record = Vec::with_capacity(50);
         for value in [
@@ -266,9 +264,9 @@ mod stl_binary_header_tests {
         record
     }
 
-    /// A binary document with the given header bytes (NUL-padded to
-    /// 80) declaring and carrying 1 valid triangle record. Only the
-    /// header varies across these tests.
+    /// Returns a binary document with the given header bytes (NUL-padded to 80)
+    /// that declares and holds 1 valid triangle record. Only the header varies
+    /// across these tests.
     fn binary_doc_with_header(header: &[u8]) -> Vec<u8> {
         assert!(header.len() <= 80);
         let mut doc = vec![0_u8; 80];
@@ -290,10 +288,10 @@ mod stl_binary_header_tests {
             .count()
     }
 
-    /// The Materialise Magics colour convention places `COLOR=` plus
-    /// 4 raw RGBA bytes in the header; 0xFF can never appear in valid
-    /// UTF-8, so the header is not text. The geometry must load, with
-    /// no name and exactly one header warning.
+    /// Pins that a header with the Materialise Magics colour convention
+    /// (`COLOR=` and 4 raw RGBA bytes) loads the geometry with no name and
+    /// exactly 1 header warning: 0xFF never occurs in valid UTF-8, so the
+    /// header is not text.
     #[test]
     fn magics_color_header_loads_geometry() {
         let mut header = b"COLOR=".to_vec();
@@ -306,9 +304,9 @@ mod stl_binary_header_tests {
         }
     }
 
-    /// Windows-codepage text (0xFC is u-umlaut in Windows-1252) is
-    /// not valid UTF-8 and is not transcoded: nameless load with a
-    /// header warning.
+    /// Pins that Windows-codepage text (0xFC is u-umlaut in Windows-1252),
+    /// which is not valid UTF-8 and is not transcoded, loads without a name and
+    /// with a header warning.
     #[test]
     fn codepage_header_loads_nameless() {
         let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(b"K\xFCche"));
@@ -317,8 +315,8 @@ mod stl_binary_header_tests {
         assert_eq!(header_not_text_warnings(&loaded), 1);
     }
 
-    /// ASCII control bytes decode as UTF-8 but are not printable
-    /// text; they must not become a mesh name.
+    /// Pins that ASCII control bytes, which decode as UTF-8 but are not
+    /// printable text, do not become a mesh name.
     #[test]
     fn control_junk_header_loads_nameless() {
         let junk: Vec<u8> = [0x07_u8, 0x01].iter().copied().cycle().take(20).collect();
@@ -328,7 +326,7 @@ mod stl_binary_header_tests {
         assert_eq!(header_not_text_warnings(&loaded), 1);
     }
 
-    /// Valid UTF-8 headers are text: the name is taken verbatim,
+    /// Pins that a valid UTF-8 header is text: the name is taken as it is,
     /// non-ASCII included, with no warning.
     #[test]
     fn utf8_header_yields_unicode_name() {
@@ -340,8 +338,8 @@ mod stl_binary_header_tests {
         assert!(loaded.warnings.is_empty());
     }
 
-    /// The 80-byte header needs no NUL terminator: a name filling the
-    /// full width is taken whole.
+    /// Pins that the 80-byte header needs no NUL terminator: a name that fills
+    /// the full width is taken whole.
     #[test]
     fn full_width_ascii_name_no_nul() {
         let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(&[b'a'; 80]));
@@ -349,8 +347,7 @@ mod stl_binary_header_tests {
         assert!(loaded.warnings.is_empty());
     }
 
-    /// The common all-zero header is plain namelessness, not a
-    /// warning condition.
+    /// Pins that the common all-zero header gives no name and no warning.
     #[test]
     fn zero_header_stays_silent() {
         let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(&[]));
@@ -358,8 +355,8 @@ mod stl_binary_header_tests {
         assert!(loaded.warnings.is_empty());
     }
 
-    /// Whitespace padding before the NULs trims to no name; benign,
-    /// so no warning either.
+    /// Pins that whitespace padding before the NULs trims to no name and gives
+    /// no warning.
     #[test]
     fn whitespace_header_stays_silent() {
         let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(b"    "));
@@ -367,12 +364,11 @@ mod stl_binary_header_tests {
         assert!(loaded.warnings.is_empty());
     }
 
-    /// Real Magics-convention colour STL vendored from the three.js
-    /// examples: `COLOR=` plus 4 raw RGBA bytes in a space-padded,
-    /// nul-free header, colour data in every facet's attribute
-    /// bytes. The load succeeds, no name is taken, and the header
-    /// warning is emitted, on both the auto-detect and the explicit
-    /// binary route.
+    /// Pins that a real Magics-convention colour STL, vendored from the
+    /// three.js examples, loads through the auto-detect and the explicit binary
+    /// route with no name and with the header warning. Its header holds
+    /// `COLOR=` and 4 raw RGBA bytes, padded with spaces and without NUL, and
+    /// the attribute bytes of every facet hold colour data.
     #[test]
     fn vendored_magics_color_fixture_loads() {
         let bytes = include_bytes!("fixtures/official/threejs-stlb-color/colored.stl");
@@ -384,12 +380,12 @@ mod stl_binary_header_tests {
         }
     }
 
-    /// Real Pro/ENGINEER binary export vendored from numpy-stl's
-    /// test data: the header starts with ` solid `, is nul-padded,
-    /// and carries 2 raw bytes after the padding. The exact binary
-    /// layout routes it to the binary parser despite the `solid`
-    /// prefix, the name comes from before the first nul, and the raw
-    /// tail neither fails the load nor pollutes the name.
+    /// Pins that a real Pro/ENGINEER binary export, vendored from the test data
+    /// of numpy-stl, loads with its name. Its header starts with ` solid `, is
+    /// NUL-padded and holds 2 raw bytes after the padding. The exact binary
+    /// layout routes it to the binary parser despite the `solid` prefix, the
+    /// name comes from the bytes before the first NUL, and the raw tail neither
+    /// fails the load nor changes the name.
     #[test]
     fn vendored_pro2stl_fixture_loads_with_name() {
         let bytes = include_bytes!("fixtures/official/numpy-stl-stlb/CubeInvalidUnicode.stl");

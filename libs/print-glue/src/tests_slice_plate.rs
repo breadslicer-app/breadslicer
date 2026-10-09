@@ -6,7 +6,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{EffectiveMaterial, MaterialProfile, PrinterProfile};
@@ -280,10 +280,7 @@ fn an_invalid_leaf_is_an_engine_error() {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 1.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 9],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 9])],
     };
     let err = slice_plate(
         &meshes_as_roots([broken]),

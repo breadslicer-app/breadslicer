@@ -22,7 +22,7 @@
 //! surface.
 
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
 #[cfg(test)]
 mod tests_collinear;
@@ -46,29 +46,23 @@ pub fn unit_cube_mesh() -> IndexedMesh {
         Vertex::new([0.5, 0.5, 0.5]),
         Vertex::new([-0.5, 0.5, 0.5]),
     ];
-    let nz = Normal::new([0.0, 0.0, -1.0]);
-    let pz = Normal::new([0.0, 0.0, 1.0]);
-    let ny = Normal::new([0.0, -1.0, 0.0]);
-    let py = Normal::new([0.0, 1.0, 0.0]);
-    let nx = Normal::new([-1.0, 0.0, 0.0]);
-    let px = Normal::new([1.0, 0.0, 0.0]);
-    let f = |n: Normal, abc: [u32; 3]| IndexedTriangle::from_raw_indices(n, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices,
         faces: vec![
-            f(nz, [0, 3, 2]),
-            f(nz, [0, 2, 1]),
-            f(pz, [4, 5, 6]),
-            f(pz, [4, 6, 7]),
-            f(py, [3, 7, 6]),
-            f(py, [3, 6, 2]),
-            f(ny, [0, 1, 5]),
-            f(ny, [0, 5, 4]),
-            f(px, [1, 2, 6]),
-            f(px, [1, 6, 5]),
-            f(nx, [0, 4, 7]),
-            f(nx, [0, 7, 3]),
+            f([0, 3, 2]),
+            f([0, 2, 1]),
+            f([4, 5, 6]),
+            f([4, 6, 7]),
+            f([3, 7, 6]),
+            f([3, 6, 2]),
+            f([0, 1, 5]),
+            f([0, 5, 4]),
+            f([1, 2, 6]),
+            f([1, 6, 5]),
+            f([0, 4, 7]),
+            f([0, 7, 3]),
         ],
     }
 }
@@ -98,8 +92,7 @@ pub fn cuboid_with_z_tunnel() -> IndexedMesh {
         Vertex::new([0.4, 0.4, 2.0]),
         Vertex::new([-0.4, 0.4, 2.0]),
     ];
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices,
@@ -171,8 +164,7 @@ pub fn cuboid_with_y_tunnel() -> IndexedMesh {
         Vertex::new([0.4, 1.0, 1.4]),
         Vertex::new([-0.4, 1.0, 1.4]),
     ];
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices,
@@ -230,8 +222,7 @@ pub fn cuboid_with_y_tunnel() -> IndexedMesh {
 /// and emit through-vertex segments. Face winding follows the manifold
 /// tetrahedron pattern in `sc-mesh-core`.
 pub fn aob_saddle_tetrahedron() -> IndexedMesh {
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices: vec![
@@ -251,8 +242,7 @@ pub fn aob_saddle_tetrahedron() -> IndexedMesh {
 /// and F3 are AOBs at V0 and V1 respectively. Face winding follows the manifold
 /// tetrahedron pattern in `sc-mesh-core`.
 pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices: vec![
@@ -276,8 +266,7 @@ pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
 /// vertices, 8 triangles and 12 edges: its Euler characteristic, V - E + F, is
 /// 3, that of 2 spheres that share a point.
 pub fn bowtie_tetrahedra() -> IndexedMesh {
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices: vec![
@@ -322,8 +311,7 @@ pub fn bowtie_tetrahedra() -> IndexedMesh {
 pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
     let mut mesh = cuboid_with_z_tunnel();
     mesh.vertices.push(Vertex::new([0.0, 0.0, 1.0]));
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     // The straight tunnel walls are the last 8 faces of the donor fixture;
     // everything else (annuli, outer sides) carries over.
     mesh.faces.truncate(24);
@@ -344,10 +332,9 @@ pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
     mesh
 }
 
-/// Turns the faces at `indices` inside out: vertex order reversed AND stored
-/// normal negated, the state in which an inverted face arrives from a file. The
-/// orientation repair pass reverses both again, restoring the donor fixture
-/// byte for byte.
+/// Turns the faces at `indices` inside out by reversing their vertex order. The
+/// orientation repair pass reverses it again, restoring the donor fixture byte
+/// for byte.
 ///
 /// The chosen faces must have pairwise disjoint edge-neighbourhoods: a face
 /// adjacent to 2 inside-out faces would itself accumulate 2 winding
@@ -356,7 +343,6 @@ fn with_flipped_faces(mut mesh: IndexedMesh, indices: &[usize]) -> IndexedMesh {
     for &idx in indices {
         let face = &mut mesh.faces[idx];
         face.vertices.reverse();
-        face.normal = face.normal.negate();
     }
     mesh
 }
@@ -402,25 +388,17 @@ pub fn cuboid_with_y_tunnel_and_flipped_faces() -> IndexedMesh {
 /// the middle of the vertical edge 1-5, splits the -Y face on that edge. The
 /// face across each edge stays whole, so a face with 3 collinear vertices
 /// closes the mesh along it. The mesh stays closed and edge-manifold, with the
-/// volume of the cube. The collinear faces store the zero normal, as the 3MF
-/// and OBJ readers do for a face without a normal.
+/// volume of the cube.
 pub fn unit_cube_with_collinear_faces() -> IndexedMesh {
     let mut mesh = unit_cube_mesh();
     mesh.vertices
         .extend([Vertex::new([0.0, -0.5, 0.5]), Vertex::new([0.5, -0.5, 0.0])]);
-    let pz = Normal::new([0.0, 0.0, 1.0]);
-    let ny = Normal::new([0.0, -1.0, 0.0]);
-    let zero = Normal::new([0.0, 0.0, 0.0]);
-    let f = |n: Normal, abc: [u32; 3]| IndexedTriangle::from_raw_indices(n, abc);
+    let f = IndexedTriangle::from_raw_indices;
     // Faces 2 and 6 of the donor are (4, 5, 6) and (0, 1, 5).
-    mesh.faces[2] = f(pz, [4, 8, 6]);
-    mesh.faces[6] = f(ny, [0, 1, 9]);
-    mesh.faces.extend([
-        f(pz, [8, 5, 6]),
-        f(ny, [0, 9, 5]),
-        f(zero, [4, 5, 8]),
-        f(zero, [1, 5, 9]),
-    ]);
+    mesh.faces[2] = f([4, 8, 6]);
+    mesh.faces[6] = f([0, 1, 9]);
+    mesh.faces
+        .extend([f([8, 5, 6]), f([0, 9, 5]), f([4, 5, 8]), f([1, 5, 9])]);
     mesh
 }
 
@@ -430,8 +408,7 @@ pub fn unit_cube_with_collinear_faces() -> IndexedMesh {
 /// entirely. Face winding follows the manifold tetrahedron pattern in
 /// `sc-mesh-core`.
 pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
-    let placeholder = Normal::new([0.0, 0.0, 1.0]);
-    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    let f = IndexedTriangle::from_raw_indices;
     IndexedMesh {
         meta: None,
         vertices: vec![
@@ -453,14 +430,10 @@ pub fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
     mesh
 }
 
-/// Returns `mesh` with the bits of its stored face normals as its declared
-/// facet normals, and its other metadata unchanged.
-pub fn with_stored_normals_declared(mut mesh: IndexedMesh) -> IndexedMesh {
-    let normals = mesh
-        .faces
-        .iter()
-        .map(|face| face.normal.coords().map(f32::to_bits))
-        .collect();
+/// Returns `mesh` with `normals`, as f32 bit patterns, as its declared facet
+/// normals, and its other metadata unchanged. Panics unless `normals` holds 1
+/// entry per face.
+pub fn with_declared_facet_normals(mut mesh: IndexedMesh, normals: Vec<[u32; 3]>) -> IndexedMesh {
     let declared = DeclaredFacetNormals::capture(&mesh, normals).expect("1 normal per face");
     let meta = mesh.meta.take().unwrap_or_default();
     mesh.set_meta(Some(MeshMetadata {

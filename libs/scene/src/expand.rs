@@ -5,11 +5,11 @@
 
 //! Expansion-aware leaf traversal for [`Scene`].
 //!
-//! "Expansion" means following `Reference -> subtree resource` edges,
-//! so a subtree referenced N times is visited N times, each under the
-//! composed transform of its call site. This is the walk the baking
-//! and export paths share; walks that deliberately skip references
-//! (cache layers, selection indexing) do not belong here.
+//! "Expansion" means following `Reference -> subtree resource` edges, so a
+//! subtree referenced N times is visited N times, each under the composed
+//! transform of its call site. This is the walk the baking and export paths
+//! share; walks that skip references on purpose (cache layers, selection
+//! indexing) do not belong here.
 
 use std::collections::HashMap;
 
@@ -19,52 +19,49 @@ use crate::node::{LeafPayload, NodeId, NodeKind, SubtreeResourceId};
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 
-/// Hard ceiling shared by consumers that expand subtree references
-/// into leaf occurrences (format readers, scene writers). Expansion
-/// graphs are acyclic but can multiply: a subtree holding 2
-/// references to its predecessor doubles the occurrence count per
-/// level, so a small scene or document can describe 2^n placements.
-/// Real plates hold thousands of occurrences at most; the cap bounds
-/// the work a crafted or accidental construction can demand.
-/// Consumers compare [`Scene::expanded_leaf_count`] against this
-/// before walking with [`Scene::for_each_expanded_leaf`].
+/// Hard ceiling shared by consumers that expand subtree references into leaf
+/// occurrences (format readers, scene writers). Expansion graphs are acyclic
+/// but can multiply: a subtree holding 2 references to its predecessor doubles
+/// the occurrence count per level, so a small scene or document can describe
+/// 2^n placements. Real plates hold thousands of occurrences at most; the cap
+/// bounds the work a crafted or accidental construction can demand. Consumers
+/// compare [`Scene::expanded_leaf_count`] against this before walking with
+/// [`Scene::for_each_expanded_leaf`].
 pub const MAX_EXPANDED_LEAF_COUNT: usize = 100_000;
 
-/// What an expanding walk does when it reaches an unevaluated
-/// [`NodeKind::Csg`] node. The stances differ per consumer and both
-/// predate this walk: merging/baking refuses (there is no evaluator,
-/// so flattening operands would misrepresent the intended solid),
-/// while the OBJ writer descends and serialises the operands as
-/// plain objects. Callers state their stance explicitly.
+/// What an expanding walk does when it reaches an unevaluated [`NodeKind::Csg`]
+/// node. The stances differ per consumer: merging and baking refuse (there is
+/// no evaluator, so flattening the operands would misrepresent the intended
+/// solid), while the OBJ writer descends and writes the operands as plain
+/// objects. Callers state their stance explicitly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CsgPolicy {
-    /// Abort the walk with [`SceneError::UnevaluatedCsg`].
+    /// Aborts the walk with [`SceneError::UnevaluatedCsg`].
     Refuse,
-    /// Treat the CSG node as a plain container and visit its
-    /// operand subtrees.
+    /// Treats the CSG node as a plain container and visits its operand
+    /// subtrees.
     Descend,
 }
 
 impl Scene {
-    /// Pre-order traversal of every leaf occurrence reachable from
-    /// the scene roots, expanding `Reference` edges.
+    /// Visits every leaf occurrence reachable from the scene roots in
+    /// pre-order, expanding `Reference` edges.
     ///
-    /// `visit` receives the leaf's stable [`NodeId`], the composed
-    /// world transform of this occurrence (root applied last,
-    /// call-site chains included), and the resolved mesh.
-    /// A leaf inside a subtree referenced N times is visited N
-    /// times, with the same `NodeId` and N different transforms.
+    /// `visit` receives the stable [`NodeId`] of the leaf, the composed world
+    /// transform of this occurrence (root applied last, call-site chains
+    /// included), and the resolved mesh. A leaf inside a subtree referenced N
+    /// times is visited N times, with the same `NodeId` and N different
+    /// transforms.
     ///
-    /// The number of occurrences can grow exponentially in the node
-    /// count when referenced subtrees nest (each level multiplies).
-    /// Callers that accept untrusted or unbounded scenes must check
-    /// [`Scene::expanded_leaf_count`] against their budget before
-    /// walking.
+    /// The number of occurrences can grow exponentially in the node count when
+    /// referenced subtrees nest (each level multiplies). Callers that accept
+    /// untrusted or unbounded scenes must check [`Scene::expanded_leaf_count`]
+    /// against their budget before walking.
     ///
-    /// Errors with the relevant dangling-id [`SceneError`] on a
-    /// broken reference, with [`SceneError::UnevaluatedCsg`] under
-    /// [`CsgPolicy::Refuse`], and with whatever `visit` returns;
-    /// the first error aborts the walk.
+    /// Errors with the relevant dangling-id [`SceneError`] on a broken
+    /// reference, with [`SceneError::UnevaluatedCsg`] under
+    /// [`CsgPolicy::Refuse`], and with whatever `visit` returns; the first
+    /// error aborts the walk.
     pub fn for_each_expanded_leaf<E, F>(&self, csg: CsgPolicy, mut visit: F) -> Result<(), E>
     where
         E: From<SceneError>,
@@ -115,21 +112,20 @@ impl Scene {
         Ok(())
     }
 
-    /// The number of leaf occurrences [`Scene::for_each_expanded_leaf`]
-    /// would visit, computed WITHOUT walking occurrences: each
-    /// reachable subtree resource is tallied once and its total is
-    /// reused per reference, so a scene describing 2^n placements is
-    /// counted in time proportional to its node count, not its
-    /// occurrence count. Totals saturate at [`usize::MAX`].
+    /// Returns the number of leaf occurrences [`Scene::for_each_expanded_leaf`]
+    /// would visit, computed without walking the occurrences: each reachable
+    /// subtree resource is tallied once and its total is reused per reference,
+    /// so a scene describing 2^n placements is counted in time proportional to
+    /// its node count, not its occurrence count. Totals saturate at
+    /// [`usize::MAX`].
     ///
     /// This is the budget pre-pass for the expanding walk;
     /// [`MAX_EXPANDED_LEAF_COUNT`] is the shared default budget.
     ///
-    /// Leaf payloads are not resolved; the count needs only the
-    /// graph structure. `csg` follows the same semantics as the
-    /// walk; dangling node ids and dangling subtree resources
-    /// error, and scopes not reachable from the scene roots
-    /// (unreferenced registered subtrees) are never examined.
+    /// Leaf payloads are not resolved; the count needs only the graph
+    /// structure. `csg` follows the same semantics as the walk; dangling node
+    /// ids and dangling subtree resources error, and scopes not reachable from
+    /// the scene roots (unreferenced registered subtrees) are never examined.
     pub fn expanded_leaf_count(&self, csg: CsgPolicy) -> Result<usize, SceneError> {
         let main = self.tally_scope(self.roots().iter().copied(), csg)?;
 
@@ -148,11 +144,11 @@ impl Scene {
             tally_of.insert(rid, tally);
         }
 
-        // Resolve totals bottom-up. The expansion graph is acyclic
-        // (enforced at every mutation), so each pass resolves at
-        // least one scope whose references are all resolved; a pass
-        // without progress would mean that invariant broke, and the
-        // loop reports it as the cycle it is instead of spinning.
+        // Resolve totals bottom-up. The expansion graph is acyclic (enforced at
+        // every mutation), so each pass resolves at least 1 scope whose
+        // references are all resolved; a pass without progress would mean that
+        // invariant broke, and the loop reports it as the cycle it is instead
+        // of spinning.
         let mut totals: HashMap<SubtreeResourceId, usize> = HashMap::new();
         let mut unresolved: Vec<SubtreeResourceId> = tally_of.keys().copied().collect();
         while !unresolved.is_empty() {
@@ -185,10 +181,9 @@ impl Scene {
             .fold(main.local_leaves, |acc, r| acc.saturating_add(totals[r])))
     }
 
-    /// Counts the leaves directly inside one expansion scope (the
-    /// main scene, or one subtree resource's interior) and records
-    /// each subtree reference with multiplicity, without
-    /// descending through it.
+    /// Counts the leaves directly inside 1 expansion scope (the main scene, or
+    /// the interior of 1 subtree resource) and records each subtree reference
+    /// with its multiplicity, without descending through it.
     fn tally_scope(
         &self,
         starts: impl IntoIterator<Item = NodeId>,
@@ -220,8 +215,8 @@ impl Scene {
     }
 }
 
-/// Leaves and subtree references found directly inside one
-/// expansion scope; see [`Scene::tally_scope`].
+/// Leaves and subtree references found directly inside 1 expansion scope; see
+/// [`Scene::tally_scope`].
 struct ScopeTally {
     local_leaves: usize,
     refs: Vec<SubtreeResourceId>,
@@ -232,7 +227,7 @@ mod expand_tests {
     use super::*;
     use crate::node::{CsgOp, SubtreeResourceId};
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
     use std::sync::Arc;
 
@@ -244,10 +239,7 @@ mod expand_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -255,8 +247,7 @@ mod expand_tests {
         Transform3D::Affine(AffineTransform3D::from_translation([x, y, z]))
     }
 
-    /// Registers a subtree holding one triangle leaf under
-    /// `leaf_transform` and returns the resource id.
+    /// Registers a subtree that holds 1 triangle leaf under `leaf_transform`.
     fn register_triangle_subtree(g: &mut Scene, leaf_transform: Transform3D) -> SubtreeResourceId {
         let leaf = g
             .add_leaf(
@@ -337,8 +328,7 @@ mod expand_tests {
     fn nested_references_multiply_and_compose() {
         let mut g = Scene::new();
         let inner = register_triangle_subtree(&mut g, Transform3D::Identity);
-        // Outer subtree: a group holding 2 references to the inner
-        // subtree at x = 0 and x = 1.
+        // Outer subtree: 2 references to the inner subtree, at x = 0 and x = 1.
         let i1 = g.add_reference(None, Transform3D::Identity, inner).unwrap();
         let i2 = g
             .add_reference(None, translation(1.0, 0.0, 0.0), inner)
@@ -454,10 +444,9 @@ mod expand_tests {
         assert_eq!(visits, 1, "the first callback error stops the walk");
     }
 
-    /// Builds a multiplicative chain: level 0 is a single-leaf
-    /// subtree, each further level is a subtree holding 2 references
-    /// to the previous one, and the scene holds 1 reference to the
-    /// top level. Expanded count = 2^levels.
+    /// Builds a multiplicative chain: level 0 is a single-leaf subtree, each
+    /// further level is a subtree holding 2 references to the previous one, and
+    /// the scene holds 1 reference to the top level. Expanded count = 2^levels.
     fn doubling_chain(levels: usize) -> Scene {
         let mut g = Scene::new();
         let mut current = register_triangle_subtree(&mut g, Transform3D::Identity);
@@ -488,9 +477,8 @@ mod expand_tests {
 
     #[test]
     fn count_matches_the_walk_on_every_shape() {
-        // Plain, shared, nested, diamond and csg-descend scenes:
-        // the count must equal the number of occurrences the walk
-        // visits.
+        // Plain, shared, nested, diamond and csg-descend scenes: the count must
+        // equal the number of occurrences the walk visits.
         let builders: Vec<fn() -> Scene> = vec![
             || {
                 let mut g = Scene::new();
@@ -532,8 +520,8 @@ mod expand_tests {
 
     #[test]
     fn count_handles_exponential_scenes_without_walking_them() {
-        // 2^20 occurrences from ~65 nodes; the count must be exact
-        // and fast, and it exceeds the shared budget.
+        // 2^20 occurrences from about 65 nodes; the count must be exact and
+        // fast, and it exceeds the shared budget.
         let g = doubling_chain(20);
         let n = count(&g, CsgPolicy::Refuse).unwrap();
         assert_eq!(n, 1 << 20);
@@ -542,8 +530,8 @@ mod expand_tests {
 
     #[test]
     fn count_saturates_instead_of_overflowing() {
-        // 2^70 exceeds usize on 64-bit targets; the fold must
-        // saturate, not wrap.
+        // 2^70 exceeds usize on 64-bit targets; the fold must saturate, not
+        // wrap.
         let g = doubling_chain(70);
         assert_eq!(count(&g, CsgPolicy::Refuse).unwrap(), usize::MAX);
     }
@@ -572,9 +560,8 @@ mod expand_tests {
 
     #[test]
     fn count_ignores_unreachable_registered_subtrees() {
-        // An unreferenced subtree containing a CSG node must not
-        // affect the count, even under Refuse: it is outside the
-        // scene's expansion.
+        // An unreferenced subtree containing a CSG node must not affect the
+        // count, even under Refuse: it is outside the scene's expansion.
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         let leaf = g

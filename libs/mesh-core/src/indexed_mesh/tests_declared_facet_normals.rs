@@ -9,7 +9,7 @@ use crate::indexed_mesh::{
     DeclaredFacetNormals, FacetCountMismatch, GeometryFingerprint, IndexedMesh, MeshMetadata,
     RestoreRefusal,
 };
-use crate::primitives::{IndexedTriangle, Normal, Vertex};
+use crate::primitives::{IndexedTriangle, Vertex};
 
 // Bits the geometry never gives for these faces, which point along +Z: a normal
 // along +X with a -0.0 component, and a zero vector.
@@ -27,7 +27,7 @@ fn square() -> IndexedMesh {
         vertices.into_iter().map(Vertex::new).collect(),
         [[0, 1, 2], [2, 1, 3]]
             .into_iter()
-            .map(|indices| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), indices))
+            .map(IndexedTriangle::from_raw_indices)
             .collect(),
     )
 }

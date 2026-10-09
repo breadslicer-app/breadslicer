@@ -13,11 +13,11 @@ use super::validate::MeshFaceError;
 use super::validated::MeshEdgeManifoldError;
 
 #[cfg(test)]
-use crate::primitives::{IndexedTriangle, Normal, Vertex, VertexIndex};
+use crate::primitives::{IndexedTriangle, Vertex, VertexIndex};
 
-/// Records of repair operations applied to a mesh by a fix routine. Returned
-/// alongside the mutated mesh so callers can surface a human-readable summary
-/// (CLI: print; GUI: dialog).
+/// Records of the repair operations that a fix routine applied to a mesh. The
+/// routine changes the mesh in place and returns these records, so that callers
+/// can show a summary: the CLI prints it, the GUI shows it in a dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MeshFix {
     /// A face was removed because it had a zero-length edge.
@@ -34,9 +34,8 @@ pub enum MeshFixError {
     /// input is self-inconsistent.
     FaceWithTooManyWindingErrors { face_idx: FaceIndex },
     /// At least half of the mesh's faces, rounded down, would have to be
-    /// flipped. The routine treats this as "the entire mesh is inside-out" and
-    /// refuses the per-face fix in favour of an explicit global flip by the
-    /// caller.
+    /// flipped. The routine takes this to mean that the whole mesh is inside
+    /// out, and refuses the per-face fix.
     TooManyFlippedFaces,
 }
 
@@ -101,7 +100,6 @@ fn apply_orientation_plan(mesh: &mut IndexedMesh, faces_to_flip: Vec<FaceIndex>)
         .map(|face_idx| {
             let face = &mut mesh.faces[face_idx.get()];
             face.vertices.reverse();
-            face.normal = face.normal.negate();
             MeshFix::FlippedFaceOrientation { face_idx }
         })
         .collect()
@@ -151,7 +149,6 @@ pub(super) fn fix_zero_length_edges_impl(
 #[cfg(test)]
 mod indexed_mesh_fix_faces_orientation_tests {
     use super::*;
-    use crate::geometry::compute_normal_from_triangle_vertices;
 
     /// Shortens `VertexIndex::from(n)`, to keep the dense
     /// `MeshEdgeManifoldError::*` literals readable.
@@ -159,22 +156,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         VertexIndex::from(n)
     }
 
-    fn assert_normal_close(actual: Normal, expected: Normal, eps: f32) {
-        for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-            assert!(
-                (a - e).abs() < eps,
-                "normal component {i}: got {a}, expected {e}"
-            );
-        }
-    }
-
-    /// Builds a tetrahedron with consistent winding and correct normals.
-    ///
-    /// Vertices:
-    ///   0: (1, 1, 1)
-    ///   1: (1, -1, -1)
-    ///   2: (-1, 1, -1)
-    ///   3: (-1, -1, 1)
+    /// Builds a tetrahedron with consistent winding.
     fn tetrahedron() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([1.0, 1.0, 1.0]),
@@ -182,21 +164,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
             Vertex::new([-1.0, 1.0, -1.0]),
             Vertex::new([-1.0, -1.0, 1.0]),
         ];
-        let v = &vertices;
         let faces_data: [[u32; 3]; 4] = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
 
         let faces = faces_data
             .iter()
-            .map(|indices| {
-                let tri_verts = [
-                    v[indices[0] as usize],
-                    v[indices[1] as usize],
-                    v[indices[2] as usize],
-                ];
-                let normal =
-                    compute_normal_from_triangle_vertices(&tri_verts).expect("valid triangle");
-                IndexedTriangle::from_raw_indices(normal, *indices)
-            })
+            .map(|indices| IndexedTriangle::from_raw_indices(*indices))
             .collect();
 
         IndexedMesh {
@@ -206,13 +178,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
         }
     }
 
-    /// Returns the tetrahedron with face 0 inside out as the readers store such
-    /// a face: reversed winding, and the normal negated with it.
+    /// Returns the tetrahedron with the winding of face 0 reversed.
     fn tetrahedron_with_face_0_inside_out() -> IndexedMesh {
         let mut mesh = tetrahedron();
         let face = &mut mesh.faces[0];
         face.vertices.reverse();
-        face.normal = face.normal.negate();
         mesh
     }
 
@@ -228,7 +198,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     }
 
     #[test]
-    fn fixes_single_flipped_face_vertices_and_normal() {
+    fn fixes_a_single_flipped_face() {
         let mut mesh = tetrahedron_with_face_0_inside_out();
 
         // Gather errors as the real workflow would
@@ -250,7 +220,6 @@ mod indexed_mesh_fix_faces_orientation_tests {
     fn does_not_modify_correct_faces() {
         let mut mesh = tetrahedron();
 
-        // Flip only face 0's winding (keep original normal -> mismatched)
         mesh.faces[0].vertices.reverse();
 
         let expected = tetrahedron();
@@ -265,14 +234,12 @@ mod indexed_mesh_fix_faces_orientation_tests {
             .fix_faces_orientation(&manifold_errors)
             .unwrap();
 
-        // Faces 1, 2, 3 should be unchanged
         for i in 1..4 {
             assert_eq!(
                 mesh.faces[i].vertices, expected.faces[i].vertices,
                 "face {} vertices changed unexpectedly",
                 i
             );
-            assert_normal_close(mesh.faces[i].normal, expected.faces[i].normal, 1e-5);
         }
     }
 
@@ -396,29 +363,6 @@ mod indexed_mesh_fix_faces_orientation_tests {
     }
 
     #[test]
-    fn flip_negates_the_stored_normal_without_recomputing_it() {
-        let mut mesh = tetrahedron();
-
-        // Flip face 0's winding and give it a completely wrong normal
-        mesh.faces[0].vertices.reverse();
-        mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
-
-        let manifold_errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_edge_manifold()
-            .unwrap_err();
-
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-
-        let expected_normal = Normal::new([-1.0, 0.0, 0.0]);
-        assert_eq!(mesh.faces[0].normal, expected_normal);
-    }
-
-    #[test]
     fn mesh_is_valid_after_fixing_flipped_face() {
         let mut mesh = tetrahedron_with_face_0_inside_out();
 
@@ -432,7 +376,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
             .fix_faces_orientation(&manifold_errors)
             .unwrap();
 
-        // After fix, the mesh should pass all validations
+        // After the fix, the mesh passes the face, edge-manifold and face-area
+        // validations.
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -538,7 +483,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
     }
 
     fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
+        IndexedTriangle::from_raw_indices([v0, v1, v2])
     }
 
     #[test]
@@ -603,8 +548,8 @@ mod indexed_mesh_fix_zero_length_edges_tests {
     #[test]
     fn removes_in_descending_order_so_remaining_indices_stay_valid() {
         // 2 collapsed faces at positions 0 and 2; face 1 is healthy. The
-        // implementation removes higher indices first, so face 1's index
-        // doesn't shift while face 2 is being removed.
+        // implementation removes higher indices first, so index 2 still names
+        // face 2 when it is removed.
         let mut mesh = make_mesh(4, vec![face(0, 1, 1), face(0, 1, 2), face(2, 3, 3)]);
         let errors = mesh.validate_faces().unwrap_err();
 

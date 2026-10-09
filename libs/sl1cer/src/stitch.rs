@@ -3,30 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Layer-stitch step: glue a layer of crossing segments into closed
-//! polygon rings.
+//! Layer-stitch step: glue a layer of crossing segments into closed polygon
+//! rings.
 //!
-//! On a watertight edge-manifold mesh, every edge crossed by a
-//! slicing plane contributes exactly two segment endpoints to the
-//! layer's segment list (one per incident triangle), and every
-//! vertex sitting exactly on the plane acts as a hub for `2k`
-//! through-vertex endpoints (one per AOB triangle incident to it,
-//! `k` contour passes through the vertex).
+//! On a watertight edge-manifold mesh, every edge crossed by a slicing plane
+//! contributes exactly 2 segment endpoints (1 per incident triangle) to the
+//! segment list of the layer, and every vertex sitting exactly on the plane
+//! acts as a hub for `2k` through-vertex endpoints (1 per AOB triangle incident
+//! to it, for `k` contour passes through the vertex).
 //!
-//! Pairing proceeds in two ways:
+//! Pairing proceeds in 2 ways:
 //!
-//! - [`EndpointTag::Edge`] endpoints are paired by tag equality;
-//!   exactly two per `Edge` tag is the edge-manifold guarantee.
-//! - [`EndpointTag::Vertex`] endpoints are sorted by their source
-//!   face's position in the vertex's cyclic fans of incident faces,
-//!   then paired in consecutive groups of two within each fan. This
-//!   is the well-formed pairing for a saddle vertex on an orientable
-//!   surface; at a pinch vertex (several fans) each lobe's contour
-//!   closes through its own fan.
+//! - [`EndpointTag::Edge`] endpoints are paired by tag equality; exactly 2 per
+//!   `Edge` tag is the edge-manifold guarantee.
+//! - [`EndpointTag::Vertex`] endpoints are sorted by the position of their
+//!   source face in the cyclic fans of incident faces of the vertex, then
+//!   paired in consecutive groups of 2 within each fan. This is the well-formed
+//!   pairing for a saddle vertex on an orientable surface; at a pinch vertex
+//!   (several fans) the contour of each lobe closes through its own fan.
 //!
 //! Endpoints whose pairing budget cannot be balanced raise
-//! [`SliceError::NonManifoldDuringStitching`] as a runtime safety
-//! net for inputs that slipped the upstream edge-manifold check.
+//! [`SliceError::NonManifoldDuringStitching`] as a runtime safety net for
+//! inputs that got past the upstream edge-manifold check.
 
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::{FaceIndex, VertexIndex};
@@ -41,7 +39,7 @@ enum Side {
     B,
 }
 
-/// One endpoint slot, identified by its segment index and side.
+/// An endpoint slot, identified by its segment index and side.
 type Endpoint = (usize, Side);
 
 impl Side {
@@ -53,7 +51,7 @@ impl Side {
     }
 }
 
-/// A segment endpoint's position in the flat pairing table: two
+/// Returns the position of a segment endpoint in the flat pairing table: 2
 /// consecutive slots per segment, side A then side B.
 fn slot(endpoint: Endpoint) -> usize {
     let (seg_idx, side) = endpoint;
@@ -73,14 +71,14 @@ fn endpoint_from_slot(slot: usize) -> Endpoint {
     (slot / 2, side)
 }
 
-/// Marker for a slot whose mate has not been written yet. Only ever
-/// observed during construction: a layer with any slot left unpaired
-/// is rejected as non-manifold before traversal.
+/// Marker for a slot whose mate has not been written yet. Only ever observed
+/// during construction: a layer with any slot left unpaired is rejected as
+/// non-manifold before traversal.
 const UNPAIRED: usize = usize::MAX;
 
-/// Endpoint-to-mate table built once per layer, then traversed to
-/// recover closed rings. A flat vector indexed by [`slot`]; on a
-/// well-formed layer every slot is written exactly once.
+/// Endpoint-to-mate table built once per layer, then traversed to recover
+/// closed rings. A flat vector indexed by [`slot`]; on a well-formed layer
+/// every slot is written exactly once.
 struct EndpointPairings(Vec<usize>);
 
 impl EndpointPairings {
@@ -88,13 +86,13 @@ impl EndpointPairings {
         Self(vec![UNPAIRED; segments * 2])
     }
 
-    /// Record `lhs` and `rhs` as each other's mates.
+    /// Records `lhs` and `rhs` as each other's mates.
     fn pair(&mut self, lhs: Endpoint, rhs: Endpoint) {
         self.0[slot(lhs)] = slot(rhs);
         self.0[slot(rhs)] = slot(lhs);
     }
 
-    /// The mate recorded for `endpoint`.
+    /// Returns the mate recorded for `endpoint`.
     fn mate(&self, endpoint: Endpoint) -> Endpoint {
         endpoint_from_slot(self.0[slot(endpoint)])
     }
@@ -107,24 +105,22 @@ fn point_at(seg: &Segment, side: Side) -> Point2D {
     }
 }
 
-/// Stitch one layer of crossing and through-vertex segments into
-/// closed rings.
+/// Stitches 1 layer of crossing and through-vertex segments into closed rings.
 ///
-/// `topology` provides the cyclic fans of each on-plane vertex so
-/// that [`EndpointTag::Vertex`] hubs can be paired by consecutive
-/// AOB-incident faces within each fan. `z_mm` is carried through to
-/// the error variant for diagnostics. Returns one [`ClosedRing`] per chain, in
-/// arbitrary order; the vertex orientation of each ring is not
-/// normalised here (that is the winding-canonicalisation pass).
+/// `topology` provides the cyclic fans of each on-plane vertex so that
+/// [`EndpointTag::Vertex`] hubs can be paired by consecutive AOB-incident faces
+/// within each fan. `z_mm` is carried through to the error variant for
+/// diagnostics. Returns 1 [`ClosedRing`] per chain, in arbitrary order; the
+/// vertex orientation of each ring is not normalised here (that is the
+/// winding-canonicalisation pass).
 pub fn stitch_layer(
     segments: &[Segment],
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Result<Vec<ClosedRing>, SliceError> {
-    // One record per segment endpoint, stably sorted by tag: equal
-    // tags form contiguous runs that keep their push order (ascending
-    // segment index, side A before B), the same order the former
-    // hash-map grouping accumulated per tag.
+    // 1 record per segment endpoint, stably sorted by tag: equal tags form
+    // contiguous runs in push order (ascending segment index, side A before
+    // side B).
     let mut endpoints: Vec<(EndpointTag, Endpoint)> = Vec::with_capacity(segments.len() * 2);
     for (i, seg) in segments.iter().enumerate() {
         endpoints.push((seg.a_tag, (i, Side::A)));
@@ -170,14 +166,13 @@ pub fn stitch_layer(
     Ok(rings)
 }
 
-/// Mate each endpoint with exactly one peer, returning the flat
+/// Mates each endpoint with exactly 1 peer and returns the flat
 /// endpoint-to-mate table.
 ///
-/// `endpoints` must be sorted by tag so that equal tags form
-/// contiguous runs (see [`stitch_layer`]). On a malformed layer (any
-/// tag whose total endpoint count is not pairing-compatible),
-/// `Err(dangling_endpoints)` is returned with the total number of
-/// unpaired endpoints across all malformed tags.
+/// `endpoints` must be sorted by tag so that equal tags form contiguous runs
+/// (see [`stitch_layer`]). On a malformed layer (any tag whose total endpoint
+/// count is not pairing-compatible), `Err(dangling_endpoints)` is returned with
+/// the total number of unpaired endpoints across all malformed tags.
 fn build_pairings(
     segments: &[Segment],
     endpoints: &[(EndpointTag, Endpoint)],
@@ -218,20 +213,19 @@ fn build_pairings(
     }
 }
 
-/// Sort the `entries` of an on-plane vertex hub by their source
-/// face's position in `vertex`'s cyclic fans, then pair them in
-/// consecutive groups of two within each fan. Returns `None` if the
-/// topology lacks fans for the vertex, any entry's source face is
-/// not part of them, or a fan holds an odd number of entries.
+/// Sorts the `entries` of an on-plane vertex hub by the position of their
+/// source face in the cyclic fans of `vertex`, then pairs them in consecutive
+/// groups of 2 within each fan. Returns `None` if the topology lacks fans for
+/// the vertex, the source face of any entry is not part of them, or a fan holds
+/// an odd number of entries.
 ///
-/// Pairing never crosses fans: at a pinch vertex each fan belongs
-/// to a separate surface lobe, and each lobe's contour must close
-/// through its own faces (the lobes meet only at the on-plane
-/// point).
+/// Pairing never crosses fans: at a pinch vertex each fan belongs to a separate
+/// surface lobe, and the contour of each lobe must close through its own faces
+/// (the lobes meet only at the on-plane point).
 ///
-/// The position lookup is a linear scan of the fans: hubs and fans
-/// are both a handful of entries, so a lookup table would cost more
-/// to build than the scans it saves.
+/// The position lookup is a linear scan of the fans: hubs and fans are both a
+/// handful of entries, so a lookup table would cost more to build than the
+/// scans it saves.
 fn pair_vertex_hub(
     vertex: VertexIndex,
     entries: &[(EndpointTag, Endpoint)],
@@ -266,15 +260,13 @@ fn pair_vertex_hub(
     Some(pairs)
 }
 
-/// Reverse the vertex order of any clockwise ring so every ring's
-/// vertices end up in counter-clockwise order (strictly positive
-/// signed area). Rings with zero signed area (degenerate) are left
-/// alone.
+/// Reverses the vertex order of any clockwise ring, so the vertices of every
+/// ring end up in counter-clockwise order (strictly positive signed area).
+/// Rings with zero signed area (degenerate) are left alone.
 ///
-/// This is a pure orientation pass. Outer-vs-hole classification is
-/// the grouping step's job and assumes CCW input, so downstream code
-/// can read "CCW means traversal direction" from any ring this
-/// function has touched.
+/// This is a pure orientation pass. Outer-vs-hole classification is the job of
+/// the grouping step and assumes CCW input, so downstream code can read "CCW
+/// means traversal direction" from any ring this function has touched.
 pub fn normalise_to_ccw(rings: &mut [ClosedRing]) {
     for ring in rings.iter_mut() {
         if ring.signed_area() < 0.0 {
@@ -286,7 +278,7 @@ pub fn normalise_to_ccw(rings: &mut [ClosedRing]) {
 #[cfg(test)]
 mod stitch_tests {
     use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex, VertexIndex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex, VertexIndex};
 
     use super::*;
     use crate::geom2d::EdgeId;
@@ -299,9 +291,9 @@ mod stitch_tests {
         Point2D::new(x, y)
     }
 
-    /// Synthetic segments in these tests carry only edge-tagged
-    /// endpoints. The source face is recorded for completeness; the
-    /// stitcher never consults it on edge-tag pairings.
+    /// Returns a placeholder face index: synthetic segments in these tests
+    /// carry only edge-tagged endpoints. The source face is recorded for
+    /// completeness; the stitcher never reads it on edge-tag pairings.
     fn dummy_face_idx() -> FaceIndex {
         FaceIndex::from(0_usize)
     }
@@ -316,10 +308,10 @@ mod stitch_tests {
         )
     }
 
-    /// Minimal manifold mesh used to build a [`MeshTopology`] for
-    /// edge-tag-only stitching tests. The stitcher's vertex-hub
-    /// pairing never fires for these tests; topology is only present
-    /// to satisfy the signature.
+    /// Builds a minimal manifold mesh and its [`MeshTopology`] for
+    /// edge-tag-only stitching tests. The vertex-hub pairing of the stitcher
+    /// never fires for these tests; the topology is only there to satisfy the
+    /// signature.
     fn synthetic_topology() -> (IndexedMesh, MeshTopology) {
         let mesh = IndexedMesh {
             meta: None,
@@ -330,10 +322,10 @@ mod stitch_tests {
                 Vertex::new([-1.0, -1.0, 1.0]),
             ],
             faces: vec![
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 3, 1]),
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 3]),
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [1, 3, 2]),
+                IndexedTriangle::from_raw_indices([0, 1, 2]),
+                IndexedTriangle::from_raw_indices([0, 3, 1]),
+                IndexedTriangle::from_raw_indices([0, 2, 3]),
+                IndexedTriangle::from_raw_indices([1, 3, 2]),
             ],
         };
         let topology = {
@@ -437,7 +429,7 @@ mod stitch_tests {
 
     #[test]
     fn normalise_to_ccw_leaves_zero_area_rings_alone() {
-        // Three collinear vertices bake to zero signed area.
+        // 3 collinear vertices give zero signed area.
         let degenerate = ClosedRing::new(vec![p(0.0, 0.0), p(1.0, 0.0), p(2.0, 0.0)]);
         let original: Vec<_> = degenerate.vertices().to_vec();
         let mut rings = vec![degenerate];
@@ -451,8 +443,8 @@ mod stitch_tests {
         let e1 = EdgeId::new(vi(1), vi(2));
         let e2 = EdgeId::new(vi(2), vi(3));
         let e3 = EdgeId::new(vi(3), vi(0));
-        // Three sides of the square; e0 and e3 each appear in only
-        // one segment endpoint instead of two.
+        // 3 sides of the square; e0 and e3 each appear in only 1 segment
+        // endpoint instead of 2.
         let segments = vec![
             seg((0.0, 0.0), e0, (1.0, 0.0), e1),
             seg((1.0, 0.0), e1, (1.0, 1.0), e2),

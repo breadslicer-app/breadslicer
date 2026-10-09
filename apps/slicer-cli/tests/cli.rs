@@ -2,11 +2,11 @@
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * End-to-end tests for the `sc-slicer-cli` binary. These drive the
- * compiled CLI against synthetic and committed fixtures and assert on
- * exit code + stdout/stderr predicates. They cover the orchestration
- * layer (path validation, format dispatch, warning surfacing, target
- * file output) which the per-module unit tests cannot reach.
+ * End-to-end tests for the `sc-slicer-cli` binary. They run the compiled CLI on
+ * synthetic and committed fixtures and check its exit code, stdout and stderr.
+ * They cover the orchestration layer (path validation, format dispatch,
+ * warnings, target file output), which the unit tests of each module cannot
+ * reach.
  */
 
 use std::fs;
@@ -21,10 +21,9 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
-use sc_mesh_fixtures::with_stored_normals_declared;
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_fixtures::with_declared_facet_normals;
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 use sc_scene::{LeafPayload, Scene};
 use tempfile::TempDir;
@@ -48,10 +47,10 @@ fn profiles_dir() -> PathBuf {
         .join("profiles")
 }
 
-/// Builds a closed, manifold tetrahedron with consistent winding and computed
-/// normals. `diagnose` reports no issues for this mesh, so it works as a "clean
-/// input" fixture for the CLI tests. Same vertex layout as the unit-test
-/// tetrahedron in `sc_mesh_core::indexed_mesh`.
+/// Builds a closed, manifold tetrahedron with consistent winding. `diagnose`
+/// reports no issues for this mesh, so it works as a "clean input" fixture for
+/// the CLI tests. Same vertex layout as the unit-test tetrahedron in
+/// `sc_mesh_core::indexed_mesh`.
 fn tetrahedron_mesh(name: Option<&str>) -> IndexedMesh {
     let vertices = vec![
         Vertex::new([1.0, 1.0, 1.0]),
@@ -62,15 +61,7 @@ fn tetrahedron_mesh(name: Option<&str>) -> IndexedMesh {
     let face_indices: [[u32; 3]; 4] = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
     let faces = face_indices
         .iter()
-        .map(|indices| {
-            let tri_verts = [
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri_verts).unwrap();
-            IndexedTriangle::from_raw_indices(normal, *indices)
-        })
+        .map(|indices| IndexedTriangle::from_raw_indices(*indices))
         .collect();
 
     IndexedMesh {
@@ -167,10 +158,11 @@ fn flipped_winding_tetrahedron_mesh() -> IndexedMesh {
     mesh
 }
 
-/// Returns the tetrahedron with the winding of faces 0 AND 1 reversed. Half the
+/// Returns the tetrahedron with the winding of faces 0 and 1 reversed. Half the
 /// faces then disagree with the other half, every face collects 2 winding
 /// complaints, and the flip pass refuses with `TooManyFlippedFaces` rather than
-/// guess which half is right: the loader-representable "unrepairable" input.
+/// guess which half is right: an "unrepairable" input that the loaders can
+/// produce.
 fn two_flipped_faces_tetrahedron_mesh() -> IndexedMesh {
     let mut mesh = tetrahedron_mesh(None);
     mesh.faces[0].vertices.reverse();
@@ -182,37 +174,41 @@ fn two_flipped_faces_tetrahedron_mesh() -> IndexedMesh {
 /// geometry: face 0's normal negated and face 1's scaled by 2. The winding and
 /// the vertices are unchanged.
 fn wrong_declared_normals_tetrahedron_mesh() -> IndexedMesh {
-    let mut mesh = tetrahedron_mesh(None);
-    mesh.faces[0].normal = mesh.faces[0].normal.negate();
-    let n = mesh.faces[1].normal.coords();
-    mesh.faces[1].normal = Normal::new([n[0] * 2.0, n[1] * 2.0, n[2] * 2.0]);
-    mesh
+    // The bits of (1, 1, -1) / sqrt(3) negated, (1, -1, 1) / sqrt(3) doubled,
+    // then the normals of faces 2 and 3 as their windings give them.
+    let normals = vec![
+        [0xbf13_cd3a, 0xbf13_cd3a, 0x3f13_cd3a],
+        [0x3f93_cd3a, 0xbf93_cd3a, 0x3f93_cd3a],
+        [0xbf13_cd3a, 0x3f13_cd3a, 0x3f13_cd3a],
+        [0xbf13_cd3a, 0xbf13_cd3a, 0xbf13_cd3a],
+    ];
+    with_declared_facet_normals(tetrahedron_mesh(None), normals)
 }
 
 /// Returns the tetrahedron with 3 extra collinear vertices appended and an
-/// extra face built from them. The face is degenerate (its computed normal is
-/// `Err(Degenerate triangle)`) but every face index in the mesh is in range.
-/// This is the worst-case input the CLI's `fix` pipeline can encounter through
-/// the bundled loaders.
+/// extra face built from them. The face is degenerate
+/// (`compute_normal_from_triangle_vertices` returns
+/// `GeometryError::DegenerateTriangle` for it) but every face index in the mesh
+/// is in range.
 fn tetrahedron_with_extra_collinear_face() -> IndexedMesh {
     let mut mesh = tetrahedron_mesh(None);
     let base = mesh.vertices.len() as u32;
     mesh.vertices.push(Vertex::new([0.0, 0.0, 0.0]));
     mesh.vertices.push(Vertex::new([1.0, 0.0, 0.0]));
     mesh.vertices.push(Vertex::new([2.0, 0.0, 0.0]));
-    mesh.faces.push(IndexedTriangle::from_raw_indices(
-        Normal::new([1.0, 0.0, 0.0]),
-        [base, base + 1, base + 2],
-    ));
+    mesh.faces.push(IndexedTriangle::from_raw_indices([
+        base,
+        base + 1,
+        base + 2,
+    ]));
     mesh
 }
 
-/// Writes `mesh` to `path` as ASCII STL, with its stored face normals as the
-/// facet normals.
+/// Writes `mesh` to `path` as ASCII STL.
 fn write_stla_to(path: &Path, mesh: &IndexedMesh) {
     let file = fs::File::create(path).expect("create stla");
     let mut writer = std::io::BufWriter::new(file);
-    write_stla(&with_stored_normals_declared(mesh.clone()), &mut writer).expect("write_stla");
+    write_stla(mesh, &mut writer).expect("write_stla");
 }
 
 /// Returns a degenerate triangle whose first and third vertex are the same
@@ -225,10 +221,7 @@ fn mesh_with_zero_length_edge() -> IndexedMesh {
     IndexedMesh {
         meta: None,
         vertices: vec![repeat, Vertex::new([1.0, 0.0, 0.0]), repeat],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
@@ -243,10 +236,7 @@ fn single_triangle_mesh() -> IndexedMesh {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
@@ -263,15 +253,7 @@ fn three_triangles_sharing_edge_mesh() -> IndexedMesh {
     ];
     let faces = [[0, 1, 2], [0, 1, 3], [0, 1, 4]]
         .iter()
-        .map(|idx| {
-            let tri_verts = [
-                vertices[idx[0] as usize],
-                vertices[idx[1] as usize],
-                vertices[idx[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri_verts).unwrap();
-            IndexedTriangle::from_raw_indices(normal, *idx)
-        })
+        .map(|idx| IndexedTriangle::from_raw_indices(*idx))
         .collect();
     IndexedMesh {
         meta: None,
@@ -280,25 +262,23 @@ fn three_triangles_sharing_edge_mesh() -> IndexedMesh {
     }
 }
 
-/// Returns an `assert_cmd` predicate that fails if stderr contains the textual
-/// signature of a Rust panic. A Rust panic in a `#[panic = "unwind"]` build
-/// prints `thread '...' panicked at ...` and exits with code 101 by default; in
-/// `#[panic = "abort"]` builds it still emits the same header before aborting.
-/// Either way, the substring is reliable.
+/// Returns a `predicates` predicate that matches when stderr contains the
+/// textual signature of a Rust panic; callers negate it with `.not()`. A Rust
+/// panic prints `thread '...' panicked at ...`: with `panic = "unwind"` the
+/// process then exits with code 101 by default, and with `panic = "abort"` it
+/// prints the same header before it aborts. Either way, the substring is
+/// reliable.
 ///
-/// Use this in addition to `.success()` / `.failure()` whenever the property we
+/// Use it together with `.success()` or `.failure()` whenever the property we
 /// care about is "the binary did not crash": a Rust panic propagating to the
 /// CLI is *always* a bug, regardless of what the user typed.
 fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
-    // `predicate::str::contains("panicked at")` is what we'll negate at the
-    // call site via `.not()`. Returning the bare predicate keeps the call sites
-    // self-documenting.
     predicate::str::contains("panicked at")
 }
 
 /// Writes a single-object scene as an OBJ file. The OBJ reader wraps object
 /// leaves under a single identity-Group root, so reading this back yields a
-/// leaf that is NOT itself a scene root: the shape the `slice` leaf selection
+/// leaf that is not itself a scene root: the shape the `slice` leaf selection
 /// must handle.
 fn write_single_object_obj(path: &Path) {
     let mut graph = Scene::new();
@@ -503,11 +483,10 @@ mod convert_tests {
 
     #[test]
     fn convert_same_format_parses_and_re_emits_through_the_writer() {
-        // Same-format conversion no longer short-circuits to `fs::copy`: it
-        // goes through the loader (so the source is validated as a real mesh)
-        // and the atomic writer (so the destination is never partially
-        // overwritten and never followed through a symlink). The output is a
-        // freshly emitted STLA, not a verbatim byte copy.
+        // Same-format conversion goes through the loader, so the source is
+        // checked as a real mesh, and through the atomic writer, so the
+        // destination is never partly overwritten and never followed through a
+        // symlink. The output is a newly emitted STLA, not a byte copy.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
         let target = tmp.path().join("out.stla");
@@ -531,8 +510,8 @@ mod convert_tests {
             "ASCII STL must start with `solid`, got: {:?}",
             &content[..content.len().min(60)]
         );
-        // Same fixture geometry has 4 facets; the writer must emit a
-        // `facet normal` line per triangle.
+        // Same fixture geometry has 4 facets; the writer must emit a `facet
+        // normal` line per triangle.
         assert_eq!(
             content.matches("facet normal").count(),
             4,
@@ -542,9 +521,8 @@ mod convert_tests {
 
     #[test]
     fn convert_same_format_rejects_garbage_payload_under_known_extension() {
-        // A `.stla` extension whose contents do not parse as ASCII STL used to
-        // be copied verbatim by the same-format short-circuit, producing a
-        // "successfully converted" file full of garbage. The loader-routed path
+        // A `.stla` file whose contents do not parse as ASCII STL must not
+        // produce a "successfully converted" file full of garbage: the loader
         // rejects it with a non-zero exit and no target file is created.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
@@ -570,12 +548,11 @@ mod convert_tests {
 
     #[test]
     fn convert_rejects_target_equal_to_source_via_relative_spelling() {
-        // Pre-fix: source canonicalised to its absolute path, target stayed as
-        // the raw `in.stla`, the equality check missed it, and `fs::copy`
-        // truncated the source before reading a byte. Post-fix:
-        // validate_targetfile_path canonicalises the parent and re-joins the
-        // file name, ensure_distinct_files then sees both paths in the same
-        // canonical form and refuses.
+        // The source is canonicalised to its absolute path while the target is
+        // the raw `in.stla`. `validate_targetfile_path` canonicalises the
+        // parent of the target and joins the file name again, so
+        // `ensure_distinct_files` sees both paths in the same canonical form
+        // and refuses.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
         write_clean_stla(&source);
@@ -595,8 +572,8 @@ mod convert_tests {
         );
     }
 
-    // Windows / NTFS is case-insensitive, so `Model.stla` and `model.stla` name
-    // the same file. `canonicalize` preserves the on-disk case, so
+    // On Windows, NTFS is case-insensitive, so `Model.stla` and `model.stla`
+    // name the same file. `canonicalize` preserves the on-disk case, so
     // ensure_distinct_files' `source == target` string check does not see the
     // alias (the 2 spellings differ in case); the file-identity comparison is
     // what catches it. On Unix these are 2 different files and the convert
@@ -630,11 +607,11 @@ mod convert_tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn convert_rejects_target_hardlinked_to_source() {
-        // 2 distinct names for the same inode (Unix) / NTFS file id (Windows):
+        // 2 distinct names for the same inode (Unix) or NTFS file id (Windows):
         // path canonicalisation cannot see they are aliases, but the
         // file-identity comparison in ensure_distinct_files does. The
         // atomic-rename writer would not corrupt the source even without this
-        // check, but silently unlinking one of the user's hardlinks is bad UX.
+        // check, but silently unlinking a hardlink of the user is bad UX.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
         let target = tmp.path().join("link.stla");
@@ -702,7 +679,7 @@ mod convert_tests {
 
     #[test]
     fn convert_multi_object_source_to_stl_warns_about_merge() {
-        // Multi-object scenes can't be written as separate solids in STL; the
+        // Multi-object scenes cannot be written as separate solids in STL; the
         // CLI surfaces a "Merging N objects" warning to stderr and still
         // produces the output file.
         let tmp = TempDir::new().unwrap();
@@ -769,10 +746,10 @@ mod convert_tests {
     // Format-pair sweep. The CLI's effective conversion matrix is 5 readable
     // (Stl, StlAscii, StlBin, Obj, _3mf) by 4 writable (StlAscii, StlBin, Obj,
     // ThreeMf). The tests above cover obj->stla (extension inference) and
-    // stla->stla (same-format short circuit); the tests below add the remaining
-    // round-trip pairs, 3MF as source and target, plus a single PLY-as-source
-    // rejection test that also covers AMF since both share a dispatch arm in
-    // `load_mesh_from_reader`.
+    // stla->stla (same format, through the loader and the writer); the tests
+    // below add the remaining round-trip pairs, 3MF as source and target, plus
+    // a single PLY-as-source rejection test that also covers AMF since both
+    // share a dispatch arm in `load_mesh_from_reader`.
     // -----------------------------------------------------------------
 
     #[test]
@@ -793,7 +770,7 @@ mod convert_tests {
             ])
             .assert()
             .success();
-        // 80-byte header + 4-byte u32 count + 4 * 50-byte triangle rec.
+        // 80-byte header + 4-byte u32 count + 4 * 50-byte triangle records.
         assert_eq!(fs::metadata(&target).unwrap().len(), 80 + 4 + 4 * 50);
     }
 
@@ -900,7 +877,7 @@ mod convert_tests {
         // Binary STL is fixed-width: an 80-byte header, a 4-byte u32 count,
         // then N 50-byte triangle records. Asserting the size matches that
         // pattern (rather than a specific N) keeps the test stable against
-        // changes in `examples/double_mesh.obj`.
+        // changes in `tests/fixtures/double_mesh.obj`.
         let size = fs::metadata(&target).unwrap().len();
         assert!(size > 84, "binary STL too short, got {size} bytes");
         assert_eq!(
@@ -970,7 +947,7 @@ mod convert_tests {
 
     #[test]
     fn convert_ply_source_errors_with_unsupported_message() {
-        // PLY/AMF have no reader implementation; the loader rejects them at
+        // PLY and AMF have no reader implementation; the loader rejects them at
         // dispatch time with "Unsupported mesh file type" before parsing the
         // file body.
         let tmp = TempDir::new().unwrap();
@@ -1073,8 +1050,8 @@ mod diagnose_tests {
     // minimal mesh that triggers a single category and asserts the
     // category-specific stderr fragment is surfaced.
     //
-    // 8 of the 11 mesh-validator error variants are reachable through the CLI's
-    // STL/OBJ loaders. The 3 unreachable categories are
+    // 6 of the 9 mesh-validator findings are reachable through the CLI's STL
+    // and OBJ loaders. The 3 unreachable categories are
     // `MeshVertexError::InfiniteCoordinate`, `MeshVertexError::NaNCoordinate`,
     // and `MeshFaceError::OutOfRangeVertexIndex`. The STL and OBJ parsers
     // reject non-finite f32 tokens and out-of-range face indices at parse time,
@@ -1244,12 +1221,11 @@ mod fix_tests {
 
     #[test]
     fn fix_with_default_flags_repairs_flipped_winding() {
-        // Default flags: zero-length-edges=true, flipped-faces=true,
-        // face-normals=false. The flipped-winding tetrahedron triggers the
-        // flipped-face fix path. The test pins that the default configuration
-        // (no `--fix-*` flags on the command line) does produce a fix, surfaces
-        // it in the "Applied fixes" report, and writes the repaired mesh to the
-        // target.
+        // Default flags: zero-length-edges=true, flipped-faces=true. The
+        // flipped-winding tetrahedron triggers the flipped-face fix path. The
+        // test pins that the default configuration (no `--fix-*` flags on the
+        // command line) does produce a fix, surfaces it in the "Applied fixes"
+        // report, and writes the repaired mesh to the target.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("flipped.stla");
         let target = tmp.path().join("fixed.stla");
@@ -1354,10 +1330,10 @@ mod fix_tests {
 
     #[test]
     fn fix_rejects_target_equal_to_source_via_relative_spelling() {
-        // Same canonicalisation hole as `convert` had: source resolved to its
-        // absolute path, target stayed raw, the equality check missed it, and
-        // the writer would have rewritten the source. The shared
-        // `ensure_distinct_files` helper now closes both.
+        // The source is canonicalised to its absolute path while the target is
+        // the raw `clean.stla`. `ensure_distinct_files`, shared with `convert`,
+        // must see both as the same file and refuse; otherwise the writer
+        // rewrites the source.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("clean.stla");
         write_clean_stla(&source);
@@ -1399,10 +1375,10 @@ mod fix_tests {
 /// flag combination. A regression in any layer (loader, validation, fix,
 /// writer) that lets a panic escape fails 1 of these tests.
 ///
-/// Tests labelled "_does_not_panic_on_*" assert *only* the absence of a Rust
-/// panic in stderr; the exit code (success vs. graceful failure) is left
-/// unconstrained where the answer depends on library-level decisions outside
-/// this binary's contract.
+/// Each test asserts that stderr shows no Rust panic. Where the exit code
+/// depends on library-level decisions outside the contract of this binary, as
+/// for the degenerate face, the test leaves it unconstrained; the other tests
+/// also pin it.
 #[cfg(test)]
 mod fix_no_panic_contract_tests {
     use super::*;
@@ -1564,7 +1540,7 @@ mod fix_partial_repair_tests {
         fs::write(path, text).expect("write fixture obj");
     }
 
-    /// Pins that a refused mesh no longer aborts the command: the repairable
+    /// Pins that a refused mesh does not abort the command: the repairable
     /// object is fixed, the refusal becomes a per-mesh warning, the target is
     /// written anyway (never worse than the input), and the exit code still
     /// reports the partial result.
@@ -1709,9 +1685,9 @@ mod inspect_and_slice_tests {
 
     #[test]
     fn inspect_subcommand_panics_with_todo() {
-        // `inspect` is not implemented yet: the binary calls `todo!()` and
-        // exits non-zero. Pinning this so a future "no it returns success now"
-        // change shows up as a deliberate test update.
+        // `inspect` is not implemented: the binary calls `todo!()` and exits
+        // non-zero. If `inspect` starts to succeed, this test must change on
+        // purpose.
         Command::cargo_bin(BIN)
             .unwrap()
             .arg("inspect")
@@ -1743,10 +1719,7 @@ mod slice_validation_error_tests {
         IndexedMesh {
             meta: None,
             vertices: vec![repeat, Vertex::new([1.0, 0.0, 2.0]), repeat],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -1941,7 +1914,7 @@ mod slice_repair_tests {
             .stderr(predicate::str::contains("Flipped orientation"));
     }
 
-    /// Pins that a repair refusal no longer aborts the slice: it becomes a
+    /// Pins that a repair refusal does not abort the slice: it becomes a
     /// warning, slicing proceeds, and the engine's validation gate stays the
     /// authority (its report and fix hint are what the user sees).
     #[test]
@@ -1987,10 +1960,11 @@ mod repair_pipeline_trio_tests {
     }
 
     /// Raises `mesh` by `dz`. The trio is pre-placed (cube raised onto the
-    /// platform) and sliced with --no-auto-place: the auto-place shift of -0.5
-    /// (the cube's floor) would land the Y-tunnel's horizontal tunnel-bottom
-    /// face exactly on a slicing plane, which the engine's stitcher rejects as
-    /// non-manifold (a coplanar-face limitation independent of this suite).
+    /// platform) and sliced with --no-auto-place: auto-place would raise the
+    /// trio by 0.5 (the cube's floor is at z = -0.5), which lands the
+    /// Y-tunnel's horizontal tunnel-bottom face exactly on a slicing plane,
+    /// which the engine's stitcher rejects as non-manifold (a coplanar-face
+    /// limitation independent of this suite).
     fn raised(mut mesh: IndexedMesh, dz: f32) -> IndexedMesh {
         for vertex in &mut mesh.vertices {
             let [x, y, z] = vertex.coords();
@@ -2140,6 +2114,143 @@ mod repair_pipeline_trio_tests {
             fixed_summary, pristine_summary,
             "the repaired trio must slice to the same layer and polygon counts"
         );
+    }
+}
+
+#[cfg(test)]
+mod collinear_face_tests {
+    //! Meshes with collinear faces, placed by transforms other than the
+    //! identity, go through each command that bakes the scene. No horizontal
+    //! face lies on a slicing plane of the e2e printer.
+
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_fixtures::{
+        cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_with_collinear_faces,
+    };
+
+    use super::slice_threemf_tests::run_slice;
+    use super::*;
+
+    fn add_root(scene: &mut Scene, transform: Transform3D, payload: LeafPayload) {
+        let leaf = scene.add_leaf(None, transform, payload).expect("add leaf");
+        scene.add_root(leaf).expect("add root");
+    }
+
+    fn add_prisms(scene: &mut Scene) {
+        for prism in [cuboid_with_z_tunnel(), cuboid_with_y_tunnel()] {
+            add_root(
+                scene,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(prism)),
+            );
+        }
+    }
+
+    /// Writes a plain 3MF with the collinear-face cube as 1 object in 2 build
+    /// items, 1 translated and 1 rotated and scaled, next to the 2 tunnel
+    /// prisms.
+    fn write_collinear_package(path: &Path) {
+        let mut scene = Scene::new();
+        let cube = scene.add_mesh_resource(unit_cube_with_collinear_faces());
+        let rotated = AffineTransform3D::from_translation([1.5, 1.5, 0.3])
+            .compose(&AffineTransform3D::from_rotation_z(0.7))
+            .compose(&AffineTransform3D::from_uniform_scale(0.6));
+        for placement in [
+            AffineTransform3D::from_translation([-1.5, -1.5, 0.5]),
+            rotated,
+        ] {
+            add_root(
+                &mut scene,
+                Transform3D::Affine(placement),
+                LeafPayload::MeshResource(cube),
+            );
+        }
+        add_prisms(&mut scene);
+        let mut writer = std::io::BufWriter::new(fs::File::create(path).expect("create 3mf"));
+        sc_mesh_formats::threemf::write_threemf(&scene, &mut writer).expect("write_threemf");
+    }
+
+    /// Writes an OBJ with the collinear-face cube off the plate centre, next to
+    /// the 2 tunnel prisms. OBJ holds no placement, so `slice` moves the scene
+    /// onto the plate by a translation.
+    fn write_collinear_obj(path: &Path) {
+        let mut cube = unit_cube_with_collinear_faces();
+        for vertex in &mut cube.vertices {
+            let [x, y, z] = vertex.coords();
+            *vertex = Vertex::new([x + 1.5, y, z + 0.5]);
+        }
+        let mut scene = Scene::new();
+        add_root(
+            &mut scene,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(cube)),
+        );
+        add_prisms(&mut scene);
+        let mut writer = std::io::BufWriter::new(fs::File::create(path).expect("create obj"));
+        sc_mesh_formats::obj::write_obj(&scene, &mut writer).expect("write_obj");
+    }
+
+    fn convert(source: &Path, target: &Path) -> assert_cmd::assert::Assert {
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+    }
+
+    #[test]
+    fn slice_takes_a_package_with_placed_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.3mf");
+        let layers = tmp.path().join("layers");
+        write_collinear_package(&source);
+        fs::create_dir(&layers).unwrap();
+        run_slice(
+            &source,
+            &layers,
+            &["--target-format", "svg-per-layer", "--no-auto-place"],
+        )
+        .success();
+    }
+
+    #[test]
+    fn slice_to_3mf_takes_a_package_with_placed_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.3mf");
+        write_collinear_package(&source);
+        let target = tmp.path().join("collinear.slices.3mf");
+        run_slice(&source, &target, &["--no-auto-place"]).success();
+    }
+
+    #[test]
+    fn convert_to_stl_takes_a_package_with_placed_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.3mf");
+        write_collinear_package(&source);
+        convert(&source, &tmp.path().join("collinear.stla")).success();
+    }
+
+    #[test]
+    fn convert_to_obj_takes_a_package_with_placed_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.3mf");
+        write_collinear_package(&source);
+        convert(&source, &tmp.path().join("collinear.obj")).success();
+    }
+
+    #[test]
+    fn slice_takes_an_obj_with_collinear_faces_after_auto_placement() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.obj");
+        let layers = tmp.path().join("layers");
+        write_collinear_obj(&source);
+        fs::create_dir(&layers).unwrap();
+        run_slice(&source, &layers, &["--target-format", "svg-per-layer"]).success();
     }
 }
 
@@ -2373,8 +2484,8 @@ mod slice_schedule_flag_tests {
 
     #[test]
     fn first_layer_height_flag_drives_the_schedule() {
-        // First layer 0.6 mm, then 0.2 mm layers over z in [0, 2]:
-        // beyond = 1.4, ceil(1.4 / 0.2) = 7, total = 8.
+        // First layer 0.6 mm, then 0.2 mm layers over z in [0, 2]: beyond =
+        // 1.4, ceil(1.4 / 0.2) = 7, total = 8.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("tet.stla");
         let output = tmp.path().join("layers");
@@ -2469,7 +2580,11 @@ mod slice_schedule_flag_tests {
 mod slice_threemf_tests {
     use super::*;
 
-    fn run_slice(source: &Path, target: &Path, extra_args: &[&str]) -> assert_cmd::assert::Assert {
+    pub(super) fn run_slice(
+        source: &Path,
+        target: &Path,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
         let mut cmd = Command::cargo_bin(BIN).unwrap();
         cmd.args([
             "slice",
@@ -2648,9 +2763,10 @@ mod slice_target_guard_tests {
         cmd.assert()
     }
 
-    // The whole source is read into memory before the writer runs, so nothing
-    // downstream notices that the file it truncates is the one it just sliced:
-    // the mesh is replaced by slice output and the command reports success.
+    // The whole source is read into memory before the writer runs, so without
+    // the same-file guard nothing downstream would notice that the target is
+    // the source: the writer would replace the mesh with slice output and
+    // report success.
     #[test]
     fn slice_rejects_3mf_target_equal_to_source() {
         let tmp = TempDir::new().unwrap();
@@ -2770,8 +2886,8 @@ mod slice_target_guard_tests {
         );
     }
 
-    // A directory-target format keeps taking an existing empty directory: the
-    // same-file guard must not reach it.
+    // A directory-target format accepts an existing empty directory: the
+    // same-file guard must not reject it.
     #[test]
     fn slice_into_existing_empty_directory_still_succeeds() {
         let tmp = TempDir::new().unwrap();

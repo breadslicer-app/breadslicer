@@ -13,7 +13,7 @@ use sc_3mf::model::{ObjectPayload, parse_model, write_model};
 use sc_3mf::names::MUST_PRESERVE_REL_TYPE;
 use sc_3mf::package::{Package, PartName};
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_formats::messages::LoadThreeMfWarning;
 use sc_mesh_formats::obj::read_obj;
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
@@ -52,9 +52,7 @@ fn mesh(vertices: &[[f32; 3]], faces: &[[u32; 3]]) -> IndexedMesh {
         vertices.iter().copied().map(Vertex::new).collect(),
         faces
             .iter()
-            .map(|&indices| {
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), indices)
-            })
+            .map(|&indices| IndexedTriangle::from_raw_indices(indices))
             .collect(),
     )
 }

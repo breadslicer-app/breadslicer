@@ -4,7 +4,6 @@
  */
 
 use float_cmp::approx_eq;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_formats::messages::LoadObjWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
@@ -17,15 +16,13 @@ fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         Vertex::new([0.0, 1.0, 0.0]),
         Vertex::new([0.0, 0.0, 1.0]),
     ];
-    let normal =
-        compute_normal_from_triangle_vertices(&[vertices[0], vertices[1], vertices[2]]).unwrap();
     IndexedMesh::new(
         name.map(|n| MeshMetadata {
             name: Some(n.to_string()),
             ..Default::default()
         }),
         vertices,
-        vec![IndexedTriangle::from_raw_indices(normal, [0, 1, 2])],
+        vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     )
 }
 
@@ -83,14 +80,6 @@ fn assert_mesh_faces_eq(a: &IndexedMesh, b: &IndexedMesh) {
     assert_eq!(a.faces().len(), b.faces().len());
     for (i, (fa, fb)) in a.faces().iter().zip(b.faces().iter()).enumerate() {
         assert_eq!(fa.vertices, fb.vertices, "face {i} vertex indices differ");
-        for c in 0..3 {
-            assert!(
-                approx_eq!(f32, fa.normal[c], fb.normal[c], ulps = 4),
-                "face {i} normal coord {c}: {} != {}",
-                fa.normal[c],
-                fb.normal[c],
-            );
-        }
     }
 }
 
@@ -138,15 +127,7 @@ fn two_objects_round_trip() {
             Vertex::new([0.0, 2.0, 0.0]),
             Vertex::new([0.0, 0.0, 2.0]),
         ],
-        vec![IndexedTriangle::from_raw_indices(
-            compute_normal_from_triangle_vertices(&[
-                Vertex::new([2.0, 0.0, 0.0]),
-                Vertex::new([0.0, 2.0, 0.0]),
-                Vertex::new([0.0, 0.0, 2.0]),
-            ])
-            .unwrap(),
-            [0, 1, 2],
-        )],
+        vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     );
     let graph = meshes_as_roots(vec![mesh_a.clone(), mesh_b.clone()]);
     let (recovered, warnings) = round_trip(&graph);

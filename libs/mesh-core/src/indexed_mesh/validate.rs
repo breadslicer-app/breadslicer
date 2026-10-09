@@ -111,7 +111,6 @@ impl IndexedMesh {
 
         for (idx, f) in self.faces.iter().enumerate() {
             let face_idx = FaceIndex::from(idx);
-            // Checking out of range indices
             for &vertex_pos in &TriVertexSlot::ALL {
                 let vertex_idx = f.vertices[vertex_pos.as_index()];
                 if usize::from(vertex_idx) >= num_vertices {
@@ -123,7 +122,6 @@ impl IndexedMesh {
                 }
             }
 
-            // Checking for collapsed edges
             for (pos_a, pos_b) in [
                 (TriVertexSlot::V0, TriVertexSlot::V1),
                 (TriVertexSlot::V1, TriVertexSlot::V2),
@@ -310,10 +308,10 @@ mod indexed_mesh_validate_vertices_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_faces_tests {
     use super::*;
-    use crate::primitives::{Normal, TriVertexSlot};
+    use crate::primitives::TriVertexSlot;
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
+        IndexedTriangle::from_raw_indices([v0, v1, v2])
     }
 
     fn make_mesh_with_faces(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -499,7 +497,6 @@ mod indexed_mesh_validate_face_areas_tests {
     use super::*;
     use crate::geometry::compute_normal_from_triangle_vertices;
     use crate::indexed_mesh::validated::ZeroAreaFace;
-    use crate::primitives::Normal;
 
     fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
         IndexedMesh {
@@ -509,12 +506,10 @@ mod indexed_mesh_validate_face_areas_tests {
         }
     }
 
-    fn face(normal: [f32; 3], v: [u32; 3]) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new(normal), v)
+    fn face(v: [u32; 3]) -> IndexedTriangle {
+        IndexedTriangle::from_raw_indices(v)
     }
 
-    // A right triangle in the XY plane: (0,0,0), (1,0,0), (0,1,0). Cross
-    // product = (0,0,1), so the correct unit normal is [0, 0, 1].
     fn xy_triangle_vertices() -> Vec<Vertex> {
         vec![
             Vertex::new([0.0, 0.0, 0.0]),
@@ -525,10 +520,7 @@ mod indexed_mesh_validate_face_areas_tests {
 
     #[test]
     fn ok_for_a_non_degenerate_triangle() {
-        let mesh = make_mesh(
-            xy_triangle_vertices(),
-            vec![face([0.0, 0.0, 1.0], [0, 1, 2])],
-        );
+        let mesh = make_mesh(xy_triangle_vertices(), vec![face([0, 1, 2])]);
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -550,14 +542,14 @@ mod indexed_mesh_validate_face_areas_tests {
 
     #[test]
     fn ok_for_small_but_valid_triangle() {
-        // Sub-millimetre detail (~1 µm edges). An absolute-area threshold that
-        // an earlier version of the validator used flagged this face.
+        // Sub-millimetre detail: edges of 1e-3 mm. A check with an
+        // absolute-area threshold would flag this face.
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
             Vertex::new([1e-3, 0.0, 0.0]),
             Vertex::new([0.0, 1e-3, 0.0]),
         ];
-        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+        let mesh = make_mesh(vertices, vec![face([0, 1, 2])]);
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -573,7 +565,7 @@ mod indexed_mesh_validate_face_areas_tests {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([2.0, 0.0, 0.0]), // collinear
         ];
-        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+        let mesh = make_mesh(vertices, vec![face([0, 1, 2])]);
         let errors = mesh
             .validated_faces()
             .unwrap()
@@ -594,7 +586,7 @@ mod indexed_mesh_validate_face_areas_tests {
             Vertex::new([1.0, 2.0, 3.0]),
             Vertex::new([1.0, 2.0, 3.0]),
         ];
-        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+        let mesh = make_mesh(vertices, vec![face([0, 1, 2])]);
         let errors = mesh
             .validated_faces()
             .unwrap()
@@ -606,28 +598,6 @@ mod indexed_mesh_validate_face_areas_tests {
                 face_idx: 0_usize.into()
             }]
         );
-    }
-
-    #[test]
-    fn ignores_the_stored_normal() {
-        let stored_normals = [
-            [0.0, 0.0, 2.0],
-            [0.0, 0.0, 0.5],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.999_998],
-            [0.0, 0.0, 1.000_002],
-            [0.0, 0.0, f32::NAN],
-            [0.0, 0.0, -1.0],
-            [1.0, 0.0, 0.0],
-        ];
-        for normal in stored_normals {
-            let mesh = make_mesh(xy_triangle_vertices(), vec![face(normal, [0, 1, 2])]);
-            assert_eq!(
-                mesh.validated_faces().unwrap().validate_face_areas(),
-                Ok(()),
-                "stored normal {normal:?}"
-            );
-        }
     }
 
     /// Pins that the zero-area check and the normal computation agree on every
@@ -694,7 +664,7 @@ mod indexed_mesh_validate_face_areas_tests {
         for (name, corners, degenerate) in cases {
             let vertices = corners.map(Vertex::new);
             let has_no_normal = compute_normal_from_triangle_vertices(&vertices).is_err();
-            let mesh = make_mesh(vertices.to_vec(), vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+            let mesh = make_mesh(vertices.to_vec(), vec![face([0, 1, 2])]);
             let flagged = mesh
                 .validated_faces()
                 .unwrap()
@@ -716,10 +686,9 @@ mod indexed_mesh_validate_face_areas_tests {
         let mesh = make_mesh(
             vertices,
             vec![
-                // Wrong stored normal, not flagged.
-                face([0.0, 0.0, -1.0], [0, 1, 2]),
+                face([0, 1, 2]),
                 // Zero area (collinear).
-                face([0.0, 0.0, 1.0], [0, 1, 3]),
+                face([0, 1, 3]),
             ],
         );
         let errors = mesh
@@ -737,15 +706,13 @@ mod indexed_mesh_validate_face_areas_tests {
 
     #[test]
     fn ok_for_non_axis_aligned_triangle() {
-        // Triangle in a tilted plane
+        // Triangle in the XZ plane, off the XY plane of the other tests.
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 0.0, 1.0]),
         ];
-        // cross = (1,0,0)×(0,0,1) = (0·1-0·0, 0·0-1·1, 1·0-0·0) = (0,-1,0)
-        // unit normal = (0,-1,0)
-        let mesh = make_mesh(vertices, vec![face([0.0, -1.0, 0.0], [0, 1, 2])]);
+        let mesh = make_mesh(vertices, vec![face([0, 1, 2])]);
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -759,10 +726,10 @@ mod indexed_mesh_validate_face_areas_tests {
 mod indexed_mesh_validate_edge_manifold_tests {
     use super::*;
     use crate::indexed_mesh::validated::MeshEdgeManifoldError;
-    use crate::primitives::{FaceIndex, Normal, VertexIndex};
+    use crate::primitives::{FaceIndex, VertexIndex};
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), v)
+        IndexedTriangle::from_raw_indices(v)
     }
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -924,8 +891,8 @@ mod indexed_mesh_validate_edge_manifold_tests {
     fn tetrahedron_with_one_flipped_face_detects_inconsistent_winding() {
         // Take a valid tetrahedron and flip 1 face's winding
         let mut mesh = tetrahedron();
-        // Flip face 0: [0, 1, 2] -> [0, 2, 1]
-        // This reverses edges 0->1 to 0->2, 1->2 to 2->1, 2->0 to 1->0
+        // Flip face 0: [0, 1, 2] -> [0, 2, 1]. Its edges reverse: 0->1 becomes
+        // 1->0, 1->2 becomes 2->1, and 2->0 becomes 0->2.
         mesh.faces[0].vertices = [0, 2, 1].map(VertexIndex::from);
 
         let errors = mesh
@@ -1038,10 +1005,10 @@ mod manifold_sort_equivalence_tests {
 
     use super::*;
     use crate::indexed_mesh::validated::MeshEdgeManifoldError;
-    use crate::primitives::{FaceIndex, Normal, VertexIndex};
+    use crate::primitives::{FaceIndex, VertexIndex};
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), v)
+        IndexedTriangle::from_raw_indices(v)
     }
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -1056,9 +1023,9 @@ mod manifold_sort_equivalence_tests {
         VertexIndex::from(i)
     }
 
-    /// Runs the previous hash-based validator, kept verbatim as the reference
-    /// the sort-based implementation must agree with (up to the error order,
-    /// which the reference never fixed).
+    /// Runs a hash-based edge-manifold check: the reference that the sort-based
+    /// implementation must agree with, up to the error order, which the
+    /// reference leaves unspecified.
     fn reference_validate_edge_manifold(
         mesh: &IndexedMesh,
     ) -> Result<(), Vec<MeshEdgeManifoldError>> {
@@ -1272,8 +1239,8 @@ mod manifold_sort_equivalence_tests {
 
     #[test]
     fn non_manifold_edge_lists_faces_ascending() {
-        // Faces 0, 1, 2 all share edge (0, 1); the old validator listed them
-        // grouped by direction, the sorted one ascending.
+        // Faces 0, 1 and 2 all share edge (0, 1); the error lists them in
+        // ascending order, not grouped by direction.
         let mesh = make_mesh(5, vec![face([0, 1, 2]), face([1, 0, 3]), face([0, 1, 4])]);
         let errors = validate(&mesh).unwrap_err();
         let shared = errors

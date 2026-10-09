@@ -3,20 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! The scene-wide mesh traversal: one definition of "which meshes
-//! does this scene store", shared by the health sweep and the
-//! scene-level repair / diagnosis drivers so they can never disagree
-//! about the target set. Arena-wide: inline leaves inside registered
-//! subtrees (and any other detached node) count; meshes held only by
-//! `Arc`s outside the scene do not.
+//! The scene-wide mesh traversal: 1 definition of "which meshes does this scene
+//! store", shared by the health sweep and the scene-level repair and diagnosis
+//! drivers, so they cannot disagree about the target set. Arena-wide: inline
+//! leaves inside registered subtrees (and any other detached node) count;
+//! meshes held only by `Arc`s outside the scene do not.
 
 use crate::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use crate::{Scene, node_id_at_index};
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 
-/// One place a [`Scene`] stores a mesh: a slot in the mesh-resource
-/// arena, or an inline-mesh leaf in the node arena. A resource shared
-/// by several leaves is a single target.
+/// A place where a [`Scene`] stores a mesh: a slot in the mesh-resource arena,
+/// or an inline-mesh leaf in the node arena. A resource shared by several
+/// leaves is a single target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MeshTarget {
     /// A live slot in the mesh-resource arena.
@@ -26,10 +25,10 @@ pub enum MeshTarget {
 }
 
 impl Scene {
-    /// Every place this scene stores a mesh, in deterministic order:
-    /// live mesh-resource slots in arena order, then inline-mesh
-    /// leaves in node-arena slot order. Resource-backed leaves
-    /// contribute through their resource, so nothing is listed twice.
+    /// Returns every place where this scene stores a mesh, in deterministic
+    /// order: live mesh-resource slots in arena order, then inline-mesh leaves
+    /// in node-arena slot order. Resource-backed leaves contribute through
+    /// their resource, so nothing is listed twice.
     pub fn mesh_targets(&self) -> Vec<MeshTarget> {
         let mut targets: Vec<MeshTarget> = self
             .mesh_resources_iter()
@@ -44,12 +43,11 @@ impl Scene {
         targets
     }
 
-    /// The storage target behind the leaf at `id`: an inline-mesh
-    /// leaf maps to itself, a resource-backed leaf to its resource
-    /// id. `None` for non-leaf nodes and dangling ids. A leaf
-    /// referencing a tombstoned resource slot still maps to
-    /// `Resource(rid)`; what a dead target means is the caller's
-    /// decision.
+    /// Returns the storage target behind the leaf at `id`: an inline-mesh leaf
+    /// maps to itself, a resource-backed leaf to its resource id. `None` for
+    /// non-leaf nodes and dangling ids. A leaf referencing a tombstoned
+    /// resource slot still maps to `Resource(rid)`; what a dead target means is
+    /// the decision of the caller.
     pub fn leaf_mesh_target(&self, id: NodeId) -> Option<MeshTarget> {
         match &self.node(id)?.kind {
             NodeKind::Leaf(LeafPayload::Mesh(_)) => Some(MeshTarget::InlineLeaf(id)),
@@ -58,9 +56,9 @@ impl Scene {
         }
     }
 
-    /// Every leaf whose mesh is stored at `target`, in node-arena
-    /// slot order. An inline target lists exactly its own leaf; a
-    /// resource target lists each referencing leaf.
+    /// Returns every leaf whose mesh is stored at `target`, in node-arena slot
+    /// order. An inline target lists exactly its own leaf; a resource target
+    /// lists each referencing leaf.
     pub fn leaves_referencing(&self, target: MeshTarget) -> Vec<NodeId> {
         let mut out = Vec::new();
         for (i, slot) in self.nodes.iter().enumerate() {
@@ -84,9 +82,8 @@ impl Scene {
         out
     }
 
-    /// Borrow the mesh stored at `target`. `None` when the target is
-    /// dead: a tombstoned resource slot, or an id that is not a live
-    /// inline-mesh leaf.
+    /// Borrows the mesh stored at `target`. `None` when the target is dead: a
+    /// tombstoned resource slot, or an id that is not a live inline-mesh leaf.
     pub fn target_mesh(&self, target: MeshTarget) -> Option<&IndexedMesh> {
         match target {
             MeshTarget::Resource(rid) => self.mesh_resource(rid),
@@ -97,12 +94,11 @@ impl Scene {
         }
     }
 
-    /// Mutable borrow of the mesh stored at `target`, with the
-    /// [`std::sync::Arc::make_mut`] semantics of `mesh_resource_mut` /
-    /// `inline_mesh_mut`: shared storage is forked on the first
-    /// mutable access. Callers that only need to know whether work
-    /// exists must decide through [`Scene::target_mesh`] first, since
-    /// taking this borrow is what forks.
+    /// Returns a mutable borrow of the mesh stored at `target`, with the
+    /// [`std::sync::Arc::make_mut`] semantics of `mesh_resource_mut` and
+    /// `inline_mesh_mut`: shared storage is forked on the first mutable access.
+    /// Callers that only need to know whether work exists must decide through
+    /// [`Scene::target_mesh`] first, since taking this borrow is what forks.
     pub fn target_mesh_mut(&mut self, target: MeshTarget) -> Option<&mut IndexedMesh> {
         match target {
             MeshTarget::Resource(rid) => self.mesh_resource_mut(rid),
@@ -117,7 +113,7 @@ mod mesh_targets_tests {
     use std::sync::Arc;
 
     use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
     fn triangle_mesh() -> IndexedMesh {
@@ -128,16 +124,13 @@ mod mesh_targets_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
-    /// A scene exercising every storage shape at once: 1 resource
-    /// shared by 2 leaves, 1 reachable inline leaf, and 1 inline leaf
-    /// inside a registered subtree.
+    /// Builds a scene with every storage shape at once: 1 resource shared by 2
+    /// leaves, 1 reachable inline leaf, and 1 inline leaf inside a registered
+    /// subtree.
     fn combined_scene() -> (Scene, MeshResourceId, NodeId, NodeId, NodeId, NodeId) {
         let mut graph = Scene::new();
         let root = graph.add_group(None, Transform3D::Identity);

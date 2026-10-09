@@ -2,12 +2,12 @@
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
  * SPDX-License-Identifier: Apache-2.0
  *
- * Malformed-input integration tests for the STL readers. Pins the
- * error branches of `stla.rs` and `stlb.rs` against fixture buffers
- * so future refactors can't silently swap a hard error for a default
- * value (or vice-versa).
+ * Malformed-input integration tests for the STL readers. They pin the error
+ * branches of `stla.rs` and `stlb.rs` with fixture buffers, so that a refactor
+ * cannot replace a hard error with a default value (or the opposite) without a
+ * test failure.
  *
- * Companion to `stl_round_trips.rs`, which covers the happy paths.
+ * `stl_round_trips.rs` covers the happy paths.
  */
 
 use std::io::Cursor;
@@ -28,6 +28,15 @@ fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
     graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
 }
 
+/// Returns the facet normals that the file of `mesh` declared, as values.
+fn declared_normals(mesh: &IndexedMesh) -> Vec<[f32; 3]> {
+    mesh.declared_facet_normals()
+        .expect("an STL reader keeps the declared facet normals")
+        .iter()
+        .map(|bits| bits.map(f32::from_bits))
+        .collect()
+}
+
 #[cfg(test)]
 mod ascii_stl_malformed_tests {
     use super::*;
@@ -40,7 +49,7 @@ mod ascii_stl_malformed_tests {
 
     #[test]
     fn missing_solid_header_is_an_error() {
-        // No leading "solid ": the regex rejects this on the very first line.
+        // No leading "solid ": `parse_solid_header` rejects the first line.
         let buf = b"facet normal 0 0 0\nendsolid\n";
         let mut reader = Cursor::new(buf.to_vec());
         assert!(read_stla(&mut reader).is_err());
@@ -87,8 +96,8 @@ solid foo
   endfacet
 endsolid foo
 ";
-        // "NaN" parses as a float but is rejected by the finite-only guard
-        // inside `tokens_to_f32`.
+        // "NaN" parses as a float but is rejected by the finite-only check in
+        // `parse_finite_f32`.
         let mut reader = Cursor::new(buf.to_vec());
         assert!(read_stla(&mut reader).is_err());
     }
@@ -148,7 +157,7 @@ endsolid foo
     #[test]
     fn truncated_mid_facet_is_an_error() {
         // The facet starts but the file ends before all 3 vertices and the
-        // closing `endloop` / `endfacet` are read.
+        // closing `endloop` and `endfacet` lines are read.
         let buf = b"\
 solid foo
   facet normal 0 0 1
@@ -178,38 +187,10 @@ endsolid foo
     }
 
     #[test]
-    fn zero_normal_is_recomputed_from_vertices() {
-        // The reader interprets a zero-magnitude normal as a hint to recompute
-        // the normal from the vertices. This exercises the
-        // `compute_normal_from_triangle_vertices` fallback path inside
-        // `next_face`.
-        let buf = b"\
-solid foo
-  facet normal 0 0 0
-    outer loop
-      vertex 0 0 0
-      vertex 1 0 0
-      vertex 0 1 0
-    endloop
-  endfacet
-endsolid foo
-";
-        let mut reader = Cursor::new(buf.to_vec());
-        let graph = read_stla(&mut reader).unwrap();
-        // The recomputed normal for a CCW triangle in the XY plane is
-        // (0, 0, 1).
-        let mesh = unwrap_single_mesh(&graph);
-        let n = mesh.faces()[0].normal;
-        assert!((n[0]).abs() < 1e-6);
-        assert!((n[1]).abs() < 1e-6);
-        assert!((n[2] - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
     fn parser_continues_past_a_degenerate_facet() {
         // 3 facets in order: valid, degenerate (collinear), valid. The parser
         // must keep reading past the degenerate facet so an isolated bad
-        // triangle in a multi-facet file doesn't fail the whole load.
+        // triangle in a multi-facet file does not fail the whole load.
         let buf = b"\
 solid foo
   facet normal 0 0 1
@@ -239,12 +220,12 @@ endsolid foo
         let graph = read_stla(&mut reader).unwrap();
         let mesh = unwrap_single_mesh(&graph);
 
-        // All 3 facets survive; only the middle one carries a zero normal (the
-        // recompute couldn't produce a direction).
+        // All 3 facets survive, with the normals they declare.
         assert_eq!(mesh.faces().len(), 3);
-        assert_eq!(mesh.faces()[0].normal.coords(), [0.0_f32, 0.0_f32, 1.0_f32]);
-        assert_eq!(mesh.faces()[1].normal.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
-        assert_eq!(mesh.faces()[2].normal.coords(), [1.0_f32, 0.0_f32, 0.0_f32]);
+        assert_eq!(
+            declared_normals(mesh),
+            [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        );
 
         // The validator flags exactly the middle facet.
         let errors = mesh
@@ -262,11 +243,10 @@ endsolid foo
 
     #[test]
     fn zero_normal_with_degenerate_triangle_is_preserved_for_validation() {
-        // Same shape as the previous test but with a collinear triangle. The
-        // recomputation can't produce a meaningful direction; the parser leaves
-        // the zero normal in place and `validate_face_areas` flags the face
-        // later. Bailing here would fail the whole file over a single bad
-        // triangle in an otherwise-valid mesh.
+        // A collinear triangle that declares the zero normal: the parser keeps
+        // the facet and `validate_face_areas` flags it later. Bailing here
+        // would fail the whole file over a single bad triangle in an
+        // otherwise-valid mesh.
         let buf = b"\
 solid foo
   facet normal 0 0 0
@@ -282,9 +262,7 @@ endsolid foo
         let graph = read_stla(&mut reader).unwrap();
         let mesh = unwrap_single_mesh(&graph);
 
-        // The zero normal is preserved verbatim.
-        let n = mesh.faces()[0].normal;
-        assert_eq!(n.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
+        assert_eq!(declared_normals(mesh), [[0.0, 0.0, 0.0]]);
 
         // The validator catches the degeneracy.
         let errors = mesh
@@ -329,8 +307,8 @@ mod binary_stl_malformed_tests {
 
     #[test]
     fn declared_count_exceeds_actual_payload_is_an_error() {
-        // Header + count says 3 triangles, but only 1 triangle's worth of bytes
-        // follows. The iterator hits UnexpectedEof on the second triangle.
+        // The count field declares 3 triangles, but only 1 triangle record
+        // follows, so the reader reports a truncated triangle record.
         let one_triangle = vec![0u8; 50];
         let buf = make_binary_stl_with_count(3, &one_triangle);
         let mut reader = Cursor::new(buf);
@@ -340,8 +318,8 @@ mod binary_stl_malformed_tests {
     #[test]
     fn zero_count_yields_an_empty_mesh() {
         // Edge case but valid: a binary STL with no triangles. The reader must
-        // succeed and produce an empty scene rather than erroring on the
-        // missing payload.
+        // succeed and produce a 1-leaf scene with an empty mesh rather than
+        // fail on the missing payload.
         let buf = make_binary_stl_with_count(0, &[]);
         let mut reader = Cursor::new(buf);
         let (graph, _) = read_stlb(&mut reader).unwrap();
@@ -386,42 +364,13 @@ mod binary_stl_malformed_tests {
     }
 
     #[test]
-    fn zero_normal_is_recomputed_from_vertices() {
-        // Same shape as the ASCII case: a triangle with a zero normal and 3
-        // non-collinear vertices. The reader recomputes the normal as
-        // (0, 0, 1).
-        let mut triangle = Vec::with_capacity(50);
-        triangle.extend(&0.0_f32.to_le_bytes()); // normal.x
-        triangle.extend(&0.0_f32.to_le_bytes()); // normal.y
-        triangle.extend(&0.0_f32.to_le_bytes()); // normal.z
-        triangle.extend(&0.0_f32.to_le_bytes()); // v0.x
-        triangle.extend(&0.0_f32.to_le_bytes()); // v0.y
-        triangle.extend(&0.0_f32.to_le_bytes()); // v0.z
-        triangle.extend(&1.0_f32.to_le_bytes()); // v1.x
-        triangle.extend(&0.0_f32.to_le_bytes()); // v1.y
-        triangle.extend(&0.0_f32.to_le_bytes()); // v1.z
-        triangle.extend(&0.0_f32.to_le_bytes()); // v2.x
-        triangle.extend(&1.0_f32.to_le_bytes()); // v2.y
-        triangle.extend(&0.0_f32.to_le_bytes()); // v2.z
-        triangle.extend(&[0u8, 0u8]); // attribute byte count
-
-        let buf = make_binary_stl_with_count(1, &triangle);
-        let mut reader = Cursor::new(buf);
-        let (graph, _) = read_stlb(&mut reader).unwrap();
-        let mesh = unwrap_single_mesh(&graph);
-        let n = mesh.faces()[0].normal;
-        assert!((n[0]).abs() < 1e-6);
-        assert!((n[1]).abs() < 1e-6);
-        assert!((n[2] - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
     fn parser_continues_past_a_degenerate_triangle() {
         // 3 faces in order: valid, degenerate (collinear), valid. The parser
         // must keep reading past the degenerate face so an isolated bad
-        // triangle in a multi-face file doesn't fail the whole load. Round-trip
-        // through `write_stlb` keeps the byte layout off the test surface.
-        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+        // triangle in a multi-face file does not fail the whole load.
+        // Round-trip through `write_stlb` keeps the byte layout off the test
+        // surface.
+        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
         use sc_mesh_formats::stl::write_stlb;
 
         let mesh = IndexedMesh {
@@ -434,9 +383,9 @@ mod binary_stl_malformed_tests {
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
             faces: vec![
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 0.0]), [0, 1, 3]),
-                IndexedTriangle::from_raw_indices(Normal::new([1.0, 0.0, 0.0]), [0, 2, 4]),
+                IndexedTriangle::from_raw_indices([0, 1, 2]),
+                IndexedTriangle::from_raw_indices([0, 1, 3]),
+                IndexedTriangle::from_raw_indices([0, 2, 4]),
             ],
         };
         let mut buf = Vec::new();
@@ -446,25 +395,16 @@ mod binary_stl_malformed_tests {
         let (graph, _) = read_stlb(&mut reader).unwrap();
         let parsed = unwrap_single_mesh(&graph);
 
-        // All 3 faces survive; only the middle one carries a zero normal (the
-        // recompute couldn't produce a direction). The 2 valid faces keep their
-        // on-disk normals verbatim.
+        // All 3 faces survive, with the normals that the writer gave them: the
+        // zero vector for the degenerate face.
         assert_eq!(parsed.faces().len(), 3);
         assert_eq!(
-            parsed.faces()[0].normal.coords(),
-            [0.0_f32, 0.0_f32, 1.0_f32]
-        );
-        assert_eq!(
-            parsed.faces()[1].normal.coords(),
-            [0.0_f32, 0.0_f32, 0.0_f32]
-        );
-        assert_eq!(
-            parsed.faces()[2].normal.coords(),
-            [1.0_f32, 0.0_f32, 0.0_f32]
+            declared_normals(parsed),
+            [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
         );
 
         // The validator flags exactly the middle face, leaving the 2 valid
-        // faces alone (the relative degeneracy threshold doesn't fire on
+        // faces alone (the relative degeneracy threshold does not fire on
         // unit-edge triangles).
         let errors = parsed
             .validated_faces()
@@ -481,13 +421,12 @@ mod binary_stl_malformed_tests {
 
     #[test]
     fn zero_normal_with_degenerate_triangle_is_preserved_for_validation() {
-        // Binary counterpart of the ASCII test: a triangle with the zero-normal
-        // sentinel and 3 collinear vertices. The recomputation can't produce a
-        // meaningful direction; the parser keeps the zero normal so the file
-        // still loads, and `validate_face_areas` flags the face later.
-        // Round-trip through `write_stlb` keeps the byte layout off the test
-        // surface.
-        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+        // Binary counterpart of the ASCII test: a triangle with 3 collinear
+        // vertices, for which `write_stlb` writes the zero normal. The parser
+        // keeps the facet so the file still loads, and `validate_face_areas`
+        // flags the face later. Round-trip through `write_stlb` keeps the byte
+        // layout off the test surface.
+        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
         use sc_mesh_formats::stl::write_stlb;
 
         let mesh = IndexedMesh {
@@ -497,10 +436,7 @@ mod binary_stl_malformed_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([2.0, 0.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let mut buf = Vec::new();
         write_stlb(&mesh, &mut buf).unwrap();
@@ -509,9 +445,7 @@ mod binary_stl_malformed_tests {
         let (graph, _) = read_stlb(&mut reader).unwrap();
         let parsed = unwrap_single_mesh(&graph);
 
-        // The zero normal is preserved verbatim.
-        let n = parsed.faces()[0].normal;
-        assert_eq!(n.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
+        assert_eq!(declared_normals(parsed), [[0.0, 0.0, 0.0]]);
 
         // The validator catches the degeneracy.
         let errors = parsed
@@ -525,10 +459,10 @@ mod binary_stl_malformed_tests {
         ));
     }
 
-    /// Helpers for the non-finite-input regression tests.
+    /// Returns a well-formed 50-byte triangle record: a CCW triangle in the XY
+    /// plane that declares a unit +Z normal. The non-finite-input tests change
+    /// 1 f32 of it at a time.
     fn well_formed_triangle_bytes() -> Vec<u8> {
-        // CCW triangle in the XY plane with a unit +Z normal: the happy-path
-        // input the next few tests perturb, 1 f32 at a time.
         let mut t = Vec::with_capacity(50);
         t.extend(&0.0_f32.to_le_bytes()); // normal.x
         t.extend(&0.0_f32.to_le_bytes()); // normal.y
@@ -551,11 +485,10 @@ mod binary_stl_malformed_tests {
         triangle[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    /// Pins that NaN bit-patterns in any f32 of a binary STL triangle record
-    /// are rejected, as the ASCII reader's `tokens_to_f32` finite-only guard
-    /// does. Each offset corresponds to a distinct field (normal.x/y/z,
-    /// v0.x/y/z, v1.x/y/z, v2.x/y/z) so that any future regression is localised
-    /// to a specific field.
+    /// Pins that NaN bit patterns in any f32 of a binary STL triangle record
+    /// are rejected, as the finite-only check of the ASCII reader
+    /// (`parse_finite_f32`) does. Each offset is a distinct field (normal.x to
+    /// v2.z), so a failure names the field.
     #[test]
     fn nan_in_any_triangle_field_is_an_error() {
         for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44] {
@@ -588,11 +521,8 @@ mod binary_stl_malformed_tests {
         }
     }
 
-    /// Pins that a triangle whose stored normal is all-zero (the "recompute me"
-    /// sentinel) but whose vertex coordinates are non-finite is still rejected.
-    /// Before the fix, the `normal == Normal::new([0,0,0])` shortcut would
-    /// short-circuit the comparison while the NaN/Inf vertices propagated
-    /// through `compute_normal_from_triangle_vertices` and into the mesh.
+    /// Pins that a triangle that declares the zero normal and has a non-finite
+    /// vertex coordinate is rejected.
     #[test]
     fn zero_normal_with_nan_vertex_is_an_error() {
         let mut triangle = well_formed_triangle_bytes();

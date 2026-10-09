@@ -37,9 +37,9 @@ where
 }
 
 /// Writes `graph` as [`write_obj`] does, and reports 1 `Serialize` unit per
-/// vertex or face line through `progress`, throttled by [`SerializeTally`]. The
-/// total counts the lines of every expanded leaf occurrence, so `done` reaches
-/// `total` with the last line.
+/// vertex or face line through `progress`, in throttled calls. The total counts
+/// the lines of every expanded leaf occurrence, so `done` reaches `total` with
+/// the last line.
 ///
 /// The walk expands `Reference` nodes: a subtree referenced N times is written
 /// N times, each occurrence under its composed call-site transform. Expansion
@@ -67,8 +67,9 @@ where
         && let Some(comment) = &meta.comment
     {
         // The reader joins the lines of a multi-line header with `\n`, so each
-        // line gets its own `#` prefix here. A line without it would fail the
-        // next read as an unknown directive.
+        // line gets its own `#` prefix here. A line without it would be read as
+        // a directive: an unknown first word fails the read, and a keyword such
+        // as `v` or `f` adds geometry.
         for line in comment.split('\n') {
             writeln!(writer, "# {line}")?;
         }
@@ -89,10 +90,10 @@ where
     let mut vertex_offset: u32 = 0;
     graph.for_each_expanded_leaf(CsgPolicy::Descend, |_, world, mesh| {
         // OBJ has no per-object transform, so each occurrence is written with
-        // its world transform baked into its vertices and face normals. The
-        // baked mesh has no metadata, so the `o` marker takes the name of the
-        // source mesh, folded to printable ASCII: a raw name could end its own
-        // line and become document structure.
+        // its world transform baked into its vertices. The baked mesh has no
+        // metadata, so the `o` marker takes the name of the source mesh, folded
+        // to printable ASCII: a raw name could end its own line and become
+        // document structure.
         let name = mesh
             .meta()
             .as_ref()
@@ -201,7 +202,7 @@ mod helper_tests {
 #[cfg(test)]
 mod tests {
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
     use sc_scene::{LeafPayload, Scene, SceneMetadata};
     use sc_scene_fixtures::{leaves_as_roots, meshes_as_roots};
 
@@ -218,10 +219,7 @@ mod tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.577, 0.577, 0.577]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -350,7 +348,7 @@ mod tests {
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
         let graph = leaves_as_roots([(make_triangle_mesh(None), transform)]);
         let out = write_to_string(&graph);
-        // Vertex 0 was (1,0,0); after x -> -x it's (-1,0,0). Winding goes from
+        // Vertex 0 was (1,0,0); after x -> -x it is (-1,0,0). Winding goes from
         // [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
         assert_eq!(out, "v -1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\n");
     }
@@ -375,10 +373,7 @@ mod tests {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [u32::MAX, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([u32::MAX, 0, 0])],
         };
         let graph = Scene::from(mesh);
         let mut buf: Vec<u8> = Vec::new();
@@ -394,10 +389,7 @@ mod tests {
         let second = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [u32::MAX - 2, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([u32::MAX - 2, 0, 0])],
         };
         let graph = meshes_as_roots(vec![first, second]);
         let mut buf: Vec<u8> = Vec::new();

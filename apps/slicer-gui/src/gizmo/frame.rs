@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-frame `GizmoFrame` assembly for the renderer. Bridges the controller's
-//! per-frame state (pivot, scale, visibility, lock-out mask) into the
-//! renderer's struct.
+//! Per-frame `GizmoFrame` assembly for the renderer: computes the pivot, scale
+//! and lock-out masks from the scene and camera, and passes the controller's
+//! visibility, hover and drag state through.
 
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
@@ -19,13 +19,8 @@ use super::hit_test::{arc_pickable, axis_pickable};
 use super::{gizmo_scale, pivot_for_leaf};
 
 /// Builds the per-frame `GizmoFrame` for the renderer when a single leaf is
-/// selected. Returns `None` if the leaf has no geometry (no pivot to attach
-/// to), `selection` does not name a reachable leaf, or the pivot is not in
-/// front of the eye. The locked-axes mask uses the camera's forward direction
-/// as a single representative ray: for a small gizmo near the screen centre,
-/// all rays through the gizmo region are within a degree or so of the camera
-/// forward, so a per-frame "is this axis grabbable from this view" check is
-/// uniform across the handle.
+/// selected. Returns `None` when `pivot_for_leaf` gives no pivot or the pivot
+/// is not in front of the eye.
 pub(crate) fn build_gizmo_frame(
     spatial: &SceneSpatial,
     camera: &OrbitCamera,
@@ -38,6 +33,9 @@ pub(crate) fn build_gizmo_frame(
     let pivot = pivot_for_leaf(spatial, selection)?;
     let fov_y = default_fov_y();
     let scale = gizmo_scale(camera, pivot, fov_y, viewport_h_logical)?;
+    // The camera forward direction stands in for every ray through the gizmo in
+    // the lock-out masks: for a small gizmo those rays are within a degree or
+    // so of it, so 1 check per axis holds across the handle.
     let forward = (camera.target - camera.eye()).normalize_or_zero();
     let view_ray = picking::Ray {
         origin: camera.eye(),
@@ -64,7 +62,7 @@ mod build_gizmo_frame_tests {
     use glam::Vec3;
 
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_scene::{LeafPayload, Scene};
 
@@ -78,10 +76,7 @@ mod build_gizmo_frame_tests {
         IndexedMesh::new(
             None,
             vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         )
     }
 
@@ -201,8 +196,8 @@ mod build_gizmo_frame_tests {
         assert_approx_eq!(f32, frame.scale, expected, epsilon = 1e-6);
     }
 
-    /// Leaf whose local AABB is centred on the origin, translated so that its
-    /// pivot lands on `pivot`.
+    /// Returns a 1-leaf scene whose leaf has its local AABB centred on the
+    /// origin and is translated so that its pivot lands on `pivot`.
     fn spatial_with_pivot_at(pivot: [f64; 3]) -> SceneSpatial {
         spatial_with_one_leaf(
             triangle_mesh([-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [0.0, 0.0, 1.0]),
@@ -210,7 +205,8 @@ mod build_gizmo_frame_tests {
         )
     }
 
-    /// Eye on the -Y axis, looking along +Y at the origin.
+    /// Returns a camera with its eye on the -Y axis, looking along +Y at the
+    /// origin.
     fn front_camera_at_distance(distance: f32) -> OrbitCamera {
         let mut camera = default_camera();
         camera.set_axis_view(AxisView::Front);

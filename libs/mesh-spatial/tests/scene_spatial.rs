@@ -6,16 +6,16 @@
 //! End-to-end tests for the `mesh-spatial` public surface:
 //!
 //! - `MeshSpatial` cache lifecycle (priming, lazy build, eager build).
-//! - `ObjectQuery` binding tests that prove the structural mesh /
-//!   cache pairing.
+//! - `ObjectQuery` binding tests that prove the structural mesh and cache
+//!   pairing.
 //! - `scene_aabb` consistency between cached and uncached forms.
-//! - Per-variant invalidation discipline for `SceneEdit` (basic enum
-//!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
+//! - Per-variant invalidation discipline for `SceneEdit` (`sc-scene-edit` tests
+//!   the basic enum behaviour, `is_noop` and `inverse`).
 
 use std::sync::Arc;
 
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{PrimingProgress, SceneSpatial, scene_aabb};
@@ -23,16 +23,16 @@ use sc_scene::node::LeafAttachment;
 use sc_scene::{CsgOp, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene, SceneError};
 use sc_scene_edit::SceneEdit;
 
-/// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
-/// The integration tests below operate on single- or two-leaf
-/// fixtures, so resolving once at the start is enough.
+/// Returns the pre-order `NodeId` of the first reachable leaf of the spatial.
+/// The integration tests below run on 1-leaf or 2-leaf fixtures, so resolving
+/// once at the start is enough.
 fn first_leaf(spatial: &SceneSpatial) -> NodeId {
     spatial
         .leaf_id_at_index(0)
         .expect("test fixture has at least one leaf")
 }
 
-/// `n`-th leaf in pre-order. Used by the few multi-leaf fixtures.
+/// Returns the `n`-th leaf in pre-order. Used by the few multi-leaf fixtures.
 fn nth_leaf(spatial: &SceneSpatial, n: usize) -> NodeId {
     spatial
         .leaf_id_at_index(n)
@@ -43,24 +43,20 @@ fn vertex(x: f32, y: f32, z: f32) -> Vertex {
     Vertex::new([x, y, z])
 }
 
-/// Small CCW triangle in the XY plane, three fresh vertices.
+/// Returns a small CCW triangle in the XY plane, with 3 fresh vertices.
 fn triangle_mesh(scale: f32) -> IndexedMesh {
     let s = scale;
     IndexedMesh::new(
         None,
         vec![vertex(-s, -s, 0.0), vertex(s, -s, 0.0), vertex(0.0, s, 0.0)],
-        vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     )
 }
 
-/// Fresh graph with a single identity-Group root. Mirrors the
-/// topology the loader pipeline installs (`read_obj` and friends
-/// land their objects as leaves under an identity-Group root).
-/// Returns the graph and the Group's id so helpers can attach
-/// leaves directly.
+/// Builds a fresh graph with a single identity-Group root and returns it with
+/// the id of that root. Mirrors the topology that the loader pipeline installs
+/// (`read_obj` and the other readers put their objects as leaves under an
+/// identity-Group root).
 fn graph_with_group_root() -> (Scene, NodeId) {
     let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
@@ -68,8 +64,8 @@ fn graph_with_group_root() -> (Scene, NodeId) {
     (g, root)
 }
 
-/// Attach an inline-mesh leaf as a child of `parent`. Returns the
-/// leaf id so tests can address it directly.
+/// Attaches an inline-mesh leaf as a child of `parent` and returns the id of
+/// the leaf.
 fn add_inline_leaf(
     g: &mut Scene,
     parent: NodeId,
@@ -83,7 +79,7 @@ fn add_inline_leaf(
     leaf
 }
 
-/// Attach a resource-backed leaf as a child of `parent`.
+/// Attaches a resource-backed leaf as a child of `parent`.
 fn add_resource_leaf(
     g: &mut Scene,
     parent: NodeId,
@@ -100,8 +96,8 @@ fn add_resource_leaf(
 mod object_query_binding {
     //! These tests prove the structural pairing: every leaf
     //! `(NodeId, IndexedMesh, MeshSpatial)` triple returned by
-    //! `SceneSpatial::leaf` comes from the same internal lookup,
-    //! so callers cannot mismatch them.
+    //! `SceneSpatial::leaf` comes from the same internal lookup, so callers
+    //! cannot mismatch them.
 
     use super::*;
 
@@ -155,10 +151,9 @@ mod object_query_binding {
 
     #[test]
     fn shared_resource_uses_a_single_cache_slot() {
-        // Two objects pointing at the same Resource(0). The cache
-        // for that resource must be built once and reused: both
-        // ObjectQuery handles must observe identical AABB and the
-        // same TriangleClusters reference.
+        // 2 objects pointing at the same Resource(0). The cache for that
+        // resource must be built once and reused: both ObjectQuery handles must
+        // observe the same AABB and the same TriangleClusters reference.
         let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(2.0));
         add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
@@ -219,9 +214,8 @@ mod cache_priming {
         let (mut graph, root) = graph_with_group_root();
         add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
-        // First query yields the AABB; subsequent queries are
-        // cache hits (same value, regardless of OnceLock state
-        // visible from outside the crate).
+        // The first query yields the AABB; later queries are cache hits (same
+        // value, whatever the OnceLock state visible from outside the crate).
         let aabb = spatial
             .leaf(first_leaf(&spatial))
             .unwrap()
@@ -257,11 +251,9 @@ mod cache_priming {
         }
     }
 
-    /// Compile-time proof that the off-thread priming claim holds:
-    /// `SceneSpatial: Send`. If the auto-Send bound ever breaks
-    /// (e.g. someone adds a `Cell` or `Rc` field), this test fails
-    /// to compile and the eager-priming-on-worker-thread story is
-    /// gone.
+    /// Pins at compile time that `SceneSpatial: Send`, which off-thread priming
+    /// needs. A field that breaks the automatic `Send` bound (a `Cell` or an
+    /// `Rc`, for example) makes this test fail to compile.
     #[test]
     fn scene_spatial_is_send() {
         fn assert_send<T: Send>() {}
@@ -272,7 +264,7 @@ mod cache_priming {
 mod priming_progress {
     use super::*;
 
-    /// Two CCW triangles forming a unit quad in the XY plane.
+    /// Returns 2 CCW triangles that form a unit quad in the XY plane.
     fn quad_mesh() -> IndexedMesh {
         IndexedMesh::new(
             None,
@@ -283,8 +275,8 @@ mod priming_progress {
                 vertex(0.0, 1.0, 0.0),
             ],
             vec![
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
-                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 3]),
+                IndexedTriangle::from_raw_indices([0, 1, 2]),
+                IndexedTriangle::from_raw_indices([0, 2, 3]),
             ],
         )
     }
@@ -297,9 +289,9 @@ mod priming_progress {
 
     #[test]
     fn ticks_are_triangle_weighted_per_leaf_in_pre_order() {
-        // 1-face inline leaf, 2-face inline leaf, 1-face resource
-        // leaf: the counts must advance by each leaf's face count
-        // (not by 1 per leaf), against a fixed total of 4.
+        // 1-face inline leaf, 2-face inline leaf, 1-face resource leaf: the
+        // counts must advance by the face count of each leaf (not by 1 per
+        // leaf), against a fixed total of 4.
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
         add_inline_leaf(&mut g, root, quad_mesh(), Transform3D::Identity);
@@ -319,8 +311,8 @@ mod priming_progress {
 
     #[test]
     fn shared_resource_counts_once_per_referencing_leaf() {
-        // One 1-face resource behind 2 leaves: both counts include it
-        // twice, so the final tick still reaches the total.
+        // A 1-face resource behind 2 leaves: both counts include it twice, so
+        // the final tick still reaches the total.
         let (mut g, root) = graph_with_group_root();
         let rid = g.add_mesh_resource(triangle_mesh(1.0));
         add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
@@ -398,13 +390,13 @@ mod scene_aabb_consistency {
         assert!(scene_aabb(&spatial).is_none());
     }
 
-    /// `Scene::aabb` (in `mesh-core`) and `scene_aabb` (in
-    /// `mesh-spatial`) implement the same Arvo loop at different
-    /// caching layers, a known duplication. These cases pin the
-    /// cross-crate agreement of the 2 loops on scenes without
-    /// subtree references (the only scenes `SceneSpatial` admits),
-    /// on every transform shape the renderer is likely to produce,
-    /// so a drift between the 2 implementations fails in CI.
+    /// Asserts that `Scene::aabb` (in `sc-scene`) and `scene_aabb` (in
+    /// `sc-mesh-spatial`) agree on the scene that `build` returns. The 2
+    /// implement the same Arvo loop at different caching layers, a known
+    /// duplication. These cases pin their agreement on scenes without subtree
+    /// references (the only scenes `SceneSpatial` admits), on every transform
+    /// shape the renderer is likely to produce, so a drift between the 2
+    /// implementations fails the tests.
     fn assert_cached_matches_uncached(mut build: impl FnMut() -> Scene) {
         let uncached = build().aabb().unwrap();
         let spatial = SceneSpatial::primed_graph(build());
@@ -430,10 +422,9 @@ mod scene_aabb_consistency {
 
     #[test]
     fn cached_form_agrees_under_mirror() {
-        // Negative-determinant transform path; the renderer's
-        // winding-reversal logic depends on the cached AABB matching
-        // the uncached one bit-for-bit so the framing camera is
-        // identical.
+        // Negative-determinant transform path; the winding-reversal logic of
+        // the renderer depends on the cached AABB matching the uncached one bit
+        // for bit, so that the framing camera is identical.
         assert_cached_matches_uncached(|| {
             let (mut g, root) = graph_with_group_root();
             add_inline_leaf(
@@ -469,8 +460,8 @@ mod scene_aabb_consistency {
 
     #[test]
     fn cached_form_agrees_with_resource_objects() {
-        // Two scene objects that share a single resource mesh;
-        // exercises the cache slot merging path.
+        // 2 scene objects that share a single resource mesh; exercises the
+        // cache slot merging path.
         assert_cached_matches_uncached(|| {
             let (mut g, root) = graph_with_group_root();
             let rid = g.add_mesh_resource(triangle_mesh(2.0));
@@ -487,16 +478,15 @@ mod scene_aabb_consistency {
 }
 
 mod invalidation_discipline {
-    //! For each `SceneEdit` variant, document the invalidation
-    //! contract via a runtime test. Future variants get one entry
-    //! here when they land; the compile-time match in the
-    //! invalidation walk is the first line of defence, this is the
+    //! Documents the invalidation contract of each `SceneEdit` variant with a
+    //! runtime test. A new variant gets an entry here; the compile-time match
+    //! in the invalidation walk is the first line of defence, this is the
     //! second.
 
     use super::*;
 
-    /// Build the paste edit these tests replay: a mesh-resource leaf
-    /// joining a `graph_with_group_root` scene behind its group root.
+    /// Builds the paste edit that these tests replay: a mesh-resource leaf that
+    /// joins a `graph_with_group_root` scene behind its group root.
     fn root_resource_leaf_edit(
         id: NodeId,
         rid: MeshResourceId,
@@ -520,8 +510,8 @@ mod invalidation_discipline {
         let leaf_id = first_leaf(&spatial);
         let primed = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         let live_arc = Arc::clone(spatial.graph().mesh_resource_arc(rid).unwrap());
-        // An allocated-but-unbound resource slot: the replace has
-        // nothing to swap and must fail without touching anything.
+        // An allocated but unbound resource slot: the replace has nothing to
+        // swap and must fail without touching anything.
         let dangling = spatial.allocate_unbound_mesh_resource_id();
         let err = spatial
             .apply_edit(SceneEdit::ReplaceMeshResource {
@@ -540,9 +530,9 @@ mod invalidation_discipline {
 
     #[test]
     fn set_local_transform_does_not_invalidate() {
-        // Transform-only edits are object-relative; per-mesh caches
-        // are object-space. Applying the edit must not change the
-        // cached local AABB.
+        // Transform-only edits are object-relative; per-mesh caches are
+        // object-space. Applying the edit must not change the cached local
+        // AABB.
         let (mut graph, root) = graph_with_group_root();
         add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
@@ -574,10 +564,9 @@ mod invalidation_discipline {
         let (mut graph, root) = graph_with_group_root();
         add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
-        // Prime via a query, then invalidate, then assert the next
-        // query still returns the right value (because the cache is
-        // rebuilt lazily; invalidation should not corrupt
-        // anything, just discard).
+        // Prime via a query, then invalidate, then assert that the next query
+        // still returns the right value: the cache is rebuilt lazily, and
+        // invalidation must discard the cache without corrupting anything.
         let leaf_id = spatial.leaf_id_at_index(0).unwrap();
         let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         spatial.invalidate_leaf(leaf_id);
@@ -601,8 +590,8 @@ mod invalidation_discipline {
     #[test]
     fn invalidate_leaf_on_resource_backed_leaf_preserves_resource_cache() {
         // A resource-backed leaf has no inline cache slot; calling
-        // `invalidate_leaf` on it is a no-op for that leaf and must
-        // not corrupt the resource cache the leaf reads from.
+        // `invalidate_leaf` on it is a no-op for that leaf and must not corrupt
+        // the resource cache the leaf reads from.
         let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(1.0));
         add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
@@ -634,8 +623,8 @@ mod invalidation_discipline {
             spatial.graph().mesh_resource_arc(rid).unwrap(),
             &after
         ));
-        // The edit must discard the primed cache: the re-queried
-        // AABB reflects the larger mesh, matching a fresh build.
+        // The edit must discard the primed cache: the re-queried AABB reflects
+        // the larger mesh, matching a fresh build.
         let refreshed = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         let expected = SceneSpatial::from_graph(spatial.graph().clone())
             .leaf(leaf_id)
@@ -683,8 +672,8 @@ mod invalidation_discipline {
         let before = spatial.graph().nodes_len();
         let id = spatial.allocate_unbound_node_id();
         assert_eq!(spatial.graph().nodes_len(), before + 1);
-        // The new id is not a live node, not in roots, and the
-        // spatial query path returns None for it.
+        // The new id is not a live node, not in roots, and the spatial query
+        // path returns None for it.
         assert!(spatial.graph().node(id).is_none());
         assert!(!spatial.graph().roots().contains(&id));
         assert!(spatial.leaf(id).is_none());
@@ -692,9 +681,9 @@ mod invalidation_discipline {
 
     #[test]
     fn add_leaf_edit_makes_the_new_root_leaf_queryable() {
-        // Walks the full paste flow at the spatial layer: allocate
-        // an unbound id, build an AddLeaf edit, apply it, then
-        // query the new leaf through the cache-aware path.
+        // Walks the full paste flow at the spatial layer: allocate an unbound
+        // id, build an AddLeaf edit, apply it, then query the new leaf through
+        // the cache-aware path.
         let (mut graph, _root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(1.0));
         let mut spatial = SceneSpatial::primed_graph(graph);
@@ -773,10 +762,10 @@ mod invalidation_discipline {
 
     #[test]
     fn compound_paste_shape_round_trips_through_spatial() {
-        // The minimal paste compound: Add the mesh, then add the
-        // root leaf referencing it. Undo (Compound's inverse) must
-        // remove the leaf first, then the mesh resource (the
-        // RemoveMeshResource precondition rejects in-use ids).
+        // The minimal paste compound: add the mesh, then add the root leaf that
+        // references it. Undo (the inverse of the Compound) must remove the
+        // leaf first, then the mesh resource (the RemoveMeshResource
+        // precondition rejects ids in use).
         let (graph, _root) = graph_with_group_root();
         let mut spatial = SceneSpatial::primed_graph(graph);
         let rid = spatial.allocate_unbound_mesh_resource_id();
@@ -800,19 +789,19 @@ mod invalidation_discipline {
 }
 
 mod transformed_aabb {
-    //! `ObjectQuery::transformed_aabb` returns the AABB of the
-    //! mesh's transformed vertices: tight for any mesh, including
-    //! rotated non-box meshes where Arvo's AABB-of-AABB is strictly
-    //! larger than the AABB-of-vertices.
+    //! `ObjectQuery::transformed_aabb` returns the AABB of the mesh's
+    //! transformed vertices: tight for any mesh, including rotated non-box
+    //! meshes where Arvo's AABB-of-AABB is strictly larger than the
+    //! AABB-of-vertices.
 
     use super::*;
     use float_cmp::assert_approx_eq;
     use std::f64::consts::FRAC_PI_4;
 
-    /// Six-vertex octahedron skeleton on the unit axes. The local
-    /// AABB is the unit cube `[-1, 1]^3`, but no vertex reaches a
-    /// corner: the gap is what makes Arvo's transformed-AABB
-    /// strictly larger than the actual rotated-vertex AABB.
+    /// Returns a 6-vertex octahedron skeleton on the unit axes. The local AABB
+    /// is the unit cube `[-1, 1]^3`, but no vertex reaches a corner: the gap is
+    /// what makes Arvo's transformed-AABB strictly larger than the actual
+    /// rotated-vertex AABB.
     fn octahedron_mesh() -> IndexedMesh {
         IndexedMesh::new(
             None,
@@ -828,10 +817,9 @@ mod transformed_aabb {
         )
     }
 
-    /// Axis-aligned unit cube (eight corner vertices). Fills its
-    /// local AABB: Arvo and per-vertex agree under any linear, so
-    /// these tests serve as a baseline that the cube case is
-    /// unchanged.
+    /// Returns an axis-aligned unit cube (8 corner vertices). It fills its
+    /// local AABB, so Arvo and per-vertex agree under any linear part: these
+    /// tests use it as the baseline case.
     fn cube_mesh() -> IndexedMesh {
         IndexedMesh::new(
             None,
@@ -886,11 +874,10 @@ mod transformed_aabb {
 
     #[test]
     fn rotated_octahedron_is_tighter_than_arvo_for_unit_cube_aabb() {
-        // The octahedron's local AABB is the unit cube; Arvo's box
-        // for a 45° Z rotation of a unit cube would extend ±√2 on
-        // X and Y. The actual rotated octahedron only reaches ±√2/2
-        // on those axes (the rotated tips of (±1, 0, 0) / (0, ±1, 0)).
-        // Z is unrotated, so it stays at ±1.
+        // The octahedron's local AABB is the unit cube; Arvo's box for a 45° Z
+        // rotation of a unit cube would extend ±√2 on X and Y. The actual
+        // rotated octahedron only reaches ±√2/2 on those axes (the rotated tips
+        // of (±1, 0, 0) and (0, ±1, 0)). Z is unrotated, so it stays at ±1.
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
         let spatial = one_object(octahedron_mesh(), Transform3D::Affine(r));
         let q = spatial.leaf(first_leaf(&spatial)).unwrap();
@@ -901,10 +888,9 @@ mod transformed_aabb {
 
     #[test]
     fn rotated_cube_matches_arvos_corner_aabb() {
-        // A cube fills its local AABB, so the tight per-vertex AABB
-        // and Arvo's AABB-of-AABB agree. After a 45° Z rotation,
-        // both produce X/Y half-extents of √2 and Z half-extents
-        // unchanged.
+        // A cube fills its local AABB, so the tight per-vertex AABB and Arvo's
+        // AABB-of-AABB agree. After a 45° Z rotation, both produce X/Y
+        // half-extents of √2 and Z half-extents unchanged.
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
         let spatial = one_object(cube_mesh(), Transform3D::Affine(r));
         let q = spatial.leaf(first_leaf(&spatial)).unwrap();
@@ -915,9 +901,9 @@ mod transformed_aabb {
 
     #[test]
     fn rotation_then_translation_composes_per_vertex_and_shift() {
-        // The whole transform = R(45° Z) then T(+10, +20, +30).
-        // Per-vertex computation gives the rotated octahedron AABB
-        // ±√2/2 on X/Y, ±1 on Z; the translation shifts the corners.
+        // The whole transform = R(45° Z) then T(+10, +20, +30). Per-vertex
+        // computation gives the rotated octahedron AABB ±√2/2 on X/Y, ±1 on Z;
+        // the translation shifts the corners.
         let composed = AffineTransform3D::from_translation([10.0, 20.0, 30.0])
             .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
         let spatial = one_object(octahedron_mesh(), Transform3D::Affine(composed));
@@ -946,12 +932,11 @@ mod transformed_aabb {
 
     #[test]
     fn cache_hits_across_translation_changes() {
-        // Two queries with the same linear part but different
-        // translations must agree on the AABB modulo the translation
-        // shift. This exercises the "linear part is the cache key,
-        // translation is a post-shift" contract: a translate drag
-        // changes only the translation tick to tick and must reuse
-        // the cached linear AABB.
+        // 2 queries with the same linear part but different translations must
+        // agree on the AABB modulo the translation shift. This exercises the
+        // "linear part is the cache key, translation is a post-shift" contract:
+        // a translate drag changes only the translation tick to tick and must
+        // reuse the cached linear AABB.
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
         let t1 =
             Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0]).compose(&r));
@@ -961,7 +946,7 @@ mod transformed_aabb {
         let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let a1 = q.transformed_aabb(t1).unwrap();
         let a2 = q.transformed_aabb(t2).unwrap();
-        // Each component of (a2 - a1) must equal (t2_translation - t1_translation).
+        // Each component of a2 - a1 must equal t2_translation - t1_translation.
         let a1_min = a1.min().coords();
         let a1_max = a1.max().coords();
         let a2_min = a2.min().coords();
@@ -976,11 +961,10 @@ mod transformed_aabb {
 
     #[test]
     fn linear_change_replaces_cached_entry() {
-        // After querying with one linear, querying with a different
-        // linear must return the AABB for the new linear (not stale
-        // data from the first one). This guards against a future
-        // refactor that turns the slot into "remember the first
-        // linear" by accident.
+        // After a query with 1 linear part, a query with a different linear
+        // part must return the AABB for the new one (not stale data from the
+        // first). This guards against a slot that keeps only the first linear
+        // part.
         let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
         let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let identity = Transform3D::Affine(AffineTransform3D::identity());
@@ -993,8 +977,8 @@ mod transformed_aabb {
         let half = std::f32::consts::FRAC_1_SQRT_2;
         assert_aabb_approx(a_rotated, [-half, -half, -1.0], [half, half, 1.0], 1e-5);
 
-        // Re-query identity: must be the identity AABB again, not
-        // the cached rotated one.
+        // Re-query identity: must be the identity AABB again, not the cached
+        // rotated one.
         let a_identity_again = q.transformed_aabb(identity).unwrap();
         assert_eq!(a_identity, a_identity_again);
     }
@@ -1003,8 +987,8 @@ mod transformed_aabb {
 mod construction_contract {
     use super::*;
 
-    /// A scene with one subtree reference: a registered single-leaf
-    /// subtree plus one reference under the group root.
+    /// Builds a scene with 1 subtree reference: a registered single-leaf
+    /// subtree plus 1 reference under the group root.
     fn graph_with_a_subtree_reference() -> Scene {
         let (mut graph, root) = graph_with_group_root();
         let sub_leaf = graph
@@ -1039,8 +1023,8 @@ mod construction_contract {
     #[test]
     #[should_panic(expected = "subtree resource")]
     fn construction_rejects_a_scene_with_registered_subtrees() {
-        // Even without a reference, the vocabulary marks
-        // the scene as outside the cached walks' supported phase.
+        // A registered subtree is enough to put the scene outside what the
+        // cached walks support, even without a reference.
         let (mut graph, _root) = graph_with_group_root();
         let orphan = graph.add_group(None, Transform3D::Identity);
         graph
@@ -1051,9 +1035,9 @@ mod construction_contract {
 }
 
 mod row_order {
-    //! Pins for the pre-order row-index space: CSG operand leaves
-    //! count as rows (descend stance), and index resolution
-    //! round-trips both ways.
+    //! Pins for the pre-order row-index space: CSG operand leaves count as rows
+    //! (the walk descends into CSG nodes), and index resolution round-trips
+    //! both ways.
 
     use super::*;
 

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Equivalence coverage for the sort-based soup deduplication against the
-//! retired streaming hash-based builder, plus pinned behavior for the
+//! Equivalence coverage for the sort-based soup deduplication against a
+//! hash-based reference builder, plus pinned behavior for the
 //! `indexed_mesh_from_soup` entry point (zero-spelling folding, NaN identity,
 //! cap boundaries, metadata passthrough).
 
@@ -13,14 +13,12 @@ use std::collections::HashMap;
 use proptest::prelude::*;
 
 use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
-use crate::primitives::{IndexedTriangle, Normal, Triangle, Vertex, VertexIndex};
+use crate::primitives::{IndexedTriangle, Triangle, Vertex, VertexIndex};
 use crate::triangle_iterator::{IndexedMeshBuildError, indexed_mesh_from_soup};
 
-/// Builds the mesh with the retired streaming hash-based builder, kept verbatim
-/// as the reference the sort-based implementation must reproduce bit for bit
-/// (vertex order, vertex bits, index values, normal bits). Only the iteration
-/// wrapper differs: the original drew from a fallible triangle stream, this
-/// copy walks an already-collected soup.
+/// Builds the mesh with a streaming hash-based builder: the reference that the
+/// sort-based implementation must reproduce bit for bit (vertex order, vertex
+/// bits, index values).
 fn reference_build(
     meta: Option<MeshMetadata>,
     soup: &[Triangle],
@@ -60,7 +58,7 @@ fn reference_build(
                 })?;
         }
 
-        triangles.push(IndexedTriangle::from_raw_indices(t.normal, vertex_indices));
+        triangles.push(IndexedTriangle::from_raw_indices(vertex_indices));
     }
 
     vertices.shrink_to_fit();
@@ -95,15 +93,7 @@ fn vertex_strategy() -> impl Strategy<Value = Vertex> {
 }
 
 fn triangle_strategy() -> impl Strategy<Value = Triangle> {
-    (
-        prop_oneof![
-            Just(Normal::new([0.0, 0.0, 1.0])),
-            Just(Normal::new([0.0, -1.0, 0.0])),
-            Just(Normal::new([1.0, 0.0, 0.0])),
-        ],
-        [vertex_strategy(), vertex_strategy(), vertex_strategy()],
-    )
-        .prop_map(|(normal, vertices)| Triangle::new(normal, vertices))
+    [vertex_strategy(), vertex_strategy(), vertex_strategy()].prop_map(Triangle::new)
 }
 
 fn soup_strategy() -> impl Strategy<Value = Vec<Triangle>> {
@@ -116,7 +106,6 @@ fn soup_strategy() -> impl Strategy<Value = Vec<Triangle>> {
 fn grid_soup(n: usize, m: usize) -> Vec<Triangle> {
     let vert =
         |i: usize, j: usize| Vertex::new([i as f32 * 0.5, j as f32 * 0.5, ((i * j) % 7) as f32]);
-    let up = Normal::new([0.0, 0.0, 1.0]);
     let mut soup = Vec::with_capacity(2 * n * m + 2);
     for i in 0..n {
         for j in 0..m {
@@ -126,8 +115,8 @@ fn grid_soup(n: usize, m: usize) -> Vec<Triangle> {
                 vert(i + 1, j + 1),
                 vert(i, j + 1),
             );
-            soup.push(Triangle::new(up, [a, b, c]));
-            soup.push(Triangle::new(up, [a, c, d]));
+            soup.push(Triangle::new([a, b, c]));
+            soup.push(Triangle::new([a, c, d]));
         }
     }
     let first_quad = [soup[0], soup[1]];
@@ -153,14 +142,11 @@ fn matches_the_reference_on_a_large_grid() {
 fn keeps_the_bits_of_the_first_zero_spelling() {
     // -0.0 seen first: the later +0.0 dedups onto it and the stored vertex
     // keeps the -0.0 bits.
-    let soup = vec![Triangle::new(
-        Normal::new([0.0, 0.0, 1.0]),
-        [
-            Vertex::new([-0.0, 1.0, 0.0]),
-            Vertex::new([0.0, 1.0, 0.0]),
-            Vertex::new([2.0, 0.0, 0.0]),
-        ],
-    )];
+    let soup = vec![Triangle::new([
+        Vertex::new([-0.0, 1.0, 0.0]),
+        Vertex::new([0.0, 1.0, 0.0]),
+        Vertex::new([2.0, 0.0, 0.0]),
+    ])];
     let mesh = indexed_mesh_from_soup(None, soup, 4).expect("2 unique vertices fit a cap of 4");
     assert_eq!(mesh.vertices.len(), 2);
     assert_eq!(raw_indices(&mesh.faces[0]), [0, 0, 1]);
@@ -171,14 +157,11 @@ fn keeps_the_bits_of_the_first_zero_spelling() {
 fn distinct_nan_payloads_stay_distinct_vertices() {
     let nan_a = f32::from_bits(0x7FC0_0001);
     let nan_b = f32::from_bits(0x7FC0_0002);
-    let soup = vec![Triangle::new(
-        Normal::new([0.0, 0.0, 1.0]),
-        [
-            Vertex::new([nan_a, 0.0, 0.0]),
-            Vertex::new([nan_b, 0.0, 0.0]),
-            Vertex::new([nan_a, 0.0, 0.0]),
-        ],
-    )];
+    let soup = vec![Triangle::new([
+        Vertex::new([nan_a, 0.0, 0.0]),
+        Vertex::new([nan_b, 0.0, 0.0]),
+        Vertex::new([nan_a, 0.0, 0.0]),
+    ])];
     let mesh = indexed_mesh_from_soup(None, soup, 4).expect("2 unique vertices fit a cap of 4");
     assert_eq!(mesh.vertices.len(), 2);
     assert_eq!(raw_indices(&mesh.faces[0]), [0, 1, 0]);
@@ -190,22 +173,16 @@ fn distinct_nan_payloads_stay_distinct_vertices() {
 fn soup_at_exact_cap_succeeds() {
     // 4 distinct vertices, inclusive cap of 4.
     let soup = vec![
-        Triangle::new(
-            Normal::new([0.0, 0.0, 1.0]),
-            [
-                Vertex::new([0.0, 0.0, 0.0]),
-                Vertex::new([1.0, 0.0, 0.0]),
-                Vertex::new([0.0, 1.0, 0.0]),
-            ],
-        ),
-        Triangle::new(
-            Normal::new([0.0, 0.0, 1.0]),
-            [
-                Vertex::new([1.0, 0.0, 0.0]),
-                Vertex::new([1.0, 1.0, 0.0]),
-                Vertex::new([0.0, 1.0, 0.0]),
-            ],
-        ),
+        Triangle::new([
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]),
+        Triangle::new([
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([1.0, 1.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]),
     ];
     let mesh = indexed_mesh_from_soup(None, soup, 4).expect("4 unique vertices, cap of 4");
     assert_eq!(mesh.vertices.len(), 4);
@@ -215,22 +192,16 @@ fn soup_at_exact_cap_succeeds() {
 fn soup_above_cap_reports_too_many_vertices() {
     // 5 distinct vertices, cap of 4.
     let soup = vec![
-        Triangle::new(
-            Normal::new([0.0, 0.0, 1.0]),
-            [
-                Vertex::new([0.0, 0.0, 0.0]),
-                Vertex::new([1.0, 0.0, 0.0]),
-                Vertex::new([0.0, 1.0, 0.0]),
-            ],
-        ),
-        Triangle::new(
-            Normal::new([0.0, 0.0, 1.0]),
-            [
-                Vertex::new([2.0, 0.0, 0.0]),
-                Vertex::new([3.0, 0.0, 0.0]),
-                Vertex::new([1.0, 0.0, 0.0]),
-            ],
-        ),
+        Triangle::new([
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]),
+        Triangle::new([
+            Vertex::new([2.0, 0.0, 0.0]),
+            Vertex::new([3.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+        ]),
     ];
     let err = indexed_mesh_from_soup(None, soup, 4).expect_err("5 unique vertices exceed 4");
     assert_eq!(err, IndexedMeshBuildError::TooManyVertices { limit: 4 });

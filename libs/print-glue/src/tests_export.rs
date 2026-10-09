@@ -5,7 +5,7 @@
 
 use std::error::Error;
 
-use sc_mesh_core::primitives::{IndexedTriangle, Normal};
+use sc_mesh_core::primitives::IndexedTriangle;
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{
@@ -354,7 +354,7 @@ fn a_scene_that_cannot_be_measured_is_refused_by_the_program() {
     // scene reach that measure.
     let contours = contours_of(&trio_as_roots(), &resin_defaults());
     let mut broken = unit_cube_mesh();
-    broken.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
+    broken.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
 
     let err = export(
         &meshes_as_roots([broken]),

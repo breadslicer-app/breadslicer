@@ -3,23 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Directed half-edge records shared by the manifold validator and the
-//! topology builder.
+//! Directed half-edge records shared by the manifold validator and the topology
+//! builder.
 //!
-//! One record per directed half-edge of the mesh: the key packs the
-//! canonical undirected edge, the value packs which face traverses it,
-//! through which of the face's 3 edge slots, and in which direction.
-//! Sorting the records groups the half-edges of each undirected edge
-//! into one contiguous run, ascending by face; a single linear scan
-//! over the runs then answers both validation (run length and
-//! direction parity) and adjacency (which faces share the edge)
+//! 1 record per directed half-edge of the mesh: the key packs the canonical
+//! undirected edge, the value packs which face traverses it, through which of
+//! the face's 3 edge slots, and in which direction. Sorting the records groups
+//! the half-edges of each undirected edge into 1 contiguous run, ascending by
+//! face; a single linear scan over the runs then answers both validation (run
+//! length and direction parity) and adjacency (which faces share the edge)
 //! without hash tables or per-edge allocation.
 
 use rayon::slice::ParallelSliceMut;
 
 use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 
-/// `(lo << 32) | hi` for the canonical (`lo <= hi`) vertex pair.
+/// Packs the canonical (`lo <= hi`) vertex pair as `(lo << 32) | hi`.
 #[inline]
 pub(crate) fn key(a: VertexIndex, b: VertexIndex) -> u64 {
     let (a, b) = (a.get(), b.get());
@@ -27,7 +26,7 @@ pub(crate) fn key(a: VertexIndex, b: VertexIndex) -> u64 {
     (u64::from(lo) << 32) | u64::from(hi)
 }
 
-/// The canonical vertex pair a key was packed from.
+/// Returns the canonical vertex pair a key was packed from.
 #[inline]
 pub(crate) fn key_vertices(key: u64) -> (VertexIndex, VertexIndex) {
     (
@@ -36,39 +35,38 @@ pub(crate) fn key_vertices(key: u64) -> (VertexIndex, VertexIndex) {
     )
 }
 
-/// `face << 3 | slot << 1 | reversed`. `slot` is which of the face's
-/// edges this is (0: v0-v1, 1: v1-v2, 2: v2-v0); `reversed` is set
-/// when the face traverses the edge from the higher vertex index to
-/// the lower. Face indices up to 2^29 fit; a mesh anywhere near that
-/// face count would not fit in memory to begin with.
+/// Packs a record value as `face << 3 | slot << 1 | reversed`. `slot` is which
+/// of the face's edges this is (0: v0-v1, 1: v1-v2, 2: v2-v0); `reversed` is
+/// set when the face traverses the edge from the higher vertex index to the
+/// lower. Face indices below 2^29 fit; a larger index is truncated without an
+/// error.
 #[inline]
 fn value(face: FaceIndex, slot: usize, reversed: bool) -> u32 {
     (face.get() as u32) << 3 | (slot as u32) << 1 | u32::from(reversed)
 }
 
-/// The face packed into a record value.
+/// Returns the face packed into a record value.
 #[inline]
 pub(crate) fn face_of(value: u32) -> FaceIndex {
     FaceIndex::from((value >> 3) as usize)
 }
 
-/// The edge slot packed into a record value (0: v0-v1, 1: v1-v2,
-/// 2: v2-v0).
+/// Returns the edge slot of a record value (0: v0-v1, 1: v1-v2, 2: v2-v0).
 #[inline]
 pub(crate) fn slot_of(value: u32) -> usize {
     ((value >> 1) & 0b11) as usize
 }
 
-/// Whether the record's face traverses the edge higher-to-lower.
+/// Reports whether the record's face traverses the edge higher-to-lower.
 #[inline]
 pub(crate) fn is_reversed(value: u32) -> bool {
     value & 1 == 1
 }
 
-/// All `3 * faces.len()` records, sorted. Within one key's run the
-/// values ascend by face index. Records are unique (one per face edge
-/// slot, and a face free of zero-length edges never repeats an
-/// undirected edge), so the unstable parallel sort is deterministic.
+/// Returns all `3 * faces.len()` records, sorted. Within 1 key's run the values
+/// ascend by face index. Records are unique (1 per face edge slot, and a face
+/// free of zero-length edges never repeats an undirected edge), so the unstable
+/// parallel sort is deterministic.
 pub(crate) fn sorted_half_edge_records(faces: &[IndexedTriangle]) -> Vec<(u64, u32)> {
     let mut records = Vec::with_capacity(faces.len() * 3);
     for (idx, face) in faces.iter().enumerate() {
@@ -110,11 +108,10 @@ mod half_edges_tests {
 
     #[test]
     fn records_of_a_shared_edge_form_one_run_ascending_by_face() {
-        use crate::primitives::Normal;
-        // Two triangles sharing edge (0, 1) with opposite traversal.
+        // 2 triangles sharing edge (0, 1) with opposite traversal.
         let faces = [
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [1, 0, 3]),
+            IndexedTriangle::from_raw_indices([0, 1, 2]),
+            IndexedTriangle::from_raw_indices([1, 0, 3]),
         ];
         let records = sorted_half_edge_records(&faces);
         assert_eq!(records.len(), 6);

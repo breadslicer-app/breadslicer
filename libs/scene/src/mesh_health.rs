@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scene-wide mesh soundness sweep: which leaves carry a mesh that is
-//! not closed and edge-manifold. Used to decide whether a freshly
-//! loaded scene is safe to edit and slice, and to point future repair
-//! tooling at the leaves that need attention.
+//! Scene-wide mesh soundness sweep: which leaves carry a mesh that is not
+//! closed and edge-manifold. Used to decide whether a freshly loaded scene is
+//! safe to edit and slice.
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -17,31 +16,28 @@ use crate::node::{NodeId, NodeKind};
 
 impl Scene {
     /// Returns the ids of every leaf whose mesh is not closed and
-    /// edge-manifold. A leaf is flagged when its mesh fails face
-    /// validation (out-of-range indices or zero-length edges) or the
-    /// edge-manifold check (boundary edges / holes, edges shared by
-    /// three or more faces, or inconsistent winding). An empty result
-    /// means every leaf is watertight and edge-manifold; a
-    /// vertex-pinched mesh is NOT flagged, since it bounds a valid
-    /// solid and slices fine. Face-invalid meshes are included
-    /// because a mesh with invalid faces cannot be edge-manifold.
+    /// edge-manifold. A leaf is flagged when its mesh fails face validation
+    /// (out-of-range indices or zero-length edges) or the edge-manifold check
+    /// (boundary edges or holes, edges shared by 3 or more faces, or
+    /// inconsistent winding). An empty result means every leaf is watertight
+    /// and edge-manifold; a vertex-pinched mesh is not flagged, since it bounds
+    /// a valid solid and slices fine. Face-invalid meshes are included because
+    /// a mesh with invalid faces cannot be edge-manifold.
     ///
-    /// The sweep runs over [`Scene::mesh_targets`], so its scope is
-    /// the same as the repair and diagnosis drivers': every stored
-    /// mesh, arena-wide. Each target is validated once and its
-    /// verdict shared by every referencing leaf; mesh-resource leaves
-    /// referencing a dangling slot are skipped (the structural
-    /// validator covers that variant). The result is sorted by id and
-    /// contains no duplicates (leaf ids are unique per slot).
+    /// The sweep runs over [`Scene::mesh_targets`], so its scope is the same as
+    /// the scope of the repair and diagnosis drivers: every stored mesh,
+    /// arena-wide. Each target is validated once and its verdict shared by
+    /// every referencing leaf; mesh-resource leaves referencing a dangling slot
+    /// are skipped (the structural validator covers that variant). The result
+    /// is sorted by id and contains no duplicates (leaf ids are unique per
+    /// slot).
     ///
-    /// Complexity: O(total face count) time; each stored mesh is a
-    /// single half-edge pass.
+    /// Complexity: O(total face count) time; each stored mesh is a single
+    /// half-edge pass.
     pub fn non_edge_manifold_leaves(&self) -> Vec<NodeId> {
-        // A target is sound iff the edge-manifold witness can be
-        // minted: in-range faces first, then the edge-manifold
-        // upgrade. The two validators carry different error types,
-        // so this is an `is_ok_and` rather than a `?`/`and_then`
-        // chain.
+        // A target is sound when both validations pass: in-range faces first,
+        // then the edge-manifold upgrade. The 2 validators have different error
+        // types, so this is an `is_ok_and` and not a `?` or `and_then` chain.
         let verdicts: HashMap<MeshTarget, bool> = self
             .mesh_targets()
             .into_iter()
@@ -64,8 +60,8 @@ impl Scene {
             let Some(target) = self.leaf_mesh_target(id) else {
                 continue;
             };
-            // A dangling resource target never entered the verdict
-            // map; the leaf is skipped, as before.
+            // A dangling resource target never entered the verdict map, so the
+            // leaf is skipped.
             if verdicts.get(&target) == Some(&false) {
                 out.push(id);
             }
@@ -86,12 +82,10 @@ mod mesh_health_tests {
     use super::*;
     use crate::node::LeafPayload;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
-    /// A closed, consistently wound tetrahedron: a valid manifold. The
-    /// stored normal is irrelevant to the manifold check (which looks
-    /// only at topology and winding), so a placeholder is used.
+    /// Returns a closed, consistently wound tetrahedron: a valid manifold.
     fn tetrahedron_mesh() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([1.0, 1.0, 1.0]),
@@ -101,7 +95,7 @@ mod mesh_health_tests {
         ];
         let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
             .into_iter()
-            .map(|indices| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), indices))
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -110,7 +104,7 @@ mod mesh_health_tests {
         }
     }
 
-    /// A lone triangle: every edge is a boundary edge, so it is not a
+    /// Returns a lone triangle: every edge is a boundary edge, so it is not a
     /// closed manifold.
     fn open_triangle_mesh() -> IndexedMesh {
         IndexedMesh {
@@ -120,10 +114,7 @@ mod mesh_health_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -184,9 +175,9 @@ mod mesh_health_tests {
         assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
     }
 
-    /// The sweep is arena-wide: a defective inline leaf inside a
-    /// registered subtree (detached from the scene roots by
-    /// construction) is flagged like any other leaf.
+    /// Pins that the sweep is arena-wide: a defective inline leaf inside a
+    /// registered subtree (detached from the scene roots by construction) is
+    /// flagged like any other leaf.
     #[test]
     fn a_registered_subtree_leaf_is_flagged() {
         let mut graph = Scene::new();
@@ -196,7 +187,7 @@ mod mesh_health_tests {
         assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
     }
 
-    /// A defective resource shared by 2 leaves flags both of them, in
+    /// Pins that a defective resource shared by 2 leaves flags both of them, in
     /// node-arena slot order.
     #[test]
     fn a_shared_defective_resource_flags_every_referencing_leaf() {

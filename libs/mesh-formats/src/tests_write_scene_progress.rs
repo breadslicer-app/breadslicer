@@ -7,7 +7,7 @@
 //! across the 4 write formats, checked on the shared manifold fixtures.
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_scene::Scene;
 use sc_scene_fixtures::leaves_under_group_root;
@@ -196,10 +196,7 @@ fn obj_total_skips_faceless_meshes() {
             Vertex::new([0.0, 1.0, 0.0]),
             Vertex::new([0.0, 0.0, 1.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([1.0, 0.0, 0.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let graph = scene_with_leaves(vec![faceless, triangle]);
 

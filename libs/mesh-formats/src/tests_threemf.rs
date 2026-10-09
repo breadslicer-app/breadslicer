@@ -16,7 +16,7 @@ use sc_3mf::model::{Matrix3D, ModelDocument, ObjectPayload, ObjectType, parse_mo
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata};
 use sc_scene::{CsgOp, Scene, bake_leaf_to_world};
 use sc_scene_fixtures::{add_mesh_leaf, leaves_under_group_root};
@@ -187,18 +187,6 @@ mod mapping_tests {
         let mesh = resource_mesh(&scene, leaf_resource(&scene, children[0]));
         assert!(mesh.vertices.is_empty());
         assert!(mesh.faces.is_empty());
-    }
-
-    #[test]
-    fn normals_are_recomputed_from_ccw_winding() {
-        let body =
-            format!(r#"<resources>{TETRA_OBJECT}</resources><build><item objectid="1"/></build>"#);
-        let (scene, _) = read("millimeter", &body);
-        let children = root_children(&scene);
-        let mesh = resource_mesh(&scene, leaf_resource(&scene, children[0]));
-        // Triangle 0 spans (0,0,0), (0,10,0), (10,0,0): the base of the
-        // tetrahedron, whose outward normal points down.
-        assert_eq!(mesh.faces[0].normal, Normal::new([0.0, 0.0, -1.0]));
     }
 }
 
@@ -545,10 +533,7 @@ mod writer_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.577, 0.577, 0.577]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -754,7 +739,8 @@ mod writer_tests {
         add_mesh_leaf(&mut g, inner, tri_mesh(None), Transform3D::Identity);
 
         // A successful parse in `written_document` proves the
-        // definition-before-use order; the id order is checked too.
+        // definition-before-use order; the asserts below also pin the object
+        // order: the mesh, then Inner, then Outer.
         let document = written_document(&g);
         assert_eq!(document.objects.len(), 3);
         assert!(matches!(

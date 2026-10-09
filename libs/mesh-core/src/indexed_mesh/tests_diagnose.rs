@@ -9,13 +9,12 @@
 //! validator's own output, so the policy can never drift from the validators it
 //! reports on.
 
-use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::diagnose::{FaceDiagnosis, MeshDiagnosis};
 use crate::indexed_mesh::validated::MeshEdgeManifoldError;
-use crate::primitives::{IndexedTriangle, Normal, Vertex};
+use crate::primitives::{IndexedTriangle, Vertex};
 
-/// Returns a closed, consistently wound tetrahedron with correct normals.
+/// Returns a closed, consistently wound tetrahedron.
 fn tetrahedron() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([1.0, 1.0, 1.0]),
@@ -25,15 +24,7 @@ fn tetrahedron() -> IndexedMesh {
     ];
     let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
         .into_iter()
-        .map(|indices: [u32; 3]| {
-            let tri = [
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
     IndexedMesh {
         meta: None,
@@ -61,15 +52,7 @@ fn open_strip() -> IndexedMesh {
     ];
     let faces = [[0, 1, 2], [2, 1, 3]]
         .into_iter()
-        .map(|indices: [u32; 3]| {
-            let tri = [
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
     IndexedMesh {
         meta: None,
@@ -78,9 +61,8 @@ fn open_strip() -> IndexedMesh {
     }
 }
 
-/// Returns the diagnosis the validators themselves dictate for `mesh`,
-/// assembled from direct calls: the equivalence oracle every test below
-/// compares against.
+/// Returns the diagnosis that the validators give for `mesh`, assembled from
+/// direct calls: the oracle for the fixture sweep at the end of this file.
 fn expected_diagnosis(mesh: &IndexedMesh) -> MeshDiagnosis {
     let vertex_errors = mesh.validate_vertices().err().unwrap_or_default();
     let faces = match mesh.validated_faces() {
@@ -128,7 +110,7 @@ fn invalid_vertices_do_not_gate_the_face_results() {
 #[test]
 fn a_failed_face_gate_leaves_the_gated_results_absent() {
     let mut mesh = tetrahedron();
-    mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
+    mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
     let diagnosis = mesh.diagnose();
     assert_eq!(
         diagnosis.faces,
@@ -208,13 +190,7 @@ fn diagnosis_equals_the_validators_for_every_fixture_class() {
     };
     let out_of_range = {
         let mut mesh = tetrahedron();
-        mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
-        mesh
-    };
-    let bad_normal = {
-        let mut mesh = tetrahedron();
-        let doubled = mesh.faces[0].normal.coords().map(|c| c * 2.0);
-        mesh.faces[0].normal = Normal::new(doubled);
+        mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
         mesh
     };
     let empty = IndexedMesh {
@@ -227,7 +203,6 @@ fn diagnosis_equals_the_validators_for_every_fixture_class() {
         ("nan", nan),
         ("out_of_range", out_of_range),
         ("open_strip", open_strip()),
-        ("bad_normal", bad_normal),
         ("zero_area", tetrahedron_with_a_zero_area_face()),
         ("empty", empty),
     ];

@@ -98,7 +98,7 @@ impl IndexedMesh {
     }
 
     /// Validates face indices and, on success, returns a witness whose methods
-    /// can index into `vertices` / `faces` without per-call bounds checks.
+    /// can index into `vertices` and `faces` without per-call bounds checks.
     /// Lifetime-tied to `self`: any later mutation of the mesh invalidates the
     /// witness.
     pub fn validated_faces(&self) -> Result<ValidatedFaces<'_>, Vec<MeshFaceError>> {
@@ -108,9 +108,9 @@ impl IndexedMesh {
 
     /// Validates face indices as [`Self::validated_faces`] does, returning a
     /// witness that also permits mutation. The returned witness exposes only
-    /// mutations that preserve the in-range invariant (winding flips, normal
-    /// recomputes, etc.); operations that could invalidate it (e.g. removing
-    /// whole faces) live on `IndexedMesh` itself.
+    /// mutations that preserve the in-range invariant (winding flips);
+    /// operations that could invalidate it (for example removing whole faces)
+    /// live on `IndexedMesh` itself.
     pub fn validated_faces_mut(&mut self) -> Result<ValidatedFacesMut<'_>, Vec<MeshFaceError>> {
         self.validate_faces()?;
         Ok(ValidatedFacesMut::new_unchecked(self))

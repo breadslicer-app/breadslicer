@@ -13,6 +13,7 @@ use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::transform::TransformError;
 
 /// A visit of [`Scene::for_each_expanded_leaf`]: the leaf node and the composed
 /// world transform of that visit.
@@ -34,9 +35,9 @@ pub struct MergedMeshes {
 impl Scene {
     /// Merges all leaf meshes reachable from the scene roots into a single
     /// [`IndexedMesh`], baking the composed ancestor-chain transform into each
-    /// leaf's vertices and normals, or returns `None` when no leaf has a face.
-    /// Runs on [`Scene::for_each_expanded_leaf`], so `Group` and `Reference`
-    /// nodes are traversed (a referenced subtree contributes 1 baked copy per
+    /// leaf's vertices, or returns `None` when no leaf has a face. Runs on
+    /// [`Scene::for_each_expanded_leaf`], so `Group` and `Reference` nodes are
+    /// traversed (a referenced subtree contributes 1 baked copy per
     /// occurrence). `Csg` nodes are an error ([`CsgPolicy::Refuse`]): without
     /// an evaluator, a caller that flattens a graph with CSG must first resolve
     /// those nodes through a kernel.
@@ -104,11 +105,11 @@ impl Scene {
 
 /// Bakes a single leaf into its ancestor-chain frame. For a leaf under a scene
 /// root, the result is in world space. For a leaf inside a subtree resource,
-/// the result is in the subtree's own external frame (the reference call site
-/// is not consulted), which is the natural per-leaf invariant of stable
-/// [`NodeId`] addressing.
+/// the result is in the frame of the subtree root, without the transform of any
+/// reference to it: a [`NodeId`] names 1 leaf, not 1 of its occurrences.
 ///
-/// Errors if `node_id` does not resolve to a `Leaf`.
+/// Errors if `node_id` does not resolve to a `Leaf`, if the mesh resource of
+/// the leaf is missing, or if its frame has no inverse.
 pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh, SceneError> {
     let leaf_node = graph
         .node(node_id)
@@ -127,17 +128,17 @@ pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh,
     bake_mesh_to_world(mesh, &world)
 }
 
-/// Bakes `mesh` under the frame `world`: vertices and face normals are
-/// transformed, and triangle winding is reversed when `world` mirrors (negative
-/// determinant). The result carries no metadata; callers that want the source
-/// mesh's name re-attach it themselves.
+/// Bakes `mesh` under the frame `world`: vertices are transformed, and triangle
+/// winding is reversed when `world` mirrors (negative determinant). The result
+/// carries no metadata; callers that want the source mesh's name re-attach it
+/// themselves.
 ///
 /// This is the per-occurrence companion of [`Scene::for_each_expanded_leaf`]:
 /// the walk hands each occurrence's composed world transform to its callback,
 /// and this bakes the occurrence's mesh under that transform.
 /// [`bake_leaf_to_world`] covers the ancestor-chain case instead.
 ///
-/// Errors when `world` cannot map normals (singular linear part).
+/// Errors when `world` has no inverse (singular linear part).
 pub fn bake_mesh_to_world(
     mesh: &IndexedMesh,
     world: &Transform3D,
@@ -164,7 +165,6 @@ fn bake_into(
             vertices.extend(mesh.vertices.iter().copied());
             for face in &mesh.faces {
                 faces.push(IndexedTriangle {
-                    normal: face.normal,
                     vertices: [
                         face.vertices[0].offset(offset),
                         face.vertices[1].offset(offset),
@@ -187,17 +187,18 @@ fn bake_into_affine(
     vertices: &mut Vec<Vertex>,
     faces: &mut Vec<IndexedTriangle>,
 ) -> Result<(), SceneError> {
+    if !a.is_invertible() {
+        return Err(TransformError::SingularLinear.into());
+    }
     vertices.extend(mesh.vertices.iter().map(|v| a.apply_to_vertex(*v)));
     let reverse_winding = a.determinant() < 0.0;
     for face in &mesh.faces {
-        let normal = a.apply_to_normal(face.normal)?;
         let v = if reverse_winding {
             [face.vertices[0], face.vertices[2], face.vertices[1]]
         } else {
             face.vertices
         };
         faces.push(IndexedTriangle {
-            normal,
             vertices: [
                 v[0].offset(offset),
                 v[1].offset(offset),
@@ -213,18 +214,14 @@ mod scene_bake_tests {
     use super::*;
     use crate::node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use std::f64::consts::FRAC_PI_2;
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use std::sync::Arc;
 
     fn triangle_mesh(vertices: Vec<[f32; 3]>, face: [u32; 3]) -> IndexedMesh {
         IndexedMesh {
             meta: None,
             vertices: vertices.into_iter().map(Vertex::new).collect(),
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                face,
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices(face)],
         }
     }
 
@@ -236,10 +233,7 @@ mod scene_bake_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -446,36 +440,6 @@ mod scene_bake_tests {
     }
 
     #[test]
-    fn bake_leaf_to_world_rotates_normal() {
-        let mut g = Scene::new();
-        let mesh = IndexedMesh {
-            meta: None,
-            vertices: vec![
-                Vertex::new([0.0, 0.0, 0.0]),
-                Vertex::new([0.0, 1.0, 0.0]),
-                Vertex::new([0.0, 0.0, 1.0]),
-            ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
-        };
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_2)),
-                LeafPayload::Mesh(Arc::new(mesh)),
-            )
-            .unwrap();
-        g.add_root(leaf).unwrap();
-        let baked = bake_leaf_to_world(&g, leaf).unwrap();
-        // +X normal rotates to +Y under pi/2 about Z.
-        assert_approx_eq!(f32, baked.faces[0].normal[0], 0.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, baked.faces[0].normal[1], 1.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, baked.faces[0].normal[2], 0.0, epsilon = 1e-6);
-    }
-
-    #[test]
     fn bake_mesh_to_world_identity_passes_geometry_through() {
         let mesh = triangle_mesh(
             vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
@@ -539,6 +503,25 @@ mod scene_bake_tests {
             [0.0, 0.0, 0.0],
         );
         assert!(bake_mesh_to_world(&mesh, &Transform3D::Affine(singular)).is_err());
+    }
+
+    #[test]
+    fn bake_mesh_to_world_takes_a_collinear_face_under_a_rotation_with_scale() {
+        let mesh = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            [0, 1, 2],
+        );
+        // The placement of a 3MF build item: a rotation about Z with a uniform
+        // scale of 0.5853570, and a translation.
+        let item = AffineTransform3D::from_linear_and_translation(
+            [
+                [-0.04546128719263793, -0.5835889231040134, 0.0],
+                [0.5835889231040134, -0.04546128719263793, 0.0],
+                [0.0, 0.0, 0.5853569507598877],
+            ],
+            [-54.116507902278265, 19.34432236804706, 9.951433181762695],
+        );
+        bake_mesh_to_world(&mesh, &Transform3D::Affine(item)).expect("the mesh bakes");
     }
 
     #[test]

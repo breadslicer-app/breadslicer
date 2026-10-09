@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vector3D, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vector3D, Vertex};
 use sc_scene::{LeafPayload, Scene};
 
 use sc_geom_transport_inprocess::{AlgorithmId, JobError, JobHandle, JobRecipe};
@@ -30,8 +30,7 @@ fn cube_mesh() -> IndexedMesh {
         v(1.0, 1.0, 1.0),
         v(0.0, 1.0, 1.0),
     ];
-    let n = Normal::new([0.0, 0.0, 1.0]);
-    let face = |a, b, c| IndexedTriangle::from_raw_indices(n, [a, b, c]);
+    let face = |a, b, c| IndexedTriangle::from_raw_indices([a, b, c]);
     IndexedMesh::new(
         Some(MeshMetadata::default()),
         vertices,

@@ -5,7 +5,7 @@
 
 //! Build correctness for [`TriangleClusters`].
 
-use sc_mesh_core::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedTriangle, Vertex};
 use sc_mesh_spatial::TriangleClusters;
 
 fn vertex(x: f32, y: f32, z: f32) -> Vertex {
@@ -13,7 +13,7 @@ fn vertex(x: f32, y: f32, z: f32) -> Vertex {
 }
 
 fn tri(a: u32, b: u32, c: u32) -> IndexedTriangle {
-    IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [a, b, c])
+    IndexedTriangle::from_raw_indices([a, b, c])
 }
 
 #[test]
@@ -72,9 +72,8 @@ fn iter_emits_half_open_face_ranges_in_cluster_order() {
 
 #[test]
 fn cluster_aabb_only_covers_faces_in_that_cluster() {
-    // Two clusters: first cluster faces all sit at z = 0, second
-    // cluster faces all sit at z = 100. The cluster AABBs must
-    // separate cleanly along z.
+    // 2 clusters: the faces of the first cluster all sit at z = 0, the faces of
+    // the second at z = 100. The cluster AABBs must separate cleanly along z.
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
     let cs = TriangleClusters::CLUSTER_SIZE as usize;

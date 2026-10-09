@@ -16,7 +16,7 @@ mod writers;
 // use the same header and triangle-record layout.
 pub(crate) const STL_HEADER_BYTES: usize = 80;
 pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
-// 3*4 normal + 3*(3*4) verts + 2 attr
+// 3*4 normal bytes + 3*(3*4) vertex bytes + 2 attribute bytes
 pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 
 use std::io::{Cursor, Read, Seek, Write};
@@ -204,7 +204,7 @@ fn mesh_from_facets(metadata: MeshMetadata, facets: Vec<Facet>) -> Result<Indexe
 mod stl_bin_reader_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 
     use super::{MeshReader, StlBin, write_stlb};
 
@@ -216,10 +216,7 @@ mod stl_bin_reader_tests {
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([-1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let mut buf = Vec::new();
         write_stlb(&mesh, &mut buf).expect("write_stlb succeeds");

@@ -14,10 +14,9 @@ use crate::stl::facet_normals::resolve_facet_normals;
 use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES};
 
 // Binary STL stores the triangle count in a fixed STL_TRIANGLE_COUNT_BYTES
-// little-endian header field. Centralising the encode lets us pin the contract:
-// any face count beyond `u32::MAX` must surface a clean error rather than
-// silently truncate to the low 32 bits (which would produce an STL file whose
-// header lies about the body).
+// little-endian field. A face count above `u32::MAX` must fail with an error,
+// not truncate to the low 32 bits, which would give a file whose count does not
+// match its records.
 fn encode_triangle_count(count: usize) -> Result<[u8; STL_TRIANGLE_COUNT_BYTES], WriteStlError> {
     u32::try_from(count)
         .map(|n| n.to_le_bytes())
@@ -70,7 +69,6 @@ where
         None => None,
     };
 
-    // Write "header"
     writer.write_all(b"solid ")?;
     if let Some(name) = &mesh_name {
         writer.write_all(name.as_str().as_bytes())?;
@@ -97,7 +95,6 @@ where
         tally.tick(&mut progress);
     }
 
-    // Closing mesh
     if let Some(name) = &mesh_name {
         writer.write_all(b"endsolid ")?;
         writer.write_all(name.as_str().as_bytes())?;
@@ -162,10 +159,8 @@ where
     }
     writer.write_all(&header)?;
 
-    // Triangle count
     writer.write_all(&encode_triangle_count(mesh.faces().len())?)?;
 
-    // Per-triangle records
     let mut tally = SerializeTally::new(mesh.faces().len() as u64);
     tally.begin(&mut progress);
     for (face, normal) in mesh.faces().iter().zip(normals) {
@@ -212,10 +207,9 @@ mod encode_triangle_count_tests {
         );
     }
 
-    // Face counts that exceed `u32::MAX` cannot be represented in the 4-byte
-    // STL header. The writer must reject them outright instead of silently
-    // writing the low 32 bits (which would yield an STL file whose header lies
-    // about the body).
+    // Face counts above `u32::MAX` do not fit the 4-byte triangle count field.
+    // The writer must reject them instead of writing the low 32 bits, which
+    // would give a file whose count does not match its records.
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn count_above_u32_max_errors() {
@@ -233,7 +227,7 @@ mod encode_triangle_count_tests {
 #[cfg(test)]
 mod test_write_stla {
     use crate::stl::write_stla;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
     #[test]
     fn test_without_name() {
@@ -244,10 +238,7 @@ mod test_write_stla {
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([-1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -282,10 +273,7 @@ endsolid",
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([-1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -342,10 +330,7 @@ endsolid my_mesh",
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let mut out: Vec<u8> = vec![];
         write_stla(&mesh, &mut out).expect("write_stla succeeds");
@@ -422,10 +407,7 @@ endsolid my_mesh",
                 Vertex::new([0.0, 1.0, -3.4e-20]),
                 Vertex::new([f32::MIN, 0.0, f32::MAX]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let mut buf: Vec<u8> = vec![];
         write_stla(&mesh, &mut buf).expect("write_stla succeeds");
@@ -454,7 +436,7 @@ endsolid my_mesh",
 mod test_write_stlb {
     use crate::stl::write_stlb;
     use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES};
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
     const PREAMBLE_BYTES: usize = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES;
     const RECORD_TOTAL_BYTES: usize = PREAMBLE_BYTES + STL_TRIANGLE_RECORD_BYTES;
@@ -467,10 +449,7 @@ mod test_write_stlb {
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([-1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 

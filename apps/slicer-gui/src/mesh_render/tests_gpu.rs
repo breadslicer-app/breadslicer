@@ -28,7 +28,7 @@ use crate::test_support::gpu_devices::{
     shared_small_texture_test_device, shared_test_device, shared_tiny_buffer_test_device,
 };
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::node::LeafPayload;
@@ -124,10 +124,7 @@ fn triangle_graph_with_translation(t: AffineTransform3D) -> Scene {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let (mut g, root) = graph_with_group_root();
     add_inline_leaf(&mut g, root, mesh, Transform3D::Affine(t));
@@ -346,7 +343,7 @@ fn graph_with_one_leaf_of_faces(face_count: usize) -> Scene {
             Vertex::new([0.0, 1.0, 0.0]),
         ],
         faces: (0..face_count)
-            .map(|_| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]))
+            .map(|_| IndexedTriangle::from_raw_indices([0, 1, 2]))
             .collect(),
     };
     let (mut g, root) = graph_with_group_root();
@@ -1113,10 +1110,7 @@ fn render_multi_object_scene_under_default_limits() {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let (mut graph, root) = graph_with_group_root();
     add_inline_leaf(&mut graph, root, mesh.clone(), Transform3D::Identity);
@@ -1399,10 +1393,7 @@ fn x_pos_breaching_graph() -> Scene {
             Vertex::new([0.0, 1.0, 50.0]),
             Vertex::new([120.0, 0.0, 50.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let (mut g, root) = graph_with_group_root();
     add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
@@ -1642,10 +1633,7 @@ fn render_against_grown_graph_does_not_panic() {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let root = graph.roots()[0];
     add_inline_leaf(
@@ -1782,10 +1770,7 @@ fn upload_after_an_empty_upload_installs_a_scene_again() {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     add_inline_leaf(&mut graph, root, mesh, Transform3D::Identity);
     renderer.upload_scene(&graph).expect("upload after refill");

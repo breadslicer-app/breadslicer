@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Detects when two or more scene leaves carry coincident vertex
-//! coordinates. The check is bit-exact on the f32 vertex tuple
-//! (with -0.0 normalised to +0.0) so it surfaces the OBJ-style
-//! "different SceneObjects share a global vertex" pattern. Surface
-//! coincidence under floating noise is out of scope here; that would
-//! be a spatial-index epsilon match.
+//! Detects when 2 or more scene leaves carry coincident vertex coordinates. The
+//! check is bit-exact on the f32 vertex tuple (with -0.0 normalised to +0.0),
+//! so it surfaces the OBJ pattern where different objects share a global
+//! vertex. Surface coincidence under floating noise is out of scope here; that
+//! would be a spatial-index epsilon match.
 
 use std::num::NonZeroU32;
 
@@ -19,30 +18,27 @@ use crate::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::primitives::Vertex;
 
 impl Scene {
-    /// Returns the ids of every leaf that shares at least one vertex
-    /// (by bit-exact coordinate, with -0.0 normalised) with another
-    /// leaf elsewhere in the scene. The result is sorted by id and
-    /// contains no duplicates.
+    /// Returns the ids of every leaf that shares at least 1 vertex (by
+    /// bit-exact coordinate, with -0.0 normalised) with another leaf elsewhere
+    /// in the scene. The result is sorted by id and contains no duplicates.
     ///
     /// Both inline-mesh leaves and mesh-resource leaves are walked.
-    /// Mesh-resource leaves that reference a dangling slot are
-    /// skipped; the structural validator at
-    /// [`Scene::validate`](Scene::validate) handles
-    /// that variant separately.
+    /// Mesh-resource leaves that reference a dangling slot are skipped; the
+    /// structural validator at [`Scene::validate`] handles that variant
+    /// separately.
     ///
-    /// Complexity: O(total vertex count * log) time and O(total
-    /// vertex count) space, from one parallel sort of the coordinate
-    /// records. A scene with fewer than 2 leaves carrying vertices
-    /// answers without building them, since sharing takes 2 leaves.
+    /// Complexity: O(total vertex count * log) time and O(total vertex count)
+    /// space, from 1 parallel sort of the coordinate records. A scene with
+    /// fewer than 2 leaves carrying vertices answers without building them,
+    /// since sharing takes 2 leaves.
     pub fn detect_shared_vertices(&self) -> Vec<NodeId> {
         let leaves = self.leaves_with_vertices();
         if leaves.len() < 2 {
             return Vec::new();
         }
 
-        // One record per vertex. The tuple order sorts by coordinate
-        // first and by leaf second, so every equal-coordinate run is
-        // itself grouped by leaf.
+        // 1 record per vertex. The tuple order sorts by coordinate first and by
+        // leaf second, so every equal-coordinate run is itself grouped by leaf.
         let total: usize = leaves.iter().map(|(_, vertices)| vertices.len()).sum();
         let mut records: Vec<([u32; 3], NodeId)> = Vec::with_capacity(total);
         for (leaf_id, vertices) in &leaves {
@@ -56,9 +52,9 @@ impl Scene {
 
         let mut shared: Vec<NodeId> = Vec::new();
         for run in records.chunk_by(|a, b| a.0 == b.0) {
-            // Sorted by leaf within the run, so one leaf at both ends
-            // means one leaf throughout: a coordinate repeated inside
-            // a single mesh, which is not sharing.
+            // Sorted by leaf within the run, so the same leaf at both ends
+            // means 1 leaf throughout: a coordinate repeated inside a single
+            // mesh, which is not sharing.
             if run[0].1 == run[run.len() - 1].1 {
                 continue;
             }
@@ -75,9 +71,10 @@ impl Scene {
         shared
     }
 
-    /// Every leaf that carries at least one vertex, with its mesh.
-    /// Empty leaves are dropped: they cannot share a coordinate, and
-    /// leaving them out sharpens the 2-leaf test above.
+    /// Returns every leaf that carries at least 1 vertex, with its mesh. Empty
+    /// leaves are dropped: they cannot share a coordinate, and without them the
+    /// 2-leaf early exit of [`Scene::detect_shared_vertices`] applies to more
+    /// scenes.
     fn leaves_with_vertices(&self) -> Vec<(NodeId, &[Vertex])> {
         let mut leaves = Vec::new();
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
@@ -123,17 +120,14 @@ mod shared_vertices_tests {
 
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
         IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -157,8 +151,8 @@ mod shared_vertices_tests {
 
     #[test]
     fn single_leaf_with_repeated_local_vertex_is_not_shared() {
-        // A leaf that contains a duplicate vertex coordinate within
-        // its own mesh does not trigger a cross-leaf warning.
+        // A leaf that contains a duplicate vertex coordinate within its own
+        // mesh does not trigger a cross-leaf warning.
         let mut graph = Scene::new();
         let root = graph.add_group(None, Transform3D::Identity);
         graph.add_root(root).unwrap();
@@ -335,8 +329,9 @@ mod shared_vertices_tests {
         assert_eq!(graph.detect_shared_vertices(), expected);
     }
 
-    /// The detection this replaced: a first-seen map keyed on the
-    /// coordinate, kept as the reference the sort must agree with.
+    /// Detects shared vertices with a first-seen map keyed on the coordinate:
+    /// the earlier detection, kept as the reference that the sort must agree
+    /// with.
     fn reference_detect(graph: &Scene) -> Vec<NodeId> {
         use std::collections::HashMap;
         use std::collections::hash_map::Entry;
@@ -379,8 +374,9 @@ mod shared_vertices_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(96))]
 
-        /// Coordinates come from a pool small enough that collisions
-        /// across leaves are the common case, not the rare one.
+        /// Pins that the sort agrees with the reference detection. Coordinates
+        /// come from a pool small enough that collisions across leaves are the
+        /// common case.
         #[test]
         fn matches_the_reference_detection(
             meshes in prop::collection::vec(
@@ -399,10 +395,7 @@ mod shared_vertices_tests {
                     .iter()
                     .map(|axes| Vertex::new([axes[0] as f32, axes[1] as f32, axes[2] as f32]))
                     .collect();
-                let faces = vec![IndexedTriangle::from_raw_indices(
-                    Normal::new([0.0, 0.0, 1.0]),
-                    [0, 1, 2],
-                )];
+                let faces = vec![IndexedTriangle::from_raw_indices([0, 1, 2])];
                 add_leaf(
                     &mut graph,
                     root,

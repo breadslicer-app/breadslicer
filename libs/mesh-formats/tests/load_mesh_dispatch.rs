@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Integration tests for the top-level `load_mesh_from_*` dispatcher in
- * `sc_mesh_formats`. Complements the format-specific round-trip suites by
- * proving the dispatcher routes each `MeshFileType` to the right reader,
- * propagates warnings, errors on unsupported formats, and infers format
- * from the filesystem path.
+ * `sc_mesh_formats`. Beside the round-trip suites of each format, they pin that
+ * the dispatcher routes each `MeshFileType` to the right reader, passes the
+ * warnings on, fails on unsupported formats, infers the format from the file
+ * path and applies the file size cap.
  */
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 
 fn triangle_mesh() -> IndexedMesh {
     IndexedMesh {
@@ -19,10 +19,7 @@ fn triangle_mesh() -> IndexedMesh {
             Vertex::new([0.0, 1.0, 0.0]),
             Vertex::new([0.0, 0.0, 1.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
@@ -90,9 +87,8 @@ mod obj_dispatch_tests {
 
     #[test]
     fn obj_propagates_warnings() {
-        // A `vt` line triggers `SkippedTextureCoordinates`; proves warnings
-        // from the reader survive the dispatcher boundary and land in
-        // `LoadedMesh.warnings`.
+        // A `vt` line triggers `SkippedTextureCoordinates`; the warning of the
+        // reader must reach `LoadedMesh.warnings` through the dispatcher.
         let obj = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0.1 0.2\nf 1 2 3\n";
         let mut reader = Cursor::new(&obj[..]);
         let loaded = load_mesh_from_reader(MeshFileType::Obj, &mut reader).unwrap();
@@ -117,10 +113,10 @@ mod obj_dispatch_tests {
     #[test]
     fn dispatcher_surfaces_shared_vertices_at_scene_level() {
         // ObjectA and ObjectB both reference the OBJ global vertex 1.
-        // `read_obj` no longer emits a per-object warning for that;
-        // the dispatcher must run the scene-level detector and produce
-        // a single `LoadMeshWarning::Scene(SharedVertices)` carrying
-        // both leaves, named when their `o` line carried a name.
+        // `read_obj` emits no per-object warning for that; the dispatcher must
+        // run the scene-level detector and give a single
+        // `LoadMeshWarning::Scene(SharedVertices)` that holds both leaves, with
+        // the names of their `o` lines.
         let obj = b"\
 o ObjectA
 v 0.0 0.0 0.0
@@ -182,8 +178,8 @@ mod path_loading_tests {
     use sc_mesh_formats::stl::write_stla;
 
     fn tmp_path(name: &str) -> std::path::PathBuf {
-        // `CARGO_TARGET_TMPDIR` is set by Cargo at compile time for integration
-        // tests; it's not a runtime environment variable.
+        // Cargo sets `CARGO_TARGET_TMPDIR` at compile time for integration
+        // tests; it is not a runtime environment variable.
         std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name)
     }
 
@@ -203,8 +199,9 @@ mod path_loading_tests {
 
     #[test]
     fn explicit_kind_overrides_unknown_extension() {
-        // Extension `.dat` is unknown; auto-infer fails.
-        // With an explicit `MeshFileType::StlAscii` the dispatcher still loads.
+        // The extension `.dat` is unknown, so the inference fails; with an
+        // explicit `MeshFileType::StlAscii` the dispatcher still loads the
+        // file.
         let path = tmp_path("load_mesh_dispatch_override.dat");
         let mut file = std::fs::File::create(&path).unwrap();
         write_stla(&triangle_mesh(), &mut file).unwrap();
@@ -228,10 +225,9 @@ mod path_loading_tests {
 
     #[test]
     fn file_size_cap_rejects_oversized_input() {
-        // Write a small STL file and ask for a 1-byte cap: the
-        // metadata precheck must fire before the parser sees the
-        // file. The error must surface both the actual size and the
-        // cap so callers can format a user-facing message.
+        // A small STL file under a 1-byte cap: the metadata precheck must fail
+        // before the parser reads the file, and the message must say that the
+        // file exceeds the cap.
         let path = tmp_path("load_mesh_dispatch_oversize.stla");
         let mut file = std::fs::File::create(&path).unwrap();
         write_stla(&triangle_mesh(), &mut file).unwrap();
@@ -261,10 +257,9 @@ mod path_loading_tests {
 
     #[test]
     fn missing_file_falls_through_to_open_error() {
-        // metadata() failure (missing file) is not surfaced by the
-        // size gate; the subsequent File::open produces the more
-        // specific I/O error. The same path with no cap behaves
-        // identically.
+        // The size gate does not report a failure of `metadata()` (a missing
+        // file); the `File::open` after it gives the more specific I/O error,
+        // the same as without a cap.
         let path = tmp_path("load_mesh_dispatch_missing.stla");
         let _ = std::fs::remove_file(&path);
 

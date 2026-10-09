@@ -11,9 +11,8 @@
 use std::f64::consts::FRAC_PI_2;
 use std::io::Cursor;
 
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_formats::ports::MeshWriter;
 use sc_mesh_formats::stl::{StlAscii, StlBin, read_stla, read_stlb, write_stla, write_stlb};
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
@@ -66,17 +65,13 @@ fn only_mesh(scene: &Scene) -> IndexedMesh {
         .clone()
 }
 
-/// Returns the fixture's tetrahedron with no declared normals and with the
-/// normals computed from its winding, as the 3MF and OBJ readers store them.
-fn tetrahedron_with_computed_normals() -> IndexedMesh {
+/// Returns the fixture's tetrahedron with no declared normals, as the 3MF and
+/// OBJ readers build it.
+fn tetrahedron_without_declared_normals() -> IndexedMesh {
     let vertices: Vec<Vertex> = VERTICES.into_iter().map(Vertex::new).collect();
     let faces = FACETS
         .into_iter()
-        .map(|indices| {
-            let corners = indices.map(|index| vertices[index as usize]);
-            let normal = compute_normal_from_triangle_vertices(&corners).expect("not degenerate");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
     IndexedMesh::new(None, vertices, faces)
 }
@@ -192,7 +187,7 @@ fn the_declared_normals_survive_a_3mf_round_trip() {
 
 #[test]
 fn a_rotated_mesh_without_declared_normals_gets_its_rotated_normals() {
-    let scene = leaves_as_roots([(tetrahedron_with_computed_normals(), rotation())]);
+    let scene = leaves_as_roots([(tetrahedron_without_declared_normals(), rotation())]);
     assert_close(&binary_normals(&write_binary(&scene)), &ROTATED);
 }
 
@@ -205,10 +200,7 @@ fn a_collinear_face_without_declared_normals_is_written_with_the_zero_vector() {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([2.0, 0.0, 0.0]),
         ],
-        vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 0.0]),
-            [0, 1, 2],
-        )],
+        vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     );
     let scene = Scene::from(collinear);
     assert_eq!(binary_normals(&write_binary(&scene)), [[0, 0, 0]]);

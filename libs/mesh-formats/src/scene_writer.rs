@@ -117,14 +117,14 @@ pub fn write_bytes_atomically(target_path: &Path, bytes: &[u8]) -> Result<()> {
     })
 }
 
-// The number of progress reports per serialise phase. A progress display in
-// steps of 0.1% changes at most 1000 times, so more reports change nothing that
-// it shows.
+// The target number of progress reports per serialise phase. A progress display
+// in steps of 0.1% changes at most 1000 times, so more reports change nothing
+// that it shows.
 const SERIALIZE_REPORT_SLOTS: u64 = 1000;
 
 /// Running `done` / `total` counter for a per-element serialise phase,
-/// throttled to about [`SERIALIZE_REPORT_SLOTS`] reports plus the completion
-/// report, whatever the element count.
+/// throttled to fewer than 2 x [`SERIALIZE_REPORT_SLOTS`] reports plus the
+/// begin report, whatever the element count.
 pub(crate) struct SerializeTally {
     done: u64,
     total: u64,
@@ -194,9 +194,8 @@ pub struct FlattenedScene {
 }
 
 /// Builds 1 `IndexedMesh` from the whole scene, with the world transform of
-/// each leaf occurrence baked into its vertices and face normals. A subtree
-/// referenced N times gives N occurrences, each under its composed call-site
-/// transform.
+/// each leaf occurrence baked into its vertices. A subtree referenced N times
+/// gives N occurrences, each under its composed call-site transform.
 ///
 /// - With 1 occurrence, the mesh keeps the metadata of its source mesh, also
 ///   when the occurrence sits behind a reference: the ASCII STL writer puts its
@@ -353,7 +352,7 @@ mod flatten_scene_to_mesh_tests {
     use super::{FlattenWarning, flatten_graph_to_mesh};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
     use sc_scene::{LeafOccurrence, LeafPayload, Scene};
     use sc_scene_fixtures::leaves_as_roots;
 
@@ -368,10 +367,7 @@ mod flatten_scene_to_mesh_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -412,8 +408,8 @@ mod flatten_scene_to_mesh_tests {
         let graph = leaves_as_roots([(unit_triangle_mesh(Some("Translated")), t)]);
         let result = flatten_graph_to_mesh(&graph).unwrap();
         // The transform was baked into the vertices, but the source mesh's name
-        // was preserved (so STL writers can put it in the `solid <name>` /
-        // 80-byte header).
+        // was kept, so the STL writers can put it in the `solid <name>` line or
+        // the 80-byte header.
         assert_eq!(
             result.mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some("Translated")
@@ -436,7 +432,7 @@ mod flatten_scene_to_mesh_tests {
         assert_eq!(result.mesh.vertices()[3].coords(), [11.0, 0.0, 0.0]);
         // Multi-object merge has no single name to keep.
         assert!(result.mesh.meta().is_none());
-        // The caller is told that names/boundaries were dropped.
+        // The caller is told that the names and boundaries were dropped.
         assert_eq!(
             result.warnings,
             vec![FlattenWarning::MultiObjectMerge { object_count: 2 }]
@@ -556,7 +552,7 @@ mod atomic_temp_path_tests {
 mod write_scene_atomicity_tests {
     use super::write_scene;
     use crate::filetypes::WriteFormat;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
     use sc_scene::Scene;
 
     fn valid_graph() -> Scene {
@@ -567,10 +563,7 @@ mod write_scene_atomicity_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         })
     }
 
@@ -580,10 +573,7 @@ mod write_scene_atomicity_tests {
         Scene::from(IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [u32::MAX, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([u32::MAX, 0, 0])],
         })
     }
 

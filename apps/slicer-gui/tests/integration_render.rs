@@ -14,22 +14,21 @@
 //! provider does not block.
 //!
 //! Concurrency note: the tests take turns on the GPU. `with_test_gpus`
-//! serialises every Vulkan call this file makes, opens 1 device per adapter for
+//! serialises every wgpu call this file makes, opens 1 device per adapter for
 //! the length of a single test, and closes them again before the next test gets
-//! its turn. 2 separate crashes forced that shape, each killing the process
-//! with SIGSEGV on a few percent of runs. Building a `wgpu::Instance` on 1
-//! thread while another thread had work in flight through an existing device
-//! made the Vulkan loader read through a torn pointer inside
-//! `vkSetDebugUtilsObjectNameEXT`. Holding devices open on several drivers
-//! until the process exited instead moved the fault into teardown, where it
-//! jumped through a dangling dispatch pointer. No GPU object may outlive the
-//! turn that opened it.
+//! its turn. 2 crashes, each a SIGSEGV on a few percent of runs, make this
+//! necessary. Building a `wgpu::Instance` on 1 thread while another thread has
+//! work in flight through an existing device can make the Vulkan loader read
+//! through a torn pointer inside `vkSetDebugUtilsObjectNameEXT`. Devices held
+//! open on several drivers until the process exits can jump through a dangling
+//! dispatch pointer at teardown. No GPU object may outlive the turn that opened
+//! it.
 
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeId, NodeKind};
@@ -42,8 +41,8 @@ use sc_slicer_gui::mesh_render::{
 
 use slint::wgpu_30::wgpu;
 
-/// Backends the sweep covers: everything wgpu was compiled with except the
-/// GL/EGL fallback, which the GUI does not ship on. `Backends::all()` also
+/// Backends the sweep covers: everything wgpu was compiled with except the GL
+/// fallback, which the GUI does not ship on. `Backends::all()` also
 /// names the no-op backend, but that one stays inert unless it is switched on
 /// through `BackendOptions`, which this file never does.
 const SWEEP_BACKENDS: wgpu::Backends = wgpu::Backends::all().difference(wgpu::Backends::GL);
@@ -161,10 +160,7 @@ fn triangle_graph(translation: [f64; 3]) -> Scene {
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     };
     let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
@@ -325,8 +321,8 @@ fn install_scene_with_mismatched_device_returns_false() {
         };
 
         // 2 distinct tokens, 1 per device. `install_scene` compares
-        // `self.core.device_token` with `gpu.device_token()`, so a mismatch
-        // must surface even though both tokens are syntactically `u64`s.
+        // `self.core.device_token` with `gpu.device_token()`, so the mismatch
+        // makes it return `false`.
         let token_a = DeviceToken::next();
         let token_b = DeviceToken::next();
 

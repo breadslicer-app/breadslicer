@@ -3,17 +3,17 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Application-wide clipboard for the copy / paste pipeline.
+//! Application-wide clipboard for the copy and paste pipeline.
 //!
-//! Holds a [`sc_scene_edit::SceneFragment`] captured from the source
-//! window's selection, plus a counter that the paste path uses to
-//! offset consecutive pastes so each copy is visually distinguishable.
+//! Holds a [`sc_scene_edit::SceneFragment`] captured from the source window's
+//! selection, plus a counter that the paste path uses to offset consecutive
+//! pastes so each copy is visually distinguishable.
 //!
-//! The clipboard lives on `AppState`, not on any individual main
-//! window: a copy in window A must be pasteable in window B (even one
-//! that has loaded an entirely different scene). The `Arc<IndexedMesh>`
-//! inside the fragment keeps the source mesh alive on its own, so the
-//! source scene can be closed and the clipboard stays valid.
+//! The clipboard lives on `AppState`, not on any individual main window: a copy
+//! in window A must be pasteable in window B (even one that has loaded an
+//! entirely different scene). The `Arc<IndexedMesh>` inside the fragment keeps
+//! the source mesh alive on its own, so the source scene can be closed and the
+//! clipboard stays valid.
 
 pub(crate) mod placement;
 
@@ -24,15 +24,15 @@ use sc_scene_edit::SceneFragment;
 
 use crate::scene_document::SceneDocument;
 
-/// Clipboard payload + cascade state. Constructed by
-/// [`fragment_from_document_selection`] (wrapped on the AppState
-/// side) and consumed by the paste path.
+/// Clipboard payload and cascade state. The fragment comes from
+/// [`fragment_from_document_selection`], `AppState` wraps it through
+/// [`Clipboard::new`], and the paste path consumes it.
 pub(crate) struct Clipboard {
     fragment: SceneFragment,
-    /// Number of consecutive pastes since the fragment was captured.
-    /// Bumped by the paste path; reset to zero on a fresh copy. The
-    /// placement function reads it to space out repeated pastes so
-    /// stacked copies don't sit on top of each other.
+    /// Number of consecutive pastes since the fragment was captured. Bumped by
+    /// the paste path; reset to 0 on a fresh copy. The placement function reads
+    /// it to space out repeated pastes so stacked copies do not sit on top of
+    /// each other.
     cascade_count: u32,
 }
 
@@ -52,26 +52,25 @@ impl Clipboard {
         self.cascade_count
     }
 
-    /// Increment the cascade counter; saturates at `u32::MAX`.
-    /// Consecutive paste calls bump this; copy replaces the
-    /// clipboard wholesale, which resets cascade to zero through
-    /// [`Self::new`].
+    /// Increments the cascade counter; saturates at `u32::MAX`. Consecutive
+    /// paste calls bump this; copy replaces the clipboard wholesale, which
+    /// resets cascade to 0 through [`Self::new`].
     pub(crate) fn bump_cascade(&mut self) {
         self.cascade_count = self.cascade_count.saturating_add(1);
     }
 }
 
-/// Build a single-leaf [`SceneFragment`] from `doc`'s current
-/// selection, or `None` when there's no scene loaded, nothing
-/// selected, or the selected node is not a mesh-backed leaf.
+/// Builds a single-leaf [`SceneFragment`] from `doc`'s current selection, or
+/// `None` when no scene is loaded, nothing is selected, or the selected node is
+/// not a mesh-backed leaf.
 ///
-/// The fragment carries the source leaf's world-space rotation + scale
-/// (the linear part of its composed world transform); the translation
-/// component is dropped because the paste primitive sets the new
-/// coordinates from the placement search. The mesh `Arc` is preserved
-/// by identity, so a later same-scene paste can dedupe via
-/// [`sc_scene::Scene::find_mesh_resource_by_arc`] instead of
-/// pushing a fresh `AddMeshResource` edit.
+/// The fragment carries the source leaf's world-space rotation and scale (the
+/// linear part of its composed world transform); the translation component is
+/// dropped because the paste primitive sets the new coordinates from the
+/// placement search. The mesh `Arc` is preserved by identity, so a later
+/// same-scene paste can dedupe via
+/// [`sc_scene::Scene::find_mesh_resource_by_arc`] instead of pushing a fresh
+/// `AddMeshResource` edit.
 pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<SceneFragment> {
     let node_id = doc.selection_primary_node_id()?;
     let (arc, world_xform) = doc
@@ -87,18 +86,16 @@ pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<Sc
     ))
 }
 
-/// World-space AABB of the fragment's single root leaf, after
-/// applying the root's local transform (rotation + scale) to the
-/// mesh's local AABB via Arvo's method. Returns `None` when the
-/// fragment is empty, the root is not a mesh-backed leaf, or the
-/// mesh has no vertices.
+/// Returns the world-space AABB of the fragment's single root leaf, after
+/// applying the root's local transform (rotation and scale) to the mesh's local
+/// AABB via Arvo's method. Returns `None` when the fragment is empty, the root
+/// is not a mesh-backed leaf, or the mesh has no vertices.
 ///
-/// "World-space" here means fragment-space: the AABB the placement
-/// function feeds into the cursor-centring math, before any
-/// paste-side translation is added. Arvo's method over-reports for
-/// tilted meshes (the conservative AABB-of-the-rotated-local-AABB);
-/// the paste pipeline accepts this since the collision search is
-/// already a heuristic.
+/// "World-space" here means fragment-space: the AABB the placement function
+/// feeds into the cursor-centring math, before any paste-side translation is
+/// added. Arvo's method over-reports for tilted meshes (the conservative
+/// AABB-of-the-rotated-local-AABB); the paste pipeline accepts this since the
+/// collision search is already a heuristic.
 pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
     let scene = fragment.scene();
     let root_id = scene.roots().first().copied()?;
@@ -115,13 +112,12 @@ pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
     })
 }
 
-/// Return `xform` with its translation component set to the origin,
-/// preserving the linear part. The paste primitive re-anchors the
-/// fragment root at a placement-chosen translation, so the
-/// translation captured at copy time would be overwritten anyway;
-/// dropping it here keeps the clipboard's invariant clean (the
-/// fragment's root sits at the origin in fragment-space) and avoids
-/// surprising callers who inspect the fragment for rotation / scale.
+/// Returns `xform` with its translation component set to the origin, preserving
+/// the linear part. The paste primitive re-anchors the fragment root at a
+/// placement-chosen translation, so the translation captured at copy time would
+/// be overwritten anyway; dropping it here keeps the clipboard's invariant
+/// clean (the fragment's root sits at the origin in fragment-space) and avoids
+/// surprising callers who inspect the fragment for rotation and scale.
 fn drop_translation(xform: Transform3D) -> Transform3D {
     match xform {
         Transform3D::Identity => Transform3D::Identity,
@@ -137,7 +133,7 @@ mod clipboard_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_scene::Scene;
     use sc_scene::node::LeafPayload;
 
@@ -153,10 +149,7 @@ mod clipboard_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         })
     }
 
@@ -164,9 +157,9 @@ mod clipboard_tests {
         PathBuf::from("/tmp/clipboard_fixture.obj")
     }
 
-    /// Build a one-inline-leaf scene under the loader-shape root and
-    /// return the (scene, leaf-id) pair so tests can select the leaf
-    /// after install.
+    /// Builds a scene with 1 inline leaf under the loader-shape root and
+    /// returns the (scene, leaf-id) pair so tests can select the leaf after
+    /// install.
     fn scene_with_inline_leaf(
         mesh: Arc<IndexedMesh>,
         leaf_local: Transform3D,
@@ -263,10 +256,10 @@ mod clipboard_tests {
 
     #[test]
     fn fragment_from_document_selection_returns_none_for_group_selection() {
-        // Selection::One is typed to a LeafId, but the underlying NodeId
-        // could in principle point at a group if a caller forged one.
-        // The helper falls back to None rather than panicking: the
-        // leaf_mesh_arc accessor reports the kind mismatch.
+        // Selection::One is typed to a LeafId, but the underlying NodeId could
+        // in principle point at a group if a caller forged one. The helper
+        // falls back to None rather than panicking: the leaf_mesh_arc accessor
+        // reports the kind mismatch.
         let doc = SceneDocument::new();
         let mut g = Scene::new();
         let group = g.add_group(None, Transform3D::Identity);
@@ -320,19 +313,18 @@ mod clipboard_tests {
 
     #[test]
     fn fragment_world_aabb_applies_root_local_transform() {
-        // 90 degree rotation around +Z: the triangle's footprint
-        // changes from x in [0, 1] to y in [0, 1] (and x in [-1, 0]).
+        // 90 degree rotation around +Z: the triangle's footprint changes from x
+        // in [0, 1] to y in [0, 1] (and x in [-1, 0]).
         let mesh = triangle_arc();
         let rot = Transform3D::Affine(AffineTransform3D::from_rotation_z(
             std::f64::consts::FRAC_PI_2,
         ));
         let fragment = SceneFragment::from_leaf_snapshot(mesh, rot);
         let aabb = fragment_world_aabb(&fragment).expect("rotated triangle has an AABB");
-        // After rotating, the original local-AABB (x in [0,1], y in
-        // [0,1]) becomes (x in [-1,0], y in [0,1]). Arvo applies the
-        // |M[i][j]| rule to the centre + half-extents formulation, so
-        // the result is slightly over-conservative but should still
-        // bracket those coordinates.
+        // After rotating, the original local AABB (x in [0, 1], y in [0, 1])
+        // becomes (x in [-1, 0], y in [0, 1]). For a 90 degree rotation, Arvo's
+        // |M[i][j]| rule is exact up to rounding, so each bound matches within
+        // 1e-5.
         let min = aabb.min().coords();
         let max = aabb.max().coords();
         assert!(min[0] <= -1.0 + 1e-5 && min[0] >= -1.0 - 1e-5);

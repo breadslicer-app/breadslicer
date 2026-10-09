@@ -2212,7 +2212,7 @@ mod scene_document_tests {
     }
 
     fn triangle_arc() -> Arc<IndexedMesh> {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -2220,10 +2220,7 @@ mod scene_document_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         })
     }
 

@@ -8,16 +8,15 @@
 //! earlier passes' fixes), the fix log, and the post-repair edge-manifold
 //! verdict.
 
-use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
 use crate::indexed_mesh::validate::MeshFaceError;
 use crate::indexed_mesh::{
     DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, RepairPasses, RepairRefusal,
 };
-use crate::primitives::{FaceIndex, IndexedTriangle, Normal, Vertex};
+use crate::primitives::{FaceIndex, IndexedTriangle, Vertex};
 
-/// Returns a closed, consistently wound tetrahedron with correct normals.
+/// Returns a closed, consistently wound tetrahedron.
 fn tetrahedron() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([1.0, 1.0, 1.0]),
@@ -27,15 +26,7 @@ fn tetrahedron() -> IndexedMesh {
     ];
     let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
         .into_iter()
-        .map(|indices: [u32; 3]| {
-            let tri = [
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
     IndexedMesh {
         meta: None,
@@ -47,8 +38,8 @@ fn tetrahedron() -> IndexedMesh {
 /// Returns an open strip of 2 consistently wound triangles sharing 1 edge: the
 /// 4 outer edges are boundary edges (a hole), and with 2 faces the flip pass's
 /// inside-out threshold (`faces / 2 = 1`) is above the 0 flips detected, so the
-/// strip exercises the hole verdict without tripping the primitive's lone-face
-/// threshold quirk.
+/// strip exercises the hole verdict without the lone-face case, where a
+/// threshold of 0 makes the flip pass refuse.
 fn open_strip() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([0.0, 0.0, 0.0]),
@@ -58,15 +49,7 @@ fn open_strip() -> IndexedMesh {
     ];
     let faces = [[0, 1, 2], [2, 1, 3]]
         .into_iter()
-        .map(|indices: [u32; 3]| {
-            let tri = [
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ];
-            let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
     IndexedMesh {
         meta: None,
@@ -79,10 +62,8 @@ fn open_strip() -> IndexedMesh {
 /// validation reports exactly 1 `ZeroLengthEdge` for it.
 fn append_zero_length_edge_face(mesh: &mut IndexedMesh) -> FaceIndex {
     let idx = mesh.faces.len();
-    mesh.faces.push(IndexedTriangle::from_raw_indices(
-        Normal::new([0.0, 0.0, 1.0]),
-        [0, 1, 1],
-    ));
+    mesh.faces
+        .push(IndexedTriangle::from_raw_indices([0, 1, 1]));
     FaceIndex::from(idx)
 }
 
@@ -232,16 +213,14 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
 }
 
 /// Pins the mesh-level refusal boundary: face errors the enabled passes cannot
-/// address refuse the run BEFORE any mutation, and the refusal carries exactly
+/// address refuse the run before any mutation, and the refusal carries exactly
 /// the unaddressable residue.
 #[test]
 fn mixed_face_errors_refuse_with_the_mesh_byte_identical() {
     let mut mesh = tetrahedron();
     append_zero_length_edge_face(&mut mesh);
-    mesh.faces.push(IndexedTriangle::from_raw_indices(
-        Normal::new([0.0, 0.0, 1.0]),
-        [0, 1, 99],
-    ));
+    mesh.faces
+        .push(IndexedTriangle::from_raw_indices([0, 1, 99]));
     let residue: Vec<MeshFaceError> = mesh
         .validate_faces()
         .unwrap_err()
@@ -289,18 +268,6 @@ fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
     );
     assert!(!report.edge_manifold_after);
     assert_eq!(mesh.faces.len(), 4, "the ZLE removal must stand");
-}
-
-#[test]
-fn unaddressed_normal_errors_do_not_refuse() {
-    let mut mesh = tetrahedron();
-    mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
-    let original = mesh.clone();
-    let report = mesh.repair(RepairPasses::default_repair());
-    assert!(report.fixes.is_empty());
-    assert_eq!(report.refusal, None);
-    assert!(report.edge_manifold_after);
-    assert_eq!(mesh, original);
 }
 
 /// Pins the flip pass gate in both functions: with the pass off, a lone
@@ -365,10 +332,8 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     let mixed = {
         let mut mesh = tetrahedron();
         append_zero_length_edge_face(&mut mesh);
-        mesh.faces.push(IndexedTriangle::from_raw_indices(
-            Normal::new([0.0, 0.0, 1.0]),
-            [0, 1, 99],
-        ));
+        mesh.faces
+            .push(IndexedTriangle::from_raw_indices([0, 1, 99]));
         mesh
     };
     let nan = {
@@ -377,8 +342,8 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         mesh
     };
     // A lone open triangle trips the flip pass's threshold of 0 (half its face
-    // count, rounded down), a pre-existing primitive quirk; the pin here is
-    // only that assessment and run agree about it.
+    // count, rounded down); the pin here is only that assessment and run agree
+    // about it.
     let lone_triangle = {
         let mut mesh = open_strip();
         mesh.faces.truncate(1);

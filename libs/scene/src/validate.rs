@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Structural invariant re-check for [`Scene`] plus the expansion-graph
-//! cycle detector it relies on.
+//! Structural invariant re-check for [`Scene`] plus the expansion-graph cycle
+//! detector it relies on.
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
@@ -31,12 +31,12 @@ impl Scene {
         }
     }
 
-    /// Whether `goal` is reachable from `from` in the expansion graph
-    /// (children edges plus `Reference -> resource root` edges). A node
-    /// reaches itself.
+    /// Returns whether `goal` is reachable from `from` in the expansion graph
+    /// (children edges plus `Reference -> resource root` edges). A node reaches
+    /// itself.
     ///
-    /// Visits only the subgraph reachable from `from`, so the cost is
-    /// bounded by that subgraph and not by the size of the arena.
+    /// Visits only the subgraph reachable from `from`, so the cost is bounded
+    /// by that subgraph and not by the size of the arena.
     pub(crate) fn expansion_reaches(&self, from: NodeId, goal: NodeId) -> bool {
         let goal_idx = goal.index();
         let mut seen: HashSet<usize> = HashSet::new();
@@ -58,10 +58,10 @@ impl Scene {
     }
 
     pub(crate) fn find_cycle_in_expansion(&self) -> Option<NodeId> {
-        // Three-color iterative DFS over the expansion graph (children
-        // edges plus `Reference -> resource root` edges). A back edge to
-        // a gray vertex is the cycle witness; we return the id of the
-        // vertex the back edge points to.
+        // 3-color iterative DFS over the expansion graph (children edges plus
+        // `Reference -> resource root` edges). A back edge to a gray vertex
+        // proves a cycle; the result is the id of the vertex that the back edge
+        // points to.
         const WHITE: u8 = 0;
         const GRAY: u8 = 1;
         const BLACK: u8 = 2;
@@ -98,12 +98,12 @@ impl Scene {
         None
     }
 
-    /// Re-check every structural invariant of this graph: live ids in
-    /// every reference, intersection non-empty, parent/child agreement,
+    /// Re-checks every structural invariant of this graph: live ids in every
+    /// reference, non-empty intersections, parent and child agreement,
     /// expansion-graph acyclicity.
     pub fn validate(&self) -> Result<(), SceneError> {
-        // (1) Every NodeId referenced exists. (2)(3) Likewise for
-        // resource ids. (5) Intersection has >= 1 child.
+        // Every referenced node id, mesh resource and subtree resource exists,
+        // and every intersection has at least 1 child.
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
             let Some(node) = slot else {
                 continue;
@@ -143,7 +143,7 @@ impl Scene {
             }
         }
 
-        // Validate subtree-resource roots point to live nodes.
+        // Subtree-resource roots must point to live nodes.
         for slot in &self.subtree_resources {
             if let Some(root) = slot
                 && self.node(*root).is_none()
@@ -152,7 +152,7 @@ impl Scene {
             }
         }
 
-        // Validate scene roots point to live nodes and are not also
+        // Scene roots must point to live nodes and must not also be
         // subtree-resource roots.
         for &root in &self.roots {
             if self.node(root).is_none() {
@@ -163,9 +163,9 @@ impl Scene {
             }
         }
 
-        // (4) Forest: rebuild expected parents from children lists and
-        // compare to self.parents. Also catches duplicate-child within a
-        // single parent.
+        // Forest: rebuild the expected parents from the children lists and
+        // compare them to `self.parents`. This also catches a duplicate child
+        // within a single parent.
         let mut expected: Vec<Option<NodeId>> = vec![None; self.nodes.len()];
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
             let Some(node) = slot else {
@@ -202,12 +202,12 @@ impl Scene {
             }
         }
 
-        // (8) Expansion-graph acyclicity.
+        // Expansion-graph acyclicity.
         if let Some(witness) = self.find_cycle_in_expansion() {
-            // A cycle witnessed here involves either a Reference edge
-            // or forged / floating children edges (a detached 2-cycle
-            // with consistent parent records passes the checks above).
-            // The mutator-facing guard against both is in add_child.
+            // A cycle found here involves either a Reference edge or forged or
+            // floating children edges (a detached 2-cycle with consistent
+            // parent records passes the checks above). The guard for mutators
+            // against both is in `add_child`.
             return Err(SceneError::ExpansionCycle { node_id: witness });
         }
 
@@ -226,7 +226,7 @@ mod scene_validate_tests {
 
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
     fn unit_triangle() -> IndexedMesh {
@@ -237,10 +237,7 @@ mod scene_validate_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -335,8 +332,8 @@ mod scene_validate_tests {
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
-        // Forge: wipe parents[child], leaving the child in parent's
-        // children list but with no recorded parent.
+        // Forge: wipe parents[child], leaving the child in parent's children
+        // list but with no recorded parent.
         g.parents[child.index()] = None;
         assert!(matches!(
             g.validate(),
@@ -396,8 +393,8 @@ mod scene_validate_tests {
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
         let inst = g.add_reference(None, Transform3D::Identity, rid).unwrap();
-        // Forge: insert the reference as a child of res_root, bypassing
-        // the cycle check that `add_child` performs.
+        // Forge: insert the reference as a child of res_root, bypassing the
+        // cycle check that `add_child` performs.
         if let Some(node) = g.nodes[res_root.index()].as_mut()
             && let NodeKind::Group { children } = &mut node.kind
         {

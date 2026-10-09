@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! "Save" / "Save As" support for project files: functions over
+//! "Save" and "Save As" support for project files: functions over
 //! `&SceneDocument` plus explicit inputs. The wiring layer drives the file
 //! dialog, then calls in here to produce the file.
 //!
@@ -38,8 +38,8 @@ pub(crate) enum SaveDispatch {
     /// overwrite it in place, no dialog.
     OverwriteProject(PathBuf),
     /// The source is a plain mesh file (or a 3MF without project data): route
-    /// to "Save As" so an STL/OBJ/interop file is never silently replaced by a
-    /// project.
+    /// to "Save As" so an STL, OBJ or other interop file is never silently
+    /// replaced by a project.
     NeedsSaveAs,
     /// The project file already matches the document: nothing to write.
     AlreadySaved,
@@ -227,7 +227,7 @@ mod scene_save_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
     use sc_print_primitives::{MaterialId, PrinterId};
     use sc_project_formats::{EmbeddedProfile, read_project};
     use sc_scene::{LeafPayload, Scene};
@@ -255,10 +255,7 @@ mod scene_save_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([1.0, 0.0, 0.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 

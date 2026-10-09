@@ -3,19 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Capability pins for scene writing over scenes with subtree references:
-//! [`flatten_graph_to_mesh`] and [`write_scene`] expand subtree
-//! so every occurrence of an referenced subtree reaches the written
-//! the written file under its composed call-site transform, while
-//! the 3MF branch keeps the sharing native (shared objects
-//! referenced by components and build items). These pins are
-//! permanent: a refusal, witness, or reference-skipping walk on
-//! these paths must turn them red, never ship green.
+//! Pins for scene writing over scenes with subtree references:
+//! [`flatten_graph_to_mesh`] and [`write_scene`] expand each reference, so
+//! every occurrence of a referenced subtree reaches the written file under its
+//! composed call-site transform, while the 3MF branch keeps the sharing (shared
+//! objects that components and build items reference). A walk on these paths
+//! that refuses or skips a reference must make these pins fail.
 
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_scene::{CsgPolicy, LeafPayload, MAX_EXPANDED_LEAF_COUNT, NodeId, Scene, SubtreeResourceId};
 
@@ -35,15 +33,12 @@ fn unit_triangle(name: Option<&str>) -> IndexedMesh {
             Vertex::new([0.0, 1.0, 0.0]),
             Vertex::new([0.0, 0.0, 1.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([0.577, 0.577, 0.577]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
-/// Registers a subtree resource holding one triangle leaf under an
-/// identity group and returns its id.
+/// Registers a subtree resource that holds 1 triangle leaf under an identity
+/// group.
 fn register_triangle_subtree(scene: &mut Scene, name: Option<&str>) -> SubtreeResourceId {
     let leaf = scene
         .add_leaf(
@@ -72,9 +67,8 @@ fn add_reference_at(scene: &mut Scene, parent: NodeId, rid: SubtreeResourceId, t
         .expect("attach reference");
 }
 
-/// Root group holding `plain_leaves` triangle leaves (at x = 0, 2,
-/// 4, ...) plus one reference to a registered single-triangle subtree
-/// at x = 10.
+/// Builds a scene with `plain_leaves` triangle leaves at x = 0, 2, 4, ... and 1
+/// reference to a registered 1-triangle subtree at x = 10, all in 1 root group.
 fn scene_with_reference(plain_leaves: usize) -> Scene {
     let mut scene = Scene::new();
     let rid = register_triangle_subtree(&mut scene, None);
@@ -104,10 +98,10 @@ fn has_vertex(mesh: &IndexedMesh, coords: [f32; 3]) -> bool {
 
 // --- flatten dispatch shapes -----------------------------------------
 //
-// The 3 shapes below used to take 3 different silent paths through
-// the dispatch (a false empty-scene error, a silent drop of the
-// referenced geometry, and a correct merge). Each now pins its
-// correct output.
+// The 3 shapes below put 0, 1 and 2 plain leaves next to 1 reference. A
+// dispatch that counts the reachable leaves and not the expanded occurrences
+// fails the first with an empty-scene error, drops the referenced geometry from
+// the second and merges the third correctly.
 
 #[test]
 fn flatten_expands_a_lone_reference() {
@@ -150,9 +144,9 @@ fn flatten_merges_two_plain_leaves_with_the_occurrence() {
 
 #[test]
 fn flatten_preserves_the_name_of_a_single_referenced_leaf() {
-    // A single occurrence keeps its source mesh's name even when it
-    // sits behind a reference, so the ASCII STL writer still gets
-    // its `solid <name>` header.
+    // A single occurrence keeps the name of its source mesh through a
+    // reference, so the ASCII STL writer still writes its `solid <name>`
+    // header.
     let mut scene = Scene::new();
     let rid = register_triangle_subtree(&mut scene, Some("Solo"));
     let root = scene.add_group(None, Transform3D::Identity);
@@ -174,9 +168,8 @@ fn flatten_preserves_the_name_of_a_single_referenced_leaf() {
 
 #[test]
 fn flatten_ignores_an_unreferenced_subtree_resource() {
-    // A registered subtree that nothing references contributes
-    // no occurrence, matching what every other consumer of the
-    // scene sees.
+    // A registered subtree that nothing references contributes no occurrence,
+    // which is what every other consumer of the scene sees.
     let mut scene = Scene::new();
     let root = scene.add_group(None, Transform3D::Identity);
     let leaf = scene
@@ -198,7 +191,7 @@ fn flatten_ignores_an_unreferenced_subtree_resource() {
     assert!(flattened.warnings.is_empty());
 }
 
-// --- write_scene over scenes with subtree references --------------------------------
+// --- write_scene over scenes with subtree references -----------------
 
 #[test]
 fn obj_and_stl_write_a_referencing_scene_in_full() {
@@ -280,8 +273,8 @@ fn stl_writes_a_referenced_prism_trio_in_full() {
     let mesh = merged.mesh_at_leaf(leaf).expect("leaf resolves");
     assert_eq!(mesh.faces().len(), 2 * trio_faces);
 
-    // Both occurrences of the cube's first vertex: verbatim and
-    // shifted 100mm along +Y.
+    // Both occurrences of the cube's first vertex: unchanged and moved 100 mm
+    // along +Y.
     let c = unit_cube_mesh().vertices()[0];
     let shifted = AffineTransform3D::from_translation([0.0, 100.0, 0.0]).apply_to_vertex(c);
     assert!(has_vertex(mesh, c.coords()), "first occurrence missing");
@@ -293,9 +286,9 @@ fn stl_writes_a_referenced_prism_trio_in_full() {
 
 #[test]
 fn threemf_writes_subtree_references_that_load_back_expanded() {
-    // 3MF keeps the sharing native (components and build
-    // items over shared objects); loading the written package back
-    // through the expanding reader yields all 3 occurrences.
+    // 3MF keeps the sharing (components and build items that reference shared
+    // objects); the reader expands the written package back into all 3
+    // occurrences.
     let scene = scene_with_reference(2);
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join("scene.3mf");
@@ -357,9 +350,9 @@ fn every_format_writes_a_scene_without_references() {
 
 // --- expansion budget through the public write entries ---------------
 
-/// Registers a chain of subtree resources whose top resource expands
-/// to 10^levels triangle occurrences, using O(levels) nodes: each
-/// level is a group of 10 references to the previous one.
+/// Registers a chain of subtree resources whose top resource expands to
+/// 10^levels triangle occurrences, using O(levels) nodes: each level is a group
+/// of 10 references to the previous one.
 fn register_power_of_ten_chain(g: &mut Scene, levels: u32) -> SubtreeResourceId {
     let mut rid = register_triangle_subtree(g, None);
     for _ in 0..levels {
@@ -403,9 +396,8 @@ fn over_cap_scene() -> Scene {
 
 #[test]
 fn flatten_accepts_an_at_cap_expansion() {
-    // The budget is inclusive, and the count assertion pins the
-    // cap's value through this path so a lowered cap cannot ship
-    // unnoticed.
+    // The budget is inclusive. The count assertion pins the value of the cap
+    // through this path, so a lower cap makes this test fail.
     let scene = at_cap_scene();
     assert_eq!(
         scene

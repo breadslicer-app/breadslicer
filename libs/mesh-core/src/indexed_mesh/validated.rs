@@ -238,10 +238,9 @@ impl<'a> ValidatedFacesMut<'a> {
     }
 
     /// Reverses the winding of the faces that `manifold_errors` shows as
-    /// flipped, and negates their stored normals. On `Err` the mesh is
-    /// unchanged. The vertex indices of a face only change places, so `self`
-    /// stays a valid witness. `manifold_errors` must come from the
-    /// edge-manifold validation of this mesh.
+    /// flipped. On `Err` the mesh is unchanged. The vertex indices of a face
+    /// only change places, so `self` stays a valid witness. `manifold_errors`
+    /// must come from the edge-manifold validation of this mesh.
     pub fn fix_faces_orientation(
         &mut self,
         manifold_errors: &[MeshEdgeManifoldError],
@@ -331,10 +330,10 @@ fn validate_edge_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshEdgeMan
 mod indexed_mesh_validated_faces_tests {
     use super::*;
     use crate::indexed_mesh::validate::MeshFaceError;
-    use crate::primitives::{Normal, TriVertexSlot};
+    use crate::primitives::TriVertexSlot;
 
     fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
+        IndexedTriangle::from_raw_indices([v0, v1, v2])
     }
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {

@@ -3,53 +3,50 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scene-wide repair driver: runs the per-mesh repair policy over
-//! every stored mesh (the [`Scene::mesh_targets`] walk) and reports a
-//! per-target outcome, with no global abort. Each target is assessed
-//! through a shared borrow first; storage shared through `Arc`s is
-//! forked only for meshes that actually receive work, so clean and
-//! refused targets keep their pointer identity (callers may diff on
-//! it to learn what changed).
+//! Scene-wide repair driver: runs the per-mesh repair policy over every stored
+//! mesh (the [`Scene::mesh_targets`] walk) and reports a per-target outcome,
+//! with no global abort. Each target is assessed through a shared borrow first;
+//! storage shared through `Arc`s is forked only for meshes that receive work,
+//! so clean and refused targets keep their pointer identity (callers can
+//! compare pointers to learn what changed).
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
 use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, assess_repair};
 use sc_mesh_core::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
 
-/// Everything one repair run did, and did not do, to one stored mesh.
+/// Everything a repair run did, and did not do, to 1 stored mesh.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneRepairOutcome {
     /// The storage place this outcome describes.
     pub target: MeshTarget,
-    /// Fixes actually applied, in pass order. Empty for clean and
-    /// refused targets; can be non-empty alongside a pass-level
-    /// refusal (earlier passes' fixes stand).
+    /// Fixes applied, in pass order. Empty for clean and refused targets; can
+    /// be non-empty with a pass-level refusal (the fixes of earlier passes
+    /// stand).
     pub fixes: Vec<MeshFix>,
     /// Why the run stopped early for this target, if it did.
     pub refusal: Option<RepairRefusal>,
-    /// Whether the target's mesh is edge-manifold AFTER the run: the
-    /// witness-mint attempt the health sweep also uses. `true` does
-    /// not mean "repaired" (a clean mesh reports `true` too), and
-    /// `refusal: None` does not mean `true` (holes are not
-    /// repairable and not a refusal).
+    /// Whether the mesh of the target is edge-manifold after the run, by the
+    /// check the health sweep also uses. `true` does not mean "repaired" (a
+    /// clean mesh reports `true` too), and `refusal: None` does not mean `true`
+    /// (holes are not repairable and not a refusal).
     pub edge_manifold_after: bool,
 }
 
 impl Scene {
-    /// Run the enabled repair passes over every stored mesh and
-    /// report one outcome per target, in [`Scene::mesh_targets`]
-    /// order. A refused target never blocks the others, and at every
-    /// observable point each mesh is at least as valid as before the
-    /// call (refused meshes are byte-identical, applied passes only
-    /// shrink the problem set).
+    /// Runs the enabled repair passes over every stored mesh and reports 1
+    /// outcome per target, in [`Scene::mesh_targets`] order. A refused target
+    /// never blocks the others, and at every observable point each mesh is at
+    /// least as valid as before the call (refused meshes are byte-identical,
+    /// applied passes only shrink the problem set).
     pub fn repair_meshes(&mut self, passes: RepairPasses) -> Vec<SceneRepairOutcome> {
         let targets = self.mesh_targets();
         let mut outcomes = Vec::with_capacity(targets.len());
         for target in targets {
             let Some(mesh) = self.target_mesh(target) else {
-                // `mesh_targets` lists live storage only; a dead
-                // target here would be a graph invariant break.
-                // Skipping keeps the driver total.
+                // `mesh_targets` lists live storage only; a dead target here
+                // would be a broken graph invariant. Skipping keeps the driver
+                // total.
                 continue;
             };
             let outcome = match assess_repair(mesh, passes) {
@@ -84,8 +81,8 @@ impl Scene {
     }
 }
 
-/// The edge-manifold witness-mint attempt, for outcomes built without
-/// running the passes.
+/// Returns whether `mesh` is edge-manifold, by the check of the health sweep,
+/// for outcomes built without running the passes.
 fn mesh_is_edge_manifold(mesh: &IndexedMesh) -> bool {
     mesh.validated_faces()
         .is_ok_and(|faces| faces.validated_edge_manifold().is_ok())
@@ -97,7 +94,6 @@ mod scene_repair_tests {
 
     use super::*;
     use crate::node::{LeafPayload, NodeId};
-    use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
@@ -110,15 +106,7 @@ mod scene_repair_tests {
         ];
         let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
             .into_iter()
-            .map(|indices: [u32; 3]| {
-                let tri = [
-                    vertices[indices[0] as usize],
-                    vertices[indices[1] as usize],
-                    vertices[indices[2] as usize],
-                ];
-                let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-                IndexedTriangle::from_raw_indices(normal, indices)
-            })
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -139,7 +127,7 @@ mod scene_repair_tests {
         mesh
     }
 
-    /// An open strip of 2 triangles: a hole, with no pass work.
+    /// Returns an open strip of 2 triangles: a hole, with no pass work.
     fn open_strip() -> IndexedMesh {
         let vertices = vec![
             Vertex::new([0.0, 0.0, 0.0]),
@@ -149,15 +137,7 @@ mod scene_repair_tests {
         ];
         let faces = [[0, 1, 2], [2, 1, 3]]
             .into_iter()
-            .map(|indices: [u32; 3]| {
-                let tri = [
-                    vertices[indices[0] as usize],
-                    vertices[indices[1] as usize],
-                    vertices[indices[2] as usize],
-                ];
-                let normal = compute_normal_from_triangle_vertices(&tri).expect("valid triangle");
-                IndexedTriangle::from_raw_indices(normal, indices)
-            })
+            .map(IndexedTriangle::from_raw_indices)
             .collect();
         IndexedMesh {
             meta: None,
@@ -184,9 +164,9 @@ mod scene_repair_tests {
         leaf
     }
 
-    /// A resource with repairable winding, a refused NaN inline leaf,
-    /// and a clean inline leaf: per-target outcomes in walk order, no
-    /// global abort, and the refused target does not block the first.
+    /// Pins that a resource with repairable winding, a refused NaN inline leaf
+    /// and a clean inline leaf give 1 outcome each, in walk order, and that the
+    /// refused target blocks no other target.
     #[test]
     fn outcomes_are_per_target_in_walk_order_with_no_abort() {
         let mut graph = Scene::new();
@@ -219,8 +199,8 @@ mod scene_repair_tests {
         assert_eq!(outcomes[2].refusal, None);
         assert!(outcomes[2].edge_manifold_after);
 
-        // The repaired resource is edge-manifold in the scene, and
-        // the refused mesh kept its bytes (NaN compared bitwise).
+        // The repaired resource is edge-manifold in the scene, and the refused
+        // mesh kept its bytes (NaN compared bitwise).
         assert!(mesh_is_edge_manifold(
             graph.target_mesh(MeshTarget::Resource(rid)).unwrap()
         ));
@@ -232,10 +212,10 @@ mod scene_repair_tests {
         }
     }
 
-    /// The S6 economics: with every `Arc` shared to an outside holder
-    /// (the GUI worker-clone scenario), only the repaired target
-    /// forks; clean and refused targets keep pointer identity, and
-    /// the outside holder keeps the pre-repair bytes.
+    /// Pins that, with every `Arc` shared with an outside holder (as when the
+    /// GUI worker clones the scene), only the repaired target forks; clean and
+    /// refused targets keep their pointer identity, and the outside holder
+    /// keeps the bytes from before the repair.
     #[test]
     fn only_repaired_targets_fork_their_shared_storage() {
         let mut graph = Scene::new();
@@ -255,8 +235,8 @@ mod scene_repair_tests {
 
         graph.repair_meshes(RepairPasses::default_repair());
 
-        // Repaired: forked away from the holder, which kept the
-        // pre-repair (still flipped) bytes.
+        // Repaired: forked away from the holder, which kept the bytes from
+        // before the repair (still flipped).
         assert!(!Arc::ptr_eq(
             graph.mesh_resource_arc(rid).unwrap(),
             &held_res
@@ -273,7 +253,7 @@ mod scene_repair_tests {
         ));
     }
 
-    /// A hole is a verdict, not a refusal, and does not fork.
+    /// Pins that a hole is a verdict, not a refusal, and does not fork.
     #[test]
     fn a_holed_target_reports_false_verdict_without_work() {
         let mut graph = Scene::new();
@@ -290,10 +270,10 @@ mod scene_repair_tests {
         assert!(Arc::ptr_eq(graph.leaf_mesh_arc(leaf).unwrap(), &held));
     }
 
-    /// Parity with the shared walk and the health sweep: the driver
-    /// covers exactly `mesh_targets()`, including a registered
-    /// subtree's inline leaf, and every leaf the health sweep flags
-    /// resolves to a covered target.
+    /// Pins parity with the shared walk and the health sweep: the driver covers
+    /// exactly `mesh_targets()`, the inline leaf of a registered subtree
+    /// included, and every leaf that the health sweep flags resolves to a
+    /// covered target.
     #[test]
     fn driver_targets_match_the_walk_and_cover_health_flags() {
         let mut graph = Scene::new();

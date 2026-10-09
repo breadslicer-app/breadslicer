@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
 
-/// Build an axis-aligned box from its 12 outward-wound triangles.
+/// Builds an axis-aligned box from its 12 outward-wound triangles.
 fn box_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
     let corners = [
         [min[0], min[1], min[2]],
@@ -35,22 +34,13 @@ fn box_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         [1, 6, 5],
     ]
     .into_iter()
-    .map(|indices: [u32; 3]| {
-        let corner = |i: u32| vertices[i as usize];
-        let normal = compute_normal_from_triangle_vertices(&[
-            corner(indices[0]),
-            corner(indices[1]),
-            corner(indices[2]),
-        ])
-        .expect("a box face is never degenerate");
-        IndexedTriangle::from_raw_indices(normal, indices)
-    })
+    .map(IndexedTriangle::from_raw_indices)
     .collect();
 
     IndexedMesh::new(None, vertices, faces)
 }
 
-/// Reverse every face's winding, leaving the geometry alone.
+/// Returns `mesh` with every face's winding reversed, the geometry unchanged.
 fn inverted(mesh: &IndexedMesh) -> IndexedMesh {
     let faces = mesh
         .faces
@@ -58,7 +48,6 @@ fn inverted(mesh: &IndexedMesh) -> IndexedMesh {
         .map(|face| {
             let [a, b, c] = face.vertices;
             IndexedTriangle {
-                normal: face.normal,
                 vertices: [c, b, a],
             }
         })
@@ -90,8 +79,8 @@ fn inward_winding_reports_the_negative_of_the_same_volume() {
 
 #[test]
 fn translating_a_box_leaves_its_volume_alone() {
-    // Each term of the sum grows with distance from the origin while
-    // the total must not, which is why the sum is taken in f64.
+    // Each term of the sum grows with distance from the origin while the total
+    // must not, which is why the sum is taken in f64.
     let here = volume_of(&box_mesh([0.0; 3], [1.0; 3]));
     let far = volume_of(&box_mesh([1000.0; 3], [1001.0; 3]));
     assert!(
@@ -116,15 +105,7 @@ fn a_tetrahedron_encloses_a_sixth_of_its_bounding_corner() {
     ];
     let faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
         .into_iter()
-        .map(|indices: [u32; 3]| {
-            let normal = compute_normal_from_triangle_vertices(&[
-                vertices[indices[0] as usize],
-                vertices[indices[1] as usize],
-                vertices[indices[2] as usize],
-            ])
-            .expect("the fixture's faces are never degenerate");
-            IndexedTriangle::from_raw_indices(normal, indices)
-        })
+        .map(IndexedTriangle::from_raw_indices)
         .collect();
 
     let mesh = IndexedMesh::new(None, vertices, faces);

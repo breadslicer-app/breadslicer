@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
@@ -53,9 +53,9 @@ fn hardware() -> PrinterHardware {
     printer().hardware
 }
 
-// A generic material: an intent layer height, no per-printer
-// calibration, so full `resolve` rejects any pairing with it while
-// the layer height alone resolves.
+// A generic material: an intent layer height and no per-printer calibration, so
+// a full `resolve` rejects any pairing with it while the layer height alone
+// resolves.
 const GENERIC_MATERIAL_TOML: &str = r#"
 [identity]
 id = "standard-405"
@@ -84,8 +84,8 @@ fn generic_material() -> EffectiveMaterial {
     EffectiveMaterial::from(profile)
 }
 
-// Same hardware, but with a 0.05 mm z step and a declared
-// layer-height range, for the first-layer quantisation pins.
+// Same hardware, but with a 0.05 mm z step and a declared layer-height range,
+// for the first-layer quantisation pins.
 const CONSTRAINED_PRINTER_TOML: &str = r#"
 [identity]
 id = "constrained-printer"
@@ -119,7 +119,8 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
 
-/// A cuboid spanning `min`..`max`; enough faces for the AABB walk.
+/// Returns the 8 corners of the cuboid that spans `min`..`max`, with 2 faces:
+/// enough for the AABB walk.
 fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
     let v = |x, y, z| Vertex::new([x, y, z]);
     let vertices = vec![
@@ -132,10 +133,9 @@ fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         v(max[0], max[1], max[2]),
         v(min[0], max[1], max[2]),
     ];
-    let n = Normal::new([0.0, 0.0, 1.0]);
     let faces = vec![
-        IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-        IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
+        IndexedTriangle::from_raw_indices([0, 1, 2]),
+        IndexedTriangle::from_raw_indices([0, 2, 3]),
     ];
     IndexedMesh {
         meta: None,
@@ -144,7 +144,7 @@ fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
     }
 }
 
-/// Single-leaf scene holding `mesh` under an identity transform.
+/// Builds a single-leaf scene that holds `mesh` under an identity transform.
 fn leaf_scene(mesh: IndexedMesh) -> Scene {
     let mut scene = Scene::new();
     let leaf = scene
@@ -200,8 +200,8 @@ fn a_scene_below_the_plate_is_rejected() {
 
 #[test]
 fn a_scene_topping_exactly_at_the_plate_is_rejected() {
-    // z_max == 0.0 sits on the boundary; nothing is above the plate,
-    // so the positivity rule refuses it.
+    // z_max == 0.0 sits on the boundary; nothing is above the plate, so the
+    // positivity rule refuses it.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, -1.0], [1.0, 1.0, 0.0]));
     let result = slice_profile_for_scene(
         &scene,
@@ -219,8 +219,8 @@ fn a_scene_topping_exactly_at_the_plate_is_rejected() {
 
 #[test]
 fn absent_first_layer_height_falls_back_to_the_layer_height() {
-    // z_max 0.97, layer height 0.05, first layer 0.05 (fallback):
-    // beyond = 0.92, ceil(0.92 / 0.05) = 19, total = 20.
+    // z_max 0.97, layer height 0.05, first layer 0.05 (fallback): beyond 0.92,
+    // ceil(0.92/0.05) = 19, total 20.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_scene(
         &scene,
@@ -236,8 +236,8 @@ fn absent_first_layer_height_falls_back_to_the_layer_height() {
 
 #[test]
 fn an_explicit_first_layer_height_overrides_the_fallback() {
-    // z_max 0.97, layer height 0.05, first layer 0.15:
-    // beyond = 0.82, ceil(0.82 / 0.05) = 17, total = 18.
+    // z_max 0.97, layer height 0.05, first layer 0.15: beyond 0.82,
+    // ceil(0.82/0.05) = 17, total 18.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_scene(
         &scene,
@@ -314,10 +314,9 @@ fn a_non_finite_scene_top_is_unschedulable() {
 
 #[test]
 fn the_fixture_trio_derives_the_expected_schedules() {
-    // unit cube: z in [-0.5, 0.5], z_max 0.5: beyond = 0.45,
-    // ceil(0.45 / 0.05) = 9, total = 10. Both tunnel prisms: z in
-    // [0, 2], z_max 2.0: beyond = 1.95, ceil(1.95 / 0.05) = 39,
-    // total = 40.
+    // Unit cube: z in [-0.5, 0.5], z_max 0.5: beyond 0.45, ceil(0.45/0.05) = 9,
+    // total 10. Both tunnel prisms: z in [0, 2], z_max 2.0: beyond 1.95,
+    // ceil(1.95/0.05) = 39, total 40.
     let cases: [(IndexedMesh, u32); 3] = [
         (unit_cube_mesh(), 10),
         (cuboid_with_z_tunnel(), 40),
@@ -343,10 +342,9 @@ fn the_fixture_trio_derives_the_expected_schedules() {
 
 #[test]
 fn a_selection_without_print_calibration_still_slices() {
-    // Geometry slicing consumes the layer height only; the exposure
-    // and motion calibration belongs to the printer-file export
-    // step. The fixture pairing is one full `resolve` rejects, yet
-    // the selection entry produces a profile.
+    // Geometry slicing consumes the layer height only; the exposure and motion
+    // calibration belongs to the printer-file export step. A full `resolve`
+    // rejects the fixture pairing, yet the selection entry produces a profile.
     let (printer, material) = (printer(), generic_material());
     assert!(
         resolve(&printer, &material, &SceneOverrides::default()).is_err(),
@@ -370,9 +368,9 @@ fn a_selection_without_print_calibration_still_slices() {
 
 #[test]
 fn a_layer_height_request_reaches_the_schedule() {
-    // Request 0.1 over an intent of 0.05: the request wins and the
-    // layer count follows it (z_max 0.97, first layer 0.1 fallback:
-    // beyond = 0.87, ceil(0.87 / 0.1) = 9, total = 10).
+    // Request 0.1 over an intent of 0.05: the request wins and the layer count
+    // follows it (z_max 0.97, first layer 0.1 fallback: beyond 0.87,
+    // ceil(0.87/0.1) = 9, total 10).
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_selection(
         &scene,
@@ -389,10 +387,9 @@ fn a_layer_height_request_reaches_the_schedule() {
 
 #[test]
 fn a_first_layer_off_the_z_step_grid_is_quantised() {
-    // First layer 0.08 on a 0.05 z step snaps to 0.1; the layer
-    // height itself (0.05 from intent) is already on the grid.
-    // z_max 0.97, first 0.1: beyond = 0.87, ceil(0.87 / 0.05) = 18,
-    // total = 19.
+    // First layer 0.08 on a 0.05 z step snaps to 0.1; the layer height itself
+    // (0.05 from intent) is already on the grid. z_max 0.97, first 0.1: beyond
+    // 0.87, ceil(0.87/0.05) = 18, total 19.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_selection(
         &scene,
@@ -409,10 +406,10 @@ fn a_first_layer_off_the_z_step_grid_is_quantised() {
 
 #[test]
 fn the_layer_height_range_does_not_bind_the_first_layer() {
-    // 0.2 sits outside the declared [0.03, 0.1] range but on the
-    // 0.05 grid: it passes unchanged. First layers legitimately run
-    // thicker than the normal-layer curing range. z_max 0.97, first
-    // 0.2: beyond = 0.77, ceil(0.77 / 0.05) = 16, total = 17.
+    // 0.2 sits outside the declared [0.03, 0.1] range but on the 0.05 grid: it
+    // passes unchanged. First layers can run thicker than the curing range of
+    // normal layers. z_max 0.97, first 0.2: beyond 0.77, ceil(0.77/0.05) = 16,
+    // total 17.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_selection(
         &scene,
@@ -429,8 +426,8 @@ fn the_layer_height_range_does_not_bind_the_first_layer() {
 
 #[test]
 fn an_unresolvable_layer_height_is_a_selection_failure() {
-    // Strip the intent so nothing supplies a layer height and no
-    // request is made.
+    // Strip the intent so that nothing supplies a layer height and no request
+    // is made.
     let material_toml = GENERIC_MATERIAL_TOML.replace("target_layer_height_mm = 0.05", "");
     let profile: MaterialProfile =
         toml_edit::de::from_str(&material_toml).expect("material fixture parses");

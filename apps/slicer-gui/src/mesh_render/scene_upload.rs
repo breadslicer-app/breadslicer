@@ -210,9 +210,9 @@ fn upload_buffer(
 /// traversal of the graph's roots, plus a uniform buffer of `ModelEntry` slots,
 /// padded to the device's `min_uniform_buffer_offset_alignment` so the render
 /// loop can address each slot via a dynamic-offset bind. The world-space AABB
-/// is captured at build time from `Scene::aabb`; it is used once for camera
-/// framing and is not refreshed on per-frame transform updates (the camera
-/// persists across edits, so a post-edit AABB is irrelevant for framing).
+/// is captured at build time from `Scene::aabb` and is not refreshed on
+/// per-frame transform updates. The renderer reads it every frame for the near
+/// and far planes, and camera framing reads it through `scene_bounds`.
 ///
 /// Construction ([`GpuScene::build`]) touches a `wgpu::Device` but not the UI
 /// loop, so it can run on the worker thread that parsed the scene; the UI
@@ -245,9 +245,9 @@ impl fmt::Debug for GpuScene {
 }
 
 /// Triangle counts reported while a scene's GPU data is built. Each object's
-/// triangles count twice, once when its vertex/index vectors are flattened and
-/// once when its device buffers are created, so `total_triangles` is twice the
-/// scene's reachable triangle count and the final tick reaches it.
+/// triangles count twice, once when its vertex and index vectors are flattened
+/// and once when its device buffers are created, so `total_triangles` is twice
+/// the scene's reachable triangle count and the final tick reaches it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UploadProgress {
     /// Triangles processed so far, summed across both passes.
@@ -434,10 +434,9 @@ pub(super) fn build_model_entries(
 }
 
 /// Returns `true` if `mesh`, after `world_transform` is applied, has any part
-/// outside `build_volume`'s envelope. Computes the transformed AABB of the mesh
-/// vertices and asks [`sc_print_primitives::BuildVolume::contains`]:
-/// containment of the AABB is equivalent to containment of every vertex (and
-/// therefore of every triangle interior) when the envelope is convex.
+/// outside `build_volume`'s envelope. Uses the transformed AABB of the mesh
+/// vertices: the envelope is an axis-aligned box, so it contains the AABB if
+/// and only if it contains every vertex, and therefore every triangle.
 fn leaf_breaches_envelope(
     mesh: &IndexedMesh,
     world_transform: &Transform3D,
@@ -460,11 +459,10 @@ fn leaf_world_box(mesh: &IndexedMesh, world_transform: &Transform3D) -> Aabb {
     aabb
 }
 
-/// Bit positions for the per-face breach mask consumed by the plate shader.
-/// Bits 0..=4 drive the side-wall + top warning quads; bit 5 (-Z, the
-/// build-plate floor) is read by the floor path of the same shader and overlays
-/// a stripe pattern on top of the grid instead of going through a dedicated
-/// wall quad.
+// Single-bit masks of the per-face breach mask that the plate shader reads.
+// Bits 0 to 4 drive the side-wall and top warning quads; bit 5 (-Z, the
+// build-plate floor) is read by the floor path of the same shader, which
+// overlays a stripe pattern on the grid instead of drawing a wall quad.
 pub(super) const FACE_BIT_X_NEG: u32 = 1 << 0;
 pub(super) const FACE_BIT_X_POS: u32 = 1 << 1;
 pub(super) const FACE_BIT_Y_NEG: u32 = 1 << 2;
@@ -473,9 +471,9 @@ pub(super) const FACE_BIT_Z_POS: u32 = 1 << 4;
 pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 
 /// Returns the bitmask of the envelope walls that some reachable leaf crosses,
-/// in the shader's bit layout (`FACE_BIT_X_NEG` etc.). A leaf crosses a wall
-/// when the box of its world-transformed vertices reaches strictly past it,
-/// which is when some vertex does.
+/// in the shader's bit layout (the `FACE_BIT_*` constants). A leaf crosses a
+/// wall when the box of its world-transformed vertices reaches strictly past
+/// it, which is when some vertex does.
 pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> Result<u32> {
     let volume = build_volume.volume();
     let mut crossed = Walls::default();
@@ -633,7 +631,7 @@ fn build_gpu_scene_data(
 
     // World-space scene AABB via `Scene::aabb`, which composes each leaf's
     // ancestor chain via Arvo. If every leaf is empty, fall back to a
-    // degenerate bbox at the origin (the renderer's diagonal-clamp `.max(1e-3)`
+    // degenerate AABB at the origin (the renderer's diagonal-clamp `.max(1e-3)`
     // keeps the projection matrix well-defined).
     let (aabb_min, aabb_max) = match graph.aabb()? {
         Some(aabb) => (
@@ -655,7 +653,7 @@ mod build_gpu_scene_data_tests {
 
     use super::*;
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_scene::{LeafPayload, MeshResourceId};
 
@@ -698,10 +696,7 @@ mod build_gpu_scene_data_tests {
         IndexedMesh {
             meta: None,
             vertices: vertices.into_iter().map(Vertex::new).collect(),
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                face_vertices,
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices(face_vertices)],
         }
     }
 
@@ -745,7 +740,7 @@ mod build_gpu_scene_data_tests {
     #[test]
     fn vertices_stay_local_even_with_affine_transform() {
         // Vertex buffers are local-space; the transform is applied at draw time
-        // via the per-leaf model uniform, so `build_gpu_scene_data` must NOT
+        // via the per-leaf model uniform, so `build_gpu_scene_data` must not
         // bake it into the vertex stream.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -830,9 +825,9 @@ mod build_gpu_scene_data_tests {
     #[test]
     fn empty_leaf_keeps_a_slot_in_the_leaf_list() {
         // A leaf with no faces still occupies a slot in the per-leaf pre-order
-        // index; the renderer indexes into `models[]` by that index, so the
-        // GpuScene must keep a parallel slot. The slot must be drawable as a
-        // no-op (an `index_count` of 0).
+        // index; the renderer binds the model-buffer slot at that index for
+        // each draw, so the GpuScene must keep a parallel slot. The slot must
+        // be drawable as a no-op (an `index_count` of 0).
         let empty = IndexedMesh {
             meta: None,
             vertices: vec![],
@@ -853,11 +848,10 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn singular_transform_is_accepted() {
-        // `Scene::aabb` doesn't fail on singular linear parts (it uses Arvo),
-        // so this currently succeeds. The check here pins the behaviour: the
-        // per-leaf data is built without touching `apply_to_normal`, so even a
-        // degenerate transform doesn't bring the build down; degenerate
-        // matrices only matter at `merge_meshes` / export time.
+        // `Scene::aabb` uses Arvo's formula, which does not fail on a singular
+        // linear part, and the per-leaf data does not invert the transform, so
+        // a degenerate transform does not stop the build. Only the bake behind
+        // `merge_meshes` and export rejects a singular transform.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -868,10 +862,9 @@ mod build_gpu_scene_data_tests {
         );
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh, Transform3D::Affine(singular));
-        // Singular transforms aren't rejected here; the GPU path is fine with a
-        // singular model matrix (it just collapses the mesh to a plane). Mirror
-        // this in the assertion so the test fails loudly if the behaviour
-        // changes.
+        // Singular transforms are not rejected here; the GPU path accepts a
+        // singular model matrix (it collapses the mesh onto a plane). The
+        // assertion pins this, so the test fails if the behaviour changes.
         assert!(build_gpu_scene_data(&g, |_| {}).is_ok());
     }
 }
@@ -931,8 +924,8 @@ mod transform_to_mat4_tests {
     }
 
     /// Returns a roomy envelope that contains every fixture in this module, so
-    /// tests focused on the selection / model-matrix lanes are not disturbed by
-    /// the breach detection of `build_model_entries`.
+    /// tests focused on the selection and model-matrix lanes are not disturbed
+    /// by the breach detection of `build_model_entries`.
     fn permissive_volume() -> BuildVolume {
         BuildVolume::new(1000.0, 1000.0, 1000.0)
     }
@@ -975,15 +968,12 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn build_model_entries_one_per_leaf() {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 0, 0])],
         };
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh.clone(), Transform3D::Identity);
@@ -1005,15 +995,12 @@ mod transform_to_mat4_tests {
     }
 
     fn two_object_graph() -> Scene {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 0, 0],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 0, 0])],
         };
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh.clone(), Transform3D::Identity);
@@ -1051,7 +1038,7 @@ mod transform_to_mat4_tests {
     }
 
     fn unit_triangle_graph_at(translation: [f64; 3]) -> Scene {
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -1060,10 +1047,7 @@ mod transform_to_mat4_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(
@@ -1077,8 +1061,7 @@ mod transform_to_mat4_tests {
 
     /// Returns a 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
     /// Y in [-30, 30], Z in [0, 80]. Tight enough that small fixtures can be
-    /// placed strictly inside or strictly outside without arithmetic
-    /// gymnastics.
+    /// placed strictly inside or strictly outside with simple translations.
     fn snug_volume() -> BuildVolume {
         BuildVolume::new(100.0, 60.0, 80.0)
     }
@@ -1137,7 +1120,8 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn warning_mask_sets_plus_x_when_a_vertex_passes_the_plus_x_wall() {
-        // Vertex [1,0,0] translated to [60,0,0] sits past +X (50).
+        // Translation +60 on X puts every vertex past the +X wall (x = 50);
+        // vertex [1,0,0] lands at [61,0,0].
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
         let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
@@ -1156,7 +1140,7 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn warning_mask_sets_plus_z_when_a_vertex_passes_the_ceiling() {
-        // Vertices land at [0,0,90], past the +Z ceiling (80).
+        // Every vertex lands at z = 90, past the +Z ceiling (80).
         let graph = unit_triangle_graph_at([0.0, 0.0, 90.0]);
         let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_POS, FACE_BIT_Z_POS);
@@ -1181,7 +1165,7 @@ mod transform_to_mat4_tests {
     fn warning_mask_unions_bits_across_leaves() {
         // First leaf breaches +X, second breaches -Y. The mask collects both
         // bits.
-        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1189,10 +1173,7 @@ mod transform_to_mat4_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         };
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(
@@ -1247,7 +1228,7 @@ mod renderable_leaf_count_tests {
     use std::sync::Arc;
 
     use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_scene::LeafPayload;
 
     fn unit_triangle() -> IndexedMesh {
@@ -1258,10 +1239,7 @@ mod renderable_leaf_count_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         }
     }
 
@@ -1376,10 +1354,10 @@ mod leaf_buffer_limit_tests {
 
     use super::*;
     use sc_mesh_core::MeshMetadata;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_scene::node::{LeafPayload, SceneMetadata};
 
-    /// Small enough that a mesh of a few dozen faces exceeds it.
+    /// Small enough that a mesh of 86 faces exceeds it.
     const LIMIT: u64 = 1024;
 
     /// Builds a mesh of `vertex_count` vertices and `face_count` faces on the
@@ -1395,7 +1373,7 @@ mod leaf_buffer_limit_tests {
                 .map(|i| Vertex::new([i as f32, 0.0, 0.0]))
                 .collect(),
             faces: (0..face_count)
-                .map(|_| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]))
+                .map(|_| IndexedTriangle::from_raw_indices([0, 1, 2]))
                 .collect(),
         }
     }

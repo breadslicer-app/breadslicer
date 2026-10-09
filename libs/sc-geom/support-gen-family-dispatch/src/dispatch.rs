@@ -7,6 +7,7 @@
 
 use generic_geom_alg_family_dispatch::AlgorithmFamilyCommonSpecs;
 use generic_geom_alg_family_dispatch::BoundaryShape;
+use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{IndexedMesh, Vector3D};
 
 use crate::print_plate::PrintPlate;
@@ -114,7 +115,11 @@ pub fn suggest_support_regions(mesh: &IndexedMesh, gravity: Vector3D<f64>) -> Ve
 
     let mut accum = vec![Vector3D::<f64>::new([0.0, 0.0, 0.0]); mesh.vertices().len()];
     for face in mesh.faces() {
-        let n = face.normal.to_f64();
+        let corners = face.vertices.map(|v| mesh.vertices()[usize::from(v)]);
+        let Ok(normal) = compute_normal_from_triangle_vertices(&corners) else {
+            continue;
+        };
+        let n = normal.to_f64();
         for v in face.vertices {
             let idx: usize = v.into();
             let a = accum[idx].coords();

@@ -4,14 +4,14 @@
  */
 
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
-use sc_mesh_fixtures::with_stored_normals_declared;
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_fixtures::with_declared_facet_normals;
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_scene::Scene;
 
 /// Returns the mesh of the only leaf of `graph`: STL readers wrap the on-disk
-/// mesh in a single-leaf graph (`Scene::from<IndexedMesh>`), and round-trip
-/// tests compare the recovered `IndexedMesh` to the input directly.
+/// mesh in a single-leaf graph (the `From<IndexedMesh>` impl of `Scene`), and
+/// round-trip tests compare the recovered `IndexedMesh` to the input directly.
 fn single_leaf_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(graph.reachable_leaf_count(), 1);
     let id = graph
@@ -28,26 +28,21 @@ fn get_mesh_without_meta() -> IndexedMesh {
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([-1.0, 0.0, 0.0]),
-            [0, 1, 2],
-        )],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
     }
 }
 
 fn get_unnamed_mesh() -> IndexedMesh {
-    with_stored_normals_declared(IndexedMesh {
+    let mesh = IndexedMesh {
         meta: Some(MeshMetadata::default()),
         vertices: vec![
             Vertex::new([0.0, 100.0, 100.0]),
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([-1.0, 0.0, 0.0]),
-            [0, 1, 2],
-        )],
-    })
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+    };
+    with_declared_facet_normals(mesh, vec![[0xbf80_0000, 0, 0]])
 }
 
 /// Returns the mesh that a write of [`get_mesh_without_meta`] reads back as: no
@@ -68,7 +63,7 @@ fn get_named_mesh() -> IndexedMesh {
 }
 
 fn get_mesh_named(name: &str) -> IndexedMesh {
-    with_stored_normals_declared(IndexedMesh {
+    let mesh = IndexedMesh {
         meta: Some(MeshMetadata {
             name: Some(String::from(name)),
             ..Default::default()
@@ -78,11 +73,9 @@ fn get_mesh_named(name: &str) -> IndexedMesh {
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle::from_raw_indices(
-            Normal::new([-1.0, 0.0, 0.0]),
-            [0, 1, 2],
-        )],
-    })
+        faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+    };
+    with_declared_facet_normals(mesh, vec![[0xbf80_0000, 0, 0]])
 }
 
 /// Writes the mesh as ASCII STL and reads it back, returning the recovered mesh
@@ -117,8 +110,6 @@ mod stla_tests {
         let recovered_graph = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
-        // Even if there is no metadata loaded, we still create the Metadata
-        // object.
         assert_eq!(recovered_mesh, &read_back_mesh_without_meta());
     }
 
@@ -210,8 +201,6 @@ mod stlb_tests {
         let (recovered_graph, _) = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
-        // Even if there is no metadata loaded, we still create the Metadata
-        // object.
         assert_eq!(recovered_mesh, &read_back_mesh_without_meta());
     }
 
@@ -286,9 +275,9 @@ mod stlb_header_roundtrip_tests {
     #[test]
     fn overlong_name_folds_to_exactly_80_bytes_and_survives() {
         // 79 ASCII bytes plus a 2-byte char: folded, the accented char becomes
-        // its base letter and the name fits the 80-byte header exactly. The raw
-        // writer used to cut the char in 2 and produce a non-text header
-        // (nameless load + warning).
+        // its base letter and the name fits the 80-byte header exactly. A raw
+        // byte cut would split the char in 2 and give a non-text header, which
+        // loads as a nameless mesh with a warning.
         let loaded = stlb_write_then_load(&get_mesh_named(&format!("{}é", "a".repeat(79))));
         assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
         assert_eq!(
@@ -312,9 +301,9 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn tab_name_round_trips_collapsed() {
-        // Unfolded, the tab is a control character in the header and the whole
-        // name used to come back as a nameless load plus the header warning;
-        // folded, it collapses to a space like in the ASCII STL writer.
+        // Unfolded, the tab is a control character in the header, which loads
+        // as a nameless mesh with the header warning; folded, it collapses to a
+        // space, as in the ASCII STL writer.
         let loaded = stlb_write_then_load(&get_mesh_named("a\tb"));
         assert_eq!(loaded_name(&loaded).as_deref(), Some("a b"));
         assert!(loaded.warnings.is_empty());
@@ -322,8 +311,8 @@ mod stlb_header_roundtrip_tests {
 
     #[test]
     fn nul_name_round_trips_with_the_nul_removed() {
-        // Unfolded, the NUL used to act as the header terminator and silently
-        // amputate the name to "a".
+        // Unfolded, the NUL acts as the header terminator and cuts the name to
+        // "a" without a warning.
         let loaded = stlb_write_then_load(&get_mesh_named("a\0b"));
         assert_eq!(loaded_name(&loaded).as_deref(), Some("ab"));
         assert!(loaded.warnings.is_empty());

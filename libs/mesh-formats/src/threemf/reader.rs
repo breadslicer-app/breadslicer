@@ -15,9 +15,8 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
 use sc_3mf::package::Package;
-use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 
@@ -320,19 +319,7 @@ fn convert_mesh(
     let mut faces = Vec::with_capacity(data.triangles.len());
     for triangle in &data.triangles {
         let indices = [triangle.v1.get(), triangle.v2.get(), triangle.v3.get()];
-        // parse_model range-checked every index against the vertex count, so
-        // direct indexing cannot go out of bounds.
-        let corners = [
-            vertices[indices[0] as usize],
-            vertices[indices[1] as usize],
-            vertices[indices[2] as usize],
-        ];
-        // 3MF stores no normals; recompute from the CCW winding. A degenerate
-        // triangle keeps a zero-normal sentinel so the geometry is not silently
-        // dropped; downstream validation flags it as `ZeroAreaFace`.
-        let normal = compute_normal_from_triangle_vertices(&corners)
-            .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
-        faces.push(IndexedTriangle::from_raw_indices(normal, indices));
+        faces.push(IndexedTriangle::from_raw_indices(indices));
     }
     let meta = object.name.as_ref().map(|name| MeshMetadata {
         name: Some(name.clone()),

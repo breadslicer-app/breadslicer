@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Pure-CPU helpers for the translate gizmo: pivot, world-aligned axes,
-//! screen-constant scale, ray-vs-axis-handle hit test, and the drag-time
-//! closest-point math. Renderer-agnostic so it can be unit-tested without a
-//! `wgpu::Device`.
+//! Pure-CPU helpers for the translate, rotate and scale gizmo: pivot,
+//! world-aligned axes, screen-constant scale, ray hit tests against the
+//! handles, and the drag math. Renderer-agnostic so it can be unit-tested
+//! without a `wgpu::Device`.
 
 pub(crate) mod axis;
 pub(crate) mod dimensions;
@@ -24,12 +24,12 @@ use crate::camera::OrbitCamera;
 
 use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 
-/// World-space pivot for the gizmo: the local-AABB centre of the leaf,
-/// transformed by the leaf's world transform. Returns `None` when the leaf has
-/// no vertices, an out-of-bounds resource reference, `node_id` does not name a
-/// reachable leaf, or the resulting pivot has any non-finite component (a
-/// NaN/Inf vertex in the mesh, or a transform that overflows to infinity); all
-/// of which render the gizmo unattachable.
+/// Returns the world-space pivot for the gizmo: the local-AABB centre of the
+/// leaf, transformed by the leaf's world transform. Returns `None` when the
+/// leaf has no vertices, an out-of-bounds resource reference, `node_id` does
+/// not name a reachable leaf, or the resulting pivot has a non-finite component
+/// (from NaN or infinite vertex coordinates, or from a transform that overflows
+/// to infinity); in all of these cases the gizmo cannot attach.
 pub(crate) fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
     let query = spatial.leaf(node_id)?;
     let aabb = query.local_aabb()?;
@@ -88,7 +88,7 @@ mod pivot_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_scene::{LeafPayload, Scene};
 
@@ -96,16 +96,13 @@ mod pivot_tests {
         IndexedMesh::new(
             None,
             vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         )
     }
 
-    /// Single-leaf scene under a Group root, mirroring the shape the loader
-    /// pipeline produces (one inline-mesh leaf attached under an identity-Group
-    /// root).
+    /// Returns a single-leaf scene under a Group root, mirroring the shape the
+    /// loader pipeline produces (1 inline-mesh leaf attached under an
+    /// identity-Group root).
     fn spatial_with_one_leaf(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -130,7 +127,7 @@ mod pivot_tests {
             Transform3D::Identity,
         );
         let p = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
-        // local AABB = ([-1, -2, -3], [3, 4, 5]) → centre (1, 1, 1)
+        // local AABB = ([-1, -2, -3], [3, 4, 5]), so its centre is (1, 1, 1).
         assert_approx_eq!(f32, p.x, 1.0);
         assert_approx_eq!(f32, p.y, 1.0);
         assert_approx_eq!(f32, p.z, 1.0);
@@ -174,7 +171,7 @@ mod pivot_tests {
     #[test]
     fn pivot_for_mesh_with_nan_vertex_is_none() {
         // Every vertex carries NaN on the same axis so the AABB on that axis
-        // stays NaN (f32::min / f32::max silently drop a NaN operand when
+        // stays NaN (f32::min and f32::max silently drop a NaN operand when
         // paired with a finite one, so a single bad vertex would not reach the
         // pivot).
         let spatial = spatial_with_one_leaf(
@@ -242,7 +239,8 @@ mod scale_tests {
     fn gizmo_scale_grows_with_camera_distance() {
         let near = gizmo_scale(&cam_at_distance(2.0), Vec3::ZERO, 1.0, 480.0).unwrap();
         let far = gizmo_scale(&cam_at_distance(20.0), Vec3::ZERO, 1.0, 480.0).unwrap();
-        // 10× farther → 10× larger world units per pixel → 10× scale.
+        // 10 times farther gives 10 times more world units per pixel, so 10
+        // times the scale.
         assert!(far > near * 9.0 && far < near * 11.0);
     }
 

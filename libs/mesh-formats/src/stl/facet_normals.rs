@@ -46,7 +46,7 @@ fn normal_of(mesh: &IndexedMesh, face: &IndexedTriangle) -> [u32; 3] {
 mod resolve_facet_normals_tests {
     use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{MeshMetadata, Vertex};
     use sc_scene::bake_mesh_to_world;
 
     use super::*;
@@ -63,10 +63,7 @@ mod resolve_facet_normals_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
+            vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
         )
     }
 
@@ -130,7 +127,7 @@ mod resolve_facet_normals_tests {
             shifted
                 .faces
                 .iter()
-                .map(|face| IndexedTriangle::from_raw_indices(face.normal, [3, 4, 5])),
+                .map(|_| IndexedTriangle::from_raw_indices([3, 4, 5])),
         );
         let normals = resolve_facet_normals(
             &output,
