@@ -151,9 +151,11 @@ impl Vertex {
 }
 
 impl Normal {
-    /// Constructs a normal from its 3 components.
+    /// Builds a normal from `components`, which the caller guarantees to have
+    /// unit length. Outside mesh-core, `compute_normal_from_triangle_vertices`
+    /// is the only way to get a normal.
     #[inline]
-    pub const fn new(components: [f32; 3]) -> Self {
+    pub(crate) const fn from_unit_unchecked(components: [f32; 3]) -> Self {
         Self(components)
     }
 
@@ -167,19 +169,6 @@ impl Normal {
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
         Vector3D::new(self.coords()).into()
-    }
-
-    /// Returns the opposite direction (component-wise negation).
-    #[inline]
-    pub fn negate(self) -> Self {
-        Self::new(self.coords().map(|c| -c))
-    }
-
-    /// Returns the magnitude (Euclidean length). For a well-formed unit normal
-    /// this is 1.0 within f32 precision.
-    #[inline]
-    pub fn norm(self) -> f32 {
-        self.iter().map(|c| c * c).sum::<f32>().sqrt()
     }
 }
 

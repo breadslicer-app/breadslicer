@@ -40,8 +40,7 @@ impl std::error::Error for GeometryError {}
 pub const DEGENERACY_SIN_SQ_THRESHOLD: f64 = 1e-12;
 
 /// Threshold used to reject near-singular linear parts of an
-/// `AffineTransform3D` (zero-magnitude rotation axis, near-zero determinant, or
-/// zero-magnitude transformed normal).
+/// `AffineTransform3D` (zero-magnitude rotation axis or near-zero determinant).
 ///
 /// `f64::EPSILON` is relative to 1.0 and may be too tight for millimetre-scale
 /// matrices whose legitimate determinants can sit around 1e-9. TODO: revisit
@@ -105,7 +104,7 @@ pub fn compute_normal_from_triangle_vertices(
     vertices: &[Vertex; 3],
 ) -> Result<Normal, GeometryError> {
     let unit = compute_reference_normal_f64(vertices)?;
-    Ok(Normal::new([
+    Ok(Normal::from_unit_unchecked([
         unit[0] as f32,
         unit[1] as f32,
         unit[2] as f32,
