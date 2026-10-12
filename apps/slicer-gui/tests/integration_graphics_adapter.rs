@@ -20,6 +20,7 @@
 //! Tests soft-skip when the machine has no usable adapter, so a headless
 //! environment without a software wgpu provider does not block the suite.
 
+use std::fmt::Debug;
 use std::sync::Mutex;
 
 use sc_slicer_gui::graphics_adapter::{
@@ -210,6 +211,47 @@ fn expected_choice(adapters: &[wgpu::Adapter], order: &[usize]) -> Option<usize>
     order
         .iter()
         .position(|&index| can_open_device(&adapters[index]))
+}
+
+/// Returns the lines that report the refusals of a selection: 1 for each
+/// adapter that it walked past, in order, and 1 for a refusal that `winner`
+/// recovered from.
+fn refusal_lines<S: Debug, R: Debug>(
+    winner: &str,
+    skipped: &[S],
+    recovery: Option<&R>,
+) -> Vec<String> {
+    let skipped = skipped
+        .iter()
+        .map(|skipped| format!("  selection: walked past {skipped:?}"));
+    let recovery =
+        recovery.map(|recovery| format!("  selection: {winner} recovered from {recovery:?}"));
+    skipped.chain(recovery).collect()
+}
+
+fn print_refusals(selection: &AdapterSelection) {
+    let winner = selection.adapter.get_info().name;
+    for line in refusal_lines(&winner, &selection.skipped, selection.recovery.as_ref()) {
+        eprintln!("{line}");
+    }
+}
+
+#[test]
+fn a_selection_without_refusals_reports_no_line() {
+    let lines = refusal_lines::<&str, &str>("winner", &[], None);
+    assert!(lines.is_empty(), "{lines:?}");
+}
+
+#[test]
+fn each_refusal_of_a_selection_gets_a_line() {
+    assert_eq!(
+        refusal_lines("winner", &["first", "second"], Some(&"retried")),
+        [
+            "  selection: walked past \"first\"",
+            "  selection: walked past \"second\"",
+            "  selection: winner recovered from \"retried\"",
+        ]
+    );
 }
 
 /// What a test requires of the adapter that the selection ends on.
@@ -690,7 +732,8 @@ fn selection_returns_the_top_ranked_adapter_that_opens_a_device() {
                 instance,
                 PLATFORM_BACKENDS,
                 &device_descriptor("graphics-adapter selection test"),
-            );
+            )
+            .inspect(print_refusals);
             Some(compare_selection(
                 Requirement::ExpectedOrBetterRanked,
                 &infos,
@@ -727,6 +770,7 @@ fn a_software_adapter_is_never_chosen_while_a_gpu_can_serve() {
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter software-avoidance test"),
         )
+        .inspect(print_refusals)
         .expect("a usable GPU is present, so selection must succeed");
 
         let chosen = adapter.get_info();
@@ -763,7 +807,8 @@ fn a_discrete_gpu_wins_over_the_rest_when_it_can_serve() {
                 instance,
                 PLATFORM_BACKENDS,
                 &device_descriptor("graphics-adapter discrete-preference test"),
-            );
+            )
+            .inspect(print_refusals);
             Some(compare_selection(
                 Requirement::DiscreteGpu,
                 &infos,
@@ -785,7 +830,8 @@ fn the_selected_device_can_carry_gpu_work() {
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter usability test"),
-        ) else {
+        )
+        .inspect(print_refusals) else {
             eprintln!("skipping: no adapter accepts the application device profile");
             return;
         };
@@ -817,6 +863,7 @@ fn the_selected_device_takes_the_adapters_buffer_and_texture_ceilings() {
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter ceilings test"),
         )
+        .inspect(print_refusals)
         else {
             eprintln!("skipping: no adapter accepts the application device profile");
             return;
@@ -875,7 +922,8 @@ fn an_override_naming_a_present_adapter_selects_that_adapter() {
                 PLATFORM_BACKENDS,
                 &device_descriptor("graphics-adapter override test"),
                 Some(name),
-            );
+            )
+            .inspect(print_refusals);
             Some(compare_selection(
                 Requirement::ExpectedName,
                 &infos,
@@ -906,7 +954,8 @@ fn an_override_matching_nothing_falls_back_to_the_normal_choice() {
                 PLATFORM_BACKENDS,
                 &device_descriptor("graphics-adapter unmatched-override test"),
                 Some("no adapter is called this"),
-            );
+            )
+            .inspect(print_refusals);
             Some(compare_selection(
                 Requirement::ExpectedOrBetterRanked,
                 &infos,
