@@ -168,6 +168,41 @@ fn can_open_device(adapter: &wgpu::Adapter) -> bool {
     true
 }
 
+/// Reports whether `probe` accepts within 2 attempts. A refusal of the first
+/// attempt can be transient, so `probe` then runs 1 more time.
+fn accepts_within_2_probes(mut probe: impl FnMut() -> bool) -> bool {
+    probe() || probe()
+}
+
+/// Runs `accepts_within_2_probes` over the scripted `answers`. Returns its
+/// answer and the number of probes that it made.
+fn run_probe_script(answers: &[bool]) -> (bool, usize) {
+    let mut answers = answers.iter().copied();
+    let mut probes_made = 0;
+    let accepted = accepts_within_2_probes(|| {
+        probes_made += 1;
+        answers
+            .next()
+            .expect("the script must hold an answer for each probe")
+    });
+    (accepted, probes_made)
+}
+
+#[test]
+fn a_probe_that_accepts_is_not_repeated() {
+    assert_eq!(run_probe_script(&[true, false]), (true, 1));
+}
+
+#[test]
+fn a_refused_probe_is_repeated_1_time() {
+    assert_eq!(run_probe_script(&[false, true]), (true, 2));
+}
+
+#[test]
+fn a_probe_refused_2_times_is_not_repeated_again() {
+    assert_eq!(run_probe_script(&[false, false, true]), (false, 2));
+}
+
 /// Returns the place in `order` of the adapter that the module is expected to
 /// settle on: the first that accepts the device profile. The answer comes from
 /// the requests of the test, so it does not depend on the selection under test.
@@ -712,11 +747,15 @@ fn a_discrete_gpu_wins_over_the_rest_when_it_can_serve() {
         |instance, adapters| {
             let infos = infos_of(adapters);
             let order = ranked_order(&infos, None);
-            let Some(expected) = order.iter().position(|&index| {
-                infos[index].device_type == wgpu::DeviceType::DiscreteGpu
-                    && can_open_device(&adapters[index])
-            }) else {
+            let discrete = |index: usize| infos[index].device_type == wgpu::DeviceType::DiscreteGpu;
+            if !order.iter().any(|&index| discrete(index)) {
                 eprintln!("skipping: this environment exposes no usable discrete GPU");
+                return None;
+            }
+            let Some(expected) = order.iter().position(|&index| {
+                discrete(index) && accepts_within_2_probes(|| can_open_device(&adapters[index]))
+            }) else {
+                eprintln!("skipping: every discrete GPU of this environment refused 2 probes");
                 return None;
             };
 
