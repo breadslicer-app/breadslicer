@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use sc_3mf::model::{
     BuildItem, Component, Matrix3D, MeshData, MeshResolution, Metadata, ModelDocument,
-    ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Vertex3,
-    write_model,
+    ModelSerialization, ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex,
+    TriangleRef, Vertex3,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -42,11 +42,6 @@ use crate::threemf::declared_normals::add_declared_facet_normals_parts;
 fn cleaned_name(name: Option<&str>) -> Option<String> {
     name.and_then(CleanName::clean).map(CleanName::into_string)
 }
-
-// Serialized-byte distance between 2 consecutive serialise-phase reports.
-// Matches the throttle the project-file writer uses for the same XML
-// serialisation.
-const SERIALIZE_REPORT_STEP: u64 = 256 * 1024;
 
 /// Writes `graph` as a complete 3MF package.
 ///
@@ -79,10 +74,17 @@ where
 {
     let model = scene_to_model_document(graph)?;
 
-    let mut ticker = SerializeTicker::new(estimate_model_bytes(&model.document), &mut progress);
-    write_model(&model.document, &mut ticker)?;
-    ticker.report_now();
-    let model_xml = ticker.into_inner();
+    let serialization = ModelSerialization::new([&model.document]);
+    let total = serialization.estimated_total_bytes();
+    // Opens the phase before the first byte: `write` reports only bytes
+    // written.
+    progress(WriteSceneProgress::Serialize { done: 0, total });
+    let [model_xml] = serialization.write(|report| {
+        progress(WriteSceneProgress::Serialize {
+            done: report.serialized_bytes,
+            total: report.estimated_total_bytes,
+        })
+    })?;
 
     let mut package = Package::new();
     let part = PartName::new(DEFAULT_MODEL_PART_NAME).expect("constant part name is valid");
@@ -100,82 +102,6 @@ where
     })?;
     writer.write_all(buffer.get_ref())?;
     Ok(())
-}
-
-/// A `Write` sink that serializes into a `Vec` while reporting the running
-/// serialized-byte total as `Serialize` progress, throttled to 1 report per
-/// [`SERIALIZE_REPORT_STEP`].
-struct SerializeTicker<'a, F> {
-    inner: Vec<u8>,
-    total: u64,
-    last_reported: u64,
-    progress: &'a mut F,
-}
-
-impl<'a, F: FnMut(WriteSceneProgress)> SerializeTicker<'a, F> {
-    fn new(total: u64, progress: &'a mut F) -> Self {
-        (*progress)(WriteSceneProgress::Serialize { done: 0, total });
-        Self {
-            inner: Vec::new(),
-            total,
-            last_reported: 0,
-            progress,
-        }
-    }
-
-    /// Emits a report at the current emitted total, regardless of the throttle
-    /// step, so the phase end is visible even when the whole document is
-    /// smaller than 1 step.
-    fn report_now(&mut self) {
-        let done = self.inner.len() as u64;
-        self.last_reported = done;
-        (self.progress)(WriteSceneProgress::Serialize {
-            done,
-            total: self.total,
-        });
-    }
-
-    fn into_inner(self) -> Vec<u8> {
-        self.inner
-    }
-}
-
-impl<F: FnMut(WriteSceneProgress)> Write for SerializeTicker<'_, F> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.extend_from_slice(buf);
-        let done = self.inner.len() as u64;
-        if done - self.last_reported >= SERIALIZE_REPORT_STEP {
-            self.last_reported = done;
-            (self.progress)(WriteSceneProgress::Serialize {
-                done,
-                total: self.total,
-            });
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// Returns a rough estimate of the XML byte size `write_model` produces for
-/// `document`, used only as the serialise phase's denominator. Real output can
-/// run over or under; a consumer clamps the fraction.
-fn estimate_model_bytes(document: &ModelDocument) -> u64 {
-    // Per-element byte guesses for the `<vertex>` and `<triangle>` markup plus
-    // their numeric payloads.
-    const BYTES_PER_VERTEX: u64 = 64;
-    const BYTES_PER_TRIANGLE: u64 = 48;
-
-    let mut bytes = 0u64;
-    for object in &document.objects {
-        if let ObjectPayload::Mesh(mesh) = &object.payload {
-            bytes += mesh.vertices.len() as u64 * BYTES_PER_VERTEX;
-            bytes += mesh.triangles.len() as u64 * BYTES_PER_TRIANGLE;
-        }
-    }
-    bytes
 }
 
 struct DocumentBuilder<'graph> {
