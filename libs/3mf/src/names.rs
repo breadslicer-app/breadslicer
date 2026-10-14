@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Well-known 3MF and OPC identifier strings: XML namespaces,
-//! relationship types, and content types.
+//! Well-known 3MF and OPC identifiers: XML namespaces, relationship types,
+//! content types, and the conventional name of the primary 3D Model part.
+
+use crate::package::static_part_name::StaticPartName;
 
 /// XML namespace of the 3MF core specification (v1.x).
 pub const CORE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
@@ -12,8 +14,8 @@ pub const CORE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/core/201
 /// XML namespace of the 3MF slice extension.
 pub const SLICE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/slice/2015/07";
 
-/// XML namespace of the 3MF production extension. Only detected (to
-/// refuse split-part documents cleanly); not implemented.
+/// XML namespace of the 3MF production extension. Only detected (to refuse
+/// split-part documents cleanly); not implemented.
 pub const PRODUCTION_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
 
 /// XML namespace of OPC relationship documents.
@@ -30,8 +32,8 @@ pub const START_PART_REL_TYPE: &str =
 pub const THUMBNAIL_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail";
 
-/// Relationship type for custom parts that consumers should retain
-/// when rewriting a package.
+/// Relationship type for custom parts that consumers should retain when
+/// rewriting a package.
 pub const MUST_PRESERVE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/mustpreserve";
 
@@ -43,4 +45,7 @@ pub const RELATIONSHIPS_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-package.relationships+xml";
 
 /// Conventional name of the primary 3D Model part.
-pub const DEFAULT_MODEL_PART_NAME: &str = "/3D/3dmodel.model";
+pub const DEFAULT_MODEL_PART_NAME: StaticPartName = match StaticPartName::new("/3D/3dmodel.model") {
+    Ok(name) => name,
+    Err(_) => panic!("malformed part name"),
+};

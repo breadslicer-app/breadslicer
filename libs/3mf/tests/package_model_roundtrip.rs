@@ -143,14 +143,14 @@ fn document_survives_the_full_package_round_trip() {
     write_model(&document, &mut model_xml).expect("document writes");
 
     let mut package = Package::new();
-    let model_part = PartName::new(DEFAULT_MODEL_PART_NAME).expect("valid part name");
+    let model_part = PartName::from(DEFAULT_MODEL_PART_NAME);
     package
         .add_part(model_part.clone(), MODEL_PART_CONTENT_TYPE, model_xml)
         .expect("unique part name");
     package.add_root_relationship(Relationship {
         id: "rel-1".to_string(),
         rel_type: START_PART_REL_TYPE.to_string(),
-        target: DEFAULT_MODEL_PART_NAME.to_string(),
+        target: DEFAULT_MODEL_PART_NAME.as_str().to_string(),
     });
 
     let mut bytes = Cursor::new(Vec::new());

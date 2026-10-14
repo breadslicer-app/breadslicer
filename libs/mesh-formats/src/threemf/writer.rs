@@ -88,12 +88,15 @@ where
     })?;
 
     let mut package = Package::new();
-    let part = PartName::new(DEFAULT_MODEL_PART_NAME).expect("constant part name is valid");
-    package.add_part(part, MODEL_PART_CONTENT_TYPE, model_xml)?;
+    package.add_part(
+        PartName::from(DEFAULT_MODEL_PART_NAME),
+        MODEL_PART_CONTENT_TYPE,
+        model_xml,
+    )?;
     package.add_root_relationship(Relationship {
         id: "rel-1".to_string(),
         rel_type: START_PART_REL_TYPE.to_string(),
-        target: DEFAULT_MODEL_PART_NAME.to_string(),
+        target: DEFAULT_MODEL_PART_NAME.as_str().to_string(),
     });
     add_declared_facet_normals_parts(&mut package, &model.mesh_objects)?;
 

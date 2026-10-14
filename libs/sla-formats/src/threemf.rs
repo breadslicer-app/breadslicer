@@ -90,7 +90,7 @@ pub fn write_scene_slices(
     validate_output_path(output, Format::ThreeMf)?;
 
     let mut package = Package::new();
-    let root_part = PartName::new(DEFAULT_MODEL_PART_NAME).expect("constant part name is valid");
+    let root_part = PartName::from(DEFAULT_MODEL_PART_NAME);
     let mut root_document = ModelDocument::default();
     copy_scene_metadata(scene, &mut root_document);
 
@@ -149,7 +149,7 @@ pub fn write_scene_slices(
     package.add_root_relationship(Relationship {
         id: "rel-1".to_string(),
         rel_type: START_PART_REL_TYPE.to_string(),
-        target: DEFAULT_MODEL_PART_NAME.to_string(),
+        target: DEFAULT_MODEL_PART_NAME.as_str().to_string(),
     });
 
     // The zip layer needs a seekable sink, so serialize into memory first and

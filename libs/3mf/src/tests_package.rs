@@ -32,7 +32,7 @@ fn sample_package() -> Package {
     let mut package = Package::new();
     package
         .add_part(
-            part(DEFAULT_MODEL_PART_NAME),
+            part(DEFAULT_MODEL_PART_NAME.as_str()),
             MODEL_PART_CONTENT_TYPE,
             b"<model/>".to_vec(),
         )
@@ -47,14 +47,14 @@ fn sample_package() -> Package {
     package
         .add_part(part("/Metadata/thumbnail.png"), "image/png", vec![1, 2, 3])
         .expect("unique name");
-    package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+    package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
     package.add_root_relationship(Relationship {
         id: "rel-2".to_string(),
         rel_type: THUMBNAIL_REL_TYPE.to_string(),
         target: "/Metadata/thumbnail.png".to_string(),
     });
     package.add_part_relationship(
-        &part(DEFAULT_MODEL_PART_NAME),
+        &part(DEFAULT_MODEL_PART_NAME.as_str()),
         Relationship {
             id: "rel-100".to_string(),
             rel_type: START_PART_REL_TYPE.to_string(),
@@ -287,13 +287,16 @@ mod round_trip_tests {
         let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
 
         let names: Vec<&str> = restored.part_names().map(PartName::as_str).collect();
-        assert!(names.contains(&DEFAULT_MODEL_PART_NAME), "names: {names:?}");
+        assert!(
+            names.contains(&DEFAULT_MODEL_PART_NAME.as_str()),
+            "names: {names:?}"
+        );
         assert!(names.contains(&"/2D/slices1.model"));
         assert!(names.contains(&"/Metadata/thumbnail.png"));
         assert_eq!(names.len(), 3, "rels parts must not surface as parts");
 
         assert_eq!(
-            restored.part_content_type(&part(DEFAULT_MODEL_PART_NAME)),
+            restored.part_content_type(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(MODEL_PART_CONTENT_TYPE),
         );
         assert_eq!(
@@ -301,17 +304,17 @@ mod round_trip_tests {
             Some("image/png"),
         );
         assert_eq!(
-            restored.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            restored.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(b"<model/>".as_slice()),
         );
 
         assert_eq!(restored.root_relationships().len(), 2);
-        let part_rels = restored.part_relationships(&part(DEFAULT_MODEL_PART_NAME));
+        let part_rels = restored.part_relationships(&part(DEFAULT_MODEL_PART_NAME.as_str()));
         assert_eq!(part_rels.len(), 1);
         assert_eq!(part_rels[0].target, "/2D/slices1.model");
 
         let start = restored.start_part().expect("start part resolves");
-        assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME);
+        assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME.as_str());
     }
 
     #[test]
@@ -341,7 +344,7 @@ mod round_trip_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 vec![],
             )
@@ -351,7 +354,7 @@ mod round_trip_tests {
         let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
         assert_eq!(
             restored.start_part().expect("resolves").as_str(),
-            DEFAULT_MODEL_PART_NAME,
+            DEFAULT_MODEL_PART_NAME.as_str(),
         );
     }
 }
@@ -390,7 +393,7 @@ mod error_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 vec![],
             )
@@ -409,7 +412,7 @@ mod error_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 vec![],
             )
@@ -456,9 +459,13 @@ mod read_limits_tests {
     fn package_bytes_with_model_part(data: Vec<u8>) -> Vec<u8> {
         let mut package = Package::new();
         package
-            .add_part(part(DEFAULT_MODEL_PART_NAME), MODEL_PART_CONTENT_TYPE, data)
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                data,
+            )
             .expect("unique name");
-        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
         write_to_bytes(&package)
     }
 
@@ -479,7 +486,7 @@ mod read_limits_tests {
         let package = Package::read_from_with_limits(Cursor::new(bytes), limits)
             .expect("a part at the cap must pass");
         let data = package
-            .part_data(&part(DEFAULT_MODEL_PART_NAME))
+            .part_data(&part(DEFAULT_MODEL_PART_NAME.as_str()))
             .expect("part present");
         assert_eq!(data.len(), 1024);
         assert!(data.iter().all(|&b| b == b'a'));
@@ -496,7 +503,7 @@ mod read_limits_tests {
         assert!(matches!(
             err,
             PackageReadError::OversizedPart { part, cap_bytes: 1024 }
-                if part == DEFAULT_MODEL_PART_NAME
+                if part == DEFAULT_MODEL_PART_NAME.as_str()
         ));
     }
 
@@ -514,7 +521,7 @@ mod read_limits_tests {
         let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
         assert!(matches!(
             err,
-            PackageReadError::OversizedPart { part, .. } if part == DEFAULT_MODEL_PART_NAME
+            PackageReadError::OversizedPart { part, .. } if part == DEFAULT_MODEL_PART_NAME.as_str()
         ));
     }
 
@@ -627,15 +634,15 @@ mod zip64_tests {
 
         let package = Package::read_from(Cursor::new(bytes)).expect("zip64 package reads");
         assert_eq!(
-            package.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            package.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(b"<model/>".as_slice()),
         );
         assert_eq!(
-            package.part_content_type(&part(DEFAULT_MODEL_PART_NAME)),
+            package.part_content_type(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(MODEL_PART_CONTENT_TYPE),
         );
         let start = package.start_part().expect("start part resolves");
-        assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME);
+        assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME.as_str());
     }
 }
 
@@ -762,12 +769,12 @@ mod write_progress_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 vec![b'x'; part_bytes],
             )
             .expect("unique name");
-        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
         package
     }
 
@@ -875,7 +882,7 @@ mod parallel_compression_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 big.clone(),
             )
@@ -887,13 +894,13 @@ mod parallel_compression_tests {
                 small.clone(),
             )
             .expect("unique name");
-        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
 
         let bytes = write_to_bytes(&package);
         let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
 
         assert_eq!(
-            restored.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            restored.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(big.as_slice()),
         );
         assert_eq!(
@@ -901,7 +908,7 @@ mod parallel_compression_tests {
             Some(small.as_slice()),
         );
         assert_eq!(
-            restored.part_content_type(&part(DEFAULT_MODEL_PART_NAME)),
+            restored.part_content_type(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(MODEL_PART_CONTENT_TYPE),
         );
     }
@@ -914,17 +921,17 @@ mod parallel_compression_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 big.clone(),
             )
             .expect("unique name");
-        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME.as_str()));
 
         let bytes = write_to_bytes(&package);
         let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
         assert_eq!(
-            restored.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            restored.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(big.as_slice()),
         );
     }

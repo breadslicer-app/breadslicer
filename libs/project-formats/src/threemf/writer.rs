@@ -152,7 +152,7 @@ fn assemble_package(
     slice_fingerprint: Option<&str>,
 ) -> Result<Package, WriteThreeMfProjectError> {
     let mut package = Package::new();
-    let model_part = known_part_name(DEFAULT_MODEL_PART_NAME);
+    let model_part = PartName::from(DEFAULT_MODEL_PART_NAME);
     package.add_part(model_part, MODEL_PART_CONTENT_TYPE, model_xml)?;
 
     let project_part = known_part_name(PROJECT_PART_NAME);
@@ -167,7 +167,7 @@ fn assemble_package(
     package.add_root_relationship(Relationship {
         id: rel_ids.next(),
         rel_type: START_PART_REL_TYPE.to_string(),
-        target: DEFAULT_MODEL_PART_NAME.to_string(),
+        target: DEFAULT_MODEL_PART_NAME.as_str().to_string(),
     });
     package.add_root_relationship(Relationship {
         id: rel_ids.next(),
@@ -398,7 +398,7 @@ mod assemble_package_tests {
     fn the_model_and_slice_parts_hold_the_given_bytes() {
         let package = assemble(Some(b"slices".to_vec()), EmbedProfiles::Yes);
         assert_eq!(
-            package.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            package.part_data(&part(DEFAULT_MODEL_PART_NAME.as_str())),
             Some(&b"model"[..])
         );
         assert_eq!(
@@ -418,7 +418,11 @@ mod assemble_package_tests {
         assert_eq!(
             relationships,
             vec![
-                ("rel-1", START_PART_REL_TYPE, DEFAULT_MODEL_PART_NAME),
+                (
+                    "rel-1",
+                    START_PART_REL_TYPE,
+                    DEFAULT_MODEL_PART_NAME.as_str()
+                ),
                 ("rel-2", PROJECT_REL_TYPE, PROJECT_PART_NAME),
                 ("rel-3", MUST_PRESERVE_REL_TYPE, PROJECT_PART_NAME),
                 ("rel-4", SLICE_REL_TYPE, SLICE_PART_NAME),
@@ -446,7 +450,10 @@ mod assemble_package_tests {
     fn without_slices_or_profiles_only_the_model_and_project_parts_remain() {
         let package = assemble(None, EmbedProfiles::No);
         let names: Vec<&str> = package.part_names().map(PartName::as_str).collect();
-        assert_eq!(names, vec![DEFAULT_MODEL_PART_NAME, PROJECT_PART_NAME]);
+        assert_eq!(
+            names,
+            vec![DEFAULT_MODEL_PART_NAME.as_str(), PROJECT_PART_NAME]
+        );
         assert_eq!(package.root_relationships().len(), 3);
     }
 }
@@ -460,7 +467,7 @@ mod compress_into_tests {
         let mut package = Package::new();
         package
             .add_part(
-                part(DEFAULT_MODEL_PART_NAME),
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
                 MODEL_PART_CONTENT_TYPE,
                 b"<model/>".to_vec(),
             )
