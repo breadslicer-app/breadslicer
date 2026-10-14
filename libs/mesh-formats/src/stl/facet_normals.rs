@@ -44,9 +44,9 @@ fn normal_of(mesh: &IndexedMesh, face: &IndexedTriangle) -> [u32; 3] {
 
 #[cfg(test)]
 mod resolve_facet_normals_tests {
-    use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
+    use sc_mesh_core::Vertex;
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{MeshMetadata, Vertex};
+    use sc_mesh_fixtures::with_declared_facet_normals;
     use sc_scene::bake_mesh_to_world;
 
     use super::*;
@@ -67,16 +67,6 @@ mod resolve_facet_normals_tests {
         )
     }
 
-    fn with_declared(mut mesh: IndexedMesh) -> IndexedMesh {
-        let declared =
-            DeclaredFacetNormals::capture(&mesh, vec![DECLARED]).expect("1 normal per face");
-        mesh.set_meta(Some(MeshMetadata {
-            declared_facet_normals: Some(declared),
-            ..Default::default()
-        }));
-        mesh
-    }
-
     fn values(normals: &[[u32; 3]]) -> Vec<[f32; 3]> {
         normals
             .iter()
@@ -86,7 +76,7 @@ mod resolve_facet_normals_tests {
 
     #[test]
     fn declared_normals_of_a_changed_mesh_give_way_to_computed_ones() {
-        let mut mesh = with_declared(triangle());
+        let mut mesh = with_declared_facet_normals(triangle(), vec![DECLARED]);
         mesh.vertices[2] = Vertex::new([0.0, 2.0, 0.0]);
         let normals = resolve_facet_normals(&mesh, [(&mesh, &Transform3D::Identity)]);
         assert_eq!(values(&normals), [[0.0, 0.0, 1.0]]);
@@ -94,7 +84,7 @@ mod resolve_facet_normals_tests {
 
     #[test]
     fn under_a_mirror_the_normal_points_out_of_the_mirrored_face() {
-        let source = with_declared(triangle());
+        let source = with_declared_facet_normals(triangle(), vec![DECLARED]);
         let mirror =
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
         let output = bake_mesh_to_world(&source, &mirror).expect("the mirror is invertible");
@@ -112,13 +102,13 @@ mod resolve_facet_normals_tests {
 
     #[test]
     fn faces_past_the_occurrences_get_computed_normals() {
-        let mesh = with_declared(triangle());
+        let mesh = with_declared_facet_normals(triangle(), vec![DECLARED]);
         assert_eq!(values(&resolve_facet_normals(&mesh, [])), [[0.0, 0.0, 1.0]]);
     }
 
     #[test]
     fn each_occurrence_owns_the_next_run_of_faces() {
-        let source = with_declared(triangle());
+        let source = with_declared_facet_normals(triangle(), vec![DECLARED]);
         let shift = Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         let mut output = bake_mesh_to_world(&source, &Transform3D::Identity).expect("identity");
         let shifted = bake_mesh_to_world(&source, &shift).expect("translation");

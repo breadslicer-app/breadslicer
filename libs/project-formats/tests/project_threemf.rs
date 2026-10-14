@@ -376,9 +376,7 @@ mod slice_persistence_tests {
 }
 
 mod declared_facet_normals_tests {
-    use sc_mesh_core::MeshMetadata;
-    use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_mesh_fixtures::{unit_cube_mesh, with_declared_facet_normals};
 
     use super::*;
 
@@ -386,13 +384,7 @@ mod declared_facet_normals_tests {
     fn the_declared_facet_normals_survive_a_project_round_trip() {
         // Bit patterns that no geometry gives, 1 per face of the cube.
         let crafted: Vec<[u32; 3]> = (1..=12).map(|k| [k, k, k]).collect();
-        let mut cube = unit_cube_mesh();
-        let declared =
-            DeclaredFacetNormals::capture(&cube, crafted.clone()).expect("1 normal per face");
-        cube.set_meta(Some(MeshMetadata {
-            declared_facet_normals: Some(declared),
-            ..Default::default()
-        }));
+        let cube = with_declared_facet_normals(unit_cube_mesh(), crafted.clone());
         let mut bytes = Vec::new();
         write_project(
             &Scene::from(cube),

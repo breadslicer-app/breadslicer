@@ -12,8 +12,8 @@ use std::io::Cursor;
 use sc_3mf::model::{ObjectPayload, parse_model, write_model};
 use sc_3mf::names::MUST_PRESERVE_REL_TYPE;
 use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
+use sc_mesh_fixtures::with_declared_facet_normals;
 use sc_mesh_formats::messages::LoadThreeMfWarning;
 use sc_mesh_formats::obj::read_obj;
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
@@ -43,7 +43,7 @@ fn tetrahedron() -> IndexedMesh {
         [-1.0, -1.0, 1.0],
     ];
     let faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
-    with_declared(mesh(&vertices, &faces), CRAFTED.to_vec())
+    with_declared_facet_normals(mesh(&vertices, &faces), CRAFTED.to_vec())
 }
 
 fn mesh(vertices: &[[f32; 3]], faces: &[[u32; 3]]) -> IndexedMesh {
@@ -55,15 +55,6 @@ fn mesh(vertices: &[[f32; 3]], faces: &[[u32; 3]]) -> IndexedMesh {
             .map(|&indices| IndexedTriangle::from_raw_indices(indices))
             .collect(),
     )
-}
-
-fn with_declared(mut mesh: IndexedMesh, normals: Vec<[u32; 3]>) -> IndexedMesh {
-    let declared = DeclaredFacetNormals::capture(&mesh, normals).expect("1 normal per face");
-    mesh.set_meta(Some(MeshMetadata {
-        declared_facet_normals: Some(declared),
-        ..Default::default()
-    }));
-    mesh
 }
 
 fn write(scene: &Scene) -> Vec<u8> {
@@ -145,7 +136,7 @@ fn a_negative_zero_a_subnormal_and_a_huge_coordinate_keep_the_declared_normals()
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
     ];
-    let source = with_declared(mesh(&vertices, &[[0, 1, 2]]), vec![CRAFTED[0]]);
+    let source = with_declared_facet_normals(mesh(&vertices, &[[0, 1, 2]]), vec![CRAFTED[0]]);
     let (mesh, warnings) = read(write(&Scene::from(source)));
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(mesh.declared_facet_normals(), Some(&CRAFTED[..1]));

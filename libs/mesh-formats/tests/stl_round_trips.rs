@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_fixtures::with_declared_facet_normals;
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
@@ -48,14 +47,10 @@ fn get_unnamed_mesh() -> IndexedMesh {
 /// Returns the mesh that a write of [`get_mesh_without_meta`] reads back as: no
 /// name, and the normal the writers compute for its face declared.
 fn read_back_mesh_without_meta() -> IndexedMesh {
-    let mut mesh = get_mesh_without_meta();
-    let computed = [0xbf80_0000, 0x8000_0000, 0x8000_0000];
-    let declared = DeclaredFacetNormals::capture(&mesh, vec![computed]).expect("1 normal per face");
-    mesh.set_meta(Some(MeshMetadata {
-        declared_facet_normals: Some(declared),
-        ..Default::default()
-    }));
-    mesh
+    with_declared_facet_normals(
+        get_mesh_without_meta(),
+        vec![[0xbf80_0000, 0x8000_0000, 0x8000_0000]],
+    )
 }
 
 fn get_named_mesh() -> IndexedMesh {
