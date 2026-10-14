@@ -27,12 +27,13 @@
 //! `IndexedMesh::fix_zero_length_edges_into_validated` removes the faces and
 //! returns the witness for the result.
 
+mod fix_faces_orientation;
+
 use std::fmt;
 
 use crate::geometry::compute_reference_normal_f64;
 use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
-use super::fix::{MeshFix, MeshFixError};
 use super::half_edges;
 use super::mesh::IndexedMesh;
 
@@ -235,17 +236,6 @@ impl<'a> ValidatedFacesMut<'a> {
 
     pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
         validate_edge_manifold_impl(self.mesh)
-    }
-
-    /// Reverses the winding of the faces that `manifold_errors` shows as
-    /// flipped. On `Err` the mesh is unchanged. The vertex indices of a face
-    /// only change places, so `self` stays a valid witness. `manifold_errors`
-    /// must come from the edge-manifold validation of this mesh.
-    pub fn fix_faces_orientation(
-        &mut self,
-        manifold_errors: &[MeshEdgeManifoldError],
-    ) -> Result<Vec<MeshFix>, MeshFixError> {
-        super::fix::fix_faces_orientation_impl(self.mesh, manifold_errors)
     }
 }
 
