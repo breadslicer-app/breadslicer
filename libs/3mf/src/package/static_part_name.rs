@@ -3,13 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Part names that are known when the code compiles.
+
 use crate::error::MalformedPartNameError;
 
 /// A part name that is known when the code compiles. Declare it as a `const`
 /// item that matches on [`StaticPartName::new`] and panics on `Err`. The
 /// compiler then checks the name: a malformed one stops the build, and no check
-/// or panic happens at run time. `PartName::from` converts it. The
-/// [`package`](super) module documentation shows an example.
+/// or panic happens at run time. `PartName::from` converts it.
+///
+/// ```
+/// use sc_3mf::package::static_part_name::StaticPartName;
+///
+/// const THUMBNAIL: StaticPartName =
+///     match StaticPartName::new("/Metadata/thumbnail.png") {
+///         Ok(name) => name,
+///         Err(_) => panic!("malformed part name"),
+///     };
+///
+/// assert_eq!(THUMBNAIL.as_str(), "/Metadata/thumbnail.png");
+/// ```
+///
+/// A malformed name stops the build:
+///
+/// ```compile_fail
+/// use sc_3mf::package::static_part_name::StaticPartName;
+///
+/// const THUMBNAIL: StaticPartName =
+///     match StaticPartName::new("/Metadata/") {
+///         Ok(name) => name,
+///         Err(_) => panic!("malformed part name"),
+///     };
+///
+/// assert_eq!(THUMBNAIL.as_str(), "/Metadata/");
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StaticPartName(&'static str);
 

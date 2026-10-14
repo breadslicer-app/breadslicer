@@ -15,38 +15,8 @@
 //! Reading refuses archives whose decompressed size exceeds fixed ceilings (2
 //! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
 //! or corrupt file; see `PackageReadLimits`.
-//!
-//! A [`StaticPartName`] constant holds a part name that the compiler checks:
-//!
-//! ```
-//! use sc_3mf::package::{PartName, StaticPartName};
-//!
-//! const THUMBNAIL: StaticPartName =
-//!     match StaticPartName::new("/Metadata/thumbnail.png") {
-//!         Ok(name) => name,
-//!         Err(_) => panic!("malformed part name"),
-//!     };
-//!
-//! assert_eq!(PartName::from(THUMBNAIL).as_str(), "/Metadata/thumbnail.png");
-//! ```
-//!
-//! A malformed name stops the build:
-//!
-//! ```compile_fail
-//! use sc_3mf::package::{PartName, StaticPartName};
-//!
-//! const THUMBNAIL: StaticPartName =
-//!     match StaticPartName::new("/Metadata/") {
-//!         Ok(name) => name,
-//!         Err(_) => panic!("malformed part name"),
-//!     };
-//!
-//! assert_eq!(PartName::from(THUMBNAIL).as_str(), "/Metadata/");
-//! ```
 
-pub(crate) mod static_part_name;
-
-pub use static_part_name::StaticPartName;
+pub mod static_part_name;
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
@@ -62,7 +32,7 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 
-use static_part_name::check_part_name;
+use static_part_name::{StaticPartName, check_part_name};
 
 /// Chunk size for feeding a part's bytes to the deflater, so a large part
 /// reports progress as it compresses rather than in 1 step.

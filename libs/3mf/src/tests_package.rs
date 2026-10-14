@@ -11,9 +11,8 @@ use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
 };
-use crate::package::{
-    DecompressionProgress, Package, PackageReadLimits, PartName, Relationship, StaticPartName,
-};
+use crate::package::static_part_name::StaticPartName;
+use crate::package::{DecompressionProgress, Package, PackageReadLimits, PartName, Relationship};
 
 fn part(name: &str) -> PartName {
     PartName::new(name).expect("valid part name")
