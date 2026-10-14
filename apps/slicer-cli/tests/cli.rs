@@ -15,9 +15,10 @@ use std::sync::Arc;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
     BuildItem, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    ResourceId, ResourceIndex, TriangleRef, Vertex3, write_model,
+    TriangleRef, Vertex3, write_model,
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -213,7 +214,7 @@ fn write_stla_to(path: &Path, mesh: &IndexedMesh) {
 
 /// Returns a degenerate triangle whose first and third vertex are the same
 /// point. STL stores explicit vertices, so the writer emits the same (0, 0, 0)
-/// coordinate twice; on read, `indexed_mesh_from_soup` dedups by f32 bit
+/// coordinate 2 times; on read, `indexed_mesh_from_soup` dedups by f32 bit
 /// pattern and the face collapses to indices `[0, 1, 0]`, which
 /// `validate_faces` flags as a `ZeroLengthEdge`.
 fn mesh_with_zero_length_edge() -> IndexedMesh {

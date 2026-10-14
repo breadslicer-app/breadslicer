@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Integration coverage for 3MF loading through the public loader
-//! entry points: the vendored 3MF Consortium sample packages (see
-//! tests/fixtures/official/README.md) and a generated multi-object
-//! scene built from the workspace's cube and tunnel-prism fixtures.
+//! Integration coverage for 3MF loading through the public loader entry points:
+//! the vendored 3MF Consortium sample packages (see
+//! tests/fixtures/official/README.md) and a generated multi-object scene built
+//! from the workspace's cube and tunnel-prism fixtures.
 
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
     BuildItem, Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource,
-    ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, write_model,
+    ObjectType, TriangleRef, Unit, Vertex3, write_model,
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -37,8 +38,8 @@ fn load_official(name: &str) -> LoadedMesh {
         .unwrap_or_else(|err| panic!("official sample {name} should load: {err}"))
 }
 
-/// Asserts the loader's root convention (a single identity Group)
-/// and returns its children.
+/// Asserts the loader's root convention (a single identity Group) and returns
+/// its children.
 fn root_children(scene: &Scene) -> Vec<NodeId> {
     assert_eq!(scene.roots().len(), 1, "expected one scene root");
     let root = scene.roots()[0];
@@ -108,8 +109,8 @@ fn multiple_cylinders_sample_loads_six_leaves_sharing_one_resource() {
         })
         .count();
     assert_eq!(transformed, 5, "5 of the 6 placements carry a transform");
-    // The file is in millimetres, so the second placement's stored
-    // x translation of 21 arrives unscaled.
+    // The file is in millimetres, so the second placement's stored x
+    // translation of 21 arrives unscaled.
     match scene.node(children[1]).expect("leaf lives").local_transform {
         Transform3D::Affine(a) => assert_eq!(a.translation()[0], 21.0),
         Transform3D::Identity => panic!("second placement should carry a transform"),
@@ -138,13 +139,13 @@ fn box_sliced_sample_loads_its_fullres_mesh_and_reports_dropped_slices() {
     assert_eq!(mesh.faces.len(), 12);
 }
 
-// ---------------------------------------------------------------------
-// Generated multi-object scene: the workspace's cube and tunnel-prism
-// fixtures written through sc-3mf and read back through the loader.
-// ---------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Generated multi-object scene: the workspace's cube and tunnel-prism fixtures
+// written through sc-3mf and read back through the loader.
+// -----------------------------------------------------------------------------
 
-/// Millimetre translation of each prism placement, in build order:
-/// cube centred, Z tunnel to the right, Y tunnel to the left.
+/// Millimetre translation of each prism placement, in build order: cube
+/// centred, Z tunnel to the right, Y tunnel to the left.
 const PRISM_PLACEMENTS: [[f64; 3]; 3] = [[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [-5.0, 0.0, 0.0]];
 
 fn to_mesh_data(mesh: &IndexedMesh) -> MeshData {
@@ -235,9 +236,9 @@ fn prism_trio_round_trips_geometry_names_and_placements() {
     let mut cursor = package_cursor(&document);
     let loaded =
         load_mesh_from_reader(MeshFileType::_3mf, &mut cursor).expect("generated package loads");
-    // The 2 tunnel prisms share their outer-box corner coordinates,
-    // so the loader's scene-level observation fires exactly as it
-    // does for OBJ input; no 3MF-specific warnings appear.
+    // The 2 tunnel prisms share their outer-box corner coordinates, so the
+    // loader's scene-level observation fires exactly as it does for OBJ input;
+    // no 3MF-specific warnings appear.
     assert_eq!(loaded.warnings.len(), 1, "got {:?}", loaded.warnings);
     match &loaded.warnings[0] {
         LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices { leaves }) => {
@@ -269,9 +270,9 @@ fn prism_trio_round_trips_geometry_names_and_placements() {
             mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some(*name),
         );
-        // f32 -> f64 widening is exact and the writer emits shortest
-        // round-trip decimals, so the coordinates come back bitwise
-        // identical in millimetre units.
+        // f32 -> f64 widening is exact and the writer emits shortest round-trip
+        // decimals, so the coordinates come back bitwise identical in
+        // millimetre units.
         assert_eq!(mesh.vertices, source.vertices, "vertices of {name}");
         let indices: Vec<_> = mesh.faces.iter().map(|f| f.vertices).collect();
         let source_indices: Vec<_> = source.faces.iter().map(|f| f.vertices).collect();

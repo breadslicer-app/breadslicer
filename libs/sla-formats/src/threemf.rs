@@ -5,33 +5,32 @@
 
 //! 3MF Slice Extension packages.
 //!
-//! [`write_scene_slices`] turns a sliced scene into a single 3MF
-//! package, conventionally named `*.slices.3mf`: the root model part
-//! carries one object per sliced leaf (its mesh baked to world
-//! space, so build items need no transform) with a slice stack
-//! attached through the Slice Extension, and each stack's layer data
-//! lives in its own `/2D/` model part reached via a sliceref plus a
-//! part-level relationship. Meshes are embedded at full resolution,
-//! so consumers without slice support still load the plain geometry.
+//! [`write_scene_slices`] turns a sliced scene into a single 3MF package,
+//! conventionally named `*.slices.3mf`: the root model part carries 1 object
+//! per sliced leaf (its mesh baked to world space, so build items need no
+//! transform) with a slice stack attached through the Slice Extension, and each
+//! stack's layer data lives in its own `/2D/` model part reached via a sliceref
+//! plus a part-level relationship. Meshes are embedded at full resolution, so
+//! consumers without slice support still load the plain geometry.
 //!
 //! Layer `ztop` values are the slab TOPS recomputed from the
-//! [`LayerSchedule`](sc_sl1cer::profile::LayerSchedule) in
-//! [`WriterOptions`]: the contour layers' own `z_mm` are the centred
-//! sampling planes, which are not what the format records. Layers
-//! without polygons become void slices (a bare `ztop`). Contour
-//! rings are implicitly closed, while 3MF polygons demand an
-//! explicit final segment back to the start vertex; the writer adds
-//! it, preserving each ring's winding (counter-clockwise outer
-//! boundaries, clockwise holes).
+//! [`LayerSchedule`](sc_sl1cer::profile::LayerSchedule) in [`WriterOptions`]:
+//! the contour layers' own `z_mm` are the centred sampling planes, which are
+//! not what the format records. Layers without polygons become void slices (a
+//! bare `ztop`). Contour rings are implicitly closed, while 3MF polygons demand
+//! an explicit final segment back to the start vertex; the writer adds it,
+//! preserving each ring's winding (counter-clockwise outer boundaries,
+//! clockwise holes).
 
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
     BuildItem, MeshResolution, Metadata, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    ResourceId, ResourceIndex, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack,
-    SliceStackContent, SliceVertex, write_model,
+    Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent, SliceVertex,
+    write_model,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -46,28 +45,26 @@ use crate::format::Format;
 use crate::options::WriterOptions;
 use crate::write::validate_output_path;
 
-/// Id of the single slice stack inside each `/2D/` part. Every part
-/// is its own id space, so the constant never collides.
+/// Id of the single slice stack inside each `/2D/` part. Every part is its own
+/// id space, so the constant never collides.
 const SLICE_PART_STACK_ID: usize = 1;
 
 /// Write `slices` as a 3MF Slice Extension package at `output`.
 ///
-/// `slices` is the per-leaf output of
-/// [`slice_scene`](sc_sl1cer::slice_scene) for `scene`; the merged
-/// stack is not accepted because the format keeps each model's
-/// layers separate. Every leaf named by `slices` is baked to world
-/// space through `scene`, embedded as a full-resolution mesh object,
-/// and paired with its own slice stack; slice coordinates from the
-/// engine are world-space millimetres already, so mesh and contours
-/// agree without any item transform.
+/// `slices` is the per-leaf output of [`slice_scene`](sc_sl1cer::slice_scene)
+/// for `scene`; the merged stack is not accepted because the format keeps each
+/// model's layers separate. Every leaf named by `slices` is baked to world
+/// space through `scene`, embedded as a full-resolution mesh object, and paired
+/// with its own slice stack; slice coordinates from the engine are world-space
+/// millimetres already, so mesh and contours agree without any item transform.
 ///
 /// # Errors
 ///
 /// - [`WriterError::NoModelsToWrite`] when `slices` is empty.
-/// - [`WriterError::LayerGridMismatch`] when a stack's layer count
-///   differs from the schedule in `options`.
-/// - [`WriterError::SceneBakeFailed`] when a leaf cannot be baked
-///   (dangling id, non-mesh node, invalid transform chain).
+/// - [`WriterError::LayerGridMismatch`] when a stack's layer count differs from
+///   the schedule in `options`.
+/// - [`WriterError::SceneBakeFailed`] when a leaf cannot be baked (dangling id,
+///   non-mesh node, invalid transform chain).
 /// - Path validation and I/O errors shared with
 ///   [`write_slice`](crate::write_slice).
 pub fn write_scene_slices(
@@ -155,17 +152,17 @@ pub fn write_scene_slices(
         target: DEFAULT_MODEL_PART_NAME.to_string(),
     });
 
-    // The zip layer needs a seekable sink, so serialize into memory
-    // first and persist in one write.
+    // The zip layer needs a seekable sink, so serialize into memory first and
+    // persist in 1 write.
     let mut buffer = Cursor::new(Vec::new());
     package.write_to(&mut buffer)?;
     fs::write(output, buffer.get_ref())?;
     Ok(())
 }
 
-/// A `/2D/` slice part: a core model document holding exactly one
-/// inline-slices stack and an empty build, the single level of
-/// sliceref indirection the Slice Extension allows.
+/// A `/2D/` slice part: a core model document holding exactly 1 inline-slices
+/// stack and an empty build, the single level of sliceref indirection the Slice
+/// Extension allows.
 fn slice_part_document(layers: &[ContourLayer], slab_tops: &[f64]) -> ModelDocument {
     let slices = layers
         .iter()
@@ -181,8 +178,8 @@ fn slice_part_document(layers: &[ContourLayer], slab_tops: &[f64]) -> ModelDocum
     document
 }
 
-/// One contour layer as a 3MF slice at the slab top `z_top`. A layer
-/// without polygons becomes a void slice.
+/// A contour layer as a 3MF slice at the slab top `z_top`. A layer without
+/// polygons becomes a void slice.
 fn layer_to_slice(layer: &ContourLayer, z_top: f64) -> Slice {
     let mut vertices = Vec::new();
     let mut polygons = Vec::new();
@@ -199,10 +196,10 @@ fn layer_to_slice(layer: &ContourLayer, z_top: f64) -> Slice {
     }
 }
 
-/// Appends one implicitly-closed contour ring as an explicitly
-/// closed 3MF polygon: the ring's points join the slice vertex list
-/// and the segment chain ends with the closing edge back to the
-/// start vertex. Winding is preserved as-is.
+/// Appends an implicitly-closed contour ring as an explicitly closed 3MF
+/// polygon: the ring's points join the slice vertex list and the segment chain
+/// ends with the closing edge back to the start vertex. Winding is preserved
+/// as-is.
 fn push_ring(ring: &ClosedRing, vertices: &mut Vec<SliceVertex>, polygons: &mut Vec<SlicePolygon>) {
     let base = vertices.len();
     vertices.extend(ring.vertices().iter().map(|point| SliceVertex {

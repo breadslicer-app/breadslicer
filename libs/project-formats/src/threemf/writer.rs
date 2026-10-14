@@ -8,8 +8,9 @@
 use std::io::{Cursor, Write};
 
 use sc_3mf::error::ModelWriteError;
+use sc_3mf::model::ModelDocument;
+use sc_3mf::model::resource_ids::ResourceId;
 use sc_3mf::model::serialization::{ModelSerialization, SerializationProgress};
-use sc_3mf::model::{ModelDocument, ResourceId};
 use sc_3mf::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE,
 };

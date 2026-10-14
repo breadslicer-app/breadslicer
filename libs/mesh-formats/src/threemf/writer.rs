@@ -16,10 +16,11 @@ use std::io::Cursor;
 use std::io::Write;
 use std::sync::Arc;
 
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::serialization::ModelSerialization;
 use sc_3mf::model::{
     BuildItem, Component, Matrix3D, MeshData, MeshResolution, Metadata, ModelDocument,
-    ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Vertex3,
+    ObjectPayload, ObjectResource, ObjectType, TriangleRef, Vertex3,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};

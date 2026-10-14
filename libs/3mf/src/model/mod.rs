@@ -10,7 +10,7 @@
 mod element_run;
 mod numbers;
 mod read;
-mod resource_ids;
+pub mod resource_ids;
 pub mod serialization;
 mod slice;
 #[cfg(test)]
@@ -21,7 +21,6 @@ mod types;
 mod write;
 
 pub use read::parse_model;
-pub use resource_ids::{ResourceId, ResourceIndex};
 pub use slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,

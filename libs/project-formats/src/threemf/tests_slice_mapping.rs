@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_3mf::model::{ModelDocument, ResourceId, SliceStackContent, parse_model, write_model};
+use sc_3mf::model::resource_ids::ResourceId;
+use sc_3mf::model::{ModelDocument, SliceStackContent, parse_model, write_model};
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 
@@ -44,8 +45,8 @@ fn maps_layers_to_slices_and_round_trips_through_3mf() {
     let mapped_slices = slices(&mapped);
     assert_eq!(mapped_slices.len(), 2);
 
-    // The solid layer carries the outer and hole rings as two closed
-    // polygons over one shared, deduplicated vertex list.
+    // The solid layer carries the outer and hole rings as 2 closed polygons
+    // over 1 shared, deduplicated vertex list.
     let solid_slice = &mapped_slices[0];
     assert_eq!(solid_slice.z_top, 0.05);
     assert_eq!(solid_slice.vertices.len(), 8);
@@ -71,7 +72,7 @@ fn maps_layers_to_slices_and_round_trips_through_3mf() {
 
 #[test]
 fn shared_vertices_are_interned_once_per_layer() {
-    // Two CCW triangles meeting at the origin: 5 distinct vertices.
+    // 2 CCW triangles meeting at the origin: 5 distinct vertices.
     let a = Polygon::new(ring(&[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]), vec![])
         .expect("triangle a is CCW");
     let b = Polygon::new(ring(&[(0.0, 0.0), (-10.0, 0.0), (0.0, -10.0)]), vec![])
@@ -87,8 +88,8 @@ fn shared_vertices_are_interned_once_per_layer() {
 
 #[test]
 fn consecutive_duplicate_points_emit_no_zero_length_segment() {
-    // The first vertex is repeated; the duplicate must be dropped so
-    // the closing segment is not zero length.
+    // The first vertex is repeated; the duplicate must be dropped so the
+    // closing segment is not zero length.
     let outer = ring(&[(0.0, 0.0), (0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]);
     let polygon = Polygon::new(outer, vec![]).expect("triangle is CCW");
     let layer = ContourLayer::new(0.05, vec![polygon]);
@@ -110,9 +111,9 @@ fn consecutive_duplicate_points_emit_no_zero_length_segment() {
 
 #[test]
 fn a_ring_that_collapses_below_three_vertices_yields_no_polygon() {
-    // A ring that degenerates to a single point cannot bound an area,
-    // so it produces no polygon and, having interned no vertices,
-    // leaves a void slice.
+    // A ring that degenerates to a single point cannot bound an area, so it
+    // produces no polygon and, having interned no vertices, leaves a void
+    // slice.
     let collapsed = ring(&[(5.0, 5.0), (5.0, 5.0), (5.0, 5.0)]);
     let polygon = Polygon::new_unchecked(collapsed, vec![]);
     let layer = ContourLayer::new(0.05, vec![polygon]);

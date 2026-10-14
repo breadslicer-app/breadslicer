@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Read, Seek};
 
+use sc_3mf::model::resource_ids::ResourceId;
 use sc_3mf::model::{
     Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    ResourceId, parse_model,
+    parse_model,
 };
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
 use sc_3mf::package::Package;

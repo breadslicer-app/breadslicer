@@ -6,7 +6,8 @@
 use std::io::Cursor;
 
 use sc_3mf::error::PackageWriteError;
-use sc_3mf::model::{ResourceId, parse_model};
+use sc_3mf::model::parse_model;
+use sc_3mf::model::resource_ids::ResourceId;
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::Package;
 

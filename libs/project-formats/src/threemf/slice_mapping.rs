@@ -6,23 +6,23 @@
 //! Mapping between the slicer's merged contour stack and the `sc-3mf`
 //! slice-extension vocabulary, both directions.
 //!
-//! Forward, a merged `ContourStack` becomes a `SliceStack`: within one
-//! layer every ring shares a single vertex list; identical points are
-//! stored once and consecutive duplicates are dropped so no zero-length
-//! segment is emitted. Each ring, outer or hole alike, becomes one
-//! closed `SlicePolygon`: the outer/hole grouping is a modelling concern
-//! with no meaning in the flat slice output.
+//! Forward, a merged `ContourStack` becomes a `SliceStack`: within a layer
+//! every ring shares a single vertex list; identical points are stored once and
+//! consecutive duplicates are dropped so no zero-length segment is emitted.
+//! Each ring, outer or hole alike, becomes 1 closed `SlicePolygon`: the
+//! outer/hole grouping is a modelling concern with no meaning in the flat slice
+//! output.
 //!
 //! Reverse, a `SliceStack` becomes a `ContourStack` for the viewer: each
-//! `SlicePolygon` returns as a lone `Polygon` with its winding preserved.
-//! The grouping is not rebuilt, because the nonzero-winding rasteriser
-//! fills the union of all rings identically either way.
+//! `SlicePolygon` returns as a lone `Polygon` with its winding preserved. The
+//! grouping is not rebuilt, because the nonzero-winding rasteriser fills the
+//! union of all rings identically either way.
 
 use std::collections::HashMap;
 
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
-    ResourceId, ResourceIndex, Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent,
-    SliceVertex,
+    Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent, SliceVertex,
 };
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, ContourStackError, Polygon};
 use sc_sl1cer::geom2d::Point2D;
@@ -30,16 +30,16 @@ use sc_sl1cer::geom2d::Point2D;
 /// Why mapping between a contour stack and a [`SliceStack`] failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SliceMappingError {
-    /// One slab top must be supplied per layer; the counts differ.
+    /// 1 slab top must be supplied per layer; the counts differ.
     LayerCountMismatch { layers: usize, tops: usize },
-    /// A slice polygon referenced a vertex index outside the slice's
-    /// vertex list.
+    /// A slice polygon referenced a vertex index outside the slice's vertex
+    /// list.
     VertexIndexOutOfRange { index: u32 },
     /// The reconstructed layers are not in strictly increasing Z, so they
     /// cannot form a contour stack.
     NonMonotoneLayers,
-    /// A reconstructed layer's Z is NaN or infinite, so the layers
-    /// cannot form a contour stack.
+    /// A reconstructed layer's Z is NaN or infinite, so the layers cannot form
+    /// a contour stack.
     NonFiniteLayerZ,
     /// The stack stores slicerefs to other model parts, which the reverse
     /// mapping does not follow; our own projects always inline slices.
@@ -76,10 +76,10 @@ impl std::fmt::Display for SliceMappingError {
 
 impl std::error::Error for SliceMappingError {}
 
-/// Map a merged, world-coordinate [`ContourStack`] to a [`SliceStack`]
-/// with `stack_id` and a bottom at Z = 0. `slab_tops` gives the top Z
-/// of each layer, index-aligned with the stack's layers; the centred
-/// sample Z the slicer used is not part of the output.
+/// Map a merged, world-coordinate [`ContourStack`] to a [`SliceStack`] with
+/// `stack_id` and a bottom at Z = 0. `slab_tops` gives the top Z of each layer,
+/// index-aligned with the stack's layers; the centred sample Z the slicer used
+/// is not part of the output.
 pub(crate) fn slice_stack_from_contours(
     stack: &ContourStack,
     slab_tops: &[f64],
@@ -106,13 +106,13 @@ pub(crate) fn slice_stack_from_contours(
     })
 }
 
-/// Map a [`SliceStack`] of inline slices back to a [`ContourStack`] for
-/// the viewer. Each `SlicePolygon` (one ring) returns as a lone
-/// [`Polygon`] with its vertex order, hence its winding, preserved, so
-/// the nonzero-winding rasteriser fills the union of rings the same way
-/// the original grouped polygons did. Each layer takes the slice's
-/// absolute `z_top` as its Z: the slicer's centred sample Z is not
-/// persisted, and the viewer reads layer tops from the schedule anyway.
+/// Map a [`SliceStack`] of inline slices back to a [`ContourStack`] for the
+/// viewer. Each `SlicePolygon` (1 ring) returns as a lone [`Polygon`] with its
+/// vertex order, hence its winding, preserved, so the nonzero-winding
+/// rasteriser fills the union of rings the same way the original grouped
+/// polygons did. Each layer takes the slice's absolute `z_top` as its Z: the
+/// slicer's centred sample Z is not persisted, and the viewer reads layer tops
+/// from the schedule anyway.
 pub(crate) fn contours_from_slice_stack(
     stack: &SliceStack,
 ) -> Result<ContourStack, SliceMappingError> {
@@ -129,9 +129,9 @@ pub(crate) fn contours_from_slice_stack(
     })
 }
 
-/// Rebuild one [`ContourLayer`] from a slice. Rings that collapse to
-/// fewer than 3 distinct vertices bound no area and are dropped, matching
-/// the forward emit; a void slice yields a layer with no polygons.
+/// Rebuild a [`ContourLayer`] from a slice. Rings that collapse to fewer than 3
+/// distinct vertices bound no area and are dropped, matching the forward emit;
+/// a void slice yields a layer with no polygons.
 fn layer_from_slice(slice: &Slice) -> Result<ContourLayer, SliceMappingError> {
     let mut polygons = Vec::new();
     for poly in &slice.polygons {
@@ -142,10 +142,10 @@ fn layer_from_slice(slice: &Slice) -> Result<ContourLayer, SliceMappingError> {
     Ok(ContourLayer::new(slice.z_top, polygons))
 }
 
-/// Reconstruct a ring's points by walking the segment chain from the
-/// start vertex. A trailing point equal to the first closes the loop and
-/// is dropped, mirroring the forward mapper's cyclic dedup. Returns
-/// `None` when fewer than 3 distinct vertices remain.
+/// Reconstruct a ring's points by walking the segment chain from the start
+/// vertex. A trailing point equal to the first closes the loop and is dropped,
+/// mirroring the forward mapper's cyclic dedup. Returns `None` when fewer than
+/// 3 distinct vertices remain.
 fn ring_from_slice_polygon(
     vertices: &[SliceVertex],
     poly: &SlicePolygon,
@@ -173,8 +173,8 @@ fn point_at(vertices: &[SliceVertex], index: ResourceIndex) -> Result<Point2D, S
     Ok(Point2D::new(vertex.x, vertex.y))
 }
 
-/// Build one [`Slice`] from a contour layer. A layer with no emittable
-/// polygon yields a void slice (no vertices, no polygons).
+/// Build a [`Slice`] from a contour layer. A layer with no emittable polygon
+/// yields a void slice (no vertices, no polygons).
 fn slice_from_layer(layer: &ContourLayer, z_top: f64) -> Slice {
     let mut vertices = LayerVertices::default();
     let mut polygons = Vec::new();
@@ -212,8 +212,7 @@ impl LayerVertices {
         self.vertices
     }
 
-    /// Return this point's index in the shared list, inserting it if it
-    /// is new.
+    /// Return this point's index in the shared list, inserting it if it is new.
     fn intern(&mut self, p: Point2D) -> ResourceIndex {
         let key = point_bits(p);
         let index = *self.index_of.entry(key).or_insert_with(|| {
@@ -224,11 +223,10 @@ impl LayerVertices {
         resource_index(index)
     }
 
-    /// Build one closed [`SlicePolygon`] from a ring. Consecutive
-    /// duplicate points (including a final point equal to the first)
-    /// are dropped before interning; a ring that collapses to fewer
-    /// than 3 distinct vertices cannot bound an area and yields no
-    /// polygon.
+    /// Build a closed [`SlicePolygon`] from a ring. Consecutive duplicate
+    /// points (including a final point equal to the first) are dropped before
+    /// interning; a ring that collapses to fewer than 3 distinct vertices
+    /// cannot bound an area and yields no polygon.
     fn ring_polygon(&mut self, ring: &ClosedRing) -> Option<SlicePolygon> {
         let points = distinct_consecutive(ring.vertices());
         if points.len() < 3 {
@@ -246,8 +244,8 @@ impl LayerVertices {
     }
 }
 
-/// The ring's points with consecutive duplicates removed, treating the
-/// list as cyclic so a trailing point equal to the first is dropped.
+/// The ring's points with consecutive duplicates removed, treating the list as
+/// cyclic so a trailing point equal to the first is dropped.
 fn distinct_consecutive(points: &[Point2D]) -> Vec<Point2D> {
     let mut out: Vec<Point2D> = Vec::with_capacity(points.len());
     for &p in points {
@@ -261,9 +259,9 @@ fn distinct_consecutive(points: &[Point2D]) -> Vec<Point2D> {
     out
 }
 
-/// A vertex index as a [`ResourceIndex`]. A slice layer holds far fewer
-/// than the 2^31 vertices the 3MF index type allows, so the conversion
-/// cannot fail in practice.
+/// A vertex index as a [`ResourceIndex`]. A slice layer holds far fewer than
+/// the 2^31 vertices the 3MF index type allows, so the conversion cannot fail
+/// in practice.
 fn resource_index(value: u32) -> ResourceIndex {
     ResourceIndex::new(value).expect("a slice layer holds far fewer than 2^31 vertices")
 }
@@ -310,8 +308,8 @@ mod reverse_mapping_tests {
         let back = contours_from_slice_stack(&mapped).expect("the stack maps back");
 
         assert_eq!(back.layers().len(), 2);
-        // The layer Z is the persisted slab top (here equal to the sample
-        // Z, so the round trip is an identity).
+        // The layer Z is the persisted slab top (here equal to the sample Z, so
+        // the round trip is an identity).
         assert_eq!(back.layers()[0].z_mm(), 1.0);
         assert_eq!(back.layers()[1].z_mm(), 2.0);
         assert_eq!(back.layers()[0].polygons().len(), 1);
@@ -342,8 +340,8 @@ mod reverse_mapping_tests {
             2,
             "the outer and the hole return as two lone polygons"
         );
-        // The forward mapper emits the outer before the holes, and the
-        // reverse preserves winding: outer stays CCW, hole stays CW.
+        // The forward mapper emits the outer before the holes, and the reverse
+        // preserves winding: outer stays CCW, hole stays CW.
         assert_eq!(layer.polygons()[0].outer().winding(), Some(Winding::Ccw));
         assert_eq!(layer.polygons()[1].outer().winding(), Some(Winding::Cw));
         assert!(layer.polygons()[0].holes().is_empty());
@@ -404,9 +402,8 @@ mod reverse_mapping_tests {
 
     #[test]
     fn errors_on_a_non_finite_slice_z() {
-        // Unreachable from file bytes (the XML layer rejects a
-        // non-finite ztop at parse), but the mapping must stay total
-        // for in-memory callers.
+        // Unreachable from file bytes (the XML layer rejects a non-finite ztop
+        // at parse), but the mapping must stay total for in-memory callers.
         let stack = SliceStack {
             id: ResourceId::MIN,
             z_bottom: 0.0,

@@ -3,15 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Unit tests for the slice-extension layer: document round trips,
-//! parser validation, and the write-time invariants (monotone z,
-//! polygon closure, planar transforms on sliced objects).
+//! Unit tests for the slice-extension layer: document round trips, parser
+//! validation, and the write-time invariants (monotone z, polygon closure,
+//! planar transforms on sliced objects).
 
 use crate::error::{ModelParseError, ModelWriteError};
+use crate::model::resource_ids::{ResourceId, ResourceIndex};
 use crate::model::{
     Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    ResourceId, ResourceIndex, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack,
-    SliceStackContent, SliceVertex, TriangleRef, Vertex3, parse_model, write_model,
+    Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent, SliceVertex,
+    TriangleRef, Vertex3, parse_model, write_model,
 };
 
 fn id(value: u32) -> ResourceId {
@@ -461,9 +462,9 @@ mod write_validation_tests {
 
     #[test]
     fn infinite_zbottom_reports_the_zbottom_not_the_first_slice() {
-        // With a +inf zbottom the first slice also fails the
-        // increasing-z comparison; the finiteness check runs first and
-        // names the actual defect.
+        // With a +inf zbottom the first slice also fails the increasing-z
+        // comparison; the finiteness check runs first and names the actual
+        // defect.
         let source = document(
             vec![inline_stack(1, f64::INFINITY, vec![square_slice(0.5)])],
             vec![sliced_object(2, 1)],
@@ -687,11 +688,11 @@ mod planar_transform_tests {
 mod numeric_round_trip_tests {
     use super::*;
 
-    /// Slice vertices, segment indices and ztop are emitted straight to
-    /// the sink with ryu/itoa. Values that stress the shortest-decimal
-    /// formatter (round ztop, negative zero, a long fractional) must
-    /// survive write -> parse bit-exact, for the same fingerprint reason
-    /// as the mesh coordinates.
+    /// Slice vertices, segment indices and ztop are emitted straight to the
+    /// sink with ryu/itoa. Values that stress the shortest-decimal formatter
+    /// (round ztop, negative zero, a long fractional) must survive write ->
+    /// parse bit-exact, for the same fingerprint reason as the mesh
+    /// coordinates.
     #[test]
     fn slice_coordinates_round_trip_bit_exact() {
         let vertices = vec![
@@ -744,10 +745,10 @@ mod numeric_round_trip_tests {
         assert_eq!(ends, vec![1, 2, 0]);
     }
 
-    /// A stack with enough layers to cross the writer's parallel
-    /// threshold, so slice fragments are emitted concurrently. Every
-    /// layer must round-trip bit-exact, and the strictly increasing
-    /// ztop chain must be preserved in order.
+    /// A stack with enough layers to cross the writer's parallel threshold, so
+    /// slice fragments are emitted concurrently. Every layer must round-trip
+    /// bit-exact, and the strictly increasing ztop chain must be preserved in
+    /// order.
     #[test]
     fn many_slices_round_trip_through_the_parallel_path() {
         let count = 100u32;

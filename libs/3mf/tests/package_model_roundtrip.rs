@@ -3,16 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Full-container integration test: build a document
-//! programmatically, serialize it, wrap it in an OPC package, write
-//! the package to bytes, read everything back, and compare.
+//! Full-container integration test: build a document programmatically,
+//! serialize it, wrap it in an OPC package, write the package to bytes, read
+//! everything back, and compare.
 
 use std::io::Cursor;
 
+use sc_3mf::model::resource_ids::{ResourceId, ResourceIndex};
 use sc_3mf::model::{
     BuildItem, Component, Matrix3D, MeshData, MeshResolution, Metadata, ModelDocument,
-    ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit,
-    Vertex3, parse_model, write_model,
+    ObjectPayload, ObjectResource, ObjectType, TriangleRef, Unit, Vertex3, parse_model,
+    write_model,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -170,9 +171,8 @@ fn document_survives_the_full_package_round_trip() {
 
 #[test]
 fn rotation_heavy_transforms_survive_the_round_trip_bitwise() {
-    // A transform with values on every row, including negatives and
-    // values needing many decimal digits, to pin the matrix
-    // serialization format.
+    // A transform with values on every row, including negatives and values
+    // needing many decimal digits, to pin the matrix serialization format.
     let matrix = Matrix3D([
         std::f64::consts::FRAC_1_SQRT_2,
         -std::f64::consts::FRAC_1_SQRT_2,

@@ -6,17 +6,17 @@
 //! Unit tests for the model document parser and serializer.
 
 use crate::error::ModelParseError;
+use crate::model::resource_ids::{ResourceId, ResourceIndex};
 use crate::model::{
     BuildItem, Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource,
-    ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, parse_model, write_model,
+    ObjectType, TriangleRef, Unit, Vertex3, parse_model, write_model,
 };
 use crate::names::{PRODUCTION_NS, SLICE_NS};
 
-/// The core-spec appendix metadata example (ASCII-adjusted): vendor
-/// metadata with preserve flags, a base-materials group, a mesh
-/// object with default properties and a metadata group, a components
-/// object, and a transformed build item carrying its own metadata
-/// group.
+/// The core-spec appendix metadata example (ASCII-adjusted): vendor metadata
+/// with preserve flags, a base-materials group, a mesh object with default
+/// properties and a metadata group, a components object, and a transformed
+/// build item carrying its own metadata group.
 const SPEC_METADATA_EXAMPLE: &str = include_str!("../tests/fixtures/spec/metadata_example.model");
 
 fn id(value: u32) -> ResourceId {
@@ -130,8 +130,8 @@ mod conformance_tests {
 
     #[test]
     fn required_slice_extension_is_accepted() {
-        // The slice namespace is in the parser's supported set, so
-        // requiring it no longer refuses the document.
+        // The slice namespace is in the parser's supported set, so requiring it
+        // no longer refuses the document.
         let xml = format!(
             r#"<model unit="millimeter" requiredextensions="s" xmlns:s="{SLICE_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#,
         );
@@ -172,9 +172,8 @@ mod conformance_tests {
 
     #[test]
     fn non_finite_vertex_coordinates_are_rejected() {
-        // The spec's ST_Number is a decimal pattern; "NaN" and "inf"
-        // are not expressible in it even though Rust's f64 parser
-        // accepts them.
+        // The spec's ST_Number is a decimal pattern; "NaN" and "inf" are not
+        // expressible in it even though Rust's f64 parser accepts them.
         for bad in ["NaN", "inf", "-inf", "infinity"] {
             let body = format!(
                 r#"<resources><object id="1"><mesh><vertices><vertex x="{bad}" y="0" z="0"/></vertices><triangles/></mesh></object></resources><build/>"#,
@@ -245,8 +244,8 @@ mod reference_and_id_tests {
 
     #[test]
     fn component_referencing_its_own_object_is_rejected() {
-        // An object joins the reference set only once its own element
-        // has been parsed, so it cannot name itself.
+        // An object joins the reference set only once its own element has been
+        // parsed, so it cannot name itself.
         let body = r#"<resources><object id="1"><components><component objectid="1"/></components></object></resources><build/>"#;
         let err = parse(&minimal_model(body)).unwrap_err();
         assert!(matches!(
@@ -257,8 +256,7 @@ mod reference_and_id_tests {
 
     #[test]
     fn build_items_resolve_objects_declared_at_any_position() {
-        // Every declared object stays reachable, not just the most
-        // recent one.
+        // Every declared object stays reachable, not just the most recent one.
         let body = r#"<resources><object id="4"><components/></object><object id="5"><components/></object><object id="6"><components/></object></resources><build><item objectid="4"/><item objectid="6"/><item objectid="5"/></build>"#;
         let document = parse(&minimal_model(body)).expect("every item resolves");
         let ids: Vec<u32> = document.build.iter().map(|i| i.object_id.get()).collect();
@@ -404,13 +402,12 @@ mod numeric_round_trip_tests {
         ResourceIndex::new(value).expect("valid index")
     }
 
-    /// The mesh writer emits vertex and triangle elements straight to
-    /// the sink with ryu/itoa. Coordinates that stress the
-    /// shortest-decimal formatter (round integers, negative zero, a long
-    /// fractional, f32-origin values) must survive write -> parse with
-    /// their exact f64 bits: the slice-input fingerprint hashes those
-    /// bits, so a formatter that did not round-trip exactly would
-    /// silently stale a project's slices on reopen.
+    /// The mesh writer emits vertex and triangle elements straight to the sink
+    /// with ryu/itoa. Coordinates that stress the shortest-decimal formatter
+    /// (round integers, negative zero, a long fractional, f32-origin values)
+    /// must survive write -> parse with their exact f64 bits: the slice-input
+    /// fingerprint hashes those bits, so a formatter that did not round-trip
+    /// exactly would silently stale a project's slices on reopen.
     #[test]
     fn mesh_coordinates_round_trip_bit_exact() {
         let vertices = vec![
@@ -476,10 +473,10 @@ mod numeric_round_trip_tests {
         }
     }
 
-    /// A mesh large enough to cross the writer's parallel threshold, so
-    /// the concurrent chunk path runs. Every vertex bit must still
-    /// survive write -> parse, including the negative zeros and messy
-    /// fractionals sprinkled through it.
+    /// A mesh large enough to cross the writer's parallel threshold, so the
+    /// concurrent chunk path runs. Every vertex bit must still survive write ->
+    /// parse, including the negative zeros and messy fractionals sprinkled
+    /// through it.
     #[test]
     fn large_mesh_round_trips_through_the_parallel_path() {
         let n = 10_000u32;

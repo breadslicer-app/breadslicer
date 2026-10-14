@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use sc_3mf::model::ResourceId;
+use sc_3mf::model::resource_ids::ResourceId;
 use sc_3mf::names::MUST_PRESERVE_REL_TYPE;
 use sc_3mf::package::{Package, PartName, Relationship};
 use sc_mesh_core::indexed_mesh::{DeclaredFacetNormals, GeometryFingerprint, RestoreRefusal};

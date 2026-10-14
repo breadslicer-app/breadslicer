@@ -632,7 +632,7 @@ mod parser_route_tests {
 #[cfg(test)]
 mod slice_run_tests {
     use super::*;
-    use crate::model::ResourceId;
+    use crate::model::resource_ids::ResourceId;
 
     #[test]
     fn reads_a_run_of_two_dimensional_vertices() {
