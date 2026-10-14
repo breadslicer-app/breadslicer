@@ -65,6 +65,8 @@ const SLICE_PART_STACK_ID: usize = 1;
 ///   the schedule in `options`.
 /// - [`WriterError::SceneBakeFailed`] when a leaf cannot be baked (dangling id,
 ///   non-mesh node, invalid transform chain).
+/// - [`WriterError::MalformedPartName`] when a slice part name that the writer
+///   built breaks the part-name rules.
 /// - Path validation and I/O errors shared with
 ///   [`write_slice`](crate::write_slice).
 pub fn write_scene_slices(
@@ -130,8 +132,7 @@ pub fn write_scene_slices(
         let slice_document = slice_part_document(leaf_slices.stack().layers(), &slab_tops);
         let mut slice_xml = Vec::new();
         write_model(&slice_document, &mut slice_xml)?;
-        let part = PartName::new(&slice_part_name)
-            .expect("generated /2D/ part names satisfy the OPC grammar");
+        let part = checked_part_name(&slice_part_name)?;
         package.add_part(part, MODEL_PART_CONTENT_TYPE, slice_xml)?;
         package.add_part_relationship(
             &root_part,
@@ -158,6 +159,15 @@ pub fn write_scene_slices(
     package.write_to(&mut buffer)?;
     fs::write(output, buffer.get_ref())?;
     Ok(())
+}
+
+/// Returns `name`, a part name that the writer built, as a [`PartName`], or
+/// [`WriterError::MalformedPartName`] when it breaks the part-name rules.
+fn checked_part_name(name: &str) -> Result<PartName, WriterError> {
+    PartName::new(name).map_err(|source| WriterError::MalformedPartName {
+        name: name.to_string(),
+        source,
+    })
 }
 
 /// A `/2D/` slice part: a core model document holding exactly 1 inline-slices
@@ -248,4 +258,30 @@ fn resource_id(raw: usize) -> ResourceId {
 fn resource_index(raw: usize) -> ResourceIndex {
     let raw = u32::try_from(raw).expect("slice vertex counts stay far below 2^31");
     ResourceIndex::new(raw).expect("indices below 2^31 are always valid")
+}
+
+#[cfg(test)]
+mod checked_part_name_tests {
+    use super::*;
+    use sc_3mf::error::MalformedPartNameError;
+
+    #[test]
+    fn a_malformed_name_gives_the_name_and_the_broken_rule() {
+        let result = checked_part_name("/2D//slices-1.model");
+        assert!(
+            matches!(
+                &result,
+                Err(WriterError::MalformedPartName { name, source })
+                    if name == "/2D//slices-1.model"
+                        && *source == MalformedPartNameError::EmptySegment
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_name_gives_the_part_name() {
+        let name = checked_part_name("/2D/slices-1.model").expect("the name is valid");
+        assert_eq!(name.as_str(), "/2D/slices-1.model");
+    }
 }

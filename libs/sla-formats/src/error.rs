@@ -6,15 +6,15 @@
 //! Typed errors for the public writer API.
 //!
 //! [`WriterError`] aggregates every failure mode of
-//! [`write_slice`](crate::write_slice): an output path that does
-//! not match the format's directory-vs-file expectation, a writer
-//! that has not yet landed, or an I/O failure under the hood.
+//! [`write_slice`](crate::write_slice): an output path that does not match the
+//! format's directory-vs-file expectation, a writer that has not yet landed, or
+//! an I/O failure under the hood.
 
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-use sc_3mf::error::{ModelWriteError, PackageWriteError};
+use sc_3mf::error::{MalformedPartNameError, ModelWriteError, PackageWriteError};
 use sc_scene::SceneError;
 use sc_scene::node::NodeId;
 
@@ -22,13 +22,13 @@ use crate::format::Format;
 use crate::preview::PreviewSizeMismatch;
 use crate::printer_file_format::PrinterFileFormat;
 
-/// How writing one printer file can fail, before the dispatcher's
-/// own vocabulary of output paths and unimplemented formats. Every
-/// container's writer reports these 3 and nothing wider.
+/// How writing a printer file can fail, before the dispatcher's own vocabulary
+/// of output paths and unimplemented formats. Every container's writer reports
+/// these 3 and nothing wider.
 #[derive(Debug)]
 pub enum WriteFailure {
-    /// The print program and the contour stack describe different
-    /// numbers of layers.
+    /// The print program and the contour stack describe different numbers of
+    /// layers.
     LayerCountMismatch {
         program_layers: usize,
         stack_layers: usize,
@@ -78,48 +78,44 @@ impl From<PreviewSizeMismatch> for WriteFailure {
 
 #[derive(Debug)]
 pub enum WriterError {
-    /// The format's writer has not yet landed. Every variant of
-    /// [`Format`] starts here and is replaced by a working writer
-    /// in a follow-on commit.
+    /// The format's writer has not yet landed. Every variant of [`Format`]
+    /// starts here and is replaced by a working writer in a follow-on commit.
     NotImplemented { format: Format },
     /// The printer format's writer has not yet landed.
     PrinterFormatNotImplemented { format: PrinterFileFormat },
     /// The print program and the contour stack handed to
-    /// [`write_printer_file`](crate::write_printer_file) describe
-    /// different numbers of layers.
+    /// [`write_printer_file`](crate::write_printer_file) describe different
+    /// numbers of layers.
     ProgramLayerCountMismatch {
         program_layers: usize,
         stack_layers: usize,
     },
-    /// A preview handed to
-    /// [`write_printer_file`](crate::write_printer_file) is not the
-    /// size the chosen container fixes.
+    /// A preview handed to [`write_printer_file`](crate::write_printer_file) is
+    /// not the size the chosen container fixes.
     PreviewSizeMismatch(PreviewSizeMismatch),
     /// An underlying filesystem operation failed.
     Io(io::Error),
-    /// The output path is unsuitable for the chosen format and the
-    /// mismatch does not fit a more specific variant.
+    /// The output path is unsuitable for the chosen format and the mismatch
+    /// does not fit a more specific variant.
     OutputPathInvalid { reason: String },
-    /// A directory-target format was pointed at an existing path
-    /// that is not a directory.
+    /// A directory-target format was pointed at an existing path that is not a
+    /// directory.
     OutputPathExistsAndIsNotADirectory { path: PathBuf },
-    /// A directory-target format was pointed at an existing
-    /// directory that already contains files; we refuse to clobber.
+    /// A directory-target format was pointed at an existing directory that
+    /// already contains files; we refuse to clobber.
     OutputPathExistsAndIsNotEmpty { path: PathBuf },
-    /// The format's encoder rejected our request for reasons other
-    /// than I/O (bad parameter, malformed text chunk, ...).
+    /// The format's encoder rejected our request for reasons other than I/O
+    /// (bad parameter, malformed text chunk, ...).
     EncodingFailed { format: Format, reason: String },
     /// The format encodes per-model data that a merged
-    /// [`ContourStack`](sc_sl1cer::contour::ContourStack) no longer
-    /// carries, so [`write_slice`](crate::write_slice) cannot
-    /// produce it; callers must go through
-    /// [`write_scene_slices`](crate::write_scene_slices).
+    /// [`ContourStack`](sc_sl1cer::contour::ContourStack) no longer carries, so
+    /// [`write_slice`](crate::write_slice) cannot produce it; callers must go
+    /// through [`write_scene_slices`](crate::write_scene_slices).
     SceneContextRequired { format: Format },
-    /// The per-leaf slices list is empty: there is nothing to
-    /// package.
+    /// The per-leaf slices list is empty: there is nothing to package.
     NoModelsToWrite,
-    /// One leaf's contour stack does not span the layer schedule's
-    /// grid, so layers cannot be paired with their slab tops.
+    /// A leaf's contour stack does not span the layer schedule's grid, so
+    /// layers cannot be paired with their slab tops.
     LayerGridMismatch {
         leaf: NodeId,
         schedule_layers: usize,
@@ -131,6 +127,13 @@ pub enum WriterError {
     ModelSerializationFailed(ModelWriteError),
     /// Assembling or compressing the 3MF package failed.
     PackageWriteFailed(PackageWriteError),
+    /// A slice part name built from a leaf ordinal is not a valid 3MF part
+    /// name. A decimal ordinal keeps the name valid, so only a change of how
+    /// the name is built produces it.
+    MalformedPartName {
+        name: String,
+        source: MalformedPartNameError,
+    },
 }
 
 impl fmt::Display for WriterError {
@@ -194,6 +197,9 @@ impl fmt::Display for WriterError {
             Self::PackageWriteFailed(err) => {
                 write!(f, "writing the 3MF package failed: {err}")
             }
+            Self::MalformedPartName { name, source } => {
+                write!(f, "\"{name}\" is not a valid 3MF part name: {source}")
+            }
         }
     }
 }
@@ -206,6 +212,7 @@ impl std::error::Error for WriterError {
             Self::ModelSerializationFailed(err) => Some(err),
             Self::PackageWriteFailed(err) => Some(err),
             Self::PreviewSizeMismatch(err) => Some(err),
+            Self::MalformedPartName { source, .. } => Some(source),
             Self::NotImplemented { .. }
             | Self::PrinterFormatNotImplemented { .. }
             | Self::ProgramLayerCountMismatch { .. }
@@ -482,6 +489,23 @@ mod writer_error_tests {
     fn source_returns_inner_for_wrapped_3mf_and_scene_errors() {
         let bake = WriterError::SceneBakeFailed(SceneError::DanglingNodeId { id: mint_node_id() });
         assert!(bake.source().is_some());
+    }
+
+    #[test]
+    fn malformed_part_name_display_and_source() {
+        let err = WriterError::MalformedPartName {
+            name: "/2D//slices-1.model".to_string(),
+            source: MalformedPartNameError::EmptySegment,
+        };
+        assert_eq!(
+            err.to_string(),
+            "\"/2D//slices-1.model\" is not a valid 3MF part name: part name contains an empty \
+             segment",
+        );
+        assert_eq!(
+            err.source().map(ToString::to_string),
+            Some("part name contains an empty segment".to_string()),
+        );
     }
 
     #[test]
