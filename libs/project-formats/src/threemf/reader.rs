@@ -22,7 +22,7 @@ use sc_sl1cer::contour::ContourStack;
 use crate::error::ReadThreeMfProjectError;
 use crate::messages::ReadProjectWarning;
 use crate::payload::{EmbeddedProfile, ProjectPayload};
-use crate::read::LoadedProject;
+use crate::read::loaded_project::LoadedProject;
 use crate::threemf::foreign::detect_foreign_dialects;
 use crate::threemf::names::{
     MATERIAL_EXTENSION_PART_PREFIX, MATERIAL_PROFILE_PART_PREFIX, PRINTER_PROFILE_PART_PREFIX,
