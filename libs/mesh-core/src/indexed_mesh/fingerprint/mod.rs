@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-pub(super) mod geometry_fingerprint;
-
-pub use geometry_fingerprint::GeometryFingerprint;
+pub mod geometry_fingerprint;
 
 use sha2::{Digest, Sha384};
 
 use super::mesh::IndexedMesh;
+
+use geometry_fingerprint::GeometryFingerprint;
 
 impl IndexedMesh {
     /// Passes the canonical byte encoding of the geometry to `sink`: the vertex

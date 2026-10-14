@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! The fingerprint of a mesh's geometry.
+
 use newtypes::newtype_array_readonly;
 
 // SHA-384 digest of the bytes from `IndexedMesh::encode_geometry`.
