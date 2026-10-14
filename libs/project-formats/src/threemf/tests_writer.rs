@@ -4,25 +4,20 @@
  */
 
 use std::io::Cursor;
-use std::sync::Arc;
 
 use sc_3mf::error::PackageWriteError;
 use sc_3mf::model::{ResourceId, parse_model};
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE};
-use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::transform::Transform3D;
-use sc_mesh_fixtures::unit_cube_mesh;
-use sc_print_primitives::{MaterialId, PrinterId};
-use sc_scene::Scene;
-use sc_scene::node::LeafPayload;
-use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
-use sc_sl1cer::geom2d::Point2D;
+use sc_3mf::package::Package;
 
 use crate::error::WriteThreeMfProjectError;
 use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 use crate::slices::PlateSlices;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
 use crate::threemf::slice_mapping::slice_stack_from_contours;
+use crate::threemf::test_fixtures::{
+    cube_scene, full_payload, material_id, part, plate_slices, printer_id,
+};
 use crate::threemf::writer::{write_threemf_project, write_threemf_project_with_progress};
 use crate::threemf::{
     PROFILE_PART_CONTENT_TYPE, PROJECT_PART_CONTENT_TYPE, PROJECT_PART_NAME, PROJECT_REL_TYPE,
@@ -30,80 +25,11 @@ use crate::threemf::{
 };
 use crate::write::WriteProgress;
 
-fn printer_id(raw: &str) -> PrinterId {
-    PrinterId::new(raw).expect("test id is a valid slug")
-}
-
-fn material_id(raw: &str) -> MaterialId {
-    MaterialId::new(raw).expect("test id is a valid slug")
-}
-
-fn cube_scene() -> Scene {
-    let mut scene = Scene::new();
-    let leaf = scene
-        .add_leaf(
-            None,
-            Transform3D::Identity,
-            LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-        )
-        .expect("adding an inline mesh leaf succeeds");
-    scene
-        .add_root(leaf)
-        .expect("a fresh leaf can become a root");
-    scene
-}
-
-/// Returns a CCW triangle as 1 solid layer plus 1 empty layer, paired with the
-/// top Z of each layer.
-fn plate_slices() -> PlateSlices {
-    let outer = ClosedRing::new(
-        [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
-            .into_iter()
-            .map(|(x, y)| Point2D::new(x, y))
-            .collect(),
-    );
-    let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
-    let solid = ContourLayer::new(0.025, vec![triangle]);
-    let void = ContourLayer::new(0.075, vec![]);
-    let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
-    PlateSlices {
-        contours,
-        slab_tops: vec![0.05, 0.10],
-    }
-}
-
-fn full_payload() -> ProjectPayload {
-    ProjectPayload {
-        printer: Some(printer_id("test-printer")),
-        resin: Some(material_id("test-resin")),
-        first_layer_height: None,
-        output_format: None,
-        embedded: vec![
-            EmbeddedProfile::Printer {
-                id: printer_id("test-printer"),
-                bytes: b"kind = \"printer\"".to_vec(),
-            },
-            EmbeddedProfile::Material {
-                id: material_id("test-resin"),
-                bytes: b"kind = \"material\"".to_vec(),
-            },
-            EmbeddedProfile::MaterialExtension {
-                id: material_id("test-resin"),
-                bytes: b"kind = \"extension\"".to_vec(),
-            },
-        ],
-    }
-}
-
 fn write_and_reopen(payload: &ProjectPayload, embed: EmbedProfiles) -> Package {
     let mut bytes = Vec::new();
     write_threemf_project(&cube_scene(), payload, embed, None, None, &mut bytes)
         .expect("the project writes cleanly");
     Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
-}
-
-fn part(name: &str) -> PartName {
-    PartName::new(name).expect("test part name is valid")
 }
 
 mod package_shape_tests {
