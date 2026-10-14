@@ -155,7 +155,7 @@ fn assemble_package(
     let model_part = PartName::from(DEFAULT_MODEL_PART_NAME);
     package.add_part(model_part, MODEL_PART_CONTENT_TYPE, model_xml)?;
 
-    let project_part = known_part_name(PROJECT_PART_NAME);
+    let project_part = PartName::from(PROJECT_PART_NAME);
     let payload_toml = serialize_payload(payload, slice_fingerprint)?;
     package.add_part(
         project_part,
@@ -172,30 +172,30 @@ fn assemble_package(
     package.add_root_relationship(Relationship {
         id: rel_ids.next(),
         rel_type: PROJECT_REL_TYPE.to_string(),
-        target: PROJECT_PART_NAME.to_string(),
+        target: PROJECT_PART_NAME.as_str().to_string(),
     });
     package.add_root_relationship(Relationship {
         id: rel_ids.next(),
         rel_type: MUST_PRESERVE_REL_TYPE.to_string(),
-        target: PROJECT_PART_NAME.to_string(),
+        target: PROJECT_PART_NAME.as_str().to_string(),
     });
     add_declared_facet_normals_parts(&mut package, mesh_objects)?;
 
     if let Some(slice_xml) = slice_xml {
         package.add_part(
-            known_part_name(SLICE_PART_NAME),
+            PartName::from(SLICE_PART_NAME),
             MODEL_PART_CONTENT_TYPE,
             slice_xml,
         )?;
         package.add_root_relationship(Relationship {
             id: rel_ids.next(),
             rel_type: SLICE_REL_TYPE.to_string(),
-            target: SLICE_PART_NAME.to_string(),
+            target: SLICE_PART_NAME.as_str().to_string(),
         });
         package.add_root_relationship(Relationship {
             id: rel_ids.next(),
             rel_type: MUST_PRESERVE_REL_TYPE.to_string(),
-            target: SLICE_PART_NAME.to_string(),
+            target: SLICE_PART_NAME.as_str().to_string(),
         });
     }
 
@@ -240,9 +240,9 @@ impl RelationshipIds {
 }
 
 /// Builds a package part name from a string that is statically known to be
-/// well-formed: the module's part-name constants, and profile part names
-/// assembled from already-validated id slugs. A malformed name here is a
-/// programming error, not a runtime input, so it is not a write failure mode.
+/// well-formed: profile part names assembled from already-validated id slugs. A
+/// malformed name here is a programming error, not a runtime input, so it is
+/// not a write failure mode.
 fn known_part_name(name: &str) -> PartName {
     PartName::new(name).expect("part name built from a known-good source is well-formed")
 }
@@ -402,7 +402,7 @@ mod assemble_package_tests {
             Some(&b"model"[..])
         );
         assert_eq!(
-            package.part_data(&part(SLICE_PART_NAME)),
+            package.part_data(&part(SLICE_PART_NAME.as_str())),
             Some(&b"slices"[..])
         );
     }
@@ -423,10 +423,10 @@ mod assemble_package_tests {
                     START_PART_REL_TYPE,
                     DEFAULT_MODEL_PART_NAME.as_str()
                 ),
-                ("rel-2", PROJECT_REL_TYPE, PROJECT_PART_NAME),
-                ("rel-3", MUST_PRESERVE_REL_TYPE, PROJECT_PART_NAME),
-                ("rel-4", SLICE_REL_TYPE, SLICE_PART_NAME),
-                ("rel-5", MUST_PRESERVE_REL_TYPE, SLICE_PART_NAME),
+                ("rel-2", PROJECT_REL_TYPE, PROJECT_PART_NAME.as_str()),
+                ("rel-3", MUST_PRESERVE_REL_TYPE, PROJECT_PART_NAME.as_str()),
+                ("rel-4", SLICE_REL_TYPE, SLICE_PART_NAME.as_str()),
+                ("rel-5", MUST_PRESERVE_REL_TYPE, SLICE_PART_NAME.as_str()),
                 (
                     "rel-6",
                     MUST_PRESERVE_REL_TYPE,
@@ -452,7 +452,7 @@ mod assemble_package_tests {
         let names: Vec<&str> = package.part_names().map(PartName::as_str).collect();
         assert_eq!(
             names,
-            vec![DEFAULT_MODEL_PART_NAME.as_str(), PROJECT_PART_NAME]
+            vec![DEFAULT_MODEL_PART_NAME.as_str(), PROJECT_PART_NAME.as_str()]
         );
         assert_eq!(package.root_relationships().len(), 3);
     }

@@ -44,7 +44,7 @@ mod package_shape_tests {
             Some(MODEL_PART_CONTENT_TYPE),
         );
         assert_eq!(
-            package.part_content_type(&part(PROJECT_PART_NAME)),
+            package.part_content_type(&part(PROJECT_PART_NAME.as_str())),
             Some(PROJECT_PART_CONTENT_TYPE),
         );
         for name in [
@@ -83,7 +83,7 @@ mod package_shape_tests {
     fn the_project_part_parses_back_to_the_references() {
         let package = write_and_reopen(&full_payload(), EmbedProfiles::Yes);
         let bytes = package
-            .part_data(&part(PROJECT_PART_NAME))
+            .part_data(&part(PROJECT_PART_NAME.as_str()))
             .expect("the project part exists");
         let text = str::from_utf8(bytes).expect("the project part is UTF-8");
         assert_eq!(
@@ -102,7 +102,7 @@ mod package_shape_tests {
     fn an_empty_payload_still_writes_a_versioned_project_part() {
         let package = write_and_reopen(&ProjectPayload::default(), EmbedProfiles::Yes);
         let bytes = package
-            .part_data(&part(PROJECT_PART_NAME))
+            .part_data(&part(PROJECT_PART_NAME.as_str()))
             .expect("the project part exists");
         let text = str::from_utf8(bytes).expect("the project part is UTF-8");
         assert_eq!(
@@ -132,7 +132,7 @@ mod package_shape_tests {
         let package = Package::read_from(Cursor::new(bytes)).expect("the written package reopens");
         let text = str::from_utf8(
             package
-                .part_data(&part(PROJECT_PART_NAME))
+                .part_data(&part(PROJECT_PART_NAME.as_str()))
                 .expect("the project part exists"),
         )
         .expect("the project part is UTF-8");
@@ -159,12 +159,11 @@ mod relationship_tests {
         );
         assert!(
             rels.iter()
-                .any(|r| r.rel_type == PROJECT_REL_TYPE && r.target == PROJECT_PART_NAME),
+                .any(|r| r.rel_type == PROJECT_REL_TYPE && r.target == PROJECT_PART_NAME.as_str()),
         );
-        assert!(
-            rels.iter()
-                .any(|r| r.rel_type == MUST_PRESERVE_REL_TYPE && r.target == PROJECT_PART_NAME),
-        );
+        assert!(rels.iter().any(
+            |r| r.rel_type == MUST_PRESERVE_REL_TYPE && r.target == PROJECT_PART_NAME.as_str()
+        ),);
     }
 
     #[test]
@@ -219,7 +218,7 @@ mod embed_flag_tests {
     fn references_only_files_keep_the_references() {
         let package = write_and_reopen(&full_payload(), EmbedProfiles::No);
         let bytes = package
-            .part_data(&part(PROJECT_PART_NAME))
+            .part_data(&part(PROJECT_PART_NAME.as_str()))
             .expect("the project part exists");
         let text = str::from_utf8(bytes).expect("the project part is UTF-8");
         assert_eq!(
@@ -290,11 +289,11 @@ mod slice_part_tests {
         let package = write_with_slices(Some(&plate));
 
         assert_eq!(
-            package.part_content_type(&part(SLICE_PART_NAME)),
+            package.part_content_type(&part(SLICE_PART_NAME.as_str())),
             Some(MODEL_PART_CONTENT_TYPE),
         );
         let bytes = package
-            .part_data(&part(SLICE_PART_NAME))
+            .part_data(&part(SLICE_PART_NAME.as_str()))
             .expect("the slice part exists");
         let parsed = parse_model(bytes).expect("the slice part parses back");
         let expected =
@@ -351,11 +350,12 @@ mod slice_part_tests {
         let rels = package.root_relationships();
         assert!(
             rels.iter()
-                .any(|r| r.rel_type == SLICE_REL_TYPE && r.target == SLICE_PART_NAME),
+                .any(|r| r.rel_type == SLICE_REL_TYPE && r.target == SLICE_PART_NAME.as_str()),
         );
         assert!(
             rels.iter()
-                .any(|r| r.rel_type == MUST_PRESERVE_REL_TYPE && r.target == SLICE_PART_NAME),
+                .any(|r| r.rel_type == MUST_PRESERVE_REL_TYPE
+                    && r.target == SLICE_PART_NAME.as_str()),
         );
     }
 
@@ -371,7 +371,7 @@ mod slice_part_tests {
             without.part_data(&part("/3D/3dmodel.model")),
         );
         // Without slices there is no slice part and no slice link.
-        assert!(without.part_data(&part(SLICE_PART_NAME)).is_none());
+        assert!(without.part_data(&part(SLICE_PART_NAME.as_str())).is_none());
         assert!(
             !without
                 .root_relationships()
@@ -528,7 +528,7 @@ mod progress_tests {
                 .len() as u64
         };
         let model = length("/3D/3dmodel.model");
-        let slice = length(SLICE_PART_NAME);
+        let slice = length(SLICE_PART_NAME.as_str());
         let counts: Vec<u64> = serialize_reports(&events)
             .into_iter()
             .map(|(done, _)| done)

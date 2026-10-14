@@ -54,7 +54,7 @@ fn model_only_package() -> Package {
 fn add_project_part(package: &mut Package, bytes: &[u8]) {
     package
         .add_part(
-            part(PROJECT_PART_NAME),
+            part(PROJECT_PART_NAME.as_str()),
             PROJECT_PART_CONTENT_TYPE,
             bytes.to_vec(),
         )

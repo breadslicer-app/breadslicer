@@ -78,7 +78,7 @@ where
 /// part only ever drops slices that would not have survived revalidation
 /// anyway.
 fn extract_slices(package: &Package) -> Option<ContourStack> {
-    let part = PartName::new(SLICE_PART_NAME).expect("constant part name is valid");
+    let part = PartName::from(SLICE_PART_NAME);
     let bytes = package.part_data(&part)?;
     let document = parse_model(bytes).ok()?;
     let stack = document.slice_stacks.first()?;
@@ -91,7 +91,7 @@ fn extract_payload(
     package: &Package,
     warnings: &mut Vec<ReadProjectWarning>,
 ) -> Result<(Option<ProjectPayload>, Option<String>), ReadThreeMfProjectError> {
-    let part = PartName::new(PROJECT_PART_NAME).expect("constant part name is valid");
+    let part = PartName::from(PROJECT_PART_NAME);
     let Some(bytes) = package.part_data(&part) else {
         return Ok((None, None));
     };
