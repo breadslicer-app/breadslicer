@@ -6,6 +6,9 @@
 //! Phase-ordering and completion coverage for [`write_scene_with_progress`]
 //! across the 4 write formats, checked on the shared manifold fixtures.
 
+use std::io::Cursor;
+
+use sc_3mf::package::Package;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
@@ -234,6 +237,36 @@ fn threemf_reports_serialize_compress_write_in_order() {
         Some(&WriteSceneProgress::Write { done: 1, total: 1 })
     );
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn threemf_serialize_ends_at_the_model_part_length() {
+    let graph = Scene::from(unit_cube_mesh());
+
+    let (reports, _, bytes) = write_collecting(&graph, WriteFormat::ThreeMf, "cube.3mf");
+
+    let serialize: Vec<(u64, u64)> = reports
+        .iter()
+        .filter_map(|r| match r {
+            WriteSceneProgress::Serialize { done, total } => Some((*done, *total)),
+            _ => None,
+        })
+        .collect();
+    let total = serialize[0].1;
+    assert!(total > 0, "the estimate is above 0");
+    assert!(
+        serialize.iter().all(|&(_, t)| t == total),
+        "every report carries the same total: {serialize:?}"
+    );
+    let package = Package::read_from(Cursor::new(bytes)).expect("package parses");
+    let start = package
+        .start_part()
+        .expect("the package names its start part");
+    let model_part = package.part_data(&start).expect("start part present");
+    assert_eq!(
+        serialize.last().map(|&(done, _)| done),
+        Some(model_part.len() as u64)
+    );
 }
 
 #[test]

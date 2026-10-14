@@ -53,6 +53,25 @@ fn cube_scene() -> Scene {
     scene
 }
 
+/// Returns a CCW triangle as 1 solid layer plus 1 empty layer, paired with the
+/// top Z of each layer.
+fn plate_slices() -> PlateSlices {
+    let outer = ClosedRing::new(
+        [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+            .into_iter()
+            .map(|(x, y)| Point2D::new(x, y))
+            .collect(),
+    );
+    let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
+    let solid = ContourLayer::new(0.025, vec![triangle]);
+    let void = ContourLayer::new(0.075, vec![]);
+    let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
+    PlateSlices {
+        contours,
+        slab_tops: vec![0.05, 0.10],
+    }
+}
+
 fn full_payload() -> ProjectPayload {
     ProjectPayload {
         printer: Some(printer_id("test-printer")),
@@ -324,25 +343,6 @@ mod slice_part_tests {
         ResourceId::MIN
     }
 
-    /// A CCW triangle as one solid layer plus an empty layer, paired
-    /// with the top Z of each layer.
-    fn plate_slices() -> PlateSlices {
-        let outer = ClosedRing::new(
-            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
-                .into_iter()
-                .map(|(x, y)| Point2D::new(x, y))
-                .collect(),
-        );
-        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
-        let solid = ContourLayer::new(0.025, vec![triangle]);
-        let void = ContourLayer::new(0.075, vec![]);
-        let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
-        PlateSlices {
-            contours,
-            slab_tops: vec![0.05, 0.10],
-        }
-    }
-
     fn write_with_slices(plate: Option<&PlateSlices>) -> Package {
         let mut bytes = Vec::new();
         write_threemf_project(
@@ -394,8 +394,8 @@ mod slice_part_tests {
             .expect("the project reads back");
         let slices = loaded.slices.expect("the slice geometry is read back");
         assert_eq!(slices.layers().len(), 2);
-        // The solid triangle layer returns as one polygon; the void layer
-        // returns with none.
+        // The solid triangle layer returns as 1 polygon; the void layer returns
+        // with none.
         assert_eq!(slices.layers()[0].polygons().len(), 1);
         assert!(slices.layers()[1].polygons().is_empty());
     }
@@ -437,8 +437,8 @@ mod slice_part_tests {
         let with = write_with_slices(Some(&plate_slices()));
         let without = write_with_slices(None);
 
-        // The scene model part is byte-identical whether or not slices
-        // are written alongside it.
+        // The scene model part is byte-identical whether or not slices are
+        // written alongside it.
         assert_eq!(
             with.part_data(&part("/3D/3dmodel.model")),
             without.part_data(&part("/3D/3dmodel.model")),
@@ -457,25 +457,6 @@ mod slice_part_tests {
 mod progress_tests {
     use super::*;
 
-    /// One solid triangle layer and one empty layer, paired with their
-    /// top Z, enough to exercise the slice serialize path.
-    fn plate_slices() -> PlateSlices {
-        let outer = ClosedRing::new(
-            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
-                .into_iter()
-                .map(|(x, y)| Point2D::new(x, y))
-                .collect(),
-        );
-        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
-        let solid = ContourLayer::new(0.025, vec![triangle]);
-        let void = ContourLayer::new(0.075, vec![]);
-        let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
-        PlateSlices {
-            contours,
-            slab_tops: vec![0.05, 0.10],
-        }
-    }
-
     fn write_collecting_progress(plate: Option<&PlateSlices>) -> (Vec<u8>, Vec<WriteProgress>) {
         let mut bytes = Vec::new();
         let mut events = Vec::new();
@@ -490,6 +471,17 @@ mod progress_tests {
         )
         .expect("the project writes cleanly");
         (bytes, events)
+    }
+
+    /// Returns the `(done, total)` pair of every serialize report, in order.
+    fn serialize_reports(events: &[WriteProgress]) -> Vec<(u64, u64)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                WriteProgress::Serialize { done, total } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -564,8 +556,8 @@ mod progress_tests {
 
     #[test]
     fn serialize_reports_once_per_document() {
-        // No slices: only the mesh model is serialized, so exactly one
-        // serialize report fires at that document's boundary.
+        // No slices: only the mesh model is serialized, so exactly 1 serialize
+        // report fires at that document's boundary.
         let (_, mesh_only) = write_collecting_progress(None);
         let mesh_serialize = mesh_only
             .iter()
@@ -573,8 +565,8 @@ mod progress_tests {
             .count();
         assert_eq!(mesh_serialize, 1, "one document, one serialize report");
 
-        // With slices, the mesh and the slice model are each serialized,
-        // so the boundary report fires twice.
+        // With slices, the mesh and the slice model are each serialized, so the
+        // boundary report fires 2 times.
         let (_, with_slices) = write_collecting_progress(Some(&plate_slices()));
         let sliced_serialize = with_slices
             .iter()
@@ -586,13 +578,7 @@ mod progress_tests {
     #[test]
     fn serialize_counts_carry_a_nonzero_estimate_and_never_regress() {
         let (_, events) = write_collecting_progress(Some(&plate_slices()));
-        let serialize: Vec<(u64, u64)> = events
-            .iter()
-            .filter_map(|e| match e {
-                WriteProgress::Serialize { done, total } => Some((*done, *total)),
-                _ => None,
-            })
-            .collect();
+        let serialize = serialize_reports(&events);
         assert!(!serialize.is_empty());
         for (done, total) in &serialize {
             assert!(*total > 0, "the serialize estimate is nonzero");
@@ -602,5 +588,33 @@ mod progress_tests {
             assert_eq!(pair[1].1, serialize[0].1, "the estimate stays fixed");
             assert!(pair[1].0 >= pair[0].0, "serialize counts never regress");
         }
+    }
+
+    #[test]
+    fn serialize_counts_end_at_the_model_part_lengths() {
+        let (bytes, events) = write_collecting_progress(Some(&plate_slices()));
+        let package = Package::read_from(Cursor::new(bytes)).expect("the written package reopens");
+        let length = |name: &str| {
+            package
+                .part_data(&part(name))
+                .expect("the part is present")
+                .len() as u64
+        };
+        let model = length("/3D/3dmodel.model");
+        let slice = length(SLICE_PART_NAME);
+        let counts: Vec<u64> = serialize_reports(&events)
+            .into_iter()
+            .map(|(done, _)| done)
+            .collect();
+        assert_eq!(counts, vec![model, model + slice]);
+    }
+
+    #[test]
+    fn slices_raise_the_serialize_total() {
+        let total = |plate: Option<&PlateSlices>| {
+            let (_, events) = write_collecting_progress(plate);
+            serialize_reports(&events)[0].1
+        };
+        assert!(total(Some(&plate_slices())) > total(None));
     }
 }
