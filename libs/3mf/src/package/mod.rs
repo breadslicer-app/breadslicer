@@ -12,9 +12,41 @@
 //! against the source part's directory when relative. Interleaved packages and
 //! ZIP64 writing are out of scope (ZIP64 reading comes with the `zip` crate).
 //!
-//! Reading refuses archives whose decompressed size exceeds fixed ceilings
-//! (2 GiB per part, 4 GiB per package) instead of exhausting memory on a
-//! crafted or corrupt file; see `PackageReadLimits`.
+//! Reading refuses archives whose decompressed size exceeds fixed ceilings (2
+//! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
+//! or corrupt file; see `PackageReadLimits`.
+//!
+//! A [`StaticPartName`] constant holds a part name that the compiler checks:
+//!
+//! ```
+//! use sc_3mf::package::{PartName, StaticPartName};
+//!
+//! const THUMBNAIL: StaticPartName =
+//!     match StaticPartName::new("/Metadata/thumbnail.png") {
+//!         Ok(name) => name,
+//!         Err(_) => panic!("malformed part name"),
+//!     };
+//!
+//! assert_eq!(PartName::from(THUMBNAIL).as_str(), "/Metadata/thumbnail.png");
+//! ```
+//!
+//! A malformed name stops the build:
+//!
+//! ```compile_fail
+//! use sc_3mf::package::{PartName, StaticPartName};
+//!
+//! const THUMBNAIL: StaticPartName =
+//!     match StaticPartName::new("/Metadata/") {
+//!         Ok(name) => name,
+//!         Err(_) => panic!("malformed part name"),
+//!     };
+//!
+//! assert_eq!(PartName::from(THUMBNAIL).as_str(), "/Metadata/");
+//! ```
+
+pub(crate) mod static_part_name;
+
+pub use static_part_name::StaticPartName;
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
@@ -29,6 +61,8 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
+
+use static_part_name::check_part_name;
 
 /// Chunk size for feeding a part's bytes to the deflater, so a large part
 /// reports progress as it compresses rather than in 1 step.
@@ -53,23 +87,7 @@ pub struct PartName(String);
 
 impl PartName {
     pub fn new(name: &str) -> Result<Self, MalformedPartNameError> {
-        if name.is_empty() {
-            return Err(MalformedPartNameError::Empty);
-        }
-        let Some(rest) = name.strip_prefix('/') else {
-            return Err(MalformedPartNameError::NotAbsolute);
-        };
-        if rest.is_empty() {
-            return Err(MalformedPartNameError::EmptySegment);
-        }
-        for segment in rest.split('/') {
-            if segment.is_empty() {
-                return Err(MalformedPartNameError::EmptySegment);
-            }
-        }
-        if rest.ends_with('.') {
-            return Err(MalformedPartNameError::TrailingDot);
-        }
+        check_part_name(name)?;
         Ok(Self(name.to_string()))
     }
 
@@ -129,6 +147,12 @@ impl PartName {
 impl std::fmt::Display for PartName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl From<StaticPartName> for PartName {
+    fn from(name: StaticPartName) -> Self {
+        Self(name.as_str().to_string())
     }
 }
 

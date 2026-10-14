@@ -11,7 +11,9 @@ use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
 };
-use crate::package::{DecompressionProgress, Package, PackageReadLimits, PartName, Relationship};
+use crate::package::{
+    DecompressionProgress, Package, PackageReadLimits, PartName, Relationship, StaticPartName,
+};
 
 fn part(name: &str) -> PartName {
     PartName::new(name).expect("valid part name")
@@ -160,6 +162,52 @@ mod part_name_tests {
             PartName::new("/3D/model."),
             Err(MalformedPartNameError::TrailingDot),
         );
+    }
+}
+
+#[cfg(test)]
+mod static_part_name_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_conventional_names_and_gives_them_back() {
+        for name in [
+            "/3D/3dmodel.model",
+            "/[Content_Types].xml",
+            "/2D/8cb173a3.model",
+            "/Metadata/thumbnail.png",
+            "/single",
+            "/3D/modèle.model",
+        ] {
+            assert_eq!(
+                StaticPartName::new(name).map(StaticPartName::as_str),
+                Ok(name),
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_names() {
+        for (name, error) in [
+            ("", MalformedPartNameError::Empty),
+            ("3D/model", MalformedPartNameError::NotAbsolute),
+            ("3D/model.", MalformedPartNameError::NotAbsolute),
+            ("/", MalformedPartNameError::EmptySegment),
+            ("//", MalformedPartNameError::EmptySegment),
+            ("//.", MalformedPartNameError::EmptySegment),
+            ("/3D//model", MalformedPartNameError::EmptySegment),
+            ("/3D/", MalformedPartNameError::EmptySegment),
+            ("/3D/model.", MalformedPartNameError::TrailingDot),
+            ("/3D/modèle.", MalformedPartNameError::TrailingDot),
+        ] {
+            assert_eq!(StaticPartName::new(name), Err(error), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn converts_into_the_part_name_that_new_gives() {
+        let name = StaticPartName::new("/3D/3dmodel.model").expect("valid part name");
+        assert_eq!(PartName::from(name), part("/3D/3dmodel.model"));
     }
 }
 
