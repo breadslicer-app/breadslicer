@@ -3,11 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Detects when 2 or more scene leaves carry coincident vertex coordinates. The
-//! check is bit-exact on the f32 vertex tuple (with -0.0 normalised to +0.0),
-//! so it surfaces the OBJ pattern where different objects share a global
-//! vertex. Surface coincidence under floating noise is out of scope here; that
-//! would be a spatial-index epsilon match.
+//! Shared-vertex detection for [`Scene`].
 
 use std::num::NonZeroU32;
 
@@ -15,37 +11,36 @@ use rayon::slice::ParallelSliceMut;
 
 use crate::Scene;
 use crate::node::{LeafPayload, NodeId, NodeKind};
-use sc_mesh_core::primitives::Vertex;
+use sc_mesh_core::primitives::{CanonicalCoords, Vertex};
 
 impl Scene {
-    /// Returns the ids of every leaf that shares at least 1 vertex (by
-    /// bit-exact coordinate, with -0.0 normalised) with another leaf elsewhere
-    /// in the scene. The result is sorted by id and contains no duplicates.
+    /// Returns the ids of the leaves that have a vertex at the same position as
+    /// a vertex of another leaf. The ids are in ascending order, with no
+    /// duplicates. A vertex with a NaN or infinite coordinate matches no other;
+    /// [`Scene::diagnose_meshes`] reports such a vertex.
     ///
-    /// Both inline-mesh leaves and mesh-resource leaves are walked.
-    /// Mesh-resource leaves that reference a dangling slot are skipped; the
-    /// structural validator at [`Scene::validate`] handles that variant
-    /// separately.
+    /// Runs in O(n log n) time and O(n) space, for n vertices in all the
+    /// leaves.
     ///
-    /// Complexity: O(total vertex count * log) time and O(total vertex count)
-    /// space, from 1 parallel sort of the coordinate records. A scene with
-    /// fewer than 2 leaves carrying vertices answers without building them,
-    /// since sharing takes 2 leaves.
+    /// TODO: the detection ignores the transforms of the leaves. It reports
+    /// leaves that are placed apart but store equal coordinates, such as 2 uses
+    /// of 1 mesh resource, and misses leaves whose vertices meet in the scene.
     pub fn detect_shared_vertices(&self) -> Vec<NodeId> {
         let leaves = self.leaves_with_vertices();
         if leaves.len() < 2 {
             return Vec::new();
         }
 
-        // 1 record per vertex. The tuple order sorts by coordinate first and by
-        // leaf second, so every equal-coordinate run is itself grouped by leaf.
+        // 1 record per finite vertex. The tuple order sorts by coordinate first
+        // and by leaf second, so every equal-coordinate run is itself grouped
+        // by leaf.
         let total: usize = leaves.iter().map(|(_, vertices)| vertices.len()).sum();
-        let mut records: Vec<([u32; 3], NodeId)> = Vec::with_capacity(total);
+        let mut records: Vec<(CanonicalCoords, NodeId)> = Vec::with_capacity(total);
         for (leaf_id, vertices) in &leaves {
             records.extend(
-                vertices
-                    .iter()
-                    .map(|vertex| (normalised_bit_pattern(vertex), *leaf_id)),
+                vertices.iter().filter_map(|vertex| {
+                    vertex.canonical_coords().map(|coords| (coords, *leaf_id))
+                }),
             );
         }
         records.par_sort_unstable();
@@ -95,16 +90,6 @@ impl Scene {
         }
         leaves
     }
-}
-
-fn normalised_bit_pattern(v: &Vertex) -> [u32; 3] {
-    v.coords().map(|f| {
-        if f == -0.0 {
-            0.0_f32.to_bits()
-        } else {
-            f.to_bits()
-        }
-    })
 }
 
 fn leaf_id_at(slot_idx: usize) -> NodeId {
@@ -329,6 +314,46 @@ mod shared_vertices_tests {
         assert_eq!(graph.detect_shared_vertices(), expected);
     }
 
+    #[test]
+    fn leaves_that_share_only_a_non_finite_vertex_are_not_reported() {
+        for bad in [f32::NAN, f32::INFINITY] {
+            let mut graph = Scene::new();
+            let root = graph.add_group(None, Transform3D::Identity);
+            graph.add_root(root).unwrap();
+            add_leaf(
+                &mut graph,
+                root,
+                triangle_mesh([bad, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            );
+            add_leaf(
+                &mut graph,
+                root,
+                triangle_mesh([bad, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]),
+            );
+            assert!(graph.detect_shared_vertices().is_empty(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_vertex_does_not_hide_a_shared_one() {
+        let mut graph = Scene::new();
+        let root = graph.add_group(None, Transform3D::Identity);
+        graph.add_root(root).unwrap();
+        let a = add_leaf(
+            &mut graph,
+            root,
+            triangle_mesh([f32::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        );
+        let b = add_leaf(
+            &mut graph,
+            root,
+            triangle_mesh([5.0, 5.0, 5.0], [1.0, 0.0, 0.0], [0.0, 2.0, 0.0]),
+        );
+        let mut expected = vec![a, b];
+        expected.sort_by_key(|id| id.get());
+        assert_eq!(graph.detect_shared_vertices(), expected);
+    }
+
     /// Detects shared vertices with a first-seen map keyed on the coordinate:
     /// the earlier detection, kept as the reference that the sort must agree
     /// with.
@@ -336,7 +361,7 @@ mod shared_vertices_tests {
         use std::collections::HashMap;
         use std::collections::hash_map::Entry;
 
-        let mut first_seen: HashMap<[u32; 3], NodeId> = HashMap::new();
+        let mut first_seen: HashMap<CanonicalCoords, NodeId> = HashMap::new();
         let mut shared: HashMap<NodeId, ()> = HashMap::new();
         for (slot_idx, slot) in graph.nodes.iter().enumerate() {
             let Some(node) = slot else { continue };
@@ -352,7 +377,10 @@ mod shared_vertices_tests {
             };
             let leaf_id = leaf_id_at(slot_idx);
             for v in vertices {
-                match first_seen.entry(normalised_bit_pattern(v)) {
+                let Some(coords) = v.canonical_coords() else {
+                    continue;
+                };
+                match first_seen.entry(coords) {
                     Entry::Vacant(e) => {
                         e.insert(leaf_id);
                     }
