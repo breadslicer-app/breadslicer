@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Progress reports of a project write.
+
 /// Progress reported while a project is written, in the order the phases run:
 /// first the scene and slice geometry are serialized to XML, then the assembled
 /// package is compressed. Each phase carries `(done, total)` in bytes; `total`

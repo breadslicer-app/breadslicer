@@ -5,9 +5,7 @@
 
 //! Format dispatch for writing project files.
 
-pub(crate) mod progress;
-
-pub use progress::WriteProgress;
+pub mod progress;
 
 use std::io::Write;
 
@@ -18,6 +16,8 @@ use crate::filetypes::ProjectFileType;
 use crate::payload::{EmbedProfiles, ProjectPayload};
 use crate::slices::PlateSlices;
 use crate::threemf::write_threemf_project_with_progress;
+
+use progress::WriteProgress;
 
 /// Writes `scene` and `payload` as a project file of the given format. With
 /// [`EmbedProfiles::No`] the payload's embedded documents are left out and only

@@ -24,7 +24,7 @@ use crate::threemf::{
     PROFILE_PART_CONTENT_TYPE, PROJECT_PART_CONTENT_TYPE, PROJECT_PART_NAME, PROJECT_REL_TYPE,
     SLICE_PART_NAME, SLICE_REL_TYPE,
 };
-use crate::write::WriteProgress;
+use crate::write::progress::WriteProgress;
 
 fn write_and_reopen(payload: &ProjectPayload, embed: EmbedProfiles) -> Package {
     let mut bytes = Vec::new();
