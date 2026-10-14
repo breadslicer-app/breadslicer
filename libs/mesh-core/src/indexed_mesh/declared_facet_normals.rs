@@ -6,7 +6,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::fingerprint::GeometryFingerprint;
+use super::fingerprint::geometry_fingerprint::GeometryFingerprint;
 use super::mesh::IndexedMesh;
 
 /// The facet normals that a source file declared for a mesh: the f32 bit

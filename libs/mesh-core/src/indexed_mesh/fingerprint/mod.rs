@@ -3,21 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use newtypes::newtype_array_readonly;
+pub(super) mod geometry_fingerprint;
+
+pub use geometry_fingerprint::GeometryFingerprint;
+
 use sha2::{Digest, Sha384};
 
 use super::mesh::IndexedMesh;
-
-// SHA-384 digest of the bytes from `IndexedMesh::encode_geometry`.
-newtype_array_readonly!(GeometryFingerprint, u8, 48);
-
-impl GeometryFingerprint {
-    /// Returns the fingerprint whose digest is `bytes`, for a digest read back
-    /// from storage.
-    pub fn from_bytes(bytes: [u8; 48]) -> Self {
-        Self(bytes)
-    }
-}
 
 impl IndexedMesh {
     /// Passes the canonical byte encoding of the geometry to `sink`: the vertex
@@ -50,6 +42,6 @@ impl IndexedMesh {
         self.encode_geometry(|bytes| hasher.update(bytes));
         let mut digest = [0u8; 48];
         digest.copy_from_slice(&hasher.finalize());
-        GeometryFingerprint(digest)
+        GeometryFingerprint::from_bytes(digest)
     }
 }
