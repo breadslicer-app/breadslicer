@@ -4,19 +4,22 @@
  */
 
 //! Typed document model for the 3D Model part, with XML parsing and
-//! serialization. Coordinates stay in the document's declared unit;
-//! converting to millimetres is the caller's job via
-//! [`Unit::scale_to_mm`].
+//! serialization. Coordinates stay in the document's declared unit; converting
+//! to millimetres is the caller's job via [`Unit::scale_to_mm`].
 
 mod element_run;
 mod read;
+mod serialization;
 mod slice;
 #[cfg(test)]
 mod tests_element_run;
+#[cfg(test)]
+mod tests_serialization;
 mod types;
 mod write;
 
 pub use read::parse_model;
+pub use serialization::{ModelSerialization, SerializationProgress};
 pub use slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,
