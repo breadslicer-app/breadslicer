@@ -11,7 +11,7 @@ mod element_run;
 mod numbers;
 mod read;
 mod resource_ids;
-mod serialization;
+pub mod serialization;
 mod slice;
 #[cfg(test)]
 mod tests_element_run;
@@ -22,7 +22,6 @@ mod write;
 
 pub use read::parse_model;
 pub use resource_ids::{ResourceId, ResourceIndex};
-pub use serialization::{ModelSerialization, SerializationProgress};
 pub use slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,

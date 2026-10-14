@@ -44,7 +44,7 @@ impl<'d, const N: usize> ModelSerialization<'d, N> {
     /// not build:
     ///
     /// ```compile_fail
-    /// sc_3mf::model::ModelSerialization::new([]);
+    /// sc_3mf::model::serialization::ModelSerialization::new([]);
     /// ```
     pub fn new(documents: [&'d ModelDocument; N]) -> Self {
         const { assert!(N > 0, "a serialization phase needs at least 1 document") };
