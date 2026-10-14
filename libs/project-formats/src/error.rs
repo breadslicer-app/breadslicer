@@ -5,17 +5,17 @@
 
 //! Error types for project reading and writing.
 //!
-//! The dispatch-level enums ([`ReadProjectError`],
-//! [`WriteProjectError`]) carry one variant per supported format,
-//! mirroring how `sc-mesh-formats` shapes its loader errors; the
-//! per-format enums hold the failure modes of that container.
+//! The dispatch-level enums ([`ReadProjectError`], [`WriteProjectError`]) carry
+//! 1 variant per supported format, mirroring how `sc-mesh-formats` shapes its
+//! loader errors; the per-format enums hold the failure modes of that
+//! container.
 
 use std::fmt;
 
 use sc_3mf::error::{ModelWriteError, PackageReadError, PackageWriteError};
 use sc_mesh_formats::error::{LoadThreeMfError, WriteThreeMfError};
 
-use crate::threemf::SliceMappingError;
+use crate::threemf::slice_mapping::SliceMappingError;
 
 /// Returned by [`crate::write_project`].
 #[derive(Debug)]
@@ -64,8 +64,7 @@ impl std::error::Error for ReadProjectError {
 /// Failure modes of writing a project as a 3MF package.
 #[derive(Debug)]
 pub enum WriteThreeMfProjectError {
-    /// The scene graph could not be converted to a 3MF model
-    /// document.
+    /// The scene graph could not be converted to a 3MF model document.
     Scene(WriteThreeMfError),
     /// The model XML could not be serialized.
     Model(ModelWriteError),
@@ -73,8 +72,7 @@ pub enum WriteThreeMfProjectError {
     SliceMapping(SliceMappingError),
     /// The project payload could not be serialized to TOML.
     Payload(toml_edit::ser::Error),
-    /// A part could not be added or the container could not be
-    /// serialized.
+    /// A part could not be added or the container could not be serialized.
     Package(PackageWriteError),
     /// Copying the buffered package to the caller's writer failed.
     Io(std::io::Error),
@@ -154,8 +152,7 @@ pub enum ReadThreeMfProjectError {
     Scene(LoadThreeMfError),
     /// The project part is not UTF-8 encoded.
     PayloadNotUtf8(std::str::Utf8Error),
-    /// The project part is not valid TOML of the shape this build
-    /// understands.
+    /// The project part is not valid TOML of the shape this build understands.
     PayloadParse(toml_edit::de::Error),
 }
 

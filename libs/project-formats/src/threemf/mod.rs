@@ -26,7 +26,7 @@ mod foreign;
 mod names;
 mod payload_part;
 mod reader;
-mod slice_mapping;
+pub(crate) mod slice_mapping;
 mod writer;
 
 #[cfg(test)]
