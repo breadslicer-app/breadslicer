@@ -5,15 +5,15 @@
 
 //! Equivalence coverage for the sort-based soup deduplication against a
 //! hash-based reference builder, plus pinned behavior for the
-//! `indexed_mesh_from_soup` entry point (zero-spelling folding, NaN identity,
-//! cap boundaries, metadata passthrough).
+//! `indexed_mesh_from_soup` entry point (signed zeros, refusal of non-finite
+//! corners, cap boundaries, metadata passthrough).
 
 use std::collections::HashMap;
 
 use proptest::prelude::*;
 
 use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
-use crate::primitives::{IndexedTriangle, Triangle, Vertex, VertexIndex};
+use crate::primitives::{FaceIndex, IndexedTriangle, TriVertexSlot, Triangle, Vertex, VertexIndex};
 use crate::triangle_iterator::{IndexedMeshBuildError, indexed_mesh_from_soup};
 
 /// Builds the mesh with a streaming hash-based builder: the reference that the
@@ -72,9 +72,9 @@ fn reference_build(
 }
 
 /// Returns a coordinate palette exercising exact-bit dedup: a small set of
-/// distinct values so generated soups share vertices often, including both zero
-/// spellings. NaN is excluded here because `IndexedMesh` equality goes through
-/// `f32` PartialEq; NaN identity has its own pinned test below.
+/// distinct values so generated soups share vertices often, including `0.0` and
+/// `-0.0`. NaN and infinities are excluded: the builder refuses them, and the
+/// tests below pin the refusal.
 fn coord_strategy() -> impl Strategy<Value = f32> {
     prop_oneof![
         Just(0.0_f32),
@@ -139,7 +139,7 @@ fn matches_the_reference_on_a_large_grid() {
 }
 
 #[test]
-fn keeps_the_bits_of_the_first_zero_spelling() {
+fn keeps_the_sign_of_the_zero_seen_first() {
     // -0.0 seen first: the later +0.0 dedups onto it and the stored vertex
     // keeps the -0.0 bits.
     let soup = vec![Triangle::new([
@@ -154,19 +154,81 @@ fn keeps_the_bits_of_the_first_zero_spelling() {
 }
 
 #[test]
-fn distinct_nan_payloads_stay_distinct_vertices() {
-    let nan_a = f32::from_bits(0x7FC0_0001);
-    let nan_b = f32::from_bits(0x7FC0_0002);
+fn refuses_the_first_non_finite_corner_in_input_order() {
+    let soup = vec![
+        Triangle::new([
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]),
+        Triangle::new([
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([1.0, 1.0, 0.0]),
+            Vertex::new([0.0, f32::NAN, 0.0]),
+        ]),
+        Triangle::new([
+            Vertex::new([f32::INFINITY, 0.0, 0.0]),
+            Vertex::new([1.0, 1.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]),
+    ];
+    let err =
+        indexed_mesh_from_soup(None, soup, u32::MAX as usize).expect_err("a NaN corner is refused");
+    assert_eq!(
+        err,
+        IndexedMeshBuildError::NonFiniteVertex {
+            face_idx: FaceIndex::from(1),
+            vertex_pos: TriVertexSlot::V2,
+        }
+    );
+}
+
+#[test]
+fn refuses_an_infinite_corner() {
     let soup = vec![Triangle::new([
-        Vertex::new([nan_a, 0.0, 0.0]),
-        Vertex::new([nan_b, 0.0, 0.0]),
-        Vertex::new([nan_a, 0.0, 0.0]),
+        Vertex::new([0.0, 0.0, 0.0]),
+        Vertex::new([1.0, f32::NEG_INFINITY, 0.0]),
+        Vertex::new([0.0, 1.0, 0.0]),
     ])];
-    let mesh = indexed_mesh_from_soup(None, soup, 4).expect("2 unique vertices fit a cap of 4");
-    assert_eq!(mesh.vertices.len(), 2);
-    assert_eq!(raw_indices(&mesh.faces[0]), [0, 1, 0]);
-    assert_eq!(mesh.vertices[0].coords()[0].to_bits(), 0x7FC0_0001);
-    assert_eq!(mesh.vertices[1].coords()[0].to_bits(), 0x7FC0_0002);
+    let err = indexed_mesh_from_soup(None, soup, u32::MAX as usize)
+        .expect_err("an infinite corner is refused");
+    assert_eq!(
+        err,
+        IndexedMeshBuildError::NonFiniteVertex {
+            face_idx: FaceIndex::from(0),
+            vertex_pos: TriVertexSlot::V1,
+        }
+    );
+}
+
+#[test]
+fn refuses_a_non_finite_corner_before_it_counts_vertices() {
+    // The 3 vertices also exceed the cap of 0.
+    let soup = vec![Triangle::new([
+        Vertex::new([0.0, 0.0, 0.0]),
+        Vertex::new([1.0, 0.0, 0.0]),
+        Vertex::new([0.0, 0.0, f32::NAN]),
+    ])];
+    let err = indexed_mesh_from_soup(None, soup, 0).expect_err("a NaN corner is refused");
+    assert_eq!(
+        err,
+        IndexedMeshBuildError::NonFiniteVertex {
+            face_idx: FaceIndex::from(0),
+            vertex_pos: TriVertexSlot::V2,
+        }
+    );
+}
+
+#[test]
+fn non_finite_vertex_names_the_corner() {
+    let err = IndexedMeshBuildError::NonFiniteVertex {
+        face_idx: FaceIndex::from(3),
+        vertex_pos: TriVertexSlot::V2,
+    };
+    assert_eq!(
+        err.to_string(),
+        "indexed-mesh build: the vertex at face #3 slot v2 has a NaN or infinite coordinate"
+    );
 }
 
 #[test]

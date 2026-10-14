@@ -48,7 +48,7 @@ mod canonical_coords_tests {
     }
 
     #[test]
-    fn both_zero_spellings_give_1_value() {
+    fn negative_zero_equals_positive_zero() {
         for axis in 0..3 {
             let mut positive = [1.0, 2.0, 3.0];
             positive[axis] = 0.0;

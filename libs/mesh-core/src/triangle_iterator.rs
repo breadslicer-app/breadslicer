@@ -7,15 +7,17 @@
 //!
 //! Defines the [`TriangleIterator`] trait for streaming readers, plus the
 //! shared [`IndexedMeshBuildError`] surfaced by the default `as_indexed_mesh`
-//! implementation when the deduplicated-vertex stream cannot fit into the
-//! indexed-mesh representation.
+//! implementation when a corner has a NaN or infinite coordinate, or when the
+//! deduplicated-vertex stream cannot fit into the indexed-mesh representation.
 
 use std::fmt;
 
 use rayon::slice::ParallelSliceMut;
 
 use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
-use crate::primitives::{IndexedTriangle, Triangle, Vertex};
+use crate::primitives::{
+    CanonicalCoords, FaceIndex, IndexedTriangle, TriVertexSlot, Triangle, Vertex,
+};
 
 /// Failure modes intrinsic to building an [`IndexedMesh`] from a stream of
 /// triangles, independent of the reader's source format.
@@ -27,6 +29,14 @@ pub enum IndexedMeshBuildError {
     /// The readers pass `u32::MAX as usize`, because `IndexedTriangle` stores
     /// indices as `u32`.
     TooManyVertices { limit: usize },
+    /// The vertex at corner `vertex_pos` of face `face_idx` has a NaN or
+    /// infinite coordinate. `face_idx` is the position of the triangle in the
+    /// input. It is the first such corner in input order, by face index and
+    /// then by slot.
+    NonFiniteVertex {
+        face_idx: FaceIndex,
+        vertex_pos: TriVertexSlot,
+    },
 }
 
 impl fmt::Display for IndexedMeshBuildError {
@@ -35,6 +45,13 @@ impl fmt::Display for IndexedMeshBuildError {
             Self::TooManyVertices { limit } => write!(
                 f,
                 "indexed-mesh build: unique vertex count exceeds the {limit} index limit",
+            ),
+            Self::NonFiniteVertex {
+                face_idx,
+                vertex_pos,
+            } => write!(
+                f,
+                "indexed-mesh build: the vertex at face #{face_idx} slot {vertex_pos} has a NaN or infinite coordinate",
             ),
         }
     }
@@ -68,6 +85,10 @@ pub trait TriangleIterator:
 /// The cap is inclusive: a stream that produces exactly `max_vertices` unique
 /// vertices succeeds; the next distinct vertex returns
 /// [`IndexedMeshBuildError::TooManyVertices`].
+///
+/// A corner with a NaN or infinite coordinate returns
+/// [`IndexedMeshBuildError::NonFiniteVertex`] for the first such corner in
+/// stream order, whatever the cap.
 pub(crate) fn build_indexed_mesh_with_cap<I>(
     iter: &mut I,
     meta: Option<MeshMetadata>,
@@ -85,20 +106,6 @@ where
     indexed_mesh_from_soup(meta, soup, max_vertices).map_err(I::Error::from)
 }
 
-/// Returns the identity of a vertex for deduplication: the raw coordinate bit
-/// patterns, with `-0.0` folded onto `0.0` so both spellings share 1 slot. If
-/// any coordinate is NaN (which does not make sense anyway), its payload bits
-/// are used as part of the identity.
-fn dedup_key(vertex: &Vertex) -> [u32; 3] {
-    vertex.coords().map(|f| {
-        if f == -0.0 {
-            0.0_f32.to_bits()
-        } else {
-            f.to_bits()
-        }
-    })
-}
-
 /// Builds an [`IndexedMesh`] from a triangle soup. Vertices with the same
 /// coordinate bits share 1 index, with `-0.0` taken as `0.0`; the vertex list
 /// keeps the order of first appearance, so the vertex list and the index values
@@ -111,6 +118,10 @@ fn dedup_key(vertex: &Vertex) -> [u32; 3] {
 /// The cap is inclusive: a soup with exactly `max_vertices` unique vertices
 /// succeeds; 1 more distinct vertex returns
 /// [`IndexedMeshBuildError::TooManyVertices`].
+///
+/// A corner with a NaN or infinite coordinate returns
+/// [`IndexedMeshBuildError::NonFiniteVertex`] for the first such corner in
+/// input order, whatever the cap.
 pub fn indexed_mesh_from_soup(
     meta: Option<MeshMetadata>,
     soup: Vec<Triangle>,
@@ -118,13 +129,19 @@ pub fn indexed_mesh_from_soup(
 ) -> Result<IndexedMesh, IndexedMeshBuildError> {
     let corner_count = soup.len() * 3;
 
-    // 1 record per corner: (dedup key, sequence number = face * 3 + corner).
-    // The sequence number fits in u32 because the format readers cap element
-    // counts far below 2^32 corners.
-    let mut records: Vec<([u32; 3], u32)> = Vec::with_capacity(corner_count);
+    // 1 record per corner: (canonical coordinates, sequence number = face * 3 +
+    // corner). The sequence number fits in u32 because the format readers cap
+    // element counts far below 2^32 corners.
+    let mut records: Vec<(CanonicalCoords, u32)> = Vec::with_capacity(corner_count);
     for (face, t) in soup.iter().enumerate() {
-        for (corner, vertex) in t.vertices.iter().enumerate() {
-            records.push((dedup_key(vertex), (face * 3 + corner) as u32));
+        for (slot, vertex) in TriVertexSlot::ALL.into_iter().zip(t.vertices) {
+            let coords = vertex.canonical_coords().ok_or_else(|| {
+                IndexedMeshBuildError::NonFiniteVertex {
+                    face_idx: FaceIndex::from(face),
+                    vertex_pos: slot,
+                }
+            })?;
+            records.push((coords, (face * 3 + slot.as_index()) as u32));
         }
     }
 
@@ -135,7 +152,7 @@ pub fn indexed_mesh_from_soup(
     // First-appearance sequence number of every distinct vertex, in key-sorted
     // run order.
     let mut run_first_seq: Vec<u32> = Vec::new();
-    let mut prev_key: Option<[u32; 3]> = None;
+    let mut prev_key: Option<CanonicalCoords> = None;
     for &(key, seq) in &records {
         if prev_key != Some(key) {
             run_first_seq.push(seq);
@@ -159,7 +176,7 @@ pub fn indexed_mesh_from_soup(
     }
 
     // Emit each distinct vertex from its first appearance, keeping the original
-    // bits (the key folds -0.0, the stored vertex does not).
+    // bits (the key stores -0.0 as 0.0, the stored vertex does not).
     let mut vertices: Vec<Vertex> = Vec::with_capacity(run_first_seq.len());
     for &run in &runs_by_appearance {
         let seq = run_first_seq[run as usize] as usize;
@@ -169,7 +186,7 @@ pub fn indexed_mesh_from_soup(
     // Scatter every corner's final vertex index back into document order.
     let mut corner_indices: Vec<u32> = vec![0; corner_count];
     let mut run: usize = 0;
-    let mut prev_key: Option<[u32; 3]> = None;
+    let mut prev_key: Option<CanonicalCoords> = None;
     for &(key, seq) in &records {
         if prev_key != Some(key) {
             if prev_key.is_some() {
