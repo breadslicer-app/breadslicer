@@ -201,7 +201,7 @@ fn assemble_package(
 
     if embed == EmbedProfiles::Yes {
         for profile in &payload.embedded {
-            let (name, bytes) = profile_part(profile);
+            let (name, bytes) = profile_part(profile)?;
             package.add_part(name.clone(), PROFILE_PART_CONTENT_TYPE, bytes.to_vec())?;
             package.add_root_relationship(Relationship {
                 id: rel_ids.next(),
@@ -239,18 +239,18 @@ impl RelationshipIds {
     }
 }
 
-/// Builds a package part name from a string that is statically known to be
-/// well-formed: profile part names assembled from already-validated id slugs. A
-/// malformed name here is a programming error, not a runtime input, so it is
-/// not a write failure mode.
-fn known_part_name(name: &str) -> PartName {
-    PartName::new(name).expect("part name built from a known-good source is well-formed")
+/// Returns `name`, a part name that the writer built, as a [`PartName`], or
+/// [`WriteThreeMfProjectError::MalformedPartName`] when it breaks the part-name
+/// rules.
+fn checked_part_name(name: String) -> Result<PartName, WriteThreeMfProjectError> {
+    PartName::new(&name)
+        .map_err(|source| WriteThreeMfProjectError::MalformedPartName { name, source })
 }
 
 /// Returns the part name and bytes of an embedded profile document. The id slug
 /// grammar (lowercase alphanumerics and hyphens) keeps every generated part
-/// name well-formed.
-fn profile_part(profile: &EmbeddedProfile) -> (PartName, &[u8]) {
+/// name well-formed, so only a change of that grammar gives an error.
+fn profile_part(profile: &EmbeddedProfile) -> Result<(PartName, &[u8]), WriteThreeMfProjectError> {
     let (raw_name, bytes) = match profile {
         EmbeddedProfile::Printer { id, bytes } => (
             format!("{PRINTER_PROFILE_PART_PREFIX}{}.toml", id.as_str()),
@@ -265,8 +265,7 @@ fn profile_part(profile: &EmbeddedProfile) -> (PartName, &[u8]) {
             bytes,
         ),
     };
-    let name = known_part_name(&raw_name);
-    (name, bytes.as_slice())
+    Ok((checked_part_name(raw_name)?, bytes.as_slice()))
 }
 
 #[cfg(test)]
@@ -506,5 +505,32 @@ mod compress_into_tests {
             matches!(result, Err(WriteThreeMfProjectError::Io(_))),
             "{result:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod checked_part_name_tests {
+    use super::*;
+    use sc_3mf::error::MalformedPartNameError;
+
+    #[test]
+    fn a_malformed_name_gives_the_name_and_the_broken_rule() {
+        let result = checked_part_name("/Metadata/profiles//p.toml".to_string());
+        assert!(
+            matches!(
+                &result,
+                Err(WriteThreeMfProjectError::MalformedPartName { name, source })
+                    if name == "/Metadata/profiles//p.toml"
+                        && *source == MalformedPartNameError::EmptySegment
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_name_gives_the_part_name() {
+        let name = checked_part_name("/Metadata/profiles/printers/p.toml".to_string())
+            .expect("the name is valid");
+        assert_eq!(name.as_str(), "/Metadata/profiles/printers/p.toml");
     }
 }

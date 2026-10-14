@@ -5,6 +5,8 @@
 
 use std::error::Error;
 
+use sc_3mf::error::MalformedPartNameError;
+
 use crate::error::{
     ReadProjectError, ReadThreeMfProjectError, WriteProjectError, WriteThreeMfProjectError,
 };
@@ -38,6 +40,23 @@ mod write_error_tests {
         assert!(
             err.to_string()
                 .starts_with("3MF project writer: failed to serialize the project part:"),
+        );
+    }
+
+    #[test]
+    fn malformed_part_name_display_and_source() {
+        let err = WriteThreeMfProjectError::MalformedPartName {
+            name: "/Metadata//p.toml".to_string(),
+            source: MalformedPartNameError::EmptySegment,
+        };
+        assert_eq!(
+            err.to_string(),
+            "3MF project writer: \"/Metadata//p.toml\" is not a valid part name: part name \
+             contains an empty segment",
+        );
+        assert_eq!(
+            err.source().map(ToString::to_string),
+            Some("part name contains an empty segment".to_string()),
         );
     }
 

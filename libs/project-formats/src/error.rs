@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use sc_3mf::error::{ModelWriteError, PackageReadError, PackageWriteError};
+use sc_3mf::error::{MalformedPartNameError, ModelWriteError, PackageReadError, PackageWriteError};
 use sc_mesh_formats::error::{LoadThreeMfError, WriteThreeMfError};
 
 use crate::threemf::slice_mapping::SliceMappingError;
@@ -74,6 +74,13 @@ pub enum WriteThreeMfProjectError {
     Payload(toml_edit::ser::Error),
     /// A part could not be added or the container could not be serialized.
     Package(PackageWriteError),
+    /// A part name built from the project payload is not a valid part name. The
+    /// id grammars keep these names valid, so only a change of a grammar
+    /// produces it.
+    MalformedPartName {
+        name: String,
+        source: MalformedPartNameError,
+    },
     /// Copying the buffered package to the caller's writer failed.
     Io(std::io::Error),
 }
@@ -89,6 +96,10 @@ impl fmt::Display for WriteThreeMfProjectError {
                 "3MF project writer: failed to serialize the project part: {e}",
             ),
             Self::Package(e) => write!(f, "3MF project writer: {e}"),
+            Self::MalformedPartName { name, source } => write!(
+                f,
+                "3MF project writer: \"{name}\" is not a valid part name: {source}",
+            ),
             Self::Io(e) => write!(f, "3MF project writer I/O error: {e}"),
         }
     }
@@ -102,6 +113,7 @@ impl std::error::Error for WriteThreeMfProjectError {
             Self::SliceMapping(e) => Some(e),
             Self::Payload(e) => Some(e),
             Self::Package(e) => Some(e),
+            Self::MalformedPartName { source, .. } => Some(source),
             Self::Io(e) => Some(e),
         }
     }
