@@ -29,7 +29,7 @@ use crate::threemf::names::{
 };
 use crate::threemf::payload_part::serialize_payload;
 use crate::threemf::slice_mapping::slice_stack_from_contours;
-use crate::write::WriteProgress;
+use crate::write::progress::WriteProgress;
 
 /// Writes `scene` and `payload` as a 3MF project package: the parts a plain 3MF
 /// export would carry, plus the project part and, with [`EmbedProfiles::Yes`],
