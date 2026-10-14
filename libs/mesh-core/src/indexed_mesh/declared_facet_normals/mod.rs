@@ -3,16 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+mod binding;
+
 use std::fmt;
 use std::sync::Arc;
 
 use super::fingerprint::geometry_fingerprint::GeometryFingerprint;
-use super::mesh::IndexedMesh;
 
 /// The facet normals that a source file declared for a mesh: the f32 bit
 /// patterns of 1 normal per face, in face order, kept as read. They are file
 /// data, not geometry, and can be read only while the mesh keeps the geometry
-/// they came with, through [`IndexedMesh::declared_facet_normals`].
+/// they came with, through
+/// [`IndexedMesh::declared_facet_normals`](super::IndexedMesh::declared_facet_normals).
 #[derive(Clone, PartialEq, Eq)]
 pub struct DeclaredFacetNormals {
     normals: Arc<[[u32; 3]]>,
@@ -21,35 +23,6 @@ pub struct DeclaredFacetNormals {
 }
 
 impl DeclaredFacetNormals {
-    /// Binds `normals` to the geometry of `mesh`. Fails when their count
-    /// differs from the face count of `mesh`.
-    pub fn capture(mesh: &IndexedMesh, normals: Vec<[u32; 3]>) -> Result<Self, FacetCountMismatch> {
-        check_count(mesh, &normals)?;
-        Ok(Self {
-            normals: normals.into(),
-            fingerprint: mesh.geometry_fingerprint(),
-        })
-    }
-
-    /// Binds `normals`, read back from storage with the fingerprint `stored`,
-    /// to the geometry of `mesh`. Fails with `GeometryChanged` when `stored`
-    /// differs from the fingerprint of `mesh`, else with `FacetCountMismatch`
-    /// when the count of `normals` differs from the face count of `mesh`.
-    pub fn restore(
-        mesh: &IndexedMesh,
-        normals: Vec<[u32; 3]>,
-        stored: GeometryFingerprint,
-    ) -> Result<Self, RestoreRefusal> {
-        if stored != mesh.geometry_fingerprint() {
-            return Err(RestoreRefusal::GeometryChanged);
-        }
-        check_count(mesh, &normals)?;
-        Ok(Self {
-            normals: normals.into(),
-            fingerprint: stored,
-        })
-    }
-
     /// Returns the fingerprint of the geometry the normals were bound to.
     pub fn fingerprint(&self) -> GeometryFingerprint {
         self.fingerprint
@@ -63,17 +36,6 @@ impl fmt::Debug for DeclaredFacetNormals {
             .field("facets", &self.normals.len())
             .field("fingerprint", &self.fingerprint)
             .finish()
-    }
-}
-
-fn check_count(mesh: &IndexedMesh, normals: &[[u32; 3]]) -> Result<(), FacetCountMismatch> {
-    if normals.len() == mesh.faces.len() {
-        Ok(())
-    } else {
-        Err(FacetCountMismatch {
-            facets: normals.len(),
-            faces: mesh.faces.len(),
-        })
     }
 }
 
@@ -131,14 +93,5 @@ impl std::error::Error for RestoreRefusal {
             Self::GeometryChanged => None,
             Self::FacetCountMismatch(mismatch) => Some(mismatch),
         }
-    }
-}
-
-impl IndexedMesh {
-    /// Returns the facet normals the source file declared while the mesh keeps
-    /// the geometry they came with, else `None`. Each call hashes the geometry.
-    pub fn declared_facet_normals(&self) -> Option<&[[u32; 3]]> {
-        let declared = self.meta.as_ref()?.declared_facet_normals.as_ref()?;
-        (declared.fingerprint == self.geometry_fingerprint()).then_some(&*declared.normals)
     }
 }
