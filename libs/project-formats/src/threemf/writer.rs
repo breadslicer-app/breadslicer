@@ -22,13 +22,13 @@ use sc_scene::Scene;
 use crate::error::WriteThreeMfProjectError;
 use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 use crate::slices::PlateSlices;
-use crate::threemf::payload_part::serialize_payload;
-use crate::threemf::slice_mapping::slice_stack_from_contours;
-use crate::threemf::{
+use crate::threemf::names::{
     MATERIAL_EXTENSION_PART_PREFIX, MATERIAL_PROFILE_PART_PREFIX, PRINTER_PROFILE_PART_PREFIX,
     PROFILE_PART_CONTENT_TYPE, PROJECT_PART_CONTENT_TYPE, PROJECT_PART_NAME, PROJECT_REL_TYPE,
     SLICE_PART_NAME, SLICE_REL_TYPE,
 };
+use crate::threemf::payload_part::serialize_payload;
+use crate::threemf::slice_mapping::slice_stack_from_contours;
 use crate::write::WriteProgress;
 
 /// Writes `scene` and `payload` as a 3MF project package: the parts a plain 3MF

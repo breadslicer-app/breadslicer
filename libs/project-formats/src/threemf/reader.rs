@@ -24,12 +24,12 @@ use crate::messages::ReadProjectWarning;
 use crate::payload::{EmbeddedProfile, ProjectPayload};
 use crate::read::LoadedProject;
 use crate::threemf::foreign::detect_foreign_dialects;
-use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
-use crate::threemf::slice_mapping::contours_from_slice_stack;
-use crate::threemf::{
+use crate::threemf::names::{
     MATERIAL_EXTENSION_PART_PREFIX, MATERIAL_PROFILE_PART_PREFIX, PRINTER_PROFILE_PART_PREFIX,
     PROFILES_PART_PREFIX, PROJECT_PART_NAME, SLICE_PART_NAME,
 };
+use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
+use crate::threemf::slice_mapping::contours_from_slice_stack;
 
 /// Reads a 3MF package as a project: the scene plus the project payload when
 /// the package carries our project part.
