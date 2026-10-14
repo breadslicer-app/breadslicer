@@ -3,13 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! The document model types. Everything is plain data with value
-//! semantics; invariants beyond simple field validity (manifoldness,
-//! reference resolution across a whole document) are enforced by the
-//! parser and by domain adapters, not here.
+//! The document model types. Everything is plain data with value semantics;
+//! invariants beyond simple field validity (manifoldness, reference resolution
+//! across a whole document) are enforced by the parser and by domain adapters,
+//! not here.
 
-use std::num::NonZeroU32;
-
+use super::resource_ids::{ResourceId, ResourceIndex};
 use super::slice::{MeshResolution, SliceStack};
 
 /// The unit all lengths in a model document are expressed in.
@@ -61,51 +60,9 @@ impl Unit {
     }
 }
 
-/// Identifier of a resource inside one model part: positive, below
-/// 2^31 per the spec's ST_ResourceID.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResourceId(NonZeroU32);
-
-impl ResourceId {
-    /// The smallest valid resource id (1). Useful as the sole id in a
-    /// single-resource document, built without a fallible conversion.
-    pub const MIN: ResourceId = ResourceId(NonZeroU32::MIN);
-
-    pub fn new(value: u32) -> Option<Self> {
-        if value > i32::MAX as u32 {
-            return None;
-        }
-        NonZeroU32::new(value).map(Self)
-    }
-
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-/// Zero-based index into an implicitly ordered resource list
-/// (vertices, material bases); below 2^31 per ST_ResourceIndex.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResourceIndex(u32);
-
-impl ResourceIndex {
-    pub fn new(value: u32) -> Option<Self> {
-        if value > i32::MAX as u32 {
-            return None;
-        }
-        Some(Self(value))
-    }
-
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0
-    }
-}
-
 /// Row-major 4x3 affine transform as 3MF stores it: the 12 values
-/// `m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32`, where the last
-/// triple is the translation row (row-vector convention).
+/// `m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32`, where the last triple is
+/// the translation row (row-vector convention).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Matrix3D(pub [f64; 12]);
 
@@ -117,10 +74,10 @@ impl Matrix3D {
         0.0, 0.0, 0.0,
     ]);
 
-    /// Parse the attribute form: 12 whitespace-separated decimal
-    /// numbers (scientific notation allowed; surrounding/collapsed
-    /// whitespace tolerated). Every entry must be finite: ST_Number
-    /// is a decimal pattern with no NaN or infinity spelling.
+    /// Parse the attribute form: 12 whitespace-separated decimal numbers
+    /// (scientific notation allowed; surrounding/collapsed whitespace
+    /// tolerated). Every entry must be finite: ST_Number is a decimal pattern
+    /// with no NaN or infinity spelling.
     pub fn parse(value: &str) -> Option<Self> {
         let mut values = [0.0_f64; 12];
         let mut count = 0;
@@ -141,8 +98,8 @@ impl Matrix3D {
         Some(Self(values))
     }
 
-    /// The attribute form: 12 numbers joined by single spaces, each
-    /// in Rust's shortest-round-trip decimal form.
+    /// The attribute form: 12 numbers joined by single spaces, each in Rust's
+    /// shortest-round-trip decimal form.
     pub fn to_attribute(self) -> String {
         let strings: Vec<String> = self.0.iter().map(|v| v.to_string()).collect();
         strings.join(" ")
@@ -175,9 +132,8 @@ pub struct BaseMaterialsGroup {
     pub bases: Vec<BaseMaterial>,
 }
 
-/// Reference from an object to a property group entry (`pid` +
-/// `pindex`). Carried opaquely; this crate does not interpret
-/// property semantics.
+/// Reference from an object to a property group entry (`pid` + `pindex`).
+/// Carried opaquely; this crate does not interpret property semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PropertyRef {
     pub group: ResourceId,
@@ -248,8 +204,7 @@ impl ObjectType {
     }
 }
 
-/// What an object is made of: exactly one of a mesh or a component
-/// list.
+/// What an object is made of: exactly 1 of a mesh or a component list.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjectPayload {
     Mesh(MeshData),
@@ -264,18 +219,17 @@ pub struct ObjectResource {
     pub name: Option<String>,
     pub partnumber: Option<String>,
     pub property_ref: Option<PropertyRef>,
-    /// `s:slicestackid`: the slice stack carrying this object's
-    /// per-layer contours, when the document uses the slice
-    /// extension.
+    /// `s:slicestackid`: the slice stack carrying this object's per-layer
+    /// contours, when the document uses the slice extension.
     pub slice_stack: Option<ResourceId>,
-    /// `s:meshresolution`: whether the mesh payload is authoritative
-    /// geometry (fullres, the default) or a decimated stand-in.
+    /// `s:meshresolution`: whether the mesh payload is authoritative geometry
+    /// (fullres, the default) or a decimated stand-in.
     pub mesh_resolution: MeshResolution,
     pub payload: ObjectPayload,
 }
 
-/// A `<build>` `<item>`: one object to manufacture, with an optional
-/// placement transform.
+/// A `<build>` `<item>`: one object to manufacture, with an optional placement
+/// transform.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuildItem {
     pub object_id: ResourceId,
@@ -366,8 +320,8 @@ mod unit_tests {
 
     #[test]
     fn matrix_rejects_non_finite_values() {
-        // ST_Matrix3D entries are ST_Number, a decimal pattern that
-        // cannot express NaN or an infinity.
+        // ST_Matrix3D entries are ST_Number, a decimal pattern that cannot
+        // express NaN or an infinity.
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 NaN 0 0").is_none());
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 inf 0 0").is_none());
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 -inf 0 0").is_none());

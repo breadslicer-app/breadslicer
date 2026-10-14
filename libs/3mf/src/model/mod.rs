@@ -10,6 +10,7 @@
 mod element_run;
 mod numbers;
 mod read;
+mod resource_ids;
 mod serialization;
 mod slice;
 #[cfg(test)]
@@ -20,6 +21,7 @@ mod types;
 mod write;
 
 pub use read::parse_model;
+pub use resource_ids::{ResourceId, ResourceIndex};
 pub use serialization::{ModelSerialization, SerializationProgress};
 pub use slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
@@ -27,7 +29,7 @@ pub use slice::{
 };
 pub use types::{
     BaseMaterial, BaseMaterialsGroup, BuildItem, Component, Matrix3D, MeshData, Metadata,
-    ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, ResourceId,
-    ResourceIndex, TriangleRef, Unit, Vertex3,
+    ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, TriangleRef, Unit,
+    Vertex3,
 };
 pub use write::write_model;

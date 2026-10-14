@@ -37,14 +37,15 @@ use crate::names::{CORE_NS, PRODUCTION_NS, SLICE_NS};
 
 use super::element_run;
 use super::numbers::{parse_f64, parse_index};
+use super::resource_ids::{ResourceId, ResourceIndex};
 use super::slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,
 };
 use super::types::{
     BaseMaterial, BaseMaterialsGroup, BuildItem, Component, Matrix3D, MeshData, Metadata,
-    ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, ResourceId,
-    ResourceIndex, TriangleRef, Unit, Vertex3,
+    ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, TriangleRef, Unit,
+    Vertex3,
 };
 
 /// Extension namespaces this parser fully understands. The core namespace is

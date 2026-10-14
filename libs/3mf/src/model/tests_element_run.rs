@@ -5,18 +5,18 @@
 
 //! Tests for reading runs of mesh leaf elements from raw bytes.
 //!
-//! Two properties matter throughout: the elements a run accepts must
-//! match what the event parser produces for the same bytes, and a run
-//! must stop exactly before the first thing it cannot read, so the
-//! parser still sees that element and still reports it.
+//! 2 properties matter throughout: the elements a run accepts must match what
+//! the event parser produces for the same bytes, and a run must stop exactly
+//! before the first thing it cannot read, so the parser still sees that element
+//! and still reports it.
 
 use proptest::prelude::*;
 
 use super::element_run::{slice_segment_run, slice_vertex_run, triangle_run, vertex_run};
+use super::resource_ids::{ResourceId, ResourceIndex};
 use super::slice::{Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent, SliceVertex};
 use super::types::{
-    BuildItem, MeshData, ModelDocument, ObjectPayload, ObjectResource, ResourceId, ResourceIndex,
-    TriangleRef, Vertex3,
+    BuildItem, MeshData, ModelDocument, ObjectPayload, ObjectResource, TriangleRef, Vertex3,
 };
 use super::write::write_model;
 use crate::model::parse_model;
@@ -34,8 +34,8 @@ fn index(value: u32) -> ResourceIndex {
     ResourceIndex::new(value).expect("index in range")
 }
 
-/// The bytes following `open`, as a run's input starts: right after
-/// the opening tag of the element list.
+/// The bytes following `open`, as a run's input starts: right after the opening
+/// tag of the element list.
 fn content_after<'a>(xml: &'a str, open: &str) -> &'a [u8] {
     let start = xml.find(open).expect("opening tag present") + open.len();
     &xml.as_bytes()[start..]
@@ -66,8 +66,8 @@ mod vertex_run_tests {
         let input = b"\n  <vertex x=\"0\" y=\"0\" z=\"0\" />\n  <vertex x=\"1\" y=\"0\" z=\"0\" />\n</vertices>";
         let run = vertex_run(input, b"vertex");
         assert_eq!(run.items.len(), 2);
-        // The run ends at the last element, leaving the whitespace and
-        // the end tag to the parser.
+        // The run ends at the last element, leaving the whitespace and the end
+        // tag to the parser.
         assert_eq!(&input[run.consumed..], b"\n</vertices>");
     }
 
@@ -106,8 +106,8 @@ mod vertex_run_tests {
 
     #[test]
     fn reads_a_prefixed_element_name() {
-        // A conformant producer may bind the core namespace to a
-        // prefix; the caller resolves the name and passes its bytes.
+        // A conformant producer may bind the core namespace to a prefix; the
+        // caller resolves the name and passes its bytes.
         let input = br#"<c:vertex x="1" y="2" z="3"/></c:vertices>"#;
         let run = vertex_run(input, b"c:vertex");
         assert_eq!(run.items.len(), 1);
@@ -138,8 +138,8 @@ mod vertex_run_tests {
     }
 }
 
-/// One stop condition per case: the run keeps the elements before the
-/// offending one and ends right after the last of them.
+/// 1 stop condition per case: the run keeps the elements before the offending
+/// one and ends right after the last of them.
 #[cfg(test)]
 mod stop_condition_tests {
     use super::*;
@@ -166,15 +166,15 @@ mod stop_condition_tests {
 
     #[test]
     fn stops_at_a_prefixed_attribute() {
-        // Extension attributes carry a prefix, and the parser may act
-        // on them: the production extension's path is refused there.
+        // Extension attributes carry a prefix, and the parser may act on them:
+        // the production extension's path is refused there.
         assert_stops_before(r#"<vertex x="1" y="2" z="3" p:path="/3D/other.model"/>"#);
     }
 
     #[test]
     fn stops_at_a_namespace_declaration() {
-        // A default-namespace rebinding would put the element outside
-        // the core namespace for the parser.
+        // A default-namespace rebinding would put the element outside the core
+        // namespace for the parser.
         assert_stops_before(r#"<vertex xmlns="urn:other" x="1" y="2" z="3"/>"#);
         assert_stops_before(r#"<vertex xmlns:p="urn:other" x="1" y="2" z="3"/>"#);
     }
@@ -251,8 +251,8 @@ mod triangle_run_tests {
 
     #[test]
     fn accepts_the_property_attributes_the_schema_defines() {
-        // The materials extension assigns properties through these
-        // core attributes; this crate carries no model for them.
+        // The materials extension assigns properties through these core
+        // attributes; this crate carries no model for them.
         let input = br#"<triangle v1="0" v2="1" v3="2" pid="1" p1="0"/><triangle v1="0" v2="1" v3="2" pid="8" p1="0" p2="1" p3="2"/>"#;
         let run = triangle_run(input, b"triangle", 3);
         assert_eq!(run.items.len(), 2);
@@ -286,8 +286,8 @@ mod triangle_run_tests {
     }
 }
 
-/// A run long enough to be split across threads must give the same
-/// answer as a short one, including where it stops.
+/// A run long enough to be split across threads must give the same answer as a
+/// short one, including where it stops.
 #[cfg(test)]
 mod chunking_tests {
     use super::*;
@@ -340,8 +340,8 @@ mod chunking_tests {
     }
 }
 
-/// The elements a run reads must equal the ones the event parser
-/// produces from the same document.
+/// The elements a run reads must equal the ones the event parser produces from
+/// the same document.
 #[cfg(test)]
 mod parser_equality_tests {
     use super::*;
@@ -517,15 +517,15 @@ mod parser_equality_tests {
     }
 }
 
-/// The parser must reach the same document whether or not the runs
-/// fire, and must carry on correctly from where a run left it.
+/// The parser must reach the same document whether or not the runs fire, and
+/// must carry on correctly from where a run left it.
 #[cfg(test)]
 mod parser_route_tests {
     use super::*;
     use crate::error::ModelParseError;
 
-    /// The same document with every attribute in single quotes: legal
-    /// XML that no run reads, so the parse goes element by element.
+    /// The same document with every attribute in single quotes: legal XML that
+    /// no run reads, so the parse goes element by element.
     fn without_runs(xml: &str) -> String {
         xml.replace('"', "'")
     }
@@ -554,8 +554,8 @@ mod parser_route_tests {
 
     #[test]
     fn the_parse_continues_correctly_after_a_run() {
-        // Everything after the runs is where a mis-advanced cursor
-        // would show up first.
+        // Everything after the runs is where a mis-advanced cursor would show
+        // up first.
         let document = parse_model(model(TWO_OBJECTS).as_bytes()).expect("parse");
         assert_eq!(document.metadata.len(), 1);
         assert_eq!(document.objects.len(), 2);
@@ -627,8 +627,8 @@ mod parser_route_tests {
     }
 }
 
-/// The slice extension's own leaf runs: 2D vertices and the segment
-/// chains of a polygon.
+/// The slice extension's own leaf runs: 2D vertices and the segment chains of a
+/// polygon.
 #[cfg(test)]
 mod slice_run_tests {
     use super::*;

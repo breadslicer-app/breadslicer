@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Slice-extension resource types: slice stacks attached to objects
-//! via `s:slicestackid`. Like the rest of the document model, plain
-//! data in document units; cross-part reference resolution (sliceref
-//! targets) and stack semantics live with the consumers.
+//! Slice-extension resource types: slice stacks attached to objects via
+//! `s:slicestackid`. Like the rest of the document model, plain data in
+//! document units; cross-part reference resolution (sliceref targets) and stack
+//! semantics live with the consumers.
 
-use super::types::{ResourceId, ResourceIndex};
+use super::resource_ids::{ResourceId, ResourceIndex};
 
-/// The `s:meshresolution` marker on an object: whether its mesh is
-/// the authoritative geometry or a decimated stand-in for viewing,
-/// with the slice data carrying the real shape.
+/// The `s:meshresolution` marker on an object: whether its mesh is the
+/// authoritative geometry or a decimated stand-in for viewing, with the slice
+/// data carrying the real shape.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeshResolution {
     #[default]
@@ -37,8 +37,8 @@ impl MeshResolution {
     }
 }
 
-/// An `<s:slicestack>` resource: a stack bottom plus either inline
-/// slices or references to stacks stored in other model parts.
+/// An `<s:slicestack>` resource: a stack bottom plus either inline slices or
+/// references to stacks stored in other model parts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SliceStack {
     pub id: ResourceId,
@@ -47,16 +47,16 @@ pub struct SliceStack {
     pub content: SliceStackContent,
 }
 
-/// The spec forbids mixing inline slices and slicerefs in one stack;
-/// the enum makes the mixed state unrepresentable.
+/// The spec forbids mixing inline slices and slicerefs in one stack; the enum
+/// makes the mixed state unrepresentable.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SliceStackContent {
     Slices(Vec<Slice>),
     Refs(Vec<SliceRef>),
 }
 
-/// One `<s:slice>`: the slab from the previous boundary up to
-/// `z_top`. A slice with no vertices and no polygons is a void layer.
+/// One `<s:slice>`: the slab from the previous boundary up to `z_top`. A slice
+/// with no vertices and no polygons is a void layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Slice {
     /// Absolute Z of the TOP of this slab, document units.
@@ -72,8 +72,8 @@ pub struct SliceVertex {
     pub y: f64,
 }
 
-/// An `<s:polygon>`: a start vertex followed by a segment chain. The
-/// polygon is closed iff the last segment ends at `start`.
+/// An `<s:polygon>`: a start vertex followed by a segment chain. The polygon is
+/// closed iff the last segment ends at `start`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SlicePolygon {
     pub start: ResourceIndex,
@@ -87,18 +87,18 @@ impl SlicePolygon {
     }
 }
 
-/// One `<s:segment>` edge to the next vertex. The optional segment
-/// properties (p1/p2/pid) are accepted and dropped by the parser and
-/// never written: the spec's XSD and prose disagree on them and this
-/// crate does not interpret property semantics.
+/// One `<s:segment>` edge to the next vertex. The optional segment properties
+/// (p1/p2/pid) are accepted and dropped by the parser and never written: the
+/// spec's XSD and prose disagree on them and this crate does not interpret
+/// property semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SliceSegment {
     pub end: ResourceIndex,
 }
 
 /// An `<s:sliceref>`: pulls in a stack defined in another model part.
-/// `slice_stack` identifies the stack WITHIN the target part; it is
-/// not a reference into this document's resources.
+/// `slice_stack` identifies the stack WITHIN the target part; it is not a
+/// reference into this document's resources.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SliceRef {
     pub slice_stack: ResourceId,

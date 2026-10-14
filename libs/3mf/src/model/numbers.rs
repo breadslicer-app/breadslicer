@@ -8,7 +8,7 @@
 
 use crate::error::ModelParseError;
 
-use super::types::ResourceIndex;
+use super::resource_ids::ResourceIndex;
 
 pub(super) fn parse_f64(
     element: &'static str,

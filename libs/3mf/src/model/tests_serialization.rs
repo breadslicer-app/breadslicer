@@ -5,13 +5,13 @@
 
 //! Tests for the serialization phase of a 3MF write.
 
+use super::resource_ids::{ResourceId, ResourceIndex};
 use super::serialization::{ModelSerialization, SerializationProgress};
 use super::slice::{
     Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent, SliceVertex,
 };
 use super::types::{
-    Component, MeshData, ModelDocument, ObjectPayload, ObjectResource, ResourceId, ResourceIndex,
-    TriangleRef, Vertex3,
+    Component, MeshData, ModelDocument, ObjectPayload, ObjectResource, TriangleRef, Vertex3,
 };
 use super::write::write_model;
 use crate::error::ModelWriteError;
