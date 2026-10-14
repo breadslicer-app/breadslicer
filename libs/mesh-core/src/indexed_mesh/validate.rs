@@ -152,6 +152,7 @@ impl IndexedMesh {
 mod indexed_mesh_validate_vertices_tests {
     use super::*;
     use crate::primitives::CoordAxis;
+    use crate::transform::AffineTransform3D;
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
         IndexedMesh {
@@ -302,6 +303,33 @@ mod indexed_mesh_validate_vertices_tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn apply_to_vertex_overflow_produces_inf_caught_by_validate_vertices() {
+        // f64 product 1e30 * 1e15 = 1e45 saturates to f32::INFINITY on
+        // downcast. The transformed mesh must remain constructible; the
+        // contract is that the next `validate_vertices()` call reports the
+        // affected vertex and axis. Downstream callers rely on this catch
+        // instead of an inline `apply_to_vertex` error path.
+        let t = AffineTransform3D::from_uniform_scale(1.0e30);
+        let v = t.apply_to_vertex(Vertex::new([1.0e15, 0.0, 0.0]));
+        assert!(v[0].is_infinite());
+        assert!(v[0] > 0.0);
+        assert_eq!(v[1], 0.0);
+        assert_eq!(v[2], 0.0);
+
+        let mesh = IndexedMesh::new(None, vec![v], vec![]);
+        let errors = mesh
+            .validate_vertices()
+            .expect_err("transformed inf vertex must surface as InfiniteCoordinate");
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: CoordAxis::X,
+            }
+        )));
     }
 }
 

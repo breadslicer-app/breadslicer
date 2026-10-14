@@ -23,6 +23,8 @@ mod tests_fingerprint;
 #[cfg(test)]
 mod tests_repair;
 #[cfg(test)]
+mod tests_validated_faces;
+#[cfg(test)]
 mod tests_volume;
 
 pub use declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
