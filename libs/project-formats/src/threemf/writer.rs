@@ -7,7 +7,8 @@
 
 use std::io::{Cursor, Write};
 
-use sc_3mf::model::{ModelDocument, ObjectPayload, ResourceId, SliceStackContent, write_model};
+use sc_3mf::error::ModelWriteError;
+use sc_3mf::model::{ModelDocument, ModelSerialization, ResourceId, SerializationProgress};
 use sc_3mf::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE,
 };
@@ -26,11 +27,6 @@ use crate::threemf::{
     SLICE_PART_NAME, SLICE_REL_TYPE,
 };
 use crate::write::WriteProgress;
-
-/// Report an accumulated serialized-byte count no more often than every this
-/// many bytes, so a large mesh yields a moving bar without a callback per XML
-/// event.
-const SERIALIZE_REPORT_STEP: u64 = 256 * 1024;
 
 /// Writes `scene` and `payload` as a 3MF project package: the parts a plain 3MF
 /// export would carry, plus the project part and, with [`EmbedProfiles::Yes`],
@@ -94,16 +90,8 @@ where
         None => None,
     };
 
-    let serialize_total = estimate_model_bytes(&model.document)
-        + slice_document.as_ref().map_or(0, estimate_model_bytes);
-    let mut serialized: u64 = 0;
-
-    let model_xml = serialize_ticking(
-        &model.document,
-        serialize_total,
-        &mut serialized,
-        &mut progress,
-    )?;
+    let (model_xml, slice_xml) =
+        serialize_documents(&model.document, slice_document.as_ref(), &mut progress)?;
 
     let mut package = Package::new();
     let model_part = known_part_name(DEFAULT_MODEL_PART_NAME);
@@ -135,13 +123,7 @@ where
     });
     add_declared_facet_normals_parts(&mut package, &model.mesh_objects)?;
 
-    if let Some(slice_document) = &slice_document {
-        let slice_xml = serialize_ticking(
-            slice_document,
-            serialize_total,
-            &mut serialized,
-            &mut progress,
-        )?;
+    if let Some(slice_xml) = slice_xml {
         package.add_part(
             known_part_name(SLICE_PART_NAME),
             MODEL_PART_CONTENT_TYPE,
@@ -179,118 +161,30 @@ where
     Ok(())
 }
 
-/// Serializes `document` to XML in memory, reporting the running total of
-/// serialized bytes as a [`WriteProgress::Serialize`] against
-/// `serialize_total`. `serialized` accumulates across successive calls (the
-/// mesh model, then the slice model), so the phase advances once across both
-/// rather than restarting.
-fn serialize_ticking(
-    document: &ModelDocument,
-    serialize_total: u64,
-    serialized: &mut u64,
+/// Serializes the scene document and, when present, the slice document in 1
+/// phase, and returns their XML in that order.
+fn serialize_documents(
+    scene: &ModelDocument,
+    slices: Option<&ModelDocument>,
     progress: &mut impl FnMut(WriteProgress),
-) -> Result<Vec<u8>, WriteThreeMfProjectError> {
-    let mut writer = SerializeTicker::new(*serialized, serialize_total, progress);
-    write_model(document, &mut writer)?;
-    // Force a report at the document boundary, so the serialize phase is
-    // visible even when the whole document is smaller than 1 report step.
-    writer.report_now();
-    *serialized = writer.emitted();
-    Ok(writer.into_inner())
-}
-
-/// A `Write` sink that serializes into a `Vec` while reporting the running
-/// serialized-byte total to a progress callback, throttled to 1 report per
-/// [`SERIALIZE_REPORT_STEP`].
-struct SerializeTicker<'a, F> {
-    inner: Vec<u8>,
-    base: u64,
-    total: u64,
-    last_reported: u64,
-    progress: &'a mut F,
-}
-
-impl<'a, F: FnMut(WriteProgress)> SerializeTicker<'a, F> {
-    fn new(base: u64, total: u64, progress: &'a mut F) -> Self {
-        Self {
-            inner: Vec::new(),
-            base,
-            total,
-            last_reported: base,
-            progress,
+) -> Result<(Vec<u8>, Option<Vec<u8>>), ModelWriteError> {
+    let mut report = |serialization: SerializationProgress| {
+        progress(WriteProgress::Serialize {
+            done: serialization.serialized_bytes,
+            total: serialization.estimated_total_bytes,
+        })
+    };
+    match slices {
+        None => {
+            let [scene_xml] = ModelSerialization::new([scene]).write(&mut report)?;
+            Ok((scene_xml, None))
+        }
+        Some(slices) => {
+            let [scene_xml, slice_xml] =
+                ModelSerialization::new([scene, slices]).write(&mut report)?;
+            Ok((scene_xml, Some(slice_xml)))
         }
     }
-
-    /// Returns the total serialized bytes emitted through this sink, counting
-    /// the base carried in from earlier documents.
-    fn emitted(&self) -> u64 {
-        self.base + self.inner.len() as u64
-    }
-
-    /// Emits a report at the current emitted total, regardless of the throttle
-    /// step.
-    fn report_now(&mut self) {
-        let emitted = self.emitted();
-        self.last_reported = emitted;
-        (self.progress)(WriteProgress::Serialize {
-            done: emitted,
-            total: self.total,
-        });
-    }
-
-    fn into_inner(self) -> Vec<u8> {
-        self.inner
-    }
-}
-
-impl<F: FnMut(WriteProgress)> Write for SerializeTicker<'_, F> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.extend_from_slice(buf);
-        let emitted = self.base + self.inner.len() as u64;
-        if emitted - self.last_reported >= SERIALIZE_REPORT_STEP {
-            self.last_reported = emitted;
-            (self.progress)(WriteProgress::Serialize {
-                done: emitted,
-                total: self.total,
-            });
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// Returns a rough estimate of the XML byte size `write_model` produces for
-/// `document`, used only as the serialize phase's denominator. Real output can
-/// run over or under; a consumer clamps the fraction.
-fn estimate_model_bytes(document: &ModelDocument) -> u64 {
-    // Per-element byte guesses for the `<vertex>`, `<triangle>`, slice
-    // `<vertex>`, and `<segment>` markup plus their numeric payloads.
-    const BYTES_PER_VERTEX: u64 = 64;
-    const BYTES_PER_TRIANGLE: u64 = 48;
-    const BYTES_PER_SLICE_VERTEX: u64 = 40;
-    const BYTES_PER_SLICE_SEGMENT: u64 = 24;
-
-    let mut bytes = 0u64;
-    for object in &document.objects {
-        if let ObjectPayload::Mesh(mesh) = &object.payload {
-            bytes += mesh.vertices.len() as u64 * BYTES_PER_VERTEX;
-            bytes += mesh.triangles.len() as u64 * BYTES_PER_TRIANGLE;
-        }
-    }
-    for stack in &document.slice_stacks {
-        if let SliceStackContent::Slices(slices) = &stack.content {
-            for slice in slices {
-                bytes += slice.vertices.len() as u64 * BYTES_PER_SLICE_VERTEX;
-                for polygon in &slice.polygons {
-                    bytes += polygon.segments.len() as u64 * BYTES_PER_SLICE_SEGMENT;
-                }
-            }
-        }
-    }
-    bytes
 }
 
 /// Sequential `rel-<n>` relationship ids for the package root.
