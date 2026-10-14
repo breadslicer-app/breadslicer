@@ -23,7 +23,9 @@ use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 
-use sc_3mf::error::{ModelParseError, ModelWriteError, PackageReadError, PackageWriteError};
+use sc_3mf::error::{
+    MalformedPartNameError, ModelParseError, ModelWriteError, PackageReadError, PackageWriteError,
+};
 use sc_mesh_core::IndexedMeshBuildError;
 use sc_scene::{NodeId, SceneError};
 
@@ -702,6 +704,13 @@ pub enum WriteThreeMfError {
     /// A mesh object has more declared facet normals than the u32 count field
     /// of their package part can hold.
     FacetCountExceedsU32 { object_id: u32, count: usize },
+    /// A part name built from an object id is not a valid part name. A decimal
+    /// id keeps the name valid, so only a change of how the name is built
+    /// produces it.
+    MalformedPartName {
+        name: String,
+        source: MalformedPartNameError,
+    },
 }
 
 impl fmt::Display for WriteThreeMfError {
@@ -722,6 +731,12 @@ impl fmt::Display for WriteThreeMfError {
                  the {} a declared-facet-normals part can hold",
                 u32::MAX,
             ),
+            Self::MalformedPartName { name, source } => {
+                write!(
+                    f,
+                    "3MF writer: \"{name}\" is not a valid part name: {source}"
+                )
+            }
         }
     }
 }
@@ -733,6 +748,7 @@ impl std::error::Error for WriteThreeMfError {
             Self::Model(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::Graph(e) => Some(e),
+            Self::MalformedPartName { source, .. } => Some(source),
             Self::CsgUnrepresentable { .. } | Self::FacetCountExceedsU32 { .. } => None,
         }
     }

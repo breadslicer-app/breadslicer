@@ -7,6 +7,8 @@
 
 use std::error::Error;
 
+use sc_3mf::error::MalformedPartNameError;
+
 use crate::error::WriteThreeMfError;
 
 #[test]
@@ -29,4 +31,21 @@ fn facet_count_exceeds_u32_has_no_source() {
         count: 42,
     };
     assert!(err.source().is_none());
+}
+
+#[test]
+fn malformed_part_name_display_and_source() {
+    let err = WriteThreeMfError::MalformedPartName {
+        name: "/Metadata//3.bin".to_string(),
+        source: MalformedPartNameError::EmptySegment,
+    };
+    assert_eq!(
+        err.to_string(),
+        "3MF writer: \"/Metadata//3.bin\" is not a valid part name: part name contains an empty \
+         segment",
+    );
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("part name contains an empty segment".to_string()),
+    );
 }

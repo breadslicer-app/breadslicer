@@ -43,8 +43,7 @@ pub fn add_declared_facet_normals_parts(
             continue;
         };
         let object_id = object_id.get();
-        let name = PartName::new(&format!("{DIRECTORY}{object_id}.{EXTENSION}"))
-            .expect("a decimal object id makes a valid part name");
+        let name = checked_part_name(format!("{DIRECTORY}{object_id}.{EXTENSION}"))?;
         let target = name.as_str().to_string();
         package.add_part(name, CONTENT_TYPE, encode(object_id, fingerprint, normals)?)?;
         package.add_root_relationship(Relationship {
@@ -59,6 +58,12 @@ pub fn add_declared_facet_normals_parts(
         });
     }
     Ok(())
+}
+
+/// Returns `name`, a part name that the writer built, as a [`PartName`], or
+/// [`WriteThreeMfError::MalformedPartName`] when it breaks the part-name rules.
+fn checked_part_name(name: String) -> Result<PartName, WriteThreeMfError> {
+    PartName::new(&name).map_err(|source| WriteThreeMfError::MalformedPartName { name, source })
 }
 
 /// Returns the fingerprint and the normals of the declared facet normals of
@@ -279,5 +284,32 @@ mod declared_normals_tests {
             encode_facet_count(5, u32::MAX as usize).ok(),
             Some([0xff; 4])
         );
+    }
+}
+
+#[cfg(test)]
+mod checked_part_name_tests {
+    use super::*;
+    use sc_3mf::error::MalformedPartNameError;
+
+    #[test]
+    fn a_malformed_name_gives_the_name_and_the_broken_rule() {
+        let result = checked_part_name("/Metadata/declared-facet-normals//3.bin".to_string());
+        assert!(
+            matches!(
+                &result,
+                Err(WriteThreeMfError::MalformedPartName { name, source })
+                    if name == "/Metadata/declared-facet-normals//3.bin"
+                        && *source == MalformedPartNameError::EmptySegment
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_name_gives_the_part_name() {
+        let name = checked_part_name("/Metadata/declared-facet-normals/3.bin".to_string())
+            .expect("the name is valid");
+        assert_eq!(name.as_str(), "/Metadata/declared-facet-normals/3.bin");
     }
 }
