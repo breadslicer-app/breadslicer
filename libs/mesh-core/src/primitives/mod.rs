@@ -7,6 +7,10 @@ use std::fmt;
 
 use newtypes::{newtype_array, newtype_array_readonly, newtype_from_only, newtype_ord};
 
+mod canonical_coords;
+
+pub use canonical_coords::CanonicalCoords;
+
 /// Which coordinate of a 3D point is being referred to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -147,6 +151,14 @@ impl Vertex {
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
         Vector3D::new(self.coords()).into()
+    }
+
+    /// Returns the coordinates in a form that is equal for coincident vertices,
+    /// or `None` when a coordinate is NaN or infinite: such a vertex coincides
+    /// with no other.
+    #[inline]
+    pub fn canonical_coords(self) -> Option<CanonicalCoords> {
+        CanonicalCoords::from_coords(self.coords())
     }
 }
 
@@ -366,5 +378,20 @@ mod vector3d_index_tests {
     fn index_out_of_bounds_panics() {
         let v = Vector3D::new([1.0_f32, 2.0, 3.0]);
         let _ = v[3];
+    }
+}
+
+#[cfg(test)]
+mod vertex_canonical_coords_tests {
+    use super::{CanonicalCoords, Vertex};
+
+    #[test]
+    fn canonical_coords_gives_what_from_coords_gives() {
+        for coords in [[1.0, -0.0, 2.5], [f32::NAN, 0.0, 0.0]] {
+            assert_eq!(
+                Vertex::new(coords).canonical_coords(),
+                CanonicalCoords::from_coords(coords)
+            );
+        }
     }
 }
