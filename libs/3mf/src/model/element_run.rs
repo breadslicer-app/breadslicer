@@ -3,32 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Reading runs of mesh leaf elements straight from the model part's
-//! bytes.
+//! Reading runs of mesh leaf elements straight from the model part's bytes.
 //!
-//! A large model part is dominated by two element lists, `<vertices>`
-//! and `<triangles>`, whose content the core schema pins down exactly:
-//! they hold nothing but their own leaf elements, the leaves have no
-//! child content, and their attributes are enumerated (x, y, z for a
-//! vertex; v1, v2, v3 plus the optional p1, p2, p3 and pid for a
-//! triangle), with any extension attribute required to carry a
-//! namespace prefix. That is narrow enough to read without building an
-//! event per element.
+//! A large model part is dominated by 2 element lists, `<vertices>` and
+//! `<triangles>`, whose content the core schema pins down exactly: they hold
+//! nothing but their own leaf elements, the leaves have no child content, and
+//! their attributes are enumerated (x, y, z for a vertex; v1, v2, v3 plus the
+//! optional p1, p2, p3 and pid for a triangle), with any extension attribute
+//! required to carry a namespace prefix. That is narrow enough to read without
+//! building an event per element.
 //!
-//! A run covers the longest prefix of the input that this module can
-//! read with the same result the event parser would produce. It stops
-//! before anything else, including a malformed number or an index
-//! outside the mesh, so the caller's ordinary parsing path still sees
-//! those elements and still produces the diagnosis. Refusing is always
-//! safe; accepting is what needs proving, so every rule here errs
-//! towards stopping.
+//! A run covers the longest prefix of the input that this module can read with
+//! the same result the event parser would produce. It stops before anything
+//! else, including a malformed number or an index outside the mesh, so the
+//! caller's ordinary parsing path still sees those elements and still produces
+//! the diagnosis. Refusing is always safe; accepting is what needs proving, so
+//! every rule here errs towards stopping.
 //!
-//! The element name is supplied by the caller, which resolved it
-//! through the reader's namespace bindings. Inside a run the bindings
-//! cannot change (the elements are empty and the accepted attribute
-//! set admits no xmlns declaration), so requiring every element to
-//! spell its name with the same bytes keeps the resolution the caller
-//! made valid for all of them.
+//! The element name is supplied by the caller, which resolved it through the
+//! reader's namespace bindings. Inside a run the bindings cannot change (the
+//! elements are empty and the accepted attribute set admits no xmlns
+//! declaration), so requiring every element to spell its name with the same
+//! bytes keeps the resolution the caller made valid for all of them.
 
 use std::ops::Range;
 use std::str;
@@ -36,7 +32,7 @@ use std::str;
 use memchr::memmem;
 use rayon::prelude::*;
 
-use super::read::{parse_f64, parse_index};
+use super::numbers::{parse_f64, parse_index};
 use super::slice::{SliceSegment, SliceVertex};
 use super::types::{TriangleRef, Vertex3};
 
@@ -44,32 +40,32 @@ use super::types::{TriangleRef, Vertex3};
 pub(super) struct ElementRun<T> {
     /// The elements, in document order.
     pub items: Vec<T>,
-    /// How many bytes of the input the run covers. Always ends right
-    /// after the last accepted element, so a caller that advances by
-    /// this much lands on markup.
+    /// How many bytes of the input the run covers. Always ends right after the
+    /// last accepted element, so a caller that advances by this much lands on
+    /// markup.
     pub consumed: usize,
 }
 
 /// The attribute keys the core schema gives `<vertex>`, all required.
 const VERTEX_KEYS: &[&[u8]] = &[b"x", b"y", b"z"];
 
-/// The attribute keys the core schema gives `<triangle>`: the three
-/// vertex indices, plus the property overrides this crate carries no
-/// model for and therefore only has to leave alone.
+/// The attribute keys the core schema gives `<triangle>`: the 3 vertex indices,
+/// plus the property overrides this crate carries no model for and therefore
+/// only has to leave alone.
 const TRIANGLE_KEYS: &[&[u8]] = &[b"v1", b"v2", b"v3", b"p1", b"p2", b"p3", b"pid"];
 
 /// The attribute keys the slice extension gives its 2D `<vertex>`.
 const SLICE_VERTEX_KEYS: &[&[u8]] = &[b"x", b"y"];
 
-/// The attribute keys the slice extension gives `<segment>`: the end
-/// vertex, plus properties this crate accepts and drops.
+/// The attribute keys the slice extension gives `<segment>`: the end vertex,
+/// plus properties this crate accepts and drops.
 const SLICE_SEGMENT_KEYS: &[&[u8]] = &[b"v2", b"p1", b"p2", b"pid"];
 
 /// The most attributes any accepted element can hold.
 const MAX_ATTRIBUTES: usize = 7;
 
-/// Below this length a run is read on the calling thread: splitting a
-/// short one costs more than it saves.
+/// Below this length a run is read on the calling thread: splitting a short one
+/// costs more than it saves.
 const MIN_PARALLEL_LEN: usize = 64 * 1024;
 
 /// Rough bytes per element, used only to pre-size the output.
@@ -80,8 +76,8 @@ pub(super) fn vertex_run(input: &[u8], name: &[u8]) -> ElementRun<Vertex3> {
     read_run(input, |bytes| read_vertex(bytes, name))
 }
 
-/// Read a run of `<triangle>` elements spelled `name`, accepting only
-/// indices below `vertex_count`, as the parser's own range check does.
+/// Read a run of `<triangle>` elements spelled `name`, accepting only indices
+/// below `vertex_count`, as the parser's own range check does.
 pub(super) fn triangle_run(
     input: &[u8],
     name: &[u8],
@@ -90,14 +86,13 @@ pub(super) fn triangle_run(
     read_run(input, |bytes| read_triangle(bytes, name, vertex_count))
 }
 
-/// Read a run of slice-extension 2D `<vertex>` elements spelled
-/// `name`.
+/// Read a run of slice-extension 2D `<vertex>` elements spelled `name`.
 pub(super) fn slice_vertex_run(input: &[u8], name: &[u8]) -> ElementRun<SliceVertex> {
     read_run(input, |bytes| read_slice_vertex(bytes, name))
 }
 
-/// Read a run of `<segment>` elements spelled `name`, accepting only
-/// end indices below `vertex_count`, as the polygon's own check does.
+/// Read a run of `<segment>` elements spelled `name`, accepting only end
+/// indices below `vertex_count`, as the polygon's own check does.
 pub(super) fn slice_segment_run(
     input: &[u8],
     name: &[u8],
@@ -106,10 +101,9 @@ pub(super) fn slice_segment_run(
     read_run(input, |bytes| read_slice_segment(bytes, name, vertex_count))
 }
 
-/// The name of the element the input starts with, once leading
-/// whitespace is skipped. Only the bytes are returned: whether that
-/// name is the wanted one is a question about namespace bindings, and
-/// only the caller holds those.
+/// The name of the element the input starts with, once leading whitespace is
+/// skipped. Only the bytes are returned: whether that name is the wanted one is
+/// a question about namespace bindings, and only the caller holds those.
 pub(super) fn leading_element_name(input: &[u8]) -> Option<&[u8]> {
     let rest = skip_space(input).strip_prefix(b"<".as_slice())?;
     let end = rest
@@ -140,9 +134,9 @@ impl<'a> Attributes<'a> {
             .map(|(_, value)| *value)
     }
 
-    /// Records one attribute, refusing a repeat of a key already seen
-    /// (the event parser reports duplicates as an error) and refusing
-    /// more entries than the schema allows.
+    /// Records one attribute, refusing a repeat of a key already seen (the
+    /// event parser reports duplicates as an error) and refusing more entries
+    /// than the schema allows.
     fn push(&mut self, key: &'a [u8], value: &'a str) -> Option<()> {
         if self.len == MAX_ATTRIBUTES || self.get(key).is_some() {
             return None;
@@ -158,22 +152,22 @@ fn is_xml_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
 
-/// The characters an accepted attribute key may use. Deliberately
-/// narrower than an XML name: a key holding anything else, a colon
-/// included, ends the key here and then fails the schema check.
+/// The characters an accepted attribute key may use. Deliberately narrower than
+/// an XML name: a key holding anything else, a colon included, ends the key
+/// here and then fails the schema check.
 fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
 }
 
-/// The characters an element name may use here. A prefixed name is one
-/// spelling of a namespace-qualified element, so the colon belongs.
+/// The characters an element name may use here. A prefixed name is one spelling
+/// of a namespace-qualified element, so the colon belongs.
 fn is_name_byte(byte: u8) -> bool {
     is_key_byte(byte) || byte == b':'
 }
 
-/// Attribute values are read verbatim, so they must be ones the event
-/// parser would also read verbatim: plain ASCII, no escape to resolve,
-/// no markup character.
+/// Attribute values are read verbatim, so they must be ones the event parser
+/// would also read verbatim: plain ASCII, no escape to resolve, no markup
+/// character.
 fn is_plain_value(value: &[u8]) -> bool {
     value
         .iter()
@@ -188,12 +182,12 @@ fn skip_space(input: &[u8]) -> &[u8] {
     &input[end..]
 }
 
-/// Read one `<name key="value" ... />` element from the front of
-/// `input`, returning its attributes and its length.
+/// Read one `<name key="value" ... />` element from the front of `input`,
+/// returning its attributes and its length.
 ///
-/// Everything outside that one spelling is refused: a different name,
-/// a key outside `keys`, a repeated key, a quoting or spacing variant,
-/// a value needing unescaping, and the `<name></name>` form.
+/// Everything outside that one spelling is refused: a different name, a key
+/// outside `keys`, a repeated key, a quoting or spacing variant, a value
+/// needing unescaping, and the `<name></name>` form.
 fn read_element<'a>(
     input: &'a [u8],
     name: &[u8],
@@ -280,11 +274,11 @@ fn read_slice_segment(
 /// What one chunk of a run yielded.
 struct Chunk<T> {
     items: Vec<T>,
-    /// Offset just past the last accepted element, relative to the
-    /// chunk, or `None` when the chunk accepted nothing.
+    /// Offset just past the last accepted element, relative to the chunk, or
+    /// `None` when the chunk accepted nothing.
     accepted_end: Option<usize>,
-    /// Whether the chunk reached its end with only whitespace left, as
-    /// opposed to stopping at something it would not read.
+    /// Whether the chunk reached its end with only whitespace left, as opposed
+    /// to stopping at something it would not read.
     complete: bool,
 }
 
@@ -317,19 +311,18 @@ where
     }
 }
 
-/// Where the run can end at the latest. The first end tag closes the
-/// element list, and a run of empty elements contains none, so the
-/// bytes beyond it are never part of the run. A shorter bound (an end
-/// tag spelled inside a comment, say) only costs acceleration.
+/// Where the run can end at the latest. The first end tag closes the element
+/// list, and a run of empty elements contains none, so the bytes beyond it are
+/// never part of the run. A shorter bound (an end tag spelled inside a comment,
+/// say) only costs acceleration.
 fn run_bound(input: &[u8]) -> usize {
     memmem::find(input, b"</").unwrap_or(input.len())
 }
 
-/// Split `input` into chunks that start on an element boundary, so
-/// each can be read independently. A boundary lands after a `>`; one
-/// that lands mid-element instead (a `>` inside an attribute value)
-/// makes its chunk stop immediately, which shortens the run without
-/// changing what it accepted.
+/// Split `input` into chunks that start on an element boundary, so each can be
+/// read independently. A boundary lands after a `>`; one that lands mid-element
+/// instead (a `>` inside an attribute value) makes its chunk stop immediately,
+/// which shortens the run without changing what it accepted.
 fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
     let threads = rayon::current_num_threads();
     if input.len() < MIN_PARALLEL_LEN || threads < 2 {
@@ -340,8 +333,8 @@ fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
     bounds.push(0);
     let mut last = 0;
     for step in 1..threads {
-        // An element longer than one chunk can push a boundary past
-        // the next nominal offset.
+        // An element longer than one chunk can push a boundary past the next
+        // nominal offset.
         let nominal = target * step;
         if nominal <= last {
             continue;

@@ -7,24 +7,23 @@
 //!
 //! Conformance behavior:
 //! - DTD content is rejected (the spec forbids it).
-//! - Slice-extension content (slicestack resources, the object
-//!   attributes) is parsed into the document model.
-//! - Elements and attributes from namespaces this crate does not know
-//!   are ignored, as the spec instructs consumers to do, with one
-//!   exception: production-extension `path` attributes are refused,
-//!   because ignoring them would silently load an incomplete scene.
-//! - `requiredextensions` prefixes are resolved against the xmlns
-//!   declarations on `<model>` and checked against the crate's
-//!   supported set; unsupported ones are refused by namespace name.
-//! - Resources must be defined before they are referenced; resource
-//!   ids must be unique; triangle indices are range-checked.
+//! - Slice-extension content (slicestack resources, the object attributes) is
+//!   parsed into the document model.
+//! - Elements and attributes from namespaces this crate does not know are
+//!   ignored, as the spec instructs consumers to do, with 1 exception:
+//!   production-extension `path` attributes are refused, because ignoring them
+//!   would silently load an incomplete scene.
+//! - `requiredextensions` prefixes are resolved against the xmlns declarations
+//!   on `<model>` and checked against the crate's supported set; unsupported
+//!   ones are refused by namespace name.
+//! - Resources must be defined before they are referenced; resource ids must be
+//!   unique; triangle indices are range-checked.
 //!
-//! Loop structure invariant used throughout: every child-parsing loop
-//! consumes events until the End of ITS OWN container element. Leaf
-//! elements (`vertex`, `base`, `item`, ...) are handled from their
-//! attributes and, when they arrive in Start form, their subtree is
-//! skipped immediately, so an unmatched End event always belongs to
-//! the enclosing container.
+//! Loop structure invariant used throughout: every child-parsing loop consumes
+//! events until the End of ITS OWN container element. Leaf elements (`vertex`,
+//! `base`, `item`, ...) are handled from their attributes and, when they arrive
+//! in Start form, their subtree is skipped immediately, so an unmatched End
+//! event always belongs to the enclosing container.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -37,6 +36,7 @@ use crate::error::ModelParseError;
 use crate::names::{CORE_NS, PRODUCTION_NS, SLICE_NS};
 
 use super::element_run;
+use super::numbers::{parse_f64, parse_index};
 use super::slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,
@@ -47,8 +47,8 @@ use super::types::{
     ResourceIndex, TriangleRef, Unit, Vertex3,
 };
 
-/// Extension namespaces this parser fully understands. The core
-/// namespace is implied and never listed in `requiredextensions`.
+/// Extension namespaces this parser fully understands. The core namespace is
+/// implied and never listed in `requiredextensions`.
 const SUPPORTED_EXTENSION_NAMESPACES: &[&str] = &[SLICE_NS];
 
 type Reader<'a> = NsReader<&'a [u8]>;
@@ -102,9 +102,9 @@ fn is_slice_ns(result: &ResolveResult<'_>) -> bool {
 }
 
 /// The attributes of one element, split into locally-relevant ones
-/// (unprefixed), slice-extension ones, and the xmlns declarations.
-/// Attributes from other foreign namespaces are dropped here, after
-/// the production-path guard.
+/// (unprefixed), slice-extension ones, and the xmlns declarations. Attributes
+/// from other foreign namespaces are dropped here, after the production-path
+/// guard.
 struct ElementAttributes {
     local: BTreeMap<Vec<u8>, String>,
     slice: BTreeMap<Vec<u8>, String>,
@@ -139,8 +139,8 @@ fn collect_attributes(
     for attr in e.attributes() {
         let attr = attr?;
         if let Some(declaration) = attr.key.as_namespace_binding() {
-            // 3MF mandates XML 1.0; the reader never checks the
-            // declaration, so the 1.0 rules are assumed.
+            // 3MF mandates XML 1.0; the reader never checks the declaration, so
+            // the 1.0 rules are assumed.
             let ns = attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned();
             let prefix = match declaration {
                 PrefixDeclaration::Default => String::new(),
@@ -183,42 +183,6 @@ fn parse_resource_id(value: &str) -> Result<ResourceId, ModelParseError> {
         .ok()
         .and_then(ResourceId::new)
         .ok_or_else(|| ModelParseError::InvalidResourceId {
-            value: value.to_string(),
-        })
-}
-
-pub(super) fn parse_f64(
-    element: &'static str,
-    attribute: &'static str,
-    value: &str,
-) -> Result<f64, ModelParseError> {
-    // ST_Number is a decimal pattern with no NaN or infinity
-    // spelling; Rust's f64 parser accepts both, so filter them out.
-    value
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|number| number.is_finite())
-        .ok_or_else(|| ModelParseError::InvalidNumber {
-            element,
-            attribute,
-            value: value.to_string(),
-        })
-}
-
-pub(super) fn parse_index(
-    element: &'static str,
-    attribute: &'static str,
-    value: &str,
-) -> Result<ResourceIndex, ModelParseError> {
-    value
-        .trim()
-        .parse::<u32>()
-        .ok()
-        .and_then(ResourceIndex::new)
-        .ok_or_else(|| ModelParseError::InvalidNumber {
-            element,
-            attribute,
             value: value.to_string(),
         })
 }
@@ -332,8 +296,8 @@ fn metadata_from_attributes(
 }
 
 /// Parse a `<metadata>` element's attributes and text content. Entity
-/// references arrive as separate events and are resolved here;
-/// undeclared entities are an error since DTDs are forbidden.
+/// references arrive as separate events and are resolved here; undeclared
+/// entities are an error since DTDs are forbidden.
 fn parse_metadata(
     reader: &mut Reader<'_>,
     start: &BytesStart<'static>,
@@ -381,9 +345,9 @@ fn resolve_general_ref(r: &BytesRef<'_>) -> Result<String, ModelParseError> {
 
 /// The objects parsed so far, with the type each one declared.
 ///
-/// An object joins this set only once its own element has been fully
-/// parsed, which is what makes a reference to a later object, or to the
-/// enclosing object itself, resolve to nothing.
+/// An object joins this set only once its own element has been fully parsed,
+/// which is what makes a reference to a later object, or to the enclosing
+/// object itself, resolve to nothing.
 #[derive(Default)]
 struct DeclaredObjects(HashMap<ResourceId, ObjectType>);
 
@@ -455,8 +419,8 @@ fn parse_resources(
                             });
                         }
                         b"object" => {
-                            // An empty-element object cannot carry a
-                            // mesh or components.
+                            // An empty-element object cannot carry a mesh or
+                            // components.
                             let attributes = collect_attributes(reader, &owned)?;
                             let id = parse_resource_id(attributes.require("object", "id")?)?;
                             return Err(ModelParseError::ObjectWithoutGeometry { id: id.get() });
@@ -659,8 +623,8 @@ fn parse_slice(
                 let owned = e.into_owned();
                 let (ns, local) = reader.resolver().resolve_element(owned.name());
                 if is_slice_ns(&ns) && local.as_ref() == b"polygon" {
-                    // A polygon without children cannot carry the
-                    // required segment chain.
+                    // A polygon without children cannot carry the required
+                    // segment chain.
                     return Err(ModelParseError::PolygonWithoutSegments {
                         stack_id: stack_id.get(),
                     });
@@ -796,9 +760,8 @@ fn parse_slice_polygon(
     })
 }
 
-/// The optional segment properties (p1, p2, pid) land in the
-/// attribute map and are dropped: this crate does not interpret
-/// property semantics.
+/// The optional segment properties (p1, p2, pid) land in the attribute map and
+/// are dropped: this crate does not interpret property semantics.
 fn parse_segment_end(
     reader: &Reader<'_>,
     e: &BytesStart<'static>,
@@ -890,9 +853,9 @@ fn parse_object(
                 }
             }
             Event::Empty(e) => {
-                // Empty-element forms of the geometry containers:
-                // `<mesh/>` and `<components/>` carry no children but
-                // still decide the payload kind.
+                // Empty-element forms of the geometry containers: `<mesh/>` and
+                // `<components/>` carry no children but still decide the
+                // payload kind.
                 let owned = e.into_owned();
                 let (ns, local) = reader.resolver().resolve_element(owned.name());
                 if is_core_ns(&ns) {
@@ -960,10 +923,10 @@ fn parse_mesh(reader: &mut Reader<'_>, object_id: ResourceId) -> Result<MeshData
     Ok(mesh)
 }
 
-/// The name of the element at the reader's cursor, when it resolves to
-/// `local` in the namespace `in_namespace` accepts. Resolution goes
-/// through the reader's own bindings, so a prefixed spelling is found
-/// and an element that merely looks the part is not.
+/// The name of the element at the reader's cursor, when it resolves to `local`
+/// in the namespace `in_namespace` accepts. Resolution goes through the
+/// reader's own bindings, so a prefixed spelling is found and an element that
+/// merely looks the part is not.
 fn leading_element<'a>(
     reader: &Reader<'a>,
     in_namespace: fn(&ResolveResult<'_>) -> bool,
@@ -975,18 +938,16 @@ fn leading_element<'a>(
     (in_namespace(&namespace) && found.as_ref() == local).then_some(name)
 }
 
-/// Take the leaf elements that are spelled plainly enough to read
-/// straight from the input, and move the reader past them. Whatever
-/// the run does not cover, including the element that ended it, is
-/// left to the event loop, so every diagnosis still comes from the
-/// ordinary path.
+/// Take the leaf elements that are spelled plainly enough to read straight from
+/// the input, and move the reader past them. Whatever the run does not cover,
+/// including the element that ended it, is left to the event loop, so every
+/// diagnosis still comes from the ordinary path.
 ///
 /// Moving the reader rewrites its source slice. quick-xml offers
-/// `Reader::stream` for reading raw bytes out of the source
-/// mid-document, but `NsReader` exposes neither it nor a way through
-/// to it. The one documented consequence is that `buffer_position`
-/// stops counting those bytes; nothing here reads it, and no error
-/// this crate reports carries a byte offset.
+/// `Reader::stream` for reading raw bytes out of the source mid-document, but
+/// `NsReader` exposes neither it nor a way through to it. The one documented
+/// consequence is that `buffer_position` stops counting those bytes; nothing
+/// here reads it, and no error this crate reports carries a byte offset.
 fn take_run<'a, T>(
     reader: &mut Reader<'a>,
     target: &mut Vec<T>,
@@ -1060,9 +1021,8 @@ fn parse_triangles(
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
-        // The run checks indices against the vertices read so far,
-        // which is the list, at the point in the document, the event
-        // path checks against.
+        // The run checks indices against the vertices read so far, which is the
+        // list, at the point in the document, the event path checks against.
         let vertex_count = mesh.vertices.len();
         take_run(
             reader,
