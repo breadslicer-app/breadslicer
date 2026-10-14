@@ -6,7 +6,7 @@
 use newtypes::newtype_array_readonly;
 use sha2::{Digest, Sha384};
 
-use super::IndexedMesh;
+use super::mesh::IndexedMesh;
 
 // SHA-384 digest of the bytes from `IndexedMesh::encode_geometry`.
 newtype_array_readonly!(GeometryFingerprint, u8, 48);

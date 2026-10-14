@@ -8,7 +8,7 @@ use std::fmt;
 
 use crate::primitives::FaceIndex;
 
-use super::IndexedMesh;
+use super::mesh::IndexedMesh;
 use super::validate::MeshFaceError;
 use super::validated::MeshEdgeManifoldError;
 

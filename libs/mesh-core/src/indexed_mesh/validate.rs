@@ -7,7 +7,7 @@ use std::fmt;
 
 use crate::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
-use super::IndexedMesh;
+use super::mesh::IndexedMesh;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshVertexError {

@@ -5,35 +5,34 @@
 
 //! Aggregation helpers for mesh-validation error lists.
 //!
-//! [`group_errors_by_variant`] folds a flat slice of validation
-//! errors into per-variant buckets, preserving the order in which
-//! each variant first appears. Consumers use this to produce
-//! summaries of the form
-//! `"N error(s)\n  M VariantName (e.g. faces #2, #5, ...)"`
-//! without re-implementing the bucketing every time.
+//! [`group_errors_by_variant`] folds a flat slice of validation errors into
+//! per-variant buckets, preserving the order in which each variant first
+//! appears. Consumers use this to produce summaries of the form
+//! `"N error(s)\n  M VariantName (e.g. faces #2, #5, ...)"` without
+//! re-implementing the bucketing every time.
 //!
-//! The buckets are powered by the [`MeshErrorReport`] trait, which
-//! exposes a variant name and an optional representative face index
-//! for each error. The trait is implemented for
-//! [`MeshVertexError`](super::MeshVertexError),
+//! The buckets are powered by the [`MeshErrorReport`] trait, which exposes a
+//! variant name and an optional representative face index for each error. The
+//! trait is implemented for [`MeshVertexError`](super::MeshVertexError),
 //! [`MeshFaceError`](super::MeshFaceError) and
 //! [`MeshEdgeManifoldError`](super::MeshEdgeManifoldError); other validation
 //! error enums can opt in by implementing it.
 
 use crate::primitives::FaceIndex;
 
-use super::{MeshEdgeManifoldError, MeshFaceError, MeshVertexError};
+use super::validate::{MeshFaceError, MeshVertexError};
+use super::validated::MeshEdgeManifoldError;
 
-/// Surface a variant name and (where applicable) a representative
-/// face index for aggregation into summaries.
+/// Surface a variant name and (where applicable) a representative face index
+/// for aggregation into summaries.
 pub trait MeshErrorReport {
-    /// Stable identifier for the enum variant. Used as a grouping
-    /// key and as the human-readable label in summaries.
+    /// Stable identifier for the enum variant. Used as a grouping key and as
+    /// the human-readable label in summaries.
     fn variant_name(&self) -> &'static str;
 
-    /// Face index this error is anchored on, when the variant
-    /// carries one. `None` for variants that do not refer to a
-    /// specific face (for example, [`MeshEdgeManifoldError::EmptyMesh`]).
+    /// Face index this error is anchored on, when the variant carries one.
+    /// `None` for variants that do not refer to a specific face (for example,
+    /// [`MeshEdgeManifoldError::EmptyMesh`]).
     fn example_face(&self) -> Option<FaceIndex>;
 }
 
@@ -45,9 +44,9 @@ impl MeshErrorReport for MeshVertexError {
         }
     }
 
-    /// Vertex errors anchor on a vertex, not a face; the summary's
-    /// face-typed example hook has nothing to offer here. Per-vertex
-    /// detail stays available through each error's `Display`.
+    /// Vertex errors anchor on a vertex, not a face; the summary's face-typed
+    /// example hook has nothing to offer here. Per-vertex detail stays
+    /// available through each error's `Display`.
     fn example_face(&self) -> Option<FaceIndex> {
         None
     }
@@ -89,16 +88,16 @@ impl MeshErrorReport for MeshEdgeManifoldError {
     }
 }
 
-/// One variant's slice of an error list, in input order.
+/// 1 variant's slice of an error list, in input order.
 #[derive(Debug)]
 pub struct ErrorVariantGroup<'a, E> {
     pub variant_name: &'static str,
     pub members: Vec<&'a E>,
 }
 
-/// Group `errors` by variant name. The returned groups appear in the
-/// order each variant first occurs in `errors`; members within a
-/// group also preserve their input order.
+/// Group `errors` by variant name. The returned groups appear in the order each
+/// variant first occurs in `errors`; members within a group also preserve their
+/// input order.
 pub fn group_errors_by_variant<E: MeshErrorReport>(errors: &[E]) -> Vec<ErrorVariantGroup<'_, E>> {
     let mut groups: Vec<ErrorVariantGroup<'_, E>> = Vec::new();
     for err in errors {

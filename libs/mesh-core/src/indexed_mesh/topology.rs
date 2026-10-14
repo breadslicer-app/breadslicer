@@ -30,7 +30,8 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 
-use super::{ValidatedEdgeManifoldMesh, half_edges};
+use super::half_edges;
+use super::validated::ValidatedEdgeManifoldMesh;
 
 /// Canonical key for an undirected mesh edge: `(lo, hi)` with `lo <= hi`.
 /// Constructed via [`edge_key`].
@@ -280,7 +281,7 @@ mod edge_key_tests {
 
 #[cfg(test)]
 mod mesh_topology_tests {
-    use crate::indexed_mesh::IndexedMesh;
+    use crate::indexed_mesh::mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Vertex};
 
     use super::*;
@@ -527,7 +528,7 @@ mod sorted_topology_equivalence_tests {
 
     use proptest::prelude::*;
 
-    use crate::indexed_mesh::IndexedMesh;
+    use crate::indexed_mesh::mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Vertex};
 
     use super::*;

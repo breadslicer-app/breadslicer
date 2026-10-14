@@ -8,7 +8,7 @@
 //! [`super::validate`] and [`super::validated`]; this module owns the read-side
 //! decisions around them so every frontend diagnoses meshes the same way.
 
-use super::IndexedMesh;
+use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::{MeshEdgeManifoldError, ZeroAreaFace};
 

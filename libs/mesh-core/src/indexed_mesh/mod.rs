@@ -9,6 +9,7 @@ pub mod error_summary;
 pub mod fingerprint;
 pub mod fix;
 mod half_edges;
+mod mesh;
 pub mod repair;
 pub mod topology;
 pub mod validate;
@@ -32,6 +33,7 @@ pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fingerprint::GeometryFingerprint;
 pub use fix::{MeshFix, MeshFixError};
+pub use mesh::{IndexedMesh, MeshMetadata};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::{EdgeKey, MeshTopology, edge_key};
 pub use validate::{MeshFaceError, MeshVertexError};
@@ -42,21 +44,6 @@ pub use validated::{
 
 use crate::aabb::Aabb;
 use crate::primitives::{IndexedTriangle, Vertex};
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MeshMetadata {
-    pub name: Option<String>,
-    pub header_comment: Option<String>,
-    pub declared_facet_normals: Option<DeclaredFacetNormals>,
-}
-
-/// Indexed triangle mesh. Pure data: no derived state, no caches.
-#[derive(Clone, Debug, PartialEq)]
-pub struct IndexedMesh {
-    pub meta: Option<MeshMetadata>,
-    pub vertices: Vec<Vertex>,
-    pub faces: Vec<IndexedTriangle>,
-}
 
 impl IndexedMesh {
     pub fn new(

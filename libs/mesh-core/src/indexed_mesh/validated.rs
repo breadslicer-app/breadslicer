@@ -32,9 +32,9 @@ use std::fmt;
 use crate::geometry::compute_reference_normal_f64;
 use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
-use super::IndexedMesh;
 use super::fix::{MeshFix, MeshFixError};
 use super::half_edges;
+use super::mesh::IndexedMesh;
 
 /// A face with zero area: its vertices are collinear or coincide, so it has no
 /// normal.

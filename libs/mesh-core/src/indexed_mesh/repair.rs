@@ -10,8 +10,8 @@
 
 use std::fmt;
 
-use super::IndexedMesh;
 use super::fix::{MeshFix, MeshFixError};
+use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
 
 /// Which repair passes [`IndexedMesh::repair`] runs. Each flag enables an
