@@ -122,16 +122,9 @@ impl LanguagePreference {
                 &detected
             }
         };
-
-        if slint::select_bundled_translation(target).is_ok() {
-            return;
-        }
-        let base = base_language(target);
-        if base != target && slint::select_bundled_translation(base).is_ok() {
-            return;
-        }
-        // Nothing matched, fall back to the source language.
-        let _ = slint::select_bundled_translation("");
+        select_first_bundled(target, |code| {
+            slint::select_bundled_translation(code).is_ok()
+        });
     }
 }
 
@@ -161,6 +154,21 @@ impl<'de> Deserialize<'de> for LanguagePreference {
             .map(Self::Bundled)
             .ok_or_else(|| D::Error::custom(format!("unknown language code: {s:?}")))
     }
+}
+
+/// Selects the first code that `select` takes, of `target`, its base language
+/// (`es` for `es-ES`) and `""` (the source strings). `select` returns whether
+/// it took the code.
+fn select_first_bundled(target: &str, mut select: impl FnMut(&str) -> bool) {
+    if select(target) {
+        return;
+    }
+    let base = base_language(target);
+    if base != target && select(base) {
+        return;
+    }
+    // Nothing matched, fall back to the source language.
+    select("");
 }
 
 fn base_language(locale: &str) -> &str {
@@ -272,5 +280,36 @@ mod language_tests {
     #[test]
     fn base_language_handles_empty_input() {
         assert_eq!(base_language(""), "");
+    }
+
+    /// Returns the codes that `select_first_bundled` tries for `target`, in
+    /// order, when the codes in `accepted` are the ones taken.
+    fn codes_tried(target: &str, accepted: &[&str]) -> Vec<String> {
+        let mut tried = Vec::new();
+        select_first_bundled(target, |code| {
+            tried.push(code.to_owned());
+            accepted.contains(&code)
+        });
+        tried
+    }
+
+    #[test]
+    fn a_taken_target_ends_the_selection() {
+        assert_eq!(codes_tried("es", &["es"]), ["es"]);
+    }
+
+    #[test]
+    fn a_refused_target_falls_back_to_its_base_language() {
+        assert_eq!(codes_tried("es-ES", &["es"]), ["es-ES", "es"]);
+    }
+
+    #[test]
+    fn nothing_taken_ends_on_the_source_strings() {
+        assert_eq!(codes_tried("ja-JP", &[]), ["ja-JP", "ja", ""]);
+    }
+
+    #[test]
+    fn a_target_that_is_its_own_base_is_tried_once() {
+        assert_eq!(codes_tried("de", &[]), ["de", ""]);
     }
 }
