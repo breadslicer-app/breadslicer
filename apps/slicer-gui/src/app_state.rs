@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
@@ -22,6 +22,7 @@ use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
+use crate::language::InstalledTranslations;
 use crate::mesh_loader::{
     LoadDispatch, SUPPORTED_MESH_EXTENSIONS, decide_load_dispatch, is_supported_mesh_extension,
     start_load_with_ticket,
@@ -41,6 +42,7 @@ use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
 use crate::support_gen_run::GenSupportRun;
+use crate::ui_language::UiLanguage;
 use crate::viewport::ViewportController;
 use crate::window_prefs::{WindowPreferences, restore_panels};
 use crate::wiring::SaveOutcome;
@@ -247,13 +249,14 @@ pub(crate) struct AppState {
     clipboard: RefCell<Option<Clipboard>>,
     /// The shared device's lost-device flag.
     device_loss: DeviceLoss,
-    // Bus subscriptions owned by AppState. They run on every `bus.update`;
-    // dropping them unregisters. Stored here so they live as long as
-    // `AppState`. The settings subscription holds the only `Sender` clone;
-    // dropping it lets the saver thread observe channel-closed and exit its
-    // recv loop.
+    /// Keeps the UI language equal to the preference. Set when the first window
+    /// is created: Slint can select a language only once a component exists.
+    ui_language: OnceCell<UiLanguage>,
+    // Bus subscription owned by AppState. It runs on every `bus.update`;
+    // dropping it unregisters. Stored here so it lives as long as `AppState`.
+    // It holds the only `Sender` clone of the settings saver; dropping it lets
+    // the saver thread observe channel-closed and exit its recv loop.
     _settings_sub: Subscription,
-    _language_apply_sub: Subscription,
     // RAII handle that joins the settings-saver worker thread. Declared after
     // `_settings_sub` so the subscription's `Sender` is dropped first;
     // otherwise the join would deadlock waiting for the worker to exit while
@@ -411,13 +414,6 @@ impl AppState {
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
         };
-        // Apply the persisted language *once* up front so the very first `@tr`
-        // evaluation during window construction uses the right locale.
-        // `select_bundled_translation` is a no-op until at least 1 Slint
-        // component exists, but the next successful call after the first window
-        // is built will retry.
-        snapshot.language.apply();
-
         let prefs = PreferencesBus::new(snapshot);
 
         // Persistence runs on a dedicated worker thread: the subscription
@@ -432,16 +428,6 @@ impl AppState {
             let _ = saver_tx.send(snap.clone());
         });
 
-        // Language side-effect: flip the process-global bundled translation
-        // before per-window listeners re-render. The `PreferencesWindow`'s
-        // listener rebuilds its language combo against the *active*
-        // translation, so this must come first.
-        let language_apply_sub = prefs.subscribe(|snap, change| {
-            if *change == PreferencesChange::Language {
-                snap.language.apply();
-            }
-        });
-
         let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
 
         let app = Rc::new(Self {
@@ -454,8 +440,8 @@ impl AppState {
             default_envelope,
             clipboard: RefCell::new(None),
             device_loss,
+            ui_language: OnceCell::new(),
             _settings_sub: settings_sub,
-            _language_apply_sub: language_apply_sub,
             _settings_saver: settings_saver,
         });
         DEVICE_LOST_TARGET.with(|target| *target.borrow_mut() = Rc::downgrade(&app));
@@ -494,6 +480,7 @@ impl AppState {
     /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        self.on_first_window(&ui);
         // Static platform flag consumed by the View menu to show the correct
         // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
         // has no compile-time platform branch, so the choice is made here and
@@ -547,6 +534,14 @@ impl AppState {
             },
         );
         Ok(id)
+    }
+
+    /// Puts the language preference in force from `ui` on, at the first call;
+    /// later calls do nothing. Slint can select a language only once the thread
+    /// has a component.
+    fn on_first_window(&self, ui: &MainWindow) {
+        self.ui_language
+            .get_or_init(|| UiLanguage::follow(InstalledTranslations::proven_by(ui), &self.prefs));
     }
 
     /// Installs on `ui` the drivers of the Slice control panel and of the
@@ -1783,9 +1778,10 @@ mod window_wiring_tests {
     use slint::platform::WindowEvent;
 
     use super::*;
-    use crate::WorkspaceSection;
+    use crate::language::{BundledLanguage, LanguagePreference};
     use crate::test_support::catalog_entries::printer_entry;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::{ErrorDialog, WorkspaceSection};
 
     fn listed_printer() -> PrinterId {
         PrinterId::new("listed-printer").expect("valid printer id")
@@ -1809,10 +1805,10 @@ mod window_wiring_tests {
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
-            // These tests save no settings and select no language, so both
-            // listeners do nothing.
+            // These tests save no settings, so the settings listener does
+            // nothing.
             _settings_sub: prefs.subscribe(|_, _| {}),
-            _language_apply_sub: prefs.subscribe(|_, _| {}),
+            ui_language: OnceCell::new(),
             prefs,
             catalog,
             default_envelope,
@@ -2132,5 +2128,60 @@ mod window_wiring_tests {
         });
         assert!(!hovering);
         assert_eq!(queued, Some(PathBuf::from("/models/cube.stl")));
+    }
+
+    fn bundled(code: &str) -> LanguagePreference {
+        LanguagePreference::Bundled(BundledLanguage::from_code(code).expect("bundled language"))
+    }
+
+    /// Returns the heading of a new error dialog, in the language in force.
+    fn error_heading() -> String {
+        ErrorDialog::new()
+            .expect("the headless platform creates components")
+            .get_heading()
+            .to_string()
+    }
+
+    /// Returns the heading of an error dialog created after the first window of
+    /// an app whose stored language is `code`.
+    fn heading_after_first_window(code: &'static str) -> String {
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot {
+                language: bundled(code),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let id = add_window(&app);
+            app.on_first_window(&window_of(&app, id));
+            error_heading()
+        })
+    }
+
+    #[test]
+    fn the_first_window_puts_the_stored_language_in_force() {
+        let spanish = heading_after_first_window("es");
+        let german = heading_after_first_window("de");
+        assert_ne!(spanish, "An error occurred");
+        assert_ne!(german, "An error occurred");
+        assert_ne!(spanish, german);
+    }
+
+    #[test]
+    fn a_language_change_after_the_first_window_is_put_in_force() {
+        let (stored, changed) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot {
+                language: bundled("es"),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let id = add_window(&app);
+            app.on_first_window(&window_of(&app, id));
+            let stored = error_heading();
+            app.prefs.update(|snap| {
+                snap.language = bundled("de");
+                PreferencesChange::Language
+            });
+            (stored, error_heading())
+        });
+        assert_ne!(changed, stored);
+        assert_eq!(changed, heading_after_first_window("de"));
     }
 }

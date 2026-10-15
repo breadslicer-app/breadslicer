@@ -14,24 +14,23 @@ const I18N_DIR: &str = "i18n";
 const LOCALE_NAMES_FILE: &str = "i18n/locale-names.toml";
 const PO_BASENAME: &str = "sc-slicer-gui.po";
 
-/// Locales with less than this fraction of their msgids translated are
-/// dropped from the language selector (so users can't pick a locale that
-/// would render the UI mostly in English anyway). Fuzzy entries do not
-/// count as translated.
+/// Locales with less than this fraction of their msgids translated are dropped
+/// from the language selector (so users can't pick a locale that would render
+/// the UI mostly in English anyway). Fuzzy entries do not count as translated.
 const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
 
-/// Locale code of the source language the `.po` files are authored
-/// against. No `i18n/<this>/` directory ships because every `msgid` is
-/// already in this language; a `.po` would be a trivially self-identical
-/// file. The build script synthesises a `BundledLanguage` variant for
-/// this code so users can pick it explicitly in the language selector
-/// instead of relying on the System-auto-detects-it path.
+/// Locale code of the source language the `.po` files are authored against. No
+/// `i18n/<this>/` directory ships because every `msgid` is already in this
+/// language; a `.po` would be a trivially self-identical file. The build script
+/// synthesises a `BundledLanguage` variant for this code so users can pick it
+/// explicitly in the language selector instead of relying on the
+/// System-auto-detects-it path.
 const SOURCE_LANGUAGE_CODE: &str = "en";
 
 fn main() {
-    // The Slint resolver recurses through the component graph; on Windows
-    // the default 1 MiB thread stack overflows, so run the build on a
-    // worker thread with a generous stack. Cheap on every platform.
+    // The Slint resolver recurses through the component graph; on Windows the
+    // default 1 MiB thread stack overflows, so run the build on a worker thread
+    // with a generous stack. Cheap on every platform.
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(run_build)
@@ -49,15 +48,14 @@ fn run_build() {
     compile_with_config("ui/main-window.slint", config).expect("Slint build failed");
 }
 
-/// Relative path (from the crate root) to the multi-resolution icon
-/// embedded into the GUI executable on Windows.
+/// Relative path (from the crate root) to the multi-resolution icon embedded
+/// into the GUI executable on Windows.
 #[cfg(windows)]
 const WINDOWS_ICON: &str = "assets/icons/it.soulcrafted.slicer.ico";
 
-/// Embeds the application icon (plus the version metadata `winresource`
-/// derives from the `CARGO_PKG_*` variables) into the executable so
-/// Explorer, the taskbar, and shortcuts show it. Windows-only; a no-op
-/// elsewhere.
+/// Embeds the application icon (plus the version metadata `winresource` derives
+/// from the `CARGO_PKG_*` variables) into the executable so Explorer, the
+/// taskbar, and shortcuts show it. Windows-only; a no-op elsewhere.
 #[cfg(windows)]
 fn embed_windows_resources() {
     println!("cargo:rerun-if-changed={WINDOWS_ICON}");
@@ -70,9 +68,9 @@ fn embed_windows_resources() {
 
 /// Walks `i18n/` for translation directories, cross-checks them against
 /// `locale-names.toml`, and writes a `language_table.rs` with the
-/// `BundledLanguage` enum (one variant per locale) and its accessor
-/// methods into `OUT_DIR`. The runtime crate `include!`s that file
-/// rather than maintaining the list by hand.
+/// `BundledLanguage` enum (1 variant per locale) and its accessor methods into
+/// `OUT_DIR`. The runtime crate `include!`s that file rather than maintaining
+/// the list by hand.
 fn generate_language_table() {
     println!("cargo:rerun-if-changed={I18N_DIR}");
     println!("cargo:rerun-if-changed={LOCALE_NAMES_FILE}");
@@ -89,9 +87,9 @@ fn generate_language_table() {
         let stats = po_coverage(&po_path);
         let pct = stats.percent();
         if pct < COVERAGE_THRESHOLD_PERCENT {
-            // Below threshold: drop from the selector with a build-log
-            // line so it's visible without being a hard error. Locales
-            // ship at zero coverage right after `msgmerge` adds them.
+            // Below threshold: drop from the selector with a build-log line so
+            // it's visible without being a hard error. Locales ship at 0%
+            // coverage right after `msgmerge` adds them.
             println!(
                 "cargo:warning=skipping locale '{code}' from the language selector: {pct}% \
                  translated ({translated}/{total}); threshold is {COVERAGE_THRESHOLD_PERCENT}%",
@@ -114,13 +112,13 @@ fn generate_language_table() {
     }
     for code in names.keys() {
         if code == SOURCE_LANGUAGE_CODE {
-            // The source language never ships a directory, see the
-            // constant's comment.
+            // The source language never ships a directory, see the constant's
+            // comment.
             continue;
         }
         if !locales.contains(code) {
-            // Stale entry, surfaced as a warning rather than a hard error
-            // so a translator removing a directory doesn't block the build.
+            // Stale entry, surfaced as a warning rather than a hard error so a
+            // translator removing a directory doesn't block the build.
             println!(
                 "cargo:warning={LOCALE_NAMES_FILE} has entry '{code}' but no matching \
                  {I18N_DIR}/{code}/ directory",
@@ -129,12 +127,10 @@ fn generate_language_table() {
     }
 
     // Synthesise an entry for the source language so users can select it
-    // explicitly. At runtime `select_bundled_translation("en")` will fail
-    // (no bundle), and `LanguagePreference::apply` falls through to
-    // `select_bundled_translation("")`, which resolves to the source
-    // strings, i.e. English. If a translator ever adds a real
-    // `i18n/en/` directory it will show up through the normal path
-    // above; skip injection in that case.
+    // explicitly. At runtime `select_bundled_translation("en")` selects the
+    // source strings, i.e. English, although no `i18n/en/` directory exists. If
+    // a translator ever adds a real `i18n/en/` directory it will show up
+    // through the normal path above; skip injection in that case.
     if !entries.iter().any(|e| e.code == SOURCE_LANGUAGE_CODE) {
         let Some(name) = names.get(SOURCE_LANGUAGE_CODE) else {
             panic!(
@@ -167,8 +163,8 @@ struct Locale {
     native_name: String,
 }
 
-/// Renders a locale code as a valid Rust identifier in PascalCase.
-/// Splits on `-` / `_` so future codes like `pt-BR` map to `PtBr`.
+/// Renders a locale code as a valid Rust identifier in PascalCase. Splits on
+/// `-` / `_` so future codes like `pt-BR` map to `PtBr`.
 fn variant_ident(code: &str) -> String {
     let mut out = String::with_capacity(code.len());
     let mut next_upper = true;
@@ -288,8 +284,8 @@ fn load_locale_names(path: &Path) -> BTreeMap<String, String> {
     })
 }
 
-/// Translation coverage of a single `.po` file: how many non-header
-/// `msgid`s have a non-empty, non-fuzzy `msgstr`.
+/// Translation coverage of a single `.po` file: how many non-header `msgid`s
+/// have a non-empty, non-fuzzy `msgstr`.
 struct CoverageStats {
     translated: u32,
     total: u32,
@@ -350,14 +346,14 @@ impl EntryState {
     }
 }
 
-/// Counts translated vs. total messages in a gettext `.po` file. Mirrors
-/// the rule `msgfmt --statistics` uses: header entry (empty `msgid`) is
-/// excluded; an entry counts as translated iff every `msgstr`/`msgstr[N]`
-/// in it has non-empty content AND the entry is not flagged `fuzzy`.
+/// Counts translated vs. total messages in a gettext `.po` file. Mirrors the
+/// rule `msgfmt --statistics` uses: header entry (empty `msgid`) is excluded;
+/// an entry counts as translated iff every `msgstr`/`msgstr[N]` in it has
+/// non-empty content AND the entry is not flagged `fuzzy`.
 ///
-/// Implemented as a small line-state parser rather than pulling a
-/// dedicated PO crate or shelling out to `msgfmt`: the dependency would
-/// be either heavy or env-dependent, and the format is simple enough.
+/// Implemented as a small line-state parser rather than pulling a dedicated PO
+/// crate or shelling out to `msgfmt`: the dependency would be either heavy or
+/// env-dependent, and the format is simple enough.
 fn po_coverage(po_path: &Path) -> CoverageStats {
     let raw = fs::read_to_string(po_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", po_path.display()));
@@ -371,7 +367,8 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix('#') {
-            // `#, fuzzy[, …]` flag line. Other comments (`#.`, `#:`, `# `) are noise.
+            // `#, fuzzy[, ...]` flag line. Other comments (`#.`, `#:`, `# `)
+            // are noise.
             if let Some(flags) = rest.strip_prefix(',')
                 && flags.split(',').any(|f| f.trim() == "fuzzy")
             {
@@ -401,7 +398,7 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
                 state.all_msgstr_empty = false;
             }
         } else if let Some(rest) = trimmed.strip_prefix("msgstr[") {
-            // `msgstr[N] "…"`: strip past the `]`.
+            // `msgstr[N] "..."`: strip past the `]`.
             state.field = Field::Msgstr;
             let payload = rest.split_once(']').map(|(_, r)| r.trim()).unwrap_or("");
             if !is_empty_quoted(payload) {
@@ -437,9 +434,9 @@ fn is_empty_quoted(s: &str) -> bool {
     s.trim() == "\"\""
 }
 
-/// Quotes a string as a valid Rust string literal. Translation native
-/// names contain non-ASCII letters but no control characters or quotes;
-/// still, escape `\` and `"` defensively to keep the generator robust.
+/// Quotes a string as a valid Rust string literal. Translation native names
+/// contain non-ASCII letters but no control characters or quotes; still, escape
+/// `\` and `"` defensively to keep the generator robust.
 fn rust_string_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

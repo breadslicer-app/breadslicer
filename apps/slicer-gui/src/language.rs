@@ -3,17 +3,19 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Language preference: catalogue of bundled locales and the runtime
-//! plumbing that switches between them.
+//! Language preference: catalogue of bundled locales and the runtime plumbing
+//! that switches between them.
 //!
-//! `BundledLanguage` is a real Rust enum generated from `i18n/` by
-//! `build.rs` (see `language_table.rs` in `OUT_DIR`); adding a translation
-//! adds a variant, and any `match` over it has compiler-enforced
-//! exhaustiveness. `LanguagePreference` wraps the System / explicit-locale
-//! distinction so it never has to hide behind an `Option<String>`.
+//! `BundledLanguage` is a real Rust enum generated from `i18n/` by `build.rs`
+//! (see `language_table.rs` in `OUT_DIR`); adding a translation adds a variant,
+//! and any `match` over it has compiler-enforced exhaustiveness.
+//! `LanguagePreference` wraps the System / explicit-locale distinction so it
+//! never has to hide behind an `Option<String>`.
+
+use std::marker::PhantomData;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
 
@@ -21,8 +23,8 @@ use crate::i18n::ctr;
 include!(concat!(env!("OUT_DIR"), "/language_table.rs"));
 
 impl BundledLanguage {
-    /// Position in [`Self::ALL`] (and therefore in [`display_options`]
-    /// minus the leading "System" entry).
+    /// Position in [`Self::ALL`] (and therefore in [`display_options`] minus
+    /// the leading "System" entry).
     fn position(self) -> usize {
         Self::ALL
             .iter()
@@ -31,8 +33,30 @@ impl BundledLanguage {
     }
 }
 
-/// User-selected language. Either an explicit bundled locale or "follow
-/// the OS locale" (resolved at apply time via `sys_locale`).
+/// The translations that Slint bundles into the binary, installed on the
+/// current thread. Slint installs them when the thread creates its first
+/// component and keeps them for the life of the thread; before that, it cannot
+/// select a language.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InstalledTranslations {
+    // Slint keeps the bundle per thread, so the value must not leave it.
+    _thread_bound: PhantomData<*const ()>,
+}
+
+impl InstalledTranslations {
+    /// Returns the translations installed on the thread that created
+    /// `component`.
+    pub(crate) fn proven_by(_component: &impl ComponentHandle) -> Self {
+        // Every generated `new()` installs the bundle before it returns, and a
+        // component cannot leave the thread that created it.
+        Self {
+            _thread_bound: PhantomData,
+        }
+    }
+}
+
+/// User-selected language. Either an explicit bundled locale or "follow the OS
+/// locale" (resolved at apply time via `sys_locale`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum LanguagePreference {
     #[default]
@@ -45,10 +69,10 @@ impl LanguagePreference {
         matches!(self, Self::System)
     }
 
-    /// Map a `ComboBox.current-index` back to the typed preference.
-    /// Index 0 is the "System" entry; indices 1.. follow the order of
-    /// [`BundledLanguage::ALL`]. Out-of-range values silently fall back
-    /// to `System`.
+    /// Map a `ComboBox.current-index` back to the typed preference. Index 0 is
+    /// the "System" entry; indices 1.. follow the order of
+    /// [`BundledLanguage::ALL`]. Out-of-range values silently fall back to
+    /// `System`.
     pub(crate) fn from_combo_index(index: i32) -> Self {
         if index <= 0 {
             return Self::System;
@@ -68,12 +92,12 @@ impl LanguagePreference {
         }
     }
 
-    /// Build the model shown by the language `ComboBox`. Index 0 is
-    /// always the "System" option; subsequent indices match the order of
+    /// Build the model shown by the language `ComboBox`. Index 0 is always the
+    /// "System" option; subsequent indices match the order of
     /// [`BundledLanguage::ALL`].
     ///
-    /// Rebuilt on every language change so the "System" label is
-    /// re-translated against the newly-active language.
+    /// Rebuilt on every language change so the "System" label is re-translated
+    /// against the newly-active language.
     pub(crate) fn display_options() -> ModelRc<SharedString> {
         let mut entries: Vec<SharedString> = Vec::with_capacity(BundledLanguage::ALL.len() + 1);
         entries.push(ctr!("AppearancePreferences", "System"));
@@ -87,14 +111,9 @@ impl LanguagePreference {
 
     /// Apply this preference to the running app.
     ///
-    /// `System` is resolved via `sys_locale::get_locale()` with a
-    /// base-language fallback (e.g. `es` for `es-ES`), mirroring Slint's
-    /// own auto-detection.
-    ///
-    /// Slint's `select_bundled_translation` requires that at least one
-    /// component already exists; the caller is responsible for that
-    /// ordering.
-    pub(crate) fn apply(self) {
+    /// `System` is resolved via `sys_locale::get_locale()` with a base-language
+    /// fallback (e.g. `es` for `es-ES`), mirroring Slint's own auto-detection.
+    pub(crate) fn apply(self, _translations: InstalledTranslations) {
         let detected;
         let target: &str = match self {
             Self::Bundled(lang) => lang.code(),
@@ -116,9 +135,9 @@ impl LanguagePreference {
     }
 }
 
-// Wire format: `language = "<code>"` for a bundled locale, or `"system"`
-// for the OS-locale fallback. The field is `#[serde(default)]` upstream,
-// so an absent key in TOML deserializes as `System` too.
+// Wire format: `language = "<code>"` for a bundled locale, or `"system"` for
+// the OS-locale fallback. The field is `#[serde(default)]` upstream, so an
+// absent key in TOML deserializes as `System` too.
 impl Serialize for LanguagePreference {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -134,11 +153,10 @@ impl<'de> Deserialize<'de> for LanguagePreference {
         if s == "system" {
             return Ok(Self::System);
         }
-        // Unknown codes are a hard error: a hand-edited config with a
-        // stale or typo'd code shouldn't be silently coerced to System,
-        // because that would mask the user's actual intent. The
-        // top-level settings loader already turns parse errors into a
-        // logged "fall back to defaults".
+        // Unknown codes are a hard error: a hand-edited config with a stale or
+        // typo'd code shouldn't be silently coerced to System, because that
+        // would mask the user's actual intent. The top-level settings loader
+        // already turns parse errors into a logged "fall back to defaults".
         BundledLanguage::from_code(&s)
             .map(Self::Bundled)
             .ok_or_else(|| D::Error::custom(format!("unknown language code: {s:?}")))
@@ -180,10 +198,9 @@ mod language_tests {
 
     #[test]
     fn english_is_available_as_the_source_language() {
-        // Regression guard: English is injected by build.rs even though
-        // there is no `i18n/en/` directory. Users must be able to pick
-        // it explicitly rather than relying on the System-auto-detects-
-        // English path.
+        // Regression guard: English is injected by build.rs even though there
+        // is no `i18n/en/` directory. Users must be able to pick it explicitly
+        // rather than relying on the System-auto-detects-English path.
         let en =
             BundledLanguage::from_code("en").expect("`en` must be bundled as the source language");
         assert_eq!(en.native_name(), "English");
