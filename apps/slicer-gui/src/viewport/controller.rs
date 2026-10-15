@@ -197,6 +197,14 @@ impl ViewportController {
         self.render.set_viewport(w, h);
     }
 
+    /// Frames the camera on the build volume, as the first paint does before a
+    /// scene is uploaded.
+    #[cfg(test)]
+    pub(crate) fn frame_camera_for_test(&self) {
+        self.camera
+            .replace_with_framing(None, self.session.build_volume());
+    }
+
     #[cfg(test)]
     pub(crate) fn viewport_for_test(&self) -> Option<(f32, f32)> {
         self.render.viewport().map(|vp| (vp.width(), vp.height()))
@@ -787,8 +795,8 @@ impl ViewportController {
 
     /// Arms the translate keyboard focus (`T`); `R` and `S` arm rotate and
     /// scale the same way. Each needs a selection; without one, the press does
-    /// nothing. Pressing the same focus twice does nothing, so autorepeat does
-    /// not reset the integrator's tick clock.
+    /// nothing. A press of the focus already armed does nothing, so autorepeat
+    /// does not reset the integrator's tick clock.
     pub(crate) fn on_gizmo_focus_translate(&self) {
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
@@ -2517,7 +2525,7 @@ mod viewport_click_tests {
 
     #[test]
     fn set_build_volume_is_idempotent_for_equal_values() {
-        // Same value twice: the second call is a no-op and the frame stays
+        // Same value 2 times: the second call is a no-op and the frame stays
         // clean. A subsequent real change re-marks dirty.
         let ctrl = ViewportController::new_for_test();
         let bv = BuildVolume::new(80.0, 80.0, 120.0);
@@ -2888,7 +2896,7 @@ mod keyboard_focus_tests {
         ctrl.set_viewport_for_test(400.0, 200.0);
     }
 
-    /// Drives `kbd_drive.integrate` twice with a real-time pause between the
+    /// Drives `kbd_drive.integrate` 2 times with a real-time pause between the
     /// calls, so the second call sees a positive `dt`. The first call seeds
     /// `last_tick`; the second produces the actual integration step.
     fn integrate_two_ticks(ctrl: &ViewportController) {

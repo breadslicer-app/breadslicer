@@ -11,11 +11,10 @@ use slint::ComponentHandle;
 
 use crate::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
 
-/// User's exit from the "replace current scene?" dialog. Four
-/// outcomes; the caller decides what each means in context (typically
-/// "close current and load new" / "save current first, then load new
-/// on success" / "export current first, then load new on success" /
-/// "do nothing").
+/// User's exit from the "replace current scene?" dialog. 4 outcomes; the caller
+/// decides what each means in context (typically "close current and load new" /
+/// "save current first, then load new on success" / "export current first, then
+/// load new on success" / "do nothing").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReplaceSceneChoice {
     Discard,
@@ -24,56 +23,55 @@ pub(crate) enum ReplaceSceneChoice {
     Cancel,
 }
 
-/// Which "keep your work" buttons the "replace current scene?" dialog
-/// offers, decided from the document's dirty state and from whether it
-/// is backed by a project file.
+/// Which "keep your work" buttons the "replace current scene?" dialog offers,
+/// decided from the document's dirty state and from whether it is backed by a
+/// project file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeepChangesOffer {
-    /// The scene has no unsaved changes: closing it loses nothing, so
-    /// neither Save nor Export is offered.
+    /// The scene has no unsaved changes: closing it loses nothing, so neither
+    /// Save nor Export is offered.
     NothingToKeep,
-    /// Unsaved changes on a scene backed by a project file: offer
-    /// "Save & Open" (overwrite that file) alongside Export.
+    /// Unsaved changes on a scene backed by a project file: offer "Save & Open"
+    /// (overwrite that file) alongside Export.
     SaveExisting,
-    /// Unsaved changes on a scene with no project file yet: offer
-    /// "Save As & Open" (pick a new file) alongside Export.
+    /// Unsaved changes on a scene with no project file yet: offer "Save As &
+    /// Open" (pick a new file) alongside Export.
     SaveAsNew,
 }
 
 impl KeepChangesOffer {
-    /// Value for the dialog's `has-unsaved-changes` property: shows
-    /// the Save and Export buttons and the matching body text.
+    /// Value for the dialog's `has-unsaved-changes` property: shows the Save
+    /// and Export buttons and the matching body text.
     fn has_unsaved_changes(self) -> bool {
         !matches!(self, Self::NothingToKeep)
     }
 
-    /// Value for the dialog's `save-as-mode` property: switches the
-    /// Save button and body text to "Save As" wording.
+    /// Value for the dialog's `save-as-mode` property: switches the Save button
+    /// and body text to "Save As" wording.
     fn save_as_mode(self) -> bool {
         matches!(self, Self::SaveAsNew)
     }
 }
 
-/// One-shot callback that delivers the user's `ReplaceSceneChoice`.
-/// Wrapped in `Rc<Cell<Option<...>>>` because Slint dispatches each of
-/// the dialog's three button callbacks independently and we want to
-/// honour whichever fires first; the others find an empty slot and
-/// no-op. Type alias to satisfy `clippy::type_complexity`.
+/// One-shot callback that delivers the user's `ReplaceSceneChoice`. Wrapped in
+/// `Rc<Cell<Option<...>>>` because Slint dispatches each of the dialog's 4
+/// button callbacks independently and we want to honour whichever fires first;
+/// the others find an empty slot and no-op. Type alias to satisfy
+/// `clippy::type_complexity`.
 type ReplaceChoiceSink = Rc<Cell<Option<Box<dyn FnOnce(ReplaceSceneChoice)>>>>;
 
-/// One-shot callback fired when the user confirms the slice-overwrite
-/// dialog. Wrapped like [`ReplaceChoiceSink`] so whichever of the
-/// dialog's buttons fires first is honoured and the rest no-op; a
-/// cancel drops it uncalled. Type alias to satisfy
-/// `clippy::type_complexity`.
+/// One-shot callback fired when the user confirms the slice-overwrite dialog.
+/// Wrapped like [`ReplaceChoiceSink`] so whichever of the dialog's buttons
+/// fires first is honoured and the rest no-op; a cancel drops it uncalled. Type
+/// alias to satisfy `clippy::type_complexity`.
 type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
 
-/// Owns every currently-visible `ErrorDialog` and `ReplaceSceneDialog`
-/// window so they stay alive for as long as the user hasn't dismissed
-/// them. Held as `Rc<DialogManager>` by the controller; close callbacks
-/// carry a `Weak<DialogManager>` back in so the map entry can be
-/// cleared without creating an ownership cycle. A single `next_id`
-/// counter feeds both maps so ids never collide across dialog kinds.
+/// Owns every currently-visible dialog window (`ErrorDialog`, `InfoDialog`,
+/// `ReplaceSceneDialog` and `SliceOverwriteDialog`) so they stay alive for as
+/// long as the user hasn't dismissed them. Held as `Rc<DialogManager>` by the
+/// controller; close callbacks carry a `Weak<DialogManager>` back in so the map
+/// entry can be cleared without creating an ownership cycle. A single `next_id`
+/// counter feeds every map so ids never collide across dialog kinds.
 pub(crate) struct DialogManager {
     dialogs: RefCell<HashMap<u64, ErrorDialog>>,
     info_dialogs: RefCell<HashMap<u64, InfoDialog>>,
@@ -91,6 +89,19 @@ impl DialogManager {
             slice_overwrite_dialogs: RefCell::new(HashMap::new()),
             next_id: Cell::new(0),
         })
+    }
+
+    /// Returns the headings of the open error dialogs, sorted.
+    #[cfg(test)]
+    pub(crate) fn error_headings_for_test(&self) -> Vec<String> {
+        let mut headings: Vec<String> = self
+            .dialogs
+            .borrow()
+            .values()
+            .map(|dialog| dialog.get_heading().to_string())
+            .collect();
+        headings.sort();
+        headings
     }
 
     /// Shows an error dialog immediately. Must run on the Slint UI thread.
@@ -137,10 +148,9 @@ impl DialogManager {
         self.dialogs.borrow_mut().insert(id, dialog);
     }
 
-    /// Shows a neutral information dialog immediately. Same window
-    /// lifecycle as [`Self::show_error`] (owned by the manager until
-    /// dismissed), without the error styling or the stderr log line.
-    /// Must run on the Slint UI thread.
+    /// Shows a neutral information dialog immediately. Same window lifecycle as
+    /// [`Self::show_error`] (owned by the manager until dismissed), without the
+    /// error styling or the stderr log line. Must run on the Slint UI thread.
     pub(crate) fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
         let dialog = match InfoDialog::new() {
             Ok(d) => d,
@@ -176,11 +186,11 @@ impl DialogManager {
 
     /// Queues `show_error` on the next iteration of the Slint event loop.
     ///
-    /// Use this when the caller runs inside a Slint hook where spawning a
-    /// new window synchronously would reenter the event loop (e.g. inside a
+    /// Use this when the caller runs inside a Slint hook where spawning a new
+    /// window synchronously would reenter the event loop (e.g. inside a
     /// rendering notifier callback). `Timer::single_shot` (rather than
-    /// `invoke_from_event_loop`) is used so the callback stays on the UI
-    /// thread and `Rc<DialogManager>` can be captured without `Send`.
+    /// `invoke_from_event_loop`) is used so the callback stays on the UI thread
+    /// and `Rc<DialogManager>` can be captured without `Send`.
     pub(crate) fn show_error_deferred(
         self: &Rc<Self>,
         heading: String,
@@ -194,14 +204,13 @@ impl DialogManager {
         });
     }
 
-    /// Shows the "replace current scene?" confirmation. Calls `on_choice`
-    /// once with the user's choice, then hides the dialog and drops it
-    /// from the manager. `source_name` (e.g. a file basename) is shown
-    /// as context; pass an empty string to omit it. `offer` controls
-    /// which "keep your work" buttons (Save / Export) are shown and
-    /// whether the Save button uses "Save As" wording. Must run on the
-    /// Slint UI thread. Logs and bails silently if the dialog can't be
-    /// constructed or shown.
+    /// Shows the "replace current scene?" confirmation. Calls `on_choice` once
+    /// with the user's choice, then hides the dialog and drops it from the
+    /// manager. `source_name` (e.g. a file basename) is shown as context; pass
+    /// an empty string to omit it. `offer` controls which "keep your work"
+    /// buttons (Save / Export) are shown and whether the Save button uses "Save
+    /// As" wording. Must run on the Slint UI thread. Logs and bails silently if
+    /// the dialog can't be constructed or shown.
     pub(crate) fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,
@@ -212,9 +221,9 @@ impl DialogManager {
             Ok(d) => d,
             Err(err) => {
                 eprintln!("Failed to create replace-scene dialog: {err}");
-                // The caller asked for a choice but we can't surface
-                // the dialog; treat that as Cancel so we never silently
-                // discard the user's scene.
+                // The caller asked for a choice but we can't surface the
+                // dialog; treat that as Cancel so we never silently discard the
+                // user's scene.
                 on_choice(ReplaceSceneChoice::Cancel);
                 return;
             }
@@ -263,8 +272,8 @@ impl DialogManager {
 
         if let Err(err) = dialog.show() {
             eprintln!("Failed to show replace-scene dialog: {err}");
-            // If show() failed, none of the callbacks will fire; deliver
-            // a Cancel so the caller isn't left waiting forever.
+            // If show() failed, none of the callbacks will fire; deliver a
+            // Cancel so the caller isn't left waiting forever.
             if let Some(cb) = sink.take() {
                 cb(ReplaceSceneChoice::Cancel);
             }
@@ -273,12 +282,12 @@ impl DialogManager {
         self.replace_dialogs.borrow_mut().insert(id, dialog);
     }
 
-    /// Shows the "re-slice?" confirmation for a scene that already holds
-    /// a slice result. Runs `on_confirm` once if the user confirms the
-    /// overwrite, and does nothing on cancel (the safe default: never
-    /// discard the held slice without an explicit yes). Must run on the
-    /// Slint UI thread. Logs and bails silently if the dialog cannot be
-    /// constructed or shown; a failure to show is treated as cancel.
+    /// Shows the "re-slice?" confirmation for a scene that already holds a
+    /// slice result. Runs `on_confirm` once if the user confirms the overwrite,
+    /// and does nothing on cancel (the safe default: never discard the held
+    /// slice without an explicit yes). Must run on the Slint UI thread. Logs
+    /// and bails silently if the dialog cannot be constructed or shown; a
+    /// failure to show is treated as cancel.
     pub(crate) fn show_slice_overwrite_confirm(
         self: &Rc<Self>,
         on_confirm: impl FnOnce() + 'static,
@@ -325,8 +334,8 @@ impl DialogManager {
     }
 }
 
-/// Hides the slice-overwrite dialog and drops its entry from the
-/// manager. Free function so the confirm and cancel closures stay small.
+/// Hides the slice-overwrite dialog and drops its entry from the manager. Free
+/// function so the confirm and cancel closures stay small.
 fn close_slice_overwrite(
     dialog_weak: &slint::Weak<SliceOverwriteDialog>,
     mgr_weak: &std::rc::Weak<DialogManager>,
@@ -340,10 +349,9 @@ fn close_slice_overwrite(
     }
 }
 
-/// Body shared by the three replace-scene callbacks. Drains the sink
-/// (no-op if another button already fired), hides the dialog, and
-/// removes its entry from the manager. Free function so each callback
-/// closure stays small.
+/// Body shared by the 4 replace-scene callbacks. Drains the sink (no-op if
+/// another button already fired), hides the dialog, and removes its entry from
+/// the manager. Free function so each callback closure stays small.
 fn fire_replace_choice(
     sink: &ReplaceChoiceSink,
     choice: ReplaceSceneChoice,
@@ -362,13 +370,12 @@ fn fire_replace_choice(
     }
 }
 
-/// Renders the `caused by:` tail of an anyhow error chain as a
-/// multi-line string for display in error dialogs.
+/// Renders the `caused by:` tail of an anyhow error chain as a multi-line
+/// string for display in error dialogs.
 ///
-/// Returns an empty string for a single-level error (no source chain
-/// to render); callers typically pair this output with the error's
-/// own `Display` rendering and skip the chain section when the
-/// returned string is empty.
+/// Returns an empty string for a single-level error (no source chain to
+/// render); callers typically pair this output with the error's own `Display`
+/// rendering and skip the chain section when the returned string is empty.
 pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
     let mut chain = err.chain();
     let Some(first) = chain.next() else {
@@ -417,8 +424,8 @@ mod format_anyhow_chain_tests {
     #[test]
     fn single_level_chain_returns_empty_string() {
         let err = anyhow::Error::msg("alone");
-        // Chain has one item: the error itself. The function deliberately
-        // returns "" so the dialog can skip the chain section.
+        // Chain has 1 item: the error itself. The function deliberately returns
+        // "" so the dialog can skip the chain section.
         assert_eq!(format_anyhow_chain(&err), "");
     }
 
@@ -446,8 +453,8 @@ mod format_anyhow_chain_tests {
             .context("L2")
             .context("L3")
             .context("L4");
-        // anyhow renders the outermost context first, then walks
-        // sources, so the chain reads L4 -> L3 -> L2 -> L1 -> L0.
+        // anyhow renders the outermost context first, then walks sources, so
+        // the chain reads L4 -> L3 -> L2 -> L1 -> L0.
         assert_eq!(
             format_anyhow_chain(&err),
             "L4\n  caused by: L3\n  caused by: L2\n  caused by: L1\n  caused by: L0"

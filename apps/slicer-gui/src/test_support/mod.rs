@@ -5,6 +5,7 @@
 
 //! Test code that more than 1 test module of the crate uses.
 
+pub(crate) mod catalog_entries;
 pub(crate) mod gpu_devices;
 pub(crate) mod projects;
 pub(crate) mod slint_thread;
