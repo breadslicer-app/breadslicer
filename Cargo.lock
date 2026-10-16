@@ -4888,6 +4888,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-message-catalog"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "rspolib",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
 name = "sc-print-glue"
 version = "0.2.0"
 dependencies = [

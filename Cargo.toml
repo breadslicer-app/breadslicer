@@ -11,6 +11,7 @@ members = [
     "libs/mesh-fixtures",
     "libs/mesh-formats",
     "libs/mesh-spatial",
+    "libs/message-catalog",
     "libs/print-glue",
     "libs/print-primitives",
     "libs/print-profiles",

@@ -1,0 +1,21 @@
+[package]
+name = "sc-message-catalog"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Library for build scripts: reads the ctr! calls of a crate and their translations in gettext .po files, and gives the Rust code of a message catalog."
+categories = ["development-tools::build-utils", "internationalization"]
+keywords = ["catalog", "gettext", "i18n", "po", "translation"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
+rspolib = "0.1.2"
+syn = { version = "2.0.119", default-features = false, features = ["full", "parsing"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
