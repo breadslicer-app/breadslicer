@@ -297,7 +297,7 @@ async fn run_open_file_flow(
             // The deposit sends the failure down the path that reports load
             // errors, so the user gets the usual dialog that names the picked
             // file.
-            ticket.deposit(path, Err(anyhow::Error::msg(reason.message())));
+            ticket.deposit(path, Err(anyhow::Error::new(reason)));
         }
     }
 }

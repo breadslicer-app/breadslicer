@@ -29,16 +29,21 @@ use sc_scene_fixtures::named_trio_under_group_root;
 use crate::build_volume::BuildVolume;
 use crate::error_dialog::DialogManager;
 use crate::graphics_status::GraphicsUnavailable;
+use crate::language::InstalledTranslations;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
-    LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch, guard_worker,
-    panic_message, parse_source, start_load_with_ticket,
+    FileTooLarge, LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch,
+    guard_worker, panic_message, parse_source, start_load_with_ticket,
 };
 use crate::mesh_render::DeviceToken;
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::scene_loader::{PreparedScene, SceneLoader};
+use crate::slint_ui::ErrorDialog;
 use crate::test_support::gpu_devices::shared_test_device;
+use crate::test_support::language_pick::pick_language;
 use crate::test_support::projects::project_with_in_sync_slices;
+use crate::test_support::slint_thread::on_fresh_slint_thread;
+use crate::ui_language::UiLanguage;
 
 fn loader() -> SceneLoader {
     SceneLoader::new_for_test(DialogManager::new(&PreferencesBus::new(
@@ -78,6 +83,45 @@ fn check_file_size_returns_err_for_a_file_over_the_cap() {
 fn check_file_size_returns_ok_for_a_missing_path_so_the_worker_can_report_the_real_error() {
     let path = PathBuf::from("/this/path/does/not/exist/scene.stl");
     assert!(check_file_size(&path).is_ok());
+}
+
+/// Creates a sparse file in `dir`, 1 byte over the size cap.
+fn oversize_file(dir: &Path) -> PathBuf {
+    let path = dir.join("huge.stl");
+    let f = std::fs::File::create(&path).expect("create");
+    f.set_len(MAX_MESH_FILE_SIZE_BYTES + 1).expect("set_len");
+    path
+}
+
+#[test]
+fn check_file_size_keeps_the_size_in_the_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let err = check_file_size(&oversize_file(dir.path())).expect_err("over the cap");
+    assert_eq!(
+        err.downcast_ref::<FileTooLarge>(),
+        Some(&FileTooLarge { size_mib: 2048 })
+    );
+}
+
+#[test]
+fn the_oversize_text_follows_the_language() {
+    let (german, english) = on_fresh_slint_thread(|| {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        // In the app, the 1st main window is the 1st component of the thread.
+        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let _ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), &bus);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = check_file_size(&oversize_file(dir.path())).expect_err("over the cap");
+        pick_language(&bus, "de");
+        let german = err.to_string();
+        pick_language(&bus, "en");
+        (german, err.to_string())
+    });
+    assert_eq!(
+        english,
+        "File is 2048 MiB, which exceeds the 2048 MiB limit."
+    );
+    assert_ne!(german, english);
 }
 
 // --- start_load_with_ticket ------------------------------------------
@@ -136,6 +180,11 @@ fn start_load_with_ticket_deposits_an_err_when_no_gpu_snapshot_is_available() {
         err.to_string(),
         GraphicsUnavailable::AwaitingSetup.message(),
         "the bailout must report why there is no device"
+    );
+    assert_eq!(
+        err.downcast_ref::<GraphicsUnavailable>(),
+        Some(&GraphicsUnavailable::AwaitingSetup),
+        "the deposit keeps the reason, so its text follows the language"
     );
 }
 

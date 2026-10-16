@@ -5,53 +5,49 @@
 
 //! Why a window's viewport has no graphics device.
 //!
-//! The device itself lives in [`crate::scene_loader::SceneLoader`],
-//! published from `RenderingSetup` and cleared on `RenderingTeardown`.
-//! An `Option` over that slot answers "is there a device", but not "will
-//! there ever be one", and those two cases call for opposite handling: a
-//! setup that has not happened yet is worth waiting for, while a setup
-//! that arrived carrying a graphics API this build cannot use, or whose
-//! device refused the viewport renderer, will not improve on its own.
+//! The device itself lives in [`crate::scene_loader::SceneLoader`], published
+//! from `RenderingSetup` and cleared on `RenderingTeardown`. An `Option` over
+//! that slot answers "is there a device", but not "will there ever be one", and
+//! those 2 cases call for opposite handling: a setup that has not happened yet
+//! is worth waiting for, while a setup that arrived carrying a graphics API
+//! this build cannot use, or whose device refused the viewport renderer, will
+//! not improve on its own.
 //!
-//! This type carries that distinction, along with the wording the user
-//! sees. Nothing here decides whether a device exists; the loader
-//! derives that from the device slot and reaches for this only when the
-//! slot is empty.
+//! This type carries that distinction, along with the wording the user sees.
+//! Nothing here decides whether a device exists; the loader derives that from
+//! the device slot and reaches for this only when the slot is empty.
 
 use std::cell::RefCell;
+use std::fmt;
 
 use crate::i18n::ctr;
 
 /// The reason the viewport has no graphics device.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum GraphicsUnavailable {
-    /// No `RenderingSetup` has published a device yet, or a teardown
-    /// took the last one away. Slint delivers `RenderingSetup` on the
-    /// window's first paint rather than at startup, so this is the
-    /// ordinary state between opening a window and painting it, and a
-    /// device may still arrive.
+    /// No `RenderingSetup` has published a device yet, or a teardown took the
+    /// last one away. Slint delivers `RenderingSetup` on the window's first
+    /// paint rather than at startup, so this is the ordinary state between
+    /// opening a window and painting it, and a device may still arrive.
     #[default]
     AwaitingSetup,
-    /// A `RenderingSetup` arrived carrying a graphics API this build
-    /// cannot render through, named as Slint reported it. The viewport
-    /// stays empty for as long as that renderer is in use.
+    /// A `RenderingSetup` arrived carrying a graphics API this build cannot
+    /// render through, named as Slint reported it. The viewport stays empty for
+    /// as long as that renderer is in use.
     UnsupportedApi(String),
-    /// A `RenderingSetup` published a device, but the device refused
-    /// one of the viewport renderer's resources; the text is the
-    /// renderer's account of which one and why. A deterministic
-    /// refusal repeats on the same device, so the window is left
-    /// without a viewport.
+    /// A `RenderingSetup` published a device, but the device refused one of the
+    /// viewport renderer's resources; the text is the renderer's account of
+    /// which one and why. A deterministic refusal repeats on the same device,
+    /// so the window is left without a viewport.
     RendererRefused(String),
-    /// The shared device was lost (driver reset, device removed,
-    /// destroyed). Nothing that needs a device works again in this
-    /// process.
+    /// The shared device was lost (driver reset, device removed, destroyed).
+    /// Nothing that needs a device works again in this process.
     DeviceLost,
 }
 
 impl GraphicsUnavailable {
-    /// Whether a device can still turn up, which decides between
-    /// parking a request until it does and telling the user it never
-    /// will.
+    /// Whether a device can still turn up, which decides between parking a
+    /// request until it does and telling the user it never will.
     pub(crate) fn may_still_arrive(&self) -> bool {
         match self {
             Self::AwaitingSetup => true,
@@ -59,9 +55,9 @@ impl GraphicsUnavailable {
         }
     }
 
-    /// What to tell the user when this blocks something they asked for.
-    /// Split by variant because the two cases warrant opposite advice:
-    /// one is worth retrying, the other is not.
+    /// What to tell the user when this blocks something they asked for. Split
+    /// by variant because the 2 cases warrant opposite advice: one is worth
+    /// retrying, the other is not.
     pub(crate) fn message(&self) -> String {
         match self {
             Self::AwaitingSetup => ctr!(
@@ -90,14 +86,24 @@ impl GraphicsUnavailable {
     }
 }
 
-/// Tracks the reason across the rendering lifecycle. Held by the
-/// loader alongside the device slot; the loader keeps the two in step
-/// by driving this from the same calls that fill and empty the slot.
+/// The text is [`GraphicsUnavailable::message`], in the language in force each
+/// time it is formatted.
+impl fmt::Display for GraphicsUnavailable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
+impl std::error::Error for GraphicsUnavailable {}
+
+/// Tracks the reason across the rendering lifecycle. Held by the loader
+/// alongside the device slot; the loader keeps the 2 in step by driving this
+/// from the same calls that fill and empty the slot.
 ///
-/// Losing a device is deliberately not a transition here: whether a
-/// device exists is the slot's business, and this only speaks when the
-/// slot is empty. Publishing one is a transition, because it retires
-/// whatever the previous setup was blamed for.
+/// Losing a device is deliberately not a transition here: whether a device
+/// exists is the slot's business, and this only speaks when the slot is empty.
+/// Publishing one is a transition, because it retires whatever the previous
+/// setup was blamed for.
 #[derive(Debug, Default)]
 pub(crate) struct GraphicsGap {
     reason: RefCell<GraphicsUnavailable>,
@@ -109,9 +115,8 @@ impl GraphicsGap {
         self.reason.borrow().clone()
     }
 
-    /// A setup published a usable device. Clears any earlier complaint
-    /// so a later teardown does not report a renderer that is no longer
-    /// in use.
+    /// A setup published a usable device. Clears any earlier complaint so a
+    /// later teardown does not report a renderer that is no longer in use.
     pub(crate) fn note_device_published(&self) {
         *self.reason.borrow_mut() = GraphicsUnavailable::AwaitingSetup;
     }
@@ -157,8 +162,8 @@ mod graphics_gap_tests {
 
     #[test]
     fn the_latest_unsupported_api_wins() {
-        // A window renders through one API at a time, so the newest
-        // setup is the one describing the current state.
+        // A window renders through 1 API at a time, so the newest setup is the
+        // one describing the current state.
         let gap = GraphicsGap::default();
         gap.note_unsupported_api("GraphicsAPI::NativeOpenGL".to_string());
         gap.note_unsupported_api("GraphicsAPI::WebGL".to_string());
@@ -170,9 +175,9 @@ mod graphics_gap_tests {
 
     #[test]
     fn publishing_a_device_retires_an_earlier_complaint() {
-        // A teardown after a working setup has to read as "waiting",
-        // not as the unusable renderer from two setups ago, otherwise
-        // a recoverable state would be reported as a dead end.
+        // A teardown after a working setup has to read as "waiting", not as the
+        // unusable renderer from 2 setups ago, otherwise a recoverable state
+        // would be reported as a dead end.
         let gap = GraphicsGap::default();
         gap.note_unsupported_api("GraphicsAPI::NativeOpenGL".to_string());
         gap.note_device_published();
@@ -227,9 +232,8 @@ mod graphics_unavailable_tests {
 
     #[test]
     fn the_default_is_awaiting_setup() {
-        // A freshly built loader has seen no setup at all, which is the
-        // state a request should wait through rather than report as a
-        // failure.
+        // A freshly built loader has seen no setup at all, which is the state a
+        // request should wait through rather than report as a failure.
         assert_eq!(
             GraphicsUnavailable::default(),
             GraphicsUnavailable::AwaitingSetup
@@ -243,8 +247,8 @@ mod graphics_unavailable_tests {
 
     #[test]
     fn no_device_is_coming_for_an_unsupported_api() {
-        // Waiting through this one would park a request forever, since
-        // the renderer in use does not change on its own.
+        // Waiting through this one would park a request forever, since the
+        // renderer in use does not change on its own.
         assert!(
             !GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string())
                 .may_still_arrive()
@@ -263,8 +267,7 @@ mod graphics_unavailable_tests {
     #[test]
     fn an_unsupported_api_names_the_renderer() {
         // The API name is the one detail that makes a report from an
-        // unreproducible machine actionable, so it has to reach the
-        // dialog.
+        // unreproducible machine actionable, so it has to reach the dialog.
         let message =
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string()).message();
         assert!(
@@ -275,8 +278,8 @@ mod graphics_unavailable_tests {
 
     #[test]
     fn the_two_reasons_do_not_share_wording() {
-        // Both end up in the same dialog slot, so identical wording
-        // would erase the distinction this type exists to carry.
+        // Both end up in the same dialog slot, so identical wording would erase
+        // the distinction this type exists to carry.
         assert_ne!(
             GraphicsUnavailable::AwaitingSetup.message(),
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()).message()
@@ -321,5 +324,17 @@ mod graphics_unavailable_tests {
             message,
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()).message()
         );
+    }
+
+    #[test]
+    fn the_text_of_each_reason_is_its_message() {
+        for reason in [
+            GraphicsUnavailable::AwaitingSetup,
+            GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()),
+            GraphicsUnavailable::RendererRefused("no pipeline".to_string()),
+            GraphicsUnavailable::DeviceLost,
+        ] {
+            assert_eq!(reason.to_string(), reason.message());
+        }
     }
 }
