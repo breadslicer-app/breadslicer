@@ -32,6 +32,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts};
+use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
@@ -153,12 +154,7 @@ impl SliceRun {
             snapshot.aa_level,
             self.document.scene_revision(),
         ) else {
-            self.dialogs.show_error(|| ErrorTexts {
-                heading: "Cannot slice".into(),
-                context: None,
-                message: "Choose a printer and a resin before slicing.".into(),
-                details: Default::default(),
-            });
+            self.dialogs.show_error(missing_selection_texts);
             return;
         };
 
@@ -364,15 +360,32 @@ impl SliceRun {
                 // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
-                let message = err.to_string();
-                self.dialogs.show_error(move || ErrorTexts {
-                    heading: "Slicing failed".into(),
-                    context: None,
-                    message: message.as_str().into(),
-                    details: Default::default(),
-                });
+                self.dialogs.show_error(move || slice_failure_texts(&err));
             }
         }
+    }
+}
+
+/// The texts of the dialog that refuses a slice with no printer or no resin.
+fn missing_selection_texts() -> ErrorTexts {
+    ErrorTexts {
+        heading: ctr!("ErrorDialog", "Cannot slice"),
+        context: None,
+        message: ctr!(
+            "ErrorDialog",
+            "Choose a printer and a resin before slicing."
+        ),
+        details: Default::default(),
+    }
+}
+
+/// The texts of the dialog that reports a failed slice run.
+fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
+    ErrorTexts {
+        heading: ctr!("ErrorDialog", "Slicing failed"),
+        context: None,
+        message: failure.to_string().into(),
+        details: Default::default(),
     }
 }
 
@@ -503,5 +516,31 @@ mod capture_tests {
         // the capture, cannot be computed.
         let result = capture(&Scene::new(), contours());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
+    }
+}
+
+#[cfg(test)]
+mod dialog_text_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_selection_asks_for_a_printer_and_a_resin() {
+        let texts = missing_selection_texts();
+        assert_eq!(texts.heading, "Cannot slice");
+        assert_eq!(texts.context, None);
+        assert_eq!(
+            texts.message,
+            "Choose a printer and a resin before slicing."
+        );
+        assert_eq!(texts.details, "");
+    }
+
+    #[test]
+    fn a_failed_run_shows_its_failure() {
+        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry);
+        assert_eq!(texts.heading, "Slicing failed");
+        assert_eq!(texts.context, None);
+        assert_eq!(texts.message, "The scene has no geometry to slice.");
+        assert_eq!(texts.details, "");
     }
 }

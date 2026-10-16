@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 21:30+0200\n"
+"POT-Creation-Date: 2026-10-16 21:52+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -114,6 +114,72 @@ msgstr ""
 #: src/wiring.rs:702
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
+msgstr ""
+
+#: src/slice_projection.rs:70
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not load the printer profile: {}"
+msgstr ""
+
+#: src/slice_projection.rs:73
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not load the resin profile: {}"
+msgstr ""
+
+#: src/slice_projection.rs:76
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not measure the scene bounds: {}"
+msgstr ""
+
+#: src/slice_projection.rs:79
+msgctxt "ErrorDialog"
+msgid "The scene has no geometry to slice."
+msgstr ""
+
+#: src/slice_projection.rs:83
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"The scene's top is at z = {} mm; nothing sits above the build plate (z = 0). "
+"Move the model above the plate before slicing."
+msgstr ""
+
+#: src/slice_projection.rs:88
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not resolve the print configuration: {}"
+msgstr ""
+
+#: src/slice_projection.rs:92
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not derive the layer count: {}"
+msgstr ""
+
+#: src/slice_projection.rs:94
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Slicing failed: {}"
+msgstr ""
+
+#: src/slice_projection.rs:97
+msgctxt "ErrorDialog"
+msgid "The slice layers could not be merged (internal layer-grid mismatch)."
+msgstr ""
+
+#: src/slice_projection.rs:101
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not fingerprint the slice inputs: {}"
+msgstr ""
+
+#: src/slice_projection.rs:104
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The slicer panicked: {}"
 msgstr ""
 
 #: src/profile_transfer/mod.rs:92
@@ -459,6 +525,21 @@ msgstr ""
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"
+msgstr ""
+
+#: src/slice_run.rs:372
+msgctxt "ErrorDialog"
+msgid "Cannot slice"
+msgstr ""
+
+#: src/slice_run.rs:376
+msgctxt "ErrorDialog"
+msgid "Choose a printer and a resin before slicing."
+msgstr ""
+
+#: src/slice_run.rs:385
+msgctxt "ErrorDialog"
+msgid "Slicing failed"
 msgstr ""
 
 #: src/support_gen_run.rs:147
