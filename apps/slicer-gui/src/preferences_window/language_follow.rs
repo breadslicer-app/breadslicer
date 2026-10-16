@@ -13,6 +13,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::material_form::InvalidFormValue;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::profile_forking::ForkError;
 
 /// Pushes the texts of `window` again with `push_texts` on each `Language`
 /// change, for as long as the window exists. Nothing holds the follow: a shown
@@ -49,6 +50,16 @@ pub(super) enum ErrorLine<E> {
 }
 
 impl ErrorLine<InvalidFormValue> {
+    /// The text of the line, in the language in force.
+    pub(super) fn text(&self) -> SharedString {
+        match self {
+            Self::Translated(error) => error.user_message(),
+            Self::Untranslated(text) => text.clone(),
+        }
+    }
+}
+
+impl ErrorLine<ForkError> {
     /// The text of the line, in the language in force.
     pub(super) fn text(&self) -> SharedString {
         match self {
@@ -156,6 +167,18 @@ mod error_line_tests {
     #[test]
     fn an_untranslated_line_shows_its_text() {
         let line = ErrorLine::<InvalidFormValue>::Untranslated("disk full".into());
+        assert_eq!(line.text(), "disk full");
+    }
+
+    #[test]
+    fn a_translated_fork_line_shows_the_error_message() {
+        let expected = ForkError::EmptyName.user_message();
+        assert_eq!(ErrorLine::Translated(ForkError::EmptyName).text(), expected);
+    }
+
+    #[test]
+    fn an_untranslated_fork_line_shows_its_text() {
+        let line = ErrorLine::<ForkError>::Untranslated("disk full".into());
         assert_eq!(line.text(), "disk full");
     }
 }
