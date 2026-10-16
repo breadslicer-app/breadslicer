@@ -9,19 +9,21 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, PlatformError, VecModel};
 
-use sc_print_profiles::{EffectiveMaterial, user_library_dir};
+use sc_print_profiles::{EffectiveMaterial, MaterialProfile, user_library_dir};
 
 use crate::material_form::{
-    CalibrationFormInput, EditedProfileKind, calibration_form_from_block, parse_calibration_form,
-    save_edited_profile,
+    CalibrationFormInput, EditedProfileKind, InvalidFormValue, calibration_form_from_block,
+    parse_calibration_form, save_edited_profile,
 };
 use crate::preferences_bus::PreferencesBus;
 use crate::profile_catalog::{ProfileCatalog, load_profile_for_view, refresh_catalog};
 use crate::profile_extending::{build_extension_update, copy_sources, uncovered_targets};
 use crate::profile_view::profile_display_name;
 use crate::slint_ui::ExtendDialog;
+
+use super::language_follow::{ErrorLine, follow_language, relabel_picker};
 
 /// Opens the extend dialog for the resin at `index`: pick one of the targets
 /// the resin does not cover yet, enter the calibration values (partial
@@ -39,6 +41,54 @@ pub(super) fn open_extend_dialog(
         return;
     };
 
+    let dialog = match build_extend_dialog(
+        bus,
+        catalog_handle,
+        refresh_view,
+        extend_slot,
+        base,
+        extension,
+    ) {
+        Ok(Some(dialog)) => dialog,
+        Ok(None) => return,
+        Err(err) => {
+            eprintln!("failed to create the extend dialog: {err}");
+            return;
+        }
+    };
+
+    let dialog_weak = dialog.as_weak();
+    dialog.on_cancel_requested({
+        let extend_slot = extend_slot.clone();
+        move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            *extend_slot.borrow_mut() = None;
+        }
+    });
+
+    if let Err(err) = dialog.show() {
+        eprintln!("failed to show the extend dialog: {err}");
+        return;
+    }
+    *extend_slot.borrow_mut() = Some(dialog);
+}
+
+/// Builds the extend dialog for the resin `base` and its `extension`, with the
+/// labels of its pickers and its error line in the language in force while the
+/// dialog exists; `None` when the resin covers every target. A save that
+/// succeeds writes the block, refreshes the catalog and the view, and empties
+/// `extend_slot`.
+fn build_extend_dialog(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh_view: &Rc<dyn Fn()>,
+    extend_slot: &Rc<RefCell<Option<ExtendDialog>>>,
+    base: MaterialProfile,
+    extension: Option<MaterialProfile>,
+) -> Result<Option<ExtendDialog>, PlatformError> {
+    let catalog = catalog_handle.borrow().clone();
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
     // The dialog writes to the raw files, so `base` and `extension` stay
@@ -50,17 +100,11 @@ pub(super) fn open_extend_dialog(
     }
     let targets = uncovered_targets(&material, catalog.printers(), default_printer.as_ref());
     if targets.is_empty() {
-        return;
+        return Ok(None);
     }
     let sources = copy_sources(&material, catalog.printers());
 
-    let dialog = match ExtendDialog::new() {
-        Ok(dialog) => dialog,
-        Err(err) => {
-            eprintln!("failed to create the extend dialog: {err}");
-            return;
-        }
-    };
+    let dialog = ExtendDialog::new()?;
     dialog.set_theme(snapshot.theme);
     dialog.set_source_name(profile_display_name(&base.identity).into());
     dialog.set_target_labels(ModelRc::new(VecModel::from(
@@ -78,15 +122,36 @@ pub(super) fn open_extend_dialog(
     )));
     dialog.set_copy_source_index(-1);
 
-    let base = Rc::new(base);
-    let extension = Rc::new(extension);
-    let targets = Rc::new(targets);
-    let sources = Rc::new(sources);
+    let error_line: Rc<RefCell<Option<ErrorLine<InvalidFormValue>>>> = Rc::default();
+    follow_language(bus, &dialog, {
+        let error_line = error_line.clone();
+        move |dialog| {
+            let printers = catalog.printers();
+            let targets = uncovered_targets(&material, printers, default_printer.as_ref());
+            relabel_picker(
+                &dialog.get_target_labels(),
+                dialog.get_target_index(),
+                targets.into_iter().map(|(_, label)| label).collect(),
+                |model| dialog.set_target_labels(model),
+            );
+            relabel_picker(
+                &dialog.get_copy_source_labels(),
+                dialog.get_copy_source_index(),
+                copy_sources(&material, printers)
+                    .into_iter()
+                    .map(|source| source.label)
+                    .collect(),
+                |model| dialog.set_copy_source_labels(model),
+            );
+            if let Some(line) = error_line.borrow().as_ref() {
+                dialog.set_error_message(line.text());
+            }
+        }
+    });
     let dialog_weak = dialog.as_weak();
 
     dialog.on_copy_requested({
         let dialog_weak = dialog_weak.clone();
-        let sources = sources.clone();
         move |picked| {
             let Some(d) = dialog_weak.upgrade() else {
                 return;
@@ -124,13 +189,9 @@ pub(super) fn open_extend_dialog(
     });
 
     dialog.on_save_requested({
-        let dialog_weak = dialog_weak.clone();
         let extend_slot = extend_slot.clone();
         let catalog_handle = catalog_handle.clone();
         let refresh_view = refresh_view.clone();
-        let base = base.clone();
-        let extension = extension.clone();
-        let targets = targets.clone();
         move || {
             let Some(d) = dialog_weak.upgrade() else {
                 return;
@@ -170,22 +231,26 @@ pub(super) fn open_extend_dialog(
             let block = match parse_calibration_form(&input) {
                 Ok(block) => block,
                 Err(err) => {
-                    d.set_error_message(err.user_message());
+                    show_error(&d, &error_line, ErrorLine::Translated(err));
                     return;
                 }
             };
-            let update = build_extension_update(&base, (*extension).as_ref(), target, block);
+            let update = build_extension_update(&base, extension.as_ref(), target, block);
             let user_lib = match user_library_dir() {
                 Ok(dir) => dir,
                 Err(err) => {
-                    d.set_error_message(err.to_string().into());
+                    show_error(
+                        &d,
+                        &error_line,
+                        ErrorLine::Untranslated(err.to_string().into()),
+                    );
                     return;
                 }
             };
             if let Err(message) =
                 save_edited_profile(&user_lib, &update, EditedProfileKind::Extension)
             {
-                d.set_error_message(message.into());
+                show_error(&d, &error_line, ErrorLine::Untranslated(message.into()));
                 return;
             }
             refresh_catalog(&catalog_handle);
@@ -195,21 +260,18 @@ pub(super) fn open_extend_dialog(
         }
     });
 
-    dialog.on_cancel_requested({
-        let extend_slot = extend_slot.clone();
-        move || {
-            if let Some(d) = dialog_weak.upgrade() {
-                let _ = d.hide();
-            }
-            *extend_slot.borrow_mut() = None;
-        }
-    });
+    Ok(Some(dialog))
+}
 
-    if let Err(err) = dialog.show() {
-        eprintln!("failed to show the extend dialog: {err}");
-        return;
-    }
-    *extend_slot.borrow_mut() = Some(dialog);
+/// Shows `line` in the extend dialog's error line and keeps it in `kept`, so
+/// that a language change writes the line again.
+fn show_error(
+    dialog: &ExtendDialog,
+    kept: &RefCell<Option<ErrorLine<InvalidFormValue>>>,
+    line: ErrorLine<InvalidFormValue>,
+) {
+    dialog.set_error_message(line.text());
+    *kept.borrow_mut() = Some(line);
 }
 
 #[cfg(test)]
@@ -234,5 +296,171 @@ mod target_picker_tests {
             dialog.get_target_index()
         });
         assert_eq!(picked, -1);
+    }
+}
+
+#[cfg(test)]
+mod language_change_tests {
+    use sc_print_primitives::PrinterId;
+    use slint::{Model, SharedString};
+
+    use super::*;
+    use crate::i18n::ctr;
+    use crate::language::InstalledTranslations;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ErrorDialog;
+    use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::material_profiles::resin_profile;
+    use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
+    use crate::ui_language::UiLanguage;
+
+    /// A catalog of 1 printer, "Printer A", which the resin profile has no
+    /// block for.
+    fn catalog_of_printer_a() -> ProfileCatalog {
+        let id = PrinterId::new("printer-a").expect("valid printer id");
+        let mut printer = printer_entry(id, "Alpha", [120.0, 68.0, 150.0]);
+        printer.name = "Printer A".to_owned();
+        ProfileCatalog::from_entries(vec![printer], Vec::new())
+    }
+
+    /// The extend dialog for the resin profile over `catalog`, built after the
+    /// UI language follows `bus`, as in the app.
+    fn following_extend_dialog(
+        bus: &Rc<PreferencesBus>,
+        catalog: ProfileCatalog,
+    ) -> (UiLanguage, Option<ExtendDialog>) {
+        // In the app, the 1st main window is the 1st component of the thread.
+        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
+        let refresh_view: Rc<dyn Fn()> = Rc::new(|| {});
+        let dialog = build_extend_dialog(
+            bus,
+            &Rc::new(RefCell::new(Rc::new(catalog))),
+            &refresh_view,
+            &Rc::new(RefCell::new(None)),
+            resin_profile(),
+            None,
+        )
+        .expect("the headless platform creates the extend dialog");
+        (ui_language, dialog)
+    }
+
+    fn extend_dialog(bus: &Rc<PreferencesBus>) -> (UiLanguage, ExtendDialog) {
+        let (ui_language, dialog) = following_extend_dialog(bus, catalog_of_printer_a());
+        (ui_language, dialog.expect("printer A is not covered"))
+    }
+
+    fn strings(model: ModelRc<SharedString>) -> Vec<String> {
+        model.iter().map(|text| text.to_string()).collect()
+    }
+
+    fn sentinel_labels() -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(vec![SharedString::from("sentinel")]))
+    }
+
+    #[test]
+    fn a_resin_that_covers_every_target_gets_no_dialog() {
+        let built = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let empty = ProfileCatalog::from_entries(Vec::new(), Vec::new());
+            following_extend_dialog(&bus, empty).1.is_some()
+        });
+        assert!(!built);
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_picker_labels_again() {
+        let (shown, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, dialog) = extend_dialog(&bus);
+            dialog.set_target_labels(sentinel_labels());
+            dialog.set_copy_source_labels(sentinel_labels());
+
+            pick_language(&bus, "es");
+
+            let shown = (
+                strings(dialog.get_target_labels()),
+                strings(dialog.get_copy_source_labels()),
+            );
+            let generic = ctr!("ExtendDialog", "Generic").to_string();
+            (shown, (vec!["Printer A".to_owned()], vec![generic]))
+        });
+        assert_eq!(shown, expected);
+    }
+
+    #[test]
+    fn with_nothing_picked_a_language_change_leaves_the_pickers_empty() {
+        let picked = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, dialog) = extend_dialog(&bus);
+            dialog
+                .show()
+                .expect("the headless platform shows the dialog");
+            render_frames();
+            pick_language(&bus, "es");
+            render_frames();
+            (dialog.get_target_index(), dialog.get_copy_source_index())
+        });
+        assert_eq!(picked, (-1, -1));
+    }
+
+    #[test]
+    fn with_a_target_picked_a_language_change_keeps_it_and_pushes_its_label() {
+        let shown = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, dialog) = extend_dialog(&bus);
+            dialog
+                .show()
+                .expect("the headless platform shows the dialog");
+            dialog.set_target_index(0);
+            dialog.set_target_labels(sentinel_labels());
+            render_frames();
+            pick_language(&bus, "es");
+            render_frames();
+            (
+                dialog.get_target_index(),
+                strings(dialog.get_target_labels()),
+                dialog.get_copy_source_index(),
+            )
+        });
+        assert_eq!(shown, (0, vec!["Printer A".to_owned()], -1));
+    }
+
+    #[test]
+    fn an_edited_field_keeps_its_text() {
+        let text = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, dialog) = extend_dialog(&bus);
+            dialog.set_normal_exposure_text("2.5".into());
+            pick_language(&bus, "es");
+            dialog.get_normal_exposure_text().to_string()
+        });
+        assert_eq!(text, "2.5");
+    }
+
+    #[test]
+    fn a_language_change_pushes_a_form_error_again() {
+        let (shown, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, dialog) = extend_dialog(&bus);
+            dialog.set_target_index(0);
+            dialog.set_normal_exposure_text("abc".into());
+            dialog.invoke_save_requested();
+            dialog.set_error_message("sentinel".into());
+
+            pick_language(&bus, "es");
+
+            let input = CalibrationFormInput {
+                normal_exposure_sec: "abc".to_owned(),
+                ..CalibrationFormInput::default()
+            };
+            let error = parse_calibration_form(&input).expect_err("\"abc\" is not a number");
+            (
+                dialog.get_error_message().to_string(),
+                error.user_message().to_string(),
+            )
+        });
+        assert_eq!(shown, expected);
     }
 }
