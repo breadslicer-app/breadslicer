@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 22:17+0200\n"
+"POT-Creation-Date: 2026-10-16 22:25+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -686,6 +686,12 @@ msgstr ""
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/mesh_loader.rs:286
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The mesh loader panicked: {}"
 msgstr ""
 
 #: src/lib.rs:296

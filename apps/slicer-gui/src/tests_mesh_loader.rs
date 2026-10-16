@@ -32,8 +32,8 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::language::InstalledTranslations;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
-    FileTooLarge, LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch,
-    guard_worker, panic_message, parse_source, start_load_with_ticket,
+    FileTooLarge, LoadDispatch, LoaderPanicked, MAX_MESH_FILE_SIZE_BYTES, check_file_size,
+    decide_load_dispatch, guard_worker, panic_message, parse_source, start_load_with_ticket,
 };
 use crate::mesh_render::DeviceToken;
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
@@ -577,6 +577,8 @@ fn a_loaded_project_brings_back_its_in_sync_slices() {
 fn a_worker_panic_becomes_an_error_carrying_the_message() {
     let err = guard_worker::<()>(|| panic!("boom")).expect_err("a panic must become an error");
     assert_eq!(err.to_string(), "The mesh loader panicked: boom");
+    // A value, not a text: the dialog formats it again after a language change.
+    assert!(err.downcast_ref::<LoaderPanicked>().is_some(), "{err:?}");
 }
 
 #[test]

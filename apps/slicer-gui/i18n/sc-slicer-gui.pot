@@ -1726,6 +1726,12 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
+#: src/mesh_loader.rs:286
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The mesh loader panicked: {}"
+msgstr ""
+
 #: src/lib.rs:296
 msgctxt "ErrorDialog"
 msgid ""

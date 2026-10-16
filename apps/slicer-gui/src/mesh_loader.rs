@@ -272,14 +272,32 @@ fn prepare_scene(
     })
 }
 
+/// A panic of the load worker, with its message. Its text is in the language in
+/// force each time it is formatted.
+#[derive(Debug)]
+pub(crate) struct LoaderPanicked {
+    message: String,
+}
+
+impl fmt::Display for LoaderPanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ctr!(
+            "ErrorDialog",
+            "The mesh loader panicked: {}",
+            self.message
+        ))
+    }
+}
+
+impl std::error::Error for LoaderPanicked {}
+
 /// Runs `body`, turning a panic into an error that carries the panic message.
 pub(crate) fn guard_worker<T>(body: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(result) => result,
-        Err(payload) => {
-            let msg = panic_message(&payload);
-            Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-        }
+        Err(payload) => Err(anyhow::Error::new(LoaderPanicked {
+            message: panic_message(&payload),
+        })),
     }
 }
 
