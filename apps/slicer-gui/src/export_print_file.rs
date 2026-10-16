@@ -373,19 +373,15 @@ mod export_button_enabled_tests {
 
 #[cfg(test)]
 mod export_job_tests {
-    use std::sync::Arc;
-
-    use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_fixtures::unit_cube_mesh;
     use sc_print_glue::PlateContours;
     use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
     use sc_print_profiles::MaterialProfile;
-    use sc_scene::LeafPayload;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
 
     use super::*;
     use crate::scene_document::SceneRevision;
+    use crate::test_support::scenes::cube_scene;
 
     const PRINTER_TOML: &str = r#"
 [identity]
@@ -458,21 +454,6 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         let printer: PrinterProfile = toml::from_str(PRINTER_TOML).expect("printer profile");
         let material: MaterialProfile = toml::from_str(material_toml).expect("material profile");
         (printer, EffectiveMaterial::from(material))
-    }
-
-    /// Builds a scene with 1 cube leaf as its own root, spanning z = -0.5 to
-    /// 0.5, so half of it stands above the plate.
-    fn cube_scene() -> Scene {
-        let mut scene = Scene::new();
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-        scene
     }
 
     /// Returns the schedule this scene and these profiles derive, which is what

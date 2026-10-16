@@ -5,13 +5,12 @@
 
 use std::fs;
 
-use sc_print_primitives::{
-    BuildVolume, FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings, PrinterId,
-};
+use sc_print_primitives::PrinterId;
 use sc_print_profiles::{MaterialExtensionIssue, load_material_profile_from_path};
 use slint::Model;
 
 use super::*;
+use crate::test_support::catalog_entries::named_printer_entry;
 
 const BASE_TOML: &str = "\
 [identity]
@@ -63,35 +62,20 @@ fn parse(toml: &str) -> MaterialProfile {
     load_material_profile_from_path(&path).unwrap()
 }
 
-/// Compose a base and an optional extension, asserting the pair is
-/// clean; tests about dirty pairs compose inline instead.
+/// Compose a base and an optional extension, asserting the pair is clean; tests
+/// about dirty pairs compose inline instead.
 fn effective(base: MaterialProfile, extension: Option<MaterialProfile>) -> EffectiveMaterial {
     let (material, issues) = EffectiveMaterial::compose(base, extension);
     assert!(issues.is_empty(), "issues: {issues:?}");
     material
 }
 
-fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
-    PrinterCatalogEntry {
-        id: PrinterId::new(id).unwrap(),
-        manufacturer: "Maker".to_owned(),
-        name: name.to_owned(),
-        build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
-        output_formats: OutputFormatBindings::new(OutputFormatBinding {
-            format: FormatKind::Goo,
-            version: Some(NonEmptyString::new("v3.0").unwrap()),
-        }),
-        image_path: None,
-        source: ProfileSource::Bundled,
-    }
-}
-
 fn printers() -> Vec<PrinterCatalogEntry> {
     vec![
-        printer_entry("printer-a", "Printer A"),
-        printer_entry("printer-b", "Printer B"),
-        printer_entry("printer-z", "Printer Z"),
-        printer_entry("generic-machine", "Generic Machine"),
+        named_printer_entry("printer-a", "Printer A"),
+        named_printer_entry("printer-b", "Printer B"),
+        named_printer_entry("printer-z", "Printer Z"),
+        named_printer_entry("generic-machine", "Generic Machine"),
     ]
 }
 
@@ -153,8 +137,8 @@ fn the_default_printers_block_is_first_and_highlighted() {
 #[test]
 fn the_generic_block_is_highlighted_when_it_is_the_fallback() {
     let material = effective(parse(BASE_TOML), None);
-    // printer-b has no block of its own; the generic block is what it
-    // would print with.
+    // printer-b has no block of its own; the generic block is what it would
+    // print with.
     let sections = build_profile_view_model(
         &material,
         &printers(),
@@ -209,10 +193,9 @@ fn extension_blocks_are_included_in_display_name_order() {
 
 #[test]
 fn an_overlapping_extension_pair_renders_one_section_with_the_base_values() {
-    // An imported extension can overlap the base (the extend dialog
-    // never authors this). The composed view holds one block per
-    // printer, the base's, so the viewer renders a single section
-    // instead of duplicates.
+    // An imported extension can overlap the base (the extend dialog never
+    // authors this). The composed view holds 1 block per printer, the base's,
+    // so the viewer renders a single section instead of duplicates.
     let overlapping = "\
 extension = true
 
@@ -268,8 +251,8 @@ fn unset_optional_fields_render_the_not_set_text() {
     assert_eq!(intent[0].1, "not set");
     assert_eq!(intent[1].1, "0.05");
 
-    // Defaults: scale compensation unset, bottom layer count set,
-    // the three waits and the two light powers unset.
+    // Defaults: scale compensation unset, bottom layer count set, the 3 waits
+    // and the 2 light powers unset.
     let defaults = fields(&sections[2]);
     assert_eq!(defaults.len(), 7);
     assert_eq!(defaults[0].1, "not set");
@@ -278,8 +261,7 @@ fn unset_optional_fields_render_the_not_set_text() {
         assert_eq!(value, "not set", "{label}");
     }
 
-    // The default printer's block: two set values, twenty-one unset,
-    // all twenty-three rendered.
+    // The default printer's block: 2 set values, 21 unset, all 23 rendered.
     let block = fields(&sections[3]);
     assert_eq!(block.len(), 23);
     assert_eq!(block[0].1, "2.5");
@@ -326,8 +308,8 @@ second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_spe
     assert_eq!(value_of("Second lift distance (mm)"), "3");
     assert_eq!(value_of("Second lift speed (mm/min)"), "230");
     assert_eq!(value_of("Second retract speed (mm/min)"), "75");
-    // The bottom stage is a separate value, not an inheritance the
-    // viewer performs: the resolver is what substitutes one.
+    // The bottom stage is a separate value, not an inheritance the viewer
+    // performs: the resolver is what substitutes one.
     assert_eq!(value_of("Bottom second lift distance (mm)"), "not set");
     assert_eq!(value_of("Bottom second lift speed (mm/min)"), "not set");
     assert_eq!(value_of("Bottom second retract speed (mm/min)"), "not set");

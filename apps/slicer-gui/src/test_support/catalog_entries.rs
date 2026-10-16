@@ -30,3 +30,16 @@ pub(crate) fn printer_entry(
         source: ProfileSource::Bundled,
     }
 }
+
+/// Returns a bundled printer entry named `name`, by "Maker", with the Goo v3.0
+/// output format and a 100 x 60 x 80 mm plate.
+pub(crate) fn named_printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
+    PrinterCatalogEntry {
+        name: name.to_owned(),
+        ..printer_entry(
+            PrinterId::new(id).expect("valid printer id"),
+            "Maker",
+            [100.0, 60.0, 80.0],
+        )
+    }
+}

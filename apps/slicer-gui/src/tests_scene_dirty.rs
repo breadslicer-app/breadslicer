@@ -9,15 +9,15 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_scene::{LeafPayload, NodeId, Scene};
+use sc_scene::NodeId;
 
 use crate::scene_document::{
     SaveRecorded, SceneDocument, SceneEdit, SceneEvent, SceneSubscription, UNDO_STACK_CAP,
 };
+use crate::test_support::documents::loaded_document;
+use crate::test_support::scenes::graph_with_one_object;
 
 fn fixture_path() -> PathBuf {
     PathBuf::from("/tmp/dirty_fixture.obj")
@@ -25,34 +25,6 @@ fn fixture_path() -> PathBuf {
 
 fn translation(dx: f64) -> Transform3D {
     Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
-}
-
-/// Builds the graph that a loader makes for 1 object: an inline-mesh leaf under
-/// an identity-Group root.
-fn graph_with_one_object() -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    let leaf = g
-        .add_leaf(
-            None,
-            Transform3D::Identity,
-            LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
-        )
-        .expect("add leaf");
-    g.add_child(root, leaf).expect("attach leaf");
-    g
-}
-
-/// Returns a loaded document and the node id that its edits target.
-fn loaded_document() -> (Rc<SceneDocument>, NodeId) {
-    let doc = SceneDocument::new();
-    doc.install_graph(graph_with_one_object(), fixture_path());
-    let node_id = doc
-        .with_scene(|s| s.leaf_id_at_index(0))
-        .flatten()
-        .expect("fixture has one leaf");
-    (doc, node_id)
 }
 
 /// Applies and commits the `dx - 1.0 -> dx` translation step, the well-formed

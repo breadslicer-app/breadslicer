@@ -1484,8 +1484,7 @@ mod selection_tests {
     use std::sync::Arc;
 
     use super::*;
-    use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::Vertex;
+    use crate::test_support::scenes::empty_leaf_mesh;
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
@@ -1494,14 +1493,6 @@ mod selection_tests {
     /// this.
     fn no_mods() -> PointerModifiers {
         PointerModifiers::default()
-    }
-
-    fn empty_leaf_mesh() -> IndexedMesh {
-        IndexedMesh {
-            meta: None,
-            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![],
-        }
     }
 
     /// Builds a graph of `n` objects in the shape a loader produces: all `n`

@@ -15,17 +15,13 @@
 //! software-wgpu integration vehicle.
 
 use std::rc::Rc;
-use std::sync::Arc;
 
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::Vertex;
-use sc_mesh_core::transform::Transform3D;
-use sc_scene::LeafPayload;
 use sc_scene::Scene;
 
 use super::controller::ViewportController;
 use super::types::FrameState;
 use crate::mesh_render::mock::{MockRenderer, MockRendererState};
+use crate::test_support::scenes::graph_with_one_leaf;
 
 /// Build a fresh controller with a `MockRenderer` installed, plus the returned
 /// shared state handle for inspection.
@@ -51,30 +47,6 @@ fn subscribed_fixture() -> (
     ctrl.set_renderer_for_test(Box::new(MockRenderer::new(state.clone())));
     ctrl.register_document_listener();
     (ctrl, state)
-}
-
-fn empty_leaf_mesh() -> IndexedMesh {
-    IndexedMesh {
-        meta: None,
-        vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-        faces: vec![],
-    }
-}
-
-/// Loader-faithful single-leaf graph under 1 identity-Group root.
-fn graph_with_one_leaf() -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    let leaf = g
-        .add_leaf(
-            None,
-            Transform3D::Identity,
-            LeafPayload::Mesh(Arc::new(empty_leaf_mesh())),
-        )
-        .expect("add leaf");
-    g.add_child(root, leaf).expect("attach leaf");
-    g
 }
 
 #[test]

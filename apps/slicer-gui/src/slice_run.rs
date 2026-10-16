@@ -442,27 +442,11 @@ fn capture(scene: &Scene, contours: PlateContours) -> Result<CompletedSlice, Sli
 mod capture_tests {
     use super::*;
 
-    use std::sync::Arc;
-
-    use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_fixtures::unit_cube_mesh;
-    use sc_scene::node::LeafPayload;
     use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
     use sc_sl1cer::geom2d::Point2D;
     use sc_sl1cer::profile::LayerSchedule;
 
-    fn cube_scene() -> Scene {
-        let mut scene = Scene::new();
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-        scene
-    }
+    use crate::test_support::scenes::cube_scene;
 
     fn schedule() -> LayerSchedule {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")

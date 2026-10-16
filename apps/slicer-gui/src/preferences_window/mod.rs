@@ -1047,12 +1047,10 @@ fn no_data_pill(default_printer: Option<&PrinterId>) -> ResinPill {
 mod derive_resin_view_tests {
     use std::collections::BTreeSet;
 
-    use sc_print_primitives::{
-        BuildVolume, FormatKind, MaterialId, NonEmptyString, OutputFormatBinding,
-        OutputFormatBindings,
-    };
+    use sc_print_primitives::MaterialId;
 
     use super::*;
+    use crate::test_support::catalog_entries::named_printer_entry;
 
     fn material(
         id: &str,
@@ -1080,21 +1078,6 @@ mod derive_resin_view_tests {
                 .iter()
                 .map(|p| CalibrationTarget::from(PrinterId::new(p).unwrap()))
                 .collect(),
-        }
-    }
-
-    fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
-        PrinterCatalogEntry {
-            id: PrinterId::new(id).unwrap(),
-            manufacturer: "Maker".to_owned(),
-            name: name.to_owned(),
-            build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
-            output_formats: OutputFormatBindings::new(OutputFormatBinding {
-                format: FormatKind::Goo,
-                version: Some(NonEmptyString::new("v3.0").unwrap()),
-            }),
-            image_path: None,
-            source: ProfileSource::Bundled,
         }
     }
 
@@ -1205,8 +1188,8 @@ mod derive_resin_view_tests {
         let materials = vec![material("a-resin", "Alpha", "Standard", &["printer-a"])];
         let extensions = vec![extension("a-resin", &["printer-b"])];
         let printers = vec![
-            printer_entry("printer-a", "Printer A"),
-            printer_entry("printer-b", "Printer B"),
+            named_printer_entry("printer-a", "Printer A"),
+            named_printer_entry("printer-b", "Printer B"),
         ];
         let rows = derive_resin_view(
             &materials,
@@ -1237,10 +1220,10 @@ mod derive_resin_view_tests {
             &["printer-z", "printer-a", "generic-machine", "printer-b"],
         )];
         let printers = vec![
-            printer_entry("printer-a", "Printer A"),
-            printer_entry("printer-b", "Printer B"),
-            printer_entry("printer-z", "Printer Z"),
-            printer_entry("generic-machine", "Generic Machine"),
+            named_printer_entry("printer-a", "Printer A"),
+            named_printer_entry("printer-b", "Printer B"),
+            named_printer_entry("printer-z", "Printer Z"),
+            named_printer_entry("generic-machine", "Generic Machine"),
         ];
         let rows = derive_resin_view(
             &materials,
@@ -1265,7 +1248,7 @@ mod derive_resin_view_tests {
     #[test]
     fn the_generic_default_printer_gets_the_our_printer_kind() {
         let materials = vec![material("a-resin", "Alpha", "A", &["generic-machine"])];
-        let printers = vec![printer_entry("generic-machine", "Generic Machine")];
+        let printers = vec![named_printer_entry("generic-machine", "Generic Machine")];
         let rows = derive_resin_view(
             &materials,
             &[],
@@ -1353,8 +1336,8 @@ mod derive_resin_view_tests {
         let materials = vec![material("a-resin", "Alpha", "A", &["printer-a"])];
         let extensions = vec![extension("a-resin", &["printer-b"])];
         let all_covered = vec![
-            printer_entry("printer-a", "Printer A"),
-            printer_entry("printer-b", "Printer B"),
+            named_printer_entry("printer-a", "Printer A"),
+            named_printer_entry("printer-b", "Printer B"),
         ];
         let rows = derive_resin_view(
             &materials,
@@ -1369,9 +1352,9 @@ mod derive_resin_view_tests {
         assert!(!rows[1].can_extend);
 
         let with_uncovered = vec![
-            printer_entry("printer-a", "Printer A"),
-            printer_entry("printer-b", "Printer B"),
-            printer_entry("printer-c", "Printer C"),
+            named_printer_entry("printer-a", "Printer A"),
+            named_printer_entry("printer-b", "Printer B"),
+            named_printer_entry("printer-c", "Printer C"),
         ];
         let rows = derive_resin_view(
             &materials,
@@ -1391,7 +1374,7 @@ mod derive_resin_view_tests {
             material("plain-resin", "Beta", "Plain", &[]),
         ];
         let extensions = vec![extension("fav-resin", &["printer-a"])];
-        let printers = vec![printer_entry("printer-a", "A")];
+        let printers = vec![named_printer_entry("printer-a", "A")];
         let favourites: BTreeSet<MaterialId> = [MaterialId::new("fav-resin").unwrap()]
             .into_iter()
             .collect();
@@ -1418,31 +1401,17 @@ mod derive_resin_view_tests {
 mod build_card_data_tests {
     use std::collections::BTreeSet;
 
-    use sc_print_primitives::{
-        BuildVolume, FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings,
-        PrinterId,
-    };
+    use sc_print_primitives::PrinterId;
 
     use super::*;
-
-    fn printer_entry(id: &str) -> PrinterCatalogEntry {
-        PrinterCatalogEntry {
-            id: PrinterId::new(id).unwrap(),
-            manufacturer: "Maker".to_owned(),
-            name: id.to_owned(),
-            build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
-            output_formats: OutputFormatBindings::new(OutputFormatBinding {
-                format: FormatKind::Goo,
-                version: Some(NonEmptyString::new("v3.0").unwrap()),
-            }),
-            image_path: None,
-            source: ProfileSource::Bundled,
-        }
-    }
+    use crate::test_support::catalog_entries::named_printer_entry;
 
     #[test]
     fn is_favourite_is_set_from_the_favourite_set() {
-        let printers = vec![printer_entry("printer-a"), printer_entry("printer-b")];
+        let printers = vec![
+            named_printer_entry("printer-a", "printer-a"),
+            named_printer_entry("printer-b", "printer-b"),
+        ];
         let favourites: BTreeSet<PrinterId> =
             [PrinterId::new("printer-b").unwrap()].into_iter().collect();
 
@@ -1455,7 +1424,7 @@ mod build_card_data_tests {
 
     #[test]
     fn no_favourites_leaves_every_card_unmarked() {
-        let printers = vec![printer_entry("printer-a")];
+        let printers = vec![named_printer_entry("printer-a", "printer-a")];
         let cards = build_card_data(&printers, &BTreeSet::new());
         assert!(!cards[0].card.is_favourite);
     }
