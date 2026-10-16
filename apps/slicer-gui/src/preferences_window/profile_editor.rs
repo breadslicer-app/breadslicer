@@ -474,8 +474,9 @@ mod language_change_tests {
                 strings(dialog.get_edit_target_labels()),
             );
             let identity = identity_section(&resin_profile().identity, ProfileSource::User);
+            let name = "Brand Resin";
             let expected = (
-                ctr!("PreferencesPage", "{} (extended)", "Brand Resin").to_string(),
+                ctr!("PreferencesPage", "{} (extended)", name).to_string(),
                 EditorNote::ForkSaved.text().to_string(),
                 vec![identity.title.to_string()],
                 vec![ctr!("ProfileViewDialog", "Generic").to_string()],

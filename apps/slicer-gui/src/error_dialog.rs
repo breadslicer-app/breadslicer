@@ -592,9 +592,10 @@ mod language_change_tests {
     /// The texts of a failed load of `part.stl`. The bundled languages
     /// translate the heading and the context.
     fn load_failure() -> ErrorTexts {
+        let file = "part.stl";
         ErrorTexts {
             heading: ctr!("ErrorDialog", "Failed to open 3D model"),
-            context: Some(ctr!("ErrorDialog", "File: {}", "part.stl")),
+            context: Some(ctr!("ErrorDialog", "File: {}", file)),
             message: "Not a mesh.".into(),
             details: "caused by: no facets".into(),
         }

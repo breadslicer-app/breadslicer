@@ -98,9 +98,10 @@ mod i18n_tests {
 
     /// The texts of 2 calls that the `.po` files translate.
     fn texts() -> (String, String) {
+        let file = "part.stl";
         (
             ctr!("FileDialog", "OBJ files").to_string(),
-            ctr!("ErrorDialog", "File: {}", "part.stl").to_string(),
+            ctr!("ErrorDialog", "File: {}", file).to_string(),
         )
     }
 
