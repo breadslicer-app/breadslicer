@@ -51,6 +51,7 @@ mod profile_extending;
 mod profile_forking;
 mod profile_transfer;
 mod profile_view;
+mod profile_view_dialog;
 mod project_profiles;
 mod reloaded_slices;
 mod repair_run;
