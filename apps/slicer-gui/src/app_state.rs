@@ -18,6 +18,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
+use crate::app_settings::file::SettingsFile;
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
 use crate::graphics_status::GraphicsUnavailable;
@@ -334,8 +335,10 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
 }
 
 /// Spawns the settings-saver worker thread, with the loop body wired to persist
-/// each coalesced snapshot through `AppSettings::save`.
+/// each coalesced snapshot into `file`. With no file (the platform gives no
+/// home directory), each save logs an error.
 fn spawn_settings_saver(
+    file: Option<SettingsFile>,
     initial_settings: AppSettings,
 ) -> std::io::Result<(Sender<PreferencesSnapshot>, SettingsSaverJoin)> {
     let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
@@ -345,7 +348,11 @@ fn spawn_settings_saver(
             let mut settings = initial_settings;
             run_settings_saver_loop(rx, |snap| {
                 apply_snapshot_to_settings(&mut settings, snap);
-                if let Err(err) = settings.save() {
+                let saved = match &file {
+                    Some(file) => file.save(&settings),
+                    None => Err(std::io::Error::other("no config directory available")),
+                };
+                if let Err(err) = saved {
                     eprintln!("Failed to save settings: {err}");
                 }
             });
@@ -376,7 +383,11 @@ fn subscribe_window_preferences(
 
 impl AppState {
     pub(crate) fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
-        let settings = AppSettings::load();
+        let settings_file = SettingsFile::platform_default();
+        let settings = settings_file
+            .as_ref()
+            .map(SettingsFile::load)
+            .unwrap_or_default();
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
@@ -421,7 +432,7 @@ impl AppState {
         // worker writes to disk. Off-loading the write keeps the Slint event
         // loop responsive on slow / network-mounted / nearly-full config
         // directories.
-        let (saver_tx, settings_saver) = spawn_settings_saver(settings)?;
+        let (saver_tx, settings_saver) = spawn_settings_saver(settings_file, settings)?;
         let settings_sub = prefs.subscribe(move |snap, _change| {
             // Channel send is non-blocking; failure means the worker has
             // already exited, which only happens at shutdown.
@@ -1601,13 +1612,12 @@ mod settings_saver_tests {
     #[test]
     fn spawn_settings_saver_joins_cleanly_on_drop() {
         // Smoke test for the production spawn path: drop the sender without
-        // sending any snapshot, so the worker exits via channel-closed before
-        // ever calling `AppSettings::save` (which would touch the user's real
-        // config directory under test). The join in `SettingsSaverJoin::drop`
-        // must complete without hanging, matching the shutdown behaviour
-        // `AppState::drop` relies on.
+        // sending any snapshot, so the worker exits via channel-closed. The
+        // join in `SettingsSaverJoin::drop` must complete without hanging,
+        // matching the shutdown behaviour `AppState::drop` relies on.
         let settings = AppSettings::default();
-        let (tx, saver) = spawn_settings_saver(settings).expect("spawn settings-saver thread");
+        let (tx, saver) =
+            spawn_settings_saver(None, settings).expect("spawn settings-saver thread");
         drop(tx);
         drop(saver);
     }
