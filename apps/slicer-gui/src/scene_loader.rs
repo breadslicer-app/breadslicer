@@ -484,20 +484,18 @@ impl SceneLoader {
     }
 
     /// Shows the error dialog only for the first failure of a run.
-    pub(crate) fn note_upload_failure(&self, err: &anyhow::Error) {
+    pub(crate) fn note_upload_failure(&self, err: anyhow::Error) {
         if !self.upload_failures.note_failure() {
             return;
         }
-        let message = err.to_string();
-        let details = format_anyhow_chain(err);
         self.dialogs.show_error_deferred(move || ErrorTexts {
             heading: ctr!("ErrorDialog", "Failed to prepare the 3D view"),
             context: Some(ctr!(
                 "ErrorDialog",
                 "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
             )),
-            message: message.as_str().into(),
-            details: details.as_str().into(),
+            message: err.to_string().into(),
+            details: format_anyhow_chain(&err).into(),
         });
     }
 

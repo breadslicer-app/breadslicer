@@ -131,12 +131,12 @@ fn note_render_failure_counts_a_run_and_a_success_ends_it() {
 #[test]
 fn note_upload_failure_counts_a_run_and_a_success_ends_it() {
     let l = loader();
-    l.note_upload_failure(&anyhow::anyhow!("first"));
-    l.note_upload_failure(&anyhow::anyhow!("second"));
+    l.note_upload_failure(anyhow::anyhow!("first"));
+    l.note_upload_failure(anyhow::anyhow!("second"));
     assert_eq!(l.upload_failures_for_test(), 2);
     l.note_upload_success();
     assert_eq!(l.upload_failures_for_test(), 0);
-    l.note_upload_failure(&anyhow::anyhow!("third"));
+    l.note_upload_failure(anyhow::anyhow!("third"));
     assert_eq!(l.upload_failures_for_test(), 1);
 }
 

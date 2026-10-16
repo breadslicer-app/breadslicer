@@ -1232,7 +1232,7 @@ impl ViewportController {
                     // `post_renderer_install`, the scene-install fallback, and
                     // each structural edit.
                     self.render.update_frame(FrameState::upload_cleared);
-                    self.session.loader().note_upload_failure(&err);
+                    self.session.loader().note_upload_failure(err);
                 }
                 None => {
                     // The flag is set, but the scene was cleared before this

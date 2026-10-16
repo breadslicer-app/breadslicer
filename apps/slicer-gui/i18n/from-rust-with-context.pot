@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 22:51+0200\n"
+"POT-Creation-Date: 2026-10-17 00:20+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -99,7 +99,7 @@ msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:565
+#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:563
 #: src/app_state.rs:762 src/error_dialog.rs:600 src/export_print_file.rs:280
 #, rust-format
 msgctxt "ErrorDialog"
@@ -297,34 +297,106 @@ msgctxt "ErrorDialog"
 msgid "The graphics device refused the image readback buffer: {}"
 msgstr ""
 
-#: src/scene_loader.rs:494
+#: src/mesh_render/scene_upload.rs:103
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"Object '{}' has more vertices ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:109
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"An object has more vertices ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:114
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"Object '{}' has more triangles ({}) than this graphics device can hold in "
+"one buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:120
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"An object has more triangles ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:159
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the vertex buffer of object '{}' ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:168
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the vertex buffer of an object ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:176
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the index buffer of object '{}' ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:185
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the index buffer of an object ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:190
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the per-object transform table ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:211
+msgctxt "ErrorDialog"
+msgid "The graphics device was lost while uploading the scene"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:223
+msgctxt "ErrorDialog"
+msgid "Graph has no leaves to render"
+msgstr ""
+
+#: src/scene_loader.rs:492
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:497
+#: src/scene_loader.rs:495
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:517
+#: src/scene_loader.rs:515
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:521
+#: src/scene_loader.rs:519
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr ""
 
-#: src/scene_loader.rs:525
+#: src/scene_loader.rs:523
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:564 src/error_dialog.rs:599
+#: src/scene_loader.rs:562 src/error_dialog.rs:599
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""

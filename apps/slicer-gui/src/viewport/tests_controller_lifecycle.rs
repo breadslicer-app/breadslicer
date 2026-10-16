@@ -38,7 +38,7 @@ fn fixture() -> (
 fn post_renderer_install_resets_the_loader_upload_failure_counter() {
     let (ctrl, _state) = fixture();
     ctrl.loader()
-        .note_upload_failure(&anyhow::anyhow!("stale failure"));
+        .note_upload_failure(anyhow::anyhow!("stale failure"));
     assert_eq!(ctrl.loader().upload_failures_for_test(), 1);
     ctrl.post_renderer_install();
     assert_eq!(ctrl.loader().upload_failures_for_test(), 0);
