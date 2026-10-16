@@ -14,6 +14,7 @@
 //! Referenced profiles without a held document get embedded copies resolved
 //! from the local libraries.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -25,6 +26,7 @@ use sc_project_formats::{
 };
 use sc_scene::Scene;
 
+use crate::i18n::ctr;
 use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
@@ -87,6 +89,23 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
         None => SaveTargetDispatch::Ready(target.with_extension("3mf")),
     }
 }
+
+/// The refusal of a "Save As" path that names another format
+/// ([`SaveTargetDispatch::WrongExtension`]). Its text is in the language in
+/// force each time it is formatted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WrongProjectExtension;
+
+impl fmt::Display for WrongProjectExtension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ctr!(
+            "ErrorDialog",
+            "Project files are saved as .3mf packages."
+        ))
+    }
+}
+
+impl std::error::Error for WrongProjectExtension {}
 
 /// Builds the payload to write when saving `doc` as a project: the scene's own
 /// choices, with a missing printer or resin filled from `defaults`. Every
@@ -427,6 +446,14 @@ mod scene_save_tests {
             assert_eq!(
                 decide_save_target(Some(PathBuf::from("/tmp/plate.stl"))),
                 SaveTargetDispatch::WrongExtension(PathBuf::from("/tmp/plate.stl")),
+            );
+        }
+
+        #[test]
+        fn the_refusal_says_projects_are_3mf_packages() {
+            assert_eq!(
+                WrongProjectExtension.to_string(),
+                "Project files are saved as .3mf packages."
             );
         }
     }

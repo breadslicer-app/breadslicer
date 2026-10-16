@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 21:58+0200\n"
+"POT-Creation-Date: 2026-10-16 22:09+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,6 +17,11 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: src/scene_save.rs:103
+msgctxt "ErrorDialog"
+msgid "Project files are saved as .3mf packages."
+msgstr ""
 
 #: src/viewport/controller.rs:745
 msgctxt "ErrorDialog"
@@ -69,12 +74,12 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:710
+#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:713
 msgctxt "FileDialog"
 msgid "3MF files"
 msgstr ""
 
-#: src/wiring.rs:343 src/wiring.rs:706 src/i18n.rs:104
+#: src/wiring.rs:343 src/wiring.rs:709 src/i18n.rs:104
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
@@ -89,31 +94,43 @@ msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:562
+#: src/wiring.rs:565
 msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:563 src/wiring.rs:684 src/i18n.rs:105 src/scene_loader.rs:564
+#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:564
 #: src/app_state.rs:762 src/error_dialog.rs:597 src/export_print_file.rs:280
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:683
+#: src/wiring.rs:686
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:698
+#: src/wiring.rs:701
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:702
+#: src/wiring.rs:705
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
+msgstr ""
+
+#: src/scene_export.rs:86
+msgctxt "ErrorDialog"
+msgid ""
+"Unable to infer file format from filename. Use one of: .stl (binary "
+"STL), .stla (ASCII STL), .obj, or .3mf."
+msgstr ""
+
+#: src/scene_export.rs:88
+msgctxt "ErrorDialog"
+msgid "No scene loaded"
 msgstr ""
 
 #: src/slice_projection.rs:70

@@ -482,7 +482,7 @@ async fn save_to_target(
             stamp,
         )),
         Ok(Err(err)) => {
-            show_save_error(dialogs, target, &err);
+            show_save_error(dialogs, target, err);
             SaveOutcome::NotSaved
         }
         // The sender dropped without sending (event loop gone at shutdown):
@@ -535,8 +535,8 @@ async fn run_save_as_flow(
     match dispatch {
         SaveTargetDispatch::Cancelled => SaveOutcome::NotSaved,
         SaveTargetDispatch::WrongExtension(target) => {
-            let err = anyhow::anyhow!("Project files are saved as .3mf packages.");
-            show_save_error(&dialogs, &target, &err);
+            let err = anyhow::Error::new(scene_save::WrongProjectExtension);
+            show_save_error(&dialogs, &target, err);
             SaveOutcome::NotSaved
         }
         SaveTargetDispatch::Ready(target) => {
@@ -554,16 +554,19 @@ async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
     dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
 
-fn show_save_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
+fn show_save_error(dialogs: &Rc<DialogManager>, target: &Path, err: anyhow::Error) {
     let target = target.to_path_buf();
-    let message = err.to_string();
-    let details = format_anyhow_chain(err);
-    dialogs.show_error(move || ErrorTexts {
+    dialogs.show_error(move || save_error_texts(&target, &err));
+}
+
+/// The texts of the dialog that reports a project save with no file written.
+fn save_error_texts(target: &Path, err: &anyhow::Error) -> ErrorTexts {
+    ErrorTexts {
         heading: ctr!("ErrorDialog", "Failed to save"),
         context: Some(ctr!("ErrorDialog", "File: {}", target.display())),
-        message: message.as_str().into(),
-        details: details.as_str().into(),
-    });
+        message: err.to_string().into(),
+        details: format_anyhow_chain(err).into(),
+    }
 }
 
 fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
@@ -612,11 +615,8 @@ pub(crate) async fn run_export_as_flow(
     match dispatch {
         ExportDispatch::Cancelled => false,
         ExportDispatch::UnsupportedExtension(target) => {
-            let err = anyhow::anyhow!(
-                "Unable to infer file format from filename. Use one of: \
-                 .stl (binary STL), .stla (ASCII STL), .obj, or .3mf."
-            );
-            show_export_error(&dialogs, &target, &err);
+            let err = anyhow::Error::new(scene_export::ExportRefusal::UnknownExtension);
+            show_export_error(&dialogs, &target, err);
             false
         }
         ExportDispatch::Ready { target, format } => {
@@ -625,8 +625,8 @@ pub(crate) async fn run_export_as_flow(
             // scene at this instant. The menu gates exports without a scene,
             // but a stale callback could still race the close path.
             let Some(scene) = scene_export::prepare_export(&doc) else {
-                let err = anyhow::anyhow!("No scene loaded");
-                show_export_error(&dialogs, &target, &err);
+                let err = anyhow::Error::new(scene_export::ExportRefusal::NoScene);
+                show_export_error(&dialogs, &target, err);
                 return false;
             };
 
@@ -664,7 +664,7 @@ pub(crate) async fn run_export_as_flow(
                     true
                 }
                 Ok(Err(err)) => {
-                    show_export_error(&dialogs, &target, &err);
+                    show_export_error(&dialogs, &target, err);
                     false
                 }
                 // The sender dropped without sending (event loop gone at
@@ -675,16 +675,19 @@ pub(crate) async fn run_export_as_flow(
     }
 }
 
-fn show_export_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
+fn show_export_error(dialogs: &Rc<DialogManager>, target: &Path, err: anyhow::Error) {
     let target = target.to_path_buf();
-    let message = err.to_string();
-    let details = format_anyhow_chain(err);
-    dialogs.show_error(move || ErrorTexts {
+    dialogs.show_error(move || export_error_texts(&target, &err));
+}
+
+/// The texts of the dialog that reports a scene export with no file written.
+fn export_error_texts(target: &Path, err: &anyhow::Error) -> ErrorTexts {
+    ErrorTexts {
         heading: ctr!("ErrorDialog", "Failed to export"),
         context: Some(ctr!("ErrorDialog", "File: {}", target.display())),
-        message: message.as_str().into(),
-        details: details.as_str().into(),
-    });
+        message: err.to_string().into(),
+        details: format_anyhow_chain(err).into(),
+    }
 }
 
 async fn pick_export_target(
@@ -879,5 +882,46 @@ mod open_dialog_dir_tests {
         let missing_path = missing.path().to_path_buf();
         drop(missing);
         assert_eq!(resolve_open_dialog_dir(None, Some(missing_path)), None);
+    }
+}
+
+#[cfg(test)]
+mod dialog_text_tests {
+    use super::*;
+
+    #[test]
+    fn a_save_under_another_extension_says_projects_are_3mf_packages() {
+        let err = anyhow::Error::new(scene_save::WrongProjectExtension);
+        let texts = save_error_texts(Path::new("/tmp/plate.stl"), &err);
+        assert_eq!(texts.heading, "Failed to save");
+        assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.stl"));
+        assert_eq!(texts.message, "Project files are saved as .3mf packages.");
+        assert_eq!(texts.details, "");
+    }
+
+    #[test]
+    fn a_failed_save_shows_its_error_chain() {
+        let err = anyhow::Error::new(std::io::Error::other("disk full"))
+            .context("could not write the file");
+        let texts = save_error_texts(Path::new("/tmp/plate.3mf"), &err);
+        assert_eq!(texts.message, "could not write the file");
+        assert_eq!(
+            texts.details,
+            "could not write the file\n  caused by: disk full"
+        );
+    }
+
+    #[test]
+    fn an_export_under_an_unknown_extension_lists_the_formats() {
+        let err = anyhow::Error::new(scene_export::ExportRefusal::UnknownExtension);
+        let texts = export_error_texts(Path::new("/tmp/plate.ply"), &err);
+        assert_eq!(texts.heading, "Failed to export");
+        assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.ply"));
+        assert_eq!(
+            texts.message,
+            "Unable to infer file format from filename. Use one of: .stl (binary STL), .stla \
+             (ASCII STL), .obj, or .3mf."
+        );
+        assert_eq!(texts.details, "");
     }
 }
