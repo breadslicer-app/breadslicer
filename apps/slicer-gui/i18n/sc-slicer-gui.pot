@@ -1138,7 +1138,7 @@ msgid "Failed to save"
 msgstr ""
 
 #: src/wiring.rs:563 src/wiring.rs:684 src/i18n.rs:105 src/scene_loader.rs:564
-#: src/app_state.rs:762 src/error_dialog.rs:597 src/export_print_file.rs:268
+#: src/app_state.rs:762 src/error_dialog.rs:597 src/export_print_file.rs:280
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -1190,7 +1190,7 @@ msgid ""
 "Move the model above the plate before slicing."
 msgstr ""
 
-#: src/slice_projection.rs:88
+#: src/slice_projection.rs:88 src/export_print_file.rs:82
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not resolve the print configuration: {}"
@@ -1791,12 +1791,42 @@ msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: src/export_print_file.rs:265
+#: src/export_print_file.rs:73
+msgctxt "ErrorDialog"
+msgid "Nothing has been sliced yet, so there is nothing to write."
+msgstr ""
+
+#: src/export_print_file.rs:77
+msgctxt "ErrorDialog"
+msgid ""
+"The held slice is out of date and no longer describes this plate. Slice it "
+"again before exporting."
+msgstr ""
+
+#: src/export_print_file.rs:87
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Cannot describe this print to the machine: {}"
+msgstr ""
+
+#: src/export_print_file.rs:90
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not write the printer file: {}"
+msgstr ""
+
+#: src/export_print_file.rs:91
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The writer panicked: {}"
+msgstr ""
+
+#: src/export_print_file.rs:279
 msgctxt "ErrorDialog"
 msgid "Cannot export for the printer"
 msgstr ""
 
-#: src/export_print_file.rs:281
+#: src/export_print_file.rs:293
 msgctxt "FileDialog"
 msgid "Printer files"
 msgstr ""
