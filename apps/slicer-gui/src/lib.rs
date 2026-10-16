@@ -47,6 +47,7 @@ mod print_file_preview;
 mod print_format;
 mod print_selection;
 pub mod profile_catalog;
+mod profile_editor;
 mod profile_extending;
 mod profile_forking;
 mod profile_transfer;
