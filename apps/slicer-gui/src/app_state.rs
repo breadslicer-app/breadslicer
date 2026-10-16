@@ -1800,8 +1800,8 @@ mod subscribe_window_preferences_tests {
     use super::*;
     use crate::ThemePreference;
     use crate::build_volume::{BuildVolume, NO_PRINTER_BUILD_VOLUME};
-    use crate::language::{BundledLanguage, LanguagePreference};
     use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
     /// A main window and its controller, subscribed to `bus` after the UI
@@ -1854,16 +1854,6 @@ mod subscribe_window_preferences_tests {
             _ui_language: ui_language,
             _subscription: subscription,
         }
-    }
-
-    fn change_language(bus: &PreferencesBus, code: &str) {
-        let language = LanguagePreference::Bundled(
-            BundledLanguage::from_code(code).expect("a bundled language"),
-        );
-        bus.update(move |snap| {
-            snap.language = language;
-            PreferencesChange::Language
-        });
     }
 
     fn first_object_name(window: &MainWindow) -> String {
@@ -1944,9 +1934,9 @@ mod subscribe_window_preferences_tests {
             subscribed
                 .controller
                 .install_graph_for_test(meshes_as_roots([unit_cube_mesh()]));
-            change_language(&subscribed.bus, "en");
+            pick_language(&subscribed.bus, "en");
             let english = first_object_name(&subscribed.window);
-            change_language(&subscribed.bus, "es");
+            pick_language(&subscribed.bus, "es");
             let expected = ctr!("ObjectList", "Object {}", 1).to_string();
             (english, first_object_name(&subscribed.window), expected)
         });
@@ -1960,7 +1950,7 @@ mod subscribe_window_preferences_tests {
         let owed = on_fresh_slint_thread(|| {
             let subscribed = subscribed_window();
             subscribed.controller.clear_frame_state_for_test();
-            change_language(&subscribed.bus, "es");
+            pick_language(&subscribed.bus, "es");
             subscribed.controller.redraw_owed_for_test()
         });
         assert!(owed);

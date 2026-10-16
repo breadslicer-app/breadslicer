@@ -408,9 +408,10 @@ mod bridge_tests {
 
     use super::*;
     use crate::i18n::ctr;
-    use crate::language::{BundledLanguage, InstalledTranslations, LanguagePreference};
+    use crate::language::InstalledTranslations;
     use crate::preferences_bus::PreferencesSnapshot;
     use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
     use crate::ui_language::UiLanguage;
 
@@ -437,11 +438,7 @@ mod bridge_tests {
             window.set_slice_print_format_options(ModelRc::new(VecModel::from(vec![
                 SharedString::from("sentinel"),
             ])));
-            let es = BundledLanguage::from_code("es").expect("a bundled language");
-            bus.update(move |snap| {
-                snap.language = LanguagePreference::Bundled(es);
-                PreferencesChange::Language
-            });
+            pick_language(&bus, "es");
             let labels: Vec<String> = window
                 .get_slice_print_format_options()
                 .iter()

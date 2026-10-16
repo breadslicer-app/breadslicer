@@ -31,7 +31,7 @@ use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
-use crate::{MenuLayout, ThemePreference};
+use crate::slint_ui::{MenuLayout, ThemePreference};
 
 /// Full read-out of every preference. Listeners receive a reference; clone the
 /// fields they care about.
@@ -305,7 +305,7 @@ mod preferences_bus_tests {
 
     use std::cell::{Cell, RefCell};
 
-    use crate::{MenuLayout, ThemePreference};
+    use crate::slint_ui::{MenuLayout, ThemePreference};
 
     fn initial() -> PreferencesSnapshot {
         PreferencesSnapshot::for_tests()

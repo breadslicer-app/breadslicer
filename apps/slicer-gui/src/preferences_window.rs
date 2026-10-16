@@ -500,12 +500,16 @@ pub(crate) fn build_preferences_window(
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
         let catalog_handle = catalog_handle.clone();
+        let tabs = tabs.clone();
         let resin_view = resin_view.clone();
-        move |snap, _change| {
+        move |snap, change| {
             if let Some(w) = prefs_weak.upgrade() {
                 w.apply_preferences(snap);
                 let catalog = catalog_handle.borrow().clone();
                 apply_printing(&w, snap, &catalog, &resin_view);
+                if matches!(change, PreferencesChange::Language) {
+                    push_tab_labels(&w, &catalog, &tabs, &resin_view);
+                }
             }
         }
     });
@@ -1458,6 +1462,22 @@ fn push_visible_resins(window: &PreferencesWindow, view: &ResinView) {
     set_visible_resin_rows(window, &view.rows, &mask);
 }
 
+/// Pushes the labels of the 2 tab bars again, in the language in force.
+/// `catalog` must be the catalog that the tabs were built from, so that each
+/// tab keeps its index.
+fn push_tab_labels(
+    window: &PreferencesWindow,
+    catalog: &ProfileCatalog,
+    manufacturer_tabs: &RefCell<Vec<String>>,
+    resin: &RefCell<ResinView>,
+) {
+    *manufacturer_tabs.borrow_mut() = build_manufacturer_tabs(catalog);
+    window.set_manufacturer_tabs(string_model(&manufacturer_tabs.borrow()));
+    let mut view = resin.borrow_mut();
+    view.tabs = build_brand_tabs(catalog);
+    window.set_resin_brand_tabs(string_model(&view.tabs));
+}
+
 /// Returns the `(card index, thumbnail path)` pairs that need decoding. Indices
 /// match `build_card_data`'s one-to-one printer ordering.
 fn thumbnail_paths(catalog: &ProfileCatalog) -> Vec<(usize, PathBuf)> {
@@ -2220,5 +2240,111 @@ profile_version = \"1.0.0\"
         let other = material_id("other-resin");
         assert!(!default_resin_orphaned(&catalog, Some(&other), &deleted));
         assert!(!default_resin_orphaned(&catalog, None, &deleted));
+    }
+}
+
+#[cfg(test)]
+mod language_change_tests {
+    use super::*;
+    use crate::language::InstalledTranslations;
+    use crate::slint_ui::ErrorDialog;
+    use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::ui_language::UiLanguage;
+
+    /// A Preferences window over a catalog of 1 printer (manufacturer "Alpha")
+    /// and no resin, built after the UI language follows `bus`, as in the app.
+    fn following_window(bus: &Rc<PreferencesBus>) -> (UiLanguage, WiredPreferencesWindow) {
+        // In the app, the 1st main window is the 1st component of the thread.
+        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
+        let printer = PrinterId::new("listed-printer").expect("valid printer id");
+        let catalog = ProfileCatalog::from_entries(
+            vec![printer_entry(printer, "Alpha", [120.0, 68.0, 150.0])],
+            Vec::new(),
+        );
+        let wired = build_preferences_window(bus, Rc::new(RefCell::new(Rc::new(catalog))))
+            .expect("the headless platform creates the window");
+        (ui_language, wired)
+    }
+
+    fn sentinel() -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(vec![SharedString::from("sentinel")]))
+    }
+
+    fn strings(model: ModelRc<SharedString>) -> Vec<String> {
+        model.iter().map(|text| text.to_string()).collect()
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_tabs_again() {
+        let (manufacturers, brands, all) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, wired) = following_window(&bus);
+            wired.window.set_manufacturer_tabs(sentinel());
+            wired.window.set_resin_brand_tabs(sentinel());
+            pick_language(&bus, "es");
+            (
+                strings(wired.window.get_manufacturer_tabs()),
+                strings(wired.window.get_resin_brand_tabs()),
+                ctr!("PreferencesPage", "All").to_string(),
+            )
+        });
+        assert_eq!(manufacturers, [all.clone(), "Alpha".to_owned()]);
+        assert_eq!(brands, [all]);
+    }
+
+    #[test]
+    fn a_language_change_keeps_the_active_tabs() {
+        let active = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, wired) = following_window(&bus);
+            wired.window.set_current_manufacturer_index(1);
+            pick_language(&bus, "es");
+            (
+                wired.window.get_current_manufacturer_index(),
+                wired.window.get_current_brand_index(),
+            )
+        });
+        assert_eq!(active, (1, 0));
+    }
+
+    #[test]
+    fn the_system_entry_follows_a_language_change() {
+        let (english, spanish, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, wired) = following_window(&bus);
+            let system_entry = || {
+                let options = wired.window.get_language_options();
+                options.row_data(0).expect("the System entry").to_string()
+            };
+            pick_language(&bus, "en");
+            let english = system_entry();
+            pick_language(&bus, "es");
+            let expected = ctr!("AppearancePreferences", "System").to_string();
+            (english, system_entry(), expected)
+        });
+        assert_eq!(english, "System");
+        assert_ne!(spanish, english);
+        assert_eq!(spanish, expected);
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_resin_rows_again() {
+        let rows = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, wired) = following_window(&bus);
+            let sentinel_row = ResinRow {
+                name: SharedString::from("sentinel"),
+                ..ResinRow::default()
+            };
+            wired
+                .window
+                .set_resin_rows(ModelRc::new(VecModel::from(vec![sentinel_row])));
+            pick_language(&bus, "es");
+            wired.window.get_resin_rows().row_count()
+        });
+        assert_eq!(rows, 0);
     }
 }
