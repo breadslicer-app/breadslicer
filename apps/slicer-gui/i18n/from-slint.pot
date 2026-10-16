@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-10-16 16:53+0000\n"
+"POT-Creation-Date: 2026-10-16 18:11+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -107,83 +107,83 @@ msgctxt "SliceView"
 msgid "Slice View"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:13 ui/slice-overwrite-dialog.slint:73
+#: ui/slice-overwrite-dialog.slint:14 ui/slice-overwrite-dialog.slint:83
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:53
+#: ui/slice-overwrite-dialog.slint:63
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice this scene?"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:59
+#: ui/slice-overwrite-dialog.slint:69
 msgctxt "SliceOverwriteDialog"
 msgid ""
 "The geometry or the print settings changed since the last slice. Re-slicing "
 "replaces the slice data you already have."
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:80
+#: ui/slice-overwrite-dialog.slint:90
 msgctxt "SliceOverwriteDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:15
+#: ui/replace-scene-dialog.slint:16
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:68
+#: ui/replace-scene-dialog.slint:76
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:74
+#: ui/replace-scene-dialog.slint:82
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:87
+#: ui/replace-scene-dialog.slint:94
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:92
+#: ui/replace-scene-dialog.slint:99
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it as a project or export a copy "
 "first to keep the changes you've made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:96
+#: ui/replace-scene-dialog.slint:103
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it or export a copy first to keep the "
 "changes you've made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:110
+#: ui/replace-scene-dialog.slint:117
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:118
+#: ui/replace-scene-dialog.slint:125
 msgctxt "ReplaceSceneDialog"
 msgid "Save As & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:119
+#: ui/replace-scene-dialog.slint:126
 msgctxt "ReplaceSceneDialog"
 msgid "Save & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:126
+#: ui/replace-scene-dialog.slint:133
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:133
+#: ui/replace-scene-dialog.slint:140
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
@@ -373,24 +373,24 @@ msgctxt "AppearancePreferences"
 msgid "Language"
 msgstr ""
 
-#: ui/info-dialog.slint:9 ui/info-dialog.slint:13 ui/info-dialog.slint:73
+#: ui/info-dialog.slint:10 ui/info-dialog.slint:14 ui/info-dialog.slint:80
 msgctxt "InfoDialog"
 msgid "Information"
 msgstr ""
 
-#. can't accidentally drop or replace it.
-#: ui/info-dialog.slint:101
+#. drop or replace it.
+#: ui/info-dialog.slint:108
 msgctxt "InfoDialog"
 msgid "Hide details"
 msgstr ""
 
-#. can't accidentally drop or replace it.
-#: ui/info-dialog.slint:101
+#. drop or replace it.
+#: ui/info-dialog.slint:108
 msgctxt "InfoDialog"
 msgid "Show details"
 msgstr ""
 
-#: ui/info-dialog.slint:128
+#: ui/info-dialog.slint:135
 msgctxt "InfoDialog"
 msgid "Close"
 msgstr ""
@@ -550,34 +550,34 @@ msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""
 
-#: ui/error-dialog.slint:9
+#: ui/error-dialog.slint:10
 msgctxt "ErrorDialog"
 msgid "Error"
 msgstr ""
 
-#: ui/error-dialog.slint:13
+#: ui/error-dialog.slint:14
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: ui/error-dialog.slint:74
+#: ui/error-dialog.slint:82
 msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr ""
 
-#. runs automatically.
-#: ui/error-dialog.slint:116
+#. side of the label in RTL runs automatically.
+#: ui/error-dialog.slint:123
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
 msgstr ""
 
-#. runs automatically.
-#: ui/error-dialog.slint:116
+#. side of the label in RTL runs automatically.
+#: ui/error-dialog.slint:123
 msgctxt "ErrorDialog"
 msgid "Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:143
+#: ui/error-dialog.slint:150
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""

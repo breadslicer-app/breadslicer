@@ -294,8 +294,14 @@ impl Drop for Subscription {
         let Some(bus) = self.bus.upgrade() else {
             return;
         };
-        let mut inner = bus.inner.borrow_mut();
-        inner.listeners.retain(|(id, _)| *id != self.id);
+        let removed = {
+            let mut inner = bus.inner.borrow_mut();
+            let index = inner.listeners.iter().position(|(id, _)| *id == self.id);
+            index.map(|index| inner.listeners.remove(index))
+        };
+        // Dropped after the borrow ends: the listener can own another
+        // subscription to this bus.
+        drop(removed);
     }
 }
 
@@ -687,6 +693,22 @@ mod preferences_bus_tests {
         drop(bus);
         // sub now holds a dangling Weak; its Drop must silently no-op.
         drop(sub);
+    }
+
+    #[test]
+    fn dropping_a_listener_that_holds_a_subscription_removes_both() {
+        let bus = PreferencesBus::new(initial());
+        let calls = Rc::new(Cell::new(0));
+        let inner = bus.subscribe({
+            let calls = calls.clone();
+            move |_, _| calls.set(calls.get() + 1)
+        });
+        let outer = bus.subscribe(move |_, _| {
+            let _ = &inner;
+        });
+        drop(outer);
+        trigger_theme(&bus, ThemePreference::Dark);
+        assert_eq!(calls.get(), 0);
     }
 
     #[test]

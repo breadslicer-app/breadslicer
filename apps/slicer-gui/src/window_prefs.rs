@@ -6,8 +6,8 @@
 //! Per-window preference application. Each window type implements
 //! [`WindowPreferences::apply_preferences`] to push a snapshot into its Slint
 //! properties, and [`restore_panels`] pushes the stored panel state into a new
-//! main window. 1 module holds the 3 impls and `restore_panels`, so it's easy
-//! to audit which preferences each window honours.
+//! main window. 1 module holds every impl and `restore_panels`, so it's easy to
+//! audit which preferences each window honours.
 //!
 //! Preference re-application on change is driven by a `PreferencesBus`
 //! subscription held by the window's builder; this module just defines *what*
@@ -16,7 +16,10 @@
 use crate::aa_level::aa_combo_index;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
-use crate::{AboutWindow, MainWindow, MenuLayout, PreferencesWindow};
+use crate::{
+    AboutWindow, ErrorDialog, InfoDialog, MainWindow, MenuLayout, PreferencesWindow,
+    ReplaceSceneDialog, SliceOverwriteDialog,
+};
 
 pub(crate) trait WindowPreferences {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot);
@@ -60,6 +63,33 @@ impl WindowPreferences for AboutWindow {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
         self.set_theme(prefs.theme);
         // Language: `@tr` bindings re-evaluate automatically.
+    }
+}
+
+// The dialogs of a main window. Their texts built in Rust follow the language
+// through their manager.
+
+impl WindowPreferences for ErrorDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for InfoDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for ReplaceSceneDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for SliceOverwriteDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
     }
 }
 

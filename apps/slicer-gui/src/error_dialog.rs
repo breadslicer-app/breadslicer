@@ -9,8 +9,11 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, SharedString};
 
-use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::preferences_bus::{
+    PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
+};
 use crate::slint_ui::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
+use crate::window_prefs::WindowPreferences;
 
 /// User's exit from the "replace current scene?" dialog. 4 outcomes; the caller
 /// decides what each means in context (typically "close current and load new" /
@@ -128,13 +131,16 @@ pub(crate) struct DialogManager {
     replace_dialogs: RefCell<HashMap<u64, ReplaceSceneDialog>>,
     slice_overwrite_dialogs: RefCell<HashMap<u64, SliceOverwriteDialog>>,
     next_id: Cell<u64>,
-    _language_follow: Subscription,
+    /// Gives each dialog the preferences in force when it opens.
+    bus: Rc<PreferencesBus>,
+    _preferences_follow: Subscription,
 }
 
 impl DialogManager {
-    /// Creates the manager of a window's dialogs, which keeps the texts of its
-    /// open error and info dialogs in the language of `bus`. `UiLanguage` must
-    /// subscribe to `bus` first, so that the texts are built in the new
+    /// Creates the manager of a window's dialogs, which keeps its open dialogs
+    /// in step with the preferences of `bus`: the theme of each, and the texts
+    /// of the error and info dialogs in the language in force. `UiLanguage`
+    /// must subscribe to `bus` first, so that the texts are built in the new
     /// language.
     pub(crate) fn new(bus: &Rc<PreferencesBus>) -> Rc<Self> {
         Rc::new_cyclic(|manager: &std::rc::Weak<Self>| {
@@ -145,15 +151,34 @@ impl DialogManager {
                 replace_dialogs: RefCell::new(HashMap::new()),
                 slice_overwrite_dialogs: RefCell::new(HashMap::new()),
                 next_id: Cell::new(0),
-                _language_follow: bus.subscribe(move |_, change| {
-                    if matches!(change, PreferencesChange::Language)
-                        && let Some(manager) = manager.upgrade()
-                    {
+                bus: bus.clone(),
+                _preferences_follow: bus.subscribe(move |snap, change| {
+                    let Some(manager) = manager.upgrade() else {
+                        return;
+                    };
+                    manager.apply_preferences(snap);
+                    if matches!(change, PreferencesChange::Language) {
                         manager.push_texts_again();
                     }
                 }),
             }
         })
+    }
+
+    /// Applies `prefs` to every open dialog.
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        for open in self.dialogs.borrow().values() {
+            open.window.apply_preferences(prefs);
+        }
+        for open in self.info_dialogs.borrow().values() {
+            open.window.apply_preferences(prefs);
+        }
+        for dialog in self.replace_dialogs.borrow().values() {
+            dialog.apply_preferences(prefs);
+        }
+        for dialog in self.slice_overwrite_dialogs.borrow().values() {
+            dialog.apply_preferences(prefs);
+        }
     }
 
     /// Pushes the texts of every open error and info dialog again.
@@ -196,6 +221,7 @@ impl DialogManager {
             }
         };
         push_error_texts(&dialog, texts);
+        dialog.apply_preferences(&self.bus.snapshot());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -237,6 +263,7 @@ impl DialogManager {
             }
         };
         push_info_texts(&dialog, build_texts());
+        dialog.apply_preferences(&self.bus.snapshot());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -309,6 +336,7 @@ impl DialogManager {
         dialog.set_source_name(source_name.into());
         dialog.set_has_unsaved_changes(offer.has_unsaved_changes());
         dialog.set_save_as_mode(offer.save_as_mode());
+        dialog.apply_preferences(&self.bus.snapshot());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -377,6 +405,7 @@ impl DialogManager {
                 return;
             }
         };
+        dialog.apply_preferences(&self.bus.snapshot());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -724,5 +753,97 @@ mod language_change_tests {
             builds.get()
         });
         assert_eq!(builds, 1);
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    fn pick_theme(bus: &PreferencesBus, theme: ThemePreference) {
+        bus.update(move |snap| {
+            snap.theme = theme;
+            PreferencesChange::Theme
+        });
+    }
+
+    /// Opens 1 dialog of each of the 4 kinds.
+    fn open_each_kind(manager: &Rc<DialogManager>) {
+        manager.show_error(|| ErrorTexts {
+            heading: "Edit failed".into(),
+            context: None,
+            message: Default::default(),
+            details: Default::default(),
+        });
+        manager.show_info(|| InfoTexts {
+            heading: "Mesh repair".into(),
+            message: Default::default(),
+            details: Default::default(),
+        });
+        manager.show_replace_scene_confirm(
+            "part.stl".to_string(),
+            KeepChangesOffer::NothingToKeep,
+            |_| {},
+        );
+        manager.show_slice_overwrite_confirm(|| {});
+    }
+
+    /// The theme of the open error, info, replace-scene and slice-overwrite
+    /// dialogs, in that order.
+    fn themes(manager: &DialogManager) -> [ThemePreference; 4] {
+        let error = manager.dialogs.borrow();
+        let info = manager.info_dialogs.borrow();
+        let replace = manager.replace_dialogs.borrow();
+        let slice_overwrite = manager.slice_overwrite_dialogs.borrow();
+        [
+            error
+                .values()
+                .next()
+                .expect("an error dialog")
+                .window
+                .get_theme(),
+            info.values()
+                .next()
+                .expect("an info dialog")
+                .window
+                .get_theme(),
+            replace
+                .values()
+                .next()
+                .expect("a replace-scene dialog")
+                .get_theme(),
+            slice_overwrite
+                .values()
+                .next()
+                .expect("a slice-overwrite dialog")
+                .get_theme(),
+        ]
+    }
+
+    #[test]
+    fn each_dialog_opens_with_the_theme_in_force() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            pick_theme(&bus, ThemePreference::Dark);
+            let manager = DialogManager::new(&bus);
+            open_each_kind(&manager);
+            themes(&manager)
+        });
+        assert_eq!(themes, [ThemePreference::Dark; 4]);
+    }
+
+    #[test]
+    fn a_theme_change_reaches_each_open_dialog() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let manager = DialogManager::new(&bus);
+            open_each_kind(&manager);
+            pick_theme(&bus, ThemePreference::Light);
+            themes(&manager)
+        });
+        assert_eq!(themes, [ThemePreference::Light; 4]);
     }
 }

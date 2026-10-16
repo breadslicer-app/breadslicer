@@ -4,15 +4,25 @@
  */
 
 import { Button, Palette } from "std-widgets.slint";
+import { ThemePreference } from "preferences/appearance.slint";
 
-// Shown when the Slice button is pressed on a scene that already holds a
-// slice result produced from different geometry or settings. Two exits:
-// Re-slice (recompute, overwriting the held slice) or Cancel (keep it).
-// The caller wires what confirming means; this component only reports it.
+// Shown when the Slice button is pressed on a scene that already holds a slice
+// result produced from different geometry or settings. 2 exits: Re-slice
+// (recompute, overwriting the held slice) or Cancel (keep it). The caller wires
+// what confirming means; this component only reports it.
 export component SliceOverwriteDialog inherits Window {
     title: @tr("SliceOverwriteDialog" => "Re-slice");
     icon: @image-url("../assets/images/soulcrafted.svg");
     default-font-family: "Noto Sans";
+
+    in property <ThemePreference> theme: ThemePreference.System;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
 
     callback confirm-requested();
     callback cancel-requested();
@@ -26,8 +36,8 @@ export component SliceOverwriteDialog inherits Window {
     max-height: body.preferred-height;
     preferred-height: body.preferred-height;
 
-    // Cancel is the safe default: pressing Enter shouldn't overwrite the
-    // slice the user already has.
+    // Cancel is the safe default: pressing Enter shouldn't overwrite the slice
+    // the user already has.
     forward-focus: cancel-button;
 
     FocusScope {
