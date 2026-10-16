@@ -5,12 +5,11 @@
 
 //! Assembling a resin profile extension update.
 //!
-//! Extending adds a calibration block for a target the resin does not
-//! cover yet. The block goes into the resin's same-id extension file:
-//! created on the first extend (identity copied verbatim from the
-//! base, extension flag set, the inherited sections left empty since
-//! they come from the base), appended to on later ones. The
-//! dialog wiring lives in the preferences window.
+//! Extending adds a calibration block for a target the resin does not cover
+//! yet. The block goes into the resin's same-id extension file: created on the
+//! first extend (identity copied verbatim from the base, extension flag set,
+//! the inherited sections left empty since they come from the base), appended
+//! to on later ones. The dialog wiring lives in the preferences window.
 
 use std::collections::BTreeMap;
 
@@ -24,13 +23,12 @@ use slint::SharedString;
 use crate::i18n::ctr;
 use crate::profile_catalog::PrinterCatalogEntry;
 
-/// The calibration targets the effective material does not cover yet:
-/// every catalog printer (the generic machine included) without a
-/// block in the composed base-plus-extension view. The extend dialog
-/// lists exactly these, which is the single place the "only uncovered
-/// targets" rule is enforced. Ordered like the editor's picker: the
-/// default printer first, the generic machine next, the rest in
-/// catalog order.
+/// The calibration targets the effective material does not cover yet: every
+/// catalog printer (the generic machine included) without a block in the
+/// composed base-plus-extension view. The extend dialog lists exactly these,
+/// which is the single place the "only uncovered targets" rule is enforced.
+/// Ordered like the editor's picker: the default printer first, the generic
+/// machine next, the rest in catalog order.
 pub(crate) fn uncovered_targets(
     material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
@@ -65,21 +63,20 @@ pub(crate) fn uncovered_targets(
         .collect()
 }
 
-/// A calibration block the resin already carries, offered as a
-/// starting point for the one being added.
+/// A calibration block the resin already carries, offered as a starting point
+/// for the one being added.
 pub(crate) struct CalibrationCopySource {
     pub label: SharedString,
     pub values: MaterialPerPrinter,
 }
 
-/// List the resin's existing calibration blocks as starting points for
-/// a new one, the generic machine's first and then the printers' by
-/// id. Labels a block keyed by a printer the catalog does not list
-/// with that printer's id.
+/// List the resin's existing calibration blocks as starting points for a new
+/// one, the generic machine's first and then the printers' by id. Labels a
+/// block keyed by a printer the catalog does not list with that printer's id.
 ///
-/// Carries the blocks as written, not resolved values: the extension
-/// inherits the base's defaults, so a field the source leaves unset
-/// stays unset in the copy.
+/// Carries the blocks as written, not resolved values: the extension inherits
+/// the base's defaults, so a field the source leaves unset stays unset in the
+/// copy.
 pub(crate) fn copy_sources(
     material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
@@ -106,11 +103,11 @@ pub(crate) fn copy_sources(
         .collect()
 }
 
-/// The extension profile to write after adding a block for `target`.
-/// Appends to `existing_extension` when the resin already has one;
-/// otherwise starts a fresh extension from the base's identity. A base
-/// that is itself an extension file (the standalone row of an orphaned
-/// extension) is appended to directly, so its existing pairs survive.
+/// The extension profile to write after adding a block for `target`. Appends to
+/// `existing_extension` when the resin already has one; otherwise starts a
+/// fresh extension from the base's identity. A base that is itself an extension
+/// file (the standalone row of an orphaned extension) is appended to directly,
+/// so its existing pairs survive.
 pub(crate) fn build_extension_update(
     base: &MaterialProfile,
     existing_extension: Option<&MaterialProfile>,

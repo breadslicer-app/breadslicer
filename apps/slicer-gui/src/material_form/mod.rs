@@ -5,12 +5,11 @@
 
 //! Window-independent form logic for the resin profile editor.
 //!
-//! Parses the editor's text fields into typed profile values and seeds
-//! the fields back from loaded values. Every field is optional: an
-//! empty text means "unset" and round-trips to an absent TOML key
-//! (never a zero). Two groups are composites, filled together or left
-//! empty together: scale compensation's three axes, and each travel
-//! stage's distance with its two speeds.
+//! Parses the editor's text fields into typed profile values and seeds the
+//! fields back from loaded values. Every field is optional: an empty text means
+//! "unset" and round-trips to an absent TOML key (never 0). 2 groups are
+//! composites, filled together or left empty together: scale compensation's 3
+//! axes, and each travel stage's distance with its 2 speeds.
 
 use std::fmt;
 use std::path::Path;
@@ -28,8 +27,8 @@ use sc_print_profiles::{
 
 use crate::i18n::ctr;
 
-/// The raw texts of the calibration value fields, straight out of the
-/// editor inputs.
+/// The raw texts of the calibration value fields, straight out of the editor
+/// inputs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CalibrationFormInput {
     pub normal_exposure_sec: String,
@@ -180,8 +179,8 @@ pub(crate) enum SecondStage {
 }
 
 impl SecondStage {
-    /// The fields holding this stage's distance, lift speed and
-    /// retract speed, in that order.
+    /// The fields holding this stage's distance, lift speed and retract speed,
+    /// in that order.
     fn fields(self) -> [FormField; 3] {
         match self {
             Self::Normal => [
@@ -214,8 +213,8 @@ impl SecondStage {
     }
 }
 
-/// Why a form value could not be accepted. `Display` keeps the English
-/// text for logs; the dialogs show [`Self::user_message`] instead.
+/// Why a form value could not be accepted. `Display` keeps the English text for
+/// logs; the dialogs show [`Self::user_message`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InvalidFormValue {
     NotANumber {
@@ -224,20 +223,20 @@ pub(crate) enum InvalidFormValue {
     OutOfRange {
         field: FormField,
     },
-    /// Scale compensation had some axes filled and some empty; the
-    /// three are set together or not at all.
+    /// Scale compensation had some axes filled and some empty; the 3 are set
+    /// together or not at all.
     PartialScaleCompensation,
-    /// A second travel stage had some of its three values filled and
-    /// some empty. A distance the platform crosses at no stated speed
-    /// is not a move, so the three go together.
+    /// A second travel stage had some of its 3 values filled and some empty. A
+    /// distance the platform crosses at no stated speed is not a move, so the 3
+    /// go together.
     PartialSecondTravelStage {
         stage: SecondStage,
     },
 }
 
 impl InvalidFormValue {
-    /// The message shown in a dialog's inline error line, in the
-    /// user's language.
+    /// The message shown in a dialog's inline error line, in the user's
+    /// language.
     pub(crate) fn user_message(&self) -> SharedString {
         match self {
             Self::NotANumber { field } => {
@@ -287,9 +286,9 @@ impl fmt::Display for InvalidFormValue {
 
 impl std::error::Error for InvalidFormValue {}
 
-/// Parse the calibration fields into a per-printer block. Empty
-/// fields stay unset; a block with every field empty is legal (the
-/// block's presence is itself the calibration assertion).
+/// Parse the calibration fields into a per-printer block. Empty fields stay
+/// unset; a block with every field empty is legal (the block's presence is
+/// itself the calibration assertion).
 pub(crate) fn parse_calibration_form(
     input: &CalibrationFormInput,
 ) -> Result<MaterialPerPrinter, InvalidFormValue> {
@@ -365,8 +364,8 @@ pub(crate) fn parse_calibration_form(
     })
 }
 
-/// Parse the defaults fields. The three scale compensation axes must
-/// be filled together or left empty together.
+/// Parse the defaults fields. The 3 scale compensation axes must be filled
+/// together or left empty together.
 pub(crate) fn parse_defaults_form(
     input: &DefaultsFormInput,
 ) -> Result<MaterialDefaults, InvalidFormValue> {
@@ -408,8 +407,8 @@ pub(crate) fn parse_defaults_form(
     })
 }
 
-/// Seed the calibration fields from a loaded block: set values render
-/// as plain numbers, unset ones as empty texts.
+/// Seed the calibration fields from a loaded block: set values render as plain
+/// numbers, unset ones as empty texts.
 pub(crate) fn calibration_form_from_block(block: &MaterialPerPrinter) -> CalibrationFormInput {
     CalibrationFormInput {
         normal_exposure_sec: fmt_opt_f64(block.normal_exposure_sec.map(|v| v.value())),
@@ -498,9 +497,8 @@ pub(crate) enum EditedProfileKind {
     Extension,
 }
 
-/// Write an edited profile back through the writer matching its kind.
-/// The error is the user-facing message for the editor's inline error
-/// line.
+/// Write an edited profile back through the writer matching its kind. The error
+/// is the user-facing message for the editor's inline error line.
 pub(crate) fn save_edited_profile(
     library_dir: &Path,
     profile: &MaterialProfile,

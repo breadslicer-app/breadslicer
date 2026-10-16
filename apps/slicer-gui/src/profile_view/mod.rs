@@ -5,12 +5,12 @@
 
 //! View model of the read-only resin profile viewer.
 //!
-//! Projects an [`EffectiveMaterial`] (the base profile with whatever
-//! its extension adds) into the section list the profile view dialog
-//! renders: identity, intent, defaults, then one section per
-//! calibration block. Every optional field is rendered explicitly, an
-//! unset one as the translated "not set" text, so a partial profile
-//! reads as partial instead of hiding what is missing.
+//! Projects an [`EffectiveMaterial`] (the base profile with whatever its
+//! extension adds) into the section list the profile view dialog renders:
+//! identity, intent, defaults, then 1 section per calibration block. Every
+//! optional field is rendered explicitly, an unset one as the translated "not
+//! set" text, so a partial profile reads as partial instead of hiding what is
+//! missing.
 
 use std::collections::BTreeMap;
 
@@ -30,11 +30,11 @@ pub(crate) fn profile_display_name(identity: &MaterialIdentity) -> String {
     format!("{} {}", identity.brand.as_str(), identity.name.as_str())
 }
 
-/// Build the viewer sections: identity, intent, defaults, then the
-/// effective material's calibration blocks. The default printer's own
-/// block comes first, the generic block next, the rest in
-/// display-name order; the block the default printer would actually
-/// use (its own, or the generic fallback) is highlighted.
+/// Build the viewer sections: identity, intent, defaults, then the effective
+/// material's calibration blocks. The default printer's own block comes first,
+/// the generic block next, the rest in display-name order; the block the
+/// default printer would actually use (its own, or the generic fallback) is
+/// highlighted.
 pub(crate) fn build_profile_view_model(
     material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
@@ -186,9 +186,8 @@ fn defaults_section(defaults: &MaterialDefaults) -> ProfileViewSection {
     )
 }
 
-/// List the profile's calibration targets with their display labels,
-/// the default printer's first, the generic machine's next, the rest
-/// by label.
+/// List the profile's calibration targets with their display labels, the
+/// default printer's first, the generic machine's next, the rest by label.
 pub(crate) fn ordered_calibration_targets(
     profile: &MaterialProfile,
     printers: &[PrinterCatalogEntry],
@@ -240,8 +239,8 @@ fn calibration_sections(
     let mut blocks: Vec<(&CalibrationTarget, &MaterialPerPrinter)> = blocks.iter().collect();
 
     let default_target = default_printer.map(CalibrationTarget::from_printer);
-    // The target whose block the default printer would use: its own
-    // when present, otherwise the generic fallback.
+    // The target whose block the default printer would use: its own when
+    // present, otherwise the generic fallback.
     let highlight: Option<CalibrationTarget> = default_target.as_ref().and_then(|wanted| {
         if blocks.iter().any(|(target, _)| *target == wanted) {
             Some(wanted.clone())
@@ -263,8 +262,7 @@ fn calibration_sections(
             .unwrap_or_else(|| id.as_str().to_owned())
     };
 
-    // Default printer's block first, generic next, the rest by
-    // display name.
+    // Default printer's block first, generic next, the rest by display name.
     blocks.sort_by(|(a, _), (b, _)| {
         let rank = |target: &CalibrationTarget| -> u8 {
             if default_target.as_ref() == Some(target) {

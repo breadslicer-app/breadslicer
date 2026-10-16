@@ -5,14 +5,13 @@
 
 //! Assembling a forked resin profile.
 //!
-//! A fork is a new full custom profile seeded from a source profile:
-//! the identity keeps the source's family / profile version under a
-//! user-entered name and brand plus a fresh id derived from the name,
-//! and the user picks which parts to carry over (intent, defaults,
-//! any of the source's own calibration blocks). Selected parts are
-//! copied verbatim; unselected ones start empty. The result is an
-//! ordinary material profile, never an extension. The dialog wiring
-//! lives in the preferences window.
+//! A fork is a new full custom profile seeded from a source profile: the
+//! identity keeps the source's family / profile version under a user-entered
+//! name and brand plus a fresh id derived from the name, and the user picks
+//! which parts to carry over (intent, defaults, any of the source's own
+//! calibration blocks). Selected parts are copied verbatim; unselected ones
+//! start empty. The result is an ordinary material profile, never an extension.
+//! The dialog wiring lives in the preferences window.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -35,8 +34,8 @@ pub(crate) struct ForkParts {
     pub blocks: Vec<CalibrationTarget>,
 }
 
-/// Why a fork could not be assembled. `Display` keeps the English
-/// text for logs; the dialog shows [`Self::user_message`] instead.
+/// Why a fork could not be assembled. `Display` keeps the English text for
+/// logs; the dialog shows [`Self::user_message`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ForkError {
     EmptyName,
@@ -45,8 +44,8 @@ pub(crate) enum ForkError {
 }
 
 impl ForkError {
-    /// The message shown in the fork dialog's inline error line, in
-    /// the user's language.
+    /// The message shown in the fork dialog's inline error line, in the user's
+    /// language.
     pub(crate) fn user_message(&self) -> SharedString {
         match self {
             Self::EmptyName => ctr!("ForkDialog", "Enter a name for the forked profile"),
@@ -73,11 +72,10 @@ impl fmt::Display for ForkError {
 
 impl std::error::Error for ForkError {}
 
-/// Assemble the fork: a fresh unique id derived from `name`, the
-/// entered name and brand, the source's other identity fields, and
-/// verbatim copies of exactly the selected parts. `existing` is the
-/// set of material ids already in the catalog, used to keep the
-/// derived id unique.
+/// Assemble the fork: a fresh unique id derived from `name`, the entered name
+/// and brand, the source's other identity fields, and verbatim copies of
+/// exactly the selected parts. `existing` is the set of material ids already in
+/// the catalog, used to keep the derived id unique.
 pub(crate) fn build_fork(
     source: &MaterialProfile,
     parts: &ForkParts,
@@ -112,8 +110,8 @@ pub(crate) fn build_fork(
         } else {
             MaterialDefaults::default()
         },
-        // The fork is the same liquid under another name, so the
-        // measured constants come along whatever else is copied.
+        // The fork is the same liquid under another name, so the measured
+        // constants come along whatever else is copied.
         physical: source.physical,
         per_printer: parts
             .blocks
@@ -139,10 +137,10 @@ pub(crate) fn build_fork(
     })
 }
 
-/// Reduce a display name to a slug matching `^[a-z0-9][a-z0-9-]*$`:
-/// lowercase ASCII alphanumerics kept, every other run collapsed to a
-/// single hyphen, no leading or trailing hyphen. May be empty when the
-/// name has no slug-able characters.
+/// Reduce a display name to a slug matching `^[a-z0-9][a-z0-9-]*$`: lowercase
+/// ASCII alphanumerics kept, every other run collapsed to a single hyphen, no
+/// leading or trailing hyphen. May be empty when the name has no slug-able
+/// characters.
 fn slugify(name: &str) -> String {
     let mut out = String::new();
     let mut pending_hyphen = false;
@@ -161,9 +159,9 @@ fn slugify(name: &str) -> String {
     out
 }
 
-/// The first free id from `slug`, `slug-2`, `slug-3`, ... that is a
-/// valid [`MaterialId`] and not already present. `None` when `slug` is
-/// empty or every candidate is taken.
+/// The first free id from `slug`, `slug-2`, `slug-3`, ... that is a valid
+/// [`MaterialId`] and not already present. `None` when `slug` is empty or every
+/// candidate is taken.
 fn unique_material_id(slug: &str, existing: &BTreeSet<MaterialId>) -> Option<MaterialId> {
     if slug.is_empty() {
         return None;
