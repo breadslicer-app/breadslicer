@@ -8,6 +8,7 @@
 //! schema change bumps [`APP_SETTINGS_SCHEMA_VERSION`], with no migration code.
 
 pub(crate) mod file;
+mod merge;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -22,7 +23,7 @@ use crate::{MenuLayout, ThemePreference};
 /// On-disk representation of `ThemePreference`. Separate type because the
 /// Slint-generated `ThemePreference` isn't serde-aware; we also want lowercase
 /// variants for a friendlier TOML surface.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum ThemeSetting {
     #[default]
@@ -172,7 +173,7 @@ impl<'de> Deserialize<'de> for LanguageSetting {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub(crate) struct Appearance {
     #[serde(default)]
     theme: ThemeSetting,
@@ -353,7 +354,7 @@ fn is_default_aa_level(level: &AaLevel) -> bool {
     *level == AaLevel::Off
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
     /// current version filled in by serde (treated as compatible); once

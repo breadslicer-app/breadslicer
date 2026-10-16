@@ -4,13 +4,16 @@
  */
 
 //! The file that keeps the application settings between sessions. It is read
-//! once at startup and written again on every user-driven change.
+//! once at startup and written again on every user-driven change. Each process
+//! merges its own changes into the file under a lock, so that 2 processes keep
+//! the changes of each other.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::merge::merge;
 use super::{APP_SETTINGS_SCHEMA_VERSION, AppSettings};
 
 const SETTINGS_FILENAME: &str = "settings.toml";
@@ -41,49 +44,63 @@ impl SettingsFile {
     /// [`LoadOutcome::Unusable`], which [`Self::reset_if_unusable`] then
     /// replaces.
     pub(crate) fn load(&self) -> LoadOutcome {
-        match fs::read_to_string(&self.path) {
-            Ok(content) => match toml::from_str::<AppSettings>(&content) {
-                Ok(loaded) if loaded.version == APP_SETTINGS_SCHEMA_VERSION => {
-                    if let Some(code) = loaded.unbundled_language() {
-                        eprintln!(
-                            "Stored language {:?} is not bundled in this build; using the system language",
-                            code.as_str(),
-                        );
-                    }
-                    LoadOutcome::Read(Box::new(loaded))
-                }
-                Ok(loaded) => {
+        match self.read() {
+            OnDisk::Usable(settings) => {
+                if let Some(code) = settings.unbundled_language() {
                     eprintln!(
-                        "Settings schema version in {} is {} (current is {}); resetting to defaults",
-                        self.path.display(),
-                        loaded.version,
-                        APP_SETTINGS_SCHEMA_VERSION,
+                        "Stored language {:?} is not bundled in this build; using the system language",
+                        code.as_str(),
                     );
-                    LoadOutcome::Unusable
                 }
-                Err(err) => {
-                    eprintln!(
-                        "Failed to parse {}: {err}; resetting to defaults",
-                        self.path.display(),
-                    );
-                    LoadOutcome::Unusable
-                }
-            },
-            Err(err) if err.kind() == io::ErrorKind::NotFound => LoadOutcome::NotRead,
-            Err(err) => {
+                LoadOutcome::Read(settings)
+            }
+            OnDisk::Missing => LoadOutcome::NotRead,
+            OnDisk::Unreadable(err) => {
                 eprintln!("Failed to read {}: {err}", self.path.display());
                 LoadOutcome::NotRead
+            }
+            OnDisk::Unparseable(err) => {
+                eprintln!(
+                    "Failed to parse {}: {err}; resetting to defaults",
+                    self.path.display(),
+                );
+                LoadOutcome::Unusable
+            }
+            OnDisk::OtherVersion(version) => {
+                eprintln!(
+                    "Settings schema version in {} is {} (current is {}); resetting to defaults",
+                    self.path.display(),
+                    version,
+                    APP_SETTINGS_SCHEMA_VERSION,
+                );
+                LoadOutcome::Unusable
             }
         }
     }
 
+    fn read(&self) -> OnDisk {
+        match fs::read_to_string(&self.path) {
+            Ok(content) => match toml::from_str::<AppSettings>(&content) {
+                Ok(settings) if settings.version == APP_SETTINGS_SCHEMA_VERSION => {
+                    OnDisk::Usable(Box::new(settings))
+                }
+                Ok(settings) => OnDisk::OtherVersion(settings.version),
+                Err(err) => OnDisk::Unparseable(err),
+            },
+            Err(err) if err.kind() == io::ErrorKind::NotFound => OnDisk::Missing,
+            Err(err) => OnDisk::Unreadable(err),
+        }
+    }
+
     /// Replaces the file with the defaults when `loaded` is
-    /// [`LoadOutcome::Unusable`], so that the next run starts from a good file.
+    /// [`LoadOutcome::Unusable`] and the file is still not usable, so that the
+    /// next run starts from a good file.
     pub(crate) fn reset_if_unusable(&self, loaded: &LoadOutcome) {
         if !matches!(loaded, LoadOutcome::Unusable) {
             return;
         }
-        if let Err(err) = self.save(&AppSettings::default()) {
+        let defaults = AppSettings::default();
+        if let Err(err) = self.save_changes(&defaults, &defaults) {
             eprintln!(
                 "Failed to overwrite {} with fresh defaults: {err}",
                 self.path.display(),
@@ -91,9 +108,51 @@ impl SettingsFile {
         }
     }
 
+    /// Writes the changes from `base` to `ours` into the file as it is now, so
+    /// that the changes that other processes saved meanwhile stay. A file that
+    /// is missing, cannot be read or is not usable gets `ours`. Nothing is
+    /// written when the file already holds the result. The read and the write
+    /// run under the lock of the file; where the system cannot lock, the save
+    /// logs that and goes on without the lock.
+    pub(crate) fn save_changes(&self, base: &AppSettings, ours: &AppSettings) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let _lock = self.lock();
+        let merged = match self.read() {
+            OnDisk::Usable(theirs) => {
+                let merged = merge(base, ours, theirs.as_ref().clone());
+                if merged == *theirs {
+                    return Ok(());
+                }
+                merged
+            }
+            OnDisk::Missing
+            | OnDisk::Unreadable(_)
+            | OnDisk::Unparseable(_)
+            | OnDisk::OtherVersion(_) => ours.clone(),
+        };
+        self.save(&merged)
+    }
+
+    /// Takes the lock that every process holds while it reads and writes the
+    /// file, or logs why it cannot and returns `None`.
+    fn lock(&self) -> Option<FileLock> {
+        match lock_path(&self.path).and_then(|path| FileLock::take(&path)) {
+            Ok(lock) => Some(lock),
+            Err(err) => {
+                eprintln!(
+                    "Cannot lock {}: {err}; saving without the lock",
+                    self.path.display(),
+                );
+                None
+            }
+        }
+    }
+
     /// Writes `settings`, and creates the directory of the file when it is
     /// missing. The write is atomic: when it fails, the previous file stays.
-    pub(crate) fn save(&self, settings: &AppSettings) -> io::Result<()> {
+    fn save(&self, settings: &AppSettings) -> io::Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -123,6 +182,42 @@ impl LoadOutcome {
             Self::NotRead | Self::Unusable => AppSettings::default(),
         }
     }
+}
+
+/// The settings file as it is on disk.
+enum OnDisk {
+    Usable(Box<AppSettings>),
+    Missing,
+    Unreadable(io::Error),
+    Unparseable(toml::de::Error),
+    OtherVersion(u32),
+}
+
+/// The lock of a settings file, held until dropped.
+struct FileLock {
+    _file: File,
+}
+
+impl FileLock {
+    fn take(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)?;
+        file.lock()?;
+        Ok(Self { _file: file })
+    }
+}
+
+/// Returns the path of the lock file of `target`: a hidden file next to it,
+/// which stays after the save.
+fn lock_path(target: &Path) -> io::Result<PathBuf> {
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other("settings path has no file name"))?
+        .to_string_lossy();
+    Ok(target.with_file_name(format!(".{file_name}.lock")))
 }
 
 /// Process-wide counter that disambiguates concurrent atomic writes from inside
@@ -1017,5 +1112,196 @@ mod settings_file_tests {
     #[test]
     fn a_target_with_no_file_name_has_no_temp_path() {
         assert!(atomic_temp_path(Path::new("/")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_save_that_changes_nothing_does_not_write() {
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut theirs = AppSettings::default();
+        theirs.set_theme(ThemePreference::Dark);
+        file.save(&theirs).unwrap();
+        let before = fs::metadata(&file.path).unwrap();
+
+        let base = AppSettings::default();
+        file.save_changes(&base, &base).unwrap();
+        // The file already holds the change of `ours`.
+        file.save_changes(&base, &theirs).unwrap();
+
+        let after = fs::metadata(&file.path).unwrap();
+        assert_eq!(after.ino(), before.ino());
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    }
+
+    #[test]
+    fn a_change_of_another_process_stays() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let base = AppSettings::default();
+        let mut theirs = base.clone();
+        theirs.set_theme(ThemePreference::Dark);
+        file.save(&theirs).unwrap();
+        let mut ours = base.clone();
+        ours.set_aa_level(AaLevel::X4);
+
+        file.save_changes(&base, &ours).unwrap();
+
+        let saved = file.load().settings();
+        assert!(matches!(saved.theme(), ThemePreference::Dark));
+        assert_eq!(saved.aa_level(), AaLevel::X4);
+    }
+
+    #[test]
+    fn an_unusable_file_is_replaced_by_ours() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(&file.path, "this is not valid TOML").unwrap();
+        let base = AppSettings::default();
+        let mut ours = base.clone();
+        ours.set_theme(ThemePreference::Dark);
+
+        file.save_changes(&base, &ours).unwrap();
+        assert_eq!(file.load().settings(), ours);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_replaced_by_ours() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(&file.path, b"[appearance]\ntheme = \"light\"\n\xff").unwrap();
+        let base = AppSettings::default();
+        let mut ours = base.clone();
+        ours.set_theme(ThemePreference::Dark);
+
+        file.save_changes(&base, &ours).unwrap();
+        assert_eq!(file.load().settings(), ours);
+    }
+
+    #[test]
+    fn a_missing_file_is_created_with_ours() {
+        let tmp = TempDir::new().unwrap();
+        let file = SettingsFile {
+            path: tmp.path().join("nested").join("settings.toml"),
+        };
+        let base = AppSettings::default();
+        let mut ours = base.clone();
+        ours.set_theme(ThemePreference::Dark);
+
+        file.save_changes(&base, &ours).unwrap();
+        assert_eq!(file.load().settings(), ours);
+    }
+
+    #[test]
+    fn the_lock_file_stays_beside_the_settings() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let base = AppSettings::default();
+        let mut ours = base.clone();
+        ours.set_theme(ThemePreference::Dark);
+
+        file.save_changes(&base, &ours).unwrap();
+
+        let mut entries: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            [
+                std::ffi::OsString::from(".settings.toml.lock"),
+                std::ffi::OsString::from("settings.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_lock_that_cannot_be_taken_still_saves() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        // A directory cannot be opened for writing, so the lock fails.
+        fs::create_dir(tmp.path().join(".settings.toml.lock")).unwrap();
+        let base = AppSettings::default();
+        let mut ours = base.clone();
+        ours.set_theme(ThemePreference::Dark);
+
+        file.save_changes(&base, &ours).unwrap();
+        assert_eq!(file.load().settings(), ours);
+    }
+
+    /// Saves 20 changes to the file at `path` one by one, as a saver does:
+    /// `change(settings, i)` makes change `i` on the base of the save before.
+    fn save_20_changes(path: PathBuf, change: impl Fn(&mut AppSettings, usize)) {
+        let file = SettingsFile { path };
+        let mut base = AppSettings::default();
+        for i in 0..20 {
+            let mut ours = base.clone();
+            change(&mut ours, i);
+            file.save_changes(&base, &ours).unwrap();
+            base = ours;
+        }
+    }
+
+    #[test]
+    fn concurrent_savers_keep_every_change() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let printers = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                save_20_changes(path, |settings, i| {
+                    let mut ids = settings.favourite_printers();
+                    ids.insert(PrinterId::new(&format!("printer-{i}")).unwrap());
+                    settings.set_favourite_printers(ids);
+                });
+            })
+        };
+        let resins = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                save_20_changes(path, |settings, i| {
+                    let mut ids = settings.favourite_resins();
+                    ids.insert(MaterialId::new(&format!("resin-{i}")).unwrap());
+                    settings.set_favourite_resins(ids);
+                });
+            })
+        };
+        printers.join().unwrap();
+        resins.join().unwrap();
+
+        let saved = SettingsFile { path }.load().settings();
+        assert_eq!(saved.favourite_printers().len(), 20);
+        assert_eq!(saved.favourite_resins().len(), 20);
+    }
+
+    #[test]
+    fn the_reset_leaves_a_file_that_became_usable() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(&file.path, "this is not valid TOML").unwrap();
+        let loaded = file.load();
+        // Another process writes a good file before the reset.
+        let mut theirs = AppSettings::default();
+        theirs.set_theme(ThemePreference::Dark);
+        file.save(&theirs).unwrap();
+
+        file.reset_if_unusable(&loaded);
+        assert_eq!(file.load().settings(), theirs);
+    }
+
+    #[test]
+    fn the_lock_path_is_a_hidden_sibling_of_the_target() {
+        assert_eq!(
+            lock_path(Path::new("dir/settings.toml")).unwrap(),
+            Path::new("dir/.settings.toml.lock")
+        );
+    }
+
+    #[test]
+    fn a_target_with_no_file_name_has_no_lock_path() {
+        assert!(lock_path(Path::new("/")).is_err());
     }
 }

@@ -334,9 +334,33 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
+/// Saves the changes that `snap` makes to `base` into `file`, and returns the
+/// base of the next save: the settings with `snap` applied when the save
+/// succeeded, `base` when it failed, so that the next save carries the failed
+/// change again.
+fn save_snapshot(
+    file: Option<&SettingsFile>,
+    base: AppSettings,
+    snap: &PreferencesSnapshot,
+) -> AppSettings {
+    let mut ours = base.clone();
+    apply_snapshot_to_settings(&mut ours, snap);
+    let saved = match file {
+        Some(file) => file.save_changes(&base, &ours),
+        None => Err(std::io::Error::other("no config directory available")),
+    };
+    match saved {
+        Ok(()) => ours,
+        Err(err) => {
+            eprintln!("Failed to save settings: {err}");
+            base
+        }
+    }
+}
+
 /// Spawns the settings-saver worker thread. Its first step replaces an unusable
-/// file with the defaults, so that the UI thread never writes; then the loop
-/// body persists each coalesced snapshot into `file`. With no file (the
+/// file with the defaults, so that the UI thread never writes; then each
+/// coalesced snapshot goes through [`save_snapshot`]. With no file (the
 /// platform gives no home directory), each save logs an error.
 fn spawn_settings_saver(
     file: Option<SettingsFile>,
@@ -349,16 +373,9 @@ fn spawn_settings_saver(
             if let Some(file) = &file {
                 file.reset_if_unusable(&loaded);
             }
-            let mut settings = loaded.settings();
+            let mut base = loaded.settings();
             run_settings_saver_loop(rx, |snap| {
-                apply_snapshot_to_settings(&mut settings, snap);
-                let saved = match &file {
-                    Some(file) => file.save(&settings),
-                    None => Err(std::io::Error::other("no config directory available")),
-                };
-                if let Err(err) = saved {
-                    eprintln!("Failed to save settings: {err}");
-                }
+                base = save_snapshot(file.as_ref(), std::mem::take(&mut base), snap);
             });
         })?;
     Ok((tx, SettingsSaverJoin { join: Some(join) }))
@@ -1389,6 +1406,7 @@ mod settings_saver_tests {
 
     use super::*;
     use crate::ThemePreference;
+    use crate::language::{BundledLanguage, LanguagePreference};
     use sc_print_primitives::AaLevel;
 
     fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
@@ -1644,6 +1662,126 @@ mod settings_saver_tests {
             written.contains(&format!("version = {version}")),
             "got:\n{written}"
         );
+    }
+
+    /// Loads the file at `path` and starts a saver on it, as a new process of
+    /// the app does.
+    fn start_saver(path: PathBuf) -> (Sender<PreferencesSnapshot>, SettingsSaverJoin) {
+        let file = SettingsFile::at(path);
+        let loaded = file.load();
+        spawn_settings_saver(Some(file), loaded).expect("spawn settings-saver thread")
+    }
+
+    #[test]
+    fn two_processes_keep_each_others_changes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let es = LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap());
+        let (to_a, saver_a) = start_saver(path.clone());
+        let (to_b, saver_b) = start_saver(path.clone());
+
+        let a = PreferencesSnapshot {
+            language: es,
+            ..PreferencesSnapshot::for_tests()
+        };
+        to_a.send(a).unwrap();
+        drop(to_a);
+        drop(saver_a);
+        let b = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+        to_b.send(b).unwrap();
+        drop(to_b);
+        drop(saver_b);
+
+        let saved = SettingsFile::at(path).load().settings();
+        assert_eq!(saved.language(), es);
+        assert!(!saved.object_list_visible());
+    }
+
+    #[test]
+    fn two_processes_keep_each_others_favourites() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let x = PrinterId::new("printer-x").unwrap();
+        let y = PrinterId::new("printer-y").unwrap();
+        let (to_a, saver_a) = start_saver(path.clone());
+        let (to_b, saver_b) = start_saver(path.clone());
+
+        let mut a = PreferencesSnapshot::for_tests();
+        a.favourite_printers.insert(x.clone());
+        to_a.send(a).unwrap();
+        drop(to_a);
+        drop(saver_a);
+        let mut b = PreferencesSnapshot::for_tests();
+        b.favourite_printers.insert(y.clone());
+        to_b.send(b).unwrap();
+        drop(to_b);
+        drop(saver_b);
+
+        let saved = SettingsFile::at(path).load().settings();
+        assert_eq!(
+            saved.favourite_printers(),
+            std::collections::BTreeSet::from([x, y])
+        );
+    }
+
+    #[test]
+    fn a_good_save_makes_the_snapshot_the_next_base() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = SettingsFile::at(tmp.path().join("settings.toml"));
+        let snap = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+
+        let next = save_snapshot(Some(&file), AppSettings::default(), &snap);
+        assert!(!next.object_list_visible());
+        assert!(!file.load().settings().object_list_visible());
+    }
+
+    #[test]
+    fn the_save_after_a_failed_one_carries_its_change() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let file = SettingsFile::at(path.clone());
+        // A directory that is not empty in the place of the file makes the save
+        // fail.
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("blocker"), "").unwrap();
+        let es = LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap());
+        let first = PreferencesSnapshot {
+            language: es,
+            ..PreferencesSnapshot::for_tests()
+        };
+
+        let base = save_snapshot(Some(&file), AppSettings::default(), &first);
+        assert_eq!(base, AppSettings::default());
+
+        // The file comes back empty, which reads as the defaults. A base that
+        // took the failed change would leave `es` out of this save.
+        std::fs::remove_dir_all(&path).unwrap();
+        std::fs::write(&path, "").unwrap();
+        let second = PreferencesSnapshot {
+            object_list_visible: false,
+            ..first
+        };
+        save_snapshot(Some(&file), base, &second);
+
+        let saved = file.load().settings();
+        assert_eq!(saved.language(), es);
+        assert!(!saved.object_list_visible());
+    }
+
+    #[test]
+    fn with_no_file_the_base_stays() {
+        let snap = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+        let next = save_snapshot(None, AppSettings::default(), &snap);
+        assert_eq!(next, AppSettings::default());
     }
 }
 
