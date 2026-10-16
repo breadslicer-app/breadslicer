@@ -30,11 +30,17 @@ impl SettingsFile {
         })
     }
 
-    /// Reads the settings. A missing file, or one that cannot be read, gives
-    /// the defaults and stays as it is. A parse failure or another schema
-    /// version gives the defaults and replaces the file with them, so that the
-    /// next run starts from a good file.
-    pub(crate) fn load(&self) -> AppSettings {
+    /// Returns the settings file at `path`.
+    #[cfg(test)]
+    pub(crate) fn at(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// Reads the settings. It never writes, so the UI thread can call it: a
+    /// file that does not parse or has another schema version gives
+    /// [`LoadOutcome::Unusable`], which [`Self::reset_if_unusable`] then
+    /// replaces.
+    pub(crate) fn load(&self) -> LoadOutcome {
         match fs::read_to_string(&self.path) {
             Ok(content) => match toml::from_str::<AppSettings>(&content) {
                 Ok(loaded) if loaded.version == APP_SETTINGS_SCHEMA_VERSION => {
@@ -44,7 +50,7 @@ impl SettingsFile {
                             code.as_str(),
                         );
                     }
-                    loaded
+                    LoadOutcome::Read(Box::new(loaded))
                 }
                 Ok(loaded) => {
                     eprintln!(
@@ -53,33 +59,36 @@ impl SettingsFile {
                         loaded.version,
                         APP_SETTINGS_SCHEMA_VERSION,
                     );
-                    self.reset()
+                    LoadOutcome::Unusable
                 }
                 Err(err) => {
                     eprintln!(
                         "Failed to parse {}: {err}; resetting to defaults",
                         self.path.display(),
                     );
-                    self.reset()
+                    LoadOutcome::Unusable
                 }
             },
-            Err(err) if err.kind() == io::ErrorKind::NotFound => AppSettings::default(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => LoadOutcome::NotRead,
             Err(err) => {
                 eprintln!("Failed to read {}: {err}", self.path.display());
-                AppSettings::default()
+                LoadOutcome::NotRead
             }
         }
     }
 
-    fn reset(&self) -> AppSettings {
-        let fresh = AppSettings::default();
-        if let Err(err) = self.save(&fresh) {
+    /// Replaces the file with the defaults when `loaded` is
+    /// [`LoadOutcome::Unusable`], so that the next run starts from a good file.
+    pub(crate) fn reset_if_unusable(&self, loaded: &LoadOutcome) {
+        if !matches!(loaded, LoadOutcome::Unusable) {
+            return;
+        }
+        if let Err(err) = self.save(&AppSettings::default()) {
             eprintln!(
                 "Failed to overwrite {} with fresh defaults: {err}",
                 self.path.display(),
             );
         }
-        fresh
     }
 
     /// Writes `settings`, and creates the directory of the file when it is
@@ -90,6 +99,29 @@ impl SettingsFile {
         }
         let content = toml::to_string_pretty(settings).map_err(io::Error::other)?;
         write_atomically(&self.path, content.as_bytes())
+    }
+}
+
+/// What [`SettingsFile::load`] found in the file.
+#[derive(Debug)]
+#[must_use]
+pub(crate) enum LoadOutcome {
+    /// The settings that the file holds.
+    Read(Box<AppSettings>),
+    /// No file, or a file that cannot be read. It stays as it is.
+    NotRead,
+    /// A file that does not parse or has another schema version.
+    /// [`SettingsFile::reset_if_unusable`] replaces it with the defaults.
+    Unusable,
+}
+
+impl LoadOutcome {
+    /// Returns the settings to start with: the ones read, or the defaults.
+    pub(crate) fn settings(&self) -> AppSettings {
+        match self {
+            Self::Read(settings) => settings.as_ref().clone(),
+            Self::NotRead | Self::Unusable => AppSettings::default(),
+        }
     }
 }
 
@@ -170,7 +202,9 @@ mod settings_file_tests {
         let file = SettingsFile {
             path: tmp.path().join("does_not_exist.toml"),
         };
-        let s = file.load();
+        let loaded = file.load();
+        assert!(matches!(loaded, LoadOutcome::NotRead), "got {loaded:?}");
+        let s = loaded.settings();
         assert!(matches!(s.theme(), ThemePreference::System));
         assert_eq!(s.language(), LanguagePreference::System);
     }
@@ -184,9 +218,14 @@ mod settings_file_tests {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         fs::write(&file.path, b"this is not valid TOML").unwrap();
-        let s = file.load();
+        let loaded = file.load();
+        assert!(matches!(loaded, LoadOutcome::Unusable), "got {loaded:?}");
+        assert_eq!(fs::read(&file.path).unwrap(), b"this is not valid TOML");
+        let s = loaded.settings();
         assert!(matches!(s.theme(), ThemePreference::System));
         assert_eq!(s.version, APP_SETTINGS_SCHEMA_VERSION);
+
+        file.reset_if_unusable(&loaded);
         let on_disk = fs::read_to_string(&file.path).unwrap();
         assert!(
             on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
@@ -209,7 +248,7 @@ mod settings_file_tests {
         // a `nested/` segment that doesn't exist yet.
         assert!(file.path.exists());
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(matches!(loaded.theme(), ThemePreference::Dark));
         assert_eq!(loaded.language(), LanguagePreference::System);
     }
@@ -239,7 +278,7 @@ mod settings_file_tests {
         s.set_language(LanguagePreference::Bundled(bundled));
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.language(), LanguagePreference::Bundled(bundled));
 
         // The output must mention `language = "es"` so an external tool (or
@@ -258,7 +297,7 @@ mod settings_file_tests {
         )
         .unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(
             loaded.default_printer(),
             Some(PrinterId::new("elegoo-mars-5").unwrap())
@@ -272,7 +311,7 @@ mod settings_file_tests {
         let file = settings_file_in(&tmp);
         fs::write(&file.path, "[appearance]\nlanguage = \"xx\"\n").unwrap();
 
-        let mut s = file.load();
+        let mut s = file.load().settings();
         // The saver copies every preference of the snapshot, which holds the
         // system language for an unbundled code.
         s.set_language(LanguagePreference::System);
@@ -294,7 +333,7 @@ mod settings_file_tests {
         )
         .unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(
             loaded.default_printer(),
             Some(PrinterId::new("elegoo-mars-5").unwrap())
@@ -309,7 +348,7 @@ mod settings_file_tests {
         let mut s = AppSettings::default();
         s.set_theme(ThemePreference::Light);
         file.save(&s).unwrap();
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(matches!(loaded.theme(), ThemePreference::Light));
     }
 
@@ -321,7 +360,7 @@ mod settings_file_tests {
         s.set_menu_layout(MenuLayout::Compact);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.menu_layout(), MenuLayout::Compact);
 
         // Written as a plain lowercase string so an external tool or a
@@ -355,7 +394,7 @@ mod settings_file_tests {
         s.set_aa_level(AaLevel::X4);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.aa_level(), AaLevel::X4);
 
         // Written as a plain lowercase string so an external tool or a
@@ -389,7 +428,7 @@ mod settings_file_tests {
         s.set_default_resin(Some(resin.clone()));
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.default_printer(), Some(printer));
         assert_eq!(loaded.default_resin(), Some(resin));
 
@@ -437,7 +476,7 @@ mod settings_file_tests {
         s.set_favourite_resins(resins.clone());
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.favourite_printers(), printers);
         assert_eq!(loaded.favourite_resins(), resins);
 
@@ -476,7 +515,7 @@ mod settings_file_tests {
         let file = settings_file_in(&tmp);
         fs::write(&file.path, "default_printer = \"anycubic-photon-m3\"\n").unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(loaded.favourite_printers().is_empty());
         assert!(loaded.favourite_resins().is_empty());
         assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
@@ -507,7 +546,7 @@ mod settings_file_tests {
         s.set_output_format_by_printer(chosen.clone());
         file.save(&s).unwrap();
 
-        assert_eq!(file.load().output_format_by_printer(), chosen);
+        assert_eq!(file.load().settings().output_format_by_printer(), chosen);
 
         let written = fs::read_to_string(&file.path).unwrap();
         assert!(
@@ -537,7 +576,7 @@ mod settings_file_tests {
         s.set_object_list_visible(false);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(!loaded.object_list_visible());
 
         // Written under a dedicated section so an external tool or a hand-edit
@@ -568,7 +607,7 @@ mod settings_file_tests {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         fs::write(&file.path, "[appearance]\ntheme = \"dark\"\n").unwrap();
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(loaded.object_list_visible());
     }
 
@@ -586,7 +625,7 @@ mod settings_file_tests {
         s.set_object_list_minimized(true);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(!loaded.object_list_anchor_right());
         assert!(loaded.object_list_anchor_bottom());
         assert_eq!(loaded.object_list_offset_x(), Some(48.0));
@@ -631,7 +670,7 @@ mod settings_file_tests {
         s.set_slice_panel_height(Some(220.0));
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(loaded.slice_panel_anchor_right());
         assert!(loaded.slice_panel_anchor_bottom());
         assert_eq!(loaded.slice_panel_offset_x(), Some(24.0));
@@ -663,7 +702,7 @@ mod settings_file_tests {
         s.set_slice_view_visible(false);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(!loaded.slice_view_visible());
 
         // Written under a dedicated section so an external tool or a hand-edit
@@ -694,7 +733,7 @@ mod settings_file_tests {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         fs::write(&file.path, "[appearance]\ntheme = \"dark\"\n").unwrap();
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(loaded.slice_view_visible());
     }
 
@@ -715,7 +754,7 @@ mod settings_file_tests {
         s.set_slice_view_minimized(true);
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert!(loaded.slice_view_anchor_right());
         assert!(!loaded.slice_view_anchor_bottom());
         assert_eq!(loaded.slice_view_offset_x(), Some(48.0));
@@ -739,7 +778,7 @@ mod settings_file_tests {
         s.set_last_open_dir(Some(PathBuf::from("/home/user/models")));
         file.save(&s).unwrap();
 
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(
             loaded.last_open_dir(),
             Some(PathBuf::from("/home/user/models"))
@@ -778,7 +817,7 @@ mod settings_file_tests {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         file.save(&AppSettings::default()).unwrap();
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
     }
 
@@ -790,7 +829,7 @@ mod settings_file_tests {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         fs::write(&file.path, "[appearance]\ntheme = \"dark\"\n").unwrap();
-        let loaded = file.load();
+        let loaded = file.load().settings();
         assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
         assert!(matches!(loaded.theme(), ThemePreference::Dark));
         // The legacy file is preserved verbatim (no rewrite happens until the
@@ -814,9 +853,14 @@ mod settings_file_tests {
         .unwrap();
 
         let loaded = file.load();
-        assert!(matches!(loaded.theme(), ThemePreference::System));
-        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+        assert!(matches!(loaded, LoadOutcome::Unusable), "got {loaded:?}");
+        let before_reset = fs::read_to_string(&file.path).unwrap();
+        assert!(before_reset.contains(&format!("version = {future}")));
+        let s = loaded.settings();
+        assert!(matches!(s.theme(), ThemePreference::System));
+        assert_eq!(s.version, APP_SETTINGS_SCHEMA_VERSION);
 
+        file.reset_if_unusable(&loaded);
         let on_disk = fs::read_to_string(&file.path).unwrap();
         assert!(
             on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
@@ -839,8 +883,11 @@ mod settings_file_tests {
         fs::write(&file.path, "version = 0\n").unwrap();
 
         let loaded = file.load();
-        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+        assert!(matches!(loaded, LoadOutcome::Unusable), "got {loaded:?}");
+        assert_eq!(fs::read_to_string(&file.path).unwrap(), "version = 0\n");
+        assert_eq!(loaded.settings().version, APP_SETTINGS_SCHEMA_VERSION);
 
+        file.reset_if_unusable(&loaded);
         let on_disk = fs::read_to_string(&file.path).unwrap();
         assert!(
             on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
@@ -892,8 +939,29 @@ mod settings_file_tests {
         fs::write(&file.path, bytes).unwrap();
 
         let loaded = file.load();
-        assert!(matches!(loaded.theme(), ThemePreference::System));
+        assert!(matches!(loaded, LoadOutcome::NotRead), "got {loaded:?}");
+        assert!(matches!(loaded.settings().theme(), ThemePreference::System));
+        file.reset_if_unusable(&loaded);
         assert_eq!(fs::read(&file.path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_good_file_is_read_and_kept() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        s.set_theme(ThemePreference::Dark);
+        file.save(&s).unwrap();
+        let before = fs::read(&file.path).unwrap();
+
+        let loaded = file.load();
+        let LoadOutcome::Read(read) = &loaded else {
+            panic!("got {loaded:?}");
+        };
+        assert!(matches!(read.theme(), ThemePreference::Dark));
+        assert!(matches!(loaded.settings().theme(), ThemePreference::Dark));
+        file.reset_if_unusable(&loaded);
+        assert_eq!(fs::read(&file.path).unwrap(), before);
     }
 
     #[test]

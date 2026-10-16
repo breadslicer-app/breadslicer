@@ -18,7 +18,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
-use crate::app_settings::file::SettingsFile;
+use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
 use crate::graphics_status::GraphicsUnavailable;
@@ -334,18 +334,22 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
-/// Spawns the settings-saver worker thread, with the loop body wired to persist
-/// each coalesced snapshot into `file`. With no file (the platform gives no
-/// home directory), each save logs an error.
+/// Spawns the settings-saver worker thread. Its first step replaces an unusable
+/// file with the defaults, so that the UI thread never writes; then the loop
+/// body persists each coalesced snapshot into `file`. With no file (the
+/// platform gives no home directory), each save logs an error.
 fn spawn_settings_saver(
     file: Option<SettingsFile>,
-    initial_settings: AppSettings,
+    loaded: LoadOutcome,
 ) -> std::io::Result<(Sender<PreferencesSnapshot>, SettingsSaverJoin)> {
     let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
     let join = thread::Builder::new()
         .name("settings-saver".into())
         .spawn(move || {
-            let mut settings = initial_settings;
+            if let Some(file) = &file {
+                file.reset_if_unusable(&loaded);
+            }
+            let mut settings = loaded.settings();
             run_settings_saver_loop(rx, |snap| {
                 apply_snapshot_to_settings(&mut settings, snap);
                 let saved = match &file {
@@ -384,10 +388,10 @@ fn subscribe_window_preferences(
 impl AppState {
     pub(crate) fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
         let settings_file = SettingsFile::platform_default();
-        let settings = settings_file
+        let loaded = settings_file
             .as_ref()
-            .map(SettingsFile::load)
-            .unwrap_or_default();
+            .map_or(LoadOutcome::NotRead, SettingsFile::load);
+        let settings = loaded.settings();
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
@@ -432,7 +436,7 @@ impl AppState {
         // worker writes to disk. Off-loading the write keeps the Slint event
         // loop responsive on slow / network-mounted / nearly-full config
         // directories.
-        let (saver_tx, settings_saver) = spawn_settings_saver(settings_file, settings)?;
+        let (saver_tx, settings_saver) = spawn_settings_saver(settings_file, loaded)?;
         let settings_sub = prefs.subscribe(move |snap, _change| {
             // Channel send is non-blocking; failure means the worker has
             // already exited, which only happens at shutdown.
@@ -1615,11 +1619,31 @@ mod settings_saver_tests {
         // sending any snapshot, so the worker exits via channel-closed. The
         // join in `SettingsSaverJoin::drop` must complete without hanging,
         // matching the shutdown behaviour `AppState::drop` relies on.
-        let settings = AppSettings::default();
         let (tx, saver) =
-            spawn_settings_saver(None, settings).expect("spawn settings-saver thread");
+            spawn_settings_saver(None, LoadOutcome::NotRead).expect("spawn settings-saver thread");
         drop(tx);
         drop(saver);
+    }
+
+    #[test]
+    fn the_saver_replaces_an_unusable_file_first() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        std::fs::write(&path, "this is not valid TOML").unwrap();
+        let file = SettingsFile::at(path.clone());
+        let loaded = file.load();
+
+        let (tx, saver) =
+            spawn_settings_saver(Some(file), loaded).expect("spawn settings-saver thread");
+        drop(tx);
+        drop(saver);
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        let version = crate::app_settings::APP_SETTINGS_SCHEMA_VERSION;
+        assert!(
+            written.contains(&format!("version = {version}")),
+            "got:\n{written}"
+        );
     }
 }
 
