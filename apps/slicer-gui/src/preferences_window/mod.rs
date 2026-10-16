@@ -5,7 +5,7 @@
 
 mod extend_dialog;
 mod fork_dialog;
-mod language_follow;
+mod preferences_follow;
 mod profile_editor;
 mod profile_view_dialog;
 

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Keeps the texts that a Preferences dialog took from Rust in the language in
-//! force.
+//! Keeps a Preferences dialog in step with the preferences: its theme, and the
+//! texts that it took from Rust in the language in force.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,12 +14,14 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use crate::material_form::InvalidFormValue;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_forking::ForkError;
+use crate::window_prefs::WindowPreferences;
 
-/// Pushes the texts of `window` again with `push_texts` on each `Language`
-/// change, for as long as the window exists. Nothing holds the follow: a shown
-/// window lives until it is hidden, whatever its opener holds, so the follow
-/// ends at the 1st change after the window is gone.
-pub(super) fn follow_language<W: ComponentHandle + 'static>(
+/// Applies the preferences of `bus` to `window` on each change, and pushes its
+/// texts again with `push_texts` on each `Language` change, for as long as the
+/// window exists. Nothing holds the follow: a shown window lives until it is
+/// hidden, whatever its opener holds, so the follow ends at the 1st change
+/// after the window is gone.
+pub(super) fn follow_preferences<W: ComponentHandle + WindowPreferences + 'static>(
     bus: &Rc<PreferencesBus>,
     window: &W,
     push_texts: impl Fn(&W) + 'static,
@@ -28,8 +30,9 @@ pub(super) fn follow_language<W: ComponentHandle + 'static>(
     let own_subscription: Rc<RefCell<Option<Subscription>>> = Rc::default();
     let subscription = bus.subscribe({
         let own_subscription = own_subscription.clone();
-        move |_, change| match window.upgrade() {
+        move |snap, change| match window.upgrade() {
             Some(window) => {
+                window.apply_preferences(snap);
                 if matches!(change, PreferencesChange::Language) {
                     push_texts(&window);
                 }
@@ -90,17 +93,18 @@ pub(super) fn relabel_picker(
 }
 
 #[cfg(test)]
-mod follow_language_tests {
+mod follow_preferences_tests {
     use super::*;
     use crate::preferences_bus::PreferencesSnapshot;
     use crate::slint_ui::{ErrorDialog, ThemePreference};
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::test_support::theme_pick::pick_theme;
 
     fn followed_dialog(bus: &Rc<PreferencesBus>) -> ErrorDialog {
         let dialog = ErrorDialog::new().expect("the headless platform creates components");
         dialog.set_heading("sentinel".into());
-        follow_language(bus, &dialog, |dialog| dialog.set_heading("pushed".into()));
+        follow_preferences(bus, &dialog, |dialog| dialog.set_heading("pushed".into()));
         dialog
     }
 
@@ -130,6 +134,17 @@ mod follow_language_tests {
     }
 
     #[test]
+    fn a_theme_change_applies_the_preferences() {
+        let theme = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let dialog = followed_dialog(&bus);
+            pick_theme(&bus, ThemePreference::Dark);
+            dialog.get_theme()
+        });
+        assert_eq!(theme, ThemePreference::Dark);
+    }
+
+    #[test]
     fn the_follow_ends_at_the_1st_change_after_the_window_is_gone() {
         let holders = on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
@@ -138,7 +153,7 @@ mod follow_language_tests {
             // still holds the listener.
             let probe = Rc::new(());
             let held = probe.clone();
-            follow_language(&bus, &dialog, move |_| {
+            follow_preferences(&bus, &dialog, move |_| {
                 let _ = &held;
             });
             drop(dialog);

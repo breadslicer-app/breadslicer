@@ -16,9 +16,9 @@
 use crate::aa_level::aa_combo_index;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
-use crate::{
-    AboutWindow, ErrorDialog, InfoDialog, MainWindow, MenuLayout, PreferencesWindow,
-    ReplaceSceneDialog, SliceOverwriteDialog,
+use crate::slint_ui::{
+    AboutWindow, ErrorDialog, ExtendDialog, ForkDialog, InfoDialog, MainWindow, MenuLayout,
+    PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, SliceOverwriteDialog,
 };
 
 pub(crate) trait WindowPreferences {
@@ -88,6 +88,27 @@ impl WindowPreferences for ReplaceSceneDialog {
 }
 
 impl WindowPreferences for SliceOverwriteDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+// The dialogs of the Preferences window. Their texts built in Rust follow the
+// language through their own follow.
+
+impl WindowPreferences for ProfileViewDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for ForkDialog {
+    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
+        self.set_theme(prefs.theme);
+    }
+}
+
+impl WindowPreferences for ExtendDialog {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
         self.set_theme(prefs.theme);
     }

@@ -762,13 +762,7 @@ mod theme_tests {
     use crate::preferences_bus::PreferencesSnapshot;
     use crate::slint_ui::ThemePreference;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
-
-    fn pick_theme(bus: &PreferencesBus, theme: ThemePreference) {
-        bus.update(move |snap| {
-            snap.theme = theme;
-            PreferencesChange::Theme
-        });
-    }
+    use crate::test_support::theme_pick::pick_theme;
 
     /// Opens 1 dialog of each of the 4 kinds.
     fn open_each_kind(manager: &Rc<DialogManager>) {

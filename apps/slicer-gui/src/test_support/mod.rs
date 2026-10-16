@@ -11,3 +11,4 @@ pub(crate) mod language_pick;
 pub(crate) mod material_profiles;
 pub(crate) mod projects;
 pub(crate) mod slint_thread;
+pub(crate) mod theme_pick;

@@ -16,8 +16,9 @@ use crate::preferences_bus::PreferencesBus;
 use crate::profile_catalog::{ProfileCatalog, ProfileSource, load_profile_for_view};
 use crate::profile_view::{build_profile_view_model, profile_display_name};
 use crate::slint_ui::ProfileViewDialog;
+use crate::window_prefs::WindowPreferences;
 
-use super::language_follow::follow_language;
+use super::preferences_follow::follow_preferences;
 
 /// Opens the read-only profile viewer for the resin at `index`: the base
 /// profile's sections plus its extension's calibration blocks, with the block
@@ -75,7 +76,7 @@ fn build_profile_viewer(
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
 
     let dialog = ProfileViewDialog::new()?;
-    dialog.set_theme(snapshot.theme);
+    dialog.apply_preferences(&snapshot);
     dialog.set_profile_name(profile_display_name(material.identity()).into());
     let push_sections = move |dialog: &ProfileViewDialog| {
         let sections = build_profile_view_model(
@@ -87,7 +88,7 @@ fn build_profile_viewer(
         dialog.set_sections(ModelRc::new(VecModel::from(sections)));
     };
     push_sections(&dialog);
-    follow_language(bus, &dialog, push_sections);
+    follow_preferences(bus, &dialog, push_sections);
     Ok(dialog)
 }
 
@@ -136,5 +137,31 @@ mod language_change_tests {
             (titles(dialog.get_sections().iter()), titles(expected))
         });
         assert_eq!(shown, expected);
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::material_profiles::resin_profile;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::test_support::theme_pick::pick_theme;
+
+    #[test]
+    fn the_viewer_takes_the_theme_and_follows_its_changes() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            pick_theme(&bus, ThemePreference::Dark);
+            let catalog = Rc::new(ProfileCatalog::from_entries(Vec::new(), Vec::new()));
+            let material = EffectiveMaterial::compose(resin_profile(), None).0;
+            let dialog = build_profile_viewer(&bus, material, ProfileSource::User, catalog)
+                .expect("the headless platform creates the viewer");
+            let at_open = dialog.get_theme();
+            pick_theme(&bus, ThemePreference::Light);
+            (at_open, dialog.get_theme())
+        });
+        assert_eq!(themes, (ThemePreference::Dark, ThemePreference::Light));
     }
 }

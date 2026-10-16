@@ -28,8 +28,9 @@ use crate::profile_view::{
     identity_section, intent_section, ordered_calibration_targets, profile_display_name,
 };
 use crate::slint_ui::ProfileViewDialog;
+use crate::window_prefs::WindowPreferences;
 
-use super::language_follow::{ErrorLine, follow_language, relabel_picker};
+use super::preferences_follow::{ErrorLine, follow_preferences, relabel_picker};
 
 /// A note above the editor's sections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +153,7 @@ fn build_profile_editor(
         ordered_calibration_targets(&profile, catalog.printers(), default_printer.as_ref());
 
     let dialog = ProfileViewDialog::new()?;
-    dialog.set_theme(snapshot.theme);
+    dialog.apply_preferences(&snapshot);
     dialog.set_editable(true);
     dialog.set_defaults_editable(kind == EditedProfileKind::Full);
     if kind == EditedProfileKind::Full {
@@ -223,7 +224,7 @@ fn build_profile_editor(
         }
     };
     push_texts(&dialog);
-    follow_language(bus, &dialog, push_texts);
+    follow_preferences(bus, &dialog, push_texts);
 
     let dialog_weak = dialog.as_weak();
 
@@ -411,7 +412,7 @@ mod language_change_tests {
 
     /// An editor of the resin profile as `kind`, with `note`, built after the
     /// UI language follows `bus`, as in the app.
-    fn following_editor(
+    pub(super) fn following_editor(
         bus: &Rc<PreferencesBus>,
         kind: EditedProfileKind,
         note: Option<EditorNote>,
@@ -574,5 +575,28 @@ mod language_change_tests {
         });
         assert_eq!(shown, "disk full");
         assert_eq!(kept.as_deref(), Some("disk full"));
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::test_support::theme_pick::pick_theme;
+
+    #[test]
+    fn the_editor_takes_the_theme_and_follows_its_changes() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            pick_theme(&bus, ThemePreference::Dark);
+            let (_ui_language, dialog) =
+                language_change_tests::following_editor(&bus, EditedProfileKind::Full, None);
+            let at_open = dialog.get_theme();
+            pick_theme(&bus, ThemePreference::Light);
+            (at_open, dialog.get_theme())
+        });
+        assert_eq!(themes, (ThemePreference::Dark, ThemePreference::Light));
     }
 }

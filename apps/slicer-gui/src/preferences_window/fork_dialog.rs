@@ -22,8 +22,9 @@ use crate::profile_catalog::{ProfileCatalog, load_profile_for_view, refresh_cata
 use crate::profile_forking::{ForkError, ForkParts, build_fork};
 use crate::profile_view::{ordered_calibration_targets, profile_display_name};
 use crate::slint_ui::{ForkBlock, ForkDialog, ProfileViewDialog};
+use crate::window_prefs::WindowPreferences;
 
-use super::language_follow::{ErrorLine, follow_language};
+use super::preferences_follow::{ErrorLine, follow_preferences};
 use super::profile_editor::{EditorNote, open_profile_editor};
 
 /// Opens the fork dialog for the resin at `index`. The source is the resolved
@@ -96,7 +97,7 @@ fn build_fork_dialog(
         ordered_calibration_targets(&source, catalog.printers(), default_printer.as_ref());
 
     let dialog = ForkDialog::new()?;
-    dialog.set_theme(snapshot.theme);
+    dialog.apply_preferences(&snapshot);
     dialog.set_source_name(profile_display_name(&source.identity).into());
     dialog.set_fork_name(ctr!(
         "ForkDialog",
@@ -119,7 +120,7 @@ fn build_fork_dialog(
     });
 
     let error_line: Rc<RefCell<Option<ErrorLine<ForkError>>>> = Rc::default();
-    follow_language(bus, &dialog, {
+    follow_preferences(bus, &dialog, {
         let error_line = error_line.clone();
         move |dialog| {
             if let Some(line) = error_line.borrow().as_ref() {
@@ -281,7 +282,7 @@ mod language_change_tests {
 
     /// A fork dialog for the resin profile, built after the UI language follows
     /// `bus`, as in the app.
-    fn following_fork_dialog(bus: &Rc<PreferencesBus>) -> (UiLanguage, ForkDialog) {
+    pub(super) fn following_fork_dialog(bus: &Rc<PreferencesBus>) -> (UiLanguage, ForkDialog) {
         // In the app, the 1st main window is the 1st component of the thread.
         let first = ErrorDialog::new().expect("the headless platform creates components");
         let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
@@ -340,5 +341,27 @@ mod language_change_tests {
             printer_name: SharedString::new(),
         };
         assert_eq!(blocks, [generic]);
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::test_support::theme_pick::pick_theme;
+
+    #[test]
+    fn the_fork_dialog_takes_the_theme_and_follows_its_changes() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            pick_theme(&bus, ThemePreference::Dark);
+            let (_ui_language, dialog) = language_change_tests::following_fork_dialog(&bus);
+            let at_open = dialog.get_theme();
+            pick_theme(&bus, ThemePreference::Light);
+            (at_open, dialog.get_theme())
+        });
+        assert_eq!(themes, (ThemePreference::Dark, ThemePreference::Light));
     }
 }

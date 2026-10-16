@@ -22,8 +22,9 @@ use crate::profile_catalog::{ProfileCatalog, load_profile_for_view, refresh_cata
 use crate::profile_extending::{build_extension_update, copy_sources, uncovered_targets};
 use crate::profile_view::profile_display_name;
 use crate::slint_ui::ExtendDialog;
+use crate::window_prefs::WindowPreferences;
 
-use super::language_follow::{ErrorLine, follow_language, relabel_picker};
+use super::preferences_follow::{ErrorLine, follow_preferences, relabel_picker};
 
 /// Opens the extend dialog for the resin at `index`: pick one of the targets
 /// the resin does not cover yet, enter the calibration values (partial
@@ -105,7 +106,7 @@ fn build_extend_dialog(
     let sources = copy_sources(&material, catalog.printers());
 
     let dialog = ExtendDialog::new()?;
-    dialog.set_theme(snapshot.theme);
+    dialog.apply_preferences(&snapshot);
     dialog.set_source_name(profile_display_name(&base.identity).into());
     dialog.set_target_labels(ModelRc::new(VecModel::from(
         targets
@@ -123,7 +124,7 @@ fn build_extend_dialog(
     dialog.set_copy_source_index(-1);
 
     let error_line: Rc<RefCell<Option<ErrorLine<InvalidFormValue>>>> = Rc::default();
-    follow_language(bus, &dialog, {
+    follow_preferences(bus, &dialog, {
         let error_line = error_line.clone();
         move |dialog| {
             let printers = catalog.printers();
@@ -346,7 +347,7 @@ mod language_change_tests {
         (ui_language, dialog)
     }
 
-    fn extend_dialog(bus: &Rc<PreferencesBus>) -> (UiLanguage, ExtendDialog) {
+    pub(super) fn extend_dialog(bus: &Rc<PreferencesBus>) -> (UiLanguage, ExtendDialog) {
         let (ui_language, dialog) = following_extend_dialog(bus, catalog_of_printer_a());
         (ui_language, dialog.expect("printer A is not covered"))
     }
@@ -462,5 +463,27 @@ mod language_change_tests {
             )
         });
         assert_eq!(shown, expected);
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::test_support::theme_pick::pick_theme;
+
+    #[test]
+    fn the_extend_dialog_takes_the_theme_and_follows_its_changes() {
+        let themes = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            pick_theme(&bus, ThemePreference::Dark);
+            let (_ui_language, dialog) = language_change_tests::extend_dialog(&bus);
+            let at_open = dialog.get_theme();
+            pick_theme(&bus, ThemePreference::Light);
+            (at_open, dialog.get_theme())
+        });
+        assert_eq!(themes, (ThemePreference::Dark, ThemePreference::Light));
     }
 }
