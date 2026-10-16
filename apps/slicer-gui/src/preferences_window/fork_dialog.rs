@@ -19,10 +19,11 @@ use crate::i18n::ctr;
 use crate::material_form::{EditedProfileKind, save_edited_profile};
 use crate::preferences_bus::PreferencesBus;
 use crate::profile_catalog::{ProfileCatalog, load_profile_for_view, refresh_catalog};
-use crate::profile_editor::open_profile_editor;
 use crate::profile_forking::{ForkParts, build_fork};
 use crate::profile_view::{ordered_calibration_targets, profile_display_name};
 use crate::slint_ui::{ForkDialog, ProfileViewDialog};
+
+use super::profile_editor::open_profile_editor;
 
 /// Opens the fork dialog for the resin at `index`. The source is the resolved
 /// profile behind the row (an extension row forks the same resolved base); the
@@ -30,7 +31,7 @@ use crate::slint_ui::{ForkDialog, ProfileViewDialog};
 /// written to the user library and the in-place editor opens on it, with a note
 /// that the profile is already saved so cancelling there keeps the untouched
 /// fork.
-pub(crate) fn open_fork_dialog(
+pub(super) fn open_fork_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
     refresh_view: &Rc<dyn Fn()>,

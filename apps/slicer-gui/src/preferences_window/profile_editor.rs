@@ -33,7 +33,7 @@ use crate::slint_ui::ProfileViewDialog;
 /// editable for full profiles only (an extension inherits them from its
 /// parent), and 1 calibration pair per session can be picked from the profile's
 /// own blocks and edited.
-pub(crate) fn open_profile_editor(
+pub(super) fn open_profile_editor(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
     refresh_view: &Rc<dyn Fn()>,

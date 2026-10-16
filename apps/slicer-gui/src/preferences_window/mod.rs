@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+mod extend_dialog;
+mod fork_dialog;
+mod profile_editor;
+mod profile_view_dialog;
+
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -22,8 +27,6 @@ use sc_print_profiles::{
 };
 
 use crate::aa_level::aa_level_from_combo_index;
-use crate::extend_dialog::open_extend_dialog;
-use crate::fork_dialog::open_fork_dialog;
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
@@ -39,16 +42,19 @@ use crate::profile_catalog::{
     MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
     ProfileSource, has_active_matcher, refresh_catalog,
 };
-use crate::profile_editor::open_profile_editor;
 use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
-use crate::profile_view_dialog::open_profile_view_dialog;
 use crate::window_prefs::WindowPreferences;
 use crate::{
     ExtendDialog, ForkDialog, PillKind, PreferencesWindow, ProfileViewDialog, ResinPill, ResinRow,
 };
+
+use extend_dialog::open_extend_dialog;
+use fork_dialog::open_fork_dialog;
+use profile_editor::open_profile_editor;
+use profile_view_dialog::open_profile_view_dialog;
 
 /// View-local state of the resin list: every derived row in tier order, the
 /// filter data for the materials those rows index into, the tab labels, and the

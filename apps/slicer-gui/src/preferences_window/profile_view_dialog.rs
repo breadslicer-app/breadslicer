@@ -20,7 +20,7 @@ use crate::slint_ui::ProfileViewDialog;
 /// Opens the read-only profile viewer for the resin at `index`: the base
 /// profile's sections plus its extension's calibration blocks, with the block
 /// the default printer would use highlighted.
-pub(crate) fn open_profile_view_dialog(
+pub(super) fn open_profile_view_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
     dialog_slot: &Rc<RefCell<Option<ProfileViewDialog>>>,

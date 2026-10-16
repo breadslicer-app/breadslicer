@@ -27,7 +27,7 @@ use crate::slint_ui::ExtendDialog;
 /// the resin does not cover yet, enter the calibration values (partial
 /// allowed), and write the block into the resin's extension file (created on
 /// the first extend, appended to afterwards).
-pub(crate) fn open_extend_dialog(
+pub(super) fn open_extend_dialog(
     bus: &Rc<PreferencesBus>,
     catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
     refresh_view: &Rc<dyn Fn()>,
