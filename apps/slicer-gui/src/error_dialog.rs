@@ -7,9 +7,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, SharedString};
 
-use crate::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
+use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::slint_ui::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
 
 /// User's exit from the "replace current scene?" dialog. 4 outcomes; the caller
 /// decides what each means in context (typically "close current and load new" /
@@ -66,6 +67,55 @@ type ReplaceChoiceSink = Rc<Cell<Option<Box<dyn FnOnce(ReplaceSceneChoice)>>>>;
 /// alias to satisfy `clippy::type_complexity`.
 type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
 
+/// The texts of an error dialog, in the language in force when they are built.
+pub(crate) struct ErrorTexts {
+    pub(crate) heading: SharedString,
+    /// What the error is about, such as the file; `None` shows no line.
+    pub(crate) context: Option<SharedString>,
+    pub(crate) message: SharedString,
+    /// Shown behind a toggle; an empty text shows no toggle.
+    pub(crate) details: SharedString,
+}
+
+/// The texts of an info dialog, in the language in force when they are built.
+pub(crate) struct InfoTexts {
+    pub(crate) heading: SharedString,
+    pub(crate) message: SharedString,
+    /// Shown behind a toggle; an empty text shows no toggle.
+    pub(crate) details: SharedString,
+}
+
+/// An open dialog window and the function that builds its texts.
+struct OpenDialog<W, T> {
+    window: W,
+    build_texts: Box<dyn Fn() -> T>,
+}
+
+impl OpenDialog<ErrorDialog, ErrorTexts> {
+    fn push_texts(&self) {
+        push_error_texts(&self.window, (self.build_texts)());
+    }
+}
+
+impl OpenDialog<InfoDialog, InfoTexts> {
+    fn push_texts(&self) {
+        push_info_texts(&self.window, (self.build_texts)());
+    }
+}
+
+fn push_error_texts(dialog: &ErrorDialog, texts: ErrorTexts) {
+    dialog.set_heading(texts.heading);
+    dialog.set_context(texts.context.unwrap_or_default());
+    dialog.set_message(texts.message);
+    dialog.set_details(texts.details);
+}
+
+fn push_info_texts(dialog: &InfoDialog, texts: InfoTexts) {
+    dialog.set_heading(texts.heading);
+    dialog.set_message(texts.message);
+    dialog.set_details(texts.details);
+}
+
 /// Owns every currently-visible dialog window (`ErrorDialog`, `InfoDialog`,
 /// `ReplaceSceneDialog` and `SliceOverwriteDialog`) so they stay alive for as
 /// long as the user hasn't dismissed them. Held as `Rc<DialogManager>` by the
@@ -73,22 +123,47 @@ type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
 /// entry can be cleared without creating an ownership cycle. A single `next_id`
 /// counter feeds every map so ids never collide across dialog kinds.
 pub(crate) struct DialogManager {
-    dialogs: RefCell<HashMap<u64, ErrorDialog>>,
-    info_dialogs: RefCell<HashMap<u64, InfoDialog>>,
+    dialogs: RefCell<HashMap<u64, OpenDialog<ErrorDialog, ErrorTexts>>>,
+    info_dialogs: RefCell<HashMap<u64, OpenDialog<InfoDialog, InfoTexts>>>,
     replace_dialogs: RefCell<HashMap<u64, ReplaceSceneDialog>>,
     slice_overwrite_dialogs: RefCell<HashMap<u64, SliceOverwriteDialog>>,
     next_id: Cell<u64>,
+    _language_follow: Subscription,
 }
 
 impl DialogManager {
-    pub(crate) fn new() -> Rc<Self> {
-        Rc::new(Self {
-            dialogs: RefCell::new(HashMap::new()),
-            info_dialogs: RefCell::new(HashMap::new()),
-            replace_dialogs: RefCell::new(HashMap::new()),
-            slice_overwrite_dialogs: RefCell::new(HashMap::new()),
-            next_id: Cell::new(0),
+    /// Creates the manager of a window's dialogs, which keeps the texts of its
+    /// open error and info dialogs in the language of `bus`. `UiLanguage` must
+    /// subscribe to `bus` first, so that the texts are built in the new
+    /// language.
+    pub(crate) fn new(bus: &Rc<PreferencesBus>) -> Rc<Self> {
+        Rc::new_cyclic(|manager: &std::rc::Weak<Self>| {
+            let manager = manager.clone();
+            Self {
+                dialogs: RefCell::new(HashMap::new()),
+                info_dialogs: RefCell::new(HashMap::new()),
+                replace_dialogs: RefCell::new(HashMap::new()),
+                slice_overwrite_dialogs: RefCell::new(HashMap::new()),
+                next_id: Cell::new(0),
+                _language_follow: bus.subscribe(move |_, change| {
+                    if matches!(change, PreferencesChange::Language)
+                        && let Some(manager) = manager.upgrade()
+                    {
+                        manager.push_texts_again();
+                    }
+                }),
+            }
         })
+    }
+
+    /// Pushes the texts of every open error and info dialog again.
+    fn push_texts_again(&self) {
+        for open in self.dialogs.borrow().values() {
+            open.push_texts();
+        }
+        for open in self.info_dialogs.borrow().values() {
+            open.push_texts();
+        }
     }
 
     /// Returns the headings of the open error dialogs, sorted.
@@ -98,21 +173,21 @@ impl DialogManager {
             .dialogs
             .borrow()
             .values()
-            .map(|dialog| dialog.get_heading().to_string())
+            .map(|open| open.window.get_heading().to_string())
             .collect();
         headings.sort();
         headings
     }
 
-    /// Shows an error dialog immediately. Must run on the Slint UI thread.
-    pub(crate) fn show_error(
-        self: &Rc<Self>,
-        heading: &str,
-        context: Option<String>,
-        message: String,
-        details: String,
-    ) {
-        eprintln!("[error] {heading}: {message}\n{details}");
+    /// Shows an error dialog immediately, with the texts that `build_texts`
+    /// gives in the language in force, now and after each language change. Must
+    /// run on the Slint UI thread.
+    pub(crate) fn show_error(self: &Rc<Self>, build_texts: impl Fn() -> ErrorTexts + 'static) {
+        let texts = build_texts();
+        eprintln!(
+            "[error] {}: {}\n{}",
+            texts.heading, texts.message, texts.details
+        );
         let dialog = match ErrorDialog::new() {
             Ok(d) => d,
             Err(err) => {
@@ -120,12 +195,7 @@ impl DialogManager {
                 return;
             }
         };
-        dialog.set_heading(heading.into());
-        if let Some(ctx) = context {
-            dialog.set_context(ctx.into());
-        }
-        dialog.set_message(message.into());
-        dialog.set_details(details.into());
+        push_error_texts(&dialog, texts);
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -145,13 +215,20 @@ impl DialogManager {
             eprintln!("Failed to show error dialog: {err}");
             return;
         }
-        self.dialogs.borrow_mut().insert(id, dialog);
+        self.dialogs.borrow_mut().insert(
+            id,
+            OpenDialog {
+                window: dialog,
+                build_texts: Box::new(build_texts),
+            },
+        );
     }
 
-    /// Shows a neutral information dialog immediately. Same window lifecycle as
-    /// [`Self::show_error`] (owned by the manager until dismissed), without the
-    /// error styling or the stderr log line. Must run on the Slint UI thread.
-    pub(crate) fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
+    /// Shows a neutral information dialog immediately. Same window lifecycle
+    /// and texts as [`Self::show_error`] (owned by the manager until
+    /// dismissed), without the error styling or the stderr log line. Must run
+    /// on the Slint UI thread.
+    pub(crate) fn show_info(self: &Rc<Self>, build_texts: impl Fn() -> InfoTexts + 'static) {
         let dialog = match InfoDialog::new() {
             Ok(d) => d,
             Err(err) => {
@@ -159,9 +236,7 @@ impl DialogManager {
                 return;
             }
         };
-        dialog.set_heading(heading.into());
-        dialog.set_message(message.into());
-        dialog.set_details(details.into());
+        push_info_texts(&dialog, build_texts());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -181,7 +256,13 @@ impl DialogManager {
             eprintln!("Failed to show info dialog: {err}");
             return;
         }
-        self.info_dialogs.borrow_mut().insert(id, dialog);
+        self.info_dialogs.borrow_mut().insert(
+            id,
+            OpenDialog {
+                window: dialog,
+                build_texts: Box::new(build_texts),
+            },
+        );
     }
 
     /// Queues `show_error` on the next iteration of the Slint event loop.
@@ -193,14 +274,11 @@ impl DialogManager {
     /// and `Rc<DialogManager>` can be captured without `Send`.
     pub(crate) fn show_error_deferred(
         self: &Rc<Self>,
-        heading: String,
-        context: Option<String>,
-        message: String,
-        details: String,
+        build_texts: impl Fn() -> ErrorTexts + 'static,
     ) {
         let me = self.clone();
         slint::Timer::single_shot(core::time::Duration::ZERO, move || {
-            me.show_error(&heading, context, message, details);
+            me.show_error(build_texts);
         });
     }
 
@@ -459,5 +537,192 @@ mod format_anyhow_chain_tests {
             format_anyhow_chain(&err),
             "L4\n  caused by: L3\n  caused by: L2\n  caused by: L1\n  caused by: L0"
         );
+    }
+}
+
+#[cfg(test)]
+mod language_change_tests {
+    use super::*;
+    use crate::i18n::ctr;
+    use crate::language::InstalledTranslations;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::ThemePreference;
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::ui_language::UiLanguage;
+
+    /// A manager of `bus`, created after the UI language follows `bus`, as in
+    /// the app.
+    fn following_manager(bus: &Rc<PreferencesBus>) -> (UiLanguage, Rc<DialogManager>) {
+        // In the app, the 1st main window is the 1st component of the thread.
+        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
+        (ui_language, DialogManager::new(bus))
+    }
+
+    /// The texts of a failed load of `part.stl`. The bundled languages
+    /// translate the heading and the context.
+    fn load_failure() -> ErrorTexts {
+        ErrorTexts {
+            heading: ctr!("ErrorDialog", "Failed to open 3D model"),
+            context: Some(ctr!("ErrorDialog", "File: {}", "part.stl")),
+            message: "Not a mesh.".into(),
+            details: "caused by: no facets".into(),
+        }
+    }
+
+    /// `load_failure`, counting each build in `builds`.
+    fn counted_load_failure(builds: &Rc<Cell<usize>>) -> impl Fn() -> ErrorTexts + 'static {
+        let builds = builds.clone();
+        move || {
+            builds.set(builds.get() + 1);
+            load_failure()
+        }
+    }
+
+    fn the_open_error_dialog(manager: &DialogManager) -> ErrorDialog {
+        let dialogs = manager.dialogs.borrow();
+        let open = dialogs.values().next().expect("an error dialog is open");
+        open.window.clone_strong()
+    }
+
+    fn the_open_info_dialog(manager: &DialogManager) -> InfoDialog {
+        let dialogs = manager.info_dialogs.borrow();
+        let open = dialogs.values().next().expect("an info dialog is open");
+        open.window.clone_strong()
+    }
+
+    fn write_error_sentinels(dialog: &ErrorDialog) {
+        dialog.set_heading("sentinel".into());
+        dialog.set_context("sentinel".into());
+        dialog.set_message("sentinel".into());
+        dialog.set_details("sentinel".into());
+    }
+
+    fn error_texts_shown(dialog: &ErrorDialog) -> [String; 4] {
+        [
+            dialog.get_heading(),
+            dialog.get_context(),
+            dialog.get_message(),
+            dialog.get_details(),
+        ]
+        .map(|text| text.to_string())
+    }
+
+    fn error_texts_of(texts: ErrorTexts) -> [String; 4] {
+        [
+            texts.heading,
+            texts.context.unwrap_or_default(),
+            texts.message,
+            texts.details,
+        ]
+        .map(|text| text.to_string())
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_error_texts_again() {
+        let (shown, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            manager.show_error(load_failure);
+            let dialog = the_open_error_dialog(&manager);
+            write_error_sentinels(&dialog);
+            pick_language(&bus, "es");
+            (error_texts_shown(&dialog), error_texts_of(load_failure()))
+        });
+        assert_eq!(shown, expected);
+        assert_ne!(shown[0], "Failed to open 3D model");
+        assert_ne!(shown[1], "File: part.stl");
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_texts_of_a_deferred_error_again() {
+        let (shown, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            manager.show_error_deferred(load_failure);
+            slint::platform::update_timers_and_animations();
+            let dialog = the_open_error_dialog(&manager);
+            write_error_sentinels(&dialog);
+            pick_language(&bus, "es");
+            (error_texts_shown(&dialog), error_texts_of(load_failure()))
+        });
+        assert_eq!(shown, expected);
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_info_texts_again() {
+        let shown = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            manager.show_info(|| InfoTexts {
+                heading: "Mesh repair".into(),
+                message: "No problems found.".into(),
+                details: "Cube: reoriented 2 faces".into(),
+            });
+            let dialog = the_open_info_dialog(&manager);
+            dialog.set_heading("sentinel".into());
+            dialog.set_message("sentinel".into());
+            dialog.set_details("sentinel".into());
+            pick_language(&bus, "es");
+            [
+                dialog.get_heading(),
+                dialog.get_message(),
+                dialog.get_details(),
+            ]
+            .map(|text| text.to_string())
+        });
+        assert_eq!(
+            shown,
+            [
+                "Mesh repair",
+                "No problems found.",
+                "Cube: reoriented 2 faces"
+            ]
+        );
+    }
+
+    #[test]
+    fn another_change_builds_no_texts() {
+        let builds = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            let builds = Rc::new(Cell::new(0));
+            manager.show_error(counted_load_failure(&builds));
+            bus.update(|snap| {
+                snap.theme = ThemePreference::Dark;
+                PreferencesChange::Theme
+            });
+            builds.get()
+        });
+        assert_eq!(builds, 1);
+    }
+
+    #[test]
+    fn a_closed_dialog_builds_no_texts() {
+        let (builds, open) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            let builds = Rc::new(Cell::new(0));
+            manager.show_error(counted_load_failure(&builds));
+            the_open_error_dialog(&manager).invoke_close_requested();
+            pick_language(&bus, "es");
+            (builds.get(), manager.dialogs.borrow().len())
+        });
+        assert_eq!((builds, open), (1, 0));
+    }
+
+    #[test]
+    fn a_language_change_after_the_manager_is_gone_builds_no_texts() {
+        let builds = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_ui_language, manager) = following_manager(&bus);
+            let builds = Rc::new(Cell::new(0));
+            manager.show_error(counted_load_failure(&builds));
+            drop(manager);
+            pick_language(&bus, "es");
+            builds.get()
+        });
+        assert_eq!(builds, 1);
     }
 }

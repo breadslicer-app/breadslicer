@@ -35,12 +35,15 @@ use crate::mesh_loader::{
     panic_message, parse_source, start_load_with_ticket,
 };
 use crate::mesh_render::DeviceToken;
+use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::test_support::gpu_devices::shared_test_device;
 use crate::test_support::projects::project_with_in_sync_slices;
 
 fn loader() -> SceneLoader {
-    SceneLoader::new_for_test(DialogManager::new())
+    SceneLoader::new_for_test(DialogManager::new(&PreferencesBus::new(
+        PreferencesSnapshot::for_tests(),
+    )))
 }
 
 // --- check_file_size --------------------------------------------------

@@ -14,7 +14,7 @@ use futures_channel::oneshot;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::error_dialog::{DialogManager, ErrorTexts, format_anyhow_chain};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
 use crate::mesh_loader::{self, LoadDispatch};
@@ -555,12 +555,15 @@ async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
 }
 
 fn show_save_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
-    dialogs.show_error(
-        ctr!("ErrorDialog", "Failed to save").as_str(),
-        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
-        err.to_string(),
-        format_anyhow_chain(err),
-    );
+    let target = target.to_path_buf();
+    let message = err.to_string();
+    let details = format_anyhow_chain(err);
+    dialogs.show_error(move || ErrorTexts {
+        heading: ctr!("ErrorDialog", "Failed to save"),
+        context: Some(ctr!("ErrorDialog", "File: {}", target.display())),
+        message: message.as_str().into(),
+        details: details.as_str().into(),
+    });
 }
 
 fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
@@ -673,12 +676,15 @@ pub(crate) async fn run_export_as_flow(
 }
 
 fn show_export_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
-    dialogs.show_error(
-        ctr!("ErrorDialog", "Failed to export").as_str(),
-        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
-        err.to_string(),
-        format_anyhow_chain(err),
-    );
+    let target = target.to_path_buf();
+    let message = err.to_string();
+    let details = format_anyhow_chain(err);
+    dialogs.show_error(move || ErrorTexts {
+        heading: ctr!("ErrorDialog", "Failed to export"),
+        context: Some(ctr!("ErrorDialog", "File: {}", target.display())),
+        message: message.as_str().into(),
+        details: details.as_str().into(),
+    });
 }
 
 async fn pick_export_target(

@@ -36,7 +36,7 @@ use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
@@ -174,50 +174,48 @@ impl RepairRun {
         let completed = match result {
             Ok(completed) => completed,
             Err(panic) => {
-                self.dialogs.show_error(
-                    &ctr!("RepairDialog", "Repair failed"),
-                    None,
-                    ctr!("RepairDialog", "The repair worker crashed.").to_string(),
-                    panic,
-                );
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("RepairDialog", "Repair failed"),
+                    context: None,
+                    message: ctr!("RepairDialog", "The repair worker crashed."),
+                    details: panic.as_str().into(),
+                });
                 return;
             }
         };
         match settle(&self.document, &completed, captured) {
             RepairSettlement::DiscardedStale => {
-                self.dialogs.show_info(
-                    &ctr!("RepairDialog", "Repair discarded"),
-                    ctr!(
+                self.dialogs.show_info(|| InfoTexts {
+                    heading: ctr!("RepairDialog", "Repair discarded"),
+                    message: ctr!(
                         "RepairDialog",
                         "The scene changed while repairing; nothing was applied."
-                    )
-                    .to_string(),
-                    String::new(),
-                );
+                    ),
+                    details: Default::default(),
+                });
             }
             RepairSettlement::NothingApplied | RepairSettlement::Applied => {
-                let details = self
+                let outcomes = completed.outcomes;
+                let names = self
                     .document
-                    .with_scene(|spatial| dialog_lines(&completed.outcomes, spatial.graph()))
-                    .unwrap_or_default()
-                    .join("\n");
-                self.dialogs.show_info(
-                    &ctr!("RepairDialog", "Mesh repair"),
-                    summary_message(&completed.outcomes),
-                    details,
-                );
+                    .with_scene(|spatial| target_names(&outcomes, spatial.graph()))
+                    .unwrap_or_default();
+                self.dialogs.show_info(move || InfoTexts {
+                    heading: ctr!("RepairDialog", "Mesh repair"),
+                    message: summary_message(&outcomes).into(),
+                    details: dialog_lines(&outcomes, &names).join("\n").into(),
+                });
             }
             RepairSettlement::Rejected(error) => {
-                self.dialogs.show_error(
-                    &ctr!("RepairDialog", "Repair failed"),
-                    None,
-                    ctr!(
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("RepairDialog", "Repair failed"),
+                    context: None,
+                    message: ctr!(
                         "RepairDialog",
                         "The scene rejected the repair edit; nothing was changed."
-                    )
-                    .to_string(),
-                    error.to_string(),
-                );
+                    ),
+                    details: error.to_string().into(),
+                });
             }
         }
     }
@@ -340,12 +338,14 @@ fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
 
 /// Builds the per-mesh detail lines: 1 line per target with something to say
 /// (fixes, a refusal, or a remaining edge-manifold failure); clean targets stay
-/// silent.
-fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
+/// silent. `names` holds the scene name of each target of `outcomes`, as
+/// [`target_names`] gives them; a target with no name gets a 1-based fallback.
+fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Vec<String> {
     outcomes
         .iter()
+        .zip(names)
         .enumerate()
-        .filter_map(|(i, outcome)| {
+        .filter_map(|(i, (outcome, name))| {
             let mut notes: Vec<String> = Vec::new();
             let mut removed = 0usize;
             let mut reoriented = 0usize;
@@ -374,45 +374,49 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<String> {
             if notes.is_empty() {
                 return None;
             }
-            Some(format!(
-                "{}: {}",
-                target_display_name(graph, outcome.target, i),
-                notes.join("; ")
-            ))
+            let name = name
+                .clone()
+                .unwrap_or_else(|| ctr!("RepairDialog", "Mesh {}", i + 1).to_string());
+            Some(format!("{name}: {}", notes.join("; ")))
         })
         .collect()
 }
 
-/// Returns the display name of a target: the first referencing leaf's scene
-/// name, else the mesh's own name, else a 1-based fallback, the same resolution
+/// Returns the scene name of each target of `outcomes`, in their order: the
+/// first referencing leaf's name, else the mesh's own name, the same resolution
 /// order the object list uses.
-fn target_display_name(graph: &Scene, target: MeshTarget, ordinal: usize) -> String {
-    let node_name = graph
-        .leaves_referencing(target)
-        .into_iter()
-        .next()
-        .and_then(|id| graph.node(id))
-        .and_then(|node| node.meta.as_ref())
-        .and_then(|meta| meta.name.clone());
-    let mesh_name = graph
-        .target_mesh(target)
-        .and_then(|mesh| mesh.meta().as_ref())
-        .and_then(|meta| meta.name.clone());
-    node_name
-        .or(mesh_name)
-        .unwrap_or_else(|| ctr!("RepairDialog", "Mesh {}", ordinal + 1).to_string())
+fn target_names(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<Option<String>> {
+    outcomes
+        .iter()
+        .map(|outcome| {
+            let node_name = graph
+                .leaves_referencing(outcome.target)
+                .into_iter()
+                .next()
+                .and_then(|id| graph.node(id))
+                .and_then(|node| node.meta.as_ref())
+                .and_then(|meta| meta.name.clone());
+            let mesh_name = graph
+                .target_mesh(outcome.target)
+                .and_then(|mesh| mesh.meta().as_ref())
+                .and_then(|meta| meta.name.clone());
+            node_name.or(mesh_name)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod repair_run_tests {
     use std::path::PathBuf;
 
+    use sc_mesh_core::primitives::FaceIndex;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
         unit_cube_mesh, unit_cube_with_flipped_faces,
     };
     use sc_scene::node::LeafPayload;
+    use sc_scene_fixtures::named_trio_under_group_root;
 
     use super::*;
     use crate::mesh_health::{MeshHealth, scene_mesh_health};
@@ -637,13 +641,55 @@ mod repair_run_tests {
     fn dialog_lines_name_each_touched_mesh_and_skip_clean_ones() {
         let scene = broken_trio_scene();
         let completed = run_repair(scene.clone());
-        let lines = dialog_lines(&completed.outcomes, &scene);
+        let names = target_names(&completed.outcomes, &scene);
+        let lines = dialog_lines(&completed.outcomes, &names);
         assert_eq!(lines.len(), 3, "3 defective targets, clean cube silent");
         assert!(
             lines
                 .iter()
                 .all(|line| line.contains("reoriented") && line.contains("face")),
             "each line reports the flip fixes: {lines:?}"
+        );
+    }
+
+    /// An outcome for `target` with 1 flipped face and nothing left to fix.
+    fn one_flip(target: MeshTarget) -> SceneRepairOutcome {
+        SceneRepairOutcome {
+            target,
+            fixes: vec![MeshFix::FlippedFaceOrientation {
+                face_idx: FaceIndex::from(0),
+            }],
+            refusal: None,
+            edge_manifold_after: true,
+        }
+    }
+
+    #[test]
+    fn target_names_give_the_scene_name_of_each_target_in_order() {
+        let scene = named_trio_under_group_root([0.0; 3]);
+        let outcomes: Vec<_> = scene.mesh_targets().into_iter().map(one_flip).collect();
+        let expected = ["Cube", "ZTunnel", "YTunnel"].map(|name| Some(name.to_string()));
+        assert_eq!(target_names(&outcomes, &scene), expected);
+    }
+
+    #[test]
+    fn an_unnamed_target_has_no_scene_name() {
+        let scene = broken_trio_scene();
+        let completed = run_repair(scene.clone());
+        assert_eq!(
+            target_names(&completed.outcomes, &scene),
+            [None, None, None, None]
+        );
+    }
+
+    #[test]
+    fn dialog_lines_number_a_target_with_no_scene_name() {
+        let targets = broken_trio_scene().mesh_targets();
+        let outcomes = [one_flip(targets[0]), one_flip(targets[1])];
+        let names = [Some("Lid".to_string()), None];
+        assert_eq!(
+            dialog_lines(&outcomes, &names),
+            ["Lid: reoriented 1 face(s)", "Mesh 2: reoriented 1 face(s)"]
         );
     }
 }

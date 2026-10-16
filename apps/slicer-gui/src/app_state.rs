@@ -21,6 +21,7 @@ use crate::app_settings::AppSettings;
 use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
+use crate::error_dialog::{ErrorTexts, InfoTexts};
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
 use crate::language::InstalledTranslations;
@@ -505,12 +506,12 @@ impl AppState {
             return;
         }
         if let Some(wired) = windows.values().next() {
-            wired.controller.dialogs().show_error(
-                &ctr!("ErrorDialog", "The graphics device was lost"),
-                None,
-                GraphicsUnavailable::DeviceLost.message(),
-                reason,
-            );
+            wired.controller.dialogs().show_error(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "The graphics device was lost"),
+                context: None,
+                message: GraphicsUnavailable::DeviceLost.message().into(),
+                details: reason.as_str().into(),
+            });
         }
     }
 
@@ -533,6 +534,7 @@ impl AppState {
             document,
             pending_load.clone(),
             self.device_loss.clone(),
+            &self.prefs,
         ));
         ctrl.register_document_listener();
         // Bus listeners run on `update` only, so the window gets the current
@@ -755,17 +757,16 @@ impl AppState {
         );
         match action {
             OpenPathAction::RejectUnsupported => {
-                controller.dialogs().show_error(
-                    ctr!("ErrorDialog", "Unsupported file type").as_str(),
-                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                    ctr!(
+                controller.dialogs().show_error(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Unsupported file type"),
+                    context: Some(ctr!("ErrorDialog", "File: {}", path.display())),
+                    message: ctr!(
                         "ErrorDialog",
                         "Only the following file types can be opened: {}",
                         SUPPORTED_MESH_EXTENSIONS.join(", ")
-                    )
-                    .to_string(),
-                    String::new(),
-                );
+                    ),
+                    details: Default::default(),
+                });
             }
             OpenPathAction::DispatchImmediately => {
                 self.dispatch_path_to_loader(window_id, path);
@@ -990,15 +991,14 @@ impl AppState {
             match outcome {
                 SaveOutcome::Saved => {}
                 SaveOutcome::MovedOn => {
-                    dialogs.show_info(
-                        &ctr!("SaveDialog", "Scene not replaced"),
-                        ctr!(
+                    dialogs.show_info(|| InfoTexts {
+                        heading: ctr!("SaveDialog", "Scene not replaced"),
+                        message: ctr!(
                             "SaveDialog",
                             "The scene changed while saving, so the file does not hold its current state. Nothing was replaced."
-                        )
-                        .to_string(),
-                        String::new(),
-                    );
+                        ),
+                        details: Default::default(),
+                    });
                     return;
                 }
                 SaveOutcome::NotSaved => return,
@@ -1842,6 +1842,7 @@ mod subscribe_window_preferences_tests {
             SceneDocument::new(),
             Rc::new(PendingLoad::new()),
             DeviceLoss::default(),
+            &bus,
         ));
         controller.register_document_listener();
         controller.set_build_volume(envelope.current());
@@ -2051,6 +2052,7 @@ mod window_wiring_tests {
             SceneDocument::new(),
             pending_load.clone(),
             app.device_loss.clone(),
+            &app.prefs,
         ));
         controller.register_document_listener();
         controller.set_build_volume(app.default_envelope.current());

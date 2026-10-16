@@ -29,7 +29,7 @@ use sc_sl1cer::VERSION;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat, WriterError};
 
 use crate::MainWindow;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress::ExportPhase;
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
@@ -259,12 +259,16 @@ async fn run_export_flow(
 }
 
 fn show_export_failure(dialogs: &Rc<DialogManager>, target: Option<&Path>, err: &ExportFailure) {
-    dialogs.show_error(
-        ctr!("ErrorDialog", "Cannot export for the printer").as_str(),
-        target.map(|path| ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-        err.to_string(),
-        String::new(),
-    );
+    let target = target.map(Path::to_path_buf);
+    let message = err.to_string();
+    dialogs.show_error(move || ErrorTexts {
+        heading: ctr!("ErrorDialog", "Cannot export for the printer"),
+        context: target
+            .as_ref()
+            .map(|path| ctr!("ErrorDialog", "File: {}", path.display())),
+        message: message.as_str().into(),
+        details: Default::default(),
+    });
 }
 
 /// Asks for the file to write, seeded with the format's own extension.

@@ -139,10 +139,11 @@ impl SessionState {
 #[cfg(test)]
 mod session_state_tests {
     use super::*;
+    use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
     use crate::scene_loader::SceneLoader;
 
     fn new_session() -> SessionState {
-        let dialogs = DialogManager::new();
+        let dialogs = DialogManager::new(&PreferencesBus::new(PreferencesSnapshot::for_tests()));
         SessionState::new(
             SceneDocument::new(),
             Rc::new(SceneLoader::new_for_test(dialogs.clone())),

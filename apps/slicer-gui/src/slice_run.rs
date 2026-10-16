@@ -31,7 +31,7 @@ use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
@@ -153,12 +153,12 @@ impl SliceRun {
             snapshot.aa_level,
             self.document.scene_revision(),
         ) else {
-            self.dialogs.show_error(
-                "Cannot slice",
-                None,
-                "Choose a printer and a resin before slicing.".to_string(),
-                String::new(),
-            );
+            self.dialogs.show_error(|| ErrorTexts {
+                heading: "Cannot slice".into(),
+                context: None,
+                message: "Choose a printer and a resin before slicing.".into(),
+                details: Default::default(),
+            });
             return;
         };
 
@@ -364,8 +364,13 @@ impl SliceRun {
                 // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
-                self.dialogs
-                    .show_error("Slicing failed", None, err.to_string(), String::new());
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: "Slicing failed".into(),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
             }
         }
     }

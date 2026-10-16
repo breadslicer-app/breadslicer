@@ -40,7 +40,7 @@ use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 #[cfg(test)]
 use crate::gizmo;
@@ -50,6 +50,9 @@ use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender};
 use crate::pending_load::PendingLoad;
 use crate::picking;
+use crate::preferences_bus::PreferencesBus;
+#[cfg(test)]
+use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
@@ -78,8 +81,9 @@ impl ViewportController {
         document: Rc<SceneDocument>,
         pending_load: Rc<PendingLoad>,
         device_loss: DeviceLoss,
+        bus: &Rc<PreferencesBus>,
     ) -> Self {
-        let dialogs = DialogManager::new();
+        let dialogs = DialogManager::new(bus);
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
@@ -107,7 +111,7 @@ impl ViewportController {
     /// only observable state. This matches `SceneLoader::new_for_test`.
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
-        let dialogs = DialogManager::new();
+        let dialogs = DialogManager::new(&PreferencesBus::new(PreferencesSnapshot::for_tests()));
         let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
         let save_progress = Rc::new(SaveProgressPanel::new(slint::Weak::default()));
         let export_progress = Rc::new(ExportProgressPanel::new(slint::Weak::default()));
@@ -737,16 +741,15 @@ impl ViewportController {
     /// edits against the live scene, so a rejection indicates a programming
     /// bug, which the dialog makes visible.
     fn show_edit_rejected(&self, error: SceneError) {
-        self.session.dialogs().show_error(
-            &ctr!("ErrorDialog", "Edit failed"),
-            None,
-            ctr!(
+        self.session.dialogs().show_error(move || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Edit failed"),
+            context: None,
+            message: ctr!(
                 "ErrorDialog",
                 "The scene rejected the last edit; nothing was changed."
-            )
-            .to_string(),
-            error.to_string(),
-        );
+            ),
+            details: error.to_string().into(),
+        });
     }
 
     /// Returns whether a repair worker is running. Undo and redo are silenced
@@ -1105,12 +1108,17 @@ impl ViewportController {
     /// that reason.
     pub(super) fn post_renderer_refused(&self, err: RendererInitError) {
         self.session.loader().note_renderer_refused(err.to_string());
-        self.session.dialogs().show_error_deferred(
-            ctr!("ErrorDialog", "The 3D view could not start").to_string(),
-            Some(ctr!("ErrorDialog", "Files cannot be opened in this window.").to_string()),
-            err.to_string(),
-            err.source.to_string(),
-        );
+        self.session
+            .dialogs()
+            .show_error_deferred(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "The 3D view could not start"),
+                context: Some(ctr!(
+                    "ErrorDialog",
+                    "Files cannot be opened in this window."
+                )),
+                message: err.to_string().into(),
+                details: err.source.to_string().into(),
+            });
         if let Some(path) = self.session.pending_load().take()
             && let Some(ticket) = self.session.loader().begin_load()
         {
@@ -1435,18 +1443,18 @@ impl ViewportController {
         self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
-            Err(err) => self.session.dialogs().show_error_deferred(
-                ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
-                Some(
-                    ctr!(
+            Err(err) => self
+                .session
+                .dialogs()
+                .show_error_deferred(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Failed to display the 3D model"),
+                    context: Some(ctr!(
                         "ErrorDialog",
                         "The rendered texture could not be handed to the UI."
-                    )
-                    .to_string(),
-                ),
-                err.to_string(),
-                format!("{err:?}"),
-            ),
+                    )),
+                    message: err.to_string().into(),
+                    details: format!("{err:?}").into(),
+                }),
         }
     }
 
