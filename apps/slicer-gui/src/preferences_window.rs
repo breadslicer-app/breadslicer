@@ -17,9 +17,9 @@ use slint::{
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    CalibrationTarget, EffectiveMaterial, MaterialProfile, ProfileLibraries,
-    delete_material_extension_from_library, delete_material_profile_from_library,
-    load_material_extension_from_library, load_material_profile_from_library, user_library_dir,
+    CalibrationTarget, EffectiveMaterial, delete_material_extension_from_library,
+    delete_material_profile_from_library, load_material_extension_from_library,
+    load_material_profile_from_library, user_library_dir,
 };
 
 use crate::aa_level::aa_level_from_combo_index;
@@ -40,7 +40,7 @@ use crate::preferences_filters::{
 };
 use crate::profile_catalog::{
     MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
-    ProfileSource, has_active_matcher,
+    ProfileSource, has_active_matcher, load_profile_for_view, refresh_catalog,
 };
 use crate::profile_extending::{build_extension_update, copy_sources, uncovered_targets};
 use crate::profile_forking::{ForkParts, build_fork};
@@ -530,12 +530,6 @@ fn string_model(values: &[String]) -> ModelRc<SharedString> {
     ))
 }
 
-fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
-    *handle.borrow_mut() = Rc::new(ProfileCatalog::from_libraries(
-        &ProfileLibraries::platform_default(),
-    ));
-}
-
 /// Runs the export flow for `scope`: pick a `.zip` destination, then package
 /// the matching profiles from the user library. Failures are reported on
 /// stderr; the library is read-only here.
@@ -616,47 +610,6 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
     }) {
         eprintln!("failed to spawn import task: {err}");
     }
-}
-
-/// Loads the material profile behind a catalog entry. Regular entries resolve
-/// through the by-id cascade (user library shadowing the bundled roots); an id
-/// whose only file is an extension (its base profile is gone) falls back to the
-/// extension file itself so the data stays viewable.
-fn load_profile_for_view(
-    catalog: &ProfileCatalog,
-    index: i32,
-) -> Option<(MaterialProfile, Option<MaterialProfile>, ProfileSource)> {
-    let entry = catalog.materials().get(index as usize)?;
-    let libraries = ProfileLibraries::platform_default();
-
-    let profile = match libraries.load_material_by_id(&entry.id) {
-        Ok(profile) => profile,
-        Err(base_err) => {
-            let orphan = libraries.user_library_dir().and_then(|user_lib| {
-                load_material_extension_from_library(user_lib, &entry.id).ok()
-            });
-            match orphan {
-                Some(orphan_extension) => orphan_extension,
-                None => {
-                    eprintln!("{base_err}");
-                    return None;
-                }
-            }
-        }
-    };
-
-    let extension = catalog.extension_for(&entry.id).and_then(|_| {
-        let user_lib = libraries.user_library_dir()?;
-        match load_material_extension_from_library(user_lib, &entry.id) {
-            Ok(extension) => Some(extension),
-            Err(err) => {
-                eprintln!("{err}");
-                None
-            }
-        }
-    });
-
-    Some((profile, extension, entry.source))
 }
 
 /// Opens the read-only profile viewer for the resin at `index`: the base
@@ -2177,6 +2130,8 @@ mod build_card_data_tests {
 #[cfg(test)]
 mod delete_flow_tests {
     use std::fs;
+
+    use sc_print_profiles::ProfileLibraries;
 
     use super::*;
 
