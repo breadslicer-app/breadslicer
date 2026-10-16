@@ -37,7 +37,10 @@ mod tests_gpu;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
-pub use error::{RenderAllocation, RenderError, RendererInitError, RendererStage};
+pub use error::{
+    AllocationRefusal, RenderAllocation, RenderError, RendererInitError, RendererStage,
+    StageRefusal,
+};
 use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
@@ -60,100 +63,96 @@ use scene_upload::{
 };
 use targets::{MsaaTargets, TargetPool};
 
-/// Scene-dependent inputs to [`Renderer::render`]. The selection
-/// drives the outline post-pass and the gizmo overlay drives the
-/// gizmo pass; both are meaningful only when a scene is loaded, so
-/// they live alongside the scene reference rather than on
-/// [`Renderer::render`]'s top-level signature where the type system
-/// would let a caller pass `selection: Some(_)` against
-/// `scene: None`.
+/// Scene-dependent inputs to [`Renderer::render`]. The selection drives the
+/// outline post-pass and the gizmo overlay drives the gizmo pass; both are
+/// meaningful only when a scene is loaded, so they live alongside the scene
+/// reference rather than on [`Renderer::render`]'s top-level signature where
+/// the type system would let a caller pass `selection: Some(_)` against `scene:
+/// None`.
 #[derive(Clone, Copy, Debug)]
 pub struct SceneRender<'a> {
     pub graph: &'a Scene,
-    /// Stable [`NodeId`] whose stencil mask the outline post-pass
-    /// dilates. `None` skips the outline pass; a `NodeId` that does
-    /// not name a reachable leaf is treated the same as `None`.
+    /// Stable [`NodeId`] whose stencil mask the outline post-pass dilates.
+    /// `None` skips the outline pass; a `NodeId` that does not name a reachable
+    /// leaf is treated the same as `None`.
     pub selection: Option<NodeId>,
-    /// Gizmo overlay parameters; the gizmo pass runs only when
-    /// this is `Some`.
+    /// Gizmo overlay parameters; the gizmo pass runs only when this is `Some`.
     pub gizmo: Option<GizmoFrame>,
-    /// World-space Z (mm) above which mesh fragments are discarded, so
-    /// the slice slider can reveal the model layer by layer. `None`
-    /// renders the whole mesh.
+    /// World-space Z (mm) above which mesh fragments are discarded, so the
+    /// slice slider can reveal the model layer by layer. `None` renders the
+    /// whole mesh.
     pub clip_z: Option<f32>,
 }
 
 /// What a frame draws around the models.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum FrameContents {
-    /// The machine's workspace: the plate, its cage and envelope, and
-    /// the slice cap when one is installed.
+    /// The machine's workspace: the plate, its cage and envelope, and the slice
+    /// cap when one is installed.
     Workspace,
     /// The models by themselves.
     ModelsOnly,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-/// Format for the gizmo pass's private depth attachment. Stencil is
-/// not used by the gizmo pipeline, so a plain `Depth32Float` (default-
-/// limits supported, single-aspect) suffices.
+/// Format for the gizmo pass's private depth attachment. Stencil is not used by
+/// the gizmo pipeline, so a plain `Depth32Float` (default-limits supported,
+/// single-aspect) suffices.
 const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-// Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a
-// single attachment. The selection-outline post-pass writes `1` to
-// stencil for the selected object via per-draw stencil reference, then
-// reads that stencil aspect in a fullscreen edge-detect. Default-limits
-// supported on every wgpu backend Slint may pick.
+// Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a single
+// attachment. The selection-outline post-pass writes `1` to stencil for the
+// selected object via per-draw stencil reference, then reads that stencil
+// aspect in a fullscreen edge-detect. Default-limits supported on every wgpu
+// backend Slint may pick.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-// 4x MSAA: each pixel rasterises 4 samples and resolves to one colour,
-// costing ~4x colour/depth/stencil attachment bandwidth in exchange for
-// smooth mesh silhouettes and grid lines. Default-limits supported on
-// every wgpu backend; 8x adds little visible benefit on this geometry.
+// 4x MSAA: each pixel rasterises 4 samples and resolves to 1 colour, costing
+// ~4x colour/depth/stencil attachment bandwidth in exchange for smooth mesh
+// silhouettes and grid lines. Default-limits supported on every wgpu backend;
+// 8x adds little visible benefit on this geometry.
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
-/// A `GpuScene` paired with its models bind group. The bind group
-/// references the scene's storage buffer by handle, so it must be
-/// rebuilt every time the storage buffer is recreated (i.e. on every
-/// scene install or upload).
+/// A `GpuScene` paired with its models bind group. The bind group references
+/// the scene's storage buffer by handle, so it must be rebuilt every time the
+/// storage buffer is recreated (i.e. on every scene install or upload).
 struct InstalledScene {
     gpu: GpuScene,
     models_bind_group: wgpu::BindGroup,
 }
 
-/// Identity token used to detect cross-device installation of a
-/// `GpuScene`. `wgpu::Device`'s own `PartialEq` proxies to the inner
-/// state's value-equality, which compares two separately-created
-/// devices as equal even when they are distinct GPU resources; the
-/// install-time guard cannot use it. Every fresh device pairing must
-/// mint a new token via [`DeviceToken::next`]; `GpuScene::build` and
-/// `Renderer::new` store the same token, and
-/// `Renderer::install_scene` rejects any `GpuScene` whose token does
-/// not match the renderer's own.
+/// Identity token used to detect cross-device installation of a `GpuScene`.
+/// `wgpu::Device`'s own `PartialEq` proxies to the inner state's
+/// value-equality, which compares 2 separately-created devices as equal even
+/// when they are distinct GPU resources; the install-time guard cannot use it.
+/// Every fresh device pairing must mint a new token via [`DeviceToken::next`];
+/// `GpuScene::build` and `Renderer::new` store the same token, and
+/// `Renderer::install_scene` rejects any `GpuScene` whose token does not match
+/// the renderer's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DeviceToken(u64);
 
 impl DeviceToken {
-    /// Mints a token that is process-globally unique for the lifetime
-    /// of the process. Wrap raises on overflow at `u64::MAX` mints.
+    /// Mints a token that is process-globally unique for the lifetime of the
+    /// process. Wrap raises on overflow at `u64::MAX` mints.
     pub fn next() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(1);
         Self(COUNTER.fetch_add(1, Ordering::Relaxed))
     }
 }
 
-/// Logs to stderr every uncaught wgpu error on `device`.
-/// Without this, wgpu's default handler panics on them.
+/// Logs to stderr every uncaught wgpu error on `device`. Without this, wgpu's
+/// default handler panics on them.
 pub fn install_device_error_logger(device: &wgpu::Device) {
     device.on_uncaptured_error(std::sync::Arc::new(|err: wgpu::Error| {
         eprintln!("wgpu error (uncaptured): {err}");
     }));
 }
 
-/// GPU device pairing plus the identity token used to detect a
-/// cross-device install. Grouped so the [`Renderer`] struct does not
-/// expose three loose fields whose lifetime is tied together (the
-/// device, the queue, and the token are minted together at
-/// `RenderingSetup` and dropped together at `RenderingTeardown`).
+/// GPU device pairing plus the identity token used to detect a cross-device
+/// install. Grouped so the [`Renderer`] struct does not expose 3 loose fields
+/// whose lifetime is tied together (the device, the queue, and the token are
+/// minted together at `RenderingSetup` and dropped together at
+/// `RenderingTeardown`).
 struct RendererCore {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -163,11 +162,10 @@ struct RendererCore {
     max_texture_side: u32,
 }
 
-/// Per-pipeline GPU state. The mesh / outline / gizmo / plate
-/// pipelines are immutable after construction; `gizmo_buffers` holds
-/// the gizmo pass's vertex/index data, also immutable, while
-/// `plate_buffers` is cached lazily because the plate geometry
-/// depends on the runtime `BuildVolume`.
+/// Per-pipeline GPU state. The mesh / outline / gizmo / plate pipelines are
+/// immutable after construction; `gizmo_buffers` holds the gizmo pass's
+/// vertex/index data, also immutable, while `plate_buffers` is cached lazily
+/// because the plate geometry depends on the runtime `BuildVolume`.
 struct Pipelines {
     mesh: MeshPipeline,
     outline: OutlinePipeline,
@@ -180,14 +178,14 @@ struct Pipelines {
     /// The plate-label pipeline, immutable after construction.
     label: LabelPipeline,
     label_state: LabelState,
-    /// Cached plate geometry for the current `BuildVolume`. `None`
-    /// until the first render call; rebuilt when the per-frame
-    /// `BuildVolume` differs from the cached one.
+    /// Cached plate geometry for the current `BuildVolume`. `None` until the
+    /// first render call; rebuilt when the per-frame `BuildVolume` differs from
+    /// the cached one.
     plate_buffers: Option<PlateBuffers>,
 }
 
-/// State of the slice-view cap texture, keyed by the layer it was last
-/// built for. The bind group keeps the texture and its view alive.
+/// State of the slice-view cap texture, keyed by the layer it was last built
+/// for. The bind group keeps the texture and its view alive.
 enum CapState {
     Off,
     Shown {
@@ -208,9 +206,9 @@ impl CapState {
     }
 }
 
-/// State of the plate label's texture, keyed by the word it was last
-/// built for. The bind group keeps the texture and its view alive,
-/// and the tab it is drawn on is sized by that same word.
+/// State of the plate label's texture, keyed by the word it was last built for.
+/// The bind group keeps the texture and its view alive, and the tab it is drawn
+/// on is sized by that same word.
 enum LabelState {
     Off,
     Shown {
@@ -231,8 +229,8 @@ impl LabelState {
         }
     }
 
-    /// Returns the tab carrying the label, `None` when there is no
-    /// label to carry: the tab exists for the word.
+    /// Returns the tab carrying the label, `None` when there is no label to
+    /// carry: the tab exists for the word.
     fn tab(&self) -> Option<FrontTab> {
         match self {
             Self::Shown { tab, .. } => Some(*tab),
@@ -241,10 +239,9 @@ impl LabelState {
     }
 }
 
-/// Viewport-sized GPU allocations that are dropped and recreated when
-/// the render-target size changes. Both fields are `None` until the
-/// first render call and after [`Renderer::invalidate_sizing`] /
-/// [`Renderer::clear_scene`].
+/// Viewport-sized GPU allocations that are dropped and recreated when the
+/// render-target size changes. Both fields are `None` until the first render
+/// call and after [`Renderer::invalidate_sizing`] / [`Renderer::clear_scene`].
 struct TargetManager {
     msaa: Option<MsaaTargets>,
     targets: Option<TargetPool>,
@@ -267,18 +264,17 @@ impl std::fmt::Debug for Renderer {
 
 /// Vertical field of view in radians.
 ///
-/// Chosen so that a sphere of the scene's bounding radius fills
-/// `FIT_FRACTION` of the viewport height when the camera sits at its initial
-/// framing distance (`DEFAULT_DISTANCE_FACTOR * radius`). Being a pure
-/// function of those constants, the FOV is viewport-independent, resizing
-/// the window rescales the image but never distorts perspective.
+/// Chosen so that a sphere of the scene's bounding radius fills `FIT_FRACTION`
+/// of the viewport height when the camera sits at its initial framing distance
+/// (`DEFAULT_DISTANCE_FACTOR * radius`). Being a pure function of those
+/// constants, the FOV is viewport-independent, resizing the window rescales the
+/// image but never distorts perspective.
 pub fn default_fov_y() -> f32 {
     2.0 * (1.0 / (FIT_FRACTION * DEFAULT_DISTANCE_FACTOR)).atan()
 }
 
 impl Renderer {
-    /// Builds every static GPU resource of the viewport against
-    /// `device`.
+    /// Builds every static GPU resource of the viewport against `device`.
     pub fn new(
         device: wgpu::Device,
         device_token: DeviceToken,
@@ -325,10 +321,10 @@ impl Renderer {
         })
     }
 
-    /// Identity token of the device pairing this renderer was built
-    /// against. Callers thread this token through to worker-side
-    /// `GpuScene::build` so the eventual `install_scene` can match
-    /// the worker's snapshot against the renderer's current device.
+    /// Identity token of the device pairing this renderer was built against.
+    /// Callers thread this token through to worker-side `GpuScene::build` so
+    /// the eventual `install_scene` can match the worker's snapshot against the
+    /// renderer's current device.
     pub fn device_token(&self) -> DeviceToken {
         self.core.device_token
     }
@@ -339,39 +335,36 @@ impl Renderer {
         self.target_manager.targets = None;
     }
 
-    /// Drops the viewport-sized allocations (MSAA + target pool) so the
-    /// next `render` reallocates them at the current `(width, height)`.
-    /// Used by `ViewportController::on_resize_settled` to snap back from
-    /// bucketed drag-resize sizing to exact pixel sizing once the user
-    /// stops resizing.
+    /// Drops the viewport-sized allocations (MSAA + target pool) so the next
+    /// `render` reallocates them at the current `(width, height)`. Used by
+    /// `ViewportController::on_resize_settled` to snap back from bucketed
+    /// drag-resize sizing to exact pixel sizing once the user stops resizing.
     pub fn invalidate_sizing(&mut self) {
         self.target_manager.msaa = None;
         self.target_manager.targets = None;
     }
 
-    /// World-space AABB of the currently uploaded scene, captured at
-    /// install time via `Scene::aabb`. `None` if nothing has been
-    /// uploaded yet.
+    /// World-space AABB of the currently uploaded scene, captured at install
+    /// time via `Scene::aabb`. `None` if nothing has been uploaded yet.
     pub fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
         self.scene.as_ref().map(|s| s.gpu.aabb())
     }
 
-    /// Replaces the renderer's scene with one built from `graph`,
-    /// blocking the caller for the whole build. Afterwards the renderer
-    /// holds the new scene on `Ok`, and no scene at all on `Err`. When
-    /// `graph` has no renderable leaves ([`render`] then draws the plate
-    /// alone).
+    /// Replaces the renderer's scene with one built from `graph`, blocking the
+    /// caller for the whole build. Afterwards the renderer holds the new scene
+    /// on `Ok`, and no scene at all on `Err`. When `graph` has no renderable
+    /// leaves ([`render`] then draws the plate alone).
     ///
     /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
         if self.core.device_loss.is_lost() {
             return Err(scene_upload::DeviceLostDuringUpload.into());
         }
-        // Released before the build so the old and the new scene never
-        // occupy device memory at the same time.
+        // Released before the build so the old and the new scene never occupy
+        // device memory at the same time.
         self.scene = None;
-        // An empty model uniform buffer would fail bind-group
-        // validation, so a leafless graph gets no scene at all.
+        // An empty model uniform buffer would fail bind-group validation, so a
+        // leafless graph gets no scene at all.
         if renderable_leaf_count(graph)? == 0 {
             self.clear_scene();
             return Ok(());
@@ -387,9 +380,9 @@ impl Renderer {
     }
 
     /// Installs a `GpuScene` built on a worker thread, but only if its
-    /// `device_token` matches this renderer's and the device is not
-    /// lost. Returns `false` otherwise; the caller falls back to the
-    /// recovery upload path.
+    /// `device_token` matches this renderer's and the device is not lost.
+    /// Returns `false` otherwise; the caller falls back to the recovery upload
+    /// path.
     pub fn install_scene(&mut self, gpu: GpuScene) -> bool {
         if self.core.device_token != gpu.device_token() || self.core.device_loss.is_lost() {
             return false;
@@ -399,10 +392,10 @@ impl Renderer {
     }
 
     fn attach_scene(&mut self, gpu: GpuScene) {
-        // The bind group references a single ModelEntry-sized window into
-        // the per-scene uniform buffer; the dynamic offset shifts that
-        // window to the right slot per draw call. The window size must
-        // match `min_binding_size` declared in the layout.
+        // The bind group references a single ModelEntry-sized window into the
+        // per-scene uniform buffer; the dynamic offset shifts that window to
+        // the right slot per draw call. The window size must match
+        // `min_binding_size` declared in the layout.
         let models_bind_group = self
             .core
             .device
@@ -433,8 +426,8 @@ impl Renderer {
         {
             return Ok(());
         }
-        // Freed before the new allocation, not after, so a refusal is
-        // not caused by the bundle it replaces.
+        // Freed before the new allocation, not after, so a refusal is not
+        // caused by the bundle it replaces.
         self.target_manager.msaa = None;
         self.target_manager.msaa = Some(MsaaTargets::create(
             &self.core.device,
@@ -459,12 +452,11 @@ impl Renderer {
         Ok(())
     }
 
-    /// Lazily create or rebuild the plate's GPU buffers. The cache
-    /// key is the `BuildVolume` plus the front tab's footprint; a
-    /// different value triggers a rebuild so a runtime envelope
-    /// change reaches the next frame. On `Err` the cache is empty, so
-    /// the next frame retries. The returned value clones the cached
-    /// wgpu handles (reference counted), so no borrow of `self`
+    /// Lazily create or rebuild the plate's GPU buffers. The cache key is the
+    /// `BuildVolume` plus the front tab's footprint; a different value triggers
+    /// a rebuild so a runtime envelope change reaches the next frame. On `Err`
+    /// the cache is empty, so the next frame retries. The returned value clones
+    /// the cached wgpu handles (reference counted), so no borrow of `self`
     /// outlives the call.
     fn ensure_plate_buffers(
         &mut self,
@@ -484,12 +476,11 @@ impl Renderer {
         Ok(self.pipelines.plate_buffers.insert(buffers).clone())
     }
 
-    /// Refresh the slice-view cap texture. `key` identifies the layer
-    /// being capped; `None` clears the cap. When `key` matches the
-    /// current cap (shown or refused) nothing happens, so a camera
-    /// orbit (same layer) skips the rasterise. Otherwise `build`
-    /// produces the coverage raster, which is uploaded as an R8
-    /// texture; a `build` yielding `None` clears the cap.
+    /// Refresh the slice-view cap texture. `key` identifies the layer being
+    /// capped; `None` clears the cap. When `key` matches the current cap (shown
+    /// or refused) nothing happens, so a camera orbit (same layer) skips the
+    /// rasterise. Otherwise `build` produces the coverage raster, which is
+    /// uploaded as an R8 texture; a `build` yielding `None` clears the cap.
     pub(crate) fn update_cap(
         &mut self,
         key: Option<u64>,
@@ -521,11 +512,11 @@ impl Renderer {
         }
     }
 
-    /// Refresh the plate label for the word identified by `key`.
-    /// `build` produces the coverage raster only when `key` differs
-    /// from the current label, so a camera orbit skips the rasterise.
-    /// A `build` yielding `None`, or a refused upload, leaves the
-    /// plate without a label and therefore without its tab.
+    /// Refresh the plate label for the word identified by `key`. `build`
+    /// produces the coverage raster only when `key` differs from the current
+    /// label, so a camera orbit skips the rasterise. A `build` yielding `None`,
+    /// or a refused upload, leaves the plate without a label and therefore
+    /// without its tab.
     pub(crate) fn update_front_label(
         &mut self,
         key: u64,
@@ -558,8 +549,8 @@ impl Renderer {
         }
     }
 
-    /// Upload a coverage raster as an R8 texture and build the cap's
-    /// group-1 bind group.
+    /// Upload a coverage raster as an R8 texture and build the cap's group-1
+    /// bind group.
     fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
@@ -577,8 +568,8 @@ impl Renderer {
         })
     }
 
-    /// Upload a label raster as an R8 texture and build the label's
-    /// group-1 bind group.
+    /// Upload a label raster as an R8 texture and build the label's group-1
+    /// bind group.
     fn upload_label_texture(&self, raster: &LabelRaster) -> Result<wgpu::BindGroup, RenderError> {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
@@ -596,9 +587,9 @@ impl Renderer {
         })
     }
 
-    /// Upload a single-channel coverage bitmap as an R8 texture and
-    /// bind it with `sampler`. Each row is padded to wgpu's copy
-    /// alignment, as `write_texture` requires.
+    /// Upload a single-channel coverage bitmap as an R8 texture and bind it
+    /// with `sampler`. Each row is padded to wgpu's copy alignment, as
+    /// `write_texture` requires.
     fn coverage_bind_group(
         &self,
         name: &str,
@@ -670,10 +661,10 @@ impl Renderer {
             })
     }
 
-    /// Draws one frame into a texture Slint can show. Returns `Ok(None)`
-    /// for a zero-sized viewport. A size over the device's texture
-    /// ceiling is drawn at the ceiling with the aspect kept, so the
-    /// texture can come back smaller than asked.
+    /// Draws one frame into a texture Slint can show. Returns `Ok(None)` for a
+    /// zero-sized viewport. A size over the device's texture ceiling is drawn
+    /// at the ceiling with the aspect kept, so the texture can come back
+    /// smaller than asked.
     pub fn render(
         &mut self,
         scene_render: Option<SceneRender<'_>>,
@@ -692,13 +683,13 @@ impl Renderer {
         )
     }
 
-    /// Draws the models alone against the clear colour, for a picture
-    /// of the print rather than of the workspace: no plate, no
-    /// envelope, no slice cap, and none of the editing overlays.
+    /// Draws the models alone against the clear colour, for a picture of the
+    /// print rather than of the workspace: no plate, no envelope, no slice cap,
+    /// and none of the editing overlays.
     ///
-    /// `camera` frames the whole model, so a caller wanting the
-    /// printed object in view builds one from the scene's bounds
-    /// rather than passing the viewport's.
+    /// `camera` frames the whole model, so a caller wanting the printed object
+    /// in view builds one from the scene's bounds rather than passing the
+    /// viewport's.
     pub fn render_preview(
         &mut self,
         graph: &Scene,
@@ -723,18 +714,16 @@ impl Renderer {
         )
     }
 
-    /// Draw the models alone and copy the frame off the GPU, for a
-    /// picture that is not going on screen. `Ok(None)` for a
-    /// zero-sized request.
+    /// Draw the models alone and copy the frame off the GPU, for a picture that
+    /// is not going on screen. `Ok(None)` for a zero-sized request.
     ///
-    /// The frame can come back smaller than asked when the size
-    /// exceeds what the device can hold, so the caller checks the
-    /// size it got.
+    /// The frame can come back smaller than asked when the size exceeds what
+    /// the device can hold, so the caller checks the size it got.
     ///
     /// # Errors
     ///
-    /// [`RenderError`] when the frame cannot be drawn, or when the
-    /// device refuses or never finishes the copy back.
+    /// [`RenderError`] when the frame cannot be drawn, or when the device
+    /// refuses or never finishes the copy back.
     pub fn preview_pixels(
         &mut self,
         graph: &Scene,
@@ -779,30 +768,27 @@ impl Renderer {
         let installed = self.scene.as_ref();
         let msaa = self.target_manager.msaa.as_ref().unwrap();
 
-        // Per-frame upload of model matrices when a `GpuScene` is
-        // installed AND the caller passed the matching CPU
-        // `Scene`. The CPU graph is the source of truth; the GPU
-        // uniform buffer is a mirror that lives long enough to be
-        // sampled across the next draw. The renderer's `GpuScene`
-        // must match the graph's reachable-leaf count 1:1; a
-        // mismatch means the live graph has drifted from the
-        // install-time snapshot, and writing one entry per live leaf
-        // would step past the model buffer's end. Skip the mesh
-        // path for this frame and wait for the next install to
-        // restore the invariant. A graph that fails the leaf walk
-        // (dangling node id / dangling subtree resource id) skips
-        // the mesh path on the same grounds: the partial entry list
-        // would leave the model buffer's tail slots holding stale
-        // matrices that the draw loop would render against the
-        // current frame's geometry.
+        // Per-frame upload of model matrices when a `GpuScene` is installed AND
+        // the caller passed the matching CPU `Scene`. The CPU graph is the
+        // source of truth; the GPU uniform buffer is a mirror that lives long
+        // enough to be sampled across the next draw. The renderer's `GpuScene`
+        // must match the graph's reachable-leaf count 1:1; a mismatch means the
+        // live graph has drifted from the install-time snapshot, and writing 1
+        // entry per live leaf would step past the model buffer's end. Skip the
+        // mesh path for this frame and wait for the next install to restore the
+        // invariant. A graph that fails the leaf walk (dangling node id /
+        // dangling subtree resource id) skips the mesh path on the same
+        // grounds: the partial entry list would leave the model buffer's tail
+        // slots holding stale matrices that the draw loop would render against
+        // the current frame's geometry.
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
             match build_model_entries(graph_data, selection, build_volume) {
                 Ok(entries) if entries.len() == inst.gpu.object_count() => {
-                    // Each entry lives at `i * model_stride`. The stride is
-                    // at least `MODEL_ENTRY_SIZE` and a multiple of the
-                    // device's uniform offset alignment (typically 256
-                    // bytes), so consecutive entries are not contiguous
-                    // and must be written individually.
+                    // Each entry lives at `i * model_stride`. The stride is at
+                    // least `MODEL_ENTRY_SIZE` and a multiple of the device's
+                    // uniform offset alignment (typically 256 bytes), so
+                    // consecutive entries are not contiguous and must be
+                    // written individually.
                     for (i, entry) in entries.iter().enumerate() {
                         let offset = i as u64 * inst.gpu.model_stride();
                         self.core.queue.write_buffer(
@@ -819,11 +805,10 @@ impl Renderer {
             false
         };
 
-        // Framing AABB drives `compute_view_proj`'s near/far
-        // multipliers. With a scene installed, union the scene's
-        // world AABB with the plate envelope so the plate stays
-        // inside the depth range; without a scene, the envelope
-        // alone is the framing AABB.
+        // Framing AABB drives `compute_view_proj`'s near/far multipliers. With
+        // a scene installed, union the scene's world AABB with the plate
+        // envelope so the plate stays inside the depth range; without a scene,
+        // the envelope alone is the framing AABB.
         let env_min = build_volume.envelope_min_mm();
         let env_max = build_volume.envelope_max_mm();
         let (framing_min, framing_max) = match installed {
@@ -842,16 +827,14 @@ impl Renderer {
             default_fov_y(),
         );
 
-        // Per-frame envelope-wall warning mask: which side walls (and
-        // the top) some leaf breaches. Recomputed each frame from
-        // the CPU `Scene`; cheap (a single per-vertex scan) and
-        // keeps the breach signal in lockstep with the per-leaf
-        // `flags.y` bit. `None` for an empty graph leaves the mask
-        // at 0 so all wall fragments are discarded. A leaf-walk
-        // failure on the same graph already caused `scene_for_draws`
-        // to fall to false above, so falling back to 0 here keeps
-        // the wall-warning state consistent with the skipped mesh
-        // draws.
+        // Per-frame envelope-wall warning mask: which side walls (and the top)
+        // some leaf breaches. Recomputed each frame from the CPU `Scene`; cheap
+        // (a single per-vertex scan) and keeps the breach signal in lockstep
+        // with the per-leaf `flags.y` bit. `None` for an empty graph leaves the
+        // mask at 0 so all wall fragments are discarded. A leaf-walk failure on
+        // the same graph already caused `scene_for_draws` to fall to false
+        // above, so falling back to 0 here keeps the wall-warning state
+        // consistent with the skipped mesh draws.
         let face_breach_mask = graph
             .and_then(|g| build_envelope_warning_mask(g, build_volume).ok())
             .unwrap_or(0);
@@ -938,10 +921,10 @@ impl Renderer {
         Ok(Some(target))
     }
 
-    /// Plate solid (sides + bottom): drawn first with depth-write on
-    /// so the slab's interior occludes content behind it when the
-    /// camera orbits low. Stencil reference stays at 0 so the outline
-    /// post-pass leaves the plate untouched.
+    /// Plate solid (sides + bottom): drawn first with depth-write on so the
+    /// slab's interior occludes content behind it when the camera orbits low.
+    /// Stencil reference stays at 0 so the outline post-pass leaves the plate
+    /// untouched.
     fn record_plate_solid(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.solid_pipeline);
         pass.set_bind_group(
@@ -958,11 +941,11 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
     }
 
-    /// Slice-view cap: a flat quad at the clip height textured with the
-    /// current layer's coverage, filling the mesh cut so it reads solid.
-    /// Drawn only when a cap texture is set (Slice section with a held
-    /// slice). The clip height and build corners come from the shared
-    /// uniform buffer, so no per-cap vertex data is bound.
+    /// Slice-view cap: a flat quad at the clip height textured with the current
+    /// layer's coverage, filling the mesh cut so it reads solid. Drawn only
+    /// when a cap texture is set (Slice section with a held slice). The clip
+    /// height and build corners come from the shared uniform buffer, so no
+    /// per-cap vertex data is bound.
     fn record_cap(&self, pass: &mut wgpu::RenderPass<'_>) {
         let CapState::Shown { bind_group, .. } = &self.pipelines.cap_state else {
             return;
@@ -974,11 +957,11 @@ impl Renderer {
         pass.draw(0..6, 0..1);
     }
 
-    /// Plate top: inner grid + outer rounded border at Z = 0.
-    /// Depth-write off so a model resting at Z = 0 always wins
-    /// z-fighting against the plate top. Relies on the vertex buffer
-    /// and uniforms bind group set by [`Self::record_plate_solid`];
-    /// must be called after it within the same render pass.
+    /// Plate top: inner grid + outer rounded border at Z = 0. Depth-write off
+    /// so a model resting at Z = 0 always wins z-fighting against the plate
+    /// top. Relies on the vertex buffer and uniforms bind group set by
+    /// [`Self::record_plate_solid`]; must be called after it within the same
+    /// render pass.
     fn record_plate_top(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.top_pipeline);
         pass.set_index_buffer(
@@ -988,10 +971,9 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
     }
 
-    /// Cage: 12 wireframe edges sharing the plate vertex buffer;
-    /// the line-list index buffer picks the cage corner range.
-    /// Relies on the vertex buffer and uniforms bind group set by
-    /// [`Self::record_plate_solid`].
+    /// Cage: 12 wireframe edges sharing the plate vertex buffer; the line-list
+    /// index buffer picks the cage corner range. Relies on the vertex buffer
+    /// and uniforms bind group set by [`Self::record_plate_solid`].
     fn record_cage(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.line_pipeline);
         pass.set_index_buffer(
@@ -1001,9 +983,9 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
     }
 
-    /// The word on the plate's front tab, over the tab's own top
-    /// face. Binds its own vertex buffer at slot 0, so the plate
-    /// draws that share the plate's must come before it.
+    /// The word on the plate's front tab, over the tab's own top face. Binds
+    /// its own vertex buffer at slot 0, so the plate draws that share the
+    /// plate's must come before it.
     fn record_front_label(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         let LabelState::Shown { bind_group, .. } = &self.pipelines.label_state else {
             return;
@@ -1019,12 +1001,11 @@ impl Renderer {
         pass.draw(0..6, 0..1);
     }
 
-    /// One draw call per installed scene object. The models bind
-    /// group is rebound at each step with the dynamic offset of the
-    /// matching ModelEntry slot, so the vertex shader's `model_entry`
-    /// uniform reads that object's matrix. The stencil reference is
-    /// `1` only for the selected object, so after this pass the
-    /// stencil holds 1 over its visible silhouette and 0 everywhere
+    /// 1 draw call per installed scene object. The models bind group is rebound
+    /// at each step with the dynamic offset of the matching ModelEntry slot, so
+    /// the vertex shader's `model_entry` uniform reads that object's matrix.
+    /// The stencil reference is `1` only for the selected object, so after this
+    /// pass the stencil holds 1 over its visible silhouette and 0 everywhere
     /// else, what the outline post-pass dilates.
     fn record_mesh_objects(
         &self,
@@ -1056,17 +1037,15 @@ impl Renderer {
         }
     }
 
-    /// Envelope-warning walls: 5 invisible quads coplanar with the
-    /// build-volume side faces and top. The plate shader discards a
-    /// wall fragment unless the matching bit of `face_breach_mask` is
-    /// set; on a set bit it emits the diagonal red stripe pattern.
-    /// Drawn after the mesh pass so the mesh's depth-write gates wall
-    /// visibility: stripes appear over the part of the mesh that lies
-    /// on the far side of the envelope wall from the camera, while
-    /// closer-to-camera mesh pixels occlude the wall as they should.
-    /// `top_pipeline` matches the needs here (TriangleList, depth-test
-    /// Less, depth-write off, cull none, alpha blending). Stencil
-    /// stays at 0.
+    /// Envelope-warning walls: 5 invisible quads coplanar with the build-volume
+    /// side faces and top. The plate shader discards a wall fragment unless the
+    /// matching bit of `face_breach_mask` is set; on a set bit it emits the
+    /// diagonal red stripe pattern. Drawn after the mesh pass so the mesh's
+    /// depth-write gates wall visibility: stripes appear over the part of the
+    /// mesh that lies on the far side of the envelope wall from the camera,
+    /// while closer-to-camera mesh pixels occlude the wall as they should.
+    /// `top_pipeline` matches the needs here (TriangleList, depth-test Less,
+    /// depth-write off, cull none, alpha blending). Stencil stays at 0.
     fn record_envelope_walls(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.top_pipeline);
         pass.set_bind_group(
@@ -1083,14 +1062,13 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
     }
 
-    /// Plate bottom: drawn last in the main pass with alpha blending
-    /// and back-face culling. Cage edges and any meshes are already
-    /// in the framebuffer, so the bottom blends over them when the
-    /// camera looks up from below; from above the bottom is
-    /// back-facing and culled by the pipeline, leaving the top face
-    /// fully opaque. The mesh loop earlier in the pass left the plate
-    /// vertex buffer unbound, so rebind here. Stencil reset to 0 so
-    /// the outline post-pass leaves the bottom untouched.
+    /// Plate bottom: drawn last in the main pass with alpha blending and
+    /// back-face culling. Cage edges and any meshes are already in the
+    /// framebuffer, so the bottom blends over them when the camera looks up
+    /// from below; from above the bottom is back-facing and culled by the
+    /// pipeline, leaving the top face fully opaque. The mesh loop earlier in
+    /// the pass left the plate vertex buffer unbound, so rebind here. Stencil
+    /// reset to 0 so the outline post-pass leaves the bottom untouched.
     fn record_plate_bottom(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
         pass.set_pipeline(&self.pipelines.plate.bottom_pipeline);
         pass.set_bind_group(
@@ -1107,13 +1085,12 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.bottom_index_count, 0, 0..1);
     }
 
-    /// Outline post-pass: dilate the stencil set by the mesh pass to
-    /// draw a one-pixel halo around the selected leaf. Caller must
-    /// gate on `selection.is_some() && scene_for_draws`: without a
-    /// scene the stencil is all zeroes and the dilate would be a
-    /// no-op; without a selection the mesh pass left the stencil at
-    /// 0 too. Loads the resolved colour from the main pass and
-    /// discards non-edge fragments, so existing pixels survive.
+    /// Outline post-pass: dilate the stencil set by the mesh pass to draw a
+    /// 1-pixel halo around the selected leaf. Caller must gate on
+    /// `selection.is_some() && scene_for_draws`: without a scene the stencil is
+    /// all zeroes and the dilate would be a no-op; without a selection the mesh
+    /// pass left the stencil at 0 too. Loads the resolved colour from the main
+    /// pass and discards non-edge fragments, so existing pixels survive.
     fn record_outline_post_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1145,13 +1122,12 @@ impl Renderer {
         outline_pass.draw(0..3, 0..1);
     }
 
-    /// Gizmo pass: drawn last so it sits on top of the mesh + the
-    /// outline. Depth is cleared at pass start so the gizmo is never
-    /// occluded by the mesh; depth-test stays enabled within the pass
-    /// so the three axes order correctly where they overlap near the
-    /// pivot. Uploads the per-frame gizmo uniforms and the active
-    /// entry slots, then records draw calls for whichever of
-    /// translate / rotate / scale handles are visible this frame.
+    /// Gizmo pass: drawn last so it sits on top of the mesh + the outline.
+    /// Depth is cleared at pass start so the gizmo is never occluded by the
+    /// mesh; depth-test stays enabled within the pass so the 3 axes order
+    /// correctly where they overlap near the pivot. Uploads the per-frame gizmo
+    /// uniforms and the active entry slots, then records draw calls for
+    /// whichever of translate / rotate / scale handles are visible this frame.
     fn record_gizmo_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1171,10 +1147,10 @@ impl Renderer {
             bytemuck::bytes_of(&uniforms),
         );
 
-        // Decide which categories to draw and write the matching
-        // entry slots. Other slots are not used this frame, so we
-        // skip writing them, the dynamic-offset bind only ever points
-        // at slots that received fresh data.
+        // Decide which categories to draw and write the matching entry slots.
+        // Other slots are not used this frame, so we skip writing them, the
+        // dynamic-offset bind only ever points at slots that received fresh
+        // data.
         let render_translate = matches!(
             frame.visibility,
             GizmoVisibility::Idle | GizmoVisibility::DraggingTranslate { .. }
@@ -1243,7 +1219,7 @@ impl Renderer {
         );
 
         if render_translate {
-            // 1-pixel shaft line, three axes.
+            // 1-pixel shaft line, 3 axes.
             gizmo_pass.set_pipeline(&self.pipelines.gizmo.line_pipeline);
             gizmo_pass.set_vertex_buffer(
                 0,
@@ -1332,10 +1308,9 @@ impl Renderer {
                     0..1,
                 );
             }
-            // Two-cone spindle at the arc's midpoint, the active
-            // rotate handle. Shares the per-axis camera-rolled
-            // `axis_rotation` so it lands at the visual centre of the
-            // arc.
+            // 2-cone spindle at the arc's midpoint, the active rotate handle.
+            // Shares the per-axis camera-rolled `axis_rotation` so it lands at
+            // the visual centre of the arc.
             gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
             gizmo_pass.set_vertex_buffer(
                 0,

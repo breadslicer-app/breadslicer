@@ -58,7 +58,9 @@ use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
 use crate::mesh_health::MeshHealth;
-use crate::mesh_render::{DeviceLoss, GpuScene, RenderAllocation, RenderError};
+use crate::mesh_render::{
+    AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
+};
 use crate::reloaded_slices::ReloadedSlices;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
@@ -401,8 +403,8 @@ impl SceneLoader {
 
     /// Records that a `RenderingSetup`'s device refused the viewport renderer;
     /// the device slot stays empty.
-    pub(crate) fn note_renderer_refused(&self, reason: String) {
-        self.graphics_gap.note_renderer_refused(reason);
+    pub(crate) fn note_renderer_refused(&self, refusal: StageRefusal) {
+        self.graphics_gap.note_renderer_refused(refusal);
     }
 
     /// Empties the device slot after the shared device was lost, and records
@@ -509,12 +511,11 @@ impl SceneLoader {
         if !self.render_failures.note_failure() {
             return;
         }
-        let what = *what;
-        let message = err.to_string();
+        let refusal = AllocationRefusal::new(*what, source);
         let details = source.to_string();
         self.dialogs.show_error_deferred(move || ErrorTexts {
             heading: ctr!("ErrorDialog", "Failed to draw the 3D view"),
-            context: Some(match what {
+            context: Some(match refusal.what {
                 RenderAllocation::CapTexture => ctr!(
                     "ErrorDialog",
                     "The cut is drawn without its fill until another layer is shown."
@@ -524,7 +525,7 @@ impl SceneLoader {
                     "The 3D view keeps its last image until it is resized."
                 ),
             }),
-            message: message.as_str().into(),
+            message: refusal.to_string().into(),
             details: details.as_str().into(),
         });
     }

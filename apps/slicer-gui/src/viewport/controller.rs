@@ -47,7 +47,7 @@ use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_health::initial_section;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender};
+use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
 use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::preferences_bus::PreferencesBus;
@@ -1107,7 +1107,9 @@ impl ViewportController {
     /// it once, and lets a load parked for this setup report itself against
     /// that reason.
     pub(super) fn post_renderer_refused(&self, err: RendererInitError) {
-        self.session.loader().note_renderer_refused(err.to_string());
+        self.session
+            .loader()
+            .note_renderer_refused(StageRefusal::new(err.stage, &err.source));
         self.session
             .dialogs()
             .show_error_deferred(move || ErrorTexts {

@@ -9,6 +9,8 @@ use std::fmt;
 
 use slint::wgpu_30::wgpu;
 
+use crate::i18n::ctr;
+
 /// The part of the renderer whose construction the device refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RendererStage {
@@ -21,22 +23,70 @@ pub enum RendererStage {
     Label,
 }
 
-impl fmt::Display for RendererStage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Mesh => "mesh pipeline",
-            Self::Outline => "outline pipeline",
-            Self::GizmoBuffers => "gizmo geometry",
-            Self::Gizmo => "gizmo pipeline",
-            Self::Plate => "build plate pipeline",
-            Self::Cap => "slice cap pipeline",
-            Self::Label => "plate label pipeline",
-        })
+/// A stage that the device refused, with the device's cause on 1 line. Its text
+/// is in the language in force each time it is formatted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StageRefusal {
+    pub stage: RendererStage,
+    pub cause: String,
+}
+
+impl StageRefusal {
+    /// The refusal of `stage`, with the cause of `source`.
+    pub fn new(stage: RendererStage, source: &wgpu::Error) -> Self {
+        Self {
+            stage,
+            cause: one_line(source),
+        }
     }
 }
 
-/// `Renderer::new` refused: the device rejected one of the renderer's
-/// static resources. `stage` names the first one refused.
+impl fmt::Display for StageRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cause = &self.cause;
+        let text = match self.stage {
+            RendererStage::Mesh => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its mesh pipeline: {}",
+                cause
+            ),
+            RendererStage::Outline => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its outline pipeline: {}",
+                cause
+            ),
+            RendererStage::GizmoBuffers => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its gizmo geometry: {}",
+                cause
+            ),
+            RendererStage::Gizmo => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its gizmo pipeline: {}",
+                cause
+            ),
+            RendererStage::Plate => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its build plate pipeline: {}",
+                cause
+            ),
+            RendererStage::Cap => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its slice cap pipeline: {}",
+                cause
+            ),
+            RendererStage::Label => ctr!(
+                "ErrorDialog",
+                "The 3D view could not build its plate label pipeline: {}",
+                cause
+            ),
+        };
+        f.write_str(&text)
+    }
+}
+
+/// `Renderer::new` refused: the device rejected one of the renderer's static
+/// resources. `stage` names the first one refused.
 #[derive(Debug)]
 pub struct RendererInitError {
     pub stage: RendererStage,
@@ -45,12 +95,7 @@ pub struct RendererInitError {
 
 impl fmt::Display for RendererInitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "The 3D view could not build its {}: {}",
-            self.stage,
-            one_line(&self.source)
-        )
+        StageRefusal::new(self.stage, &self.source).fmt(f)
     }
 }
 
@@ -60,8 +105,8 @@ impl std::error::Error for RendererInitError {
     }
 }
 
-/// A viewport-sized or scene-dependent allocation the renderer makes
-/// while drawing.
+/// A viewport-sized or scene-dependent allocation the renderer makes while
+/// drawing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderAllocation {
     PlateGeometry,
@@ -72,16 +117,60 @@ pub enum RenderAllocation {
     ReadbackBuffer,
 }
 
-impl fmt::Display for RenderAllocation {
+/// An allocation that the device refused, with the device's cause on 1 line.
+/// Its text is in the language in force each time it is formatted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AllocationRefusal {
+    pub what: RenderAllocation,
+    pub cause: String,
+}
+
+impl AllocationRefusal {
+    /// The refusal of `what`, with the cause of `source`.
+    pub fn new(what: RenderAllocation, source: &wgpu::Error) -> Self {
+        Self {
+            what,
+            cause: one_line(source),
+        }
+    }
+}
+
+impl fmt::Display for AllocationRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::PlateGeometry => "build plate geometry",
-            Self::MsaaTargets => "multisample buffers",
-            Self::ColourTargets => "output image",
-            Self::CapTexture => "slice cap texture",
-            Self::LabelTexture => "plate label texture",
-            Self::ReadbackBuffer => "image readback buffer",
-        })
+        let cause = &self.cause;
+        let text = match self.what {
+            RenderAllocation::PlateGeometry => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the build plate geometry: {}",
+                cause
+            ),
+            RenderAllocation::MsaaTargets => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the multisample buffers: {}",
+                cause
+            ),
+            RenderAllocation::ColourTargets => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the output image: {}",
+                cause
+            ),
+            RenderAllocation::CapTexture => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the slice cap texture: {}",
+                cause
+            ),
+            RenderAllocation::LabelTexture => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the plate label texture: {}",
+                cause
+            ),
+            RenderAllocation::ReadbackBuffer => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the image readback buffer: {}",
+                cause
+            ),
+        };
+        f.write_str(&text)
     }
 }
 
@@ -102,11 +191,8 @@ pub enum RenderError {
 impl fmt::Display for RenderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeviceRefused { what, source } => write!(
-                f,
-                "The graphics device refused the {what}: {}",
-                one_line(source)
-            ),
+            // A refusal is the only render error that a dialog shows.
+            Self::DeviceRefused { what, source } => AllocationRefusal::new(*what, source).fmt(f),
             Self::DeviceLost => f.write_str("The graphics device was lost."),
             Self::ReadbackFailed { reason } => {
                 write!(f, "The rendered image could not be read back: {reason}")
@@ -124,9 +210,9 @@ impl std::error::Error for RenderError {
     }
 }
 
-/// wgpu's `Display` is a multi-line "Validation Error\n\nCaused by:\n..."
-/// tree with the deepest cause on the last line; a one-line message
-/// wants the class and that cause.
+/// wgpu's `Display` is a multi-line "Validation Error\n\nCaused by:\n..." tree
+/// with the deepest cause on the last line; a 1-line message wants the class
+/// and that cause.
 fn one_line(err: &wgpu::Error) -> String {
     let text = err.to_string();
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
@@ -141,8 +227,8 @@ fn one_line(err: &wgpu::Error) -> String {
 mod error_display_tests {
     use super::*;
 
-    /// A validation error whose description has wgpu's real shape:
-    /// class line, blank, "Caused by:", context line, deepest cause.
+    /// A validation error whose description has wgpu's real shape: class line,
+    /// blank, "Caused by:", context line, deepest cause.
     fn validation(cause: &str) -> wgpu::Error {
         let description = format!(
             "Validation Error\n\nCaused by:\n  In Device::create_buffer, label = 'x'\n    {cause}\n"
@@ -181,41 +267,78 @@ mod error_display_tests {
         assert!(!text.contains('\n'), "{text}");
     }
 
-    fn assert_distinct_non_empty(names: &[String]) {
-        for (i, name) in names.iter().enumerate() {
-            assert!(!name.is_empty());
-            assert!(!names[..i].contains(name), "{name} repeats");
-        }
+    #[test]
+    fn each_stage_has_its_own_sentence() {
+        let sentence = |stage| {
+            RendererInitError {
+                stage,
+                source: validation("x"),
+            }
+            .to_string()
+        };
+        assert_eq!(
+            sentence(RendererStage::Mesh),
+            "The 3D view could not build its mesh pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::Outline),
+            "The 3D view could not build its outline pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::GizmoBuffers),
+            "The 3D view could not build its gizmo geometry: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::Gizmo),
+            "The 3D view could not build its gizmo pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::Plate),
+            "The 3D view could not build its build plate pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::Cap),
+            "The 3D view could not build its slice cap pipeline: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RendererStage::Label),
+            "The 3D view could not build its plate label pipeline: Validation Error: x"
+        );
     }
 
     #[test]
-    fn every_allocation_has_a_distinct_name() {
-        let names: Vec<String> = [
-            RenderAllocation::PlateGeometry,
-            RenderAllocation::MsaaTargets,
-            RenderAllocation::ColourTargets,
-            RenderAllocation::CapTexture,
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-        assert_distinct_non_empty(&names);
-    }
-
-    #[test]
-    fn every_stage_has_a_distinct_name() {
-        let names: Vec<String> = [
-            RendererStage::Mesh,
-            RendererStage::Outline,
-            RendererStage::GizmoBuffers,
-            RendererStage::Gizmo,
-            RendererStage::Plate,
-            RendererStage::Cap,
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-        assert_distinct_non_empty(&names);
+    fn each_allocation_has_its_own_sentence() {
+        let sentence = |what| {
+            RenderError::DeviceRefused {
+                what,
+                source: validation("x"),
+            }
+            .to_string()
+        };
+        assert_eq!(
+            sentence(RenderAllocation::PlateGeometry),
+            "The graphics device refused the build plate geometry: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RenderAllocation::MsaaTargets),
+            "The graphics device refused the multisample buffers: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RenderAllocation::ColourTargets),
+            "The graphics device refused the output image: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RenderAllocation::CapTexture),
+            "The graphics device refused the slice cap texture: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RenderAllocation::LabelTexture),
+            "The graphics device refused the plate label texture: Validation Error: x"
+        );
+        assert_eq!(
+            sentence(RenderAllocation::ReadbackBuffer),
+            "The graphics device refused the image readback buffer: Validation Error: x"
+        );
     }
 
     #[test]

@@ -1076,27 +1076,27 @@ msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr ""
 
-#: src/viewport/controller.rs:1114
+#: src/viewport/controller.rs:1116
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr ""
 
-#: src/viewport/controller.rs:1117
+#: src/viewport/controller.rs:1119
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr ""
 
-#: src/viewport/controller.rs:1364
+#: src/viewport/controller.rs:1366
 msgctxt "MeshViewer"
 msgid "FRONT"
 msgstr ""
 
-#: src/viewport/controller.rs:1450
+#: src/viewport/controller.rs:1452
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1453
+#: src/viewport/controller.rs:1455
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -1142,7 +1142,7 @@ msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:564
+#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:565
 #: src/app_state.rs:762 src/error_dialog.rs:600 src/export_print_file.rs:280
 #, rust-format
 msgctxt "ErrorDialog"
@@ -1262,34 +1262,112 @@ msgctxt "PreferencesPage"
 msgid "Material extensions"
 msgstr ""
 
-#: src/scene_loader.rs:492
+#: src/mesh_render/error.rs:50
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its mesh pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:55
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its outline pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:60
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its gizmo geometry: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:65
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its gizmo pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:70
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its build plate pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:75
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its slice cap pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:80
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its plate label pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:144
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the build plate geometry: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:149
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the multisample buffers: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:154
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the output image: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:159
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the slice cap texture: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:164
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the plate label texture: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:169
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the image readback buffer: {}"
+msgstr ""
+
+#: src/scene_loader.rs:494
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:495
+#: src/scene_loader.rs:497
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:516
+#: src/scene_loader.rs:517
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:520
+#: src/scene_loader.rs:521
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr ""
 
-#: src/scene_loader.rs:524
+#: src/scene_loader.rs:525
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:563 src/error_dialog.rs:599
+#: src/scene_loader.rs:564 src/error_dialog.rs:599
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -1668,12 +1746,12 @@ msgctxt "SlicePanel"
 msgid ".ctb (v5 encrypted)"
 msgstr ""
 
-#: src/graphics_status.rs:65
+#: src/graphics_status.rs:66
 msgctxt "ErrorDialog"
 msgid "The 3D view is still starting up. Please try again in a moment."
 msgstr ""
 
-#: src/graphics_status.rs:70
+#: src/graphics_status.rs:71
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1681,13 +1759,13 @@ msgid ""
 "build cannot use for 3D."
 msgstr ""
 
-#: src/graphics_status.rs:76
+#: src/graphics_status.rs:77
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "{} Files cannot be opened in this window."
 msgstr ""
 
-#: src/graphics_status.rs:82
+#: src/graphics_status.rs:83
 msgctxt "ErrorDialog"
 msgid ""
 "The graphics device was lost. Save your work and restart the application."

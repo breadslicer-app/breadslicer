@@ -35,7 +35,7 @@ use crate::mesh_loader::{
     FileTooLarge, LoadDispatch, LoaderPanicked, MAX_MESH_FILE_SIZE_BYTES, check_file_size,
     decide_load_dispatch, guard_worker, panic_message, parse_source, start_load_with_ticket,
 };
-use crate::mesh_render::DeviceToken;
+use crate::mesh_render::{DeviceToken, RendererStage, StageRefusal};
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::slint_ui::ErrorDialog;
@@ -252,7 +252,10 @@ fn a_pick_on_an_unusable_renderer_is_reported_not_parked() {
 
 #[test]
 fn a_pick_on_a_refused_renderer_is_reported_not_parked() {
-    let reason = GraphicsUnavailable::RendererRefused("mesh pipeline refused".to_string());
+    let reason = GraphicsUnavailable::RendererRefused(StageRefusal {
+        stage: RendererStage::Mesh,
+        cause: "Validation Error: x".to_string(),
+    });
     assert_eq!(
         decide_load_dispatch(Some(reason.clone())),
         LoadDispatch::Report(reason)

@@ -21,6 +21,7 @@ use std::cell::RefCell;
 use std::fmt;
 
 use crate::i18n::ctr;
+use crate::mesh_render::StageRefusal;
 
 /// The reason the viewport has no graphics device.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,10 +37,10 @@ pub(crate) enum GraphicsUnavailable {
     /// as long as that renderer is in use.
     UnsupportedApi(String),
     /// A `RenderingSetup` published a device, but the device refused one of the
-    /// viewport renderer's resources; the text is the renderer's account of
-    /// which one and why. A deterministic refusal repeats on the same device,
-    /// so the window is left without a viewport.
-    RendererRefused(String),
+    /// viewport renderer's resources; the refusal names which one and why. A
+    /// deterministic refusal repeats on the same device, so the window is left
+    /// without a viewport.
+    RendererRefused(StageRefusal),
     /// The shared device was lost (driver reset, device removed, destroyed).
     /// Nothing that needs a device works again in this process.
     DeviceLost,
@@ -127,10 +128,9 @@ impl GraphicsGap {
         *self.reason.borrow_mut() = GraphicsUnavailable::UnsupportedApi(api);
     }
 
-    /// A setup's device refused the viewport renderer; `reason` is the
-    /// renderer's account of it.
-    pub(crate) fn note_renderer_refused(&self, reason: String) {
-        *self.reason.borrow_mut() = GraphicsUnavailable::RendererRefused(reason);
+    /// A setup's device refused the viewport renderer.
+    pub(crate) fn note_renderer_refused(&self, refusal: StageRefusal) {
+        *self.reason.borrow_mut() = GraphicsUnavailable::RendererRefused(refusal);
     }
 
     pub(crate) fn note_device_lost(&self) {
@@ -141,6 +141,7 @@ impl GraphicsGap {
 #[cfg(test)]
 mod graphics_gap_tests {
     use super::*;
+    use crate::mesh_render::RendererStage;
 
     #[test]
     fn a_fresh_gap_is_awaiting_setup() {
@@ -216,11 +217,12 @@ mod graphics_gap_tests {
     #[test]
     fn a_refused_renderer_is_recorded_and_retired_by_a_later_device() {
         let gap = GraphicsGap::default();
-        gap.note_renderer_refused("mesh pipeline refused".to_string());
-        assert_eq!(
-            gap.reason(),
-            GraphicsUnavailable::RendererRefused("mesh pipeline refused".to_string())
-        );
+        let refusal = StageRefusal {
+            stage: RendererStage::Mesh,
+            cause: "Validation Error: x".to_string(),
+        };
+        gap.note_renderer_refused(refusal.clone());
+        assert_eq!(gap.reason(), GraphicsUnavailable::RendererRefused(refusal));
         gap.note_device_published();
         assert_eq!(gap.reason(), GraphicsUnavailable::AwaitingSetup);
     }
@@ -229,6 +231,15 @@ mod graphics_gap_tests {
 #[cfg(test)]
 mod graphics_unavailable_tests {
     use super::*;
+    use crate::mesh_render::RendererStage;
+
+    /// The reason of a window whose device refused the mesh pipeline.
+    fn refused_renderer() -> GraphicsUnavailable {
+        GraphicsUnavailable::RendererRefused(StageRefusal {
+            stage: RendererStage::Mesh,
+            cause: "Validation Error: x".to_string(),
+        })
+    }
 
     #[test]
     fn the_default_is_awaiting_setup() {
@@ -298,7 +309,7 @@ mod graphics_unavailable_tests {
 
     #[test]
     fn no_device_is_coming_for_a_refused_renderer() {
-        assert!(!GraphicsUnavailable::RendererRefused("refused".to_string()).may_still_arrive());
+        assert!(!refused_renderer().may_still_arrive());
     }
 
     #[test]
@@ -312,10 +323,7 @@ mod graphics_unavailable_tests {
 
     #[test]
     fn a_refused_renderer_carries_the_reason_and_says_files_cannot_open() {
-        let message = GraphicsUnavailable::RendererRefused(
-            "The 3D view could not build its mesh pipeline: Validation Error: x".to_string(),
-        )
-        .message();
+        let message = refused_renderer().message();
         assert!(message.contains("mesh pipeline"), "{message}");
         assert!(message.contains("cannot be opened"), "{message}");
         assert!(!message.contains("again"), "{message}");
@@ -331,7 +339,7 @@ mod graphics_unavailable_tests {
         for reason in [
             GraphicsUnavailable::AwaitingSetup,
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()),
-            GraphicsUnavailable::RendererRefused("no pipeline".to_string()),
+            refused_renderer(),
             GraphicsUnavailable::DeviceLost,
         ] {
             assert_eq!(reason.to_string(), reason.message());
