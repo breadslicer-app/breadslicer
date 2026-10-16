@@ -42,7 +42,7 @@ mod slint_thread_tests {
     use slint::{SelectBundledTranslationError, select_bundled_translation};
 
     use super::*;
-    use crate::ErrorDialog;
+    use crate::slint_ui::ErrorDialog;
 
     fn no_translations_installed() -> bool {
         matches!(

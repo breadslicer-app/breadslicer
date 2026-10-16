@@ -8,11 +8,15 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sc_message_catalog::bundle::Bundle;
+use sc_message_catalog::generate::catalog_code;
+use sc_message_catalog::scan::scan_directory;
 use slint_build::{CompilerConfiguration, compile_with_config};
 
 const I18N_DIR: &str = "i18n";
 const LOCALE_NAMES_FILE: &str = "i18n/locale-names.toml";
-const PO_BASENAME: &str = "sc-slicer-gui.po";
+/// Slint bundles the files `i18n/<lang>/LC_MESSAGES/<package name>.po`.
+const DOMAIN: &str = env!("CARGO_PKG_NAME");
 
 /// Locales with less than this fraction of their msgids translated are dropped
 /// from the language selector (so users can't pick a locale that would render
@@ -42,7 +46,9 @@ fn main() {
 fn run_build() {
     #[cfg(windows)]
     embed_windows_resources();
-    generate_language_table();
+    let bundle = Bundle::read(Path::new(I18N_DIR), DOMAIN).unwrap_or_else(|err| panic!("{err}"));
+    generate_language_table(&bundle);
+    generate_message_catalog(&bundle);
 
     let config = CompilerConfiguration::new().with_bundled_translations(I18N_DIR);
     compile_with_config("ui/main-window.slint", config).expect("Slint build failed");
@@ -66,16 +72,19 @@ fn embed_windows_resources() {
         .expect("failed to embed Windows resources into the executable");
 }
 
-/// Walks `i18n/` for translation directories, cross-checks them against
-/// `locale-names.toml`, and writes a `language_table.rs` with the
-/// `BundledLanguage` enum (1 variant per locale) and its accessor methods into
-/// `OUT_DIR`. The runtime crate `include!`s that file rather than maintaining
-/// the list by hand.
-fn generate_language_table() {
+/// Cross-checks the languages of `bundle` against `locale-names.toml`, and
+/// writes a `language_table.rs` with the `BundledLanguage` enum (1 variant per
+/// locale) and its accessor methods into `OUT_DIR`. The runtime crate
+/// `include!`s that file rather than maintaining the list by hand.
+fn generate_language_table(bundle: &Bundle) {
     println!("cargo:rerun-if-changed={I18N_DIR}");
     println!("cargo:rerun-if-changed={LOCALE_NAMES_FILE}");
 
-    let locales = discover_locales(Path::new(I18N_DIR));
+    let locales: Vec<String> = bundle
+        .languages()
+        .iter()
+        .map(|language| language.code().to_owned())
+        .collect();
     let names = load_locale_names(Path::new(LOCALE_NAMES_FILE));
 
     let mut entries: Vec<Locale> = Vec::with_capacity(locales.len());
@@ -83,7 +92,7 @@ fn generate_language_table() {
         let po_path = Path::new(I18N_DIR)
             .join(code)
             .join("LC_MESSAGES")
-            .join(PO_BASENAME);
+            .join(format!("{DOMAIN}.po"));
         let stats = po_coverage(&po_path);
         let pct = stats.percent();
         if pct < COVERAGE_THRESHOLD_PERCENT {
@@ -128,9 +137,7 @@ fn generate_language_table() {
 
     // Synthesise an entry for the source language so users can select it
     // explicitly. At runtime `select_bundled_translation("en")` selects the
-    // source strings, i.e. English, although no `i18n/en/` directory exists. If
-    // a translator ever adds a real `i18n/en/` directory it will show up
-    // through the normal path above; skip injection in that case.
+    // source strings, i.e. English, although no `i18n/en/` directory exists.
     if !entries.iter().any(|e| e.code == SOURCE_LANGUAGE_CODE) {
         let Some(name) = names.get(SOURCE_LANGUAGE_CODE) else {
             panic!(
@@ -248,29 +255,20 @@ fn render_module(entries: &[Locale]) -> String {
     out
 }
 
-/// Returns the locale codes for every directory in `i18n/` that ships a
-/// `LC_MESSAGES/<PO_BASENAME>` file. Sorted; deterministic.
-fn discover_locales(root: &Path) -> Vec<String> {
-    let mut locales: Vec<String> = Vec::new();
-    let entries =
-        fs::read_dir(root).unwrap_or_else(|err| panic!("failed to read {}: {err}", root.display()));
-    for entry in entries {
-        let entry =
-            entry.unwrap_or_else(|err| panic!("failed to enumerate {}: {err}", root.display()));
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if !path.join("LC_MESSAGES").join(PO_BASENAME).is_file() {
-            continue;
-        }
-        let Some(code) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        locales.push(code.to_owned());
-    }
-    locales.sort();
-    locales
+/// Writes a `message_catalog.rs` with the `ctr!` messages of `src` and their
+/// translations in the languages of `bundle` into `OUT_DIR`, for `i18n.rs`. The
+/// language order is the order of Slint's bundle, so that the language Slint
+/// selects also selects the translation of each call.
+fn generate_message_catalog(bundle: &Bundle) {
+    println!("cargo:rerun-if-changed=src");
+
+    let messages = scan_directory(Path::new("src")).unwrap_or_else(|err| panic!("{err}"));
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
+    fs::write(
+        out_dir.join("message_catalog.rs"),
+        catalog_code(bundle, &messages),
+    )
+    .expect("failed to write generated message_catalog.rs");
 }
 
 fn load_locale_names(path: &Path) -> BTreeMap<String, String> {

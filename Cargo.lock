@@ -5085,6 +5085,7 @@ dependencies = [
  "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-mesh-spatial",
+ "sc-message-catalog",
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
