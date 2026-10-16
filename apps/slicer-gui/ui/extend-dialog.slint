@@ -98,7 +98,10 @@ export component ExtendDialog inherits Window {
                 wrap: word-wrap;
             }
 
-            ComboBox {
+            // Created only once the labels are set: on a new model, Slint
+            // 1.18.1 moves an index of -1 to 0, so a picker that existed before
+            // them would open with the 1st target picked.
+            if root.target-labels.length > 0: ComboBox {
                 model: root.target-labels;
                 current-index <=> root.target-index;
             }

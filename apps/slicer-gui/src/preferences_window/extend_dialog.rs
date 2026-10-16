@@ -211,3 +211,28 @@ pub(super) fn open_extend_dialog(
     }
     *extend_slot.borrow_mut() = Some(dialog);
 }
+
+#[cfg(test)]
+mod target_picker_tests {
+    use slint::SharedString;
+
+    use super::*;
+    use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
+
+    #[test]
+    fn the_dialog_opens_with_no_target_picked() {
+        let picked = on_fresh_slint_thread(|| {
+            let dialog = ExtendDialog::new().expect("the headless platform creates the dialog");
+            // The order of `open_extend_dialog`: the labels, then no target.
+            let labels = ["Printer A", "Generic", "Printer B"].map(SharedString::from);
+            dialog.set_target_labels(ModelRc::new(VecModel::from(labels.to_vec())));
+            dialog.set_target_index(-1);
+            dialog
+                .show()
+                .expect("the headless platform shows the dialog");
+            render_frames();
+            dialog.get_target_index()
+        });
+        assert_eq!(picked, -1);
+    }
+}
