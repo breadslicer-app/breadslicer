@@ -24,6 +24,7 @@ mod export_print_file;
 mod export_progress;
 mod export_progress_panel;
 mod failure_gate;
+mod fork_dialog;
 mod front_label;
 mod gizmo;
 mod gizmo_geometry;
