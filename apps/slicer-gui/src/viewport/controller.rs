@@ -356,6 +356,16 @@ impl ViewportController {
         self.mirror_title_to_ui();
     }
 
+    /// Builds the object names and the plate's front label again, in the
+    /// language in force, for a language change.
+    pub(crate) fn refresh_texts(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh_object_list_on(&ui);
+        }
+        // The paint pass builds the label from the text in force.
+        self.mark_dirty();
+    }
+
     /// Resets the viewport after a fresh scene install: the camera goes back to
     /// `None`, so the framing in `on_scene_load_finished` can set it, and the
     /// UI mirrors the new scene's object list and the cleared selection.

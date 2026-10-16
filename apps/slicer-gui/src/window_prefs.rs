@@ -36,7 +36,8 @@ impl WindowPreferences for MainWindow {
         self.set_menu_layout(menu_layout);
         // Language: `@tr` bindings throughout the Slint tree re-evaluate
         // automatically after `select_bundled_translation` flips the active
-        // locale; nothing to push per-window.
+        // locale. The viewport controller and the slice panel push the texts
+        // that they build in Rust again themselves.
     }
 }
 

@@ -382,9 +382,11 @@ fn spawn_settings_saver(
 }
 
 /// Subscribes `window` to the preferences of `bus`: each change applies them to
-/// the window, and a `DefaultPrinter` change also sets the build volume of
-/// `controller` to the new default plate. `envelope` must subscribe to `bus`
-/// first, so that the listener reads the new plate.
+/// the window, a `DefaultPrinter` change also sets the build volume of
+/// `controller` to the new default plate, and a `Language` change makes
+/// `controller` build its texts again. `envelope` and `UiLanguage` must
+/// subscribe to `bus` first, so that the listener reads the new plate and the
+/// new language.
 fn subscribe_window_preferences(
     bus: &Rc<PreferencesBus>,
     window: &MainWindow,
@@ -398,6 +400,9 @@ fn subscribe_window_preferences(
         }
         if matches!(change, PreferencesChange::DefaultPrinter) {
             controller.set_build_volume(envelope.current());
+        }
+        if matches!(change, PreferencesChange::Language) {
+            controller.refresh_texts();
         }
     })
 }
@@ -1787,21 +1792,27 @@ mod settings_saver_tests {
 
 #[cfg(test)]
 mod subscribe_window_preferences_tests {
+    use sc_mesh_fixtures::unit_cube_mesh;
     use sc_print_primitives::PrinterId;
+    use sc_scene_fixtures::meshes_as_roots;
+    use slint::Model;
 
     use super::*;
     use crate::ThemePreference;
     use crate::build_volume::{BuildVolume, NO_PRINTER_BUILD_VOLUME};
+    use crate::language::{BundledLanguage, LanguagePreference};
     use crate::test_support::catalog_entries::printer_entry;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
-    /// A main window and its controller, subscribed to `bus`. The catalog holds
-    /// 1 printer, and the default printer of `bus` is not in it, so the default
-    /// plate starts as the placeholder.
+    /// A main window and its controller, subscribed to `bus` after the UI
+    /// language, as `spawn_main_window` does. The catalog holds 1 printer, and
+    /// the default printer of `bus` is not in it, so the default plate starts
+    /// as the placeholder.
     struct SubscribedWindow {
         bus: Rc<PreferencesBus>,
         window: MainWindow,
         controller: Rc<ViewportController>,
+        _ui_language: UiLanguage,
         _subscription: Subscription,
     }
 
@@ -1825,12 +1836,14 @@ mod subscribe_window_preferences_tests {
         );
         let envelope = DefaultEnvelope::new(&bus, Rc::new(RefCell::new(Rc::new(catalog))));
         let window = MainWindow::new().expect("the headless platform creates a main window");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&window), &bus);
         let controller = Rc::new(ViewportController::new(
             &window,
             SceneDocument::new(),
             Rc::new(PendingLoad::new()),
             DeviceLoss::default(),
         ));
+        controller.register_document_listener();
         controller.set_build_volume(envelope.current());
         let subscription =
             subscribe_window_preferences(&bus, &window, controller.clone(), envelope);
@@ -1838,8 +1851,28 @@ mod subscribe_window_preferences_tests {
             bus,
             window,
             controller,
+            _ui_language: ui_language,
             _subscription: subscription,
         }
+    }
+
+    fn change_language(bus: &PreferencesBus, code: &str) {
+        let language = LanguagePreference::Bundled(
+            BundledLanguage::from_code(code).expect("a bundled language"),
+        );
+        bus.update(move |snap| {
+            snap.language = language;
+            PreferencesChange::Language
+        });
+    }
+
+    fn first_object_name(window: &MainWindow) -> String {
+        window
+            .get_object_list()
+            .row_data(0)
+            .expect("the scene has an object")
+            .text
+            .to_string()
     }
 
     #[test]
@@ -1902,6 +1935,35 @@ mod subscribe_window_preferences_tests {
                 "{change:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_object_names_again() {
+        let (english, spanish, expected) = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            subscribed
+                .controller
+                .install_graph_for_test(meshes_as_roots([unit_cube_mesh()]));
+            change_language(&subscribed.bus, "en");
+            let english = first_object_name(&subscribed.window);
+            change_language(&subscribed.bus, "es");
+            let expected = ctr!("ObjectList", "Object {}", 1).to_string();
+            (english, first_object_name(&subscribed.window), expected)
+        });
+        assert_eq!(english, "Object 1");
+        assert_ne!(spanish, english);
+        assert_eq!(spanish, expected);
+    }
+
+    #[test]
+    fn a_language_change_repaints_the_viewport() {
+        let owed = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            subscribed.controller.clear_frame_state_for_test();
+            change_language(&subscribed.bus, "es");
+            subscribed.controller.redraw_owed_for_test()
+        });
+        assert!(owed);
     }
 }
 
