@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-16 22:09+0200\n"
+"POT-Creation-Date: 2026-10-16 22:17+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -100,7 +100,7 @@ msgid "Failed to save"
 msgstr ""
 
 #: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:564
-#: src/app_state.rs:762 src/error_dialog.rs:597 src/export_print_file.rs:280
+#: src/app_state.rs:762 src/error_dialog.rs:600 src/export_print_file.rs:280
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -246,7 +246,7 @@ msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:563 src/error_dialog.rs:596
+#: src/scene_loader.rs:563 src/error_dialog.rs:599
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -674,6 +674,12 @@ msgstr ""
 #: src/profile_forking/mod.rs:56
 msgctxt "ForkDialog"
 msgid "Could not derive a free profile id from that name"
+msgstr ""
+
+#: src/error_dialog.rs:499
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "caused by: {}"
 msgstr ""
 
 #: src/mesh_loader.rs:55

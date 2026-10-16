@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, SharedString};
 
+use crate::i18n::ctr;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
@@ -482,7 +483,8 @@ fn fire_replace_choice(
 ///
 /// Returns an empty string for a single-level error (no source chain to
 /// render); callers typically pair this output with the error's own `Display`
-/// rendering and skip the chain section when the returned string is empty.
+/// rendering and skip the chain section when the returned string is empty. The
+/// labels are in the language in force when it is called.
 pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
     let mut chain = err.chain();
     let Some(first) = chain.next() else {
@@ -491,9 +493,10 @@ pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
     let Some(second) = chain.next() else {
         return String::new();
     };
-    let mut out = format!("{first}\n  caused by: {second}");
-    for cause in chain {
-        out.push_str(&format!("\n  caused by: {cause}"));
+    let mut out = first.to_string();
+    for cause in std::iter::once(second).chain(chain) {
+        out.push_str("\n  ");
+        out.push_str(&ctr!("ErrorDialog", "caused by: {}", cause));
     }
     out
 }
