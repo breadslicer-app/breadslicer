@@ -23,7 +23,7 @@ use crate::profile_forking::{ForkParts, build_fork};
 use crate::profile_view::{ordered_calibration_targets, profile_display_name};
 use crate::slint_ui::{ForkDialog, ProfileViewDialog};
 
-use super::profile_editor::open_profile_editor;
+use super::profile_editor::{EditorNote, open_profile_editor};
 
 /// Opens the fork dialog for the resin at `index`. The source is the resolved
 /// profile behind the row (an extension row forks the same resolved base); the
@@ -157,10 +157,7 @@ pub(super) fn open_fork_dialog(
                 &editor_slot,
                 fork_index as i32,
                 false,
-                Some(ctr!(
-                    "ProfileViewDialog",
-                    "The forked profile is already in your library. Close keeps it unchanged.",
-                )),
+                Some(EditorNote::ForkSaved),
             );
         }
     });
