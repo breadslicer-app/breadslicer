@@ -37,7 +37,15 @@ impl SettingsFile {
     pub(crate) fn load(&self) -> AppSettings {
         match fs::read_to_string(&self.path) {
             Ok(content) => match toml::from_str::<AppSettings>(&content) {
-                Ok(loaded) if loaded.version == APP_SETTINGS_SCHEMA_VERSION => loaded,
+                Ok(loaded) if loaded.version == APP_SETTINGS_SCHEMA_VERSION => {
+                    if let Some(code) = loaded.unbundled_language() {
+                        eprintln!(
+                            "Stored language {:?} is not bundled in this build; using the system language",
+                            code.as_str(),
+                        );
+                    }
+                    loaded
+                }
                 Ok(loaded) => {
                     eprintln!(
                         "Settings schema version in {} is {} (current is {}); resetting to defaults",
@@ -164,7 +172,7 @@ mod settings_file_tests {
         };
         let s = file.load();
         assert!(matches!(s.theme(), ThemePreference::System));
-        assert!(s.language().is_system());
+        assert_eq!(s.language(), LanguagePreference::System);
     }
 
     #[test]
@@ -203,7 +211,7 @@ mod settings_file_tests {
 
         let loaded = file.load();
         assert!(matches!(loaded.theme(), ThemePreference::Dark));
-        assert!(loaded.language().is_system());
+        assert_eq!(loaded.language(), LanguagePreference::System);
     }
 
     #[test]
@@ -238,6 +246,60 @@ mod settings_file_tests {
         // hand-edit) can find it.
         let written = fs::read_to_string(&file.path).unwrap();
         assert!(written.contains("language = \"es\""), "got:\n{written}");
+    }
+
+    #[test]
+    fn an_unbundled_language_keeps_the_other_settings() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(
+            &file.path,
+            "default_printer = \"elegoo-mars-5\"\n[appearance]\nlanguage = \"xx\"\n",
+        )
+        .unwrap();
+
+        let loaded = file.load();
+        assert_eq!(
+            loaded.default_printer(),
+            Some(PrinterId::new("elegoo-mars-5").unwrap())
+        );
+        assert_eq!(loaded.language(), LanguagePreference::System);
+    }
+
+    #[test]
+    fn an_unbundled_language_stays_on_disk_after_another_change() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(&file.path, "[appearance]\nlanguage = \"xx\"\n").unwrap();
+
+        let mut s = file.load();
+        // The saver copies every preference of the snapshot, which holds the
+        // system language for an unbundled code.
+        s.set_language(LanguagePreference::System);
+        s.set_theme(ThemePreference::Dark);
+        file.save(&s).unwrap();
+
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(written.contains("language = \"xx\""), "got:\n{written}");
+        assert!(written.contains("theme = \"dark\""), "got:\n{written}");
+    }
+
+    #[test]
+    fn a_malformed_language_keeps_the_other_settings() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(
+            &file.path,
+            "default_printer = \"elegoo-mars-5\"\n[appearance]\nlanguage = \"\"\n",
+        )
+        .unwrap();
+
+        let loaded = file.load();
+        assert_eq!(
+            loaded.default_printer(),
+            Some(PrinterId::new("elegoo-mars-5").unwrap())
+        );
+        assert_eq!(loaded.language(), LanguagePreference::System);
     }
 
     #[test]

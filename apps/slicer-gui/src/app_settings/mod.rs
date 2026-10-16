@@ -12,10 +12,11 @@ pub(crate) mod file;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use newtypes::newtype_validated;
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::language::LanguagePreference;
+use crate::language::{BundledLanguage, LanguagePreference};
 use crate::{MenuLayout, ThemePreference};
 
 /// On-disk representation of `ThemePreference`. Separate type because the
@@ -87,14 +88,98 @@ impl From<MenuLayoutSetting> for MenuLayout {
     }
 }
 
+// A language code as the settings file stores it, such as `es`, `pt_BR` or
+// `sr@latin`. This build may not bundle it.
+newtype_validated!(LanguageCode, MalformedLanguageCode, String, is_language_code; Eq);
+
+/// Returns whether `code` can be stored as a language code: not empty, only
+/// ASCII letters, digits, `-`, `_` and `@` (the characters of a locale code),
+/// and not `system`, which the settings file uses for the system language.
+fn is_language_code(code: &str) -> bool {
+    !code.is_empty()
+        && code != "system"
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'@'))
+}
+
+impl LanguageCode {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<BundledLanguage> for LanguageCode {
+    fn from(language: BundledLanguage) -> Self {
+        // Every bundled code passes the check, as
+        // `every_bundled_code_is_a_language_code` shows.
+        Self(language.code().to_owned())
+    }
+}
+
+/// The language that the settings file stores: the system language, or a
+/// language code.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum LanguageSetting {
+    #[default]
+    System,
+    Code(LanguageCode),
+}
+
+impl LanguageSetting {
+    fn is_system(&self) -> bool {
+        matches!(self, Self::System)
+    }
+
+    /// Returns the preference that this setting puts in force: a code that this
+    /// build does not bundle gives the system language.
+    fn preference(&self) -> LanguagePreference {
+        match self {
+            Self::System => LanguagePreference::System,
+            Self::Code(code) => BundledLanguage::from_code(code.as_str())
+                .map_or(LanguagePreference::System, LanguagePreference::Bundled),
+        }
+    }
+}
+
+// Wire format: `"system"` for the system language, the code otherwise.
+impl Serialize for LanguageSetting {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::System => "system".serialize(ser),
+            Self::Code(code) => code.as_str().serialize(ser),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LanguageSetting {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let stored = String::deserialize(de)?;
+        if stored == "system" {
+            return Ok(Self::System);
+        }
+        match LanguageCode::new(stored.clone()) {
+            Ok(code) => Ok(Self::Code(code)),
+            Err(MalformedLanguageCode) => {
+                // Only a hand edit writes a malformed value, and the next save
+                // drops it.
+                eprintln!(
+                    "Stored language {stored:?} is not a language code; using the system language"
+                );
+                Ok(Self::System)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Appearance {
     #[serde(default)]
     theme: ThemeSetting,
     /// Omitted in TOML when the user is on `System` (the default) so a fresh
     /// config stays minimal.
-    #[serde(default, skip_serializing_if = "LanguagePreference::is_system")]
-    language: LanguagePreference,
+    #[serde(default, skip_serializing_if = "LanguageSetting::is_system")]
+    language: LanguageSetting,
     /// Omitted in TOML when the user is on `Bar` (the default).
     #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_bar")]
     menu_layout: MenuLayoutSetting,
@@ -354,11 +439,30 @@ impl AppSettings {
     }
 
     pub(crate) fn language(&self) -> LanguagePreference {
-        self.appearance.language
+        self.appearance.language.preference()
     }
 
+    /// Stores `language`. A stored code that this build does not bundle stays
+    /// while `language` is the system language, so a save of another change
+    /// keeps the code that the user chose.
     pub(crate) fn set_language(&mut self, language: LanguagePreference) {
-        self.appearance.language = language;
+        if self.language() == language {
+            return;
+        }
+        self.appearance.language = match language {
+            LanguagePreference::System => LanguageSetting::System,
+            LanguagePreference::Bundled(bundled) => LanguageSetting::Code(bundled.into()),
+        };
+    }
+
+    /// Returns the stored language code when this build does not bundle it.
+    fn unbundled_language(&self) -> Option<&LanguageCode> {
+        match &self.appearance.language {
+            LanguageSetting::Code(code) if self.language() == LanguagePreference::System => {
+                Some(code)
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn menu_layout(&self) -> MenuLayout {
@@ -616,7 +720,7 @@ mod app_settings_tests {
         // Discriminant comparison only: ThemePreference may carry
         // platform-specific extra variants we don't construct here.
         assert!(matches!(s.theme(), ThemePreference::System));
-        assert!(s.language().is_system());
+        assert_eq!(s.language(), LanguagePreference::System);
     }
 
     #[test]
@@ -696,5 +800,153 @@ mod app_settings_tests {
     #[test]
     fn default_carries_current_schema_version() {
         assert_eq!(AppSettings::default().version, APP_SETTINGS_SCHEMA_VERSION);
+    }
+}
+
+#[cfg(test)]
+mod language_setting_tests {
+    use super::*;
+
+    /// The `language` key on its own, as the settings file reads and writes it.
+    #[derive(Debug, Deserialize, PartialEq, Serialize)]
+    struct Stored {
+        language: LanguageSetting,
+    }
+
+    fn code(value: &str) -> LanguageCode {
+        LanguageCode::new(value.to_owned()).expect("a language code")
+    }
+
+    fn bundled(value: &str) -> LanguagePreference {
+        LanguagePreference::Bundled(BundledLanguage::from_code(value).expect("bundled language"))
+    }
+
+    /// Returns default settings that store `language`.
+    fn settings_with(language: LanguageSetting) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.appearance.language = language;
+        settings
+    }
+
+    #[test]
+    fn locale_codes_are_language_codes() {
+        for value in ["es", "pt_BR", "sr@latin", "xx"] {
+            assert_eq!(code(value).as_str(), value);
+        }
+    }
+
+    #[test]
+    fn other_values_are_not_language_codes() {
+        for value in ["", "system", "e s", "ü"] {
+            assert_eq!(
+                LanguageCode::new(value.to_owned()),
+                Err(MalformedLanguageCode),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_bundled_code_is_a_language_code() {
+        for language in BundledLanguage::ALL {
+            assert_eq!(
+                LanguageCode::new(language.code().to_owned()),
+                Ok(LanguageCode::from(*language))
+            );
+        }
+    }
+
+    #[test]
+    fn system_is_read_as_the_system_language() {
+        let stored: Stored = toml::from_str("language = \"system\"").unwrap();
+        assert_eq!(stored.language, LanguageSetting::System);
+    }
+
+    #[test]
+    fn a_code_is_read_as_that_code() {
+        let stored: Stored = toml::from_str("language = \"xx\"").unwrap();
+        assert_eq!(stored.language, LanguageSetting::Code(code("xx")));
+    }
+
+    #[test]
+    fn a_malformed_value_is_read_as_the_system_language() {
+        let stored: Stored = toml::from_str("language = \"\"").unwrap();
+        assert_eq!(stored.language, LanguageSetting::System);
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_string_does_not_parse() {
+        assert!(toml::from_str::<Stored>("language = 5").is_err());
+    }
+
+    #[test]
+    fn the_system_language_is_written_as_system() {
+        let stored = Stored {
+            language: LanguageSetting::System,
+        };
+        assert_eq!(toml::to_string(&stored).unwrap(), "language = \"system\"\n");
+    }
+
+    #[test]
+    fn a_code_is_written_as_itself() {
+        let stored = Stored {
+            language: LanguageSetting::Code(code("xx")),
+        };
+        assert_eq!(toml::to_string(&stored).unwrap(), "language = \"xx\"\n");
+    }
+
+    #[test]
+    fn a_bundled_code_gives_its_language() {
+        let settings = settings_with(LanguageSetting::Code(code("es")));
+        assert_eq!(settings.language(), bundled("es"));
+    }
+
+    #[test]
+    fn an_unbundled_code_gives_the_system_language() {
+        let settings = settings_with(LanguageSetting::Code(code("xx")));
+        assert_eq!(settings.language(), LanguagePreference::System);
+    }
+
+    #[test]
+    fn the_system_setting_gives_the_system_language() {
+        let settings = settings_with(LanguageSetting::System);
+        assert_eq!(settings.language(), LanguagePreference::System);
+    }
+
+    #[test]
+    fn the_system_language_keeps_an_unbundled_code() {
+        let mut settings = settings_with(LanguageSetting::Code(code("xx")));
+        settings.set_language(LanguagePreference::System);
+        assert_eq!(
+            settings.appearance.language,
+            LanguageSetting::Code(code("xx"))
+        );
+    }
+
+    #[test]
+    fn picking_a_language_replaces_an_unbundled_code() {
+        let mut settings = settings_with(LanguageSetting::Code(code("xx")));
+        settings.set_language(bundled("de"));
+        assert_eq!(
+            settings.appearance.language,
+            LanguageSetting::Code(code("de"))
+        );
+    }
+
+    #[test]
+    fn the_system_language_replaces_a_bundled_code() {
+        let mut settings = settings_with(LanguageSetting::Code(code("es")));
+        settings.set_language(LanguagePreference::System);
+        assert_eq!(settings.appearance.language, LanguageSetting::System);
+    }
+
+    #[test]
+    fn only_an_unbundled_code_is_reported() {
+        let unbundled = settings_with(LanguageSetting::Code(code("xx")));
+        assert_eq!(unbundled.unbundled_language(), Some(&code("xx")));
+        let with_bundled = settings_with(LanguageSetting::Code(code("es")));
+        assert_eq!(with_bundled.unbundled_language(), None);
+        let system = settings_with(LanguageSetting::System);
+        assert_eq!(system.unbundled_language(), None);
     }
 }

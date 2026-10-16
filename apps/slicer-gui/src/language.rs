@@ -14,7 +14,6 @@
 
 use std::marker::PhantomData;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
@@ -65,10 +64,6 @@ pub(crate) enum LanguagePreference {
 }
 
 impl LanguagePreference {
-    pub(crate) fn is_system(&self) -> bool {
-        matches!(self, Self::System)
-    }
-
     /// Map a `ComboBox.current-index` back to the typed preference. Index 0 is
     /// the "System" entry; indices 1.. follow the order of
     /// [`BundledLanguage::ALL`]. Out-of-range values silently fall back to
@@ -125,34 +120,6 @@ impl LanguagePreference {
         select_first_bundled(target, |code| {
             slint::select_bundled_translation(code).is_ok()
         });
-    }
-}
-
-// Wire format: `language = "<code>"` for a bundled locale, or `"system"` for
-// the OS-locale fallback. The field is `#[serde(default)]` upstream, so an
-// absent key in TOML deserializes as `System` too.
-impl Serialize for LanguagePreference {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::System => "system".serialize(ser),
-            Self::Bundled(lang) => lang.code().serialize(ser),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for LanguagePreference {
-    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(de)?;
-        if s == "system" {
-            return Ok(Self::System);
-        }
-        // Unknown codes are a hard error: a hand-edited config with a stale or
-        // typo'd code shouldn't be silently coerced to System, because that
-        // would mask the user's actual intent. The top-level settings loader
-        // already turns parse errors into a logged "fall back to defaults".
-        BundledLanguage::from_code(&s)
-            .map(Self::Bundled)
-            .ok_or_else(|| D::Error::custom(format!("unknown language code: {s:?}")))
     }
 }
 
@@ -229,52 +196,11 @@ mod language_tests {
     }
 
     #[test]
-    fn serde_round_trip_through_toml() {
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        struct W {
-            language: LanguagePreference,
-        }
-
-        let bundled = W {
-            language: LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap()),
-        };
-        let s = toml::to_string(&bundled).unwrap();
-        assert!(s.contains("language = \"es\""), "got {s}");
-        let back: W = toml::from_str(&s).unwrap();
-        assert_eq!(back, bundled);
-
-        let sys = W {
-            language: LanguagePreference::System,
-        };
-        let s = toml::to_string(&sys).unwrap();
-        assert!(s.contains("language = \"system\""), "got {s}");
-        let back: W = toml::from_str(&s).unwrap();
-        assert_eq!(back, sys);
-    }
-
-    #[test]
-    fn deserializing_unknown_code_is_an_error() {
-        #[derive(Deserialize)]
-        struct W {
-            #[allow(dead_code)]
-            language: LanguagePreference,
-        }
-        assert!(toml::from_str::<W>("language = \"xx\"").is_err());
-    }
-
-    #[test]
     fn base_language_strips_region() {
         assert_eq!(base_language("es-ES"), "es");
         assert_eq!(base_language("pt_BR"), "pt");
         assert_eq!(base_language("en@latin"), "en");
         assert_eq!(base_language("de"), "de");
-    }
-
-    #[test]
-    fn is_system_distinguishes_the_two_variants() {
-        assert!(LanguagePreference::System.is_system());
-        let en = BundledLanguage::from_code("en").unwrap();
-        assert!(!LanguagePreference::Bundled(en).is_system());
     }
 
     #[test]
