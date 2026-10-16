@@ -29,7 +29,9 @@ include!(concat!(env!("OUT_DIR"), "/message_catalog.rs"));
 /// # xgettext
 ///
 /// ```sh
-/// xgettext -L Rust --keyword='ctr!:1c,2' --keyword='ctr!:1c,2,3' ...
+/// xgettext -L Rust --keyword='ctr!:1c,2' \
+///     --keyword='ctr!:1c,2,3,4t' --keyword='ctr!:1c,2,3,5t' ... \
+///     --keyword='ctr!:1c,2,3,10t' ...
 /// ```
 macro_rules! ctr {
     // Plural, with or without format arguments.
@@ -98,10 +100,9 @@ mod i18n_tests {
 
     /// The texts of 2 calls that the `.po` files translate.
     fn texts() -> (String, String) {
-        let file = "part.stl";
         (
             ctr!("FileDialog", "OBJ files").to_string(),
-            ctr!("ErrorDialog", "File: {}", file).to_string(),
+            ctr!("ErrorDialog", "File: {}", "part.stl").to_string(),
         )
     }
 

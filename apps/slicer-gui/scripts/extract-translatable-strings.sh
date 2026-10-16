@@ -34,10 +34,18 @@ find ./src -name '*.rs' \
         -o ./i18n/from-rust-without-context.pot.tmp ;
 maybe_update_pot ./i18n/from-rust-without-context.pot
 
+# A plural ctr! call has at least 4 arguments: context, singular, plural and
+# count. The total-argument specs keep xgettext from reading a singular call
+# whose 3rd argument is a string literal as plural. A plural call with more than
+# 10 arguments needs 1 more spec.
 find ./src -name '*.rs' \
     | xargs xgettext \
         -L Rust \
-        --keyword='ctr!:1c,2' --keyword='ctr!:1c,2,3' \
+        --keyword='ctr!:1c,2' \
+        --keyword='ctr!:1c,2,3,4t' --keyword='ctr!:1c,2,3,5t' \
+        --keyword='ctr!:1c,2,3,6t' --keyword='ctr!:1c,2,3,7t' \
+        --keyword='ctr!:1c,2,3,8t' --keyword='ctr!:1c,2,3,9t' \
+        --keyword='ctr!:1c,2,3,10t' \
         --from-code=UTF-8 \
         -o ./i18n/from-rust-with-context.pot.tmp ;
 maybe_update_pot ./i18n/from-rust-with-context.pot
