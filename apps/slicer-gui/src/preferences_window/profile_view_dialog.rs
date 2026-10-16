@@ -8,14 +8,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, PlatformError, VecModel};
 
 use sc_print_profiles::EffectiveMaterial;
 
 use crate::preferences_bus::PreferencesBus;
-use crate::profile_catalog::{ProfileCatalog, load_profile_for_view};
+use crate::profile_catalog::{ProfileCatalog, ProfileSource, load_profile_for_view};
 use crate::profile_view::{build_profile_view_model, profile_display_name};
 use crate::slint_ui::ProfileViewDialog;
+
+use super::language_follow::follow_language;
 
 /// Opens the read-only profile viewer for the resin at `index`: the base
 /// profile's sections plus its extension's calibration blocks, with the block
@@ -35,25 +37,13 @@ pub(super) fn open_profile_view_dialog(
         eprintln!("warning: {issue}");
     }
 
-    let snapshot = bus.snapshot();
-    let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
-    let sections = build_profile_view_model(
-        &material,
-        catalog.printers(),
-        default_printer.as_ref(),
-        source,
-    );
-
-    let dialog = match ProfileViewDialog::new() {
+    let dialog = match build_profile_viewer(bus, material, source, catalog) {
         Ok(dialog) => dialog,
         Err(err) => {
             eprintln!("failed to create the profile viewer: {err}");
             return;
         }
     };
-    dialog.set_theme(snapshot.theme);
-    dialog.set_profile_name(profile_display_name(material.identity()).into());
-    dialog.set_sections(ModelRc::new(VecModel::from(sections)));
 
     let dialog_weak = dialog.as_weak();
     dialog.on_close_requested({
@@ -71,4 +61,80 @@ pub(super) fn open_profile_view_dialog(
         return;
     }
     *dialog_slot.borrow_mut() = Some(dialog);
+}
+
+/// Builds the viewer of `material`, with its sections in the language in force
+/// while the viewer exists.
+fn build_profile_viewer(
+    bus: &Rc<PreferencesBus>,
+    material: EffectiveMaterial,
+    source: ProfileSource,
+    catalog: Rc<ProfileCatalog>,
+) -> Result<ProfileViewDialog, PlatformError> {
+    let snapshot = bus.snapshot();
+    let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
+
+    let dialog = ProfileViewDialog::new()?;
+    dialog.set_theme(snapshot.theme);
+    dialog.set_profile_name(profile_display_name(material.identity()).into());
+    let push_sections = move |dialog: &ProfileViewDialog| {
+        let sections = build_profile_view_model(
+            &material,
+            catalog.printers(),
+            default_printer.as_ref(),
+            source,
+        );
+        dialog.set_sections(ModelRc::new(VecModel::from(sections)));
+    };
+    push_sections(&dialog);
+    follow_language(bus, &dialog, push_sections);
+    Ok(dialog)
+}
+
+#[cfg(test)]
+mod language_change_tests {
+    use slint::Model;
+
+    use super::*;
+    use crate::language::InstalledTranslations;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::slint_ui::{ErrorDialog, ProfileViewSection};
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::material_profiles::resin_profile;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::ui_language::UiLanguage;
+
+    fn titles(sections: impl IntoIterator<Item = ProfileViewSection>) -> Vec<String> {
+        sections
+            .into_iter()
+            .map(|section| section.title.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_sections_again() {
+        let (shown, expected) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            // In the app, the 1st main window is the 1st component of the
+            // thread.
+            let first = ErrorDialog::new().expect("the headless platform creates components");
+            let _ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), &bus);
+            let catalog = Rc::new(ProfileCatalog::from_entries(Vec::new(), Vec::new()));
+            let material = EffectiveMaterial::compose(resin_profile(), None).0;
+            let dialog = build_profile_viewer(&bus, material, ProfileSource::User, catalog)
+                .expect("the headless platform creates the viewer");
+            let sentinel = ProfileViewSection {
+                title: "sentinel".into(),
+                ..ProfileViewSection::default()
+            };
+            dialog.set_sections(ModelRc::new(VecModel::from(vec![sentinel])));
+
+            pick_language(&bus, "es");
+
+            let material = EffectiveMaterial::compose(resin_profile(), None).0;
+            let expected = build_profile_view_model(&material, &[], None, ProfileSource::User);
+            (titles(dialog.get_sections().iter()), titles(expected))
+        });
+        assert_eq!(shown, expected);
+    }
 }

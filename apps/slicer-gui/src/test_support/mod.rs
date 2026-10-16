@@ -8,5 +8,6 @@
 pub(crate) mod catalog_entries;
 pub(crate) mod gpu_devices;
 pub(crate) mod language_pick;
+pub(crate) mod material_profiles;
 pub(crate) mod projects;
 pub(crate) mod slint_thread;
