@@ -166,4 +166,47 @@ mod i18n_tests {
         });
         assert_eq!(bundled, LANGUAGES);
     }
+
+    /// The counts of the tables of [`plural_forms`]: together they reach every
+    /// form of each formula of the bundled files.
+    const COUNTS: [i32; 12] = [0, 1, 2, 3, 5, 7, 11, 12, 21, 22, 101, 111];
+
+    /// The form that the compiled plural rule of `language` gives for each of
+    /// [`COUNTS`].
+    fn plural_forms(language: &str) -> [usize; 12] {
+        let index = LANGUAGES
+            .iter()
+            .position(|code| *code == language)
+            .expect("bundled language");
+        let rule = PLURAL_RULES[index].expect("a rule for each language");
+        COUNTS.map(rule)
+    }
+
+    /// Checks 1 language for each formula of the bundled files.
+    #[test]
+    fn the_compiled_plural_rules_give_the_forms_of_their_formulas() {
+        // es: n != 1
+        assert_eq!(plural_forms("es"), [1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+        // fr: n > 1
+        assert_eq!(plural_forms("fr"), [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+        // ru: n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 ||
+        // n%100>=20) ? 1 : 2
+        assert_eq!(plural_forms("ru"), [2, 0, 1, 1, 2, 2, 2, 2, 0, 1, 0, 2]);
+        // pl: n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2
+        assert_eq!(plural_forms("pl"), [2, 0, 1, 1, 2, 2, 2, 2, 2, 1, 2, 2]);
+        // sk: (n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2
+        assert_eq!(plural_forms("sk"), [2, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2]);
+        // ro: n==1 ? 0 : (n==0 || (n%100 > 0 && n%100 < 20)) ? 1 : 2
+        assert_eq!(plural_forms("ro"), [1, 0, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1]);
+        // lt: (n % 10 == 1 && (n % 100 < 11 || n % 100 > 19)) ? 0 : ((n % 10 >=
+        // 2 && n % 10 <= 9 && (n % 100 < 11 || n % 100 > 19)) ? 1 : 2)
+        assert_eq!(plural_forms("lt"), [2, 0, 1, 1, 1, 1, 2, 2, 0, 1, 0, 2]);
+        // lv: (n % 10 == 0 || n % 100 >= 11 && n % 100 <= 19) ? 0 : ((n % 10 ==
+        // 1 && n % 100 != 11) ? 1 : 2)
+        assert_eq!(plural_forms("lv"), [0, 1, 2, 2, 2, 2, 0, 0, 1, 2, 1, 0]);
+        // sl: n%100==1 ? 0 : n%100==2 ? 1 : n%100==3 || n%100==4 ? 2 : 3
+        assert_eq!(plural_forms("sl"), [3, 0, 1, 2, 3, 3, 3, 3, 3, 3, 0, 3]);
+        // ga: n==1 ? 0 : n==2 ? 1 : (n>2 && n<7) ? 2 : (n>6 && n<11) ? 3 : 4
+        assert_eq!(plural_forms("ga"), [4, 0, 1, 2, 2, 3, 4, 4, 4, 4, 4, 4]);
+    }
 }

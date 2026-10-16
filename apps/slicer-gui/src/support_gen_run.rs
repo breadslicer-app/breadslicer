@@ -267,18 +267,21 @@ fn boundary_box_from_build_volume(build_volume: BuildVolume) -> BoundaryShape {
 /// 1-line rollup for the dialog's message.
 fn summary_message(inserted: usize, total: usize, material_g: f64) -> String {
     if inserted < total {
+        // The noun follows the total, as in "1 of 2 structures".
         return ctr!(
             "GenSupportDialog",
-            "{} of {} Support structure(s) added to the scene. Estimated material: {} g.",
-            inserted,
+            "{} of {n} Support structure added to the scene. Estimated material: {} g.",
+            "{} of {n} Support structures added to the scene. Estimated material: {} g.",
             total,
+            inserted,
             format!("{material_g:.2}")
         )
         .to_string();
     }
     ctr!(
         "GenSupportDialog",
-        "{} Support structure(s) added to the scene. Estimated material: {} g.",
+        "{n} Support structure added to the scene. Estimated material: {} g.",
+        "{n} Support structures added to the scene. Estimated material: {} g.",
         inserted,
         format!("{material_g:.2}")
     )
@@ -299,4 +302,33 @@ fn details_message(recipe: &JobRecipe, resolution_trail: &[ResolutionRecord]) ->
         ));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod support_gen_run_tests {
+    use super::*;
+
+    #[test]
+    fn the_summary_counts_added_structures_in_the_singular_and_the_plural() {
+        assert_eq!(
+            summary_message(1, 1, 2.5),
+            "1 Support structure added to the scene. Estimated material: 2.50 g."
+        );
+        assert_eq!(
+            summary_message(2, 2, 2.5),
+            "2 Support structures added to the scene. Estimated material: 2.50 g."
+        );
+    }
+
+    #[test]
+    fn a_partial_summary_takes_its_form_from_the_total() {
+        assert_eq!(
+            summary_message(0, 1, 2.5),
+            "0 of 1 Support structure added to the scene. Estimated material: 2.50 g."
+        );
+        assert_eq!(
+            summary_message(1, 2, 2.5),
+            "1 of 2 Support structures added to the scene. Estimated material: 2.50 g."
+        );
+    }
 }

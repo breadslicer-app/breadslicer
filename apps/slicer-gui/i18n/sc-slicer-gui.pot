@@ -1117,7 +1117,7 @@ msgctxt "FileDialog"
 msgid "3MF files"
 msgstr ""
 
-#: src/wiring.rs:343 src/wiring.rs:706 src/i18n.rs:103
+#: src/wiring.rs:343 src/wiring.rs:706 src/i18n.rs:104
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
@@ -1137,8 +1137,8 @@ msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:563 src/wiring.rs:684 src/i18n.rs:104 src/scene_loader.rs:564
-#: src/app_state.rs:762 src/error_dialog.rs:598 src/export_print_file.rs:268
+#: src/wiring.rs:563 src/wiring.rs:684 src/i18n.rs:105 src/scene_loader.rs:564
+#: src/app_state.rs:762 src/error_dialog.rs:597 src/export_print_file.rs:268
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -1206,7 +1206,7 @@ msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:563 src/error_dialog.rs:597
+#: src/scene_loader.rs:563 src/error_dialog.rs:596
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -1442,48 +1442,58 @@ msgctxt "RepairDialog"
 msgid "No problems found."
 msgstr ""
 
-#: src/repair_run.rs:314
+#: src/repair_run.rs:317
 #, rust-format
 msgctxt "RepairDialog"
-msgid "{} mesh(es) repaired"
-msgstr ""
+msgid "{n} mesh repaired"
+msgid_plural "{n} meshes repaired"
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/repair_run.rs:320
+#: src/repair_run.rs:328
 #, rust-format
 msgctxt "RepairDialog"
-msgid "{} mesh(es) could not be fully repaired"
-msgstr ""
+msgid "{n} mesh could not be fully repaired"
+msgid_plural "{n} meshes could not be fully repaired"
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/repair_run.rs:330
+#: src/repair_run.rs:339
 #, rust-format
 msgctxt "RepairDialog"
-msgid "{} mesh(es) still not edge-manifold"
-msgstr ""
+msgid "{n} mesh still not edge-manifold"
+msgid_plural "{n} meshes still not edge-manifold"
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/repair_run.rs:360
+#: src/repair_run.rs:372
 #, rust-format
 msgctxt "RepairDialog"
-msgid "removed {} degenerate face(s)"
-msgstr ""
+msgid "removed {n} degenerate face"
+msgid_plural "removed {n} degenerate faces"
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/repair_run.rs:364
+#: src/repair_run.rs:383
 #, rust-format
 msgctxt "RepairDialog"
-msgid "reoriented {} face(s)"
-msgstr ""
+msgid "reoriented {n} face"
+msgid_plural "reoriented {n} faces"
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/repair_run.rs:368
+#: src/repair_run.rs:392
 #, rust-format
 msgctxt "RepairDialog"
 msgid "could not be fully repaired: {}"
 msgstr ""
 
-#: src/repair_run.rs:372
+#: src/repair_run.rs:396
 msgctxt "RepairDialog"
 msgid "still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:379
+#: src/repair_run.rs:403
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"
@@ -1511,18 +1521,24 @@ msgctxt "GenSupportDialog"
 msgid "Support-structures generated"
 msgstr ""
 
-#: src/support_gen_run.rs:272
+#: src/support_gen_run.rs:273
 #, rust-format
 msgctxt "GenSupportDialog"
 msgid ""
-"{} of {} Support structure(s) added to the scene. Estimated material: {} g."
-msgstr ""
+"{} of {n} Support structure added to the scene. Estimated material: {} g."
+msgid_plural ""
+"{} of {n} Support structures added to the scene. Estimated material: {} g."
+msgstr[0] ""
+msgstr[1] ""
 
-#: src/support_gen_run.rs:281
+#: src/support_gen_run.rs:283
 #, rust-format
 msgctxt "GenSupportDialog"
-msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
-msgstr ""
+msgid "{n} Support structure added to the scene. Estimated material: {} g."
+msgid_plural ""
+"{n} Support structures added to the scene. Estimated material: {} g."
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/print_format.rs:72
 msgctxt "SlicePanel"
@@ -1677,8 +1693,8 @@ msgctxt "ProfileViewDialog"
 msgid "Scale compensation (x/y/z)"
 msgstr ""
 
-#: src/profile_view/mod.rs:224 src/preferences_window/profile_editor.rs:482
-#: src/preferences_window/profile_editor.rs:524
+#: src/profile_view/mod.rs:224 src/preferences_window/profile_editor.rs:481
+#: src/preferences_window/profile_editor.rs:523
 msgctxt "ProfileViewDialog"
 msgid "Generic"
 msgstr ""
@@ -1711,7 +1727,7 @@ msgid ""
 msgstr ""
 
 #: src/preferences_window/profile_editor.rs:194
-#: src/preferences_window/profile_editor.rs:479
+#: src/preferences_window/profile_editor.rs:478
 #: src/preferences_window/mod.rs:913
 #, rust-format
 msgctxt "PreferencesPage"

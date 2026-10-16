@@ -311,13 +311,22 @@ fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
     }
     let mut parts: Vec<String> = Vec::new();
     if repaired > 0 {
-        parts.push(ctr!("RepairDialog", "{} mesh(es) repaired", repaired).to_string());
+        parts.push(
+            ctr!(
+                "RepairDialog",
+                "{n} mesh repaired",
+                "{n} meshes repaired",
+                repaired
+            )
+            .to_string(),
+        );
     }
     if refused > 0 {
         parts.push(
             ctr!(
                 "RepairDialog",
-                "{} mesh(es) could not be fully repaired",
+                "{n} mesh could not be fully repaired",
+                "{n} meshes could not be fully repaired",
                 refused
             )
             .to_string(),
@@ -327,7 +336,8 @@ fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
         parts.push(
             ctr!(
                 "RepairDialog",
-                "{} mesh(es) still not edge-manifold",
+                "{n} mesh still not edge-manifold",
+                "{n} meshes still not edge-manifold",
                 still_holed
             )
             .to_string(),
@@ -357,11 +367,25 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
             }
             if removed > 0 {
                 notes.push(
-                    ctr!("RepairDialog", "removed {} degenerate face(s)", removed).to_string(),
+                    ctr!(
+                        "RepairDialog",
+                        "removed {n} degenerate face",
+                        "removed {n} degenerate faces",
+                        removed
+                    )
+                    .to_string(),
                 );
             }
             if reoriented > 0 {
-                notes.push(ctr!("RepairDialog", "reoriented {} face(s)", reoriented).to_string());
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "reoriented {n} face",
+                        "reoriented {n} faces",
+                        reoriented
+                    )
+                    .to_string(),
+                );
             }
             if let Some(refusal) = &outcome.refusal {
                 notes.push(
@@ -409,6 +433,7 @@ fn target_names(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<Option<St
 mod repair_run_tests {
     use std::path::PathBuf;
 
+    use sc_mesh_core::indexed_mesh::{MeshFixError, RepairRefusal};
     use sc_mesh_core::primitives::FaceIndex;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
@@ -689,7 +714,123 @@ mod repair_run_tests {
         let names = [Some("Lid".to_string()), None];
         assert_eq!(
             dialog_lines(&outcomes, &names),
-            ["Lid: reoriented 1 face(s)", "Mesh 2: reoriented 1 face(s)"]
+            ["Lid: reoriented 1 face", "Mesh 2: reoriented 1 face"]
+        );
+    }
+
+    /// An outcome for `target` with `fixes` and nothing left to fix.
+    fn fixed(target: MeshTarget, fixes: Vec<MeshFix>) -> SceneRepairOutcome {
+        SceneRepairOutcome {
+            target,
+            fixes,
+            refusal: None,
+            edge_manifold_after: true,
+        }
+    }
+
+    fn flipped_faces(count: usize) -> Vec<MeshFix> {
+        (0..count)
+            .map(|face| MeshFix::FlippedFaceOrientation {
+                face_idx: FaceIndex::from(face),
+            })
+            .collect()
+    }
+
+    fn removed_faces(count: usize) -> Vec<MeshFix> {
+        (0..count)
+            .map(|face| MeshFix::RemovedZeroLengthEdgeFace {
+                face_idx: FaceIndex::from(face),
+            })
+            .collect()
+    }
+
+    /// An outcome for `target` that the repair refused.
+    fn refused(target: MeshTarget) -> SceneRepairOutcome {
+        SceneRepairOutcome {
+            target,
+            fixes: Vec::new(),
+            refusal: Some(RepairRefusal::OrientationFixFailed(
+                MeshFixError::TooManyFlippedFaces,
+            )),
+            edge_manifold_after: false,
+        }
+    }
+
+    /// An outcome for `target` with nothing fixed and the mesh still not
+    /// edge-manifold.
+    fn still_not_edge_manifold(target: MeshTarget) -> SceneRepairOutcome {
+        SceneRepairOutcome {
+            target,
+            fixes: Vec::new(),
+            refusal: None,
+            edge_manifold_after: false,
+        }
+    }
+
+    #[test]
+    fn the_summary_counts_repaired_meshes_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        assert_eq!(summary_message(&[one_flip(target)]), "1 mesh repaired.");
+        assert_eq!(
+            summary_message(&[one_flip(target), one_flip(target)]),
+            "2 meshes repaired."
+        );
+    }
+
+    #[test]
+    fn the_summary_counts_refused_meshes_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        assert_eq!(
+            summary_message(&[refused(target)]),
+            "1 mesh could not be fully repaired."
+        );
+        assert_eq!(
+            summary_message(&[refused(target), refused(target)]),
+            "2 meshes could not be fully repaired."
+        );
+    }
+
+    #[test]
+    fn the_summary_counts_meshes_still_not_edge_manifold_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        assert_eq!(
+            summary_message(&[still_not_edge_manifold(target)]),
+            "1 mesh still not edge-manifold."
+        );
+        assert_eq!(
+            summary_message(&[
+                still_not_edge_manifold(target),
+                still_not_edge_manifold(target)
+            ]),
+            "2 meshes still not edge-manifold."
+        );
+    }
+
+    #[test]
+    fn dialog_lines_count_removed_faces_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        let names = [Some("Lid".to_string())];
+        assert_eq!(
+            dialog_lines(&[fixed(target, removed_faces(1))], &names),
+            ["Lid: removed 1 degenerate face"]
+        );
+        assert_eq!(
+            dialog_lines(&[fixed(target, removed_faces(2))], &names),
+            ["Lid: removed 2 degenerate faces"]
+        );
+    }
+
+    #[test]
+    fn dialog_lines_count_reoriented_faces_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        let names = [Some("Lid".to_string())];
+        assert_eq!(
+            dialog_lines(&[fixed(target, flipped_faces(1))], &names),
+            ["Lid: reoriented 1 face"]
+        );
+        assert_eq!(
+            dialog_lines(&[fixed(target, flipped_faces(2))], &names),
+            ["Lid: reoriented 2 faces"]
         );
     }
 }
