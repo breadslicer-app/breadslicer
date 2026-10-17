@@ -341,3 +341,14 @@ mod geometry_tests {
         assert!(!gt_strict(subnormal, subnormal));
     }
 }
+
+#[cfg(test)]
+mod geometry_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn degenerate_triangle_renders_short_phrase() {
+        let msg = format!("{}", GeometryError::DegenerateTriangle);
+        assert_eq!(msg, "degenerate (near-zero area) triangle");
+    }
+}

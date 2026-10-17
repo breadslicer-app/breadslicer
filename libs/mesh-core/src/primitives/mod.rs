@@ -395,3 +395,38 @@ mod vertex_canonical_coords_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod coord_axis_display_tests {
+    use super::CoordAxis;
+
+    #[test]
+    fn each_axis_renders_its_letter() {
+        let letters: Vec<String> = CoordAxis::ALL.iter().map(ToString::to_string).collect();
+        assert_eq!(letters, ["X", "Y", "Z"]);
+    }
+}
+
+#[cfg(test)]
+mod normal_tests {
+    use super::{Normal, Vector3D};
+
+    #[test]
+    fn to_f64_widens_each_component() {
+        let normal = Normal::from_unit_unchecked([0.6, 0.0, -0.8]);
+        assert_eq!(
+            normal.to_f64(),
+            Vector3D::new([f64::from(0.6_f32), 0.0, f64::from(-0.8_f32)])
+        );
+    }
+}
+
+#[cfg(test)]
+mod vertex_index_tests {
+    use super::VertexIndex;
+
+    #[test]
+    fn offset_adds_to_the_index() {
+        assert_eq!(VertexIndex::from(5_u32).offset(2), VertexIndex::from(7_u32));
+    }
+}
