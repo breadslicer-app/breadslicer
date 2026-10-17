@@ -89,6 +89,7 @@ impl PartName {
 
     /// Returns the extension of the final segment, lowercased, if any.
     fn extension_lowercase(&self) -> Option<String> {
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "never None")]
         let file = self.0.rsplit('/').next()?;
         let (stem, ext) = file.rsplit_once('.')?;
         if stem.is_empty() {
@@ -102,6 +103,8 @@ impl PartName {
     fn directory(&self) -> &str {
         match self.0.rfind('/') {
             Some(idx) => &self.0[..=idx],
+            // #[gamma::skip(literal.str_to_empty, reason = "names have a /")]
+            // #[gamma::skip(literal.str_to_xyzzy, reason = "names have a /")]
             None => "/",
         }
     }
@@ -196,6 +199,7 @@ pub struct Package {
 }
 
 impl Package {
+    // #[gamma::skip(fn_value.default, reason = "new is Self::default")]
     pub fn new() -> Self {
         Self::default()
     }
@@ -311,6 +315,8 @@ impl Package {
         archive.write_all(&relationships_xml(&self.root_relationships)?)?;
 
         for (source, relationships) in &self.part_relationships {
+            // #[gamma::skip(cond.always_false, reason = "reads the same")]
+            // #[gamma::skip(loop.delete_continue, reason = "reads the same")]
             if relationships.is_empty() {
                 continue;
             }
@@ -326,7 +332,9 @@ impl Package {
             if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&len) {
                 // Compress the part across threads, then splice the finished
                 // stream in verbatim (no recompression).
+                // #[gamma::skip(try.propagate_to_unwrap, reason = "size fits")]
                 let entry = crate::deflate::parallel_entry(part.name.zip_entry(), &part.data)?;
+                // #[gamma::skip(try.propagate_to_unwrap, reason = "valid ZIP")]
                 let mut source = ZipArchive::new(Cursor::new(entry))?;
                 archive.raw_copy_file(source.by_index(0)?)?;
                 // Report the part's bytes in the same chunk steps the
@@ -473,6 +481,7 @@ impl Package {
     /// Builds the `[Content_Types].xml` payload: Default entries for extensions
     /// whose parts all share the same content type, Override entries for
     /// everything else.
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "writes into a Vec")]
     fn content_types_xml(&self) -> Result<Vec<u8>, PackageWriteError> {
         // extension -> unanimous content type (None once conflicting).
         let mut defaults: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -496,6 +505,7 @@ impl Package {
 
         let mut buffer = Vec::new();
         let mut writer = Writer::new(&mut buffer);
+        // #[gamma::skip(option.some_to_none, reason = "UTF-8 is the default")]
         writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
         let mut types = BytesStart::new("Types");
         types.push_attribute(("xmlns", crate::names::CONTENT_TYPES_NS));
@@ -707,9 +717,11 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
                     overrides.insert(part_name, content_type);
                 }
             }
+            // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
             Event::Eof => break,
             _ => {}
         }
+        // #[gamma::skip(stmt.delete_call, reason = "memory only")]
         buffer.clear();
     }
     open.ensure_closed()
@@ -758,18 +770,22 @@ fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, Pa
                     target: target.ok_or_else(|| missing("Target"))?,
                 });
             }
+            // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
             Event::Eof => break,
             _ => {}
         }
+        // #[gamma::skip(stmt.delete_call, reason = "memory only")]
         buffer.clear();
     }
     open.ensure_closed().map_err(xml_error)?;
     Ok(relationships)
 }
 
+// #[gamma::skip(try.propagate_to_unwrap, reason = "writes into a Vec")]
 fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageWriteError> {
     let mut buffer = Vec::new();
     let mut writer = Writer::new(&mut buffer);
+    // #[gamma::skip(option.some_to_none, reason = "UTF-8 is the default")]
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     let mut root = BytesStart::new("Relationships");
     root.push_attribute(("xmlns", crate::names::RELATIONSHIPS_NS));
@@ -798,10 +814,14 @@ fn is_relationships_part(name: &PartName) -> bool {
 /// Returns the source a relationships part describes: `None` for the package
 /// root (`/_rels/.rels`), otherwise the part name.
 fn relationships_source(rels: &PartName) -> Option<PartName> {
+    // #[gamma::skip(cond.always_false, reason = "the rest gives None too")]
+    // #[gamma::skip(literal.str_to_empty, reason = "the rest gives None too")]
+    // #[gamma::skip(literal.str_to_xyzzy, reason = "the rest gives None too")]
     if rels.as_str() == "/_rels/.rels" {
         return None;
     }
     let full = rels.as_str();
+    // #[gamma::skip(literal.str_to_xyzzy, reason = "never None")]
     let file = full.rsplit('/').next().unwrap_or("");
     let source_file = file.strip_suffix(".rels").unwrap_or(file);
     let dir_with_rels = &full[..full.len() - file.len()];

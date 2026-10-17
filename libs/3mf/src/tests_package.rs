@@ -5,9 +5,16 @@
 
 //! Unit tests for the OPC package layer.
 
-use std::io::{Cursor, Write};
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::rc::Rc;
 
+use quick_xml::XmlVersion;
 use quick_xml::errors::{Error as XmlError, IllFormedError};
+use quick_xml::events::Event;
+use quick_xml::name::{Namespace, ResolveResult};
+use quick_xml::reader::NsReader;
 
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
@@ -138,6 +145,102 @@ fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
     bytes[central + 24..central + 28].copy_from_slice(&claimed.to_le_bytes());
 }
 
+/// Returns the decompressed bytes of the item `name` of a ZIP archive.
+fn item_bytes(archive: &[u8], name: &str) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(archive)).expect("a ZIP archive");
+    let mut item = archive.by_name(name).expect("the item is present");
+    let mut bytes = Vec::new();
+    item.read_to_end(&mut bytes).expect("the item reads");
+    bytes
+}
+
+fn item_names(archive: &[u8]) -> BTreeSet<String> {
+    let archive = zip::ZipArchive::new(Cursor::new(archive)).expect("a ZIP archive");
+    archive.file_names().map(String::from).collect()
+}
+
+/// Returns a ZIP archive that stores `items` (name, bytes) uncompressed, in
+/// that order.
+fn stored_archive(items: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut cursor = Cursor::new(Vec::new());
+    let mut archive = zip::write::ZipWriter::new(&mut cursor);
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, bytes) in items {
+        archive.start_file(*name, stored).unwrap();
+        archive.write_all(bytes).unwrap();
+    }
+    archive.finish().unwrap();
+    cursor.into_inner()
+}
+
+/// Returns a Media Types stream that holds `entries` (Default and Override
+/// elements).
+fn content_types_part(entries: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">{entries}</Types>"#
+    )
+}
+
+/// Returns pseudo-random bytes, which DEFLATE barely compresses.
+fn incompressible_bytes(len: usize) -> Vec<u8> {
+    let mut state = 0x9e37_79b9u32;
+    (0..len)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
+/// A seekable in-memory writer that refuses, as a full disk does, every write
+/// that would make it longer than `capacity`. `len` follows its length;
+/// `lengths` keeps its length after each write.
+struct ProbeWriter {
+    inner: Cursor<Vec<u8>>,
+    capacity: u64,
+    len: Rc<Cell<u64>>,
+    lengths: Vec<u64>,
+}
+
+impl ProbeWriter {
+    fn with_capacity(capacity: u64) -> Self {
+        Self {
+            inner: Cursor::new(Vec::new()),
+            capacity,
+            len: Rc::default(),
+            lengths: Vec::new(),
+        }
+    }
+
+    fn unlimited() -> Self {
+        Self::with_capacity(u64::MAX)
+    }
+}
+
+impl Write for ProbeWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.inner.position() + buf.len() as u64 > self.capacity {
+            return Err(std::io::ErrorKind::StorageFull.into());
+        }
+        let n = self.inner.write(buf)?;
+        let len = self.inner.get_ref().len() as u64;
+        self.len.set(len);
+        self.lengths.push(len);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for ProbeWriter {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 #[cfg(test)]
 mod part_name_tests {
     use super::*;
@@ -174,6 +277,11 @@ mod part_name_tests {
             PartName::new("/3D/model."),
             Err(MalformedPartNameError::TrailingDot),
         );
+    }
+
+    #[test]
+    fn displays_as_its_name() {
+        assert_eq!(part("/3D/3dmodel.model").to_string(), "/3D/3dmodel.model");
     }
 }
 
@@ -373,6 +481,275 @@ mod round_trip_tests {
 }
 
 #[cfg(test)]
+mod written_archive_tests {
+    use super::*;
+
+    const RELATIONSHIPS_MEDIA_TYPE: &str =
+        "application/vnd.openxmlformats-package.relationships+xml";
+
+    fn string_map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    /// Returns the Default entries (extension to media type) and the Override
+    /// entries (part name to media type) of a Media Types stream.
+    fn media_type_entries(xml: &[u8]) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+        let mut reader = NsReader::from_reader(xml);
+        let mut defaults = BTreeMap::new();
+        let mut overrides = BTreeMap::new();
+        loop {
+            match reader.read_event().expect("well-formed XML") {
+                Event::Start(e) | Event::Empty(e) => {
+                    let value = |key: &str| {
+                        let attribute = e.try_get_attribute(key).expect("attributes").expect(key);
+                        let value = attribute.normalized_value(XmlVersion::Implicit1_0);
+                        value.expect("a value").into_owned()
+                    };
+                    match e.local_name().as_ref() {
+                        b"Default" => {
+                            defaults.insert(value("Extension"), value("ContentType"));
+                        }
+                        b"Override" => {
+                            overrides.insert(value("PartName"), value("ContentType"));
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Eof => return (defaults, overrides),
+                _ => {}
+            }
+        }
+    }
+
+    fn written_media_types(
+        package: &Package,
+    ) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+        media_type_entries(&item_bytes(&write_to_bytes(package), "[Content_Types].xml"))
+    }
+
+    /// Asserts that `xml` starts with an XML 1.0 declaration that names UTF-8
+    /// or UTF-16 if it names an encoding, and that its root element is `root`
+    /// in `namespace`.
+    fn assert_opc_xml(xml: &[u8], root: &str, namespace: &str) {
+        let mut reader = NsReader::from_reader(xml);
+        match reader.read_event().expect("well-formed XML") {
+            Event::Decl(declaration) => {
+                assert_eq!(declaration.version().expect("a version").as_ref(), b"1.0");
+                if let Some(encoding) = declaration.encoding() {
+                    let encoding = encoding.expect("an encoding name");
+                    assert!(
+                        encoding.eq_ignore_ascii_case(b"UTF-8")
+                            || encoding.eq_ignore_ascii_case(b"UTF-16"),
+                        "{}",
+                        String::from_utf8_lossy(&encoding),
+                    );
+                }
+            }
+            other => panic!("not a declaration: {other:?}"),
+        }
+        loop {
+            match reader.read_resolved_event().expect("well-formed XML") {
+                (resolved, Event::Start(e) | Event::Empty(e)) => {
+                    assert_eq!(e.local_name().as_ref(), root.as_bytes());
+                    assert_eq!(
+                        resolved,
+                        ResolveResult::Bound(Namespace(namespace.as_bytes()))
+                    );
+                    return;
+                }
+                (_, Event::Eof) => panic!("no root element"),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn item_names_are_the_part_names_without_their_leading_slash() {
+        let expected: BTreeSet<String> = [
+            "2D/slices1.model",
+            "3D/3dmodel.model",
+            "3D/_rels/3dmodel.model.rels",
+            "Metadata/thumbnail.png",
+            "[Content_Types].xml",
+            "_rels/.rels",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(item_names(&write_to_bytes(&sample_package())), expected);
+    }
+
+    #[test]
+    fn an_extension_with_1_media_type_gets_a_default() {
+        let (defaults, overrides) = written_media_types(&sample_package());
+        assert_eq!(
+            defaults,
+            string_map(&[
+                ("model", MODEL_PART_CONTENT_TYPE),
+                ("png", "image/png"),
+                ("rels", RELATIONSHIPS_MEDIA_TYPE),
+            ]),
+        );
+        assert_eq!(overrides, BTreeMap::new());
+    }
+
+    #[test]
+    fn an_extension_with_2_media_types_gets_overrides() {
+        let mut package = Package::new();
+        package
+            .add_part(part("/a/data.bin"), "application/x-alpha", vec![1])
+            .unwrap();
+        package
+            .add_part(part("/b/data.bin"), "application/x-beta", vec![2])
+            .unwrap();
+        let (defaults, overrides) = written_media_types(&package);
+        assert_eq!(defaults, string_map(&[("rels", RELATIONSHIPS_MEDIA_TYPE)]));
+        assert_eq!(
+            overrides,
+            string_map(&[
+                ("/a/data.bin", "application/x-alpha"),
+                ("/b/data.bin", "application/x-beta"),
+            ]),
+        );
+    }
+
+    #[test]
+    fn a_part_without_an_extension_gets_an_override() {
+        // The dot in the folder name is not in the last segment.
+        let mut package = Package::new();
+        package
+            .add_part(part("/a.b/notes"), "text/plain", vec![1])
+            .unwrap();
+        package
+            .add_part(part("/c.png"), "image/png", vec![2])
+            .unwrap();
+        let (defaults, overrides) = written_media_types(&package);
+        assert_eq!(
+            defaults,
+            string_map(&[("png", "image/png"), ("rels", RELATIONSHIPS_MEDIA_TYPE)]),
+        );
+        assert_eq!(overrides, string_map(&[("/a.b/notes", "text/plain")]));
+    }
+
+    #[test]
+    fn written_xml_parts_declare_xml_1_0_and_use_the_opc_namespaces() {
+        let bytes = write_to_bytes(&sample_package());
+        let content_types = "http://schemas.openxmlformats.org/package/2006/content-types";
+        let relationships = "http://schemas.openxmlformats.org/package/2006/relationships";
+        assert_opc_xml(
+            &item_bytes(&bytes, "[Content_Types].xml"),
+            "Types",
+            content_types,
+        );
+        assert_opc_xml(
+            &item_bytes(&bytes, "_rels/.rels"),
+            "Relationships",
+            relationships,
+        );
+        assert_opc_xml(
+            &item_bytes(&bytes, "3D/_rels/3dmodel.model.rels"),
+            "Relationships",
+            relationships,
+        );
+    }
+}
+
+#[cfg(test)]
+mod item_mapping_tests {
+    use super::*;
+
+    fn relationships_part(body: &str) -> String {
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{body}</Relationships>"#
+        )
+    }
+
+    fn part_names_of(package: &Package) -> Vec<&str> {
+        package.part_names().map(PartName::as_str).collect()
+    }
+
+    #[test]
+    fn an_item_name_maps_to_the_part_name_with_a_slash_added() {
+        let content_types = content_types_part(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+        );
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("x.bin", b"x"),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(part_names_of(&package), ["/x.bin"]);
+    }
+
+    #[test]
+    fn folder_items_are_not_parts() {
+        // A name that ends with a slash is a folder, whatever its data.
+        let bytes = stored_archive(&[
+            ("3D/", &[0; 100]),
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", MINIMAL_RELS.as_bytes()),
+            ("3D/3dmodel.model", b"<model/>"),
+        ]);
+        let mut ticks = Vec::new();
+        let package = Package::read_from_with_progress(Cursor::new(bytes), |p| ticks.push(p))
+            .expect("package reads");
+        assert_eq!(part_names_of(&package), [DEFAULT_MODEL_PART_NAME.as_str()]);
+        let last = ticks.last().expect("reading a package ticks");
+        assert_eq!(last.total_bytes, minimal_package_decompressed_len());
+        assert_eq!(last.decompressed_bytes, minimal_package_decompressed_len());
+    }
+
+    #[test]
+    fn only_rels_names_in_a_rels_segment_are_relationships_parts() {
+        let content_types = content_types_part(
+            r#"<Default Extension="txt" ContentType="text/plain"/><Override PartName="/data/notes.rels" ContentType="text/plain"/>"#,
+        );
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/notes.txt", b"plain text"),
+            ("data/notes.rels", b"plain text"),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(
+            part_names_of(&package),
+            ["/_rels/notes.txt", "/data/notes.rels"]
+        );
+        assert_eq!(
+            package.part_content_type(&part("/data/notes.rels")),
+            Some("text/plain")
+        );
+    }
+
+    #[test]
+    fn an_empty_relationships_part_does_not_hide_the_next_one() {
+        let content_types = content_types_part(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+        );
+        let empty = relationships_part("");
+        let one = relationships_part(r#"<Relationship Id="r1" Type="t" Target="/a.bin"/>"#);
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("a.bin", b"a"),
+            ("b.bin", b"b"),
+            ("_rels/a.bin.rels", empty.as_bytes()),
+            ("_rels/b.bin.rels", one.as_bytes()),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        let restored = Package::read_from(Cursor::new(write_to_bytes(&package)))
+            .expect("written package reads");
+        let expected = Relationship {
+            id: "r1".to_string(),
+            rel_type: "t".to_string(),
+            target: "/a.bin".to_string(),
+        };
+        assert_eq!(restored.part_relationships(&part("/b.bin")), [expected]);
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
 
@@ -520,6 +897,138 @@ mod error_tests {
             assert!(
                 matches!(&err, PackageReadError::RelationshipsXml { part, .. } if part == "/_rels/.rels"),
                 "{len} bytes: {err:?}",
+            );
+        }
+    }
+
+    /// Returns the offset of the last central directory header of `bytes`.
+    fn last_central_header(bytes: &[u8]) -> usize {
+        bytes
+            .windows(4)
+            .rposition(|w| w == b"PK\x01\x02")
+            .expect("central directory header")
+    }
+
+    #[test]
+    fn a_start_part_target_that_is_not_a_part_name_is_reported() {
+        let mut package = Package::new();
+        package.add_root_relationship(start_part_relationship("/3D//a.model"));
+        let err = package.start_part().unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::MalformedPartName { name, source: MalformedPartNameError::EmptySegment } if name == "/3D//a.model"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_zip_archive_are_rejected() {
+        let err = Package::read_from(Cursor::new(MINIMAL_CONTENT_TYPES.as_bytes())).unwrap_err();
+        assert!(matches!(err, PackageReadError::Zip(_)), "{err:?}");
+    }
+
+    #[test]
+    fn a_damaged_local_header_is_rejected() {
+        let mut bytes = minimal_package_bytes(Default::default());
+        assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
+        bytes[0] = b'X';
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(matches!(err, PackageReadError::Zip(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_encrypted_item_is_rejected() {
+        // Bit 0 of the general purpose flag, in the local header and in the
+        // central directory.
+        let mut bytes = single_entry_archive(b"0123456789".to_vec());
+        let central = last_central_header(&bytes);
+        bytes[6] |= 1;
+        bytes[central + 8] |= 1;
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                PackageReadError::Zip(zip::result::ZipError::UnsupportedArchive(_))
+            ),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn an_item_whose_crc_does_not_match_is_rejected() {
+        let mut bytes = single_entry_archive(b"0123456789".to_vec());
+        let central = last_central_header(&bytes);
+        bytes[14] ^= 0xff;
+        bytes[central + 16] ^= 0xff;
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::PartRead { part, .. } if part == "/big.bin"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn an_item_name_with_an_empty_segment_is_rejected() {
+        let content_types =
+            content_types_part(r#"<Default Extension="model" ContentType="text/plain"/>"#);
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("3D//a.model", b"<model/>"),
+        ]);
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::MalformedPartName { name, source: MalformedPartNameError::EmptySegment } if name == "/3D//a.model"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn a_part_without_an_extension_or_an_override_is_rejected() {
+        let content_types =
+            content_types_part(r#"<Default Extension="txt" ContentType="text/plain"/>"#);
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("LICENSE", b"text"),
+        ]);
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::PartWithoutContentType { part } if part == "/LICENSE"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn media_type_entries_without_a_required_attribute_are_rejected() {
+        for (entry, missing) in [
+            (r#"<Default ContentType="text/plain"/>"#, "Extension"),
+            (r#"<Default Extension="txt"/>"#, "ContentType"),
+            (r#"<Override ContentType="text/plain"/>"#, "PartName"),
+            (r#"<Override PartName="/a.txt"/>"#, "ContentType"),
+        ] {
+            let content_types = content_types_part(entry);
+            let bytes = stored_archive(&[("[Content_Types].xml", content_types.as_bytes())]);
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(err, PackageReadError::ContentTypeMissingAttribute { attribute } if attribute == missing),
+                "{entry}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn relationships_without_a_required_attribute_are_rejected() {
+        for (attributes, missing) in [
+            (r#"Type="t" Target="/a.model""#, "Id"),
+            (r#"Id="r1" Target="/a.model""#, "Type"),
+            (r#"Id="r1" Type="t""#, "Target"),
+        ] {
+            let rels = format!(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship {attributes}/></Relationships>"#
+            );
+            let bytes = opc_package_bytes(MINIMAL_CONTENT_TYPES, &rels, Default::default());
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::RelationshipMissingAttribute { part, attribute } if part == "/_rels/.rels" && *attribute == missing),
+                "{attributes}: {err:?}",
             );
         }
     }
@@ -675,6 +1184,50 @@ mod read_limits_tests {
             PackageReadError::OversizedPackage { cap_bytes: 1024 }
         ));
     }
+
+    #[test]
+    fn a_package_exactly_at_the_total_cap_is_read() {
+        let bytes = minimal_package_bytes(Default::default());
+        let limits = PackageReadLimits {
+            max_part_bytes: 1 << 20,
+            max_total_bytes: minimal_package_decompressed_len(),
+        };
+        Package::read_from_with_limits(Cursor::new(bytes), limits)
+            .expect("a package at the cap must pass");
+    }
+
+    #[test]
+    fn a_claim_past_the_remaining_total_is_refused_before_the_read() {
+        // The claim is over the total cap only; the real data is under both.
+        let mut bytes = single_entry_archive(b"0123456789".to_vec());
+        forge_claimed_size(&mut bytes, 4096);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1 << 20,
+            max_total_bytes: 1024,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(
+            matches!(err, PackageReadError::OversizedPackage { cap_bytes: 1024 }),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn the_total_cap_is_reported_when_it_is_1_byte_under_the_part_cap() {
+        // The read stops 1 byte over the total cap, so it proves only that the
+        // total cap is exceeded.
+        let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
+        forge_claimed_size(&mut bytes, 10);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1024,
+            max_total_bytes: 1023,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(
+            matches!(err, PackageReadError::OversizedPackage { cap_bytes: 1023 }),
+            "{err:?}",
+        );
+    }
 }
 
 #[cfg(test)]
@@ -763,6 +1316,22 @@ mod progress_tests {
         result.expect("package reads");
         let total = assert_monotone_ending_at_total(&ticks);
         assert_eq!(total, minimal_package_decompressed_len());
+    }
+
+    #[test]
+    fn a_1_byte_part_ends_the_ticks_at_the_total() {
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", MINIMAL_RELS.as_bytes()),
+            ("3D/3dmodel.model", b"x"),
+        ]);
+        let (result, ticks) = read_collecting_ticks(bytes);
+        result.expect("package reads");
+        let total = assert_monotone_ending_at_total(&ticks);
+        assert_eq!(
+            total,
+            (MINIMAL_CONTENT_TYPES.len() + MINIMAL_RELS.len() + 1) as u64
+        );
     }
 
     #[test]
@@ -919,6 +1488,141 @@ mod write_progress_tests {
             total,
             "the last tick reaches total"
         );
+    }
+
+    /// Returns, for each tick of a write of a package with 1 part that holds
+    /// `data`, the count of the tick and the length of the writer at it.
+    fn ticks_and_lengths(data: Vec<u8>) -> Vec<(u64, u64)> {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                data,
+            )
+            .expect("unique name");
+        let mut writer = ProbeWriter::unlimited();
+        let len = Rc::clone(&writer.len);
+        let mut ticks = Vec::new();
+        package
+            .write_to_with_progress(&mut writer, |done, _| ticks.push((done, len.get())))
+            .expect("package writes");
+        ticks
+    }
+
+    fn steps(ticks: &[(u64, u64)]) -> Vec<u64> {
+        let mut previous = 0;
+        ticks
+            .iter()
+            .map(|&(done, _)| {
+                let step = done - previous;
+                previous = done;
+                step
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parts_from_4_mib_tick_after_their_splice_in_the_same_steps() {
+        let below = ticks_and_lengths(incompressible_bytes(4 * 1024 * 1024 - 1));
+        let at = ticks_and_lengths(incompressible_bytes(4 * 1024 * 1024));
+        // The writing thread feeds the deflater, and pseudo-random bytes leave
+        // it at about the rate they enter.
+        let grows = below.last().unwrap().1 > below[0].1;
+        assert!(grows, "under 4 MiB, the writer grows between the ticks");
+        let still = at.iter().all(|&(_, len)| len == at[0].1);
+        assert!(
+            still,
+            "at 4 MiB, the whole stream is written before the ticks"
+        );
+        let (below, at) = (steps(&below), steps(&at));
+        let full_steps = below.len().min(at.len()) - 1;
+        assert_eq!(below[..full_steps], at[..full_steps]);
+    }
+}
+
+#[cfg(test)]
+mod write_failure_tests {
+    use super::*;
+
+    /// Asserts that a write of `package` gives `Err`, and does not panic, when
+    /// the writer is full at any length that a full write goes through.
+    fn assert_every_full_writer_is_reported(package: &Package) {
+        let mut writer = ProbeWriter::unlimited();
+        package.write_to(&mut writer).expect("package writes");
+        let full_length = writer.len.get();
+        let capacities: BTreeSet<u64> = std::iter::once(0)
+            .chain(writer.lengths)
+            .filter(|&length| length != full_length)
+            .collect();
+        for capacity in capacities {
+            let result = package.write_to(ProbeWriter::with_capacity(capacity));
+            assert!(result.is_err(), "capacity {capacity}");
+        }
+    }
+
+    #[test]
+    fn a_full_writer_is_reported() {
+        // The deflater keeps about 64 KiB of pseudo-random input, so a part of
+        // 128 KiB reaches the writer while it is fed.
+        let mut package = sample_package();
+        package
+            .add_part(
+                part("/Metadata/noise.bin"),
+                "application/octet-stream",
+                incompressible_bytes(128 * 1024),
+            )
+            .unwrap();
+        assert_every_full_writer_is_reported(&package);
+    }
+
+    #[test]
+    fn a_full_writer_while_large_relationships_parts_are_written_is_reported() {
+        // Each relationships part is large enough to reach the writer while it
+        // is fed.
+        let source = part("/a.bin");
+        let mut package = Package::new();
+        package
+            .add_part(source.clone(), "application/octet-stream", vec![1])
+            .unwrap();
+        for (i, name) in incompressible_bytes(32 * 1200).chunks(32).enumerate() {
+            let name: String = name.iter().map(|b| format!("{b:02x}")).collect();
+            let relationship = Relationship {
+                id: format!("rel{i}"),
+                rel_type: "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture"
+                    .to_string(),
+                target: format!("/3D/Textures/{name}.png"),
+            };
+            package.add_root_relationship(relationship.clone());
+            package.add_part_relationship(&source, relationship);
+        }
+        assert_every_full_writer_is_reported(&package);
+    }
+
+    #[test]
+    fn a_full_writer_while_a_part_is_spliced_is_reported() {
+        // A part of 4 MiB is compressed across threads and spliced in before
+        // its first tick, so a writer that is full 1 byte before the length at
+        // that tick refuses the last write of the splice.
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME.as_str()),
+                MODEL_PART_CONTENT_TYPE,
+                vec![b'x'; 4 * 1024 * 1024],
+            )
+            .unwrap();
+        let mut writer = ProbeWriter::unlimited();
+        let len = Rc::clone(&writer.len);
+        let mut len_at_first_tick = None;
+        package
+            .write_to_with_progress(&mut writer, |_, _| {
+                len_at_first_tick.get_or_insert(len.get());
+            })
+            .expect("package writes");
+        let capacity = len_at_first_tick.expect("the part ticks") - 1;
+        let result = package.write_to(ProbeWriter::with_capacity(capacity));
+        assert!(result.is_err(), "capacity {capacity}");
     }
 }
 
