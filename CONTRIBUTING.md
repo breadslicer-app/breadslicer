@@ -163,3 +163,44 @@ Note: tests in `apps/slicer-gui/src/mesh_render/` require a working
 wgpu adapter (any modern GPU with a Vulkan, Metal, or DX12 driver). On
 machines without one, those tests soft-skip and the mesh-render
 coverage numbers will read lower than on a GPU-equipped machine.
+
+### Measuring mutation score
+
+This project uses [`cargo-gamma`](https://crates.io/crates/cargo-gamma) 0.3.0
+for mutation testing. It runs in a sandbox (Linux only).
+
+The script needs `bwrap`, `rsync` and a systemd user manager (for the memory
+limits of the tool), and it stops with an error when the installed version of
+the tool is not 0.3.0.
+
+```bash
+cargo install cargo-gamma --version 0.3.0 --locked   # once
+sh scripts/mutation.sh run
+```
+
+Run every command of the tool through the script, for example
+`sh scripts/mutation.sh list mutants`, and never `cargo gamma` directly on the
+checkout: every command of the tool copies the workspace into a scratch
+directory, and the script limits what that copy can hold.
+
+What the sandbox of the script allows:
+
+- The repository shows only `gamma.toml`, a copy of `Cargo.lock`, a generated
+  `Cargo.toml`, the crates in `VISIBLE_CRATES` of the script (read-only), and
+  `target/`. The generated `Cargo.toml` lists only those crates and has no
+  `sc-geom` dependency, so a crate that depends on `sc-geom` cannot enter.
+- The tests can write only to `target/` and to a private `/tmp`. `HOME` and
+  the XDG directories are in that `/tmp`, and `CARGO_HOME` is a copy of your
+  cargo registry in `target/mutation/cargo-home/`.
+- There is no network.
+
+`gamma.toml` holds allow lists: the tool mutates only the packages and files
+that they name, and only the test targets that they name judge a mutant. To
+add a crate, add its package, files and test targets there, and its directory
+(with the directories of the workspace crates that it needs) to
+`VISIBLE_CRATES` in the script, in the same change.
+
+`run` tests 4 mutants at the same time; pass `--jobs N` to change that. The
+reports go to `target/cargo-gamma/`: `gamma-report.html` is a self-contained
+page, and `gamma-perf-advice.md` explains where the time went. The tool does
+not run doctests.
