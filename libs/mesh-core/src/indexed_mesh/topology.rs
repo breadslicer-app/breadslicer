@@ -213,7 +213,9 @@ fn walk_cyclic_fans(
         let mut current = start;
         let mut prev_edge: Option<u64> = None;
 
-        loop {
+        // Each step adds a different incident face to the fan, so the walk
+        // closes within this bound.
+        for _ in 0..incident.len() {
             fan.push(current);
             visited.insert(current);
 
@@ -526,6 +528,20 @@ mod mesh_topology_tests {
             let count = topo.vertex_fans(vi(v)).unwrap().count();
             assert_eq!(count, 1, "vertex {v} expected a single fan");
         }
+    }
+
+    #[test]
+    fn bowtie_pinch_vertex_fans_hold_each_incident_face_once() {
+        let mesh = bowtie();
+        let topo = topology(&mesh);
+        let mut faces: Vec<usize> = topo
+            .vertex_fans(vi(0))
+            .expect("pinch vertex has incident faces")
+            .flatten()
+            .map(|f| f.get())
+            .collect();
+        faces.sort_unstable();
+        assert_eq!(faces, [0, 1, 2, 4, 5, 6]);
     }
 }
 
