@@ -126,6 +126,7 @@ impl IndexedMesh {
         // With only `ZeroLengthEdge` errors, every index is in range; removing
         // whole faces changes neither `vertices.len()` nor the indices of the
         // faces that stay.
+        // #[gamma::skip(cond.always_false, reason = "Ok too for a full list")]
         let witness = if only_zero_length {
             Ok(ValidatedFacesMut::new_unchecked(self))
         } else {

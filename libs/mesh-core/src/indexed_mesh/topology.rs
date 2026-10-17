@@ -40,6 +40,7 @@ pub type EdgeKey = (VertexIndex, VertexIndex);
 /// Canonicalises an unordered vertex pair into an [`EdgeKey`].
 #[inline]
 pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
+    // #[gamma::skip(relational.le_to_lt, reason = "same pair when a == b")]
     if a <= b { (a, b) } else { (b, a) }
 }
 
@@ -74,6 +75,10 @@ impl MeshTopology {
         // 1 scan over the sorted runs yields the edge table and the per-face
         // neighbor across each edge slot; the latter is what the ring walks
         // step through.
+        // #[gamma::skip(arith.div_to_mul, reason = "capacity hint only")]
+        // #[gamma::skip(arith.div_to_rem, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
         let mut edges: Vec<(u64, [FaceIndex; 2])> = Vec::with_capacity(records.len() / 2);
         let mut face_adj: Vec<[FaceIndex; 3]> = vec![[FaceIndex::from(0_usize); 3]; faces.len()];
         for run in records.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
@@ -86,6 +91,7 @@ impl MeshTopology {
             );
             let f0 = half_edges::face_of(run[0].1);
             let f1 = half_edges::face_of(run[1].1);
+            // #[gamma::skip(literal.int_increment, reason = "a run has 1 key")]
             edges.push((run[0].0, [f0, f1]));
             face_adj[f0.get()][half_edges::slot_of(run[0].1)] = f1;
             face_adj[f1.get()][half_edges::slot_of(run[1].1)] = f0;
@@ -100,10 +106,14 @@ impl MeshTopology {
                 ring_offsets[usize::from(v) + 1] += 1;
             }
         }
-        for k in 1..ring_offsets.len() {
+        for k in
+            // #[gamma::skip(literal.int_increment, reason = "index 0 stays 0")]
+            1..ring_offsets.len()
+        {
             ring_offsets[k] += ring_offsets[k - 1];
         }
         let mut incident = vec![FaceIndex::from(0_usize); ring_offsets[vertex_count]];
+        // #[gamma::skip(range.exclusive_to_inclusive, reason = "unused entry")]
         let mut cursors = ring_offsets[..vertex_count].to_vec();
         for (idx, face) in faces.iter().enumerate() {
             for &v in &face.vertices {
@@ -128,6 +138,10 @@ impl MeshTopology {
 
         let mut ring_faces = Vec::with_capacity(ring_offsets[vertex_count]);
         let mut fan_bounds = vec![0usize];
+        // #[gamma::skip(arith.add_to_mul, reason = "capacity hint only")]
+        // #[gamma::skip(arith.add_to_sub, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
         let mut vertex_fan_ranges = Vec::with_capacity(vertex_count + 1);
         vertex_fan_ranges.push(0);
         for fans in &fans_per_vertex {
@@ -211,15 +225,19 @@ fn walk_cyclic_fans(
         }
         let mut fan = Vec::new();
         let mut current = start;
+        // #[gamma::skip(option.none_to_some, reason = "no edge has key 0")]
         let mut prev_edge: Option<u64> = None;
 
         // Each step adds a different incident face to the fan, so the walk
         // closes within this bound.
+        // #[gamma::skip(range.exclusive_to_inclusive, reason = "walk closes")]
+        // #[gamma::skip(expr.increment, reason = "walk closes")]
         for _ in 0..incident.len() {
             fan.push(current);
             visited.insert(current);
 
             let [v0, v1, v2] = faces[current.get()].vertices;
+            // #[gamma::skip(literal.int_increment, reason = "always written")]
             let mut through_vertex: [(u64, usize); 2] = [(0, 0); 2];
             let mut written = 0;
             for (slot, &(a, b)) in [(v0, v1), (v1, v2), (v2, v0)].iter().enumerate() {

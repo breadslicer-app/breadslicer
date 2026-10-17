@@ -22,6 +22,7 @@ use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 #[inline]
 pub(crate) fn key(a: VertexIndex, b: VertexIndex) -> u64 {
     let (a, b) = (a.get(), b.get());
+    // #[gamma::skip(relational.le_to_lt, reason = "same pair when a == b")]
     let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
     (u64::from(lo) << 32) | u64::from(hi)
 }
@@ -68,6 +69,12 @@ pub(crate) fn is_reversed(value: u32) -> bool {
 /// free of zero-length edges never repeats an undirected edge), so the unstable
 /// parallel sort is deterministic.
 pub(crate) fn sorted_half_edge_records(faces: &[IndexedTriangle]) -> Vec<(u64, u32)> {
+    // #[gamma::skip(arith.mul_to_add, reason = "capacity hint only")]
+    // #[gamma::skip(arith.mul_to_div, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_to_one, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_to_zero, reason = "capacity hint only")]
     let mut records = Vec::with_capacity(faces.len() * 3);
     for (idx, face) in faces.iter().enumerate() {
         let face_idx = FaceIndex::from(idx);

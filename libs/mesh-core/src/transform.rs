@@ -213,6 +213,7 @@ impl AffineTransform3D {
         let b = &other.linear;
 
         // Linear part: A · B.
+        // #[gamma::skip(literal.float_to_one, reason = "overwritten below")]
         let mut linear = [[0.0_f64; 3]; 3];
         for i in 0..3 {
             for j in 0..3 {

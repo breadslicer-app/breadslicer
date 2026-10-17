@@ -219,6 +219,8 @@ impl IndexedMesh {
                     // Unreachable when every input error was a zero-length edge
                     // (whole-face removal preserves the in-range invariant);
                     // mapped instead of panicking so the function stays total.
+                    // #[gamma::skip(return_value.default, reason = "dead arm")]
+                    // #[gamma::skip(option.some_to_none, reason = "dead arm")]
                     Err(residual) => {
                         return (fixes, Some(RepairRefusal::UnfixableFaceErrors(residual)));
                     }

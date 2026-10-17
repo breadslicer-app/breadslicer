@@ -127,6 +127,7 @@ pub fn indexed_mesh_from_soup(
     soup: Vec<Triangle>,
     max_vertices: usize,
 ) -> Result<IndexedMesh, IndexedMeshBuildError> {
+    // #[gamma::skip(literal.int_increment, reason = "extra corners unread")]
     let corner_count = soup.len() * 3;
 
     // 1 record per corner: (canonical coordinates, sequence number = face * 3 +

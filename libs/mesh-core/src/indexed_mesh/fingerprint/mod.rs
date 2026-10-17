@@ -40,6 +40,7 @@ impl IndexedMesh {
     pub fn geometry_fingerprint(&self) -> GeometryFingerprint {
         let mut hasher = Sha384::new();
         self.encode_geometry(|bytes| hasher.update(bytes));
+        // #[gamma::skip(literal.int_increment, reason = "overwritten below")]
         let mut digest = [0u8; 48];
         digest.copy_from_slice(&hasher.finalize());
         GeometryFingerprint::from_bytes(digest)
