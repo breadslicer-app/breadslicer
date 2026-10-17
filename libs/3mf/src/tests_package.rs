@@ -7,6 +7,8 @@
 
 use std::io::{Cursor, Write};
 
+use quick_xml::errors::{Error as XmlError, IllFormedError};
+
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
@@ -73,24 +75,35 @@ fn write_to_bytes(package: &Package) -> Vec<u8> {
 const MINIMAL_CONTENT_TYPES: &str = include_str!("../tests/fixtures/opc/minimal_content_types.xml");
 const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
 
-/// Returns a hand-built archive holding the minimal fixture entries (content
-/// types, root rels, `<model/>`), so tests know the exact decompressed size of
-/// every entry. `model_options` styles the model entry (e.g. forcing ZIP64
-/// structures via `large_file`).
-fn minimal_package_bytes(model_options: zip::write::SimpleFileOptions) -> Vec<u8> {
+/// Returns a hand-built archive holding `content_types`, `rels` as the root
+/// relationships part, and the model part `<model/>` styled by
+/// `model_options`.
+fn opc_package_bytes(
+    content_types: &str,
+    rels: &str,
+    model_options: zip::write::SimpleFileOptions,
+) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     let mut archive = zip::write::ZipWriter::new(&mut cursor);
     let plain = zip::write::SimpleFileOptions::default();
     archive.start_file("[Content_Types].xml", plain).unwrap();
-    archive.write_all(MINIMAL_CONTENT_TYPES.as_bytes()).unwrap();
+    archive.write_all(content_types.as_bytes()).unwrap();
     archive.start_file("_rels/.rels", plain).unwrap();
-    archive.write_all(MINIMAL_RELS.as_bytes()).unwrap();
+    archive.write_all(rels.as_bytes()).unwrap();
     archive
         .start_file("3D/3dmodel.model", model_options)
         .unwrap();
     archive.write_all(b"<model/>").unwrap();
     archive.finish().unwrap();
     cursor.into_inner()
+}
+
+/// Returns a hand-built archive holding the minimal fixture entries (content
+/// types, root rels, `<model/>`), so tests know the exact decompressed size of
+/// every entry. `model_options` styles the model entry (e.g. forcing ZIP64
+/// structures via `large_file`).
+fn minimal_package_bytes(model_options: zip::write::SimpleFileOptions) -> Vec<u8> {
+    opc_package_bytes(MINIMAL_CONTENT_TYPES, MINIMAL_RELS, model_options)
 }
 
 /// Returns the decompressed size of every entry `minimal_package_bytes` writes.
@@ -446,6 +459,69 @@ mod error_tests {
         assert!(
             matches!(err, PackageReadError::PartWithoutContentType { part } if part == "/3D/3dmodel.model"),
         );
+    }
+
+    #[test]
+    fn content_types_without_their_end_tag_are_rejected() {
+        let content_types = MINIMAL_CONTENT_TYPES.replace("</Types>", "");
+        let bytes = opc_package_bytes(&content_types, MINIMAL_RELS, Default::default());
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::ContentTypesXml(XmlError::IllFormed(IllFormedError::MissingEndTag(name))) if name == "Types"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn the_innermost_open_element_is_reported() {
+        let content_types = MINIMAL_CONTENT_TYPES.replace("</Types>", "<Extra>");
+        let bytes = opc_package_bytes(&content_types, MINIMAL_RELS, Default::default());
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::ContentTypesXml(XmlError::IllFormed(IllFormedError::MissingEndTag(name))) if name == "Extra"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn relationships_without_their_end_tag_are_rejected() {
+        let rels = MINIMAL_RELS.replace("</Relationships>", "");
+        let bytes = opc_package_bytes(MINIMAL_CONTENT_TYPES, &rels, Default::default());
+        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::RelationshipsXml { part, source: XmlError::IllFormed(IllFormedError::MissingEndTag(name)) } if part == "/_rels/.rels" && name == "Relationships"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn content_types_cut_inside_their_root_are_rejected() {
+        let start = MINIMAL_CONTENT_TYPES.find("<Types").unwrap() + 1;
+        let end = MINIMAL_CONTENT_TYPES.find("</Types>").unwrap() + "</Types>".len();
+        for len in start..end {
+            let content_types = &MINIMAL_CONTENT_TYPES[..len];
+            let bytes = opc_package_bytes(content_types, MINIMAL_RELS, Default::default());
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(err, PackageReadError::ContentTypesXml(_)),
+                "{len} bytes: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn relationships_cut_inside_their_root_are_rejected() {
+        let start = MINIMAL_RELS.find("<Relationships").unwrap() + 1;
+        let end = MINIMAL_RELS.find("</Relationships>").unwrap() + "</Relationships>".len();
+        for len in start..end {
+            let rels = &MINIMAL_RELS[..len];
+            let bytes = opc_package_bytes(MINIMAL_CONTENT_TYPES, rels, Default::default());
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::RelationshipsXml { part, .. } if part == "/_rels/.rels"),
+                "{len} bytes: {err:?}",
+            );
+        }
     }
 }
 

@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 
 use quick_xml::XmlVersion;
+use quick_xml::errors::IllFormedError;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesStart, Event};
 use quick_xml::reader::NsReader;
@@ -623,16 +624,47 @@ fn attr_value(attr: &Attribute<'_>) -> Option<String> {
         .map(|v| v.into_owned())
 }
 
+/// The names of the elements that an event loop has opened and not yet closed,
+/// innermost last.
+#[derive(Default)]
+struct OpenElements(Vec<Vec<u8>>);
+
+impl OpenElements {
+    fn track(&mut self, event: &Event<'_>) {
+        match event {
+            Event::Start(e) => self.0.push(e.name().as_ref().to_vec()),
+            Event::End(_) => {
+                self.0.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Fails while an element is still open, with the error that `quick-xml`
+    /// gives for a missing end tag when it skips a subtree.
+    fn ensure_closed(&self) -> Result<(), quick_xml::errors::Error> {
+        match self.0.last() {
+            None => Ok(()),
+            Some(name) => {
+                let name = String::from_utf8_lossy(name).into_owned();
+                Err(IllFormedError::MissingEndTag(name).into())
+            }
+        }
+    }
+}
+
 fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
     let mut reader = NsReader::from_reader(bytes);
     let mut buffer = Vec::new();
     let mut defaults = BTreeMap::new();
     let mut overrides = BTreeMap::new();
+    let mut open = OpenElements::default();
     loop {
-        match reader
+        let event = reader
             .read_event_into(&mut buffer)
-            .map_err(PackageReadError::ContentTypesXml)?
-        {
+            .map_err(PackageReadError::ContentTypesXml)?;
+        open.track(&event);
+        match event {
             Event::Start(e) | Event::Empty(e) => {
                 let local = e.local_name();
                 if local.as_ref() == b"Default" {
@@ -680,6 +712,8 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
         }
         buffer.clear();
     }
+    open.ensure_closed()
+        .map_err(PackageReadError::ContentTypesXml)?;
     Ok(ContentTypes {
         defaults,
         overrides,
@@ -690,13 +724,15 @@ fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, Pa
     let mut reader = NsReader::from_reader(bytes);
     let mut buffer = Vec::new();
     let mut relationships = Vec::new();
+    let mut open = OpenElements::default();
+    let xml_error = |source| PackageReadError::RelationshipsXml {
+        part: part.to_string(),
+        source,
+    };
     loop {
-        match reader.read_event_into(&mut buffer).map_err(|source| {
-            PackageReadError::RelationshipsXml {
-                part: part.to_string(),
-                source,
-            }
-        })? {
+        let event = reader.read_event_into(&mut buffer).map_err(xml_error)?;
+        open.track(&event);
+        match event {
             Event::Start(e) | Event::Empty(e) => {
                 if e.local_name().as_ref() != b"Relationship" {
                     continue;
@@ -727,6 +763,7 @@ fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, Pa
         }
         buffer.clear();
     }
+    open.ensure_closed().map_err(xml_error)?;
     Ok(relationships)
 }
 
