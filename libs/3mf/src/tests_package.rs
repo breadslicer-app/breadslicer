@@ -241,6 +241,51 @@ impl Seek for ProbeWriter {
     }
 }
 
+/// A seekable in-memory writer whose write call `fail_at` (counted from 0)
+/// fails once, while the calls after it succeed, as after a transient error.
+/// It counts its write calls and the writes that reach it after the failure.
+struct FlakyWriter {
+    inner: Cursor<Vec<u8>>,
+    calls: usize,
+    fail_at: usize,
+    writes_after_failure: usize,
+}
+
+impl FlakyWriter {
+    fn failing_at(fail_at: usize) -> Self {
+        Self {
+            inner: Cursor::new(Vec::new()),
+            calls: 0,
+            fail_at,
+            writes_after_failure: 0,
+        }
+    }
+}
+
+impl Write for FlakyWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let call = self.calls;
+        self.calls += 1;
+        if call == self.fail_at {
+            return Err(std::io::Error::other("transient write failure"));
+        }
+        if call > self.fail_at {
+            self.writes_after_failure += 1;
+        }
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for FlakyWriter {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 #[cfg(test)]
 mod part_name_tests {
     use super::*;
@@ -1561,10 +1606,9 @@ mod write_failure_tests {
         }
     }
 
-    #[test]
-    fn a_full_writer_is_reported() {
-        // The deflater keeps about 64 KiB of pseudo-random input, so a part of
-        // 128 KiB reaches the writer while it is fed.
+    /// Returns `sample_package` with a part that reaches the writer while it is
+    /// fed: the deflater keeps about 64 KiB of pseudo-random input.
+    fn package_with_a_large_part() -> Package {
         let mut package = sample_package();
         package
             .add_part(
@@ -1573,7 +1617,37 @@ mod write_failure_tests {
                 incompressible_bytes(128 * 1024),
             )
             .unwrap();
-        assert_every_full_writer_is_reported(&package);
+        package
+    }
+
+    #[test]
+    fn a_full_writer_is_reported() {
+        assert_every_full_writer_is_reported(&package_with_a_large_part());
+    }
+
+    #[test]
+    fn a_write_that_fails_once_is_reported_and_ends_the_writing() {
+        let package = package_with_a_large_part();
+        let mut writer = FlakyWriter::failing_at(usize::MAX);
+        package.write_to(&mut writer).expect("package writes");
+        for fail_at in 0..writer.calls {
+            let mut writer = FlakyWriter::failing_at(fail_at);
+            let error = package.write_to(&mut writer).unwrap_err();
+            let cause = match &error {
+                PackageWriteError::Io(cause) => Some(cause),
+                PackageWriteError::Zip(zip::result::ZipError::Io(cause)) => Some(cause),
+                _ => None,
+            };
+            assert_eq!(
+                cause.map(ToString::to_string).as_deref(),
+                Some("transient write failure"),
+                "failure at write call {fail_at}: {error:?}"
+            );
+            assert_eq!(
+                writer.writes_after_failure, 0,
+                "writes after the failure at call {fail_at}"
+            );
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@
 //! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
 //! or corrupt file; see `PackageReadLimits`.
 
+mod fused_writer;
 pub mod static_part_name;
 
 use std::collections::BTreeMap;
@@ -33,6 +34,7 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 
+use fused_writer::FusedWriter;
 use static_part_name::{StaticPartName, check_part_name};
 
 /// Chunk size for feeding a part's bytes to the deflater, so a large part
@@ -306,7 +308,7 @@ impl Package {
     ) -> Result<(), PackageWriteError> {
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let mut archive = ZipWriter::new(writer);
+        let mut archive = ZipWriter::new(FusedWriter::new(writer));
 
         archive.start_file("[Content_Types].xml", options)?;
         archive.write_all(&self.content_types_xml()?)?;
