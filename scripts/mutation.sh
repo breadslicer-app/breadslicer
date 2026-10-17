@@ -33,7 +33,7 @@ GAMMA_VERSION="cargo-gamma 0.3.0"
 
 # Allow list of the crate directories that the sandbox shows: the crates of
 # gamma.toml, and the workspace crates that they need to build and test.
-VISIBLE_CRATES="libs/mesh-core libs/app-paths"
+VISIBLE_CRATES="libs/mesh-core libs/app-paths libs/3mf"
 
 # Allow list of the paths outside the crates that the sandbox shows (read-only),
 # because the tests of the visible crates read them.
