@@ -405,6 +405,20 @@ mod indexed_mesh_validate_faces_tests {
     }
 
     #[test]
+    fn detects_the_1st_index_past_the_vertices() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 3)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0_usize.into(),
+                vertex_pos: TriVertexSlot::V2,
+                vertex_idx: 3_u32.into(),
+            }]
+        );
+    }
+
+    #[test]
     fn detects_collapsed_edge_01() {
         let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 2)]);
         let errors = mesh.validate_faces().unwrap_err();

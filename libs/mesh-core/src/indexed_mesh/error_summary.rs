@@ -210,6 +210,15 @@ mod example_face_tests {
     }
 
     #[test]
+    fn manifold_boundary_edge_returns_its_face_index() {
+        let err = MeshEdgeManifoldError::BoundaryEdge {
+            edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
+            face_idx: 17_usize.into(),
+        };
+        assert_eq!(err.example_face(), Some(17_usize.into()));
+    }
+
+    #[test]
     fn manifold_non_manifold_edge_returns_first_face_index() {
         let err = MeshEdgeManifoldError::NonManifoldEdge {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),

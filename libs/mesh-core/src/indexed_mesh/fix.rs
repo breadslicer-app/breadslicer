@@ -217,6 +217,33 @@ mod indexed_mesh_fix_faces_orientation_tests {
     }
 
     #[test]
+    fn fixes_a_flipped_face_with_the_highest_index() {
+        // The validator lists the 2 faces of an error in ascending order, so
+        // face 3 is the 2nd face of each of its 3 errors.
+        let mut mesh = tetrahedron();
+        mesh.faces[3].vertices.reverse();
+        let manifold_errors = mesh
+            .validated_faces()
+            .unwrap()
+            .validate_edge_manifold()
+            .unwrap_err();
+
+        let fixes = mesh
+            .validated_faces_mut()
+            .unwrap()
+            .fix_faces_orientation(&manifold_errors)
+            .unwrap();
+
+        assert_eq!(
+            fixes,
+            vec![MeshFix::FlippedFaceOrientation {
+                face_idx: 3_usize.into()
+            }]
+        );
+        assert_eq!(mesh, tetrahedron());
+    }
+
+    #[test]
     fn does_not_modify_correct_faces() {
         let mut mesh = tetrahedron();
 
@@ -561,6 +588,40 @@ mod indexed_mesh_fix_zero_length_edges_tests {
     }
 
     #[test]
+    fn errors_in_any_order_remove_the_faces_they_name() {
+        let mut mesh = make_mesh(
+            4,
+            vec![
+                face(0, 1, 2),
+                face(0, 1, 1),
+                face(0, 1, 3),
+                face(2, 2, 3),
+                face(1, 2, 3),
+            ],
+        );
+        let mut errors = mesh.validate_faces().unwrap_err();
+        errors.reverse();
+
+        let fixes = fix_zero_length_edges_impl(&mut mesh, &errors);
+
+        assert_eq!(
+            mesh.faces,
+            vec![face(0, 1, 2), face(0, 1, 3), face(1, 2, 3)]
+        );
+        assert_eq!(
+            fixes,
+            vec![
+                MeshFix::RemovedZeroLengthEdgeFace {
+                    face_idx: 3_usize.into()
+                },
+                MeshFix::RemovedZeroLengthEdgeFace {
+                    face_idx: 1_usize.into()
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn mixed_error_kinds_only_remove_collapsed_faces() {
         let mut mesh = make_mesh(3, vec![face(0, 1, 2), face(0, 1, 1)]);
         let mut errors = vec![MeshFaceError::OutOfRangeVertexIndex {
@@ -581,5 +642,27 @@ mod indexed_mesh_fix_zero_length_edges_tests {
                 .iter()
                 .all(|f| matches!(f, MeshFix::RemovedZeroLengthEdgeFace { .. }))
         );
+    }
+}
+
+#[cfg(test)]
+mod mesh_fix_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn face_with_too_many_winding_errors_renders_face_id() {
+        let msg = format!(
+            "{}",
+            MeshFixError::FaceWithTooManyWindingErrors {
+                face_idx: 7_usize.into(),
+            }
+        );
+        assert_eq!(msg, "face 7 has more than 3 winding-order errors");
+    }
+
+    #[test]
+    fn too_many_flipped_faces_renders_short_phrase() {
+        let msg = format!("{}", MeshFixError::TooManyFlippedFaces);
+        assert_eq!(msg, "too many flipped faces");
     }
 }

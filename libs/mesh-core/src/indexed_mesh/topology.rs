@@ -494,6 +494,13 @@ mod mesh_topology_tests {
     }
 
     #[test]
+    fn vertex_fans_returns_none_for_the_1st_index_past_the_vertices() {
+        let mesh = tetrahedron();
+        let topo = topology(&mesh);
+        assert!(topo.vertex_fans(vi(4)).is_none());
+    }
+
+    #[test]
     fn bowtie_pinch_vertex_has_two_lobe_fans_and_others_have_one() {
         let mesh = bowtie();
         let topo = topology(&mesh);

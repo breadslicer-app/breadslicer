@@ -108,6 +108,26 @@ fn invalid_vertices_do_not_gate_the_face_results() {
 }
 
 #[test]
+fn vertex_errors_alone_are_problems() {
+    // The NaN vertex is in no face, so the face results stay clean.
+    let mut mesh = tetrahedron();
+    mesh.vertices.push(Vertex::new([f32::NAN, 0.0, 0.0]));
+    let diagnosis = mesh.diagnose();
+    assert_eq!(
+        diagnosis.vertex_errors,
+        mesh.validate_vertices().unwrap_err()
+    );
+    assert_eq!(
+        diagnosis.faces,
+        FaceDiagnosis::Valid {
+            zero_area_faces: vec![],
+            edge_manifold_errors: vec![],
+        }
+    );
+    assert!(diagnosis.has_problems());
+}
+
+#[test]
 fn a_failed_face_gate_leaves_the_gated_results_absent() {
     let mut mesh = tetrahedron();
     mesh.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);

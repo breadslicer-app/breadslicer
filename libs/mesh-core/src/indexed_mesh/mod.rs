@@ -22,6 +22,8 @@ mod tests_diagnose;
 #[cfg(test)]
 mod tests_fingerprint;
 #[cfg(test)]
+mod tests_mesh;
+#[cfg(test)]
 mod tests_repair;
 #[cfg(test)]
 mod tests_validated_faces;

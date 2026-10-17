@@ -5,7 +5,7 @@
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::validate::MeshFaceError;
-use crate::indexed_mesh::validated::MeshEdgeManifoldError;
+use crate::indexed_mesh::validated::{MeshEdgeManifoldError, ZeroAreaFace};
 use crate::primitives::{IndexedTriangle, TriVertexSlot, Vertex, VertexIndex};
 
 fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
@@ -56,6 +56,28 @@ fn validated_faces_mut_succeeds_on_clean_mesh() {
     let _ = mesh.validated_faces_mut().expect("clean mesh");
 }
 
+#[test]
+fn validated_faces_mut_gives_the_vertices_and_accepts_the_face_areas() {
+    let mut mesh = closed_tetrahedron();
+    let vertices = mesh.vertices.clone();
+    let witness = mesh.validated_faces_mut().expect("in-range indices");
+    assert_eq!(witness.vertices(), vertices.as_slice());
+    assert_eq!(witness.validate_face_areas(), Ok(()));
+}
+
+#[test]
+fn validated_faces_mut_reports_a_zero_area_face() {
+    // All vertices of `make_mesh` are at the origin.
+    let mut mesh = make_mesh(3, vec![face(0, 1, 2)]);
+    let witness = mesh.validated_faces_mut().expect("in-range indices");
+    assert_eq!(
+        witness.validate_face_areas(),
+        Err(vec![ZeroAreaFace {
+            face_idx: 0_usize.into()
+        }])
+    );
+}
+
 /// Pins the shortcut: when every input error is a `ZeroLengthEdge`, removing
 /// the affected faces preserves the in-range invariant for survivors and
 /// `validated_faces_mut` is *not* re-run. We cannot easily observe "didn't
@@ -101,6 +123,25 @@ fn fix_zero_length_edges_into_validated_returns_err_when_post_removal_invalid() 
     let (fixes, witness) = mesh.fix_zero_length_edges_into_validated(&face_errors);
     assert!(fixes.is_empty());
     let _ = witness.expect_err("post-removal mesh still has out-of-range index");
+}
+
+/// Pins that a mesh with both a zero-length edge and an out-of-range index
+/// gives `Err`: the removal of the zero-length-edge face moves the out-of-range
+/// face to index 0.
+#[test]
+fn fix_zero_length_edges_into_validated_returns_err_for_both_error_kinds() {
+    let mut mesh = make_mesh(3, vec![face(0, 1, 1), face(0, 1, 99), face(0, 1, 2)]);
+    let face_errors = mesh.validate_faces().expect_err("zle and oor");
+    let (fixes, witness) = mesh.fix_zero_length_edges_into_validated(&face_errors);
+    assert_eq!(fixes.len(), 1);
+    assert_eq!(
+        witness.expect_err("the out-of-range face remains"),
+        vec![MeshFaceError::OutOfRangeVertexIndex {
+            face_idx: 0_usize.into(),
+            vertex_pos: TriVertexSlot::V2,
+            vertex_idx: VertexIndex::from(99_u32),
+        }]
+    );
 }
 
 /// Builds a closed tetrahedron with consistent outward winding, mirroring the

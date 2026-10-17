@@ -8,13 +8,17 @@
 //! earlier passes' fixes), the fix log, and the post-repair edge-manifold
 //! verdict.
 
+use std::error::Error;
+
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
-use crate::indexed_mesh::validate::MeshFaceError;
+use crate::indexed_mesh::validate::{MeshFaceError, MeshVertexError};
 use crate::indexed_mesh::{
     DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, RepairPasses, RepairRefusal,
 };
-use crate::primitives::{FaceIndex, IndexedTriangle, Vertex};
+use crate::primitives::{
+    CoordAxis, FaceIndex, IndexedTriangle, TriVertexSlot, Vertex, VertexIndex,
+};
 
 /// Returns a closed, consistently wound tetrahedron.
 fn tetrahedron() -> IndexedMesh {
@@ -210,6 +214,21 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
         Some(RepairRefusal::UnfixableFaceErrors(expected_errors))
     );
     assert_eq!(mesh, original);
+}
+
+#[test]
+fn zle_pass_disabled_assesses_as_a_refusal_carrying_every_face_error() {
+    let mut mesh = tetrahedron();
+    append_zero_length_edge_face(&mut mesh);
+    let expected_errors = mesh.validate_faces().unwrap_err();
+    let passes = RepairPasses {
+        zero_length_edges: false,
+        flipped_faces: true,
+    };
+    assert_eq!(
+        assess_repair(&mesh, passes),
+        RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(expected_errors))
+    );
 }
 
 /// Pins the mesh-level refusal boundary: face errors the enabled passes cannot
@@ -419,4 +438,52 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
             MeshFixError::TooManyFlippedFaces
         ))
     ));
+}
+
+#[test]
+fn repair_refusals_display_their_cause() {
+    let nan = MeshVertexError::NaNCoordinate {
+        vertex_idx: 0,
+        coord: CoordAxis::X,
+    };
+    let zle = MeshFaceError::ZeroLengthEdge {
+        face_idx: FaceIndex::from(4_usize),
+        vertex_pos_a: TriVertexSlot::V1,
+        vertex_pos_b: TriVertexSlot::V2,
+        vertex_idx: VertexIndex::from(1_u32),
+    };
+    let cases = [
+        (
+            RepairRefusal::InvalidVertices(vec![nan.clone(), nan]),
+            "mesh has 2 invalid vertex coordinates",
+        ),
+        (
+            RepairRefusal::UnfixableFaceErrors(vec![zle.clone(), zle]),
+            "2 face errors the enabled repair passes cannot address",
+        ),
+        (
+            RepairRefusal::OrientationFixFailed(MeshFixError::TooManyFlippedFaces),
+            "face orientation fix failed: too many flipped faces",
+        ),
+    ];
+    for (refusal, text) in cases {
+        assert_eq!(refusal.to_string(), text);
+    }
+}
+
+#[test]
+fn only_the_orientation_refusal_has_a_source() {
+    let failed = RepairRefusal::OrientationFixFailed(MeshFixError::TooManyFlippedFaces);
+    assert_eq!(
+        failed
+            .source()
+            .and_then(|source| source.downcast_ref::<MeshFixError>()),
+        Some(&MeshFixError::TooManyFlippedFaces)
+    );
+    assert!(RepairRefusal::InvalidVertices(vec![]).source().is_none());
+    assert!(
+        RepairRefusal::UnfixableFaceErrors(vec![])
+            .source()
+            .is_none()
+    );
 }

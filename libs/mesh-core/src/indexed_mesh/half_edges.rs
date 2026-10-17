@@ -107,6 +107,18 @@ mod half_edges_tests {
     }
 
     #[test]
+    fn value_round_trips_every_slot_in_both_directions() {
+        for slot in 0..3 {
+            for reversed in [false, true] {
+                let v = value(FaceIndex::from(42_usize), slot, reversed);
+                assert_eq!(slot_of(v), slot, "slot {slot}, reversed {reversed}");
+                assert_eq!(face_of(v), FaceIndex::from(42_usize));
+                assert_eq!(is_reversed(v), reversed);
+            }
+        }
+    }
+
+    #[test]
     fn records_of_a_shared_edge_form_one_run_ascending_by_face() {
         // 2 triangles sharing edge (0, 1) with opposite traversal.
         let faces = [
@@ -123,5 +135,21 @@ mod half_edges_tests {
         assert_eq!(face_of(shared[0].1), FaceIndex::from(0_usize));
         assert_eq!(face_of(shared[1].1), FaceIndex::from(1_usize));
         assert_ne!(is_reversed(shared[0].1), is_reversed(shared[1].1));
+    }
+
+    #[test]
+    fn a_record_is_reversed_when_its_face_goes_from_the_higher_vertex() {
+        let directions = |vertices: [u32; 3]| {
+            let mut directions = [false; 3];
+            let face = IndexedTriangle::from_raw_indices(vertices);
+            for (_, v) in sorted_half_edge_records(&[face]) {
+                directions[slot_of(v)] = is_reversed(v);
+            }
+            directions
+        };
+        // The slots go 0 to 1, 1 to 2 and 2 to 0.
+        assert_eq!(directions([0, 1, 2]), [false, false, true]);
+        // Slot 0 goes 0 to 0, which is not from a higher index to a lower one.
+        assert_eq!(directions([0, 0, 1]), [false, false, true]);
     }
 }
