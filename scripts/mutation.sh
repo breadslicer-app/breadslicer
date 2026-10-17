@@ -12,7 +12,8 @@
 # Inside the sandbox:
 # - the repository root shows only a generated Cargo.toml (its members are
 #   VISIBLE_CRATES, and it has no sc-geom dependency), a copy of Cargo.lock,
-#   gamma.toml, the visible crates (read-only) and target/;
+#   gamma.toml, the visible crates and the paths of VISIBLE_PATHS (read-only),
+#   and target/;
 # - the only writable places are target/, a private /tmp (that is,
 #   target/mutation/tmp, which holds HOME and the XDG directories), and the
 #   cgroup subtree of the systemd manager of the user, where the tool puts the
@@ -32,7 +33,11 @@ GAMMA_VERSION="cargo-gamma 0.3.0"
 
 # Allow list of the crate directories that the sandbox shows: the crates of
 # gamma.toml, and the workspace crates that they need to build and test.
-VISIBLE_CRATES="libs/mesh-core"
+VISIBLE_CRATES="libs/mesh-core libs/app-paths"
+
+# Allow list of the paths outside the crates that the sandbox shows (read-only),
+# because the tests of the visible crates read them.
+VISIBLE_PATHS="assets packages/shared/it.soulcrafted.slicer.desktop"
 
 # Lists of gamma.toml that must name at least 1 entry: the tool reads an empty
 # or missing list as "everything".
@@ -103,6 +108,9 @@ sandboxed() {
     set -- --remount-ro "$REPO" --chdir "$REPO" "$@"
     for crate in $VISIBLE_CRATES; do
         set -- --ro-bind "$REPO/$crate" "$REPO/$crate" "$@"
+    done
+    for path in $VISIBLE_PATHS; do
+        set -- --ro-bind "$REPO/$path" "$REPO/$path" "$@"
     done
     mkdir -p "$WORK/tmp/home/.cache" "$WORK/tmp/home/.config" \
         "$WORK/tmp/home/.local/share" "$WORK/tmp/home/.local/state"

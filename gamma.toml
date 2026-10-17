@@ -2,9 +2,9 @@
 # rely on its sandbox, and the tool copies the whole repository when it runs
 # outside it.
 
-packages = ["sc-mesh-core"]
-files = ["libs/mesh-core/src/**/*.rs"]
-include-tests = ["sc_mesh_core", "properties"]
+packages = ["sc-mesh-core", "sc-app-paths"]
+files = ["libs/mesh-core/src/**/*.rs", "libs/app-paths/src/**/*.rs"]
+include-tests = ["sc_mesh_core", "properties", "sc_app_paths"]
 
 mutators = ["@default"]
 all-features = true

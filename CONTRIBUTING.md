@@ -186,9 +186,10 @@ directory, and the script limits what that copy can hold.
 What the sandbox of the script allows:
 
 - The repository shows only `gamma.toml`, a copy of `Cargo.lock`, a generated
-  `Cargo.toml`, the crates in `VISIBLE_CRATES` of the script (read-only), and
-  `target/`. The generated `Cargo.toml` lists only those crates and has no
-  `sc-geom` dependency, so a crate that depends on `sc-geom` cannot enter.
+  `Cargo.toml`, the crates in `VISIBLE_CRATES` and the paths in
+  `VISIBLE_PATHS` of the script (read-only), and `target/`. The generated
+  `Cargo.toml` lists only those crates and has no `sc-geom` dependency, so a
+  crate that depends on `sc-geom` cannot enter.
 - The tests can write only to `target/` and to a private `/tmp`. `HOME` and
   the XDG directories are in that `/tmp`, and `CARGO_HOME` is a copy of your
   cargo registry in `target/mutation/cargo-home/`.
@@ -196,9 +197,10 @@ What the sandbox of the script allows:
 
 `gamma.toml` holds allow lists: the tool mutates only the packages and files
 that they name, and only the test targets that they name judge a mutant. To
-add a crate, add its package, files and test targets there, and its directory
+add a crate, add its package, files and test targets there, its directory
 (with the directories of the workspace crates that it needs) to
-`VISIBLE_CRATES` in the script, in the same change.
+`VISIBLE_CRATES` in the script, and the paths outside the crates that its
+tests read to `VISIBLE_PATHS`, in the same change.
 
 `run` tests 4 mutants at the same time; pass `--jobs N` to change that. The
 reports go to `target/cargo-gamma/`: `gamma-report.html` is a self-contained

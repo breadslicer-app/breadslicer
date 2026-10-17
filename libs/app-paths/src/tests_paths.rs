@@ -67,12 +67,32 @@ fn bundled_data_dirs_are_all_absolute() {
 }
 
 #[test]
+fn bundled_data_dirs_end_with_the_source_tree_assets() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("the crate sits 2 levels below the workspace root");
+    let last = bundled_data_dirs()
+        .pop()
+        .expect("the source tree has assets/");
+    assert_eq!(
+        fs::canonicalize(last).unwrap(),
+        fs::canonicalize(workspace.join("assets")).unwrap()
+    );
+}
+
+#[test]
 fn home_dir_is_absolute_when_resolved() {
     // Environments without a home directory resolve to `None`; when one
     // is available it must be an absolute path.
     if let Some(home) = home_dir() {
         assert!(home.is_absolute(), "home dir should be absolute: {home:?}");
     }
+}
+
+#[test]
+fn project_dirs_resolve_exactly_when_the_home_dir_does() {
+    assert_eq!(project_dirs().is_some(), home_dir().is_some());
 }
 
 #[test]
