@@ -52,8 +52,14 @@ pub(crate) fn parallel_entry(entry_name: &str, data: &[u8]) -> io::Result<Vec<u8
     hasher.update(data);
     let crc = hasher.finalize();
 
+    // #[gamma::skip(iter.max_to_min, reason = "only the chunks change")]
+    // #[gamma::skip(literal.int_decrement, reason = "at least 1 thread")]
+    // #[gamma::skip(literal.int_increment, reason = "only the chunks change")]
     let threads = rayon::current_num_threads().max(1);
+    // #[gamma::skip(expr.decrement, reason = "only the chunks change")]
+    // #[gamma::skip(expr.increment, reason = "only the chunks change")]
     let chunk_size = data.len().div_ceil(threads).max(MIN_CHUNK_BYTES);
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "cannot fail")]
     let compressed = pigz_deflate(data, chunk_size)?;
 
     if data.len() > u32::MAX as usize || compressed.len() > u32::MAX as usize {
@@ -71,18 +77,24 @@ pub(crate) fn parallel_entry(entry_name: &str, data: &[u8]) -> io::Result<Vec<u8
 /// parallel, then concatenated. The result is a single valid
 /// raw-deflate stream (what a ZIP entry stores), recoverable in one
 /// decompression pass.
+// #[gamma::skip(parameter.default_shadow, reason = "1-byte chunks: too slow")]
 fn pigz_deflate(data: &[u8], chunk_size: usize) -> io::Result<Vec<u8>> {
     if data.is_empty() {
+        // #[gamma::skip(option.none_to_some, reason = "data is empty here")]
         return deflate_chunk(&[], None, true);
     }
+    // #[gamma::skip(literal.int_increment, reason = "only the chunks change")]
     let chunk_size = chunk_size.max(1);
     let starts: Vec<usize> = (0..data.len()).step_by(chunk_size).collect();
     let last = starts.len() - 1;
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "cannot fail")]
     let chunks: Vec<Vec<u8>> = starts
         .par_iter()
         .enumerate()
         .map(|(index, &start)| {
             let end = (start + chunk_size).min(data.len());
+            // #[gamma::skip(relational.gt_to_ge, reason = "empty dictionary")]
+            // #[gamma::skip(literal.int_increment, reason = "ratio only")]
             let dictionary =
                 (start > 0).then(|| &data[start.saturating_sub(DICTIONARY_WINDOW)..start]);
             deflate_chunk(&data[start..end], dictionary, index == last)
@@ -102,10 +114,17 @@ fn deflate_chunk(data: &[u8], dictionary: Option<&[u8]>, last: bool) -> io::Resu
     // ZIP entry stores.
     let mut compressor = Compress::new(Compression::new(DEFLATE_LEVEL), false);
     if let Some(dictionary) = dictionary {
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "cannot fail")]
         compressor
             .set_dictionary(dictionary)
             .map_err(io::Error::other)?;
     }
+    // #[gamma::skip(arith.add_to_mul, reason = "capacity hint only")]
+    // #[gamma::skip(arith.div_to_mul, reason = "capacity hint only")]
+    // #[gamma::skip(arith.div_to_rem, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_to_one, reason = "capacity hint only")]
     let mut out = Vec::with_capacity(data.len() / 2 + 64);
     let mut scratch = vec![0u8; 128 * 1024];
 
@@ -113,9 +132,12 @@ fn deflate_chunk(data: &[u8], dictionary: Option<&[u8]>, last: bool) -> io::Resu
     // buffer fills. zlib consumes available input while it has output
     // room, so `consumed` strictly advances and the loop terminates.
     let mut consumed = 0usize;
+    // #[gamma::skip(relational.lt_to_le, reason = "endless loop")]
+    // #[gamma::skip(stmt.delete_assign, reason = "endless loop")]
     while consumed < data.len() {
         let before_in = compressor.total_in();
         let before_out = compressor.total_out();
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "cannot fail")]
         compressor
             .compress(&data[consumed..], &mut scratch, FlushCompress::None)
             .map_err(io::Error::other)?;
@@ -133,8 +155,12 @@ fn deflate_chunk(data: &[u8], dictionary: Option<&[u8]>, last: bool) -> io::Resu
     } else {
         FlushCompress::Sync
     };
+    // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
+    // #[gamma::skip(match_guard.always_false, reason = "endless loop")]
+    // #[gamma::skip(match_arm.never_matches, reason = "next call ends it")]
     loop {
         let before_out = compressor.total_out();
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "cannot fail")]
         let status = compressor
             .compress(&[], &mut scratch, flush)
             .map_err(io::Error::other)?;
@@ -163,6 +189,7 @@ fn le32(out: &mut Vec<u8>, value: u32) {
 /// the ZIP specification (APPNOTE sections 4.3.7, 4.3.12, 4.3.16).
 /// Sizes are 32-bit, so the caller must confirm they fit before this is
 /// reached (this crate does not write ZIP64).
+// #[gamma::skip(call_result.default, reason = "le16 and le32 return ()")]
 fn build_single_entry_zip(name: &str, crc: u32, uncompressed: u32, compressed: &[u8]) -> Vec<u8> {
     const METHOD_DEFLATED: u16 = 8;
     const VERSION: u16 = 20;
@@ -170,6 +197,13 @@ fn build_single_entry_zip(name: &str, crc: u32, uncompressed: u32, compressed: &
 
     let name = name.as_bytes();
     let compressed_len = compressed.len() as u32;
+    // #[gamma::skip(arith.add_to_mul, reason = "capacity hint only")]
+    // #[gamma::skip(arith.mul_to_add, reason = "capacity hint only")]
+    // #[gamma::skip(arith.mul_to_div, reason = "capacity; names not empty")]
+    // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_to_one, reason = "capacity hint only")]
+    // #[gamma::skip(literal.int_to_zero, reason = "capacity hint only")]
     let mut out = Vec::with_capacity(compressed.len() + 2 * name.len() + 98);
 
     // Local file header.
@@ -234,7 +268,8 @@ mod deflate_tests {
 
     /// Decompress a raw-deflate stream in one pass, the way the ZIP
     /// reader does, so a `pigz` stream is checked against the same
-    /// decoder that reads a single-threaded one.
+    /// decoder that reads a single-threaded one. Panics when the stream
+    /// ends without its final block.
     fn inflate_raw(compressed: &[u8], expected_len: usize) -> Vec<u8> {
         let mut decompressor = Decompress::new(false);
         let mut out = Vec::with_capacity(expected_len);
@@ -251,7 +286,9 @@ mod deflate_tests {
             out.extend_from_slice(&scratch[..produced]);
             match status {
                 Status::StreamEnd => break,
-                _ if produced == 0 && consumed >= compressed.len() => break,
+                _ if produced == 0 && consumed >= compressed.len() => {
+                    panic!("the stream ends without its final block")
+                }
                 _ => {}
             }
         }
@@ -275,6 +312,18 @@ mod deflate_tests {
         }
         data.truncate(len);
         data
+    }
+
+    /// The compressed bytes stored for the only entry of `archive_bytes`.
+    fn stored_stream(archive_bytes: Vec<u8>) -> Vec<u8> {
+        let mut archive = ZipArchive::new(io::Cursor::new(archive_bytes)).unwrap();
+        let mut stream = Vec::new();
+        archive
+            .by_index_raw(0)
+            .unwrap()
+            .read_to_end(&mut stream)
+            .unwrap();
+        stream
     }
 
     #[test]
@@ -363,5 +412,112 @@ mod deflate_tests {
             .unwrap();
         assert_eq!(mesh_back, mesh);
         assert_eq!(other_back, other);
+    }
+
+    #[test]
+    fn hand_built_zip_follows_the_appnote_layout() {
+        let zip = build_single_entry_zip("ab", 0x1122_3344, 0x5566_7788, &[0xC0, 0xDE, 0x01]);
+        let expected: Vec<u8> = [
+            // Local file header (APPNOTE 4.3.7), at offset 0.
+            &[0x50, 0x4b, 0x03, 0x04][..], // signature
+            &[20, 0],                      // version needed: 2.0 (Deflate)
+            &[0, 0],                       // general purpose flags
+            &[8, 0],                       // method: Deflated
+            &[0, 0],                       // last-modified time
+            &[0x21, 0],                    // last-modified date: 1980-01-01
+            &[0x44, 0x33, 0x22, 0x11],     // CRC-32
+            &[3, 0, 0, 0],                 // compressed size
+            &[0x88, 0x77, 0x66, 0x55],     // uncompressed size
+            &[2, 0],                       // file name length
+            &[0, 0],                       // extra field length
+            b"ab",
+            &[0xC0, 0xDE, 0x01], // file data
+            // Central directory header (APPNOTE 4.3.12), at offset 35.
+            &[0x50, 0x4b, 0x01, 0x02], // signature
+            &[20, 0],                  // version made by: 2.0, MS-DOS
+            &[20, 0],                  // version needed: 2.0 (Deflate)
+            &[0, 0],                   // general purpose flags
+            &[8, 0],                   // method: Deflated
+            &[0, 0],                   // last-modified time
+            &[0x21, 0],                // last-modified date: 1980-01-01
+            &[0x44, 0x33, 0x22, 0x11], // CRC-32
+            &[3, 0, 0, 0],             // compressed size
+            &[0x88, 0x77, 0x66, 0x55], // uncompressed size
+            &[2, 0],                   // file name length
+            &[0, 0],                   // extra field length
+            &[0, 0],                   // file comment length
+            &[0, 0],                   // disk number start
+            &[0, 0],                   // internal file attributes
+            &[0, 0, 0, 0],             // external file attributes
+            &[0, 0, 0, 0],             // offset of the local header
+            b"ab",
+            // End of central directory record (APPNOTE 4.3.16).
+            &[0x50, 0x4b, 0x05, 0x06], // signature
+            &[0, 0],                   // number of this disk
+            &[0, 0],                   // disk with the central directory
+            &[1, 0],                   // entries on this disk
+            &[1, 0],                   // entries in total
+            &[48, 0, 0, 0],            // size of the central directory
+            &[35, 0, 0, 0],            // offset of the central directory
+            &[0, 0],                   // comment length
+        ]
+        .concat();
+        assert_eq!(zip, expected);
+    }
+
+    #[test]
+    fn parallel_entry_records_the_crc_and_size_of_the_part() {
+        let zip_bytes = parallel_entry("p", b"123456789").unwrap();
+        let mut archive = ZipArchive::new(io::Cursor::new(zip_bytes)).unwrap();
+        let entry = archive.by_index(0).unwrap();
+        // The standard check value of CRC-32 for these 9 bytes.
+        assert_eq!(entry.crc32(), 0xCBF4_3926);
+        assert_eq!(entry.size(), 9);
+    }
+
+    #[test]
+    fn a_single_chunk_is_compressed_as_the_zip_writer_does() {
+        let data = sample(3000);
+        let zip_writer_stream = {
+            let mut writer = ZipWriter::new(io::Cursor::new(Vec::new()));
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("p", options).unwrap();
+            writer.write_all(&data).unwrap();
+            stored_stream(writer.finish().unwrap().into_inner())
+        };
+        // 1 chunk has no chunk boundary, so the level alone decides the bytes.
+        assert_eq!(pigz_deflate(&data, data.len()).unwrap(), zip_writer_stream);
+        let entry = parallel_entry("p", &data).unwrap();
+        assert_eq!(stored_stream(entry), zip_writer_stream);
+    }
+
+    #[test]
+    fn a_last_chunk_of_1_byte_round_trips() {
+        let data = sample(1001);
+        let compressed = pigz_deflate(&data, 1000).unwrap();
+        assert_eq!(inflate_raw(&compressed, data.len()), data);
+    }
+
+    #[test]
+    fn a_chunk_size_of_0_round_trips() {
+        let data = sample(300);
+        let compressed = pigz_deflate(&data, 0).unwrap();
+        assert_eq!(inflate_raw(&compressed, data.len()), data);
+    }
+
+    #[test]
+    fn a_large_incompressible_chunk_round_trips() {
+        // Pseudo-random bytes do not compress: their stream fills the output
+        // buffer of `deflate_chunk` more than once.
+        let mut state = 0x9E37_79B9u32;
+        let data: Vec<u8> = (0..1 << 20)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect();
+        let compressed = pigz_deflate(&data, data.len()).unwrap();
+        assert_eq!(inflate_raw(&compressed, data.len()), data);
     }
 }
