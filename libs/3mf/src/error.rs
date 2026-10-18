@@ -78,6 +78,10 @@ pub enum PackageReadError {
         name: String,
         source: MalformedPartNameError,
     },
+    /// 2 archive items have names that OPC treats as 1, such as `a.bin` and
+    /// `A.BIN`. `first` and `second` are the 2 ZIP item names, in archive
+    /// order.
+    EquivalentItemNames { first: String, second: String },
     /// A part's decompressed bytes exceed the per-part ceiling, so the package
     /// was refused.
     OversizedPart { part: String, cap_bytes: u64 },
@@ -135,6 +139,10 @@ impl fmt::Display for PackageReadError {
             Self::MalformedPartName { name, source } => {
                 write!(f, "entry \"{name}\" is not a valid part name: {source}")
             }
+            Self::EquivalentItemNames { first, second } => write!(
+                f,
+                "archive items \"{first}\" and \"{second}\" have names that OPC treats as the same",
+            ),
             Self::OversizedPart { part, cap_bytes } => write!(
                 f,
                 "part \"{part}\" decompresses past the {cap_bytes}-byte per-part cap; the package was refused",
@@ -163,6 +171,7 @@ impl std::error::Error for PackageReadError {
             | Self::PartWithoutContentType { .. }
             | Self::MissingStartPartRelationship
             | Self::StartPartNotFound { .. }
+            | Self::EquivalentItemNames { .. }
             | Self::OversizedPart { .. }
             | Self::OversizedPackage { .. } => None,
         }
@@ -182,7 +191,8 @@ pub enum PackageWriteError {
     Zip(zip::result::ZipError),
     /// An I/O failure while writing entry bytes or XML.
     Io(io::Error),
-    /// 2 parts share 1 name.
+    /// A part was added with a name that OPC treats as the name of an earlier
+    /// part, such as `/A.BIN` after `/a.bin`.
     DuplicatePartName { name: String },
 }
 
@@ -192,7 +202,10 @@ impl fmt::Display for PackageWriteError {
             Self::Zip(err) => write!(f, "could not write the package archive: {err}"),
             Self::Io(err) => write!(f, "could not write package data: {err}"),
             Self::DuplicatePartName { name } => {
-                write!(f, "package already contains a part named \"{name}\"")
+                write!(
+                    f,
+                    "package already contains a part whose name OPC treats as \"{name}\""
+                )
             }
         }
     }
@@ -618,6 +631,29 @@ mod display_tests {
             },
         );
         assert!(msg.contains("\"/A.BIN\""), "msg: {msg}");
+    }
+
+    #[test]
+    fn equivalent_name_errors_name_the_names() {
+        let msg = format!(
+            "{}",
+            PackageWriteError::DuplicatePartName {
+                name: "/A.BIN".to_string(),
+            },
+        );
+        assert!(msg.contains("\"/A.BIN\""), "msg: {msg}");
+
+        let msg = format!(
+            "{}",
+            PackageReadError::EquivalentItemNames {
+                first: "a.bin".to_string(),
+                second: "A.BIN".to_string(),
+            },
+        );
+        assert!(
+            msg.contains("\"a.bin\"") && msg.contains("\"A.BIN\""),
+            "msg: {msg}"
+        );
     }
 
     #[test]

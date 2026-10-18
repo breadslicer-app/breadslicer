@@ -867,6 +867,18 @@ mod error_tests {
     }
 
     #[test]
+    fn a_part_name_that_differs_only_in_ascii_case_is_rejected_at_add_time() {
+        let mut package = Package::new();
+        package
+            .add_part(part("/a.bin"), "application/octet-stream", vec![])
+            .unwrap();
+        let err = package
+            .add_part(part("/A.BIN"), "application/octet-stream", vec![])
+            .unwrap_err();
+        assert!(matches!(err, PackageWriteError::DuplicatePartName { name } if name == "/A.BIN"));
+    }
+
+    #[test]
     fn missing_content_types_part_is_rejected() {
         let mut cursor = Cursor::new(Vec::new());
         let mut archive = zip::write::ZipWriter::new(&mut cursor);
@@ -1155,6 +1167,37 @@ mod error_tests {
             assert!(
                 matches!(&err, PackageReadError::DuplicateOverridePartName { part_name } if part_name == repeated),
                 "{entries}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn items_whose_names_opc_treats_as_1_are_rejected() {
+        let content_types = content_types_part(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+        );
+        // The items that follow `[Content_Types].xml`, and the 2 names that the
+        // error must give.
+        for (names, first, second) in [
+            (&["a.bin", "A.BIN"][..], "a.bin", "A.BIN"),
+            (&["a.bin", "/a.bin"], "a.bin", "/a.bin"),
+            (
+                &["_rels/.rels", "_RELS/.rels"],
+                "_rels/.rels",
+                "_RELS/.rels",
+            ),
+            (
+                &["[content_types].xml"],
+                "[Content_Types].xml",
+                "[content_types].xml",
+            ),
+        ] {
+            let mut items = vec![("[Content_Types].xml", content_types.as_bytes())];
+            items.extend(names.iter().map(|name| (*name, &b"x"[..])));
+            let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::EquivalentItemNames { first: a, second: b } if a == first && b == second),
+                "{names:?}: {err:?}",
             );
         }
     }

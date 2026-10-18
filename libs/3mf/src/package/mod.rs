@@ -203,14 +203,19 @@ impl Package {
         Self::default()
     }
 
-    /// Adds a part. Part names must be unique.
+    /// Adds a part. Part names must be unique, and OPC treats names that differ
+    /// only in ASCII case as 1 name.
     pub fn add_part(
         &mut self,
         name: PartName,
         content_type: &str,
         data: Vec<u8>,
     ) -> Result<(), PackageWriteError> {
-        if self.parts.iter().any(|p| p.name == name) {
+        if self
+            .parts
+            .iter()
+            .any(|p| p.name.as_str().eq_ignore_ascii_case(name.as_str()))
+        {
             return Err(PackageWriteError::DuplicatePartName {
                 name: name.as_str().to_string(),
             });
@@ -411,6 +416,7 @@ impl Package {
             announced_total = announced_total.saturating_add(file.size());
         }
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut item_by_lowercase_name: BTreeMap<String, String> = BTreeMap::new();
         let mut total_bytes: u64 = 0;
         for index in 0..archive.len() {
             let mut file = archive.by_index(index)?;
@@ -419,10 +425,19 @@ impl Package {
             }
             let raw_name = file.name().to_string();
             let name = if raw_name.starts_with('/') {
-                raw_name
+                raw_name.clone()
             } else {
                 format!("/{raw_name}")
             };
+            // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
+            if let Some(first) =
+                item_by_lowercase_name.insert(name.to_ascii_lowercase(), raw_name.clone())
+            {
+                return Err(PackageReadError::EquivalentItemNames {
+                    first,
+                    second: raw_name,
+                });
+            }
             let claimed_size = file.size();
             let ticking = TickingReader {
                 inner: &mut file,
