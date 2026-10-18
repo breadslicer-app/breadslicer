@@ -249,11 +249,24 @@ impl Package {
         self.root_relationships.push(relationship);
     }
 
-    pub fn add_part_relationship(&mut self, source: &PartName, relationship: Relationship) {
+    /// Adds a relationship from the part `source`. A Relationships part name is
+    /// refused as the source: OPC allows no relationships from a Relationships
+    /// part.
+    pub fn add_part_relationship(
+        &mut self,
+        source: &PartName,
+        relationship: Relationship,
+    ) -> Result<(), PackageWriteError> {
+        if is_reserved_for_relationships(source) {
+            return Err(PackageWriteError::ReservedPartName {
+                name: source.as_str().to_string(),
+            });
+        }
         self.part_relationships
             .entry(source.clone())
             .or_default()
             .push(relationship);
+        Ok(())
     }
 
     pub fn part_names(&self) -> impl Iterator<Item = &PartName> {
@@ -489,8 +502,9 @@ impl Package {
                     source,
                 })?;
             if is_relationships_part(&part_name) {
+                let source = relationships_source(&part_name)?;
                 let relationships = parse_relationships(&data, part_name.as_str())?;
-                match relationships_source(&part_name) {
+                match source {
                     None => package.root_relationships = relationships,
                     Some(source) => {
                         package.part_relationships.insert(source, relationships);
@@ -917,14 +931,12 @@ fn find_derivable<V>(names: &BTreeMap<String, V>) -> Option<(&V, &V)> {
     })
 }
 
-/// Returns the source a relationships part describes: `None` for the package
-/// root (`/_rels/.rels`), otherwise the part name.
-fn relationships_source(rels: &PartName) -> Option<PartName> {
-    // #[gamma::skip(cond.always_false, reason = "the rest gives None too")]
-    // #[gamma::skip(literal.str_to_empty, reason = "the rest gives None too")]
-    // #[gamma::skip(literal.str_to_xyzzy, reason = "the rest gives None too")]
+/// Returns the source of a Relationships part: `None` for the package
+/// (`/_rels/.rels`), otherwise the part name. Fails when the source is not a
+/// part name, or is the name of a Relationships part.
+fn relationships_source(rels: &PartName) -> Result<Option<PartName>, PackageReadError> {
     if rels.as_str() == "/_rels/.rels" {
-        return None;
+        return Ok(None);
     }
     let full = rels.as_str();
     // #[gamma::skip(literal.str_to_xyzzy, reason = "never None")]
@@ -934,7 +946,12 @@ fn relationships_source(rels: &PartName) -> Option<PartName> {
     let dir = dir_with_rels
         .strip_suffix("_rels/")
         .unwrap_or(dir_with_rels);
-    PartName::new(&format!("{dir}{source_file}")).ok()
+    match PartName::new(&format!("{dir}{source_file}")) {
+        Ok(source) if !is_reserved_for_relationships(&source) => Ok(Some(source)),
+        _ => Err(PackageReadError::RelationshipsPartWithoutSource {
+            part: full.to_string(),
+        }),
+    }
 }
 
 /// Resolves a relationship target against its source directory. Absolute

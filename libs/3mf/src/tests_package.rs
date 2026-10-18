@@ -62,14 +62,16 @@ fn sample_package() -> Package {
         rel_type: THUMBNAIL_REL_TYPE.to_string(),
         target: "/Metadata/thumbnail.png".to_string(),
     });
-    package.add_part_relationship(
-        &part(DEFAULT_MODEL_PART_NAME.as_str()),
-        Relationship {
-            id: "rel-100".to_string(),
-            rel_type: START_PART_REL_TYPE.to_string(),
-            target: "/2D/slices1.model".to_string(),
-        },
-    );
+    package
+        .add_part_relationship(
+            &part(DEFAULT_MODEL_PART_NAME.as_str()),
+            Relationship {
+                id: "rel-100".to_string(),
+                rel_type: START_PART_REL_TYPE.to_string(),
+                target: "/2D/slices1.model".to_string(),
+            },
+        )
+        .expect("a part name as the source");
     package
 }
 
@@ -911,6 +913,24 @@ mod error_tests {
     }
 
     #[test]
+    fn a_relationships_part_name_is_rejected_as_a_source_at_add_time() {
+        for source in ["/_rels/.rels", "/3D/_rels/3dmodel.model.rels"] {
+            let mut package = Package::new();
+            let err = package
+                .add_part_relationship(&part(source), start_part_relationship("/a.bin"))
+                .unwrap_err();
+            assert!(
+                matches!(&err, PackageWriteError::ReservedPartName { name } if name == source),
+                "{source}: {err:?}",
+            );
+            assert_eq!(
+                item_names(&write_to_bytes(&package)),
+                BTreeSet::from(["[Content_Types].xml".to_string(), "_rels/.rels".to_string()]),
+            );
+        }
+    }
+
+    #[test]
     fn a_part_name_derivable_from_another_is_rejected_at_add_time() {
         for (earlier, later, base, derived) in [
             ("/a.bin", "/a.bin/c.bin", "/a.bin", "/a.bin/c.bin"),
@@ -965,7 +985,9 @@ mod error_tests {
         package
             .write_to(Cursor::new(Vec::new()))
             .expect("no Relationships part in /3D/_rels");
-        package.add_part_relationship(&part("/3D/a.model"), start_part_relationship("/3D/a.model"));
+        package
+            .add_part_relationship(&part("/3D/a.model"), start_part_relationship("/3D/a.model"))
+            .unwrap();
         let err = package.write_to(Cursor::new(Vec::new())).unwrap_err();
         assert!(
             matches!(&err, PackageWriteError::DerivablePartNames { base, derived } if base == "/3D/_rels" && derived == "/3D/_rels/a.model.rels"),
@@ -1329,6 +1351,33 @@ mod error_tests {
             let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
             assert!(
                 matches!(&err, PackageReadError::DerivableItemNames { base: b, derived: d } if b == base && d == derived),
+                "{names:?}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_relationships_part_without_a_valid_source_is_rejected() {
+        // The sources are `/a/` (an empty segment), `/a.` (a trailing dot), and
+        // 2 Relationships parts, which can have no relationships.
+        for (names, refused) in [
+            (&["_rels/.rels", "a/_rels/.rels"][..], "/a/_rels/.rels"),
+            (&["a/_rels/.rels"], "/a/_rels/.rels"),
+            (&["_rels/.rels", "_rels/a..rels"], "/_rels/a..rels"),
+            (
+                &["_rels/.rels", "_rels/_rels/.rels.rels"],
+                "/_rels/_rels/.rels.rels",
+            ),
+            (
+                &["_rels/.rels", "3D/_rels/_rels/3dmodel.model.rels.rels"],
+                "/3D/_rels/_rels/3dmodel.model.rels.rels",
+            ),
+        ] {
+            let mut items = vec![("[Content_Types].xml", MINIMAL_CONTENT_TYPES.as_bytes())];
+            items.extend(names.iter().map(|name| (*name, MINIMAL_RELS.as_bytes())));
+            let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::RelationshipsPartWithoutSource { part } if part == refused),
                 "{names:?}: {err:?}",
             );
         }
@@ -1943,7 +1992,9 @@ mod write_failure_tests {
                 target: format!("/3D/Textures/{name}.png"),
             };
             package.add_root_relationship(relationship.clone());
-            package.add_part_relationship(&source, relationship);
+            package
+                .add_part_relationship(&source, relationship)
+                .unwrap();
         }
         assert_every_full_writer_is_reported(&package);
     }

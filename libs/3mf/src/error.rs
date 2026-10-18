@@ -65,6 +65,11 @@ pub enum PackageReadError {
         part: String,
         attribute: &'static str,
     },
+    /// An item has a name that OPC reserves for Relationships parts, but it is
+    /// neither `/_rels/.rels` nor the Relationships part of a part that can
+    /// have relationships: `/a/_rels/.rels` (source `/a/`) and
+    /// `/_rels/_rels/.rels.rels` (source `/_rels/.rels`) are such names.
+    RelationshipsPartWithoutSource { part: String },
     /// A stored part has no content type, neither by extension default nor by
     /// override.
     PartWithoutContentType { part: String },
@@ -129,6 +134,10 @@ impl fmt::Display for PackageReadError {
                 f,
                 "a relationship in \"{part}\" is missing its \"{attribute}\" attribute",
             ),
+            Self::RelationshipsPartWithoutSource { part } => write!(
+                f,
+                "relationships part \"{part}\" belongs neither to the package nor to a part that can have relationships",
+            ),
             Self::PartWithoutContentType { part } => {
                 write!(f, "part \"{part}\" has no content type")
             }
@@ -176,6 +185,7 @@ impl std::error::Error for PackageReadError {
             | Self::DuplicateOverridePartName { .. }
             | Self::MissingContentTypes
             | Self::RelationshipMissingAttribute { .. }
+            | Self::RelationshipsPartWithoutSource { .. }
             | Self::PartWithoutContentType { .. }
             | Self::MissingStartPartRelationship
             | Self::StartPartNotFound { .. }
@@ -203,8 +213,8 @@ pub enum PackageWriteError {
     /// A part was added with a name that OPC treats as the name of an earlier
     /// part, such as `/A.BIN` after `/a.bin`.
     DuplicatePartName { name: String },
-    /// A part was added with a name that OPC reserves for Relationships parts,
-    /// such as `/_rels/.rels`.
+    /// A part, or the source of a part relationship, was given a name that OPC
+    /// reserves for Relationships parts, such as `/_rels/.rels`.
     ReservedPartName { name: String },
     /// The part name `derived` starts with the part name `base` and a `/`,
     /// which OPC forbids; `/A.BIN/c.bin` and `/a.bin` are such a pair.
@@ -694,6 +704,17 @@ mod display_tests {
             },
         );
         assert!(msg.contains("\"/_rels/.rels\""), "msg: {msg}");
+    }
+
+    #[test]
+    fn relationships_part_without_source_error_names_the_part() {
+        let msg = format!(
+            "{}",
+            PackageReadError::RelationshipsPartWithoutSource {
+                part: "/a/_rels/.rels".to_string(),
+            },
+        );
+        assert!(msg.contains("\"/a/_rels/.rels\""), "msg: {msg}");
     }
 
     #[test]
