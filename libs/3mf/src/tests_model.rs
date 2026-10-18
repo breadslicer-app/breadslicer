@@ -304,6 +304,135 @@ mod missing_end_tag_tests {
     }
 }
 
+/// XML 1.0 makes each of these a fatal error, which the parser must report
+/// wherever it occurs, also inside an element that it skips.
+#[cfg(test)]
+mod well_formedness_tests {
+    use super::*;
+    use quick_xml::errors::{Error as XmlError, IllFormedError};
+    use quick_xml::events::attributes::AttrError;
+
+    #[test]
+    fn a_repeated_attribute_is_refused_on_each_element() {
+        // WFC: Unique Att Spec.
+        let mesh = tetra_mesh_xml();
+        let root = r#"<model unit="millimeter" unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#;
+        let bodies = [
+            r#"<metadata name="a" name="b"/><resources/><build/>"#.to_string(),
+            r#"<metadata name="a" name="b">t</metadata><resources/><build/>"#.to_string(),
+            r#"<resources><basematerials id="1" id="2"/></resources><build/>"#.to_string(),
+            "<resources><basematerials id=\"1\" id=\"2\"><base name=\"a\" displaycolor=\"#FFFFFF\"/></basematerials></resources><build/>".to_string(),
+            "<resources><basematerials id=\"1\"><base name=\"a\" name=\"b\" displaycolor=\"#FFFFFF\"/></basematerials></resources><build/>".to_string(),
+            r#"<resources><object id="1" id="2"/></resources><build/>"#.to_string(),
+            mesh_body(r#"<vertex x="0" x="1" y="0" z="0"/>"#, ""),
+            mesh_body(THREE_VERTICES, r#"<triangle v1="0" v1="0" v2="1" v3="2"/>"#),
+            format!("<resources><object id=\"1\">{mesh}</object><object id=\"2\"><components><component objectid=\"1\" objectid=\"1\"/></components></object></resources><build/>"),
+            format!("<resources><object id=\"1\">{mesh}</object></resources><build><item objectid=\"1\" objectid=\"1\"/></build>"),
+        ];
+        let documents =
+            std::iter::once(root.to_string()).chain(bodies.iter().map(|body| minimal_model(body)));
+        for xml in documents {
+            let err = parse(&xml).expect_err(&xml);
+            assert!(
+                matches!(err, ModelParseError::AttrSyntax(AttrError::Duplicated(..))),
+                "{xml}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn an_undeclared_entity_in_an_attribute_value_is_refused() {
+        // WFC: Entity Declared. 3MF forbids the DTD that could declare it.
+        let mesh = tetra_mesh_xml();
+        for xml in [
+            r#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:q="&undefined;"><resources/><build/></model>"#.to_string(),
+            minimal_model(&format!("<resources><object id=\"1\" name=\"&undefined;\">{mesh}</object></resources><build/>")),
+        ] {
+            let err = parse(&xml).expect_err(&xml);
+            assert!(
+                matches!(err, ModelParseError::Xml(XmlError::Escape(_))),
+                "{xml}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_mismatched_end_tag_inside_a_skipped_element_is_refused() {
+        // WFC: Element Type Match. Each case reaches 1 place where the parser
+        // skips a subtree.
+        let mesh = tetra_mesh_xml();
+        let foreign = r#"<q:x xmlns:q="urn:q"></q:y>"#;
+        for body in [
+            format!("<resources/><build/>{foreign}"),
+            "<resources/><build/><other></wrong>".to_string(),
+            "<metadata name=\"a\">t<b></c></metadata><resources/><build/>".to_string(),
+            "<resources><other></wrong></resources><build/>".to_string(),
+            format!("<resources>{foreign}</resources><build/>"),
+            "<resources><basematerials id=\"1\"><base name=\"a\" displaycolor=\"#FFFFFF\"></wrong></basematerials></resources><build/>".to_string(),
+            format!("<resources><object id=\"1\">{mesh}{foreign}</object></resources><build/>"),
+            format!("<resources><object id=\"1\"><metadatagroup></wrong>{mesh}</object></resources><build/>"),
+            TETRA_BODY.replace("</triangles></mesh>", &format!("</triangles>{foreign}</mesh>")),
+            TETRA_BODY.replace("</triangles></mesh>", "</triangles><other></wrong></mesh>"),
+            TETRA_BODY.replace(r#"<vertex x="0" y="0" z="0"/>"#, r#"<vertex x="0" y="0" z="0"></wrong>"#),
+            TETRA_BODY.replace(r#"<triangle v1="0" v2="2" v3="1"/>"#, r#"<triangle v1="0" v2="2" v3="1"></wrong>"#),
+            format!("<resources><object id=\"1\">{mesh}</object><object id=\"2\"><components><component objectid=\"1\"></wrong></components></object></resources><build/>"),
+            TETRA_BODY.replace(r#"<item objectid="1"/>"#, r#"<item objectid="1"></wrong>"#),
+        ] {
+            let err = parse(&minimal_model(&body)).expect_err(&body);
+            assert!(
+                matches!(err, ModelParseError::Xml(XmlError::IllFormed(IllFormedError::MismatchedEndTag { .. }))),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_text_takes_cdata_and_the_predefined_entities() {
+        // XML 1.0 2.7 (CDATA sections are character data) and 4.6.
+        let body =
+            r#"<metadata name="a">&quot;&apos;<![CDATA[<x>]]></metadata><resources/><build/>"#;
+        let document = parse(&minimal_model(body)).expect("parse");
+        assert_eq!(document.metadata[0].value, "\"'<x>");
+    }
+
+    #[test]
+    fn a_character_reference_to_nul_is_refused() {
+        // WFC: Legal Character.
+        let body = r#"<metadata name="a">&#0;</metadata><resources/><build/>"#;
+        let err = parse(&minimal_model(body)).unwrap_err();
+        assert!(
+            matches!(err, ModelParseError::Xml(XmlError::Escape(_))),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf_8_are_refused() {
+        // 3MF core 2.3.2: XML content is UTF-8.
+        for (before, after) in [
+            (r#"<metadata name="a">"#, "</metadata>"),
+            (r#"<metadata name="a"><![CDATA["#, "]]></metadata>"),
+            (r#"<metadata name="a">&"#, ";</metadata>"),
+        ] {
+            let xml = minimal_model(&format!("{before}\u{1}{after}<resources/><build/>"));
+            let (head, tail) = xml.split_once('\u{1}').expect("the marker");
+            let bytes = [head.as_bytes(), b"\xFF", tail.as_bytes()].concat();
+            let err = parse_model(&bytes).expect_err(before);
+            assert!(
+                matches!(err, ModelParseError::Xml(XmlError::Encoding(_))),
+                "{before}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_doctype_inside_the_model_is_refused() {
+        let body = "<!DOCTYPE m><resources/><build/>";
+        let err = parse(&minimal_model(body)).unwrap_err();
+        assert!(matches!(err, ModelParseError::DtdForbidden), "{err:?}");
+    }
+}
+
 /// The core schema marks these attributes `use="required"`: a document without
 /// one is refused, and the error names the element and the attribute.
 #[cfg(test)]

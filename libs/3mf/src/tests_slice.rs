@@ -260,6 +260,8 @@ mod attribute_emission_tests {
 #[cfg(test)]
 mod parse_validation_tests {
     use super::*;
+    use quick_xml::errors::{Error as XmlError, IllFormedError};
+    use quick_xml::events::attributes::AttrError;
 
     fn slice_model(body: &str) -> String {
         format!(
@@ -533,6 +535,73 @@ mod parse_validation_tests {
                     },
                 ),
                 "{polygon}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_attribute_on_a_slice_element_is_refused() {
+        // XML 1.0, WFC: Unique Att Spec.
+        for body in [
+            r#"<resources><s:slicestack id="1" id="2"/></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:slice ztop="1" ztop="2"/></s:slicestack></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:slice ztop="1" ztop="2"></s:slice></s:slicestack></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:sliceref slicestackid="1" slicestackid="2" slicepath="/2D/s.model"/></s:slicestack></resources><build/>"#.to_string(),
+            slice_body(r#"<s:vertices><s:vertex x="0" x="1" y="0"/><s:vertex x="1" y="0"/></s:vertices>"#),
+            slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0" startv="1"><s:segment v2="1"/></s:polygon>"#)),
+            slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment v2="1" v2="0"/></s:polygon>"#)),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(err, ModelParseError::AttrSyntax(AttrError::Duplicated(..))),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn an_undeclared_entity_in_a_slice_attribute_is_refused() {
+        // XML 1.0, WFC: Entity Declared.
+        let body = r#"<resources><object id="1" s:meshresolution="&undefined;"><mesh/></object></resources><build/>"#;
+        let err = parse_err(body);
+        assert!(
+            matches!(err, ModelParseError::Xml(XmlError::Escape(_))),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_mismatched_end_tag_inside_a_skipped_slice_element_is_refused() {
+        // XML 1.0, WFC: Element Type Match. Each case reaches 1 place where the
+        // parser skips a subtree.
+        let foreign = r#"<q:x xmlns:q="urn:q"></q:y>"#;
+        let stack = |content: &str| {
+            format!(
+                r#"<resources><s:slicestack id="1">{content}</s:slicestack></resources><build/>"#
+            )
+        };
+        for body in [
+            stack(r#"<s:sliceref slicestackid="1" slicepath="/2D/s.model"></s:wrong>"#),
+            stack("<s:other></s:wrong>"),
+            stack(foreign),
+            slice_body("<s:other></s:wrong>"),
+            slice_body(foreign),
+            slice_body(
+                r#"<s:vertices><s:vertex x="0" y="0"></s:wrong><s:vertex x="1" y="0"/></s:vertices>"#,
+            ),
+            slice_body(&format!(
+                r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment v2="1"></s:wrong></s:polygon>"#
+            )),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(
+                    err,
+                    ModelParseError::Xml(XmlError::IllFormed(
+                        IllFormedError::MismatchedEndTag { .. }
+                    ))
+                ),
+                "{body}: {err:?}",
             );
         }
     }
