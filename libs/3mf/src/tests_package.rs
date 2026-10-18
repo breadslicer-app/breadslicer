@@ -911,6 +911,69 @@ mod error_tests {
     }
 
     #[test]
+    fn a_part_name_derivable_from_another_is_rejected_at_add_time() {
+        for (earlier, later, base, derived) in [
+            ("/a.bin", "/a.bin/c.bin", "/a.bin", "/a.bin/c.bin"),
+            ("/a.bin/c.bin", "/a.bin", "/a.bin", "/a.bin/c.bin"),
+            ("/a.bin", "/A.BIN/c.bin", "/a.bin", "/A.BIN/c.bin"),
+        ] {
+            let mut package = Package::new();
+            package
+                .add_part(part(earlier), "application/octet-stream", vec![])
+                .unwrap();
+            let err = package
+                .add_part(part(later), "application/octet-stream", vec![])
+                .unwrap_err();
+            assert!(
+                matches!(&err, PackageWriteError::DerivablePartNames { base: b, derived: d } if b == base && d == derived),
+                "{later}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn part_names_that_only_share_a_prefix_are_accepted_at_add_time() {
+        for (earlier, later) in [("/a.bin", "/a.binx/c"), ("/a/b", "/a/c"), ("/a", "/a-b")] {
+            let mut package = Package::new();
+            package
+                .add_part(part(earlier), "application/octet-stream", vec![])
+                .unwrap();
+            package
+                .add_part(part(later), "application/octet-stream", vec![])
+                .unwrap_or_else(|err| panic!("{later}: {err:?}"));
+        }
+    }
+
+    #[test]
+    fn a_part_named_as_a_written_rels_folder_is_rejected_at_write_time() {
+        let octet = "application/octet-stream";
+        let mut package = Package::new();
+        package.add_part(part("/_rels"), octet, vec![]).unwrap();
+        let mut bytes = Vec::new();
+        let err = package.write_to(Cursor::new(&mut bytes)).unwrap_err();
+        assert!(
+            matches!(&err, PackageWriteError::DerivablePartNames { base, derived } if base == "/_rels" && derived == "/_rels/.rels"),
+            "{err:?}",
+        );
+        assert!(bytes.is_empty(), "nothing reaches the writer");
+
+        let mut package = Package::new();
+        package.add_part(part("/3D/_rels"), octet, vec![]).unwrap();
+        package
+            .add_part(part("/3D/a.model"), octet, vec![])
+            .unwrap();
+        package
+            .write_to(Cursor::new(Vec::new()))
+            .expect("no Relationships part in /3D/_rels");
+        package.add_part_relationship(&part("/3D/a.model"), start_part_relationship("/3D/a.model"));
+        let err = package.write_to(Cursor::new(Vec::new())).unwrap_err();
+        assert!(
+            matches!(&err, PackageWriteError::DerivablePartNames { base, derived } if base == "/3D/_rels" && derived == "/3D/_rels/a.model.rels"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
     fn missing_content_types_part_is_rejected() {
         let mut cursor = Cursor::new(Vec::new());
         let mut archive = zip::write::ZipWriter::new(&mut cursor);
@@ -1245,6 +1308,27 @@ mod error_tests {
             let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
             assert!(
                 matches!(&err, PackageReadError::EquivalentItemNames { first: a, second: b } if a == first && b == second),
+                "{names:?}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn items_whose_names_start_with_another_item_name_and_a_slash_are_rejected() {
+        let content_types = content_types_part(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+        );
+        for (names, base, derived) in [
+            (&["a.bin", "a.bin/c.bin"][..], "a.bin", "a.bin/c.bin"),
+            (&["a.bin/c.bin", "a.bin"], "a.bin", "a.bin/c.bin"),
+            (&["a.bin", "A.BIN/c.bin"], "a.bin", "A.BIN/c.bin"),
+            (&["_rels", "_rels/.rels"], "_rels", "_rels/.rels"),
+        ] {
+            let mut items = vec![("[Content_Types].xml", content_types.as_bytes())];
+            items.extend(names.iter().map(|name| (*name, &b"x"[..])));
+            let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::DerivableItemNames { base: b, derived: d } if b == base && d == derived),
                 "{names:?}: {err:?}",
             );
         }

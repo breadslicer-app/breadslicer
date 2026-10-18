@@ -227,6 +227,16 @@ impl Package {
                 name: name.as_str().to_string(),
             });
         }
+        if let Some((base, derived)) = self
+            .parts
+            .iter()
+            .find_map(|p| derivable_pair(name.as_str(), p.name.as_str()))
+        {
+            return Err(PackageWriteError::DerivablePartNames {
+                base: base.to_string(),
+                derived: derived.to_string(),
+            });
+        }
         self.parts.push(Part {
             name,
             content_type: content_type.to_string(),
@@ -315,6 +325,7 @@ impl Package {
         writer: W,
         mut progress: impl FnMut(u64, u64),
     ) -> Result<(), PackageWriteError> {
+        self.ensure_no_derivable_names()?;
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let mut archive = ZipWriter::new(FusedWriter::new(writer));
@@ -453,6 +464,12 @@ impl Package {
             total_bytes += data.len() as u64;
             entries.push((name, data));
         }
+        if let Some((base, derived)) = find_derivable(&item_by_lowercase_name) {
+            return Err(PackageReadError::DerivableItemNames {
+                base: base.clone(),
+                derived: derived.clone(),
+            });
+        }
 
         let content_types_bytes = entries
             .iter()
@@ -551,6 +568,29 @@ impl Package {
         }
         writer.write_event(Event::End(BytesStart::new("Types").to_end()))?;
         Ok(buffer)
+    }
+
+    /// Fails when 1 of the names that `write_to` writes is derivable from
+    /// another: the parts, `[Content_Types].xml`, and the Relationships parts
+    /// of the package and of every source part.
+    fn ensure_no_derivable_names(&self) -> Result<(), PackageWriteError> {
+        let relationships_parts = self.part_relationships.keys().map(PartName::rels_part_name);
+        let names: BTreeMap<String, String> = [
+            "/[Content_Types].xml".to_string(),
+            "/_rels/.rels".to_string(),
+        ]
+        .into_iter()
+        .chain(relationships_parts)
+        .chain(self.parts.iter().map(|p| p.name.as_str().to_string()))
+        .map(|name| (name.to_ascii_lowercase(), name))
+        .collect();
+        match find_derivable(&names) {
+            Some((base, derived)) => Err(PackageWriteError::DerivablePartNames {
+                base: base.clone(),
+                derived: derived.clone(),
+            }),
+            None => Ok(()),
+        }
     }
 }
 
@@ -845,6 +885,36 @@ fn is_relationships_part(name: &PartName) -> bool {
 fn is_reserved_for_relationships(name: &PartName) -> bool {
     let name = name.as_str().to_ascii_lowercase();
     name.ends_with(".rels") && name.rsplit('/').nth(1) == Some("_rels")
+}
+
+/// Returns whether `name` is derivable from `base` in the OPC sense: it starts
+/// with `base` and a `/`, in any ASCII case.
+fn is_derivable(name: &str, base: &str) -> bool {
+    let (name, base) = (name.as_bytes(), base.as_bytes());
+    name.len() > base.len()
+        && name[base.len()] == b'/'
+        && name[..base.len()].eq_ignore_ascii_case(base)
+}
+
+/// Returns `(base, derived)` when 1 of the 2 names is derivable from the other.
+fn derivable_pair<'a>(a: &'a str, b: &'a str) -> Option<(&'a str, &'a str)> {
+    if is_derivable(a, b) {
+        Some((b, a))
+    } else if is_derivable(b, a) {
+        Some((a, b))
+    } else {
+        None
+    }
+}
+
+/// Returns the values `(base, derived)` of 2 keys of `names` where 1 is
+/// derivable from the other, if any. The keys are names in ASCII lowercase.
+fn find_derivable<V>(names: &BTreeMap<String, V>) -> Option<(&V, &V)> {
+    names.iter().find_map(|(key, derived)| {
+        key.match_indices('/')
+            .find_map(|(index, _)| names.get(&key[..index]))
+            .map(|base| (base, derived))
+    })
 }
 
 /// Returns the source a relationships part describes: `None` for the package

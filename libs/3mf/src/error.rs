@@ -82,6 +82,10 @@ pub enum PackageReadError {
     /// `A.BIN`. `first` and `second` are the 2 ZIP item names, in archive
     /// order.
     EquivalentItemNames { first: String, second: String },
+    /// The name of archive item `derived` starts with the name of item `base`
+    /// and a `/`, which OPC forbids; `A.BIN/c.bin` and `a.bin` are such a pair.
+    /// `base` and `derived` are ZIP item names.
+    DerivableItemNames { base: String, derived: String },
     /// A part's decompressed bytes exceed the per-part ceiling, so the package
     /// was refused.
     OversizedPart { part: String, cap_bytes: u64 },
@@ -143,6 +147,10 @@ impl fmt::Display for PackageReadError {
                 f,
                 "archive items \"{first}\" and \"{second}\" have names that OPC treats as the same",
             ),
+            Self::DerivableItemNames { base, derived } => write!(
+                f,
+                "archive item \"{derived}\" starts with the name of archive item \"{base}\" and a slash, which OPC forbids",
+            ),
             Self::OversizedPart { part, cap_bytes } => write!(
                 f,
                 "part \"{part}\" decompresses past the {cap_bytes}-byte per-part cap; the package was refused",
@@ -172,6 +180,7 @@ impl std::error::Error for PackageReadError {
             | Self::MissingStartPartRelationship
             | Self::StartPartNotFound { .. }
             | Self::EquivalentItemNames { .. }
+            | Self::DerivableItemNames { .. }
             | Self::OversizedPart { .. }
             | Self::OversizedPackage { .. } => None,
         }
@@ -197,6 +206,11 @@ pub enum PackageWriteError {
     /// A part was added with a name that OPC reserves for Relationships parts,
     /// such as `/_rels/.rels`.
     ReservedPartName { name: String },
+    /// The part name `derived` starts with the part name `base` and a `/`,
+    /// which OPC forbids; `/A.BIN/c.bin` and `/a.bin` are such a pair.
+    /// `write_to` also checks the Relationships parts and `[Content_Types].xml`
+    /// that it writes.
+    DerivablePartNames { base: String, derived: String },
 }
 
 impl fmt::Display for PackageWriteError {
@@ -216,6 +230,10 @@ impl fmt::Display for PackageWriteError {
                     "part name \"{name}\" is reserved for OPC Relationships parts"
                 )
             }
+            Self::DerivablePartNames { base, derived } => write!(
+                f,
+                "part name \"{derived}\" starts with the part name \"{base}\" and a slash, which OPC forbids",
+            ),
         }
     }
 }
@@ -225,7 +243,9 @@ impl std::error::Error for PackageWriteError {
         match self {
             Self::Zip(err) => Some(err),
             Self::Io(err) => Some(err),
-            Self::DuplicatePartName { .. } | Self::ReservedPartName { .. } => None,
+            Self::DuplicatePartName { .. }
+            | Self::ReservedPartName { .. }
+            | Self::DerivablePartNames { .. } => None,
         }
     }
 }
@@ -674,6 +694,33 @@ mod display_tests {
             },
         );
         assert!(msg.contains("\"/_rels/.rels\""), "msg: {msg}");
+    }
+
+    #[test]
+    fn derivable_name_errors_name_both_names() {
+        let msg = format!(
+            "{}",
+            PackageWriteError::DerivablePartNames {
+                base: "/a.bin".to_string(),
+                derived: "/a.bin/c.bin".to_string(),
+            },
+        );
+        assert!(
+            msg.contains("\"/a.bin\"") && msg.contains("\"/a.bin/c.bin\""),
+            "msg: {msg}"
+        );
+
+        let msg = format!(
+            "{}",
+            PackageReadError::DerivableItemNames {
+                base: "a.bin".to_string(),
+                derived: "a.bin/c.bin".to_string(),
+            },
+        );
+        assert!(
+            msg.contains("\"a.bin\"") && msg.contains("\"a.bin/c.bin\""),
+            "msg: {msg}"
+        );
     }
 
     #[test]
