@@ -83,8 +83,7 @@ const MINIMAL_CONTENT_TYPES: &str = include_str!("../tests/fixtures/opc/minimal_
 const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
 
 /// Returns a hand-built archive holding `content_types`, `rels` as the root
-/// relationships part, and the model part `<model/>` styled by
-/// `model_options`.
+/// relationships part, and the model part `<model/>` styled by `model_options`.
 fn opc_package_bytes(
     content_types: &str,
     rels: &str,
@@ -242,8 +241,8 @@ impl Seek for ProbeWriter {
 }
 
 /// A seekable in-memory writer whose write call `fail_at` (counted from 0)
-/// fails once, while the calls after it succeed, as after a transient error.
-/// It counts its write calls and the writes that reach it after the failure.
+/// fails once, while the calls after it succeed, as after a transient error. It
+/// counts its write calls and the writes that reach it after the failure.
 struct FlakyWriter {
     inner: Cursor<Vec<u8>>,
     calls: usize,
@@ -795,6 +794,34 @@ mod item_mapping_tests {
 }
 
 #[cfg(test)]
+mod media_type_tests {
+    use super::*;
+
+    #[test]
+    fn an_override_matches_its_part_name_in_any_ascii_case() {
+        let content_types = content_types_part(concat!(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+            r#"<Override PartName="/DATA/A.BIN" ContentType="text/plain"/>"#,
+            r#"<Override PartName="/data/b.bin" ContentType="text/csv"/>"#,
+        ));
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("data/a.bin", b"a"),
+            ("Data/B.Bin", b"b"),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(
+            package.part_content_type(&part("/data/a.bin")),
+            Some("text/plain")
+        );
+        assert_eq!(
+            package.part_content_type(&part("/Data/B.Bin")),
+            Some("text/csv")
+        );
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
 
@@ -1055,6 +1082,50 @@ mod error_tests {
             assert!(
                 matches!(err, PackageReadError::ContentTypeMissingAttribute { attribute } if attribute == missing),
                 "{entry}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_2nd_default_for_an_extension_is_rejected() {
+        for (entries, repeated) in [
+            (
+                r#"<Default Extension="png" ContentType="image/png"/><Default Extension="png" ContentType="image/png"/>"#,
+                "png",
+            ),
+            (
+                r#"<Default Extension="png" ContentType="image/png"/><Default Extension="PNG" ContentType="image/jpeg"/>"#,
+                "PNG",
+            ),
+        ] {
+            let content_types = content_types_part(entries);
+            let bytes = stored_archive(&[("[Content_Types].xml", content_types.as_bytes())]);
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::DuplicateDefaultExtension { extension } if extension == repeated),
+                "{entries}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_2nd_override_for_a_part_is_rejected() {
+        for (entries, repeated) in [
+            (
+                r#"<Override PartName="/a.bin" ContentType="text/plain"/><Override PartName="/a.bin" ContentType="text/plain"/>"#,
+                "/a.bin",
+            ),
+            (
+                r#"<Override PartName="/a.bin" ContentType="text/plain"/><Override PartName="/A.BIN" ContentType="text/csv"/>"#,
+                "/A.BIN",
+            ),
+        ] {
+            let content_types = content_types_part(entries);
+            let bytes = stored_archive(&[("[Content_Types].xml", content_types.as_bytes())]);
+            let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::DuplicateOverridePartName { part_name } if part_name == repeated),
+                "{entries}: {err:?}",
             );
         }
     }

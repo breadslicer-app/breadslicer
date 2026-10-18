@@ -15,7 +15,7 @@ pub enum MalformedPartNameError {
     Empty,
     /// The name does not start with `/`.
     NotAbsolute,
-    /// A path segment between two `/` is empty.
+    /// A path segment between 2 `/` is empty.
     EmptySegment,
     /// The final segment ends with a dot, which OPC forbids.
     TrailingDot,
@@ -39,7 +39,7 @@ impl std::error::Error for MalformedPartNameError {}
 pub enum PackageReadError {
     /// The ZIP container itself could not be opened or traversed.
     Zip(zip::result::ZipError),
-    /// Reading one entry's bytes failed.
+    /// Reading an entry's bytes failed.
     PartRead { part: String, source: io::Error },
     /// The mandatory `[Content_Types].xml` part is absent.
     MissingContentTypes,
@@ -47,6 +47,14 @@ pub enum PackageReadError {
     ContentTypesXml(quick_xml::errors::Error),
     /// A content-type entry lacks a required attribute.
     ContentTypeMissingAttribute { attribute: &'static str },
+    /// `[Content_Types].xml` has 2 Default entries for 1 extension, which OPC
+    /// forbids (i.e.: `png` and `PNG` are 1 extension). `extension` is the
+    /// Extension attribute of the 2nd entry.
+    DuplicateDefaultExtension { extension: String },
+    /// `[Content_Types].xml` has 2 Override entries for 1 part, which OPC
+    /// forbids (i.e.: `/a.bin` and `/A.BIN` name 1 part). `part_name` is the
+    /// PartName attribute of the 2nd entry.
+    DuplicateOverridePartName { part_name: String },
     /// A relationships part is not parseable XML.
     RelationshipsXml {
         part: String,
@@ -57,25 +65,24 @@ pub enum PackageReadError {
         part: String,
         attribute: &'static str,
     },
-    /// A stored part has no content type, neither by extension default
-    /// nor by override.
+    /// A stored part has no content type, neither by extension default nor by
+    /// override.
     PartWithoutContentType { part: String },
-    /// No root relationship of the StartPart type exists, so the
-    /// primary 3D Model part cannot be located.
+    /// No root relationship of the StartPart type exists, so the primary 3D
+    /// Model part cannot be located.
     MissingStartPartRelationship,
-    /// The StartPart relationship points at a part that is not in the
-    /// package.
+    /// The StartPart relationship points at a part that is not in the package.
     StartPartNotFound { target: String },
     /// An entry name in the archive is not a valid part name.
     MalformedPartName {
         name: String,
         source: MalformedPartNameError,
     },
-    /// A part's decompressed bytes exceed the per-part ceiling, so
-    /// the package was refused.
+    /// A part's decompressed bytes exceed the per-part ceiling, so the package
+    /// was refused.
     OversizedPart { part: String, cap_bytes: u64 },
-    /// The decompressed bytes of all entries together exceed the
-    /// package ceiling, so the package was refused.
+    /// The decompressed bytes of all entries together exceed the package
+    /// ceiling, so the package was refused.
     OversizedPackage { cap_bytes: u64 },
 }
 
@@ -95,6 +102,14 @@ impl fmt::Display for PackageReadError {
             Self::ContentTypeMissingAttribute { attribute } => write!(
                 f,
                 "a content-type entry is missing its \"{attribute}\" attribute",
+            ),
+            Self::DuplicateDefaultExtension { extension } => write!(
+                f,
+                "[Content_Types].xml repeats the Default entry for the extension \"{extension}\"",
+            ),
+            Self::DuplicateOverridePartName { part_name } => write!(
+                f,
+                "[Content_Types].xml repeats the Override entry for the part \"{part_name}\"",
             ),
             Self::RelationshipsXml { part, source } => {
                 write!(
@@ -141,6 +156,8 @@ impl std::error::Error for PackageReadError {
             Self::RelationshipsXml { source, .. } => Some(source),
             Self::MalformedPartName { source, .. } => Some(source),
             Self::ContentTypeMissingAttribute { .. }
+            | Self::DuplicateDefaultExtension { .. }
+            | Self::DuplicateOverridePartName { .. }
             | Self::MissingContentTypes
             | Self::RelationshipMissingAttribute { .. }
             | Self::PartWithoutContentType { .. }
@@ -165,7 +182,7 @@ pub enum PackageWriteError {
     Zip(zip::result::ZipError),
     /// An I/O failure while writing entry bytes or XML.
     Io(io::Error),
-    /// Two parts share one name.
+    /// 2 parts share 1 name.
     DuplicatePartName { name: String },
 }
 
@@ -210,11 +227,11 @@ pub enum ModelParseError {
     Xml(quick_xml::errors::Error),
     /// An attribute list is malformed.
     AttrSyntax(quick_xml::events::attributes::AttrError),
-    /// The document contains DTD content, which the 3MF core
-    /// specification forbids.
+    /// The document contains DTD content, which the 3MF core specification
+    /// forbids.
     DtdForbidden,
-    /// The document references an entity that is neither predefined
-    /// nor numeric. With DTDs forbidden it can never be declared.
+    /// The document references an entity that is neither predefined nor
+    /// numeric. With DTDs forbidden it can never be declared.
     UndeclaredEntity { name: String },
     /// The root element is not a core-namespace `<model>`.
     UnexpectedRootElement { found: String },
@@ -225,7 +242,7 @@ pub enum ModelParseError {
         element: &'static str,
         attribute: &'static str,
     },
-    /// The `unit` attribute value is not one of the six spec units.
+    /// The `unit` attribute value is not 1 of the 6 spec units.
     InvalidUnit { value: String },
     /// A numeric attribute did not parse.
     InvalidNumber {
@@ -239,14 +256,13 @@ pub enum ModelParseError {
     InvalidResourceId { value: String },
     /// The value of an object `type` attribute is unknown.
     InvalidObjectType { value: String },
-    /// Two resources share one id.
+    /// 2 resources share 1 id.
     DuplicateResourceId { id: u32 },
-    /// A component or build item references an object id that has not
-    /// been defined before the reference (the spec requires definition
-    /// prior to use).
+    /// A component or build item references an object id that has not been
+    /// defined before the reference (the spec requires definition prior to
+    /// use).
     UnknownObjectReference { id: u32 },
-    /// A triangle references a vertex index outside the mesh's vertex
-    /// list.
+    /// A triangle references a vertex index outside the mesh's vertex list.
     TriangleIndexOutOfRange {
         object_id: u32,
         index: u32,
@@ -254,31 +270,31 @@ pub enum ModelParseError {
     },
     /// An object carries neither a mesh nor components.
     ObjectWithoutGeometry { id: u32 },
-    /// An object carries more than one geometry element.
+    /// An object carries more than 1 geometry element.
     DuplicateGeometry { id: u32 },
-    /// A build item references an object of type "other", which the
-    /// spec forbids.
+    /// A build item references an object of type "other", which the spec
+    /// forbids.
     BuildItemReferencesOtherType { id: u32 },
     /// The model requires an extension this crate does not implement.
     UnsupportedRequiredExtension { namespace: String },
     /// A `requiredextensions` prefix has no matching xmlns declaration.
     UnknownRequiredExtensionPrefix { prefix: String },
-    /// The document uses production-extension part references
-    /// (`p:path`); loading it without that extension would silently
-    /// produce an incomplete scene, so it is refused.
+    /// The document uses production-extension part references (`p:path`);
+    /// loading it without that extension would silently produce an incomplete
+    /// scene, so it is refused.
     ProductionPathUnsupported,
-    /// A slice stack contains both inline slices and slicerefs,
-    /// which the slice extension forbids.
+    /// A slice stack contains both inline slices and slicerefs, which the slice
+    /// extension forbids.
     SliceStackMixesSlicesAndRefs { id: u32 },
-    /// An object's `s:slicestackid` references a slice stack that
-    /// has not been defined before the reference.
+    /// An object's `s:slicestackid` references a slice stack that has not been
+    /// defined before the reference.
     UnknownSliceStackReference { object_id: u32, stack_id: u32 },
     /// The value of an `s:meshresolution` attribute is unknown.
     InvalidMeshResolution { value: String },
     /// A slice polygon carries no segments.
     PolygonWithoutSegments { stack_id: u32 },
-    /// A slice polygon references a vertex index outside the slice's
-    /// vertex list.
+    /// A slice polygon references a vertex index outside the slice's vertex
+    /// list.
     SliceIndexOutOfRange {
         stack_id: u32,
         index: u32,
@@ -421,28 +437,28 @@ impl From<quick_xml::encoding::EncodingError> for ModelParseError {
     }
 }
 
-/// Why serializing a 3D Model part failed: the output channel broke,
-/// or the document violates a slice-extension invariant the writer
-/// must not put on disk.
+/// Why serializing a 3D Model part failed: the output channel broke, or the
+/// document violates a slice-extension invariant the writer must not put on
+/// disk.
 #[derive(Debug)]
 pub enum ModelWriteError {
     Io(io::Error),
-    /// Slice boundaries must strictly increase, starting above the
-    /// stack's zbottom. `index` is the offending slice's position.
+    /// Slice boundaries must strictly increase, starting above the stack's
+    /// zbottom. `index` is the offending slice's position.
     SliceZNotIncreasing {
         stack_id: u32,
         index: usize,
     },
-    /// A slice's ztop is NaN or infinite. Checked before the
-    /// increasing-z comparison, which is false against NaN and would
-    /// let a non-finite boundary through into the XML.
+    /// A slice's ztop is NaN or infinite. Checked before the increasing-z
+    /// comparison, which is false against NaN and would let a non-finite
+    /// boundary through into the XML.
     SliceZTopNotFinite {
         stack_id: u32,
         index: usize,
     },
-    /// A stack's zbottom is NaN or infinite. It seeds the
-    /// increasing-z comparison, so a non-finite value would disable
-    /// that check for the first slice.
+    /// A stack's zbottom is NaN or infinite. It seeds the increasing-z
+    /// comparison, so a non-finite value would disable that check for the first
+    /// slice.
     SliceZBottomNotFinite {
         stack_id: u32,
     },
@@ -450,28 +466,27 @@ pub enum ModelWriteError {
     PolygonWithoutSegments {
         stack_id: u32,
     },
-    /// A slice polygon references a vertex index outside the slice's
-    /// vertex list.
+    /// A slice polygon references a vertex index outside the slice's vertex
+    /// list.
     SliceIndexOutOfRange {
         stack_id: u32,
         index: u32,
         vertex_count: usize,
     },
-    /// A stack referenced by a model or solidsupport object contains
-    /// an open polygon; such objects require closed contours.
+    /// A stack referenced by a model or solidsupport object contains an open
+    /// polygon; such objects require closed contours.
     OpenPolygonOnModelObject {
         object_id: u32,
         stack_id: u32,
     },
-    /// An object's `slice_stack` id has no matching stack in the
-    /// document.
+    /// An object's `slice_stack` id has no matching stack in the document.
     UnknownSliceStackReference {
         object_id: u32,
         stack_id: u32,
     },
-    /// A transform applied (directly or through components) to a
-    /// sliced object is not planar: the slice extension requires
-    /// m02, m12, m20, m21 to equal 0 and m22 to equal 1.
+    /// A transform applied (directly or through components) to a sliced object
+    /// is not planar: the slice extension requires m02, m12, m20, m21 to equal
+    /// 0 and m22 to equal 1.
     NonPlanarSlicedTransform {
         object_id: u32,
     },
@@ -584,6 +599,25 @@ mod display_tests {
 
         let msg = format!("{}", PackageReadError::OversizedPackage { cap_bytes: 4096 });
         assert!(msg.contains("4096"), "msg: {msg}");
+    }
+
+    #[test]
+    fn duplicate_media_type_errors_name_the_repeated_value() {
+        let msg = format!(
+            "{}",
+            PackageReadError::DuplicateDefaultExtension {
+                extension: "PNG".to_string(),
+            },
+        );
+        assert!(msg.contains("\"PNG\""), "msg: {msg}");
+
+        let msg = format!(
+            "{}",
+            PackageReadError::DuplicateOverridePartName {
+                part_name: "/A.BIN".to_string(),
+            },
+        );
+        assert!(msg.contains("\"/A.BIN\""), "msg: {msg}");
     }
 
     #[test]

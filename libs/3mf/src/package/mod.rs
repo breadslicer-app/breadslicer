@@ -612,7 +612,9 @@ fn read_part_bytes<R: Read>(
     Ok(data)
 }
 
-/// The parsed content-type map of a package.
+/// The parsed content-type map of a package. Its keys are in ASCII lowercase,
+/// because OPC ignores ASCII case when it matches extensions and Override part
+/// names.
 struct ContentTypes {
     defaults: BTreeMap<String, String>,
     overrides: BTreeMap<String, String>,
@@ -620,7 +622,7 @@ struct ContentTypes {
 
 impl ContentTypes {
     fn lookup(&self, part: &PartName) -> Option<&str> {
-        if let Some(ct) = self.overrides.get(part.as_str()) {
+        if let Some(ct) = self.overrides.get(&part.as_str().to_ascii_lowercase()) {
             return Some(ct);
         }
         let ext = part.extension_lowercase()?;
@@ -697,7 +699,12 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
                         content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
                             attribute: "ContentType",
                         })?;
-                    defaults.insert(extension.to_ascii_lowercase(), content_type);
+                    if defaults
+                        .insert(extension.to_ascii_lowercase(), content_type)
+                        .is_some()
+                    {
+                        return Err(PackageReadError::DuplicateDefaultExtension { extension });
+                    }
                 } else if local.as_ref() == b"Override" {
                     let mut part_name = None;
                     let mut content_type = None;
@@ -716,7 +723,12 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
                         content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
                             attribute: "ContentType",
                         })?;
-                    overrides.insert(part_name, content_type);
+                    if overrides
+                        .insert(part_name.to_ascii_lowercase(), content_type)
+                        .is_some()
+                    {
+                        return Err(PackageReadError::DuplicateOverridePartName { part_name });
+                    }
                 }
             }
             // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
