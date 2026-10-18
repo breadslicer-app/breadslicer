@@ -679,6 +679,20 @@ mod written_archive_tests {
     }
 
     #[test]
+    fn a_name_that_starts_with_its_only_dot_gets_the_default_of_its_extension() {
+        let mut package = Package::new();
+        package
+            .add_part(part("/a/.hidden"), "text/plain", vec![1])
+            .unwrap();
+        let (defaults, overrides) = written_media_types(&package);
+        assert_eq!(
+            defaults,
+            string_map(&[("hidden", "text/plain"), ("rels", RELATIONSHIPS_MEDIA_TYPE)]),
+        );
+        assert_eq!(overrides, BTreeMap::new());
+    }
+
+    #[test]
     fn written_xml_parts_declare_xml_1_0_and_use_the_opc_namespaces() {
         let bytes = write_to_bytes(&sample_package());
         let content_types = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -817,6 +831,21 @@ mod media_type_tests {
         assert_eq!(
             package.part_content_type(&part("/Data/B.Bin")),
             Some("text/csv")
+        );
+    }
+
+    #[test]
+    fn a_name_that_starts_with_its_only_dot_matches_the_default_of_its_extension() {
+        let content_types =
+            content_types_part(r#"<Default Extension="hidden" ContentType="text/plain"/>"#);
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("a/.hidden", b"x"),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(
+            package.part_content_type(&part("/a/.hidden")),
+            Some("text/plain")
         );
     }
 }

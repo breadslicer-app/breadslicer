@@ -93,10 +93,7 @@ impl PartName {
     fn extension_lowercase(&self) -> Option<String> {
         // #[gamma::skip(try.propagate_to_unwrap, reason = "never None")]
         let file = self.0.rsplit('/').next()?;
-        let (stem, ext) = file.rsplit_once('.')?;
-        if stem.is_empty() {
-            return None;
-        }
+        let (_, ext) = file.rsplit_once('.')?;
         Some(ext.to_ascii_lowercase())
     }
 
