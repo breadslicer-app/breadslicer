@@ -424,11 +424,7 @@ impl Package {
                 continue;
             }
             let raw_name = file.name().to_string();
-            let name = if raw_name.starts_with('/') {
-                raw_name.clone()
-            } else {
-                format!("/{raw_name}")
-            };
+            let name = format!("/{raw_name}");
             // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
             if let Some(first) =
                 item_by_lowercase_name.insert(name.to_ascii_lowercase(), raw_name.clone())

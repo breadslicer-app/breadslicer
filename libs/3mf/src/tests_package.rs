@@ -1095,6 +1095,23 @@ mod error_tests {
     }
 
     #[test]
+    fn an_item_name_with_a_leading_slash_is_rejected() {
+        // OPC adds a `/` to an item name, so `/a.bin` gives `//a.bin`.
+        let content_types = content_types_part(
+            r#"<Default Extension="bin" ContentType="application/octet-stream"/>"#,
+        );
+        for names in [&["/a.bin"][..], &["a.bin", "/a.bin"]] {
+            let mut items = vec![("[Content_Types].xml", content_types.as_bytes())];
+            items.extend(names.iter().map(|name| (*name, &b"x"[..])));
+            let err = Package::read_from(Cursor::new(stored_archive(&items))).unwrap_err();
+            assert!(
+                matches!(&err, PackageReadError::MalformedPartName { name, source: MalformedPartNameError::EmptySegment } if name == "//a.bin"),
+                "{names:?}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
     fn a_part_without_an_extension_or_an_override_is_rejected() {
         let content_types =
             content_types_part(r#"<Default Extension="txt" ContentType="text/plain"/>"#);
@@ -1180,7 +1197,6 @@ mod error_tests {
         // error must give.
         for (names, first, second) in [
             (&["a.bin", "A.BIN"][..], "a.bin", "A.BIN"),
-            (&["a.bin", "/a.bin"], "a.bin", "/a.bin"),
             (
                 &["_rels/.rels", "_RELS/.rels"],
                 "_rels/.rels",
