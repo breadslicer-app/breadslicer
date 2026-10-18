@@ -7,6 +7,8 @@
 //!
 //! Conformance behavior:
 //! - DTD content is rejected (the spec forbids it).
+//! - A document that ends with an element open is refused with the missing end
+//!   tag of the innermost one: XML 1.0 makes it a fatal error.
 //! - Slice-extension content (slicestack resources, the object attributes) is
 //!   parsed into the document model.
 //! - Elements and attributes from namespaces this crate does not know are
@@ -28,6 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use quick_xml::XmlVersion;
+use quick_xml::errors::IllFormedError;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::{PrefixDeclaration, QName, ResolveResult};
 use quick_xml::reader::NsReader;
@@ -202,6 +205,13 @@ fn skip_subtree(reader: &mut Reader<'_>, start: &BytesStart<'_>) -> Result<(), M
     Ok(())
 }
 
+/// The error for an input that ends while the element of `start` is open: the
+/// one that `skip_subtree` gives for a missing end tag.
+fn missing_end_tag(start: &BytesStart<'_>) -> ModelParseError {
+    let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    ModelParseError::Xml(IllFormedError::MissingEndTag(name).into())
+}
+
 fn parse_model_element(
     reader: &mut Reader<'_>,
     model: &BytesStart<'static>,
@@ -258,9 +268,15 @@ fn parse_model_element(
                             document.metadata.push(parse_metadata(reader, &owned)?);
                         }
                         b"resources" => {
-                            parse_resources(reader, &mut document, &mut seen_ids, &mut declared)?;
+                            parse_resources(
+                                reader,
+                                &owned,
+                                &mut document,
+                                &mut seen_ids,
+                                &mut declared,
+                            )?;
                         }
-                        b"build" => parse_build(reader, &mut document, &declared)?,
+                        b"build" => parse_build(reader, &owned, &mut document, &declared)?,
                         _ => skip_subtree(reader, &owned)?,
                     }
                 }
@@ -276,7 +292,7 @@ fn parse_model_element(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(model)),
             _ => {}
         }
         buffer.clear();
@@ -316,7 +332,7 @@ fn parse_metadata(
                 skip_subtree(reader, &owned)?;
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -372,6 +388,7 @@ fn register_id(seen_ids: &mut BTreeSet<u32>, id: ResourceId) -> Result<(), Model
 
 fn parse_resources(
     reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
     document: &mut ModelDocument,
     seen_ids: &mut BTreeSet<u32>,
     declared: &mut DeclaredObjects,
@@ -439,7 +456,7 @@ fn parse_resources(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -472,7 +489,7 @@ fn parse_base_materials(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -556,7 +573,7 @@ fn parse_slice_stack(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -605,7 +622,7 @@ fn parse_slice(
                 let (ns, local) = reader.resolver().resolve_element(owned.name());
                 if is_slice_ns(&ns) {
                     match local.as_ref() {
-                        b"vertices" => parse_slice_vertices(reader, &mut vertices)?,
+                        b"vertices" => parse_slice_vertices(reader, &owned, &mut vertices)?,
                         b"polygon" => {
                             polygons.push(parse_slice_polygon(
                                 reader,
@@ -632,7 +649,7 @@ fn parse_slice(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -646,6 +663,7 @@ fn parse_slice(
 
 fn parse_slice_vertices(
     reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
     vertices: &mut Vec<SliceVertex>,
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
@@ -668,7 +686,7 @@ fn parse_slice_vertices(
                 parse_slice_vertex_attributes(reader, &owned, vertices)?;
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -745,7 +763,7 @@ fn parse_slice_polygon(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -839,14 +857,14 @@ fn parse_object(
                             if payload.is_some() {
                                 return Err(ModelParseError::DuplicateGeometry { id: id.get() });
                             }
-                            payload = Some(ObjectPayload::Mesh(parse_mesh(reader, id)?));
+                            payload = Some(ObjectPayload::Mesh(parse_mesh(reader, &owned, id)?));
                         }
                         b"components" => {
                             if payload.is_some() {
                                 return Err(ModelParseError::DuplicateGeometry { id: id.get() });
                             }
                             payload = Some(ObjectPayload::Components(parse_components(
-                                reader, declared,
+                                reader, &owned, declared,
                             )?));
                         }
                         _ => skip_subtree(reader, &owned)?,
@@ -878,7 +896,7 @@ fn parse_object(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -897,7 +915,11 @@ fn parse_object(
     })
 }
 
-fn parse_mesh(reader: &mut Reader<'_>, object_id: ResourceId) -> Result<MeshData, ModelParseError> {
+fn parse_mesh(
+    reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
+    object_id: ResourceId,
+) -> Result<MeshData, ModelParseError> {
     let mut mesh = MeshData::default();
     let mut buffer = Vec::new();
     loop {
@@ -909,14 +931,14 @@ fn parse_mesh(reader: &mut Reader<'_>, object_id: ResourceId) -> Result<MeshData
                     skip_subtree(reader, &owned)?;
                 } else {
                     match local.as_ref() {
-                        b"vertices" => parse_vertices(reader, &mut mesh)?,
-                        b"triangles" => parse_triangles(reader, &mut mesh, object_id)?,
+                        b"vertices" => parse_vertices(reader, &owned, &mut mesh)?,
+                        b"triangles" => parse_triangles(reader, &owned, &mut mesh, object_id)?,
                         _ => skip_subtree(reader, &owned)?,
                     }
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -968,7 +990,11 @@ fn take_run<'a, T>(
     *reader.get_mut() = &input[run.consumed..];
 }
 
-fn parse_vertices(reader: &mut Reader<'_>, mesh: &mut MeshData) -> Result<(), ModelParseError> {
+fn parse_vertices(
+    reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
+    mesh: &mut MeshData,
+) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
         take_run(
@@ -989,7 +1015,7 @@ fn parse_vertices(reader: &mut Reader<'_>, mesh: &mut MeshData) -> Result<(), Mo
                 parse_vertex_attributes(reader, &owned, mesh)?;
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -1017,6 +1043,7 @@ fn parse_vertex_attributes(
 
 fn parse_triangles(
     reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
     mesh: &mut MeshData,
     object_id: ResourceId,
 ) -> Result<(), ModelParseError> {
@@ -1043,7 +1070,7 @@ fn parse_triangles(
                 parse_triangle_attributes(reader, &owned, mesh, object_id)?;
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -1082,6 +1109,7 @@ fn parse_triangle_attributes(
 
 fn parse_components(
     reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
     declared: &DeclaredObjects,
 ) -> Result<Vec<Component>, ModelParseError> {
     let mut components = Vec::new();
@@ -1103,7 +1131,7 @@ fn parse_components(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();
@@ -1139,6 +1167,7 @@ fn parse_component_attributes(
 
 fn parse_build(
     reader: &mut Reader<'_>,
+    start: &BytesStart<'_>,
     document: &mut ModelDocument,
     declared: &DeclaredObjects,
 ) -> Result<(), ModelParseError> {
@@ -1160,7 +1189,7 @@ fn parse_build(
                 }
             }
             Event::End(_) => break,
-            Event::Eof => break,
+            Event::Eof => return Err(missing_end_tag(start)),
             _ => {}
         }
         buffer.clear();

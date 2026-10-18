@@ -208,6 +208,79 @@ mod conformance_tests {
     }
 }
 
+/// XML 1.0 makes a missing end tag a fatal error, so a model that ends with an
+/// element open must be refused, with the innermost open element named.
+#[cfg(test)]
+mod missing_end_tag_tests {
+    use super::*;
+    use quick_xml::errors::{Error as XmlError, IllFormedError};
+
+    /// A model with each container element that the parser reads in a loop of
+    /// its own, and no byte after the root end tag.
+    fn every_container() -> String {
+        format!(
+            concat!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+                r#"<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:s="{slice}">"#,
+                r#"<metadata name="Title">t</metadata>"#,
+                r#"<resources>"#,
+                "<basematerials id=\"1\"><base name=\"red\" displaycolor=\"#FF0000\"/></basematerials>",
+                r#"<s:slicestack id="2"><s:slice ztop="0.1">"#,
+                r#"<s:vertices><s:vertex x="0" y="0"/><s:vertex x="1" y="0"/><s:vertex x="0" y="1"/></s:vertices>"#,
+                r#"<s:polygon startv="0"><s:segment v2="1"/><s:segment v2="2"/><s:segment v2="0"/></s:polygon>"#,
+                r#"</s:slice></s:slicestack>"#,
+                r#"<object id="3"><mesh>"#,
+                r#"<vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices>"#,
+                r#"<triangles><triangle v1="0" v2="1" v3="2"/></triangles>"#,
+                r#"</mesh></object>"#,
+                r#"<object id="4"><components><component objectid="3"/></components></object>"#,
+                r#"</resources>"#,
+                r#"<build><item objectid="4"/></build>"#,
+                r#"</model>"#,
+            ),
+            slice = SLICE_NS,
+        )
+    }
+
+    #[test]
+    fn each_open_container_is_reported_by_its_name() {
+        let xml = every_container();
+        for (tag, name) in [
+            ("<model ", "model"),
+            ("<metadata ", "metadata"),
+            ("<resources>", "resources"),
+            ("<basematerials ", "basematerials"),
+            ("<s:slicestack ", "s:slicestack"),
+            ("<s:slice ", "s:slice"),
+            ("<s:vertices>", "s:vertices"),
+            ("<s:polygon ", "s:polygon"),
+            ("<object ", "object"),
+            ("<mesh>", "mesh"),
+            ("<vertices>", "vertices"),
+            ("<triangles>", "triangles"),
+            ("<components>", "components"),
+            ("<build>", "build"),
+        ] {
+            let start = xml.find(tag).expect("tag in the fixture");
+            let end = start + xml[start..].find('>').expect("end of the tag") + 1;
+            let err = parse(&xml[..end]).expect_err(name);
+            assert!(
+                matches!(&err, ModelParseError::Xml(XmlError::IllFormed(IllFormedError::MissingEndTag(open))) if open == name),
+                "cut after {tag}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn every_strict_prefix_of_a_model_is_rejected() {
+        let xml = every_container();
+        parse(&xml).expect("the whole model parses");
+        for end in 0..xml.len() {
+            assert!(parse(&xml[..end]).is_err(), "accepted a cut at byte {end}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod reference_and_id_tests {
     use super::*;
