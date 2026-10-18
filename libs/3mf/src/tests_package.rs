@@ -1065,7 +1065,12 @@ mod error_tests {
 
     #[test]
     fn part_names_that_only_share_a_prefix_are_accepted_at_add_time() {
-        for (earlier, later) in [("/a.bin", "/a.binx/c"), ("/a/b", "/a/c"), ("/a", "/a-b")] {
+        for (earlier, later) in [
+            ("/a.bin", "/a.binx/c"),
+            ("/a.bin", "/b.bin/c"),
+            ("/a/b", "/a/c"),
+            ("/a", "/a-b"),
+        ] {
             let mut package = Package::new();
             package
                 .add_part(part(earlier), "application/octet-stream", vec![])
@@ -1103,6 +1108,23 @@ mod error_tests {
         let err = package.write_to(Cursor::new(Vec::new())).unwrap_err();
         assert!(
             matches!(&err, PackageWriteError::DerivablePartNames { base, derived } if base == "/3D/_rels" && derived == "/3D/_rels/a.model.rels"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn a_part_named_under_content_types_is_rejected_at_write_time() {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part("/[Content_Types].xml/a.bin"),
+                "application/octet-stream",
+                vec![],
+            )
+            .unwrap();
+        let err = package.write_to(Cursor::new(Vec::new())).unwrap_err();
+        assert!(
+            matches!(&err, PackageWriteError::DerivablePartNames { base, derived } if base == "/[Content_Types].xml" && derived == "/[Content_Types].xml/a.bin"),
             "{err:?}",
         );
     }

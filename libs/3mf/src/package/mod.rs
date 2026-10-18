@@ -595,6 +595,8 @@ impl Package {
     /// of the package and of every source part.
     fn ensure_no_derivable_names(&self) -> Result<(), PackageWriteError> {
         let relationships_parts = self.part_relationships.keys().map(PartName::rels_part_name);
+        // #[gamma::skip(collection.reverse_array, reason = "a map sorts it")]
+        // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
         let names: BTreeMap<String, String> = [
             "/[Content_Types].xml".to_string(),
             "/_rels/.rels".to_string(),
