@@ -12,7 +12,10 @@
 
 use proptest::prelude::*;
 
-use super::element_run::{slice_segment_run, slice_vertex_run, triangle_run, vertex_run};
+use super::element_run::{
+    element_chunks, leading_element_name, slice_segment_run, slice_vertex_run, triangle_run,
+    vertex_run,
+};
 use super::resource_ids::{ResourceId, ResourceIndex};
 use super::slice::{Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent, SliceVertex};
 use super::types::{
@@ -39,6 +42,36 @@ fn index(value: u32) -> ResourceIndex {
 fn content_after<'a>(xml: &'a str, open: &str) -> &'a [u8] {
     let start = xml.find(open).expect("opening tag present") + open.len();
     &xml.as_bytes()[start..]
+}
+
+#[cfg(test)]
+mod leading_element_name_tests {
+    use super::*;
+
+    #[test]
+    fn names_the_element_the_input_starts_with() {
+        assert_eq!(leading_element_name(b"<a/>"), Some(b"a".as_slice()));
+        assert_eq!(
+            leading_element_name(br#"<s:vertex x="1"/>"#),
+            Some(b"s:vertex".as_slice())
+        );
+        assert_eq!(
+            leading_element_name(b"<a-b.c_d/>"),
+            Some(b"a-b.c_d".as_slice())
+        );
+    }
+
+    #[test]
+    fn skips_leading_whitespace() {
+        assert_eq!(leading_element_name(b" \t\r\n<a/>"), Some(b"a".as_slice()));
+    }
+
+    #[test]
+    fn names_nothing_when_no_element_comes_first() {
+        for input in ["", "<", "text<a/>", "<!-- a --><a/>", "</a>"] {
+            assert_eq!(leading_element_name(input.as_bytes()), None, "{input:?}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +220,8 @@ mod stop_condition_tests {
 
     #[test]
     fn stops_at_a_missing_attribute() {
+        assert_stops_before(r#"<vertex y="2" z="3"/>"#);
+        assert_stops_before(r#"<vertex x="1" z="3"/>"#);
         assert_stops_before(r#"<vertex x="1" y="2"/>"#);
         assert_stops_before(r#"<vertex/>"#);
     }
@@ -220,16 +255,24 @@ mod stop_condition_tests {
     }
 
     #[test]
+    fn stops_at_text() {
+        assert_stops_before("text<vertex x=\"1\" y=\"2\" z=\"3\"/>");
+    }
+
+    #[test]
     fn stops_at_a_number_the_parser_would_reject() {
         assert_stops_before(r#"<vertex x="none" y="2" z="3"/>"#);
         assert_stops_before(r#"<vertex x="NaN" y="2" z="3"/>"#);
         assert_stops_before(r#"<vertex x="inf" y="2" z="3"/>"#);
         assert_stops_before(r#"<vertex x="1 2" y="2" z="3"/>"#);
+        assert_stops_before(r#"<vertex x="1" y="none" z="3"/>"#);
+        assert_stops_before(r#"<vertex x="1" y="2" z="none"/>"#);
     }
 
     #[test]
     fn stops_at_a_truncated_element() {
         assert_stops_before(r#"<vertex x="1" y="2" z="3""#);
+        assert_stops_before(r#"<vertex x="1" y="2" z="3"#);
         assert_stops_before(r#"<vertex x="1" y="2" z="#);
         assert_stops_before("<");
     }
@@ -284,6 +327,37 @@ mod triangle_run_tests {
         assert!(run.items.is_empty());
         assert_eq!(run.consumed, 0);
     }
+
+    #[test]
+    fn stops_at_a_missing_or_malformed_index() {
+        let good = r#"<triangle v1="0" v2="1" v3="2"/>"#;
+        for offending in [
+            r#"<triangle v2="1" v3="2"/>"#,
+            r#"<triangle v1="0" v3="2"/>"#,
+            r#"<triangle v1="0" v2="1"/>"#,
+            r#"<triangle v1="-1" v2="1" v3="2"/>"#,
+            r#"<triangle v1="0" v2="-1" v3="2"/>"#,
+            r#"<triangle v1="0" v2="1" v3="-1"/>"#,
+        ] {
+            let input = format!("{good}{offending}");
+            let run = triangle_run(input.as_bytes(), b"triangle", 3);
+            assert_eq!(run.items.len(), 1, "accepted {offending}");
+            assert_eq!(run.consumed, good.len(), "wrong resume point: {offending}");
+        }
+    }
+
+    #[test]
+    fn stops_at_a_property_value_that_is_not_plain() {
+        // The run does not parse `p1`, so only the check for a plain value can
+        // stop it here.
+        let good = r#"<triangle v1="0" v2="1" v3="2"/>"#;
+        for value in ["&#48;", "<", "\u{e9}"] {
+            let input = format!("{good}<triangle v1=\"0\" v2=\"1\" v3=\"2\" p1=\"{value}\"/>");
+            let run = triangle_run(input.as_bytes(), b"triangle", 3);
+            assert_eq!(run.items.len(), 1, "accepted p1={value:?}");
+            assert_eq!(run.consumed, good.len(), "wrong resume point: {value:?}");
+        }
+    }
 }
 
 /// A run long enough to be split across threads must give the same answer as a
@@ -337,6 +411,84 @@ mod chunking_tests {
         let run = vertex_run(closed.as_bytes(), b"vertex");
         assert_eq!(run.items.len(), COUNT);
         assert_eq!(run.consumed, good_len);
+    }
+
+    #[test]
+    fn a_long_run_drops_the_chunks_after_an_unreadable_element() {
+        // Readable elements follow the bad one, in the chunks after its own.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .expect("thread pool");
+        for bad_at in [1, COUNT / 2] {
+            let (head, good_len) = long_vertex_input(Some(bad_at));
+            let (tail, _) = long_vertex_input(None);
+            let text = head + &tail;
+            let run = pool.install(|| vertex_run(text.as_bytes(), b"vertex"));
+            assert_eq!(run.items.len(), bad_at, "bad element at {bad_at}");
+            assert_eq!(run.consumed, good_len, "bad element at {bad_at}");
+        }
+    }
+
+    #[test]
+    fn a_short_run_is_not_split() {
+        // XML allows `>` in a value. With 2 threads, a split would cut after
+        // the `>` in the 2nd `p1` value.
+        let input =
+            br#"<triangle v1="0" v2="1" v3="2" p1=">"/><triangle v1="0" v2="1" v3="2" p1=">"/>"#;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("thread pool");
+        let run = pool.install(|| triangle_run(input, b"triangle", 3));
+        assert_eq!(run.items.len(), 2);
+        assert_eq!(run.consumed, input.len());
+    }
+}
+
+/// `element_chunks` cuts right after the 1st `>` at or after each multiple of
+/// `len / threads` that is past the last cut. A cut at the end gives no chunk.
+#[cfg(test)]
+mod element_chunks_tests {
+    use super::*;
+
+    #[test]
+    fn fewer_than_2_threads_give_1_chunk() {
+        let whole: Vec<_> = std::iter::once(0..8).collect();
+        assert_eq!(element_chunks(b"<a/><a/>", 0), whole);
+        assert_eq!(element_chunks(b"<a/><a/>", 1), whole);
+    }
+
+    #[test]
+    fn each_cut_follows_the_element_that_holds_a_multiple() {
+        // 17 bytes and 3 threads: the 2nd and the 3rd element hold the
+        // multiples 5 and 10.
+        assert_eq!(
+            element_chunks(b"<a/><a/><a/><a/> ", 3),
+            [0..8, 8..12, 12..17]
+        );
+    }
+
+    #[test]
+    fn a_long_element_takes_the_cut_of_the_next_multiple() {
+        // 18 bytes and 4 threads: the 1st element holds the multiples 4 and 8.
+        assert_eq!(
+            element_chunks(br#"<a x="1"/><a/><a/>"#, 4),
+            [0..10, 10..14, 14..18]
+        );
+    }
+
+    #[test]
+    fn a_multiple_at_the_last_cut_or_a_cut_at_the_end_adds_no_chunk() {
+        // Every byte is a `>`: the multiple 1 gives the cut 2, the multiple 2
+        // is at that cut, and the multiple 3 gives a cut at the end.
+        assert_eq!(element_chunks(b">>>>", 4), [0..2, 2..4]);
+    }
+
+    #[test]
+    fn a_multiple_after_the_last_element_adds_no_chunk() {
+        let whole: Vec<_> = std::iter::once(0..10).collect();
+        assert_eq!(element_chunks(b"<a/>      ", 2), whole);
     }
 }
 
@@ -678,6 +830,33 @@ mod slice_run_tests {
         let run = slice_segment_run(input.as_bytes(), b"s:segment", 2);
         assert_eq!(run.items.len(), 1);
         assert_eq!(run.consumed, good.len());
+    }
+
+    #[test]
+    fn stops_at_a_missing_or_malformed_coordinate() {
+        let good = r#"<s:vertex x="1" y="2"/>"#;
+        for offending in [
+            r#"<s:vertex y="2"/>"#,
+            r#"<s:vertex x="1"/>"#,
+            r#"<s:vertex x="none" y="2"/>"#,
+            r#"<s:vertex x="1" y="none"/>"#,
+        ] {
+            let input = format!("{good}{offending}");
+            let run = slice_vertex_run(input.as_bytes(), b"s:vertex");
+            assert_eq!(run.items.len(), 1, "accepted {offending}");
+            assert_eq!(run.consumed, good.len(), "wrong resume point: {offending}");
+        }
+    }
+
+    #[test]
+    fn stops_at_a_missing_or_malformed_segment_end() {
+        let good = r#"<s:segment v2="1"/>"#;
+        for offending in [r#"<s:segment p1="0"/>"#, r#"<s:segment v2="-1"/>"#] {
+            let input = format!("{good}{offending}");
+            let run = slice_segment_run(input.as_bytes(), b"s:segment", 2);
+            assert_eq!(run.items.len(), 1, "accepted {offending}");
+            assert_eq!(run.consumed, good.len(), "wrong resume point: {offending}");
+        }
     }
 
     fn square_slice(z_top: f64) -> Slice {

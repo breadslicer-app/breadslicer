@@ -120,6 +120,7 @@ struct Attributes<'a> {
 }
 
 impl<'a> Attributes<'a> {
+    // #[gamma::skip(literal.str_to_xyzzy, reason = "only ..len is read")]
     fn new() -> Self {
         Self {
             entries: [(b"", ""); MAX_ATTRIBUTES],
@@ -138,6 +139,7 @@ impl<'a> Attributes<'a> {
     /// parser reports duplicates as an error) and refusing more entries than
     /// the schema allows.
     fn push(&mut self, key: &'a [u8], value: &'a str) -> Option<()> {
+        // #[gamma::skip(logical.or_remove_left, reason = "7 keys at most")]
         if self.len == MAX_ATTRIBUTES || self.get(key).is_some() {
             return None;
         }
@@ -161,6 +163,8 @@ fn is_key_byte(byte: u8) -> bool {
 
 /// The characters an element name may use here. A prefixed name is 1 spelling
 /// of a namespace-qualified element, so the colon belongs.
+// #[gamma::skip(fn_value.bool_true, reason = "names grow: too slow")]
+// #[gamma::skip(relational.eq_to_ne, reason = "names grow: too slow")]
 fn is_name_byte(byte: u8) -> bool {
     is_key_byte(byte) || byte == b':'
 }
@@ -210,6 +214,7 @@ fn read_element<'a>(
             .position(|byte| !is_key_byte(*byte))
             .unwrap_or(rest.len());
         let (key, tail) = rest.split_at(key_len);
+        // #[gamma::skip(logical.or_remove_left, reason = "no empty key")]
         if key.is_empty() || !keys.contains(&key) {
             return None;
         }
@@ -219,7 +224,11 @@ fn read_element<'a>(
         if !is_plain_value(value) {
             return None;
         }
-        attributes.push(key, str::from_utf8(value).ok()?)?;
+        attributes.push(
+            key,
+            // #[gamma::skip(try.propagate_to_unwrap, reason = "always ASCII")]
+            str::from_utf8(value).ok()?,
+        )?;
         rest = &tail[value_len + 1..];
     }
 }
@@ -241,6 +250,7 @@ fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(Tria
         v2: resource_index(attributes.get(b"v2")?)?,
         v3: resource_index(attributes.get(b"v3")?)?,
     };
+    // #[gamma::skip(collection.reverse_array, reason = "3 separate checks")]
     for index in [triangle.v1, triangle.v2, triangle.v3] {
         if index.get() as usize >= vertex_count {
             return None;
@@ -286,6 +296,8 @@ fn read_chunk<T, F>(input: &[u8], read_one: &F) -> Chunk<T>
 where
     F: Fn(&[u8]) -> Option<(T, usize)>,
 {
+    // #[gamma::skip(arith.div_to_mul, reason = "capacity hint only")]
+    // #[gamma::skip(arith.div_to_rem, reason = "capacity hint only")]
     let mut items = Vec::with_capacity(input.len() / ESTIMATED_ELEMENT_LEN);
     let mut accepted_end = None;
     let mut rest = input;
@@ -306,6 +318,7 @@ where
             };
         };
         items.push(item);
+        // #[gamma::skip(stmt.delete_assign, reason = "endless loop")]
         rest = &rest[length..];
         accepted_end = Some(input.len() - rest.len());
     }
@@ -324,12 +337,13 @@ fn run_bound(input: &[u8]) -> usize {
 /// `>`, which normally ends an element. When that `>` is inside an attribute
 /// value, the run ends before the element that holds it: the run is shorter,
 /// but every element in it is still correct.
-fn element_chunks(input: &[u8], threads: usize) -> Vec<Range<usize>> {
+pub(super) fn element_chunks(input: &[u8], threads: usize) -> Vec<Range<usize>> {
     let Some(target) = input.len().checked_div(threads) else {
         return std::iter::once(0..input.len()).collect();
     };
     let mut bounds = vec![0];
     let mut last = 0;
+    // #[gamma::skip(literal.int_decrement, reason = "offset 0 is skipped")]
     let nominals = (1..threads).map(|step| target * step);
     for nominal in nominals {
         // An element longer than 1 chunk can push a boundary past the next
@@ -337,10 +351,12 @@ fn element_chunks(input: &[u8], threads: usize) -> Vec<Range<usize>> {
         if nominal <= last {
             continue;
         }
+        // #[gamma::skip(loop.break_to_continue, reason = "no later cut")]
         let Some(offset) = memchr::memchr(b'>', &input[nominal..]) else {
             break;
         };
         let boundary = nominal + offset + 1;
+        // #[gamma::skip(loop.break_to_continue, reason = "no later cut")]
         if boundary >= input.len() {
             break;
         }
@@ -357,11 +373,21 @@ where
     F: Fn(&[u8]) -> Option<(T, usize)> + Sync,
 {
     let bounded = &input[..run_bound(input)];
+    // #[gamma::skip(cond.always_true, reason = "1 chunk never reads less")]
+    // #[gamma::skip(relational.lt_to_le, reason = "1 chunk never reads less")]
     let ranges = if bounded.len() < MIN_PARALLEL_LEN {
         std::iter::once(0..bounded.len()).collect()
     } else {
         element_chunks(bounded, rayon::current_num_threads())
     };
+    // #[gamma::skip(cond.always_false, reason = "both arms read the same")]
+    // #[gamma::skip(cond.always_true, reason = "both arms read the same")]
+    // #[gamma::skip(cond.negate, reason = "both arms read the same")]
+    // #[gamma::skip(relational.lt_to_gt, reason = "both arms read the same")]
+    // #[gamma::skip(relational.lt_to_le, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_decrement, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_increment, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_to_zero, reason = "both arms read the same")]
     let chunks: Vec<Chunk<T>> = if ranges.len() < 2 {
         ranges
             .iter()
