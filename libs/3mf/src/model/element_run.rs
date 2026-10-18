@@ -319,23 +319,21 @@ fn run_bound(input: &[u8]) -> usize {
     memmem::find(input, b"</").unwrap_or(input.len())
 }
 
-/// Split `input` into chunks that start on an element boundary, so each can be
-/// read independently. A boundary lands after a `>`; one that lands mid-element
-/// instead (a `>` inside an attribute value) makes its chunk stop immediately,
-/// which shortens the run without changing what it accepted.
-fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
-    let threads = rayon::current_num_threads();
-    if input.len() < MIN_PARALLEL_LEN || threads < 2 {
+/// Split `input` into at most `threads` chunks that can be read in parallel, or
+/// 1 chunk when `threads` is 0. Each chunk after the 1st starts right after a
+/// `>`, which normally ends an element. When that `>` is inside an attribute
+/// value, the run ends before the element that holds it: the run is shorter,
+/// but every element in it is still correct.
+fn element_chunks(input: &[u8], threads: usize) -> Vec<Range<usize>> {
+    let Some(target) = input.len().checked_div(threads) else {
         return std::iter::once(0..input.len()).collect();
-    }
-    let target = input.len() / threads;
-    let mut bounds = Vec::with_capacity(threads + 1);
-    bounds.push(0);
+    };
+    let mut bounds = vec![0];
     let mut last = 0;
-    for step in 1..threads {
+    let nominals = (1..threads).map(|step| target * step);
+    for nominal in nominals {
         // An element longer than 1 chunk can push a boundary past the next
         // nominal offset.
-        let nominal = target * step;
         if nominal <= last {
             continue;
         }
@@ -359,7 +357,11 @@ where
     F: Fn(&[u8]) -> Option<(T, usize)> + Sync,
 {
     let bounded = &input[..run_bound(input)];
-    let ranges = element_chunks(bounded);
+    let ranges = if bounded.len() < MIN_PARALLEL_LEN {
+        std::iter::once(0..bounded.len()).collect()
+    } else {
+        element_chunks(bounded, rayon::current_num_threads())
+    };
     let chunks: Vec<Chunk<T>> = if ranges.len() < 2 {
         ranges
             .iter()
