@@ -194,6 +194,9 @@ pub enum PackageWriteError {
     /// A part was added with a name that OPC treats as the name of an earlier
     /// part, such as `/A.BIN` after `/a.bin`.
     DuplicatePartName { name: String },
+    /// A part was added with a name that OPC reserves for Relationships parts,
+    /// such as `/_rels/.rels`.
+    ReservedPartName { name: String },
 }
 
 impl fmt::Display for PackageWriteError {
@@ -207,6 +210,12 @@ impl fmt::Display for PackageWriteError {
                     "package already contains a part whose name OPC treats as \"{name}\""
                 )
             }
+            Self::ReservedPartName { name } => {
+                write!(
+                    f,
+                    "part name \"{name}\" is reserved for OPC Relationships parts"
+                )
+            }
         }
     }
 }
@@ -216,7 +225,7 @@ impl std::error::Error for PackageWriteError {
         match self {
             Self::Zip(err) => Some(err),
             Self::Io(err) => Some(err),
-            Self::DuplicatePartName { .. } => None,
+            Self::DuplicatePartName { .. } | Self::ReservedPartName { .. } => None,
         }
     }
 }
@@ -654,6 +663,17 @@ mod display_tests {
             msg.contains("\"a.bin\"") && msg.contains("\"A.BIN\""),
             "msg: {msg}"
         );
+    }
+
+    #[test]
+    fn reserved_name_error_names_the_part() {
+        let msg = format!(
+            "{}",
+            PackageWriteError::ReservedPartName {
+                name: "/_rels/.rels".to_string(),
+            },
+        );
+        assert!(msg.contains("\"/_rels/.rels\""), "msg: {msg}");
     }
 
     #[test]

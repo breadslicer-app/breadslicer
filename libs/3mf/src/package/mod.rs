@@ -204,13 +204,20 @@ impl Package {
     }
 
     /// Adds a part. Part names must be unique, and OPC treats names that differ
-    /// only in ASCII case as 1 name.
+    /// only in ASCII case as 1 name. Names of Relationships parts are refused:
+    /// relationships go through [`Package::add_root_relationship`] and
+    /// [`Package::add_part_relationship`].
     pub fn add_part(
         &mut self,
         name: PartName,
         content_type: &str,
         data: Vec<u8>,
     ) -> Result<(), PackageWriteError> {
+        if is_reserved_for_relationships(&name) {
+            return Err(PackageWriteError::ReservedPartName {
+                name: name.as_str().to_string(),
+            });
+        }
         if self
             .parts
             .iter()
@@ -831,6 +838,13 @@ fn is_relationships_part(name: &PartName) -> bool {
             .rsplit('/')
             .nth(1)
             .is_some_and(|dir| dir == "_rels")
+}
+
+/// Returns whether OPC reserves a name for a Relationships part
+/// (`.../_rels/<name>.rels`, in any ASCII case).
+fn is_reserved_for_relationships(name: &PartName) -> bool {
+    let name = name.as_str().to_ascii_lowercase();
+    name.ends_with(".rels") && name.rsplit('/').nth(1) == Some("_rels")
 }
 
 /// Returns the source a relationships part describes: `None` for the package

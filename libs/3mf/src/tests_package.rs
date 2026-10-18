@@ -879,6 +879,38 @@ mod error_tests {
     }
 
     #[test]
+    fn reserved_relationships_part_names_are_rejected_at_add_time() {
+        for name in [
+            "/_rels/.rels",
+            "/3D/_rels/3dmodel.model.rels",
+            "/data/_rels/notes.rels",
+            "/data/_RELS/notes.RELS",
+        ] {
+            let err = Package::new()
+                .add_part(part(name), "application/octet-stream", vec![])
+                .unwrap_err();
+            assert!(
+                matches!(&err, PackageWriteError::ReservedPartName { name: refused } if refused == name),
+                "{name}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn names_close_to_the_reserved_ones_are_accepted_at_add_time() {
+        for name in [
+            "/_rels/notes.txt",
+            "/data/notes.rels",
+            "/_rels",
+            "/a_rels/x.rels",
+        ] {
+            Package::new()
+                .add_part(part(name), "application/octet-stream", vec![])
+                .unwrap_or_else(|err| panic!("{name}: {err:?}"));
+        }
+    }
+
+    #[test]
     fn missing_content_types_part_is_rejected() {
         let mut cursor = Cursor::new(Vec::new());
         let mut archive = zip::write::ZipWriter::new(&mut cursor);
