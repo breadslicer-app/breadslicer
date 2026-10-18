@@ -89,6 +89,12 @@ impl PartName {
         &self.0[1..]
     }
 
+    /// Returns whether OPC treats the 2 names as 1 name, which it does when
+    /// they differ only in ASCII case.
+    fn is_equivalent(&self, other: &PartName) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+
     /// Returns the extension of the final segment, lowercased, if any.
     fn extension_lowercase(&self) -> Option<String> {
         // #[gamma::skip(try.propagate_to_unwrap, reason = "never None")]
@@ -187,13 +193,15 @@ pub struct DecompressionProgress {
     pub total_bytes: u64,
 }
 
-/// An in-memory OPC package: ordered parts plus relationships.
+/// An in-memory OPC package: ordered parts plus relationships. Lookups by part
+/// name ignore ASCII case, as OPC does.
 #[derive(Debug, Default)]
 pub struct Package {
     parts: Vec<Part>,
     /// Package-root relationships (stored at `/_rels/.rels`).
     root_relationships: Vec<Relationship>,
-    /// Per-part relationships, keyed by source part name.
+    /// Per-part relationships, keyed by source part name; equivalent names
+    /// share 1 key.
     part_relationships: BTreeMap<PartName, Vec<Relationship>>,
 }
 
@@ -218,11 +226,7 @@ impl Package {
                 name: name.as_str().to_string(),
             });
         }
-        if self
-            .parts
-            .iter()
-            .any(|p| p.name.as_str().eq_ignore_ascii_case(name.as_str()))
-        {
+        if self.find_part(&name).is_some() {
             return Err(PackageWriteError::DuplicatePartName {
                 name: name.as_str().to_string(),
             });
@@ -262,8 +266,14 @@ impl Package {
                 name: source.as_str().to_string(),
             });
         }
+        let key = self
+            .part_relationships
+            .keys()
+            .find(|key| key.is_equivalent(source))
+            .unwrap_or(source)
+            .clone();
         self.part_relationships
-            .entry(source.clone())
+            .entry(key)
             .or_default()
             .push(relationship);
         Ok(())
@@ -274,17 +284,11 @@ impl Package {
     }
 
     pub fn part_content_type(&self, name: &PartName) -> Option<&str> {
-        self.parts
-            .iter()
-            .find(|p| &p.name == name)
-            .map(|p| p.content_type.as_str())
+        self.find_part(name).map(|p| p.content_type.as_str())
     }
 
     pub fn part_data(&self, name: &PartName) -> Option<&[u8]> {
-        self.parts
-            .iter()
-            .find(|p| &p.name == name)
-            .map(|p| p.data.as_slice())
+        self.find_part(name).map(|p| p.data.as_slice())
     }
 
     pub fn root_relationships(&self) -> &[Relationship] {
@@ -293,12 +297,14 @@ impl Package {
 
     pub fn part_relationships(&self, source: &PartName) -> &[Relationship] {
         self.part_relationships
-            .get(source)
-            .map(Vec::as_slice)
+            .iter()
+            .find(|(key, _)| key.is_equivalent(source))
+            .map(|(_, relationships)| relationships.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Resolves the StartPart relationship to the primary 3D Model part's name.
+    /// Resolves the StartPart relationship to the name of the primary 3D Model
+    /// part, as the part spells it.
     pub fn start_part(&self) -> Result<PartName, PackageReadError> {
         let rel = self
             .root_relationships
@@ -311,10 +317,10 @@ impl Package {
                 name: target.clone(),
                 source,
             })?;
-        if self.part_data(&name).is_none() {
-            return Err(PackageReadError::StartPartNotFound { target });
+        match self.find_part(&name) {
+            Some(part) => Ok(part.name.clone()),
+            None => Err(PackageReadError::StartPartNotFound { target }),
         }
-        Ok(name)
     }
 
     /// Serializes the package as a plain deflate-compressed ZIP.
@@ -501,7 +507,7 @@ impl Package {
                     name: name.clone(),
                     source,
                 })?;
-            if is_relationships_part(&part_name) {
+            if is_reserved_for_relationships(&part_name) {
                 let source = relationships_source(&part_name)?;
                 let relationships = parse_relationships(&data, part_name.as_str())?;
                 match source {
@@ -605,6 +611,11 @@ impl Package {
             }),
             None => Ok(()),
         }
+    }
+
+    /// Returns the part whose name OPC treats as `name`.
+    fn find_part(&self, name: &PartName) -> Option<&Part> {
+        self.parts.iter().find(|p| p.name.is_equivalent(name))
     }
 }
 
@@ -884,21 +895,22 @@ fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageW
     Ok(buffer)
 }
 
-/// Returns whether a part is a relationships part (`.../_rels/<name>.rels`).
-fn is_relationships_part(name: &PartName) -> bool {
-    name.as_str().ends_with(".rels")
-        && name
-            .as_str()
-            .rsplit('/')
-            .nth(1)
-            .is_some_and(|dir| dir == "_rels")
-}
-
 /// Returns whether OPC reserves a name for a Relationships part
 /// (`.../_rels/<name>.rels`, in any ASCII case).
 fn is_reserved_for_relationships(name: &PartName) -> bool {
-    let name = name.as_str().to_ascii_lowercase();
-    name.ends_with(".rels") && name.rsplit('/').nth(1) == Some("_rels")
+    split_relationships_part_name(name).is_some()
+}
+
+/// Splits a name that OPC reserves for Relationships parts into the folder and
+/// the file name of its source: `/3D/_rels/a.model.rels` gives `/3D` and
+/// `a.model`.
+fn split_relationships_part_name(name: &PartName) -> Option<(&str, &str)> {
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "names have a /")]
+    let (folder, file) = name.as_str().rsplit_once('/')?;
+    let (source_folder, rels_folder) = folder.rsplit_once('/')?;
+    let (source_file, extension) = file.rsplit_once('.')?;
+    (rels_folder.eq_ignore_ascii_case("_rels") && extension.eq_ignore_ascii_case("rels"))
+        .then_some((source_folder, source_file))
 }
 
 /// Returns whether `name` is derivable from `base` in the OPC sense: it starts
@@ -932,24 +944,18 @@ fn find_derivable<V>(names: &BTreeMap<String, V>) -> Option<(&V, &V)> {
 }
 
 /// Returns the source of a Relationships part: `None` for the package
-/// (`/_rels/.rels`), otherwise the part name. Fails when the source is not a
-/// part name, or is the name of a Relationships part.
+/// (`/_rels/.rels`, in any ASCII case), otherwise the part name. Fails when the
+/// source is not a part name, or is the name of a Relationships part.
 fn relationships_source(rels: &PartName) -> Result<Option<PartName>, PackageReadError> {
-    if rels.as_str() == "/_rels/.rels" {
+    if rels.as_str().eq_ignore_ascii_case("/_rels/.rels") {
         return Ok(None);
     }
-    let full = rels.as_str();
-    // #[gamma::skip(literal.str_to_xyzzy, reason = "never None")]
-    let file = full.rsplit('/').next().unwrap_or("");
-    let source_file = file.strip_suffix(".rels").unwrap_or(file);
-    let dir_with_rels = &full[..full.len() - file.len()];
-    let dir = dir_with_rels
-        .strip_suffix("_rels/")
-        .unwrap_or(dir_with_rels);
-    match PartName::new(&format!("{dir}{source_file}")) {
-        Ok(source) if !is_reserved_for_relationships(&source) => Ok(Some(source)),
+    let source = split_relationships_part_name(rels)
+        .and_then(|(folder, file)| PartName::new(&format!("{folder}/{file}")).ok());
+    match source {
+        Some(source) if !is_reserved_for_relationships(&source) => Ok(Some(source)),
         _ => Err(PackageReadError::RelationshipsPartWithoutSource {
-            part: full.to_string(),
+            part: rels.as_str().to_string(),
         }),
     }
 }

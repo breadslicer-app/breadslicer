@@ -853,6 +853,118 @@ mod media_type_tests {
 }
 
 #[cfg(test)]
+mod equivalent_name_tests {
+    use super::*;
+
+    /// Returns a Relationships part with 1 relationship, `r1`, of `rel_type` to
+    /// `target`.
+    fn relationships_part(rel_type: &str, target: &str) -> String {
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="{rel_type}" Target="{target}"/></Relationships>"#
+        )
+    }
+
+    fn relationship(id: &str) -> Relationship {
+        Relationship {
+            id: id.to_string(),
+            rel_type: "t".to_string(),
+            target: "/a.bin".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_part_is_found_by_an_equivalent_name() {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part("/3D/3dmodel.model"),
+                MODEL_PART_CONTENT_TYPE,
+                b"<model/>".to_vec(),
+            )
+            .unwrap();
+        let equivalent = part("/3D/3DMODEL.MODEL");
+        assert_eq!(package.part_data(&equivalent), Some(b"<model/>".as_slice()));
+        assert_eq!(
+            package.part_content_type(&equivalent),
+            Some(MODEL_PART_CONTENT_TYPE)
+        );
+    }
+
+    #[test]
+    fn a_start_part_target_finds_the_part_with_an_equivalent_name() {
+        let rels = relationships_part(START_PART_REL_TYPE, "/3D/3DModel.model");
+        let bytes = opc_package_bytes(MINIMAL_CONTENT_TYPES, &rels, Default::default());
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        let start = package.start_part().expect("start part resolves");
+        assert_eq!(start.as_str(), "/3D/3dmodel.model");
+    }
+
+    #[test]
+    fn a_relationships_part_belongs_to_the_part_with_an_equivalent_name() {
+        let rels = relationships_part("t", "/a.bin");
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES.as_bytes()),
+            ("3D/3dmodel.model", b"<model/>"),
+            ("3D/_rels/3DModel.model.rels", rels.as_bytes()),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(
+            package.part_relationships(&part("/3D/3dmodel.model")),
+            [relationship("r1")]
+        );
+    }
+
+    #[test]
+    fn relationships_part_names_are_recognized_in_any_ascii_case() {
+        let root = relationships_part(START_PART_REL_TYPE, "/3D/3dmodel.model");
+        let rels = relationships_part("t", "/a.bin");
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES.as_bytes()),
+            ("_RELS/.RELS", root.as_bytes()),
+            ("3D/3dmodel.model", b"<model/>"),
+            ("3D/_RELS/3dmodel.model.RELS", rels.as_bytes()),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        let names: Vec<&str> = package.part_names().map(PartName::as_str).collect();
+        assert_eq!(names, ["/3D/3dmodel.model"]);
+        let start = package.start_part().expect("start part resolves");
+        assert_eq!(start.as_str(), "/3D/3dmodel.model");
+        assert_eq!(
+            package.part_relationships(&part("/3D/3dmodel.model")),
+            [relationship("r1")]
+        );
+    }
+
+    #[test]
+    fn relationships_from_equivalent_sources_share_1_list() {
+        let mut package = Package::new();
+        package
+            .add_part(part("/a.bin"), "application/octet-stream", vec![1])
+            .unwrap();
+        package
+            .add_part_relationship(&part("/a.bin"), relationship("r1"))
+            .unwrap();
+        package
+            .add_part_relationship(&part("/A.BIN"), relationship("r2"))
+            .unwrap();
+        assert_eq!(
+            package.part_relationships(&part("/a.bin")),
+            [relationship("r1"), relationship("r2")]
+        );
+        let expected = [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "_rels/a.bin.rels",
+            "a.bin",
+        ];
+        assert_eq!(
+            item_names(&write_to_bytes(&package)),
+            expected.into_iter().map(String::from).collect(),
+        );
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
 
