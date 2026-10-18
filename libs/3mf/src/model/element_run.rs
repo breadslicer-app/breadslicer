@@ -32,7 +32,7 @@ use std::str;
 use memchr::memmem;
 use rayon::prelude::*;
 
-use super::numbers::{parse_f64, parse_index};
+use super::numbers::{number, resource_index};
 use super::slice::{SliceSegment, SliceVertex};
 use super::types::{TriangleRef, Vertex3};
 
@@ -113,7 +113,7 @@ pub(super) fn leading_element_name(input: &[u8]) -> Option<&[u8]> {
     (end > 0).then(|| &rest[..end])
 }
 
-/// The attributes of one leaf element, in document order.
+/// The attributes of 1 leaf element, in document order.
 struct Attributes<'a> {
     entries: [(&'a [u8], &'a str); MAX_ATTRIBUTES],
     len: usize,
@@ -134,9 +134,9 @@ impl<'a> Attributes<'a> {
             .map(|(_, value)| *value)
     }
 
-    /// Records one attribute, refusing a repeat of a key already seen (the
-    /// event parser reports duplicates as an error) and refusing more entries
-    /// than the schema allows.
+    /// Records 1 attribute, refusing a repeat of a key already seen (the event
+    /// parser reports duplicates as an error) and refusing more entries than
+    /// the schema allows.
     fn push(&mut self, key: &'a [u8], value: &'a str) -> Option<()> {
         if self.len == MAX_ATTRIBUTES || self.get(key).is_some() {
             return None;
@@ -159,7 +159,7 @@ fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
 }
 
-/// The characters an element name may use here. A prefixed name is one spelling
+/// The characters an element name may use here. A prefixed name is 1 spelling
 /// of a namespace-qualified element, so the colon belongs.
 fn is_name_byte(byte: u8) -> bool {
     is_key_byte(byte) || byte == b':'
@@ -182,10 +182,10 @@ fn skip_space(input: &[u8]) -> &[u8] {
     &input[end..]
 }
 
-/// Read one `<name key="value" ... />` element from the front of `input`,
+/// Read 1 `<name key="value" ... />` element from the front of `input`,
 /// returning its attributes and its length.
 ///
-/// Everything outside that one spelling is refused: a different name, a key
+/// Everything outside that 1 spelling is refused: a different name, a key
 /// outside `keys`, a repeated key, a quoting or spacing variant, a value
 /// needing unescaping, and the `<name></name>` form.
 fn read_element<'a>(
@@ -227,9 +227,9 @@ fn read_element<'a>(
 fn read_vertex(input: &[u8], name: &[u8]) -> Option<(Vertex3, usize)> {
     let (attributes, length) = read_element(input, name, VERTEX_KEYS)?;
     let vertex = Vertex3 {
-        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
-        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
-        z: parse_f64("vertex", "z", attributes.get(b"z")?).ok()?,
+        x: number(attributes.get(b"x")?)?,
+        y: number(attributes.get(b"y")?)?,
+        z: number(attributes.get(b"z")?)?,
     };
     Some((vertex, length))
 }
@@ -237,9 +237,9 @@ fn read_vertex(input: &[u8], name: &[u8]) -> Option<(Vertex3, usize)> {
 fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(TriangleRef, usize)> {
     let (attributes, length) = read_element(input, name, TRIANGLE_KEYS)?;
     let triangle = TriangleRef {
-        v1: parse_index("triangle", "v1", attributes.get(b"v1")?).ok()?,
-        v2: parse_index("triangle", "v2", attributes.get(b"v2")?).ok()?,
-        v3: parse_index("triangle", "v3", attributes.get(b"v3")?).ok()?,
+        v1: resource_index(attributes.get(b"v1")?)?,
+        v2: resource_index(attributes.get(b"v2")?)?,
+        v3: resource_index(attributes.get(b"v3")?)?,
     };
     for index in [triangle.v1, triangle.v2, triangle.v3] {
         if index.get() as usize >= vertex_count {
@@ -252,8 +252,8 @@ fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(Tria
 fn read_slice_vertex(input: &[u8], name: &[u8]) -> Option<(SliceVertex, usize)> {
     let (attributes, length) = read_element(input, name, SLICE_VERTEX_KEYS)?;
     let vertex = SliceVertex {
-        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
-        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
+        x: number(attributes.get(b"x")?)?,
+        y: number(attributes.get(b"y")?)?,
     };
     Some((vertex, length))
 }
@@ -264,14 +264,14 @@ fn read_slice_segment(
     vertex_count: usize,
 ) -> Option<(SliceSegment, usize)> {
     let (attributes, length) = read_element(input, name, SLICE_SEGMENT_KEYS)?;
-    let end = parse_index("segment", "v2", attributes.get(b"v2")?).ok()?;
+    let end = resource_index(attributes.get(b"v2")?)?;
     if end.get() as usize >= vertex_count {
         return None;
     }
     Some((SliceSegment { end }, length))
 }
 
-/// What one chunk of a run yielded.
+/// What 1 chunk of a run yielded.
 struct Chunk<T> {
     items: Vec<T>,
     /// Offset just past the last accepted element, relative to the chunk, or
@@ -333,7 +333,7 @@ fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
     bounds.push(0);
     let mut last = 0;
     for step in 1..threads {
-        // An element longer than one chunk can push a boundary past the next
+        // An element longer than 1 chunk can push a boundary past the next
         // nominal offset.
         let nominal = target * step;
         if nominal <= last {
