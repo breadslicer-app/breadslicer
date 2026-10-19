@@ -97,6 +97,31 @@ fn a_merge_drops_2_faces_and_keeps_the_order_of_the_others() {
     );
 }
 
+#[test]
+fn a_merge_also_replaces_a_zero_area_neighbour() {
+    // With R 2^-20 of the way from P to Q, A is thin. Stored with X 1st, it has
+    // a sine of about 8e-7 at that corner, so it has zero area too, and its
+    // long edge X-P makes it a candidate of the pass.
+    let mut points = SPLIT_TETRAHEDRON;
+    let near_p = 1.0 - 2.0_f32.powi(-19);
+    points[2] = [1.0, near_p, near_p];
+    let mut mesh = split_tetrahedron(points);
+    mesh.faces[1] = triangle([3, 0, 2]);
+    let zero_area: Vec<ZeroAreaFace> = [0_usize, 1]
+        .map(|face| ZeroAreaFace {
+            face_idx: FaceIndex::from(face),
+        })
+        .to_vec();
+    let faces = mesh.validated_faces().expect("in-range indices");
+    assert_eq!(faces.validate_face_areas(), Err(zero_area));
+    let fixes = fix_collinear_faces(&mut mesh, &[]);
+    assert_eq!(fixes, [merge([0, 1, 2], [[3, 0, 2], [2, 1, 3]], [3, 0, 1])]);
+    assert_eq!(
+        mesh.faces,
+        triangles(&[[3, 0, 1], [0, 4, 1], [0, 3, 4], [1, 4, 3]])
+    );
+}
+
 /// Returns a pyramid on the square P (0), Q (1), Y (3), X (2) with its apex S
 /// (4), where R1 (5) and R2 (6) split the edge P-Q in 3. The collinear face 8,
 /// (P, R2, R1), has its long edge P-R2 on the collinear face 9, (P, Q, R2).
