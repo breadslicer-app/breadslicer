@@ -17,6 +17,12 @@ pub(in crate::indexed_mesh::fix::collinear_faces) struct CollinearFace {
     long_edge: HalfEdge,
 }
 
+impl CollinearFace {
+    pub(in crate::indexed_mesh::fix::collinear_faces) fn face(self) -> FaceIndex {
+        self.long_edge.face
+    }
+}
+
 /// The removal of a collinear face (R, P, Q). A is the face across R-P, B the
 /// face across Q-R, and C the face across P-Q.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

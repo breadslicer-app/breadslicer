@@ -143,7 +143,9 @@ impl<'a> LinkedFaces<'a> {
 
 /// Returns the witness of `mesh`, which must be edge-manifold.
 #[cfg(test)]
-pub(super) fn edge_manifold(mesh: &IndexedMesh) -> ValidatedEdgeManifoldMesh<'_> {
+pub(in crate::indexed_mesh::fix::collinear_faces) fn edge_manifold(
+    mesh: &IndexedMesh,
+) -> ValidatedEdgeManifoldMesh<'_> {
     mesh.validated_faces()
         .expect("in-range indices")
         .validated_edge_manifold()

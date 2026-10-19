@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::fix::collinear_faces::fix_collinear_faces_impl;
+use crate::indexed_mesh::fix::collinear_faces::CollinearFaceRemovals;
 use crate::indexed_mesh::fix::records::MeshFix;
 use crate::indexed_mesh::validated::ValidatedEdgeManifoldMesh;
 
@@ -21,8 +21,12 @@ impl ValidatedEdgeManifoldMeshMut<'_> {
     /// vertices do not change, so the in-range witness that minted this one
     /// stays valid.
     pub fn fix_collinear_faces(self) -> Vec<MeshFix> {
-        let (fixes, faces) =
-            fix_collinear_faces_impl(&ValidatedEdgeManifoldMesh::new_unchecked(self.mesh));
+        let (fixes, faces) = {
+            let view = ValidatedEdgeManifoldMesh::new_unchecked(self.mesh);
+            let mut removals = CollinearFaceRemovals::new(&view);
+            let fixes: Vec<MeshFix> = removals.by_ref().collect();
+            (fixes, removals.into_faces())
+        };
         if !fixes.is_empty() {
             self.mesh.faces = faces;
         }

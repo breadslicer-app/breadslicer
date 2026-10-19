@@ -5,12 +5,14 @@
 
 //! Pins for the removal of collinear faces through
 //! `ValidatedEdgeManifoldMeshMut::fix_collinear_faces`: the records, the faces
-//! after the pass, the order of the scans, and the faces that stay. After each
-//! run, the mesh is edge-manifold and has exactly the listed zero-area faces.
+//! after the pass, the order of the rounds, and the faces that stay. After
+//! each run, the mesh is edge-manifold and has exactly the listed zero-area
+//! faces.
 
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
-    SPLIT_TETRAHEDRON, SQUARE_FAN_PYRAMID, blocked_split_tetrahedron, collinear_pair, fan_pyramid,
-    flat_tetrahedron, split_tetrahedron,
+    SPLIT_TETRAHEDRON, SQUARE_FAN_PYRAMID, blocked_split_tetrahedron, chained_pyramid,
+    collinear_pair, fan_pyramid, flat_tetrahedron, split_tetrahedron,
+    split_tetrahedron_with_a_thin_neighbour,
 };
 use crate::indexed_mesh::fix::records::MeshFix;
 use crate::indexed_mesh::mesh::IndexedMesh;
@@ -100,14 +102,7 @@ fn a_merge_drops_2_faces_and_keeps_the_order_of_the_others() {
 
 #[test]
 fn a_merge_also_replaces_a_zero_area_neighbour() {
-    // With R 2^-20 of the way from P to Q, A is thin. Stored with X 1st, it has
-    // a sine of about 8e-7 at that corner, so it has zero area too, and its
-    // long edge X-P makes it a candidate of the pass.
-    let mut points = SPLIT_TETRAHEDRON;
-    let near_p = 1.0 - 2.0_f32.powi(-19);
-    points[2] = [1.0, near_p, near_p];
-    let mut mesh = split_tetrahedron(points);
-    mesh.faces[1] = triangle([3, 0, 2]);
+    let mut mesh = split_tetrahedron_with_a_thin_neighbour();
     let zero_area: Vec<ZeroAreaFace> = [0_usize, 1]
         .map(|face| ZeroAreaFace {
             face_idx: FaceIndex::from(face),
@@ -123,40 +118,8 @@ fn a_merge_also_replaces_a_zero_area_neighbour() {
     );
 }
 
-/// Returns a pyramid on the square P (0), Q (1), Y (3), X (2) with its apex S
-/// (4), where R1 (5) and R2 (6) split the edge P-Q in 3. The collinear face 8,
-/// (P, R2, R1), has its long edge P-R2 on the collinear face 9, (P, Q, R2).
-fn chained_pyramid() -> IndexedMesh {
-    IndexedMesh {
-        meta: None,
-        vertices: [
-            [0.0, 0.0, 0.0],
-            [3.0, 0.0, 0.0],
-            [0.0, -3.0, 0.0],
-            [3.0, -3.0, 0.0],
-            [1.5, -1.5, 1.5],
-            [1.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-        ]
-        .map(Vertex::new)
-        .to_vec(),
-        faces: triangles(&[
-            [0, 5, 2],
-            [5, 3, 2],
-            [5, 6, 3],
-            [6, 1, 3],
-            [1, 0, 4],
-            [3, 1, 4],
-            [2, 3, 4],
-            [0, 2, 4],
-            [0, 6, 5],
-            [0, 1, 6],
-        ]),
-    }
-}
-
 #[test]
-fn a_chain_in_the_unfavourable_order_needs_a_2nd_scan() {
+fn a_chain_in_the_unfavourable_order_needs_a_2nd_round() {
     let mut mesh = chained_pyramid();
     let fixes = fix_collinear_faces(&mut mesh, &[]);
     // Face 8 could only split into a collinear face while face 9 was there, so

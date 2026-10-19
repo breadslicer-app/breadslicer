@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Small closed meshes with 1 collinear face, for the tests of the pass. The
+//! Small closed meshes with collinear faces, for the tests of the pass. The
 //! names are those of the pass: the collinear face is (R, P, Q) with its long
 //! edge P-Q, A is the face across R-P (3rd vertex X), B the face across Q-R
 //! (3rd vertex Y), and C the face across P-Q (3rd vertex S).
@@ -112,6 +112,47 @@ pub(in crate::indexed_mesh) fn blocked_split_tetrahedron() -> IndexedMesh {
             [0, 3, 1],
             [2, 4, 3],
             [4, 1, 3],
+        ],
+    )
+}
+
+/// Returns [`split_tetrahedron`] with R 2^-20 of the way from P to Q, and A
+/// stored as (X, P, R). A is thin: its sine at X is about 8e-7, so it has zero
+/// area too, and its long edge X-P makes it a candidate of the pass.
+pub(in crate::indexed_mesh) fn split_tetrahedron_with_a_thin_neighbour() -> IndexedMesh {
+    let mut points = SPLIT_TETRAHEDRON;
+    let near_p = 1.0 - 2.0_f32.powi(-19);
+    points[2] = [1.0, near_p, near_p];
+    let mut mesh = split_tetrahedron(points);
+    mesh.faces[1] = IndexedTriangle::from_raw_indices([3, 0, 2]);
+    mesh
+}
+
+/// Returns a pyramid on the square P (0), Q (1), Y (3), X (2) with its apex S
+/// (4), where R1 (5) and R2 (6) split the edge P-Q in 3. The collinear face 8,
+/// (P, R2, R1), has its long edge P-R2 on the collinear face 9, (P, Q, R2).
+pub(in crate::indexed_mesh) fn chained_pyramid() -> IndexedMesh {
+    mesh(
+        &[
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [0.0, -3.0, 0.0],
+            [3.0, -3.0, 0.0],
+            [1.5, -1.5, 1.5],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ],
+        &[
+            [0, 5, 2],
+            [5, 3, 2],
+            [5, 6, 3],
+            [6, 1, 3],
+            [1, 0, 4],
+            [3, 1, 4],
+            [2, 3, 4],
+            [0, 2, 4],
+            [0, 6, 5],
+            [0, 1, 6],
         ],
     )
 }
