@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::fix::MeshFix;
 use crate::indexed_mesh::fix::collinear_faces::fix_collinear_faces_impl;
+use crate::indexed_mesh::fix::records::MeshFix;
 
-use super::{ValidatedEdgeManifoldMeshMut, validate_face_areas_impl};
+use super::{ValidatedEdgeManifoldMesh, ValidatedEdgeManifoldMeshMut};
 
 impl ValidatedEdgeManifoldMeshMut<'_> {
     /// Removes the collinear faces of the mesh, and returns the records of the
@@ -20,9 +20,11 @@ impl ValidatedEdgeManifoldMeshMut<'_> {
     /// vertices do not change, so the in-range witness that minted this one
     /// stays valid.
     pub fn fix_collinear_faces(self) -> Vec<MeshFix> {
-        let zero_area_faces = validate_face_areas_impl(self.mesh)
-            .err()
-            .unwrap_or_default();
-        fix_collinear_faces_impl(self.mesh, &zero_area_faces)
+        let (fixes, faces) =
+            fix_collinear_faces_impl(&ValidatedEdgeManifoldMesh::new_unchecked(self.mesh));
+        if !fixes.is_empty() {
+            self.mesh.faces = faces;
+        }
+        fixes
     }
 }

@@ -8,7 +8,7 @@
 //! edge P-Q, A is the face across R-P (3rd vertex X), B the face across Q-R
 //! (3rd vertex Y), and C the face across P-Q (3rd vertex S).
 
-use crate::indexed_mesh::IndexedMesh;
+use crate::indexed_mesh::mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
 
 /// The points [P, Q, R, X, S] of [`split_tetrahedron`] for a tetrahedron with R

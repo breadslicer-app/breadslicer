@@ -82,8 +82,8 @@ impl MeshTopology {
             let f1 = half_edges::face_of(run[1].1);
             // #[gamma::skip(literal.int_increment, reason = "a run has 1 key")]
             edges.push((run[0].0, [f0, f1]));
-            face_adj[f0.get()][half_edges::slot_of(run[0].1)] = f1;
-            face_adj[f1.get()][half_edges::slot_of(run[1].1)] = f0;
+            face_adj[f0.get()][half_edges::slot_of(run[0].1).index()] = f1;
+            face_adj[f1.get()][half_edges::slot_of(run[1].1).index()] = f0;
         }
 
         // Incident faces per vertex, CSR, ascending face order (so each ring

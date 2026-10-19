@@ -10,7 +10,8 @@
 
 use std::fmt;
 
-use super::fix::{MeshFix, MeshFixError};
+use super::fix::MeshFixError;
+use super::fix::records::MeshFix;
 use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::ZeroAreaFace;

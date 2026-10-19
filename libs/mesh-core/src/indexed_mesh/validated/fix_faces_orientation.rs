@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::fix::{MeshFix, MeshFixError};
+use crate::indexed_mesh::fix::MeshFixError;
+use crate::indexed_mesh::fix::records::MeshFix;
 
 use super::{MeshEdgeManifoldError, ValidatedFacesMut};
 

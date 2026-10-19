@@ -36,7 +36,8 @@ pub use declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, Resto
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fingerprint::geometry_fingerprint::GeometryFingerprint;
-pub use fix::{MeshFix, MeshFixError};
+pub use fix::MeshFixError;
+pub use fix::records::MeshFix;
 pub use mesh::{IndexedMesh, MeshMetadata};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::MeshTopology;
