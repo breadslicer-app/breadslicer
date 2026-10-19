@@ -12,8 +12,9 @@ use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
     SPLIT_TETRAHEDRON, SQUARE_FAN_PYRAMID, blocked_split_tetrahedron, collinear_pair, fan_pyramid,
     flat_tetrahedron, split_tetrahedron,
 };
+use crate::indexed_mesh::fix::records::MeshFix;
+use crate::indexed_mesh::mesh::IndexedMesh;
 use crate::indexed_mesh::validated::ZeroAreaFace;
-use crate::indexed_mesh::{IndexedMesh, MeshFix};
 use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
 fn triangle(vertices: [u32; 3]) -> IndexedTriangle {

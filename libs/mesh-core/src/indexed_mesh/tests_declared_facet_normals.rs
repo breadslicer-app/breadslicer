@@ -5,10 +5,11 @@
 
 use std::error::Error;
 
-use crate::indexed_mesh::{
-    DeclaredFacetNormals, FacetCountMismatch, GeometryFingerprint, IndexedMesh, MeshMetadata,
-    RestoreRefusal,
+use crate::indexed_mesh::declared_facet_normals::{
+    DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal,
 };
+use crate::indexed_mesh::fingerprint::geometry_fingerprint::GeometryFingerprint;
+use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Vertex};
 
 // Bits the geometry never gives for these faces, which point along +Z: a normal

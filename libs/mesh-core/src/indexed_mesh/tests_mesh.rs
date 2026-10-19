@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
+use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Vertex};
 
 #[test]

@@ -403,7 +403,8 @@ mod vector3d_index_tests {
 
 #[cfg(test)]
 mod vertex_canonical_coords_tests {
-    use super::{CanonicalCoords, Vertex};
+    use super::Vertex;
+    use super::canonical_coords::CanonicalCoords;
 
     #[test]
     fn canonical_coords_gives_what_from_coords_gives() {

@@ -9,8 +9,8 @@
 //! validator's own output, so the policy can never drift from the validators it
 //! reports on.
 
-use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::diagnose::{FaceDiagnosis, MeshDiagnosis};
+use crate::indexed_mesh::mesh::IndexedMesh;
 use crate::indexed_mesh::validated::MeshEdgeManifoldError;
 use crate::primitives::{IndexedTriangle, Vertex};
 

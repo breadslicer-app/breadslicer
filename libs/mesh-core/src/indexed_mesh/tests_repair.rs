@@ -10,16 +10,16 @@
 
 use std::error::Error;
 
+use crate::indexed_mesh::declared_facet_normals::DeclaredFacetNormals;
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::flat_tetrahedron;
+use crate::indexed_mesh::fix::records::MeshFix;
+use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::indexed_mesh::repair::{
-    MeshStateAfterRepair, RepairAssessment, RepairEnd, assess_repair,
+    MeshRepairReport, MeshStateAfterRepair, RepairAssessment, RepairEnd, RepairPasses,
+    RepairRefusal, assess_repair,
 };
 use crate::indexed_mesh::validate::{MeshFaceError, MeshVertexError};
-use crate::indexed_mesh::{
-    DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, MeshRepairReport, RepairPasses,
-    RepairRefusal,
-};
 use crate::primitives::{
     CoordAxis, FaceIndex, IndexedTriangle, TriVertexSlot, Vertex, VertexIndex,
 };

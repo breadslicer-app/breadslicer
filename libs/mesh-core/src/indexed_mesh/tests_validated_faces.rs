@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
     SPLIT_TETRAHEDRON, flat_tetrahedron, split_tetrahedron,
 };
+use crate::indexed_mesh::mesh::IndexedMesh;
 use crate::indexed_mesh::validate::MeshFaceError;
 use crate::indexed_mesh::validated::{MeshEdgeManifoldError, ZeroAreaFace};
 use crate::primitives::{IndexedTriangle, TriVertexSlot, Vertex, VertexIndex};
