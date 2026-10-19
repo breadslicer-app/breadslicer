@@ -634,6 +634,10 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
             flipped_faces: false,
             ..RepairPasses::default_repair()
         },
+        RepairPasses {
+            collinear_faces: false,
+            ..RepairPasses::default_repair()
+        },
     ];
     for passes in pass_sets {
         for (name, mesh) in &cases {
