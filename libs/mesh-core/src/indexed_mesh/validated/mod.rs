@@ -195,7 +195,7 @@ impl<'a> ValidatedFaces<'a> {
 ///   fans. Such a mesh still bounds a well-defined solid; consumers that need
 ///   the per-vertex fan structure get it from `MeshTopology`.
 /// - Every triangle has non-zero area (covered by
-///   [`ValidatedFaces::validate_face_areas`]).
+///   [`Self::validate_face_areas`]).
 /// - Any particular global winding convention (CCW outward, etc.):
 ///   edge-manifold inputs may still be globally inside-out.
 #[derive(Debug)]
@@ -221,6 +221,10 @@ impl<'a> ValidatedEdgeManifoldMesh<'a> {
 
     pub fn as_indexed_mesh(&self) -> &IndexedMesh {
         self.mesh
+    }
+
+    pub fn validate_face_areas(&self) -> Result<(), Vec<ZeroAreaFace>> {
+        validate_face_areas_impl(self.mesh)
     }
 }
 
@@ -267,10 +271,10 @@ impl<'a> ValidatedFacesMut<'a> {
     }
 }
 
-/// Carries out `validate_face_areas` for both `ValidatedFaces` and
-/// `ValidatedFacesMut`. The in-range invariant is what makes the unguarded
-/// `mesh.vertices[i]` indexing inside this routine safe; both witness types
-/// only call this on a mesh whose `validate_faces` returned `Ok`.
+/// Carries out `validate_face_areas` for `ValidatedFaces`, `ValidatedFacesMut`
+/// and `ValidatedEdgeManifoldMesh`. The in-range invariant is what makes the
+/// unguarded `mesh.vertices[i]` indexing inside this routine safe; every
+/// witness type calls this only on a mesh whose `validate_faces` returned `Ok`.
 fn validate_face_areas_impl(mesh: &IndexedMesh) -> Result<(), Vec<ZeroAreaFace>> {
     let mut errors: Vec<ZeroAreaFace> = vec![];
 

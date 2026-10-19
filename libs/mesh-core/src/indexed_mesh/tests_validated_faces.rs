@@ -5,7 +5,7 @@
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
-    SPLIT_TETRAHEDRON, split_tetrahedron,
+    SPLIT_TETRAHEDRON, flat_tetrahedron, split_tetrahedron,
 };
 use crate::indexed_mesh::validate::MeshFaceError;
 use crate::indexed_mesh::validated::{MeshEdgeManifoldError, ZeroAreaFace};
@@ -185,6 +185,27 @@ fn validated_edge_manifold_round_trips_buffers() {
     assert_eq!(witness.vertices(), mesh.vertices.as_slice());
     assert_eq!(witness.faces(), mesh.faces.as_slice());
     assert!(std::ptr::eq(witness.as_indexed_mesh(), &mesh));
+}
+
+#[test]
+fn validated_edge_manifold_reports_the_zero_area_faces() {
+    let clean = closed_tetrahedron();
+    let witness = clean
+        .validated_faces()
+        .unwrap()
+        .validated_edge_manifold()
+        .unwrap();
+    assert_eq!(witness.validate_face_areas(), Ok(()));
+    for mesh in [flat_tetrahedron(), split_tetrahedron(SPLIT_TETRAHEDRON)] {
+        let faces = mesh.validated_faces().unwrap();
+        let in_range = faces.validate_face_areas();
+        let face_0 = ZeroAreaFace {
+            face_idx: 0_usize.into(),
+        };
+        assert_eq!(in_range, Err(vec![face_0]));
+        let witness = faces.validated_edge_manifold().unwrap();
+        assert_eq!(witness.validate_face_areas(), in_range);
+    }
 }
 
 #[test]
