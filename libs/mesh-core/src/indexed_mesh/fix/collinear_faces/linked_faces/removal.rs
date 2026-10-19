@@ -128,12 +128,20 @@ mod collinear_face_tests {
 
     #[test]
     fn a_face_with_2_vertices_at_1_position_has_no_reading() {
-        let mut mesh = collinear_pair();
-        // With R on P, the edges P-Q and Q-R tie.
-        mesh.vertices[2] = mesh.vertices[0];
-        let witness = edge_manifold(&mesh);
-        let faces = LinkedFaces::new(&witness);
-        assert_eq!(faces.collinear_face(FaceIndex::from(0_usize)), None);
+        // With R on P, the edges P-Q and Q-R tie. Each rotation puts them at
+        // another pair of slots.
+        for rotation in [[2, 0, 1], [0, 1, 2], [1, 2, 0]] {
+            let mut mesh = collinear_pair();
+            mesh.vertices[2] = mesh.vertices[0];
+            mesh.faces[0] = IndexedTriangle::from_raw_indices(rotation);
+            let witness = edge_manifold(&mesh);
+            let faces = LinkedFaces::new(&witness);
+            assert_eq!(
+                faces.collinear_face(FaceIndex::from(0_usize)),
+                None,
+                "{rotation:?}"
+            );
+        }
     }
 }
 
@@ -256,6 +264,25 @@ mod removal_of_tests {
                 ),
                 "{r_along_pq}"
             );
+        }
+    }
+
+    #[test]
+    fn a_split_is_refused_when_a_half_does_not_face_the_way_of_the_replaced_faces() {
+        // R is off the plane of C, and C is about as thin as the collinear
+        // face, so the 2 faces that the split replaces face another way than C
+        // alone. (Q, R, S) faces the way of C, but is edge-on to the 2 faces
+        // together with S at x = 1.125, and faces against them at x = 1.5.
+        for s_x in [1.125, 1.5] {
+            let mesh = fan_pyramid([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0 - 2.0_f32.powi(-5), 0.0, 2.0_f32.powi(-20)],
+                [s_x, 2.0_f32.powi(-19), 0.0],
+                [0.0, -1.0, -1.0],
+                [1.0, -1.0, -1.0],
+            ]);
+            assert_eq!(removal_of_face_0(&mesh), None, "{s_x}");
         }
     }
 }

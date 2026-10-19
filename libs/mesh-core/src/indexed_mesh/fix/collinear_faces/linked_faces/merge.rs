@@ -145,4 +145,23 @@ mod merge_neighbours_tests {
             [[0, 1, 3], [0, 4, 1], [0, 3, 4], [1, 4, 3]].map(triangle)
         );
     }
+
+    #[test]
+    fn a_merge_drops_the_collinear_face_also_after_b() {
+        let mut mesh = split_tetrahedron(SPLIT_TETRAHEDRON);
+        // The collinear face (0, 1, 2) becomes face 5, and B face 1.
+        mesh.faces.rotate_left(1);
+        let witness = edge_manifold(&mesh);
+        let mut faces = LinkedFaces::new(&witness);
+        let long_edge = HalfEdge {
+            face: FaceIndex::from(5_usize),
+            slot: EdgeSlot::V0V1,
+        };
+        let merge = faces.merge_of(long_edge).expect("a merge");
+        faces.merge_neighbours(merge);
+        assert_eq!(
+            faces.into_faces(),
+            [[0, 1, 3], [0, 4, 1], [0, 3, 4], [1, 4, 3]].map(triangle)
+        );
+    }
 }
