@@ -4,6 +4,9 @@
  */
 
 use crate::indexed_mesh::IndexedMesh;
+use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
+    SPLIT_TETRAHEDRON, split_tetrahedron,
+};
 use crate::indexed_mesh::validate::MeshFaceError;
 use crate::indexed_mesh::validated::{MeshEdgeManifoldError, ZeroAreaFace};
 use crate::primitives::{IndexedTriangle, TriVertexSlot, Vertex, VertexIndex};
@@ -199,4 +202,35 @@ fn validated_edge_manifold_fails_on_boundary_edge() {
             .iter()
             .any(|e| matches!(e, MeshEdgeManifoldError::BoundaryEdge { .. }))
     );
+}
+
+#[test]
+fn validated_edge_manifold_mut_succeeds_on_closed_mesh() {
+    let mut mesh = closed_tetrahedron();
+    let mut faces = mesh.validated_faces_mut().expect("in-range indices");
+    assert!(faces.validated_edge_manifold_mut().is_ok());
+}
+
+#[test]
+fn validated_edge_manifold_mut_gives_the_errors_of_validated_edge_manifold() {
+    let mut mesh = make_mesh(4, vec![face(0, 1, 2), face(1, 0, 3)]);
+    let expected = mesh
+        .validated_faces()
+        .unwrap()
+        .validated_edge_manifold()
+        .expect_err("open strip");
+    let mut faces = mesh.validated_faces_mut().unwrap();
+    assert_eq!(faces.validated_edge_manifold_mut().err(), Some(expected));
+}
+
+#[test]
+fn fix_collinear_faces_leaves_the_in_range_witness_usable() {
+    let mut mesh = split_tetrahedron(SPLIT_TETRAHEDRON);
+    let mut faces = mesh.validated_faces_mut().unwrap();
+    let fixes = faces
+        .validated_edge_manifold_mut()
+        .unwrap()
+        .fix_collinear_faces();
+    assert_eq!(fixes.len(), 1);
+    assert_eq!(faces.validate_face_areas(), Ok(()));
 }

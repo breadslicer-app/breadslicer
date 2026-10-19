@@ -390,10 +390,13 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
             let mut notes: Vec<String> = Vec::new();
             let mut removed = 0usize;
             let mut reoriented = 0usize;
+            let mut collinear = 0usize;
             for fix in &outcome.report.fixes {
                 match fix {
                     MeshFix::RemovedZeroLengthEdgeFace { .. } => removed += 1,
                     MeshFix::FlippedFaceOrientation { .. } => reoriented += 1,
+                    MeshFix::RemovedCollinearFaceByMerge { .. }
+                    | MeshFix::RemovedCollinearFaceBySplit { .. } => collinear += 1,
                 }
             }
             if removed > 0 {
@@ -414,6 +417,17 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
                         "reoriented {n} face",
                         "reoriented {n} faces",
                         reoriented
+                    )
+                    .to_string(),
+                );
+            }
+            if collinear > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "removed {n} collinear face",
+                        "removed {n} collinear faces",
+                        collinear
                     )
                     .to_string(),
                 );
@@ -478,7 +492,7 @@ mod repair_run_tests {
     use std::path::PathBuf;
 
     use sc_mesh_core::indexed_mesh::{MeshFixError, MeshRepairReport, RepairRefusal};
-    use sc_mesh_core::primitives::FaceIndex;
+    use sc_mesh_core::primitives::{FaceIndex, IndexedTriangle};
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
@@ -918,6 +932,38 @@ mod repair_run_tests {
         assert_eq!(
             dialog_lines(&[fixed(target, flipped_faces(2))], &names),
             ["Lid: reoriented 2 faces"]
+        );
+    }
+
+    /// A merge and a split of collinear faces, in that order.
+    fn collinear_removals() -> [MeshFix; 2] {
+        let triangle = IndexedTriangle::from_raw_indices;
+        [
+            MeshFix::RemovedCollinearFaceByMerge {
+                collinear: triangle([4, 5, 8]),
+                merged_neighbours: [triangle([4, 8, 6]), triangle([8, 5, 6])],
+                merged: triangle([4, 5, 6]),
+            },
+            MeshFix::RemovedCollinearFaceBySplit {
+                collinear: triangle([4, 5, 8]),
+                opposite: triangle([0, 5, 4]),
+                halves: [triangle([8, 4, 0]), triangle([0, 5, 8])],
+            },
+        ]
+    }
+
+    #[test]
+    fn dialog_lines_count_both_collinear_removals_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        let names = [Some("Lid".to_string())];
+        let [merge, split] = collinear_removals();
+        assert_eq!(
+            dialog_lines(&[fixed(target, vec![split.clone()])], &names),
+            ["Lid: removed 1 collinear face"]
+        );
+        assert_eq!(
+            dialog_lines(&[fixed(target, vec![merge, split])], &names),
+            ["Lid: removed 2 collinear faces"]
         );
     }
 

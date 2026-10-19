@@ -16,6 +16,8 @@ pub mod validate;
 pub mod validated;
 
 #[cfg(test)]
+mod tests_collinear_faces;
+#[cfg(test)]
 mod tests_declared_facet_normals;
 #[cfg(test)]
 mod tests_diagnose;
@@ -99,9 +101,10 @@ impl IndexedMesh {
 
     /// Validates face indices as [`Self::validated_faces`] does, returning a
     /// witness that also permits mutation. The returned witness exposes only
-    /// mutations that preserve the in-range invariant (winding flips);
-    /// operations that could invalidate it (for example removing whole faces)
-    /// live on `IndexedMesh` itself.
+    /// mutations that preserve the in-range invariant: winding flips and,
+    /// through [`ValidatedFacesMut::validated_edge_manifold_mut`], the removal
+    /// of collinear faces. The removal of faces with a zero-length edge lives
+    /// on `IndexedMesh` itself, because it runs on faces that fail validation.
     pub fn validated_faces_mut(&mut self) -> Result<ValidatedFacesMut<'_>, Vec<MeshFaceError>> {
         self.validate_faces()?;
         Ok(ValidatedFacesMut::new_unchecked(self))

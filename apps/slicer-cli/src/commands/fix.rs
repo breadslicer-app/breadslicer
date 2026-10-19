@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses, RepairRefusal};
+use sc_mesh_core::primitives::IndexedTriangle;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
@@ -155,14 +156,48 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
             MeshFix::FlippedFaceOrientation { face_idx } => {
                 let _ = writeln!(out, "\t- Flipped orientation of face with ID '{face_idx}'");
             }
+            MeshFix::RemovedCollinearFaceByMerge {
+                collinear,
+                merged_neighbours: [first, second],
+                merged,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Removed collinear face {} by merging {} and {} into {}",
+                    format_triangle(collinear),
+                    format_triangle(first),
+                    format_triangle(second),
+                    format_triangle(merged)
+                );
+            }
+            MeshFix::RemovedCollinearFaceBySplit {
+                collinear,
+                opposite,
+                halves: [first, second],
+            } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Removed collinear face {} by splitting {} into {} and {}",
+                    format_triangle(collinear),
+                    format_triangle(opposite),
+                    format_triangle(first),
+                    format_triangle(second)
+                );
+            }
         }
     }
+}
+
+/// Formats the vertex indices of `triangle` as `(a, b, c)`.
+fn format_triangle(triangle: &IndexedTriangle) -> String {
+    let [a, b, c] = triangle.vertices;
+    format!("({a}, {b}, {c})")
 }
 
 #[cfg(test)]
 mod show_applied_fixes_tests {
     use sc_mesh_core::indexed_mesh::MeshFix;
-    use sc_mesh_core::primitives::FaceIndex;
+    use sc_mesh_core::primitives::{FaceIndex, IndexedTriangle};
 
     use super::show_applied_fixes;
 
@@ -179,6 +214,7 @@ mod show_applied_fixes_tests {
 
     #[test]
     fn covers_every_mesh_fix_variant() {
+        let triangle = IndexedTriangle::from_raw_indices;
         let fixes = vec![
             MeshFix::RemovedZeroLengthEdgeFace {
                 face_idx: FaceIndex::from(4_usize),
@@ -186,11 +222,29 @@ mod show_applied_fixes_tests {
             MeshFix::FlippedFaceOrientation {
                 face_idx: FaceIndex::from(5_usize),
             },
+            MeshFix::RemovedCollinearFaceByMerge {
+                collinear: triangle([4, 5, 8]),
+                merged_neighbours: [triangle([4, 8, 6]), triangle([8, 5, 6])],
+                merged: triangle([4, 5, 6]),
+            },
+            MeshFix::RemovedCollinearFaceBySplit {
+                collinear: triangle([4, 5, 8]),
+                opposite: triangle([0, 5, 4]),
+                halves: [triangle([8, 4, 0]), triangle([0, 5, 8])],
+            },
         ];
         let out = render(&fixes);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 3, "header + 2 entries; got: {out}");
-        assert!(lines[0].contains("Applied fixes (2)"));
+        assert_eq!(lines.len(), 5, "header + 4 entries; got: {out}");
+        assert!(lines[0].contains("Applied fixes (4)"));
+        assert_eq!(
+            lines[3],
+            "\t- Removed collinear face (4, 5, 8) by merging (4, 8, 6) and (8, 5, 6) into (4, 5, 6)"
+        );
+        assert_eq!(
+            lines[4],
+            "\t- Removed collinear face (4, 5, 8) by splitting (0, 5, 4) into (8, 4, 0) and (0, 5, 8)"
+        );
         assert!(
             lines[1].contains("Removed face") && lines[1].contains("'4'"),
             "{}",

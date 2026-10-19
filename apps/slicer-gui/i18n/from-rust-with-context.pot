@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-19 12:01+0200\n"
+"POT-Creation-Date: 2026-10-19 13:01+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -669,7 +669,7 @@ msgid_plural "{n} meshes still have zero-area faces"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:403
+#: src/repair_run.rs:406
 #, rust-format
 msgctxt "RepairDialog"
 msgid "removed {n} degenerate face"
@@ -677,7 +677,7 @@ msgid_plural "removed {n} degenerate faces"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:414
+#: src/repair_run.rs:417
 #, rust-format
 msgctxt "RepairDialog"
 msgid "reoriented {n} face"
@@ -685,18 +685,26 @@ msgid_plural "reoriented {n} faces"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:423
+#: src/repair_run.rs:428
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} collinear face"
+msgid_plural "removed {n} collinear faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:437
 #, rust-format
 msgctxt "RepairDialog"
 msgid "could not be fully repaired: {}"
 msgstr ""
 
-#: src/repair_run.rs:427
+#: src/repair_run.rs:441
 msgctxt "RepairDialog"
 msgid "still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:433
+#: src/repair_run.rs:447
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{n} zero-area face remains"
@@ -704,7 +712,7 @@ msgid_plural "{n} zero-area faces remain"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:447
+#: src/repair_run.rs:461
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"

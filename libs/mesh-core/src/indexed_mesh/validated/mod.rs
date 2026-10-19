@@ -18,15 +18,22 @@
 //!    [`ValidatedFaces::validated_edge_manifold`], which consumes the in-range
 //!    witness, runs the edge-manifold check, and on success upgrades the borrow
 //!    to the stronger witness. Vertex-manifoldness is deliberately NOT part of
-//!    the claim: pinch vertices pass.
+//!    the claim: pinch vertices pass. The mutable form,
+//!    [`ValidatedEdgeManifoldMeshMut`], is minted by
+//!    [`ValidatedFacesMut::validated_edge_manifold_mut`], which borrows the
+//!    in-range witness instead of consuming it.
 //!
 //! Operations that preserve the in-range invariant, such as
 //! `fix_faces_orientation` (it reverses the vertex order of faces in place) and
-//! the read-only validators, are methods on the witnesses. Zero-length-edge
-//! face removal lives on `IndexedMesh` itself:
-//! `IndexedMesh::fix_zero_length_edges_into_validated` removes the faces and
-//! returns the witness for the result.
+//! the read-only validators, are methods on the witnesses.
+//! `fix_collinear_faces` preserves it too (it writes only vertex indices that
+//! the faces already hold, and keeps the vertices), but it changes the edges,
+//! so it consumes the mutable edge-manifold witness. Zero-length-edge face
+//! removal lives on `IndexedMesh` itself, because it runs before the faces pass
+//! validation: `IndexedMesh::fix_zero_length_edges_into_validated` removes the
+//! faces and returns the witness for the result.
 
+mod fix_collinear_faces;
 mod fix_faces_orientation;
 
 use std::fmt;
@@ -217,6 +224,15 @@ impl<'a> ValidatedEdgeManifoldMesh<'a> {
     }
 }
 
+/// Mutable witness that the underlying `IndexedMesh` is edge-manifold, with the
+/// claims of [`ValidatedEdgeManifoldMesh`]. Its only method consumes it: the
+/// claim holds when the witness is minted, and no check proves it after the
+/// method changes the mesh.
+#[derive(Debug)]
+pub struct ValidatedEdgeManifoldMeshMut<'a> {
+    mesh: &'a mut IndexedMesh,
+}
+
 impl<'a> ValidatedFacesMut<'a> {
     pub(super) fn new_unchecked(mesh: &'a mut IndexedMesh) -> Self {
         Self { mesh }
@@ -236,6 +252,18 @@ impl<'a> ValidatedFacesMut<'a> {
 
     pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
         validate_edge_manifold_impl(self.mesh)
+    }
+
+    /// Runs the edge-manifold validation and, on success, returns a mutable
+    /// witness whose existence proves that the mesh is edge-manifold. The
+    /// returned witness borrows `self`, which is usable again once it is gone.
+    pub fn validated_edge_manifold_mut(
+        &mut self,
+    ) -> Result<ValidatedEdgeManifoldMeshMut<'_>, Vec<MeshEdgeManifoldError>> {
+        validate_edge_manifold_impl(self.mesh)?;
+        Ok(ValidatedEdgeManifoldMeshMut {
+            mesh: &mut *self.mesh,
+        })
     }
 }
 

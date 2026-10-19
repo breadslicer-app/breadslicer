@@ -6,7 +6,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::primitives::{Normal, Vertex};
+use crate::primitives::{Normal, Vector3D, Vertex};
 
 /// Failure mode of `compute_normal_from_triangle_vertices`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,12 +70,7 @@ pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
 pub(crate) fn compute_reference_normal_f64(
     vertices: &[Vertex; 3],
 ) -> Result<[f64; 3], GeometryError> {
-    let v0 = vertices[0].to_f64();
-    let v1 = vertices[1].to_f64();
-    let v2 = vertices[2].to_f64();
-
-    let e1 = v1.diff(&v0);
-    let e2 = v2.diff(&v0);
+    let [e1, e2] = edges_from_v0_f64(vertices);
 
     let cross = e1.cross_product(&e2);
 
@@ -98,6 +93,28 @@ pub(crate) fn compute_reference_normal_f64(
         cross[1] / cross_mag,
         cross[2] / cross_mag,
     ])
+}
+
+/// Returns `(v1 - v0) x (v2 - v0)` in f64. Its direction follows the winding of
+/// the triangle, and its length is 2 times the area of the triangle.
+pub(crate) fn cross_of_edges_f64(vertices: &[Vertex; 3]) -> Vector3D<f64> {
+    let [e1, e2] = edges_from_v0_f64(vertices);
+    e1.cross_product(&e2)
+}
+
+/// Returns whether [`compute_reference_normal_f64`] rejects the triangle in any
+/// of its 3 rotations. That function measures the angle at v0 only, so a
+/// triangle that passes here has a normal whatever corner is stored 1st.
+pub(crate) fn is_degenerate_at_any_corner(vertices: &[Vertex; 3]) -> bool {
+    let [a, b, c] = *vertices;
+    [[a, b, c], [b, c, a], [c, a, b]]
+        .iter()
+        .any(|rotation| compute_reference_normal_f64(rotation).is_err())
+}
+
+fn edges_from_v0_f64(vertices: &[Vertex; 3]) -> [Vector3D<f64>; 2] {
+    let [v0, v1, v2] = vertices.map(Vertex::to_f64);
+    [v1.diff(&v0), v2.diff(&v0)]
 }
 
 pub fn compute_normal_from_triangle_vertices(
@@ -339,6 +356,57 @@ mod geometry_tests {
         assert!(gt_strict(subnormal, 0.0));
         assert!(!gt_strict(0.0, subnormal));
         assert!(!gt_strict(subnormal, subnormal));
+    }
+}
+
+#[cfg(test)]
+mod triangle_corner_tests {
+    use super::*;
+
+    fn v(x: f32, y: f32, z: f32) -> Vertex {
+        Vertex::new([x, y, z])
+    }
+
+    #[test]
+    fn the_cross_of_the_edges_follows_the_winding_and_doubles_the_area() {
+        let right = [v(1.0, 2.0, 3.0), v(3.0, 2.0, 3.0), v(1.0, 5.0, 3.0)];
+        assert_eq!(cross_of_edges_f64(&right), Vector3D::new([0.0, 0.0, 6.0]));
+        let reversed = [right[0], right[2], right[1]];
+        assert_eq!(
+            cross_of_edges_f64(&reversed),
+            Vector3D::new([0.0, 0.0, -6.0])
+        );
+        let collinear = [v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0), v(2.0, 2.0, 2.0)];
+        assert_eq!(
+            cross_of_edges_f64(&collinear),
+            Vector3D::new([0.0, 0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn a_tiny_angle_is_degenerate_at_any_corner_in_every_rotation() {
+        // The angle at (0, 0, 0) has a sine of 1e-7; the other 2 are near 90
+        // degrees.
+        let [a, b, c] = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(1.0, 1e-7, 0.0)];
+        let rotations = [[a, b, c], [b, c, a], [c, a, b]];
+        for rotation in &rotations {
+            assert!(is_degenerate_at_any_corner(rotation), "{rotation:?}");
+        }
+        let rejected_at_v0: Vec<bool> = rotations
+            .iter()
+            .map(|rotation| compute_reference_normal_f64(rotation).is_err())
+            .collect();
+        assert_eq!(rejected_at_v0, [true, false, false]);
+    }
+
+    #[test]
+    fn collinear_and_coincident_vertices_are_degenerate_and_a_right_triangle_is_not() {
+        let collinear = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(2.0, 0.0, 0.0)];
+        assert!(is_degenerate_at_any_corner(&collinear));
+        let coincident = [v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)];
+        assert!(is_degenerate_at_any_corner(&coincident));
+        let right = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)];
+        assert!(!is_degenerate_at_any_corner(&right));
     }
 }
 
