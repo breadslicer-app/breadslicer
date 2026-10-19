@@ -5,12 +5,14 @@
 
 //! Per-mesh repair policy: which passes run, in which order, and when repair is
 //! refused. The repair primitives (zero-length-edge face removal, face
-//! orientation fixes) live in [`super::fix`]; this module owns the decisions
-//! around them so every frontend repairs meshes the same way.
+//! orientation fixes, collinear-face removal) live in [`super::fix`]; this
+//! module owns the decisions around them so every frontend repairs meshes the
+//! same way.
 
 use std::fmt;
 
 use super::fix::MeshFixError;
+use super::fix::collinear_faces::CollinearFaceRemovals;
 use super::fix::records::MeshFix;
 use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
@@ -25,6 +27,10 @@ pub struct RepairPasses {
     pub zero_length_edges: bool,
     /// Reverses the vertex order of inconsistently wound faces.
     pub flipped_faces: bool,
+    /// Removes collinear faces: zero-area faces whose 3 distinct vertices lie
+    /// on 1 line. It runs only on a mesh that is edge-manifold after the
+    /// orientation pass.
+    pub collinear_faces: bool,
 }
 
 impl RepairPasses {
@@ -34,6 +40,7 @@ impl RepairPasses {
         Self {
             zero_length_edges: true,
             flipped_faces: true,
+            collinear_faces: false,
         }
     }
 }
@@ -156,22 +163,30 @@ pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessme
             return RepairAssessment::Work;
         }
     };
-    let edge_manifold = witness.validate_edge_manifold();
+    // The face areas come 1st: the edge check consumes the witness.
+    let face_areas = witness.validate_face_areas();
+    let edge_manifold = witness.validated_edge_manifold();
     if passes.flipped_faces
         && let Err(manifold_errors) = &edge_manifold
     {
         return match super::fix::plan_faces_orientation_impl(mesh, manifold_errors) {
             Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
             Ok(faces_to_flip) if faces_to_flip.is_empty() => {
-                RepairAssessment::Clean(state_after_repair(false, witness.validate_face_areas()))
+                RepairAssessment::Clean(state_after_repair(false, face_areas))
             }
             Ok(_) => RepairAssessment::Work,
         };
     }
-    RepairAssessment::Clean(state_after_repair(
-        edge_manifold.is_ok(),
-        witness.validate_face_areas(),
-    ))
+    // Here the orientation pass changes nothing, so the run gives the
+    // collinear-face pass this same mesh.
+    if passes.collinear_faces
+        && face_areas.is_err()
+        && let Ok(manifold) = &edge_manifold
+        && CollinearFaceRemovals::new(manifold).next().is_some()
+    {
+        return RepairAssessment::Work;
+    }
+    RepairAssessment::Clean(state_after_repair(edge_manifold.is_ok(), face_areas))
 }
 
 fn state_after_repair(
@@ -197,6 +212,9 @@ impl IndexedMesh {
     /// 4. Flipped-face pass: reverses the winding of inconsistently wound
     ///    faces. A failure here refuses the rest of the run but keeps the fixes
     ///    already applied; the mesh never holds a half-applied pass.
+    /// 5. Collinear-face pass: removes collinear faces when the mesh is
+    ///    edge-manifold at this point. On a mesh that is not, it does not run,
+    ///    and that is no refusal.
     ///
     /// When a pass changes the mesh, the declared facet normals in its metadata
     /// are dropped.
@@ -280,6 +298,15 @@ impl IndexedMesh {
                     );
                 }
             }
+        }
+
+        // The face-area test only skips the mint for a mesh without zero-area
+        // faces: the pass finds its faces itself.
+        if passes.collinear_faces
+            && validated.validate_face_areas().is_err()
+            && let Ok(manifold) = validated.validated_edge_manifold_mut()
+        {
+            fixes.extend(manifold.fix_collinear_faces());
         }
 
         let state = state_after_repair(

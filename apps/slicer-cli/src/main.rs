@@ -59,6 +59,7 @@ fn main() -> Result<()> {
             RepairPasses {
                 zero_length_edges: fix_zero_length_edges,
                 flipped_faces: fix_flipped_faces,
+                collinear_faces: RepairPasses::default_repair().collinear_faces,
             },
             &mut std::io::stderr(),
         ),
