@@ -28,6 +28,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
 use sc_scene::mesh_targets::MeshTarget;
 use sc_scene::repair::SceneRepairOutcome;
@@ -299,14 +300,23 @@ fn settle(
 fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
     let repaired = outcomes
         .iter()
-        .filter(|o| !o.fixes.is_empty() && o.refusal.is_none())
+        .filter(|o| !o.report.fixes.is_empty() && matches!(o.report.end, RepairEnd::Completed(_)))
         .count();
-    let refused = outcomes.iter().filter(|o| o.refusal.is_some()).count();
+    let refused = outcomes
+        .iter()
+        .filter(|o| matches!(o.report.end, RepairEnd::Refused(_)))
+        .count();
     let still_holed = outcomes
         .iter()
-        .filter(|o| o.refusal.is_none() && !o.edge_manifold_after)
+        .filter_map(completed_state)
+        .filter(|state| !state.edge_manifold)
         .count();
-    if repaired == 0 && refused == 0 && still_holed == 0 {
+    let with_zero_area_faces = outcomes
+        .iter()
+        .filter_map(completed_state)
+        .filter(|state| state.zero_area_face_count > 0)
+        .count();
+    if repaired == 0 && refused == 0 && still_holed == 0 && with_zero_area_faces == 0 {
         return ctr!("RepairDialog", "No problems found.").to_string();
     }
     let mut parts: Vec<String> = Vec::new();
@@ -343,13 +353,34 @@ fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
             .to_string(),
         );
     }
+    if with_zero_area_faces > 0 {
+        parts.push(
+            ctr!(
+                "RepairDialog",
+                "{n} mesh still has zero-area faces",
+                "{n} meshes still have zero-area faces",
+                with_zero_area_faces
+            )
+            .to_string(),
+        );
+    }
     format!("{}.", parts.join(", "))
 }
 
+/// Returns the state of the mesh of `outcome` after its run, or `None` when the
+/// run was refused.
+fn completed_state(outcome: &SceneRepairOutcome) -> Option<&MeshStateAfterRepair> {
+    match &outcome.report.end {
+        RepairEnd::Completed(state) => Some(state),
+        RepairEnd::Refused(_) => None,
+    }
+}
+
 /// Builds the per-mesh detail lines: 1 line per target with something to say
-/// (fixes, a refusal, or a remaining edge-manifold failure); clean targets stay
-/// silent. `names` holds the scene name of each target of `outcomes`, as
-/// [`target_names`] gives them; a target with no name gets a 1-based fallback.
+/// (fixes, a refusal, a remaining edge-manifold failure, or remaining zero-area
+/// faces); clean targets stay silent. `names` holds the scene name of each
+/// target of `outcomes`, as [`target_names`] gives them; a target with no name
+/// gets a 1-based fallback.
 fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Vec<String> {
     outcomes
         .iter()
@@ -359,7 +390,7 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
             let mut notes: Vec<String> = Vec::new();
             let mut removed = 0usize;
             let mut reoriented = 0usize;
-            for fix in &outcome.fixes {
+            for fix in &outcome.report.fixes {
                 match fix {
                     MeshFix::RemovedZeroLengthEdgeFace { .. } => removed += 1,
                     MeshFix::FlippedFaceOrientation { .. } => reoriented += 1,
@@ -387,13 +418,26 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
                     .to_string(),
                 );
             }
-            if let Some(refusal) = &outcome.refusal {
-                notes.push(
+            match &outcome.report.end {
+                RepairEnd::Refused(refusal) => notes.push(
                     ctr!("RepairDialog", "could not be fully repaired: {}", refusal).to_string(),
-                );
-            }
-            if outcome.refusal.is_none() && !outcome.edge_manifold_after {
-                notes.push(ctr!("RepairDialog", "still not edge-manifold").to_string());
+                ),
+                RepairEnd::Completed(state) => {
+                    if !state.edge_manifold {
+                        notes.push(ctr!("RepairDialog", "still not edge-manifold").to_string());
+                    }
+                    if state.zero_area_face_count > 0 {
+                        notes.push(
+                            ctr!(
+                                "RepairDialog",
+                                "{n} zero-area face remains",
+                                "{n} zero-area faces remain",
+                                state.zero_area_face_count
+                            )
+                            .to_string(),
+                        );
+                    }
+                }
             }
             if notes.is_empty() {
                 return None;
@@ -433,7 +477,7 @@ fn target_names(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<Option<St
 mod repair_run_tests {
     use std::path::PathBuf;
 
-    use sc_mesh_core::indexed_mesh::{MeshFixError, RepairRefusal};
+    use sc_mesh_core::indexed_mesh::{MeshFixError, MeshRepairReport, RepairRefusal};
     use sc_mesh_core::primitives::FaceIndex;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
@@ -511,12 +555,14 @@ mod repair_run_tests {
         graph.add_root(leaf).expect("root");
         let completed = run_repair(graph);
         assert!(completed.replacements.is_empty());
-        assert!(
-            completed
-                .outcomes
-                .iter()
-                .all(|o| o.fixes.is_empty() && o.refusal.is_none() && o.edge_manifold_after)
-        );
+        let clean = MeshRepairReport {
+            fixes: Vec::new(),
+            end: RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            }),
+        };
+        assert!(completed.outcomes.iter().all(|o| o.report == clean));
         assert_eq!(summary_message(&completed.outcomes), "No problems found.");
     }
 
@@ -677,16 +723,25 @@ mod repair_run_tests {
         );
     }
 
-    /// An outcome for `target` with 1 flipped face and nothing left to fix.
-    fn one_flip(target: MeshTarget) -> SceneRepairOutcome {
+    fn outcome(target: MeshTarget, fixes: Vec<MeshFix>, end: RepairEnd) -> SceneRepairOutcome {
         SceneRepairOutcome {
             target,
-            fixes: vec![MeshFix::FlippedFaceOrientation {
+            report: MeshRepairReport { fixes, end },
+        }
+    }
+
+    /// An outcome for `target` with 1 flipped face and nothing left to fix.
+    fn one_flip(target: MeshTarget) -> SceneRepairOutcome {
+        outcome(
+            target,
+            vec![MeshFix::FlippedFaceOrientation {
                 face_idx: FaceIndex::from(0),
             }],
-            refusal: None,
-            edge_manifold_after: true,
-        }
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            }),
+        )
     }
 
     #[test]
@@ -720,12 +775,14 @@ mod repair_run_tests {
 
     /// An outcome for `target` with `fixes` and nothing left to fix.
     fn fixed(target: MeshTarget, fixes: Vec<MeshFix>) -> SceneRepairOutcome {
-        SceneRepairOutcome {
+        outcome(
             target,
             fixes,
-            refusal: None,
-            edge_manifold_after: true,
-        }
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            }),
+        )
     }
 
     fn flipped_faces(count: usize) -> Vec<MeshFix> {
@@ -746,25 +803,39 @@ mod repair_run_tests {
 
     /// An outcome for `target` that the repair refused.
     fn refused(target: MeshTarget) -> SceneRepairOutcome {
-        SceneRepairOutcome {
+        outcome(
             target,
-            fixes: Vec::new(),
-            refusal: Some(RepairRefusal::OrientationFixFailed(
+            Vec::new(),
+            RepairEnd::Refused(RepairRefusal::OrientationFixFailed(
                 MeshFixError::TooManyFlippedFaces,
             )),
-            edge_manifold_after: false,
-        }
+        )
     }
 
     /// An outcome for `target` with nothing fixed and the mesh still not
     /// edge-manifold.
     fn still_not_edge_manifold(target: MeshTarget) -> SceneRepairOutcome {
-        SceneRepairOutcome {
+        outcome(
             target,
-            fixes: Vec::new(),
-            refusal: None,
-            edge_manifold_after: false,
-        }
+            Vec::new(),
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: false,
+                zero_area_face_count: 0,
+            }),
+        )
+    }
+
+    /// An outcome for `target` with nothing fixed and `count` faces with zero
+    /// area in the mesh.
+    fn with_zero_area_faces(target: MeshTarget, count: usize) -> SceneRepairOutcome {
+        outcome(
+            target,
+            Vec::new(),
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: count,
+            }),
+        )
     }
 
     #[test]
@@ -807,6 +878,22 @@ mod repair_run_tests {
     }
 
     #[test]
+    fn the_summary_counts_meshes_with_zero_area_faces_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        assert_eq!(
+            summary_message(&[with_zero_area_faces(target, 2)]),
+            "1 mesh still has zero-area faces."
+        );
+        assert_eq!(
+            summary_message(&[
+                with_zero_area_faces(target, 1),
+                with_zero_area_faces(target, 3)
+            ]),
+            "2 meshes still have zero-area faces."
+        );
+    }
+
+    #[test]
     fn dialog_lines_count_removed_faces_in_the_singular_and_the_plural() {
         let target = broken_trio_scene().mesh_targets()[0];
         let names = [Some("Lid".to_string())];
@@ -831,6 +918,32 @@ mod repair_run_tests {
         assert_eq!(
             dialog_lines(&[fixed(target, flipped_faces(2))], &names),
             ["Lid: reoriented 2 faces"]
+        );
+    }
+
+    #[test]
+    fn dialog_lines_count_remaining_zero_area_faces_in_the_singular_and_the_plural() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        let names = [Some("Lid".to_string())];
+        assert_eq!(
+            dialog_lines(&[with_zero_area_faces(target, 1)], &names),
+            ["Lid: 1 zero-area face remains"]
+        );
+        assert_eq!(
+            dialog_lines(&[with_zero_area_faces(target, 2)], &names),
+            ["Lid: 2 zero-area faces remain"]
+        );
+    }
+
+    #[test]
+    fn dialog_lines_give_a_refused_target_only_its_refusal() {
+        let target = broken_trio_scene().mesh_targets()[0];
+        let names = [Some("Lid".to_string())];
+        assert_eq!(
+            dialog_lines(&[refused(target)], &names),
+            [
+                "Lid: could not be fully repaired: face orientation fix failed: too many flipped faces"
+            ]
         );
     }
 }

@@ -1607,7 +1607,7 @@ msgctxt "MaterialForm"
 msgid "Fill all three values of {}, or leave all three empty"
 msgstr ""
 
-#: src/preferences_filters.rs:59 src/preferences_window/mod.rs:1580
+#: src/preferences_filters.rs:59 src/preferences_window/mod.rs:1549
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
@@ -1640,42 +1640,42 @@ msgid ""
 "Nothing was replaced."
 msgstr ""
 
-#: src/repair_run.rs:178 src/repair_run.rs:211
+#: src/repair_run.rs:179 src/repair_run.rs:212
 msgctxt "RepairDialog"
 msgid "Repair failed"
 msgstr ""
 
-#: src/repair_run.rs:180
+#: src/repair_run.rs:181
 msgctxt "RepairDialog"
 msgid "The repair worker crashed."
 msgstr ""
 
-#: src/repair_run.rs:189
+#: src/repair_run.rs:190
 msgctxt "RepairDialog"
 msgid "Repair discarded"
 msgstr ""
 
-#: src/repair_run.rs:192
+#: src/repair_run.rs:193
 msgctxt "RepairDialog"
 msgid "The scene changed while repairing; nothing was applied."
 msgstr ""
 
-#: src/repair_run.rs:204
+#: src/repair_run.rs:205
 msgctxt "RepairDialog"
 msgid "Mesh repair"
 msgstr ""
 
-#: src/repair_run.rs:215
+#: src/repair_run.rs:216
 msgctxt "RepairDialog"
 msgid "The scene rejected the repair edit; nothing was changed."
 msgstr ""
 
-#: src/repair_run.rs:310
+#: src/repair_run.rs:320
 msgctxt "RepairDialog"
 msgid "No problems found."
 msgstr ""
 
-#: src/repair_run.rs:317
+#: src/repair_run.rs:327
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{n} mesh repaired"
@@ -1683,7 +1683,7 @@ msgid_plural "{n} meshes repaired"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:328
+#: src/repair_run.rs:338
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{n} mesh could not be fully repaired"
@@ -1691,7 +1691,7 @@ msgid_plural "{n} meshes could not be fully repaired"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:339
+#: src/repair_run.rs:349
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{n} mesh still not edge-manifold"
@@ -1699,7 +1699,15 @@ msgid_plural "{n} meshes still not edge-manifold"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:372
+#: src/repair_run.rs:360
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} mesh still has zero-area faces"
+msgid_plural "{n} meshes still have zero-area faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:403
 #, rust-format
 msgctxt "RepairDialog"
 msgid "removed {n} degenerate face"
@@ -1707,7 +1715,7 @@ msgid_plural "removed {n} degenerate faces"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:383
+#: src/repair_run.rs:414
 #, rust-format
 msgctxt "RepairDialog"
 msgid "reoriented {n} face"
@@ -1715,18 +1723,26 @@ msgid_plural "reoriented {n} faces"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/repair_run.rs:392
+#: src/repair_run.rs:423
 #, rust-format
 msgctxt "RepairDialog"
 msgid "could not be fully repaired: {}"
 msgstr ""
 
-#: src/repair_run.rs:396
+#: src/repair_run.rs:427
 msgctxt "RepairDialog"
 msgid "still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:403
+#: src/repair_run.rs:433
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} zero-area face remains"
+msgid_plural "{n} zero-area faces remain"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:447
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"

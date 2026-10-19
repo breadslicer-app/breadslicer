@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses, RepairRefusal};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
@@ -55,13 +56,14 @@ pub(crate) fn fix(
 
     let all_fixes: Vec<MeshFix> = outcomes
         .iter()
-        .flat_map(|outcome| outcome.fixes.iter().cloned())
+        .flat_map(|outcome| outcome.report.fixes.iter().cloned())
         .collect();
     if all_fixes.is_empty() {
         let _ = writeln!(out, "No fixes were applied.");
     } else {
         show_applied_fixes(&all_fixes, out);
     }
+    show_zero_area_warnings(&outcomes, out);
 
     // The unconditional write leans on the repair driver's never-worse
     // guarantee: refused meshes are byte-identical to their input and applied
@@ -89,7 +91,7 @@ pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut d
     let total = outcomes.len();
     let mut refused = 0usize;
     for (idx, outcome) in outcomes.iter().enumerate() {
-        let Some(refusal) = &outcome.refusal else {
+        let RepairEnd::Refused(refusal) = &outcome.report.end else {
             continue;
         };
         refused += 1;
@@ -105,13 +107,39 @@ pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut d
             }
             RepairRefusal::OrientationFixFailed(err) => format!("Unable to fix mesh: {err}"),
         };
-        if total > 1 {
-            let _ = writeln!(out, "warning (mesh {} of {total}): {message}", idx + 1);
-        } else {
-            let _ = writeln!(out, "warning: {message}");
-        }
+        write_target_warning(out, idx, total, &message);
     }
     refused
+}
+
+/// Renders 1 warning line per target of a
+/// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes) run whose mesh has
+/// faces with zero area after a completed run. Names the target as
+/// [`show_refusal_warnings`] does. Shared between the `fix` subcommand and the
+/// `slice --repair` path.
+pub(crate) fn show_zero_area_warnings(outcomes: &[SceneRepairOutcome], out: &mut dyn Write) {
+    let total = outcomes.len();
+    for (idx, outcome) in outcomes.iter().enumerate() {
+        let RepairEnd::Completed(state) = &outcome.report.end else {
+            continue;
+        };
+        let message = match state.zero_area_face_count {
+            0 => continue,
+            1 => "1 face with zero area remains".to_string(),
+            count => format!("{count} faces with zero area remain"),
+        };
+        write_target_warning(out, idx, total, &message);
+    }
+}
+
+/// Writes `message` as a warning about the target at 0-based `idx` of `total`
+/// targets. The warning names the target only when there is more than 1.
+fn write_target_warning(out: &mut dyn Write, idx: usize, total: usize, message: &str) {
+    if total > 1 {
+        let _ = writeln!(out, "warning (mesh {} of {total}): {message}", idx + 1);
+    } else {
+        let _ = writeln!(out, "warning: {message}");
+    }
 }
 
 pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
@@ -173,5 +201,80 @@ mod show_applied_fixes_tests {
             "{}",
             lines[2]
         );
+    }
+}
+
+#[cfg(test)]
+mod show_zero_area_warnings_tests {
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
+    use sc_mesh_core::indexed_mesh::{MeshFixError, MeshRepairReport, RepairRefusal};
+    use sc_scene::Scene;
+    use sc_scene::mesh_targets::MeshTarget;
+    use sc_scene::repair::SceneRepairOutcome;
+
+    use super::show_zero_area_warnings;
+
+    /// Returns an outcome with no fixes that ends with `end`. The warnings name
+    /// a target by its position, so its target does not matter.
+    fn outcome(end: RepairEnd) -> SceneRepairOutcome {
+        let mut scene = Scene::new();
+        let rid = scene.add_mesh_resource(IndexedMesh {
+            meta: None,
+            vertices: Vec::new(),
+            faces: Vec::new(),
+        });
+        SceneRepairOutcome {
+            target: MeshTarget::Resource(rid),
+            report: MeshRepairReport {
+                fixes: Vec::new(),
+                end,
+            },
+        }
+    }
+
+    fn completed(zero_area_face_count: usize) -> SceneRepairOutcome {
+        outcome(RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count,
+        }))
+    }
+
+    fn refused() -> SceneRepairOutcome {
+        outcome(RepairEnd::Refused(RepairRefusal::OrientationFixFailed(
+            MeshFixError::TooManyFlippedFaces,
+        )))
+    }
+
+    fn render(outcomes: &[SceneRepairOutcome]) -> String {
+        let mut buf = Vec::new();
+        show_zero_area_warnings(outcomes, &mut buf);
+        String::from_utf8(buf).expect("show_zero_area_warnings emits valid UTF-8")
+    }
+
+    #[test]
+    fn a_single_target_warns_without_its_position() {
+        assert_eq!(
+            render(&[completed(1)]),
+            "warning: 1 face with zero area remains\n"
+        );
+        assert_eq!(
+            render(&[completed(2)]),
+            "warning: 2 faces with zero area remain\n"
+        );
+    }
+
+    #[test]
+    fn each_of_several_targets_warns_with_its_position() {
+        assert_eq!(
+            render(&[completed(0), completed(1), completed(3)]),
+            "warning (mesh 2 of 3): 1 face with zero area remains\n\
+             warning (mesh 3 of 3): 3 faces with zero area remain\n"
+        );
+    }
+
+    #[test]
+    fn a_refused_target_and_a_target_with_no_zero_area_face_do_not_warn() {
+        assert_eq!(render(&[refused(), completed(0)]), "");
     }
 }

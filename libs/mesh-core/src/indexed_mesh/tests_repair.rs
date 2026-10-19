@@ -5,16 +5,19 @@
 
 //! Pins for the per-mesh repair policy: pass gating, refusal boundaries
 //! (mesh-level refusals leave the mesh byte-identical, pass-level refusals keep
-//! earlier passes' fixes), the fix log, and the post-repair edge-manifold
-//! verdict.
+//! earlier passes' fixes), the fix log, and the state of the mesh after a
+//! completed run.
 
 use std::error::Error;
 
 use crate::indexed_mesh::fix::MeshFixError;
-use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
+use crate::indexed_mesh::repair::{
+    MeshStateAfterRepair, RepairAssessment, RepairEnd, assess_repair,
+};
 use crate::indexed_mesh::validate::{MeshFaceError, MeshVertexError};
 use crate::indexed_mesh::{
-    DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, RepairPasses, RepairRefusal,
+    DeclaredFacetNormals, IndexedMesh, MeshFix, MeshMetadata, MeshRepairReport, RepairPasses,
+    RepairRefusal,
 };
 use crate::primitives::{
     CoordAxis, FaceIndex, IndexedTriangle, TriVertexSlot, Vertex, VertexIndex,
@@ -62,6 +65,35 @@ fn open_strip() -> IndexedMesh {
     }
 }
 
+/// Returns the open strip with vertex 3 at (2, -1, 0), so that face 1 is
+/// collinear: vertex 1 is the midpoint of vertices 2 and 3.
+fn open_strip_with_a_collinear_face() -> IndexedMesh {
+    let mut mesh = open_strip();
+    mesh.vertices[3] = Vertex::new([2.0, -1.0, 0.0]);
+    mesh
+}
+
+/// Returns a closed tetrahedron with its 4 vertices in 1 plane: vertex 2 is the
+/// midpoint of vertices 0 and 1, so face 0, (2, 0, 1), is collinear. It is
+/// edge-manifold and encloses no volume.
+fn flat_tetrahedron() -> IndexedMesh {
+    let vertices = vec![
+        Vertex::new([0.0, 0.0, 0.0]),
+        Vertex::new([2.0, 0.0, 0.0]),
+        Vertex::new([1.0, 0.0, 0.0]),
+        Vertex::new([1.0, 1.0, 0.0]),
+    ];
+    let faces = [[2, 0, 1], [0, 2, 3], [2, 1, 3], [1, 0, 3]]
+        .into_iter()
+        .map(IndexedTriangle::from_raw_indices)
+        .collect();
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces,
+    }
+}
+
 /// Appends a face whose 2nd and 3rd slots repeat a vertex index, so face
 /// validation reports exactly 1 `ZeroLengthEdge` for it.
 fn append_zero_length_edge_face(mesh: &mut IndexedMesh) -> FaceIndex {
@@ -91,8 +123,13 @@ fn all_passes_off_is_a_no_op_on_a_clean_mesh() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses::default());
     assert!(report.fixes.is_empty());
-    assert_eq!(report.refusal, None);
-    assert!(report.edge_manifold_after);
+    assert_eq!(
+        report.end,
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+        })
+    );
     assert_eq!(mesh, original);
 }
 
@@ -103,8 +140,13 @@ fn all_passes_off_leaves_a_flipped_face_untouched() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses::default());
     assert!(report.fixes.is_empty());
-    assert_eq!(report.refusal, None);
-    assert!(!report.edge_manifold_after);
+    assert_eq!(
+        report.end,
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: false,
+            zero_area_face_count: 0,
+        })
+    );
     assert_eq!(mesh, original);
 }
 
@@ -119,8 +161,13 @@ fn default_repair_fixes_a_flipped_face() {
             face_idx: FaceIndex::from(0_usize),
         }]
     );
-    assert_eq!(report.refusal, None);
-    assert!(report.edge_manifold_after);
+    assert_eq!(
+        report.end,
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+        })
+    );
     assert_eq!(mesh.faces[0].vertices, tetrahedron().faces[0].vertices);
 }
 
@@ -135,8 +182,13 @@ fn zero_length_edge_faces_are_removed_with_a_pinned_log() {
             face_idx: degenerate,
         }]
     );
-    assert_eq!(report.refusal, None);
-    assert!(report.edge_manifold_after);
+    assert_eq!(
+        report.end,
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+        })
+    );
     assert_eq!(mesh.faces.len(), 4);
 }
 
@@ -179,13 +231,12 @@ fn nan_vertices_refuse_with_the_mesh_untouched() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses::default_repair());
     assert!(report.fixes.is_empty());
-    match &report.refusal {
-        Some(RepairRefusal::InvalidVertices(errors)) => assert!(!errors.is_empty()),
+    match &report.end {
+        RepairEnd::Refused(RepairRefusal::InvalidVertices(errors)) => {
+            assert!(!errors.is_empty());
+        }
         other => panic!("expected InvalidVertices, got {other:?}"),
     }
-    // The verdict is purely combinatorial: a NaN coordinate does not change
-    // edge-manifoldness.
-    assert!(report.edge_manifold_after);
     // `PartialEq` cannot pin an untouched NaN mesh (NaN != NaN), so the
     // vertices are compared bit for bit.
     assert_eq!(mesh.faces, original.faces);
@@ -210,8 +261,8 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
     });
     assert!(report.fixes.is_empty());
     assert_eq!(
-        report.refusal,
-        Some(RepairRefusal::UnfixableFaceErrors(expected_errors))
+        report.end,
+        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(expected_errors))
     );
     assert_eq!(mesh, original);
 }
@@ -253,8 +304,8 @@ fn mixed_face_errors_refuse_with_the_mesh_byte_identical() {
 
     assert!(report.fixes.is_empty());
     assert_eq!(
-        report.refusal,
-        Some(RepairRefusal::UnfixableFaceErrors(residue))
+        report.end,
+        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residue))
     );
     assert_eq!(mesh, original, "mesh-level refusal must not mutate");
 }
@@ -280,12 +331,11 @@ fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
         }]
     );
     assert_eq!(
-        report.refusal,
-        Some(RepairRefusal::OrientationFixFailed(
+        report.end,
+        RepairEnd::Refused(RepairRefusal::OrientationFixFailed(
             MeshFixError::TooManyFlippedFaces
         ))
     );
-    assert!(!report.edge_manifold_after);
     assert_eq!(mesh.faces.len(), 4, "the ZLE removal must stand");
 }
 
@@ -308,16 +358,20 @@ fn a_disabled_flip_pass_assesses_winding_problems_as_clean() {
         mesh.faces.truncate(1);
         mesh
     };
+    let state = MeshStateAfterRepair {
+        edge_manifold: false,
+        zero_area_face_count: 0,
+    };
     for (name, mesh) in [("flipped", flipped), ("lone-triangle", lone_triangle)] {
         assert_eq!(
             assess_repair(&mesh, passes),
-            RepairAssessment::Clean,
+            RepairAssessment::Clean(state),
             "{name}"
         );
         let mut repaired = mesh.clone();
         let report = repaired.repair(passes);
         assert!(report.fixes.is_empty(), "{name}");
-        assert_eq!(report.refusal, None, "{name}");
+        assert_eq!(report.end, RepairEnd::Completed(state), "{name}");
         assert_eq!(repaired, mesh, "{name}");
     }
 }
@@ -328,8 +382,69 @@ fn a_hole_is_reported_by_the_verdict_not_a_refusal() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses::default_repair());
     assert!(report.fixes.is_empty());
-    assert_eq!(report.refusal, None);
-    assert!(!report.edge_manifold_after);
+    assert_eq!(
+        report.end,
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: false,
+            zero_area_face_count: 0,
+        })
+    );
+    assert_eq!(mesh, original);
+}
+
+#[test]
+fn default_repair_completes_a_clean_tetrahedron_with_no_zero_area_face() {
+    let mut mesh = tetrahedron();
+    let report = mesh.repair(RepairPasses::default_repair());
+    assert_eq!(
+        report,
+        MeshRepairReport {
+            fixes: Vec::new(),
+            end: RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            }),
+        }
+    );
+}
+
+/// Pins that no pass removes the collinear face of a closed, flat tetrahedron,
+/// and that the report counts it.
+#[test]
+fn default_repair_counts_the_zero_area_face_of_a_flat_tetrahedron() {
+    let mut mesh = flat_tetrahedron();
+    let original = mesh.clone();
+    let report = mesh.repair(RepairPasses::default_repair());
+    assert_eq!(
+        report,
+        MeshRepairReport {
+            fixes: Vec::new(),
+            end: RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 1,
+            }),
+        }
+    );
+    assert_eq!(mesh, original);
+}
+
+/// Pins that the report counts the zero-area faces of a mesh that is not
+/// edge-manifold too.
+#[test]
+fn default_repair_counts_the_collinear_face_of_an_open_mesh() {
+    let mut mesh = open_strip_with_a_collinear_face();
+    let original = mesh.clone();
+    let report = mesh.repair(RepairPasses::default_repair());
+    assert_eq!(
+        report,
+        MeshRepairReport {
+            fixes: Vec::new(),
+            end: RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: false,
+                zero_area_face_count: 1,
+            }),
+        }
+    );
     assert_eq!(mesh, original);
 }
 
@@ -377,21 +492,27 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         ("nan", nan),
         ("lone-triangle", lone_triangle),
         ("open-strip", open_strip()),
+        ("flat-tetrahedron", flat_tetrahedron()),
+        ("open-collinear", open_strip_with_a_collinear_face()),
     ];
     for (name, mesh) in cases {
         let assessment = assess_repair(&mesh, RepairPasses::default_repair());
         let mut clone = mesh.clone();
         let report = clone.repair(RepairPasses::default_repair());
         match assessment {
-            RepairAssessment::Clean => {
+            RepairAssessment::Clean(state) => {
                 assert!(report.fixes.is_empty(), "{name}: Clean predicts no fixes");
-                assert_eq!(report.refusal, None, "{name}: Clean predicts no refusal");
+                assert_eq!(
+                    report.end,
+                    RepairEnd::Completed(state),
+                    "{name}: Clean predicts the state after the run"
+                );
             }
             RepairAssessment::Refused(refusal) => {
                 assert!(report.fixes.is_empty(), "{name}: Refused predicts no fixes");
                 assert_eq!(
-                    report.refusal,
-                    Some(refusal),
+                    report.end,
+                    RepairEnd::Refused(refusal),
                     "{name}: the refusal must match"
                 );
             }
@@ -406,14 +527,20 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     // The matrix covers all 3 assessment kinds; pin the per-case kinds so a
     // fixture drifting into another class is caught.
     let passes = RepairPasses::default_repair();
-    assert_eq!(
-        assess_repair(&tetrahedron(), passes),
-        RepairAssessment::Clean
-    );
-    assert_eq!(
-        assess_repair(&open_strip(), passes),
-        RepairAssessment::Clean
-    );
+    for (mesh, edge_manifold, zero_area_face_count) in [
+        (tetrahedron(), true, 0),
+        (open_strip(), false, 0),
+        (flat_tetrahedron(), true, 1),
+        (open_strip_with_a_collinear_face(), false, 1),
+    ] {
+        assert_eq!(
+            assess_repair(&mesh, passes),
+            RepairAssessment::Clean(MeshStateAfterRepair {
+                edge_manifold,
+                zero_area_face_count,
+            })
+        );
+    }
     assert!(matches!(
         assess_repair(
             &{

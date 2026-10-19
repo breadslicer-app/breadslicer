@@ -13,6 +13,7 @@ use std::fmt;
 use super::fix::{MeshFix, MeshFixError};
 use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
+use super::validated::ZeroAreaFace;
 
 /// Which repair passes [`IndexedMesh::repair`] runs. Each flag enables an
 /// independent pass; passes that find nothing to repair are no-ops. `Default`
@@ -85,25 +86,41 @@ impl std::error::Error for RepairRefusal {
 /// Everything a [`IndexedMesh::repair`] run did, and did not do, to a mesh.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshRepairReport {
-    /// Fixes applied, in pass order. Can be non-empty even when `refusal` is
-    /// set: a pass-level refusal keeps the fixes earlier passes applied.
+    /// Fixes applied, in pass order. Can be non-empty also when the run ends
+    /// refused: a pass-level refusal keeps the fixes earlier passes applied.
     pub fixes: Vec<MeshFix>,
-    /// Why the run stopped early, if it did. `None` means every enabled pass
-    /// ran to completion; it does not mean the mesh is problem-free (problems
-    /// whose pass is disabled, and problems no pass addresses, such as holes,
-    /// remain untouched).
-    pub refusal: Option<RepairRefusal>,
-    /// Whether the mesh is edge-manifold after the passes ran. Purely
-    /// combinatorial; it says nothing about vertex validity.
-    pub edge_manifold_after: bool,
+    /// How the run ended.
+    pub end: RepairEnd,
+}
+
+/// How a [`IndexedMesh::repair`] run ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RepairEnd {
+    /// The run stopped early.
+    Refused(RepairRefusal),
+    /// Every enabled pass ran to completion. This does not mean that the mesh
+    /// is problem-free: problems whose pass is disabled, and problems that no
+    /// pass addresses, such as holes, remain untouched.
+    Completed(MeshStateAfterRepair),
+}
+
+/// The state of a mesh after a completed [`IndexedMesh::repair`] run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshStateAfterRepair {
+    /// Whether the mesh is edge-manifold. The check is combinatorial: it does
+    /// not look at the vertex positions.
+    pub edge_manifold: bool,
+    /// How many faces have zero area (see [`ZeroAreaFace`]).
+    pub zero_area_face_count: usize,
 }
 
 /// What a repair run would do to a mesh, decided on a shared borrow (see
 /// [`assess_repair`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum RepairAssessment {
-    /// Every enabled pass would find nothing to do.
-    Clean,
+    /// Every enabled pass would find nothing to do. Holds the state that the
+    /// run reports.
+    Clean(MeshStateAfterRepair),
     /// The run would be refused; the mesh would not change.
     Refused(RepairRefusal),
     /// At least 1 enabled pass would mutate the mesh.
@@ -138,16 +155,32 @@ pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessme
             return RepairAssessment::Work;
         }
     };
+    let edge_manifold = witness.validate_edge_manifold();
     if passes.flipped_faces
-        && let Err(manifold_errors) = witness.validate_edge_manifold()
+        && let Err(manifold_errors) = &edge_manifold
     {
-        return match super::fix::plan_faces_orientation_impl(mesh, &manifold_errors) {
+        return match super::fix::plan_faces_orientation_impl(mesh, manifold_errors) {
             Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
-            Ok(faces_to_flip) if faces_to_flip.is_empty() => RepairAssessment::Clean,
+            Ok(faces_to_flip) if faces_to_flip.is_empty() => {
+                RepairAssessment::Clean(state_after_repair(false, witness.validate_face_areas()))
+            }
             Ok(_) => RepairAssessment::Work,
         };
     }
-    RepairAssessment::Clean
+    RepairAssessment::Clean(state_after_repair(
+        edge_manifold.is_ok(),
+        witness.validate_face_areas(),
+    ))
+}
+
+fn state_after_repair(
+    edge_manifold: bool,
+    face_areas: Result<(), Vec<ZeroAreaFace>>,
+) -> MeshStateAfterRepair {
+    MeshStateAfterRepair {
+        edge_manifold,
+        zero_area_face_count: face_areas.err().map_or(0, |faces| faces.len()),
+    }
 }
 
 impl IndexedMesh {
@@ -170,25 +203,21 @@ impl IndexedMesh {
     /// Every path is total: no panic, and at every observable point the mesh is
     /// at least as valid as it was before the call.
     pub fn repair(&mut self, passes: RepairPasses) -> MeshRepairReport {
-        let (fixes, refusal) = self.run_repair_passes(passes);
+        let (fixes, end) = self.run_repair_passes(passes);
         if !fixes.is_empty()
             && let Some(meta) = &mut self.meta
         {
             meta.declared_facet_normals = None;
         }
-        let edge_manifold_after = self
-            .validated_faces()
-            .is_ok_and(|faces| faces.validated_edge_manifold().is_ok());
-        MeshRepairReport {
-            fixes,
-            refusal,
-            edge_manifold_after,
-        }
+        MeshRepairReport { fixes, end }
     }
 
-    fn run_repair_passes(&mut self, passes: RepairPasses) -> (Vec<MeshFix>, Option<RepairRefusal>) {
+    fn run_repair_passes(&mut self, passes: RepairPasses) -> (Vec<MeshFix>, RepairEnd) {
         if let Err(errors) = self.validate_vertices() {
-            return (Vec::new(), Some(RepairRefusal::InvalidVertices(errors)));
+            return (
+                Vec::new(),
+                RepairEnd::Refused(RepairRefusal::InvalidVertices(errors)),
+            );
         }
 
         let mut fixes: Vec<MeshFix> = Vec::new();
@@ -202,7 +231,10 @@ impl IndexedMesh {
                 // zero-length edge refuses the run while the mesh is still
                 // untouched.
                 if !passes.zero_length_edges {
-                    return (fixes, Some(RepairRefusal::UnfixableFaceErrors(face_errors)));
+                    return (
+                        fixes,
+                        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(face_errors)),
+                    );
                 }
                 let residue: Vec<MeshFaceError> = face_errors
                     .iter()
@@ -210,7 +242,10 @@ impl IndexedMesh {
                     .cloned()
                     .collect();
                 if !residue.is_empty() {
-                    return (fixes, Some(RepairRefusal::UnfixableFaceErrors(residue)));
+                    return (
+                        fixes,
+                        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residue)),
+                    );
                 }
                 let (edge_fixes, witness) = self.fix_zero_length_edges_into_validated(&face_errors);
                 fixes.extend(edge_fixes);
@@ -219,10 +254,11 @@ impl IndexedMesh {
                     // Unreachable when every input error was a zero-length edge
                     // (whole-face removal preserves the in-range invariant);
                     // mapped instead of panicking so the function stays total.
-                    // #[gamma::skip(return_value.default, reason = "dead arm")]
-                    // #[gamma::skip(option.some_to_none, reason = "dead arm")]
                     Err(residual) => {
-                        return (fixes, Some(RepairRefusal::UnfixableFaceErrors(residual)));
+                        return (
+                            fixes,
+                            RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residual)),
+                        );
                     }
                 }
             }
@@ -237,11 +273,18 @@ impl IndexedMesh {
                 // transactional, so the mesh holds exactly the completed
                 // passes' state and their fixes stay in the report.
                 Err(err) => {
-                    return (fixes, Some(RepairRefusal::OrientationFixFailed(err)));
+                    return (
+                        fixes,
+                        RepairEnd::Refused(RepairRefusal::OrientationFixFailed(err)),
+                    );
                 }
             }
         }
 
-        (fixes, None)
+        let state = state_after_repair(
+            validated.validate_edge_manifold().is_ok(),
+            validated.validate_face_areas(),
+        );
+        (fixes, RepairEnd::Completed(state))
     }
 }

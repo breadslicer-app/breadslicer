@@ -2256,6 +2256,74 @@ mod collinear_face_tests {
 }
 
 #[cfg(test)]
+mod remaining_zero_area_tests {
+    //! A closed, flat tetrahedron beside the cube or a tunnel prism keeps its
+    //! collinear face through a repair, and the CLI warns about it.
+
+    use sc_mesh_fixtures::{
+        cuboid_with_y_tunnel_and_flat_tetrahedron, cuboid_with_z_tunnel_and_flat_tetrahedron,
+        unit_cube_and_flat_tetrahedron,
+    };
+
+    use super::slice_threemf_tests::run_slice;
+    use super::*;
+
+    const WARNING: &str = "warning: 1 face with zero area remains";
+
+    /// Writes each flat-tetrahedron variant to its own ASCII STL file in `dir`.
+    fn write_variants(dir: &Path) -> Vec<PathBuf> {
+        [
+            ("cube", unit_cube_and_flat_tetrahedron()),
+            ("z-tunnel", cuboid_with_z_tunnel_and_flat_tetrahedron()),
+            ("y-tunnel", cuboid_with_y_tunnel_and_flat_tetrahedron()),
+        ]
+        .into_iter()
+        .map(|(name, mesh)| {
+            let path = dir.join(format!("{name}.stla"));
+            write_stla_to(&path, &mesh);
+            path
+        })
+        .collect()
+    }
+
+    #[test]
+    fn fix_warns_about_the_zero_area_face_that_remains() {
+        let tmp = TempDir::new().unwrap();
+        for source in write_variants(tmp.path()) {
+            let target = source.with_extension("fixed.stla");
+            Command::cargo_bin(BIN)
+                .unwrap()
+                .args([
+                    "fix",
+                    "-s",
+                    source.to_str().unwrap(),
+                    "-t",
+                    target.to_str().unwrap(),
+                ])
+                .assert()
+                .success()
+                .stderr(predicate::str::contains(WARNING));
+        }
+    }
+
+    #[test]
+    fn slice_with_repair_warns_about_the_zero_area_face_that_remains() {
+        let tmp = TempDir::new().unwrap();
+        for source in write_variants(tmp.path()) {
+            let layers = source.with_extension("layers");
+            fs::create_dir(&layers).unwrap();
+            run_slice(
+                &source,
+                &layers,
+                &["--target-format", "svg-per-layer", "--repair"],
+            )
+            .success()
+            .stderr(predicate::str::contains(WARNING));
+        }
+    }
+}
+
+#[cfg(test)]
 mod slice_leaf_selection_tests {
     use super::*;
 
