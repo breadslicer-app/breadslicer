@@ -1425,6 +1425,7 @@ mod fix_no_panic_contract_tests {
                 target.to_str().unwrap(),
                 "--fix-zero-length-edges=false",
                 "--fix-flipped-faces=false",
+                "--fix-collinear-faces=false",
             ])
             .assert()
             .success()
@@ -2320,6 +2321,74 @@ mod remaining_zero_area_tests {
             .success()
             .stderr(predicate::str::contains(WARNING));
         }
+    }
+}
+
+#[cfg(test)]
+mod fix_collinear_faces_tests {
+    //! The cube with collinear faces goes through `fix` with the collinear-face
+    //! pass on and off, and `diagnose` reads the result.
+
+    use sc_mesh_fixtures::unit_cube_with_collinear_faces;
+
+    use super::*;
+
+    const ZERO_AREA: &str = "is degenerate: zero area";
+
+    fn diagnose(source: &Path) -> assert_cmd::assert::Assert {
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+    }
+
+    fn fix(source: &Path, target: &Path, collinear_faces: bool) -> assert_cmd::assert::Assert {
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .arg(format!("--fix-collinear-faces={collinear_faces}"))
+            .assert()
+    }
+
+    /// Writes the cube with collinear faces to an ASCII STL file in `dir`, and
+    /// checks that `diagnose` sees its zero-area faces in that file.
+    fn write_collinear_cube(dir: &Path) -> PathBuf {
+        let source = dir.join("collinear.stla");
+        write_stla_to(&source, &unit_cube_with_collinear_faces());
+        diagnose(&source)
+            .failure()
+            .stderr(predicate::str::contains(ZERO_AREA));
+        source
+    }
+
+    #[test]
+    fn fix_with_the_collinear_face_pass_removes_the_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = write_collinear_cube(tmp.path());
+        let target = tmp.path().join("fixed.stla");
+        fix(&source, &target, true)
+            .success()
+            .stderr(predicate::str::contains("Removed collinear face"));
+        diagnose(&target).success();
+    }
+
+    #[test]
+    fn fix_without_the_collinear_face_pass_keeps_the_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = write_collinear_cube(tmp.path());
+        let target = tmp.path().join("fixed.stla");
+        fix(&source, &target, false)
+            .success()
+            .stderr(predicate::str::contains("Removed collinear face").not());
+        diagnose(&target)
+            .failure()
+            .stderr(predicate::str::contains(ZERO_AREA));
     }
 }
 
