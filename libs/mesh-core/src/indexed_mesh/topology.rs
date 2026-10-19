@@ -33,17 +33,6 @@ use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 use super::half_edges;
 use super::validated::ValidatedEdgeManifoldMesh;
 
-/// Canonical key for an undirected mesh edge: `(lo, hi)` with `lo <= hi`.
-/// Constructed via [`edge_key`].
-pub type EdgeKey = (VertexIndex, VertexIndex);
-
-/// Canonicalises an unordered vertex pair into an [`EdgeKey`].
-#[inline]
-pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
-    // #[gamma::skip(relational.le_to_lt, reason = "same pair when a == b")]
-    if a <= b { (a, b) } else { (b, a) }
-}
-
 /// Precomputed topology over an edge-manifold mesh.
 ///
 /// Built once via [`MeshTopology::from_edge_manifold`]; edge lookups
@@ -274,29 +263,6 @@ fn walk_cyclic_fans(
     }
 
     fans
-}
-
-#[cfg(test)]
-mod edge_key_tests {
-    use super::*;
-
-    fn vi(i: u32) -> VertexIndex {
-        VertexIndex::from(i)
-    }
-
-    #[test]
-    fn edge_key_canonicalises_to_lo_hi() {
-        let forward = edge_key(vi(3), vi(7));
-        let reverse = edge_key(vi(7), vi(3));
-        assert_eq!(forward, reverse);
-        assert_eq!(forward, (vi(3), vi(7)));
-    }
-
-    #[test]
-    fn edge_key_equal_endpoints_collapses_cleanly() {
-        let degenerate = edge_key(vi(5), vi(5));
-        assert_eq!(degenerate, (vi(5), vi(5)));
-    }
 }
 
 #[cfg(test)]
@@ -570,7 +536,7 @@ mod sorted_topology_equivalence_tests {
     use proptest::prelude::*;
 
     use crate::indexed_mesh::mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Vertex};
+    use crate::primitives::{EdgeKey, IndexedTriangle, Vertex};
 
     use super::*;
 
@@ -599,7 +565,7 @@ mod sorted_topology_equivalence_tests {
             let face_idx = FaceIndex::from(idx);
             let [v0, v1, v2] = face.vertices;
             for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
-                acc.entry(edge_key(a, b)).or_default().push(face_idx);
+                acc.entry(EdgeKey::new(a, b)).or_default().push(face_idx);
             }
         }
         acc.into_iter()
@@ -651,7 +617,7 @@ mod sorted_topology_equivalence_tests {
             let mut written = 0;
             for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
                 if a == vertex || b == vertex {
-                    through_vertex[written] = Some(edge_key(a, b));
+                    through_vertex[written] = Some(EdgeKey::new(a, b));
                     written += 1;
                 }
             }
@@ -734,7 +700,8 @@ mod sorted_topology_equivalence_tests {
         let reference = reference_topology(&witness);
 
         assert_eq!(topo.edge_count(), reference.edge_to_faces.len());
-        for (&(a, b), &pair) in &reference.edge_to_faces {
+        for (&edge, &pair) in &reference.edge_to_faces {
+            let (a, b) = edge.vertices();
             assert_eq!(
                 topo.edge_faces(a, b),
                 Some(pair),

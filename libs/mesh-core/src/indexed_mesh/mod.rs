@@ -39,7 +39,7 @@ pub use fingerprint::geometry_fingerprint::GeometryFingerprint;
 pub use fix::{MeshFix, MeshFixError};
 pub use mesh::{IndexedMesh, MeshMetadata};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
-pub use topology::{EdgeKey, MeshTopology, edge_key};
+pub use topology::MeshTopology;
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{
     MeshEdgeManifoldError, ValidatedEdgeManifoldMesh, ValidatedFaces, ValidatedFacesMut,
