@@ -1222,11 +1222,11 @@ mod fix_tests {
 
     #[test]
     fn fix_with_default_flags_repairs_flipped_winding() {
-        // Default flags: zero-length-edges=true, flipped-faces=true. The
-        // flipped-winding tetrahedron triggers the flipped-face fix path. The
-        // test pins that the default configuration (no `--fix-*` flags on the
-        // command line) does produce a fix, surfaces it in the "Applied fixes"
-        // report, and writes the repaired mesh to the target.
+        // Default flags: every `--fix-*` flag is true. The flipped-winding
+        // tetrahedron triggers the flipped-face fix path. The test pins that
+        // the default configuration (no `--fix-*` flags on the command line)
+        // does produce a fix, surfaces it in the "Applied fixes" report, and
+        // writes the repaired mesh to the target.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("flipped.stla");
         let target = tmp.path().join("fixed.stla");
@@ -2326,14 +2326,23 @@ mod remaining_zero_area_tests {
 
 #[cfg(test)]
 mod fix_collinear_faces_tests {
-    //! The cube with collinear faces goes through `fix` with the collinear-face
-    //! pass on and off, and `diagnose` reads the result.
+    //! Meshes with collinear faces go through `fix` with the collinear-face pass
+    //! on, off and by default, and through `slice --repair`. `diagnose` reads
+    //! the result of `fix`.
 
-    use sc_mesh_fixtures::unit_cube_with_collinear_faces;
+    use sc_mesh_fixtures::{
+        cuboid_with_y_tunnel_and_collinear_faces,
+        cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres,
+        cuboid_with_z_tunnel_and_collinear_faces,
+        cuboid_with_z_tunnel_and_collinear_faces_at_fan_centres, unit_cube_with_collinear_faces,
+        unit_cube_with_collinear_faces_at_fan_centres,
+    };
 
+    use super::slice_threemf_tests::run_slice;
     use super::*;
 
     const ZERO_AREA: &str = "is degenerate: zero area";
+    const REMOVAL: &str = "Removed collinear face";
 
     fn diagnose(source: &Path) -> assert_cmd::assert::Assert {
         Command::cargo_bin(BIN)
@@ -2342,7 +2351,7 @@ mod fix_collinear_faces_tests {
             .assert()
     }
 
-    fn fix(source: &Path, target: &Path, collinear_faces: bool) -> assert_cmd::assert::Assert {
+    fn fix(source: &Path, target: &Path, flags: &[&str]) -> assert_cmd::assert::Assert {
         Command::cargo_bin(BIN)
             .unwrap()
             .args([
@@ -2352,43 +2361,92 @@ mod fix_collinear_faces_tests {
                 "-t",
                 target.to_str().unwrap(),
             ])
-            .arg(format!("--fix-collinear-faces={collinear_faces}"))
+            .args(flags)
             .assert()
     }
 
-    /// Writes the cube with collinear faces to an ASCII STL file in `dir`, and
-    /// checks that `diagnose` sees its zero-area faces in that file.
-    fn write_collinear_cube(dir: &Path) -> PathBuf {
-        let source = dir.join("collinear.stla");
-        write_stla_to(&source, &unit_cube_with_collinear_faces());
-        diagnose(&source)
+    /// Writes `mesh` to the ASCII STL file `path`, and checks that `diagnose`
+    /// sees its zero-area faces in that file.
+    fn write_with_zero_area_faces(path: &Path, mesh: &IndexedMesh) {
+        write_stla_to(path, mesh);
+        diagnose(path)
             .failure()
             .stderr(predicate::str::contains(ZERO_AREA));
-        source
     }
 
     #[test]
     fn fix_with_the_collinear_face_pass_removes_the_collinear_faces() {
         let tmp = TempDir::new().unwrap();
-        let source = write_collinear_cube(tmp.path());
+        let source = tmp.path().join("collinear.stla");
         let target = tmp.path().join("fixed.stla");
-        fix(&source, &target, true)
+        write_with_zero_area_faces(&source, &unit_cube_with_collinear_faces());
+        fix(&source, &target, &["--fix-collinear-faces=true"])
             .success()
-            .stderr(predicate::str::contains("Removed collinear face"));
+            .stderr(predicate::str::contains(REMOVAL));
         diagnose(&target).success();
     }
 
     #[test]
     fn fix_without_the_collinear_face_pass_keeps_the_collinear_faces() {
         let tmp = TempDir::new().unwrap();
-        let source = write_collinear_cube(tmp.path());
+        let source = tmp.path().join("collinear.stla");
         let target = tmp.path().join("fixed.stla");
-        fix(&source, &target, false)
+        write_with_zero_area_faces(&source, &unit_cube_with_collinear_faces());
+        fix(&source, &target, &["--fix-collinear-faces=false"])
             .success()
-            .stderr(predicate::str::contains("Removed collinear face").not());
+            .stderr(predicate::str::contains(REMOVAL).not());
         diagnose(&target)
             .failure()
             .stderr(predicate::str::contains(ZERO_AREA));
+    }
+
+    /// Pins the default of the flag on the cube and the 2 tunnel prisms, with
+    /// collinear faces that merge and with collinear faces that split.
+    #[test]
+    fn fix_with_the_default_flags_removes_the_collinear_faces_of_each_variant() {
+        let tmp = TempDir::new().unwrap();
+        for (name, mesh) in [
+            ("cube", unit_cube_with_collinear_faces()),
+            ("z-tunnel", cuboid_with_z_tunnel_and_collinear_faces()),
+            ("y-tunnel", cuboid_with_y_tunnel_and_collinear_faces()),
+            (
+                "cube-fan-centres",
+                unit_cube_with_collinear_faces_at_fan_centres(),
+            ),
+            (
+                "z-tunnel-fan-centres",
+                cuboid_with_z_tunnel_and_collinear_faces_at_fan_centres(),
+            ),
+            (
+                "y-tunnel-fan-centres",
+                cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres(),
+            ),
+        ] {
+            let source = tmp.path().join(format!("{name}.stla"));
+            let target = tmp.path().join(format!("{name}.fixed.stla"));
+            write_with_zero_area_faces(&source, &mesh);
+            fix(&source, &target, &[])
+                .success()
+                .stderr(predicate::str::contains(REMOVAL));
+            diagnose(&target).success();
+        }
+    }
+
+    /// Pins the pass set of `slice --repair`, which the command chooses itself.
+    #[test]
+    fn slice_with_repair_removes_the_collinear_faces() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("collinear.stla");
+        let layers = tmp.path().join("layers");
+        write_with_zero_area_faces(&source, &unit_cube_with_collinear_faces());
+        fs::create_dir(&layers).unwrap();
+        run_slice(
+            &source,
+            &layers,
+            &["--target-format", "svg-per-layer", "--repair"],
+        )
+        .success()
+        .stderr(predicate::str::contains(REMOVAL));
     }
 }
 

@@ -496,7 +496,7 @@ mod repair_run_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
-        unit_cube_mesh, unit_cube_with_flipped_faces,
+        unit_cube_mesh, unit_cube_with_collinear_faces, unit_cube_with_flipped_faces,
     };
     use sc_scene::node::LeafPayload;
     use sc_scene_fixtures::named_trio_under_group_root;
@@ -578,6 +578,46 @@ mod repair_run_tests {
         };
         assert!(completed.outcomes.iter().all(|o| o.report == clean));
         assert_eq!(summary_message(&completed.outcomes), "No problems found.");
+    }
+
+    /// Pins the pass set of `run_repair`, which chooses it itself: the 2
+    /// collinear faces of the cube go, and the dialog line says so.
+    #[test]
+    fn run_repair_removes_the_collinear_faces_of_a_mesh() {
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_with_collinear_faces())),
+            )
+            .expect("leaf");
+        graph.add_root(leaf).expect("root");
+        let completed = run_repair(graph.clone());
+        assert_eq!(completed.replacements.len(), 1);
+        let [outcome] = completed.outcomes.as_slice() else {
+            panic!("the scene has 1 target");
+        };
+        assert_eq!(outcome.report.fixes.len(), 2);
+        assert!(
+            outcome
+                .report
+                .fixes
+                .iter()
+                .all(|fix| matches!(fix, MeshFix::RemovedCollinearFaceByMerge { .. }))
+        );
+        assert_eq!(
+            outcome.report.end,
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            })
+        );
+        let names = target_names(&completed.outcomes, &graph);
+        assert_eq!(
+            dialog_lines(&completed.outcomes, &names),
+            ["Mesh 1: removed 2 collinear faces"]
+        );
     }
 
     #[test]

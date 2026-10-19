@@ -5,6 +5,7 @@
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::ZeroAreaFace;
+use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd, RepairPasses};
 use sc_mesh_core::primitives::FaceIndex;
 
 use crate::{
@@ -226,5 +227,54 @@ fn each_zero_area_variant_encloses_the_volume_of_its_donor() {
         let faces = variant.mesh.validated_faces().expect(name);
         let error = (faces.signed_volume_mm3() - variant.volume_mm3).abs();
         assert!(error <= variant.volume_tolerance_mm3, "{name}: {error}");
+    }
+}
+
+/// Pins the role of the variants for the CLI pins that run `fix` and then
+/// `diagnose` on them: the default repair leaves no zero-area face.
+#[test]
+fn the_default_repair_removes_every_zero_area_face_of_the_collinear_variants() {
+    for (name, mut mesh) in [
+        ("cube", unit_cube_with_collinear_faces()),
+        ("z_tunnel", cuboid_with_z_tunnel_and_collinear_faces()),
+        ("y_tunnel", cuboid_with_y_tunnel_and_collinear_faces()),
+        (
+            "cube_fan_centres",
+            unit_cube_with_collinear_faces_at_fan_centres(),
+        ),
+        (
+            "z_tunnel_fan_centres",
+            cuboid_with_z_tunnel_and_collinear_faces_at_fan_centres(),
+        ),
+        (
+            "y_tunnel_fan_centres",
+            cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres(),
+        ),
+    ] {
+        let report = mesh.repair(RepairPasses::default_repair());
+        assert_eq!(
+            report.end,
+            RepairEnd::Completed(MeshStateAfterRepair {
+                edge_manifold: true,
+                zero_area_face_count: 0,
+            }),
+            "{name}"
+        );
+    }
+}
+
+/// Pins the role of the variants for the CLI pins that warn about the
+/// zero-area face that remains: the default repair changes nothing.
+#[test]
+fn the_default_repair_leaves_the_flat_tetrahedron_variants_unchanged() {
+    for (name, mut mesh) in [
+        ("cube", unit_cube_and_flat_tetrahedron()),
+        ("z_tunnel", cuboid_with_z_tunnel_and_flat_tetrahedron()),
+        ("y_tunnel", cuboid_with_y_tunnel_and_flat_tetrahedron()),
+    ] {
+        let original = mesh.clone();
+        let report = mesh.repair(RepairPasses::default_repair());
+        assert!(report.fixes.is_empty(), "{name}");
+        assert_eq!(mesh, original, "{name}");
     }
 }

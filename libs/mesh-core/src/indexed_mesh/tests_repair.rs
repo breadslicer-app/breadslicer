@@ -86,12 +86,6 @@ fn append_zero_length_edge_face(mesh: &mut IndexedMesh) -> FaceIndex {
     FaceIndex::from(idx)
 }
 
-/// The default pass set with the collinear-face pass on.
-const ALL_ON: RepairPasses = RepairPasses {
-    collinear_faces: true,
-    ..RepairPasses::default_repair()
-};
-
 /// Returns the split tetrahedron with face 5 reversed: a winding error and a
 /// collinear face.
 fn flipped_split_tetrahedron() -> IndexedMesh {
@@ -119,11 +113,11 @@ fn merged_split_tetrahedron_faces() -> [IndexedTriangle; 4] {
 }
 
 #[test]
-fn default_repair_enables_zle_and_flips_only() {
+fn default_repair_enables_the_3_passes() {
     let passes = RepairPasses::default_repair();
     assert!(passes.zero_length_edges);
     assert!(passes.flipped_faces);
-    assert!(!passes.collinear_faces);
+    assert!(passes.collinear_faces);
     assert_eq!(
         RepairPasses::default(),
         RepairPasses {
@@ -470,7 +464,7 @@ fn default_repair_counts_the_collinear_face_of_an_open_mesh() {
 #[test]
 fn the_collinear_face_pass_merges_the_neighbours_of_a_collinear_face() {
     let mut mesh = split_tetrahedron(SPLIT_TETRAHEDRON);
-    let report = mesh.repair(ALL_ON);
+    let report = mesh.repair(RepairPasses::default_repair());
     assert_eq!(
         report,
         MeshRepairReport {
@@ -487,7 +481,7 @@ fn the_collinear_face_pass_merges_the_neighbours_of_a_collinear_face() {
 #[test]
 fn the_collinear_face_pass_splits_the_face_across_the_long_edge() {
     let mut mesh = fan_pyramid(SQUARE_FAN_PYRAMID);
-    let report = mesh.repair(ALL_ON);
+    let report = mesh.repair(RepairPasses::default_repair());
     assert_eq!(
         report,
         MeshRepairReport {
@@ -513,7 +507,7 @@ fn the_collinear_face_pass_splits_the_face_across_the_long_edge() {
 #[test]
 fn the_orientation_pass_runs_before_the_collinear_face_pass() {
     let mut mesh = flipped_split_tetrahedron();
-    let report = mesh.repair(ALL_ON);
+    let report = mesh.repair(RepairPasses::default_repair());
     assert_eq!(
         report.fixes,
         vec![
@@ -536,7 +530,7 @@ fn the_orientation_pass_runs_before_the_collinear_face_pass() {
 #[test]
 fn a_collinear_face_fix_drops_the_declared_facet_normals() {
     let mut mesh = with_declared_facet_normals(split_tetrahedron(SPLIT_TETRAHEDRON));
-    let report = mesh.repair(ALL_ON);
+    let report = mesh.repair(RepairPasses::default_repair());
     assert_eq!(report.fixes, [split_tetrahedron_merge()]);
     assert_eq!(mesh.meta, Some(MeshMetadata::default()));
 }
@@ -547,7 +541,7 @@ fn a_disabled_collinear_face_pass_leaves_the_collinear_face() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses {
         collinear_faces: false,
-        ..ALL_ON
+        ..RepairPasses::default_repair()
     });
     assert_eq!(
         report,
@@ -568,7 +562,7 @@ fn a_winding_error_that_stays_keeps_the_collinear_pass_from_running() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses {
         flipped_faces: false,
-        ..ALL_ON
+        ..RepairPasses::default_repair()
     });
     assert_eq!(
         report,
@@ -636,10 +630,9 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     ];
     let pass_sets = [
         RepairPasses::default_repair(),
-        ALL_ON,
         RepairPasses {
             flipped_faces: false,
-            ..ALL_ON
+            ..RepairPasses::default_repair()
         },
     ];
     for passes in pass_sets {
@@ -686,6 +679,7 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         (tetrahedron(), true, 0),
         (open_strip(), false, 0),
         (flat_tetrahedron(), true, 1),
+        (blocked_split_tetrahedron(), true, 1),
         (open_strip_with_a_collinear_face(), false, 1),
     ] {
         assert_eq!(
@@ -725,24 +719,11 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         fan_pyramid(SQUARE_FAN_PYRAMID),
         flipped_split_tetrahedron(),
     ] {
-        assert_eq!(assess_repair(&mesh, ALL_ON), RepairAssessment::Work);
-    }
-    for (mesh, edge_manifold) in [
-        (flat_tetrahedron(), true),
-        (blocked_split_tetrahedron(), true),
-        (open_strip_with_a_collinear_face(), false),
-    ] {
-        assert_eq!(
-            assess_repair(&mesh, ALL_ON),
-            RepairAssessment::Clean(MeshStateAfterRepair {
-                edge_manifold,
-                zero_area_face_count: 1,
-            })
-        );
+        assert_eq!(assess_repair(&mesh, passes), RepairAssessment::Work);
     }
     let without_flips = RepairPasses {
         flipped_faces: false,
-        ..ALL_ON
+        ..RepairPasses::default_repair()
     };
     assert_eq!(
         assess_repair(&flipped_split_tetrahedron(), without_flips),

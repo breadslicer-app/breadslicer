@@ -34,13 +34,13 @@ pub struct RepairPasses {
 }
 
 impl RepairPasses {
-    /// Returns the default pass set: zero-length-edge face removal and flipped
-    /// face correction.
+    /// Returns the default pass set: zero-length-edge face removal, flipped
+    /// face correction and collinear-face removal.
     pub const fn default_repair() -> Self {
         Self {
             zero_length_edges: true,
             flipped_faces: true,
-            collinear_faces: false,
+            collinear_faces: true,
         }
     }
 }
