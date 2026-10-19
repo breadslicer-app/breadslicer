@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::indexed_mesh::half_edges;
 use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 
-use super::SlotWrite;
+use super::slot_write::SlotWrite;
 
 /// The 2 faces of each edge of a mesh, ascending, keyed by `half_edges::key`.
 /// Unlike the edge table of `MeshTopology`, it follows the changes of the pass.

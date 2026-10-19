@@ -19,23 +19,17 @@
 
 mod edge_faces;
 mod removal;
+mod slot_write;
 #[cfg(test)]
 pub(in crate::indexed_mesh) mod test_meshes;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::fix::MeshFix;
 use crate::indexed_mesh::validated::ZeroAreaFace;
-use crate::primitives::{FaceIndex, IndexedTriangle};
+use crate::primitives::FaceIndex;
 
 use edge_faces::EdgeFaces;
 use removal::{CollinearFace, CollinearFaceRemoval, choose_removal};
-
-/// A face slot and the triangle that a removal writes into it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SlotWrite {
-    face: FaceIndex,
-    triangle: IndexedTriangle,
-}
 
 /// Removes the collinear faces of `mesh`, and returns the records of the
 /// removals. `zero_area_faces` must be the zero-area faces of `mesh`, as

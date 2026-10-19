@@ -6,8 +6,8 @@
 use crate::geometry::{cross_of_edges_f64, is_degenerate_at_any_corner};
 use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
-use super::SlotWrite;
 use super::edge_faces::EdgeFaces;
+use super::slot_write::SlotWrite;
 
 /// A face with a strictly longest edge, read in its winding as (R, P, Q): P-Q
 /// is the longest edge, and R is the vertex opposite to it.
