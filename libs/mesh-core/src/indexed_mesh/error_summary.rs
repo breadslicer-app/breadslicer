@@ -13,10 +13,9 @@
 //!
 //! The buckets are powered by the [`MeshErrorReport`] trait, which exposes a
 //! variant name and an optional representative face index for each error. The
-//! trait is implemented for [`MeshVertexError`](super::MeshVertexError),
-//! [`MeshFaceError`](super::MeshFaceError) and
-//! [`MeshEdgeManifoldError`](super::MeshEdgeManifoldError); other validation
-//! error enums can opt in by implementing it.
+//! trait is implemented for [`MeshVertexError`], [`MeshFaceError`] and
+//! [`MeshEdgeManifoldError`]; other validation error enums can opt in by
+//! implementing it.
 
 use crate::primitives::FaceIndex;
 

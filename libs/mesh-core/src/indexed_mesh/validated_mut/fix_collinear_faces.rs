@@ -5,8 +5,9 @@
 
 use crate::indexed_mesh::fix::collinear_faces::fix_collinear_faces_impl;
 use crate::indexed_mesh::fix::records::MeshFix;
+use crate::indexed_mesh::validated::ValidatedEdgeManifoldMesh;
 
-use super::{ValidatedEdgeManifoldMesh, ValidatedEdgeManifoldMeshMut};
+use super::ValidatedEdgeManifoldMeshMut;
 
 impl ValidatedEdgeManifoldMeshMut<'_> {
     /// Removes the collinear faces of the mesh, and returns the records of the

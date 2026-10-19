@@ -5,8 +5,9 @@
 
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::fix::records::MeshFix;
+use crate::indexed_mesh::validated::MeshEdgeManifoldError;
 
-use super::{MeshEdgeManifoldError, ValidatedFacesMut};
+use super::ValidatedFacesMut;
 
 impl ValidatedFacesMut<'_> {
     /// Reverses the winding of the faces that `manifold_errors` shows as

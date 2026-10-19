@@ -8,6 +8,7 @@ use std::fmt;
 use crate::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
 use super::mesh::IndexedMesh;
+use super::validated::ValidatedFaces;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshVertexError {
@@ -145,6 +146,15 @@ impl IndexedMesh {
         } else {
             Ok(())
         }
+    }
+
+    /// Validates face indices and, on success, returns a witness whose methods
+    /// can index into `vertices` and `faces` without per-call bounds checks.
+    /// Lifetime-tied to `self`: any later mutation of the mesh invalidates the
+    /// witness.
+    pub fn validated_faces(&self) -> Result<ValidatedFaces<'_>, Vec<MeshFaceError>> {
+        self.validate_faces()?;
+        Ok(ValidatedFaces::new_unchecked(self))
     }
 }
 
