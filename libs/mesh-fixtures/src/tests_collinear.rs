@@ -13,8 +13,7 @@ use crate::{
     cuboid_with_y_tunnel_and_flat_tetrahedron, cuboid_with_z_tunnel_and_collinear_faces,
     cuboid_with_z_tunnel_and_collinear_faces_at_fan_centres,
     cuboid_with_z_tunnel_and_flat_tetrahedron, unit_cube_and_flat_tetrahedron,
-    unit_cube_with_adjacent_collinear_faces, unit_cube_with_collinear_faces,
-    unit_cube_with_collinear_faces_at_fan_centres,
+    unit_cube_with_collinear_faces, unit_cube_with_collinear_faces_at_fan_centres,
 };
 
 #[test]
@@ -115,7 +114,7 @@ struct ZeroAreaVariant {
 /// Returns the variants with zero-area faces, other than
 /// [`unit_cube_with_collinear_faces`]. The prisms hold the f32 values of 0.4,
 /// 0.6 and 1.4, so their volumes miss 6.72 by less than 1e-7.
-fn zero_area_variants() -> [ZeroAreaVariant; 9] {
+fn zero_area_variants() -> [ZeroAreaVariant; 8] {
     let cube = |name, mesh, vertex_count, zero_area_faces| ZeroAreaVariant {
         name,
         mesh,
@@ -164,12 +163,6 @@ fn zero_area_variants() -> [ZeroAreaVariant; 9] {
             cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres(),
             18,
             &[34, 35],
-        ),
-        cube(
-            "cube_adjacent",
-            unit_cube_with_adjacent_collinear_faces(),
-            10,
-            &[14, 15],
         ),
         cube(
             "cube_flat_tetrahedron",

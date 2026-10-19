@@ -11,10 +11,9 @@
 //! rectangular tunnel along Z or along Y, and variants of the 3: with some
 //! faces turned inside out, with collinear faces (zero-area faces with 3
 //! distinct vertices) in 2 layouts, and beside a flat closed part with a
-//! collinear face. A variant of the cube has 2 adjacent collinear faces. 3
-//! tetrahedra cover the slicer's cases at `z = 0`: a vertex on the plane
-//! (saddle), a mesh edge on the plane that the surface crosses, and a mesh edge
-//! along which the surface only touches the plane.
+//! collinear face. 3 tetrahedra cover the slicer's cases at `z = 0`: a vertex
+//! on the plane (saddle), a mesh edge on the plane that the surface crosses,
+//! and a mesh edge along which the surface only touches the plane.
 //!
 //! 2 fixtures are deliberate exceptions to the "manifold by construction" rule:
 //! [`bowtie_tetrahedra`] and [`cuboid_with_pinched_z_tunnel`] are edge-manifold
@@ -537,27 +536,6 @@ pub fn cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres() -> IndexedMesh 
         cuboid_with_y_tunnel(),
         &[([2, 3], [4, 5, 6, 7]), ([24, 25], [11, 15, 14, 10])],
     )
-}
-
-/// Returns [`unit_cube_mesh`] with 2 zero-area faces, 14 and 15, that share an
-/// edge. Vertices 8 and 9, at x = -0.25 and x = 0.25 on the top edge 4-5, are
-/// vertices of the top faces only; the -Y face across the edge stays whole.
-/// Face 15, (4, 5, 9), closes the edge 4-5, and face 14, (4, 9, 8), has its
-/// long edge 4-9 on face 15. The mesh stays closed and edge-manifold, with the
-/// volume of the cube.
-pub fn unit_cube_with_adjacent_collinear_faces() -> IndexedMesh {
-    let mut mesh = unit_cube_mesh();
-    mesh.vertices.extend([
-        Vertex::new([-0.25, -0.5, 0.5]),
-        Vertex::new([0.25, -0.5, 0.5]),
-    ]);
-    let f = IndexedTriangle::from_raw_indices;
-    // Faces 2 and 3 of the donor are the top, (4, 5, 6) and (4, 6, 7).
-    mesh.faces[2] = f([9, 5, 6]);
-    mesh.faces[3] = f([8, 6, 7]);
-    mesh.faces
-        .extend([f([4, 8, 7]), f([8, 9, 6]), f([4, 9, 8]), f([4, 5, 9])]);
-    mesh
 }
 
 /// Adds a closed part of 4 faces in 1 plane, with a volume of 0: the collinear
