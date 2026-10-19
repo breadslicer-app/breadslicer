@@ -11,6 +11,7 @@
 use std::error::Error;
 
 use crate::indexed_mesh::fix::MeshFixError;
+use crate::indexed_mesh::fix::collinear_faces::test_meshes::flat_tetrahedron;
 use crate::indexed_mesh::repair::{
     MeshStateAfterRepair, RepairAssessment, RepairEnd, assess_repair,
 };
@@ -71,27 +72,6 @@ fn open_strip_with_a_collinear_face() -> IndexedMesh {
     let mut mesh = open_strip();
     mesh.vertices[3] = Vertex::new([2.0, -1.0, 0.0]);
     mesh
-}
-
-/// Returns a closed tetrahedron with its 4 vertices in 1 plane: vertex 2 is the
-/// midpoint of vertices 0 and 1, so face 0, (2, 0, 1), is collinear. It is
-/// edge-manifold and encloses no volume.
-fn flat_tetrahedron() -> IndexedMesh {
-    let vertices = vec![
-        Vertex::new([0.0, 0.0, 0.0]),
-        Vertex::new([2.0, 0.0, 0.0]),
-        Vertex::new([1.0, 0.0, 0.0]),
-        Vertex::new([1.0, 1.0, 0.0]),
-    ];
-    let faces = [[2, 0, 1], [0, 2, 3], [2, 1, 3], [1, 0, 3]]
-        .into_iter()
-        .map(IndexedTriangle::from_raw_indices)
-        .collect();
-    IndexedMesh {
-        meta: None,
-        vertices,
-        faces,
-    }
 }
 
 /// Appends a face whose 2nd and 3rd slots repeat a vertex index, so face
