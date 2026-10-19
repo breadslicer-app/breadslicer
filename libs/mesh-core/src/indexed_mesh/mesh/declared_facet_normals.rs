@@ -3,23 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-mod binding;
-
 use std::fmt;
 use std::sync::Arc;
 
-use super::fingerprint::geometry_fingerprint::GeometryFingerprint;
+use super::geometry_fingerprint::GeometryFingerprint;
 
 /// The facet normals that a source file declared for a mesh: the f32 bit
 /// patterns of 1 normal per face, in face order, kept as read. They are file
-/// data, not geometry, and can be read only while the mesh keeps the geometry
-/// they came with, through
-/// [`IndexedMesh::declared_facet_normals`](super::IndexedMesh::declared_facet_normals).
+/// data, not geometry, and apply only to the geometry they came with.
 #[derive(Clone, PartialEq, Eq)]
 pub struct DeclaredFacetNormals {
-    normals: Arc<[[u32; 3]]>,
+    pub(super) normals: Arc<[[u32; 3]]>,
     // Fingerprint of the mesh the normals were built for.
-    fingerprint: GeometryFingerprint,
+    pub(super) fingerprint: GeometryFingerprint,
 }
 
 impl DeclaredFacetNormals {
@@ -59,7 +55,7 @@ impl fmt::Display for FacetCountMismatch {
 
 impl std::error::Error for FacetCountMismatch {}
 
-/// Why [`DeclaredFacetNormals::restore`] refused stored normals.
+/// Why stored facet normals were not bound to a mesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreRefusal {
     /// The geometry of the mesh differs from the geometry the normals were

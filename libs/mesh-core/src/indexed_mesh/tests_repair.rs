@@ -10,10 +10,10 @@
 
 use std::error::Error;
 
-use crate::indexed_mesh::declared_facet_normals::DeclaredFacetNormals;
 use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::flat_tetrahedron;
 use crate::indexed_mesh::fix::records::MeshFix;
+use crate::indexed_mesh::mesh::declared_facet_normals::DeclaredFacetNormals;
 use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::indexed_mesh::repair::{
     MeshRepairReport, MeshStateAfterRepair, RepairAssessment, RepairEnd, RepairPasses,

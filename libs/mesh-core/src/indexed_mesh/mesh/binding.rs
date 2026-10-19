@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::fingerprint::geometry_fingerprint::GeometryFingerprint;
-use crate::indexed_mesh::mesh::IndexedMesh;
-
-use super::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
+use super::IndexedMesh;
+use super::declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
+use super::geometry_fingerprint::GeometryFingerprint;
 
 impl DeclaredFacetNormals {
     /// Binds `normals` to the geometry of `mesh`. Fails when their count
@@ -51,8 +50,9 @@ fn check_count(mesh: &IndexedMesh, normals: &[[u32; 3]]) -> Result<(), FacetCoun
 }
 
 impl IndexedMesh {
-    /// Returns the facet normals the source file declared while the mesh keeps
-    /// the geometry they came with, else `None`. Each call hashes the geometry.
+    /// Returns the facet normals the source file declared
+    /// ([`DeclaredFacetNormals`]) while the mesh keeps the geometry they came
+    /// with, else `None`. Each call hashes the geometry.
     pub fn declared_facet_normals(&self) -> Option<&[[u32; 3]]> {
         let declared = self.meta.as_ref()?.declared_facet_normals.as_ref()?;
         (declared.fingerprint == self.geometry_fingerprint()).then_some(&*declared.normals)

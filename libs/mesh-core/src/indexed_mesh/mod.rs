@@ -3,10 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-pub mod declared_facet_normals;
 pub mod diagnose;
 pub mod error_summary;
-pub mod fingerprint;
 pub mod fix;
 mod half_edges;
 mod mesh;
@@ -33,12 +31,12 @@ mod tests_validated_faces;
 #[cfg(test)]
 mod tests_volume;
 
-pub use declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
-pub use fingerprint::geometry_fingerprint::GeometryFingerprint;
 pub use fix::MeshFixError;
 pub use fix::records::MeshFix;
+pub use mesh::declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
+pub use mesh::geometry_fingerprint::GeometryFingerprint;
 pub use mesh::{IndexedMesh, MeshMetadata};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::MeshTopology;

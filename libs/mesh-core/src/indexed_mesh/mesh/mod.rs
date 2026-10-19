@@ -3,10 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+mod binding;
+pub(super) mod declared_facet_normals;
+mod fingerprint;
+pub(super) mod geometry_fingerprint;
+
 use crate::aabb::Aabb;
 use crate::primitives::{IndexedTriangle, Vertex};
 
-use super::declared_facet_normals::DeclaredFacetNormals;
+use declared_facet_normals::DeclaredFacetNormals;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshMetadata {

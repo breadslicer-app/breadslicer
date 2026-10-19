@@ -5,10 +5,10 @@
 
 use std::error::Error;
 
-use crate::indexed_mesh::declared_facet_normals::{
+use crate::indexed_mesh::mesh::declared_facet_normals::{
     DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal,
 };
-use crate::indexed_mesh::fingerprint::geometry_fingerprint::GeometryFingerprint;
+use crate::indexed_mesh::mesh::geometry_fingerprint::GeometryFingerprint;
 use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Vertex};
 
