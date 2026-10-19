@@ -27,6 +27,7 @@ impl ValidatedEdgeManifoldMeshMut<'_> {
             let fixes: Vec<MeshFix> = removals.by_ref().collect();
             (fixes, removals.into_faces())
         };
+        // #[gamma::skip(cond.always_true, reason = "the same faces")]
         if !fixes.is_empty() {
             self.mesh.faces = faces;
         }

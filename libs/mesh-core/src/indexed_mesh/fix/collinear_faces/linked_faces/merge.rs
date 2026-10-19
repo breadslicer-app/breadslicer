@@ -74,9 +74,11 @@ impl LinkedFaces<'_> {
         // `a` is now P->Q and `a.next()` Q->X; X->P keeps its link.
         self.link(a, c);
         self.link(a.next(), beyond_b);
+        // #[gamma::skip(collection.reverse_array, reason = "a set: any order")]
         for (u, v) in [(r, p), (q, r), (r, x)] {
             self.edges.remove(&EdgeKey::new(u, v));
         }
+        // #[gamma::skip(collection.reverse_array, reason = "into_faces sorts")]
         self.removed.extend([long_edge.face, b.face]);
         MeshFix::RemovedCollinearFaceByMerge {
             collinear,

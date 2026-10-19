@@ -40,6 +40,7 @@ impl CollinearFaceRemoval {
     pub(in crate::indexed_mesh::fix::collinear_faces) fn changed_neighbours(
         self,
     ) -> impl Iterator<Item = FaceIndex> {
+        // #[gamma::skip(collection.reverse_array, reason = "None is dropped")]
         let faces = match self {
             Self::MergeNeighbours(merge) => merge.neighbours().map(Some),
             Self::SplitOpposite(split) => [Some(split.opposite()), None],
@@ -85,6 +86,7 @@ impl LinkedFaces<'_> {
             .map(|half_edge| self.apex(self.twin(half_edge)));
         // C holds R only when the collinear face and C are a closed part of 2
         // faces.
+        // #[gamma::skip(cond.always_false, reason = "G1 refuses it too")]
         if s == self.apex(long_edge) {
             return None;
         }

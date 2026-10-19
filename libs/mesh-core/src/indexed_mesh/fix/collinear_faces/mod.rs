@@ -59,6 +59,7 @@ impl<'a> CollinearFaceRemovals<'a> {
         Self {
             faces,
             candidates,
+            // #[gamma::skip(literal.bool_flip, reason = "1 more round")]
             removed_in_round: false,
         }
     }
@@ -79,6 +80,7 @@ impl Iterator for CollinearFaceRemovals<'_> {
                 // A removal can make a set-aside face removable, as in a chain
                 // of collinear faces on 1 edge. A round without a removal
                 // changes nothing, so it is the last.
+                // #[gamma::skip(cond.always_false, reason = "never ends")]
                 if !mem::take(&mut self.removed_in_round) {
                     return None;
                 }

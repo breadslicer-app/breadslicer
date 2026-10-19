@@ -179,6 +179,7 @@ pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessme
     }
     // Here the orientation pass changes nothing, so the run gives the
     // collinear-face pass this same mesh.
+    // #[gamma::skip(logical.and_remove_right, reason = "finds no face")]
     if passes.collinear_faces
         && face_areas.is_err()
         && let Ok(manifold) = &edge_manifold
@@ -302,6 +303,7 @@ impl IndexedMesh {
 
         // The face-area test only skips the mint for a mesh without zero-area
         // faces: the pass finds its faces itself.
+        // #[gamma::skip(logical.and_remove_right, reason = "finds no face")]
         if passes.collinear_faces
             && validated.validate_face_areas().is_err()
             && let Ok(manifold) = validated.validated_edge_manifold_mut()

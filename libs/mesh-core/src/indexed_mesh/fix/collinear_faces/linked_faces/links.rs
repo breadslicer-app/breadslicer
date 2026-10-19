@@ -67,6 +67,7 @@ impl<'a> LinkedFaces<'a> {
             })
             .collect();
         // Each half-edge is in 1 pair, so the pairs replace every placeholder.
+        // #[gamma::skip(literal.int_increment, reason = "replaced below")]
         let placeholder = HalfEdge {
             face: FaceIndex::from(0_usize),
             slot: EdgeSlot::V0V1,

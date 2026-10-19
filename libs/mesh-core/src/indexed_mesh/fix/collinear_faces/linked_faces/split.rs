@@ -41,6 +41,7 @@ impl LinkedFaces<'_> {
         if self.has_edge(self.apex(long_edge), self.apex(c)) {
             return None;
         }
+        // #[gamma::skip(collection.reverse_array, reason = "the sum commutes")]
         let replaced_crosses = [long_edge.face, c.face]
             .map(|face| cross_of_edges_f64(&self.positions(self.faces[face.get()])));
         for half in self.halves(long_edge) {
