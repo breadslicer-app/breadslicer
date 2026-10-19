@@ -41,14 +41,17 @@ fn split(collinear: [u32; 3], opposite: [u32; 3], halves: [[u32; 3]; 2]) -> Mesh
 }
 
 /// Runs the pass on `mesh`, which must be edge-manifold, and checks that the
-/// mesh is still edge-manifold, with the zero-area faces `zero_area_after`.
+/// vertices do not change and that the mesh is still edge-manifold, with the
+/// zero-area faces `zero_area_after`.
 fn fix_collinear_faces(mesh: &mut IndexedMesh, zero_area_after: &[usize]) -> Vec<MeshFix> {
+    let vertices = mesh.vertices.clone();
     let fixes = mesh
         .validated_faces_mut()
         .expect("in-range indices")
         .validated_edge_manifold_mut()
         .expect("edge-manifold")
         .fix_collinear_faces();
+    assert_eq!(mesh.vertices, vertices);
     let faces = mesh.validated_faces().expect("in-range indices");
     let expected: Vec<ZeroAreaFace> = zero_area_after
         .iter()
@@ -86,14 +89,12 @@ fn disjoint_union(parts: &[IndexedMesh]) -> IndexedMesh {
 #[test]
 fn a_merge_drops_2_faces_and_keeps_the_order_of_the_others() {
     let mut mesh = split_tetrahedron(SPLIT_TETRAHEDRON);
-    let vertices = mesh.vertices.clone();
     let fixes = fix_collinear_faces(&mut mesh, &[]);
     assert_eq!(fixes, [merge([0, 1, 2], [[0, 2, 3], [2, 1, 3]], [0, 1, 3])]);
     assert_eq!(
         mesh.faces,
         triangles(&[[0, 1, 3], [0, 4, 1], [0, 3, 4], [1, 4, 3]])
     );
-    assert_eq!(mesh.vertices, vertices);
 }
 
 /// Returns a pyramid on the square P (0), Q (1), Y (3), X (2) with its apex S
@@ -209,4 +210,77 @@ fn a_split_that_would_repeat_the_edge_of_an_earlier_split_is_refused() {
     expected[0] = triangle([2, 0, 3]);
     expected[3] = triangle([1, 2, 3]);
     assert_eq!(mesh.faces, expected);
+}
+
+fn signed_volume(mesh: &IndexedMesh) -> f64 {
+    mesh.validated_faces()
+        .expect("in-range indices")
+        .signed_volume_mm3()
+}
+
+#[test]
+fn merges_in_2_parts_delete_4_faces_and_keep_the_volume() {
+    let mut mesh = disjoint_union(&[
+        split_tetrahedron(SPLIT_TETRAHEDRON),
+        split_tetrahedron(SPLIT_TETRAHEDRON),
+    ]);
+    // Each part is the tetrahedron on 4 corners of a cube of side 2.
+    assert_eq!(signed_volume(&mesh), 16.0 / 3.0);
+    let fixes = fix_collinear_faces(&mut mesh, &[]);
+    assert_eq!(
+        fixes,
+        [
+            merge([0, 1, 2], [[0, 2, 3], [2, 1, 3]], [0, 1, 3]),
+            merge([5, 6, 7], [[5, 7, 8], [7, 6, 8]], [5, 6, 8]),
+        ]
+    );
+    assert_eq!(
+        mesh.faces,
+        triangles(&[
+            [0, 1, 3],
+            [0, 4, 1],
+            [0, 3, 4],
+            [1, 4, 3],
+            [5, 6, 8],
+            [5, 9, 6],
+            [5, 8, 9],
+            [6, 9, 8],
+        ])
+    );
+    assert_eq!(signed_volume(&mesh), 16.0 / 3.0);
+}
+
+/// The points of [`SQUARE_FAN_PYRAMID`] moved by (1, 2, 4), so that no face
+/// plane passes through the origin. A face in such a plane adds 0 to the
+/// volume, so a wrong face there would not change it.
+const MOVED_SQUARE_FAN_PYRAMID: [[f32; 3]; 6] = [
+    [3.0, 2.0, 4.0],
+    [1.0, 2.0, 4.0],
+    [2.0, 2.0, 4.0],
+    [2.0, 3.0, 5.0],
+    [3.0, 4.0, 4.0],
+    [1.0, 4.0, 4.0],
+];
+
+#[test]
+fn splits_in_2_parts_keep_the_volume() {
+    let part = || fan_pyramid(MOVED_SQUARE_FAN_PYRAMID);
+    let mut mesh = disjoint_union(&[part(), part()]);
+    // Each part is a pyramid with a base of area 4 and a height of 1.
+    assert_eq!(signed_volume(&mesh), 8.0 / 3.0);
+    let fixes = fix_collinear_faces(&mut mesh, &[]);
+    assert_eq!(
+        fixes,
+        [
+            split([0, 1, 2], [1, 0, 3], [[2, 0, 3], [1, 2, 3]]),
+            split([6, 7, 8], [7, 6, 9], [[8, 6, 9], [7, 8, 9]]),
+        ]
+    );
+    let mut expected = disjoint_union(&[part(), part()]).faces;
+    expected[0] = triangle([2, 0, 3]);
+    expected[3] = triangle([1, 2, 3]);
+    expected[8] = triangle([8, 6, 9]);
+    expected[11] = triangle([7, 8, 9]);
+    assert_eq!(mesh.faces, expected);
+    assert_eq!(signed_volume(&mesh), 8.0 / 3.0);
 }
