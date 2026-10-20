@@ -9,16 +9,18 @@ command-line tool.
 ./build.sh
 ```
 
-It leaves one bundle per application id under `.cache/`, and an unchanged
-source reuses the cached build. If a vendored source declaration has gone
-stale, it stops before doing any work and names the script to run; see
+It leaves one bundle per application id under `.cache/`, named
+`<application id>-<version>-<arch>.flatpak`, where `<arch>` is the architecture
+of the build machine as Flatpak names it, such as `x86_64` or `aarch64`. An
+unchanged source reuses the cached build. If a vendored source declaration has
+gone stale, it stops before doing any work and names the script to run; see
 [Vendored sources](#vendored-sources).
 
 ## Installing
 
 ```
-flatpak install --user .cache/it.soulcrafted.slicer.flatpak
-flatpak install --user .cache/it.soulcrafted.slicer.cli.flatpak
+flatpak install --user .cache/it.soulcrafted.slicer-<version>-<arch>.flatpak
+flatpak install --user .cache/it.soulcrafted.slicer.cli-<version>-<arch>.flatpak
 ```
 
 ## Running
