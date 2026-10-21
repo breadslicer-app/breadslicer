@@ -1,0 +1,43 @@
+id: it.soulcrafted.slicer.cli
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: sc-slicer-cli
+
+finish-args:
+  # Flatpak exports one wrapper per application id, and that wrapper forwards
+  # its arguments to the application, not to `flatpak run`. A caller therefore
+  # cannot pass `--filesystem=` through it, so the grant has to be declared
+  # here or the exported command cannot read or write any of the user's files.
+  # The tool takes input and output paths on the command line and has no
+  # window, so the XDG Desktop Portal the GUI relies on is not available to it.
+  - --filesystem=host
+
+modules:
+  - name: slicer-cli
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/slicer-cli/cargo
+        CARGO_NET_OFFLINE: '1'
+    build-commands:
+      # Only the CLI package is built, so neither Slint nor Skia is compiled
+      # and no prebuilt Skia archive is needed. The fetch still covers the
+      # whole workspace because it resolves against the shared lock file.
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release -p sc-slicer-cli
+      - install -Dm755 target/release/sc-slicer-cli /app/bin/sc-slicer-cli
+      # Bundled vendor profiles. sc-app-paths resolves the data root by
+      # searching XDG_DATA_DIRS (which includes /app/share in the sandbox)
+      # for the soulcrafted-slicer directory.
+      - install -d /app/share/soulcrafted-slicer
+      - cp -r assets/profiles /app/share/soulcrafted-slicer/profiles
+    sources:
+      # The same working-tree tarball and offline crate list the GUI package
+      # builds from; build.sh packs the tarball once and both manifests read
+      # it. Paths resolve against this manifest's directory.
+      - .cache/source.source.json
+      - cargo-sources.json

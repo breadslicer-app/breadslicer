@@ -1,0 +1,22 @@
+[package]
+name = "sc-mesh-core"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "A simple library with basic types to handle 3d mesh data"
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+newtypes = "0.6.0"
+rayon.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+float-cmp.workspace = true
+proptest.workspace = true

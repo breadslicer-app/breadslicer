@@ -1,0 +1,33 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, ScrollView } from "std-widgets.slint";
+
+// Filter strip: one button per label, the active one highlighted.
+// Scrolls sideways when the labels are wider than the page. Pinned
+// height with no vertical stretch so the list below is the only child
+// that grows.
+export component FilterTabs inherits ScrollView {
+    in property <[string]> tabs;
+    in property <int> current-index: 0;
+
+    callback tab-changed(int);
+
+    vertical-stretch: 0;
+    min-height: 40px;
+    max-height: 40px;
+
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        for label[i] in root.tabs: Button {
+            text: label;
+            primary: i == root.current-index;
+            clicked => {
+                root.tab-changed(i);
+            }
+        }
+    }
+}

@@ -1,0 +1,42 @@
+# Fake material profile used only by the slicer-cli end-to-end
+# tests. Unlike `slicer-cli-e2e-test-resin`, it names every optional
+# print value as well as the required ones, and the resin's own
+# density, so exporting a printer file with it reports no fallback.
+# The 0.2 mm intent layer height
+# keeps the e2e layer-count assertions (5 layers for the cube) valid.
+
+[identity]
+id = "slicer-cli-e2e-test-resin-calibrated"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Calibrated Resin"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.2
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+cured_density_g_per_cm3 = 1.15
+
+[per_printer."slicer-cli-e2e-test"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.4
+wait_after_cure_sec = 1.2
+wait_after_lift_sec = 2.5
+bottom_wait_before_cure_sec = 6.0
+bottom_wait_after_cure_sec = 7.0
+bottom_wait_after_lift_sec = 8.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 90.0
+light_pwm = 80.0
+bottom_light_pwm = 60.0

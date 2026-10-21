@@ -1,0 +1,37 @@
+[identity]
+id = "elegoo-rapid-standard-photopolymer-resin-grey-50um"
+brand = "ELEGOO"
+family = "standard"
+name = "Rapid Standard Photopolymer Resin (Grey, 50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+# The figures the Mars 5 manual prints for the resin the machine ships
+# with. They belong to a 0.05 mm layer: the manual states that a thicker
+# layer needs a longer exposure, so the exposures do not carry over to
+# another height. Raising the bottom exposure buys plate adhesion.
+[per_printer.elegoo-mars-5]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 32.0
+bottom_layer_count = 2
+wait_before_cure_sec = 0.5
+wait_after_cure_sec = 0.0
+wait_after_lift_sec = 0.0
+bottom_wait_before_cure_sec = 0.5
+bottom_wait_after_cure_sec = 0.0
+bottom_wait_after_lift_sec = 0.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+bottom_lift_distance_mm = 2.0
+bottom_lift_speed_mm_min = 75.0
+bottom_retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }

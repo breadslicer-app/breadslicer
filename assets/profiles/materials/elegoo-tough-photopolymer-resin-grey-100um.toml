@@ -1,0 +1,33 @@
+[identity]
+id = "elegoo-tough-photopolymer-resin-grey-100um"
+brand = "ELEGOO"
+family = "tough"
+name = "Tough Photopolymer Resin (Grey, 100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+# NOTE: This parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness>2mm, model has holes)
+[per_printer.elegoo-mars-4-ultra]
+normal_exposure_sec = 3.8
+bottom_exposure_sec = 40.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+second_travel = { lift_distance_mm = 2.0, lift_speed_mm_min = 1000.0, retract_speed_mm_min = 1000.0 }
+
+# NOTE: This parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness>2mm, model has holes)
+[per_printer.elegoo-saturn-3-ultra]
+normal_exposure_sec = 3.5
+bottom_exposure_sec = 40.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+second_travel = { lift_distance_mm = 2.0, lift_speed_mm_min = 1000.0, retract_speed_mm_min = 1000.0 }

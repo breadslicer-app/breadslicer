@@ -1,0 +1,1742 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"POT-Creation-Date: 2026-09-12 10:24+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: Automatically generated\n"
+"Language-Team: none\n"
+"Language: sr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
+"X-Generator: Poedit 3.7\n"
+
+#: ui/slice-control-panel.slint:165
+msgctxt "SlicePanel"
+msgid "Slice setup"
+msgstr ""
+
+#: ui/slice-control-panel.slint:228
+msgctxt "SlicePanel"
+msgid "Print Setup"
+msgstr ""
+
+#: ui/slice-control-panel.slint:242
+msgctxt "SlicePanel"
+msgid "Printer"
+msgstr ""
+
+#: ui/slice-control-panel.slint:259
+msgctxt "SlicePanel"
+msgid "Resin"
+msgstr ""
+
+#: ui/slice-control-panel.slint:276
+msgctxt "SlicePanel"
+msgid "First layer height (mm)"
+msgstr ""
+
+#: ui/slice-control-panel.slint:282
+msgctxt "SlicePanel"
+msgid "from resin profile"
+msgstr ""
+
+#: ui/slice-control-panel.slint:283
+msgctxt "SlicePanel"
+msgid "First layer height in millimetres"
+msgstr ""
+
+#: ui/slice-control-panel.slint:295
+msgctxt "SlicePanel"
+msgid "Slice is up to date."
+msgstr ""
+
+#: ui/slice-control-panel.slint:308
+msgctxt "SlicePanel"
+msgid "Slice"
+msgstr ""
+
+#: ui/slice-control-panel.slint:323
+msgctxt "SlicePanel"
+msgid "Print format"
+msgstr ""
+
+#: ui/slice-control-panel.slint:344
+msgctxt "SlicePanel"
+msgid "Export for printer"
+msgstr ""
+
+#: ui/about-window.slint:10
+msgctxt "AboutWindow"
+msgid "About SoulCrafted Slicer"
+msgstr ""
+
+#: ui/about-window.slint:55
+msgctxt "AboutWindow"
+msgid "SoulCrafted Slicer"
+msgstr ""
+
+#: ui/about-window.slint:62
+msgctxt "About"
+msgid "Version {0}"
+msgstr ""
+
+#: ui/about-window.slint:68
+msgctxt "About"
+msgid "An open source slicer for resin 3D printers."
+msgstr ""
+
+#: ui/about-window.slint:74
+msgctxt "About"
+msgid "Licensed under AGPL-3.0-only"
+msgstr ""
+
+#: ui/about-window.slint:84
+msgctxt "About"
+msgid "Close"
+msgstr ""
+
+#: ui/slice-view-panel.slint:140
+msgctxt "SliceView"
+msgid "Slice preview"
+msgstr ""
+
+#: ui/slice-view-panel.slint:208
+msgctxt "SliceView"
+msgid "Slice View"
+msgstr ""
+
+#: ui/slice-overwrite-dialog.slint:13 ui/slice-overwrite-dialog.slint:73
+msgctxt "SliceOverwriteDialog"
+msgid "Re-slice"
+msgstr ""
+
+#: ui/slice-overwrite-dialog.slint:53
+msgctxt "SliceOverwriteDialog"
+msgid "Re-slice this scene?"
+msgstr ""
+
+#: ui/slice-overwrite-dialog.slint:59
+msgctxt "SliceOverwriteDialog"
+msgid ""
+"The geometry or the print settings changed since the last slice. Re-slicing "
+"replaces the slice data you already have."
+msgstr ""
+
+#: ui/slice-overwrite-dialog.slint:80
+msgctxt "SliceOverwriteDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:15
+msgctxt "ReplaceSceneDialog"
+msgid "Open new model"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:68
+msgctxt "ReplaceSceneDialog"
+msgid "Replace the current scene?"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:74
+msgctxt "ReplaceSceneDialog"
+msgid "Opening: {}"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:87
+msgctxt "ReplaceSceneDialog"
+msgid "The current scene will be closed."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:92
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it as a project or export a copy "
+"first to keep the changes you've made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:96
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it or export a copy first to keep the "
+"changes you've made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:110
+msgctxt "ReplaceSceneDialog"
+msgid "Discard & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:118
+msgctxt "ReplaceSceneDialog"
+msgid "Save As & Open…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:119
+msgctxt "ReplaceSceneDialog"
+msgid "Save & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:126
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Open…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:133
+msgctxt "ReplaceSceneDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/preferences/printer.slint:25
+msgctxt "PreferencesPage"
+msgid "Printer"
+msgstr ""
+
+#: ui/preferences/printer.slint:65
+msgctxt "PreferencesPage"
+msgid "Search models"
+msgstr ""
+
+#: ui/preferences/printer.slint:67
+msgctxt "PreferencesPage"
+msgid "Search printer models"
+msgstr ""
+
+#: ui/preferences/printer.slint:153
+msgctxt "PreferencesPage"
+msgid "No image"
+msgstr ""
+
+#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:253
+msgctxt "PreferencesPage"
+msgid "custom"
+msgstr ""
+
+#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:321
+msgctxt "PreferencesPage"
+msgid "Import package..."
+msgstr ""
+
+#: ui/preferences/printer.slint:199
+msgctxt "PreferencesPage"
+msgid "Export printers..."
+msgstr ""
+
+#: ui/preferences/slicing.slint:10
+msgctxt "PreferencesPage"
+msgid "Slicing"
+msgstr ""
+
+#: ui/preferences/slicing.slint:19
+msgctxt "SlicingPreferences"
+msgid "Off"
+msgstr ""
+
+#: ui/preferences/slicing.slint:20
+msgctxt "SlicingPreferences"
+msgid "2x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:21
+msgctxt "SlicingPreferences"
+msgid "4x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:22
+msgctxt "SlicingPreferences"
+msgid "8x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:30 ui/preferences/slicing.slint:41
+msgctxt "SlicingPreferences"
+msgid "Anti-aliasing"
+msgstr ""
+
+#: ui/preferences/resin.slint:50
+msgctxt "PreferencesPage"
+msgid "Resin"
+msgstr ""
+
+#: ui/preferences/resin.slint:128
+msgctxt "PreferencesPage"
+msgid "Search resins"
+msgstr ""
+
+#: ui/preferences/resin.slint:130
+msgctxt "PreferencesPage"
+msgid "Search resins by brand, name or family"
+msgstr ""
+
+#: ui/preferences/resin.slint:158 ui/preferences/resin.slint:298
+msgctxt "PreferencesPage"
+msgid "View"
+msgstr ""
+
+#: ui/preferences/resin.slint:164
+msgctxt "PreferencesPage"
+msgid "Fork..."
+msgstr ""
+
+#: ui/preferences/resin.slint:170
+msgctxt "PreferencesPage"
+msgid "Extend..."
+msgstr ""
+
+#: ui/preferences/resin.slint:176 ui/preferences/resin.slint:304
+msgctxt "PreferencesPage"
+msgid "Edit"
+msgstr ""
+
+#: ui/preferences/resin.slint:182
+msgctxt "PreferencesPage"
+msgid "Delete..."
+msgstr ""
+
+#: ui/preferences/resin.slint:267
+msgctxt "PreferencesPage"
+msgid "No calibration data"
+msgstr ""
+
+#: ui/preferences/resin.slint:269
+msgctxt "PreferencesPage"
+msgid "Generic calibration"
+msgstr ""
+
+#: ui/preferences/resin.slint:270
+msgctxt "PreferencesPage"
+msgid "Calibration: {}"
+msgstr ""
+
+#: ui/preferences/resin.slint:327
+msgctxt "PreferencesPage"
+msgid "Export materials..."
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:14
+msgctxt "PreferencesWindow"
+msgid "Preferences"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:92
+msgctxt "PreferencesMenu"
+msgid "Preferences Sections"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:94
+msgctxt "PreferencesMenu"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:95
+msgctxt "PreferencesMenu"
+msgid "Printer"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:96
+msgctxt "PreferencesMenu"
+msgid "Resin"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:97
+msgctxt "PreferencesMenu"
+msgid "Slicing"
+msgstr ""
+
+#: ui/preferences/appearance.slint:12
+msgctxt "PreferencesPage"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:27
+msgctxt "AppearancePreferences"
+msgid "System"
+msgstr ""
+
+#: ui/preferences/appearance.slint:28
+msgctxt "AppearancePreferences"
+msgid "Light"
+msgstr ""
+
+#: ui/preferences/appearance.slint:29
+msgctxt "AppearancePreferences"
+msgid "Dark"
+msgstr ""
+
+#: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
+msgctxt "AppearancePreferences"
+msgid "Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
+msgctxt "AppearancePreferences"
+msgid "Language"
+msgstr ""
+
+#: ui/info-dialog.slint:9 ui/info-dialog.slint:13 ui/info-dialog.slint:73
+msgctxt "InfoDialog"
+msgid "Information"
+msgstr ""
+
+#. can't accidentally drop or replace it.
+#: ui/info-dialog.slint:101
+msgctxt "InfoDialog"
+msgid "Hide details"
+msgstr ""
+
+#. can't accidentally drop or replace it.
+#: ui/info-dialog.slint:101
+msgctxt "InfoDialog"
+msgid "Show details"
+msgstr ""
+
+#: ui/info-dialog.slint:128
+msgctxt "InfoDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:60
+msgctxt "ProfileViewDialog"
+msgid "Resin profile"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:222
+msgctxt "ProfileViewDialog"
+msgid "Defaults"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:227
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation x (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:231
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation y (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:235
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation z (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:239 ui/profile-view-dialog.slint:299
+msgctxt "ProfileViewDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:243 ui/profile-view-dialog.slint:303
+msgctxt "ProfileViewDialog"
+msgid "Wait before cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:247 ui/profile-view-dialog.slint:307
+msgctxt "ProfileViewDialog"
+msgid "Wait after cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:251 ui/profile-view-dialog.slint:311
+msgctxt "ProfileViewDialog"
+msgid "Wait after lift (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:255 ui/profile-view-dialog.slint:375
+msgctxt "ProfileViewDialog"
+msgid "Light power (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:259 ui/profile-view-dialog.slint:379
+msgctxt "ProfileViewDialog"
+msgid "Bottom light power (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:277
+msgctxt "ProfileViewDialog"
+msgid "Edit calibration values"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:291
+msgctxt "ProfileViewDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:295
+msgctxt "ProfileViewDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:315
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:319
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:323
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:327
+msgctxt "ProfileViewDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:331
+msgctxt "ProfileViewDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:335
+msgctxt "ProfileViewDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:339
+msgctxt "ProfileViewDialog"
+msgid "Second lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:343
+msgctxt "ProfileViewDialog"
+msgid "Second lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:347
+msgctxt "ProfileViewDialog"
+msgid "Second retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:351
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:355
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:359
+msgctxt "ProfileViewDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:363
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:367
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:371
+msgctxt "ProfileViewDialog"
+msgid "Bottom second retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:400
+msgctxt "ProfileViewDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:407
+msgctxt "ProfileViewDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/error-dialog.slint:9
+msgctxt "ErrorDialog"
+msgid "Error"
+msgstr ""
+
+#: ui/error-dialog.slint:13
+msgctxt "ErrorDialog"
+msgid "An error occurred"
+msgstr ""
+
+#: ui/error-dialog.slint:74
+msgctxt "ErrorDialog"
+msgid "Warning"
+msgstr ""
+
+#. runs automatically.
+#: ui/error-dialog.slint:116
+msgctxt "ErrorDialog"
+msgid "Hide technical details"
+msgstr ""
+
+#. runs automatically.
+#: ui/error-dialog.slint:116
+msgctxt "ErrorDialog"
+msgid "Show technical details"
+msgstr ""
+
+#: ui/error-dialog.slint:143
+msgctxt "ErrorDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/object-list-panel.slint:138
+msgctxt "ObjectList"
+msgid "Scene objects"
+msgstr ""
+
+#: ui/object-list-panel.slint:206
+msgctxt "ObjectList"
+msgid "Scene Objects"
+msgstr ""
+
+#: ui/main-window.slint:96
+msgctxt "MainWindow"
+msgid "SoulCrafted Slicer"
+msgstr ""
+
+#: ui/main-window.slint:383 ui/main-window.slint:964
+msgctxt "MenuBar"
+msgid "File"
+msgstr ""
+
+#: ui/main-window.slint:386 ui/main-window.slint:967
+msgctxt "MenuBar"
+msgid "New Window"
+msgstr ""
+
+#: ui/main-window.slint:396 ui/main-window.slint:976
+msgctxt "MenuBar"
+msgid "Open…"
+msgstr ""
+
+#: ui/main-window.slint:405 ui/main-window.slint:984
+msgctxt "MenuBar"
+msgid "Close"
+msgstr ""
+
+#: ui/main-window.slint:416 ui/main-window.slint:994
+msgctxt "MenuBar"
+msgid "Save"
+msgstr ""
+
+#: ui/main-window.slint:425 ui/main-window.slint:1002
+msgctxt "MenuBar"
+msgid "Save As…"
+msgstr ""
+
+#: ui/main-window.slint:436 ui/main-window.slint:1012
+msgctxt "MenuBar"
+msgid "Export As…"
+msgstr ""
+
+#: ui/main-window.slint:446 ui/main-window.slint:1021
+msgctxt "MenuBar"
+msgid "Edit"
+msgstr ""
+
+#: ui/main-window.slint:448 ui/main-window.slint:1024
+msgctxt "MenuBar"
+msgid "Undo"
+msgstr ""
+
+#: ui/main-window.slint:459 ui/main-window.slint:1034
+msgctxt "MenuBar"
+msgid "Redo"
+msgstr ""
+
+#: ui/main-window.slint:472 ui/main-window.slint:1046
+msgctxt "MenuBar"
+msgid "Delete"
+msgstr ""
+
+#: ui/main-window.slint:483 ui/main-window.slint:1057
+msgctxt "MenuBar"
+msgid "Preferences"
+msgstr ""
+
+#: ui/main-window.slint:492 ui/main-window.slint:1065
+msgctxt "MenuBar"
+msgid "Tools"
+msgstr ""
+
+#: ui/main-window.slint:495 ui/main-window.slint:1068
+msgctxt "MenuBar"
+msgid "Generate Support (trivial for test)…"
+msgstr ""
+
+#: ui/main-window.slint:504 ui/main-window.slint:1077
+msgctxt "MenuBar"
+msgid "View"
+msgstr ""
+
+#: ui/main-window.slint:508 ui/main-window.slint:1081
+msgctxt "MenuBar"
+msgid "Hide Object List"
+msgstr ""
+
+#: ui/main-window.slint:509 ui/main-window.slint:1082
+msgctxt "MenuBar"
+msgid "Show Object List"
+msgstr ""
+
+#: ui/main-window.slint:520 ui/main-window.slint:1092
+msgctxt "MenuBar"
+msgid "Hide Slice View"
+msgstr ""
+
+#: ui/main-window.slint:521 ui/main-window.slint:1093
+msgctxt "MenuBar"
+msgid "Show Slice View"
+msgstr ""
+
+#: ui/main-window.slint:534 ui/main-window.slint:1103
+msgctxt "MenuBar"
+msgid "Show Menu Bar"
+msgstr ""
+
+#: ui/main-window.slint:535 ui/main-window.slint:1104
+msgctxt "MenuBar"
+msgid "Hide Menu Bar"
+msgstr ""
+
+#: ui/main-window.slint:553 ui/main-window.slint:1117
+msgctxt "MenuBar"
+msgid "Fullscreen"
+msgstr ""
+
+#: ui/main-window.slint:563 ui/main-window.slint:1124
+msgctxt "MenuBar"
+msgid "Help"
+msgstr ""
+
+#: ui/main-window.slint:565 ui/main-window.slint:1127
+msgctxt "MenuBar"
+msgid "Documentation"
+msgstr ""
+
+#: ui/main-window.slint:570 ui/main-window.slint:1132
+msgctxt "MenuBar"
+msgid "Show Release Notes"
+msgstr ""
+
+#: ui/main-window.slint:577 ui/main-window.slint:1139
+msgctxt "MenuBar"
+msgid "Report Issue"
+msgstr ""
+
+#: ui/main-window.slint:584 ui/main-window.slint:1146
+msgctxt "MenuBar"
+msgid "Check for Updates…"
+msgstr ""
+
+#: ui/main-window.slint:591 ui/main-window.slint:1153
+msgctxt "MenuBar"
+msgid "About"
+msgstr ""
+
+#: ui/main-window.slint:598 ui/main-window.slint:1160
+msgctxt "MenuBar"
+msgid "View License"
+msgstr ""
+
+#: ui/main-window.slint:610
+msgctxt "MainWindow"
+msgid "Open a 3D model to visualize it here"
+msgstr ""
+
+#: ui/main-window.slint:857
+msgctxt "Workspace"
+msgid "Prepare"
+msgstr ""
+
+#: ui/main-window.slint:870
+msgctxt "Workspace"
+msgid "Transform"
+msgstr ""
+
+#: ui/main-window.slint:883
+msgctxt "Workspace"
+msgid "Slice"
+msgstr ""
+
+#: ui/main-window.slint:913
+msgctxt "Prepare"
+msgid "Repair meshes"
+msgstr ""
+
+#: ui/main-window.slint:1200
+msgctxt "MainWindow"
+msgid "Drop to open"
+msgstr ""
+
+#: ui/main-window.slint:1229
+msgctxt "MainWindow"
+msgid "Reading file…"
+msgstr ""
+
+#: ui/main-window.slint:1231 ui/main-window.slint:1293
+msgctxt "MainWindow"
+msgid "Preparing geometry…"
+msgstr ""
+
+#: ui/main-window.slint:1232
+msgctxt "MainWindow"
+msgid "Uploading to GPU…"
+msgstr ""
+
+#: ui/main-window.slint:1262
+msgctxt "MainWindow"
+msgid "Generating support structure…"
+msgstr ""
+
+#: ui/main-window.slint:1295
+msgctxt "MainWindow"
+msgid "Serializing model…"
+msgstr ""
+
+#: ui/main-window.slint:1297
+msgctxt "MainWindow"
+msgid "Compressing…"
+msgstr ""
+
+#: ui/main-window.slint:1298
+msgctxt "MainWindow"
+msgid "Writing file…"
+msgstr ""
+
+#: ui/main-window.slint:1348
+msgctxt "SlicePanel"
+msgid "Slicing..."
+msgstr ""
+
+#: ui/main-window.slint:1355
+msgctxt "SlicePanel"
+msgid "{} / {} layers"
+msgstr ""
+
+#: ui/main-window.slint:1356
+msgctxt "SlicePanel"
+msgid "Preparing..."
+msgstr ""
+
+#: ui/main-window.slint:1366
+msgctxt "SlicePanel"
+msgid "Cancel"
+msgstr ""
+
+#: ui/extend-dialog.slint:15
+msgctxt "ExtendDialog"
+msgid "Extend resin profile"
+msgstr ""
+
+#: ui/extend-dialog.slint:88
+msgctxt "ExtendDialog"
+msgid "Extend {}"
+msgstr ""
+
+#: ui/extend-dialog.slint:95
+msgctxt "ExtendDialog"
+msgid "Add calibration values for a target this resin does not cover yet."
+msgstr ""
+
+#: ui/extend-dialog.slint:116
+msgctxt "ExtendDialog"
+msgid "Copy values from"
+msgstr ""
+
+#: ui/extend-dialog.slint:129
+msgctxt "ExtendDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:133
+msgctxt "ExtendDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:137
+msgctxt "ExtendDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: ui/extend-dialog.slint:141
+msgctxt "ExtendDialog"
+msgid "Wait before cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:145
+msgctxt "ExtendDialog"
+msgid "Wait after cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:149
+msgctxt "ExtendDialog"
+msgid "Wait after lift (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:153
+msgctxt "ExtendDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:157
+msgctxt "ExtendDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:161
+msgctxt "ExtendDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:165
+msgctxt "ExtendDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:169
+msgctxt "ExtendDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:173
+msgctxt "ExtendDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:177
+msgctxt "ExtendDialog"
+msgid "Second lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:181
+msgctxt "ExtendDialog"
+msgid "Second lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:185
+msgctxt "ExtendDialog"
+msgid "Second retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:189
+msgctxt "ExtendDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:193
+msgctxt "ExtendDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:197
+msgctxt "ExtendDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:201
+msgctxt "ExtendDialog"
+msgid "Bottom second lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:205
+msgctxt "ExtendDialog"
+msgid "Bottom second lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:209
+msgctxt "ExtendDialog"
+msgid "Bottom second retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:213
+msgctxt "ExtendDialog"
+msgid "Light power (%)"
+msgstr ""
+
+#: ui/extend-dialog.slint:217
+msgctxt "ExtendDialog"
+msgid "Bottom light power (%)"
+msgstr ""
+
+#: ui/extend-dialog.slint:235
+msgctxt "ExtendDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/extend-dialog.slint:243
+msgctxt "ExtendDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/fork-dialog.slint:14
+msgctxt "ForkDialog"
+msgid "Fork resin profile"
+msgstr ""
+
+#: ui/fork-dialog.slint:77
+msgctxt "ForkDialog"
+msgid "Fork {}"
+msgstr ""
+
+#: ui/fork-dialog.slint:88
+msgctxt "ForkDialog"
+msgid "Brand"
+msgstr ""
+
+#: ui/fork-dialog.slint:103
+msgctxt "ForkDialog"
+msgid "Name"
+msgstr ""
+
+#: ui/fork-dialog.slint:119
+msgctxt "ForkDialog"
+msgid "Copy from the source:"
+msgstr ""
+
+#: ui/fork-dialog.slint:132
+msgctxt "ForkDialog"
+msgid "Intent"
+msgstr ""
+
+#: ui/fork-dialog.slint:136
+msgctxt "ForkDialog"
+msgid "Defaults"
+msgstr ""
+
+#: ui/fork-dialog.slint:140
+msgctxt "ForkDialog"
+msgid "Calibration: {}"
+msgstr ""
+
+#: ui/fork-dialog.slint:161
+msgctxt "ForkDialog"
+msgid "Create"
+msgstr ""
+
+#: ui/fork-dialog.slint:168
+msgctxt "ForkDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/mesh-viewer.slint:136
+msgctxt "MeshViewer"
+msgid "3D model viewer, empty"
+msgstr ""
+
+#: ui/mesh-viewer.slint:137
+msgctxt "MeshViewer"
+msgid "3D model viewer"
+msgstr ""
+
+#: ui/mesh-viewer.slint:138
+msgctxt "MeshViewer"
+msgid ""
+"Right-click drag or arrow keys to rotate. Shift with right-click drag, "
+"middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or "
+"Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
+"for front, right, or top views; hold Control for back, left, or bottom."
+msgstr ""
+
+#: ui/mesh-viewer.slint:462
+msgctxt "MeshViewer"
+msgid "Copy"
+msgstr ""
+
+#: ui/mesh-viewer.slint:468
+msgctxt "MeshViewer"
+msgid "Delete"
+msgstr ""
+
+#: ui/mesh-viewer.slint:474
+msgctxt "MeshViewer"
+msgid "Paste"
+msgstr ""
+
+#: src/preferences_window.rs:546 src/preferences_window.rs:570
+msgctxt "FileDialog"
+msgid "Profile package"
+msgstr ""
+
+#: src/preferences_window.rs:591
+msgctxt "PreferencesPage"
+msgid "Overwrite"
+msgstr ""
+
+#: src/preferences_window.rs:593
+msgctxt "PreferencesPage"
+msgid "Overwrite existing profiles?"
+msgstr ""
+
+#: src/preferences_window.rs:597 src/preferences_window.rs:1379
+msgctxt "PreferencesPage"
+msgid "Cancel"
+msgstr ""
+
+#: src/preferences_window.rs:787 src/preferences_window.rs:1606
+msgctxt "PreferencesPage"
+msgid "{} (extended)"
+msgstr ""
+
+#: src/preferences_window.rs:1013
+msgctxt "ForkDialog"
+msgid "{} (fork)"
+msgstr ""
+
+#: src/preferences_window.rs:1112
+msgctxt "ProfileViewDialog"
+msgid ""
+"The forked profile is already in your library. Close keeps it unchanged."
+msgstr ""
+
+#: src/preferences_window.rs:1361
+msgctxt "PreferencesPage"
+msgid "Deleting the extension of {} removes every calibration pair it adds."
+msgstr ""
+
+#: src/preferences_window.rs:1368
+msgctxt "PreferencesPage"
+msgid "Deleting {} removes the custom profile file."
+msgstr ""
+
+#: src/preferences_window.rs:1373
+msgctxt "PreferencesPage"
+msgid "Delete"
+msgstr ""
+
+#: src/preferences_window.rs:1375
+msgctxt "PreferencesPage"
+msgid "Delete profile?"
+msgstr ""
+
+#: src/preferences_window.rs:1705
+msgctxt "PreferencesPage"
+msgid "Generic"
+msgstr ""
+
+#: src/viewport/controller.rs:728
+msgctxt "ErrorDialog"
+msgid "Edit failed"
+msgstr ""
+
+#: src/viewport/controller.rs:732
+msgctxt "ErrorDialog"
+msgid "The scene rejected the last edit; nothing was changed."
+msgstr ""
+
+#: src/viewport/controller.rs:1099
+msgctxt "ErrorDialog"
+msgid "The 3D view could not start"
+msgstr ""
+
+#: src/viewport/controller.rs:1100
+msgctxt "ErrorDialog"
+msgid "Files cannot be opened in this window."
+msgstr ""
+
+#: src/viewport/controller.rs:1347
+msgctxt "MeshViewer"
+msgid "FRONT"
+msgstr ""
+
+#: src/viewport/controller.rs:1430
+msgctxt "ErrorDialog"
+msgid "Failed to display the 3D model"
+msgstr ""
+
+#: src/viewport/controller.rs:1434
+msgctxt "ErrorDialog"
+msgid "The rendered texture could not be handed to the UI."
+msgstr ""
+
+#: src/viewport/object_list.rs:53
+msgctxt "ObjectList"
+msgid "Object {}"
+msgstr ""
+
+#: src/wiring.rs:339
+msgctxt "FileDialog"
+msgid "All supported files"
+msgstr ""
+
+#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:704
+msgctxt "FileDialog"
+msgid "3MF files"
+msgstr ""
+
+#: src/wiring.rs:343 src/wiring.rs:700
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr ""
+
+#: src/wiring.rs:345
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr ""
+
+#: src/wiring.rs:348
+msgctxt "FileDialog"
+msgid "All files"
+msgstr ""
+
+#: src/wiring.rs:559
+msgctxt "ErrorDialog"
+msgid "Failed to save"
+msgstr ""
+
+#: src/wiring.rs:560 src/wiring.rs:678 src/scene_loader.rs:563
+#: src/app_state.rs:718 src/export_print_file.rs:264
+msgctxt "ErrorDialog"
+msgid "File: {}"
+msgstr ""
+
+#: src/wiring.rs:677
+msgctxt "ErrorDialog"
+msgid "Failed to export"
+msgstr ""
+
+#: src/wiring.rs:692
+msgctxt "FileDialog"
+msgid "STL (binary)"
+msgstr ""
+
+#: src/wiring.rs:696
+msgctxt "FileDialog"
+msgid "STL (ASCII)"
+msgstr ""
+
+#: src/scene_loader.rs:490
+msgctxt "ErrorDialog"
+msgid "Failed to prepare the 3D view"
+msgstr ""
+
+#: src/scene_loader.rs:494
+msgctxt "ErrorDialog"
+msgid ""
+"The scene could not be handed to the graphics device. The 3D view shows the "
+"build plate alone until the next successful update."
+msgstr ""
+
+#: src/scene_loader.rs:516
+msgctxt "ErrorDialog"
+msgid "The cut is drawn without its fill until another layer is shown."
+msgstr ""
+
+#: src/scene_loader.rs:520
+msgctxt "ErrorDialog"
+msgid "The 3D view keeps its last image until it is resized."
+msgstr ""
+
+#: src/scene_loader.rs:524
+msgctxt "ErrorDialog"
+msgid "Failed to draw the 3D view"
+msgstr ""
+
+#: src/scene_loader.rs:562
+msgctxt "ErrorDialog"
+msgid "Failed to open 3D model"
+msgstr ""
+
+#: src/profile_view.rs:62
+msgctxt "ProfileViewDialog"
+msgid "not set"
+msgstr ""
+
+#: src/profile_view.rs:96
+msgctxt "ProfileViewDialog"
+msgid "Bundled"
+msgstr ""
+
+#: src/profile_view.rs:97
+msgctxt "ProfileViewDialog"
+msgid "Custom"
+msgstr ""
+
+#: src/profile_view.rs:100
+msgctxt "ProfileViewDialog"
+msgid "Identity"
+msgstr ""
+
+#: src/profile_view.rs:104
+msgctxt "ProfileViewDialog"
+msgid "Brand"
+msgstr ""
+
+#: src/profile_view.rs:108
+msgctxt "ProfileViewDialog"
+msgid "Name"
+msgstr ""
+
+#: src/profile_view.rs:112
+msgctxt "ProfileViewDialog"
+msgid "Family"
+msgstr ""
+
+#: src/profile_view.rs:116
+msgctxt "ProfileViewDialog"
+msgid "Profile version"
+msgstr ""
+
+#: src/profile_view.rs:119
+msgctxt "ProfileViewDialog"
+msgid "Origin"
+msgstr ""
+
+#: src/profile_view.rs:126
+msgctxt "ProfileViewDialog"
+msgid "Intent"
+msgstr ""
+
+#: src/profile_view.rs:130
+msgctxt "ProfileViewDialog"
+msgid "Target energy density (mJ/cm2)"
+msgstr ""
+
+#: src/profile_view.rs:134
+msgctxt "ProfileViewDialog"
+msgid "Target layer height (mm)"
+msgstr ""
+
+#: src/profile_view.rs:158
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation (x/y/z)"
+msgstr ""
+
+#: src/profile_view.rs:225
+msgctxt "ProfileViewDialog"
+msgid "Generic"
+msgstr ""
+
+#: src/profile_view.rs:288
+msgctxt "ProfileViewDialog"
+msgid "Generic calibration"
+msgstr ""
+
+#: src/profile_view.rs:291
+msgctxt "ProfileViewDialog"
+msgid "Calibration: {}"
+msgstr ""
+
+#: src/material_form.rs:141
+msgctxt "MaterialForm"
+msgid "Normal exposure"
+msgstr ""
+
+#: src/material_form.rs:142
+msgctxt "MaterialForm"
+msgid "Bottom exposure"
+msgstr ""
+
+#: src/material_form.rs:143
+msgctxt "MaterialForm"
+msgid "Bottom layer count"
+msgstr ""
+
+#: src/material_form.rs:144
+msgctxt "MaterialForm"
+msgid "Wait before cure"
+msgstr ""
+
+#: src/material_form.rs:145
+msgctxt "MaterialForm"
+msgid "Wait after cure"
+msgstr ""
+
+#: src/material_form.rs:146
+msgctxt "MaterialForm"
+msgid "Wait after lift"
+msgstr ""
+
+#: src/material_form.rs:147
+msgctxt "MaterialForm"
+msgid "Bottom wait before cure"
+msgstr ""
+
+#: src/material_form.rs:148
+msgctxt "MaterialForm"
+msgid "Bottom wait after cure"
+msgstr ""
+
+#: src/material_form.rs:149
+msgctxt "MaterialForm"
+msgid "Bottom wait after lift"
+msgstr ""
+
+#: src/material_form.rs:150
+msgctxt "MaterialForm"
+msgid "Lift distance"
+msgstr ""
+
+#: src/material_form.rs:151
+msgctxt "MaterialForm"
+msgid "Lift speed"
+msgstr ""
+
+#: src/material_form.rs:152
+msgctxt "MaterialForm"
+msgid "Retract speed"
+msgstr ""
+
+#: src/material_form.rs:153
+msgctxt "MaterialForm"
+msgid "Second lift distance"
+msgstr ""
+
+#: src/material_form.rs:154
+msgctxt "MaterialForm"
+msgid "Second lift speed"
+msgstr ""
+
+#: src/material_form.rs:155
+msgctxt "MaterialForm"
+msgid "Second retract speed"
+msgstr ""
+
+#: src/material_form.rs:156
+msgctxt "MaterialForm"
+msgid "Bottom lift distance"
+msgstr ""
+
+#: src/material_form.rs:157
+msgctxt "MaterialForm"
+msgid "Bottom lift speed"
+msgstr ""
+
+#: src/material_form.rs:158
+msgctxt "MaterialForm"
+msgid "Bottom retract speed"
+msgstr ""
+
+#: src/material_form.rs:160
+msgctxt "MaterialForm"
+msgid "Bottom second lift distance"
+msgstr ""
+
+#: src/material_form.rs:162
+msgctxt "MaterialForm"
+msgid "Bottom second lift speed"
+msgstr ""
+
+#: src/material_form.rs:164
+msgctxt "MaterialForm"
+msgid "Bottom second retract speed"
+msgstr ""
+
+#: src/material_form.rs:166
+msgctxt "MaterialForm"
+msgid "Light power"
+msgstr ""
+
+#: src/material_form.rs:167
+msgctxt "MaterialForm"
+msgid "Bottom light power"
+msgstr ""
+
+#: src/material_form.rs:168
+msgctxt "MaterialForm"
+msgid "Scale compensation x"
+msgstr ""
+
+#: src/material_form.rs:169
+msgctxt "MaterialForm"
+msgid "Scale compensation y"
+msgstr ""
+
+#: src/material_form.rs:170
+msgctxt "MaterialForm"
+msgid "Scale compensation z"
+msgstr ""
+
+#: src/material_form.rs:211
+msgctxt "MaterialForm"
+msgid "the second travel stage"
+msgstr ""
+
+#: src/material_form.rs:212
+msgctxt "MaterialForm"
+msgid "the bottom second travel stage"
+msgstr ""
+
+#: src/material_form.rs:246
+msgctxt "MaterialForm"
+msgid "{} must be a number"
+msgstr ""
+
+#: src/material_form.rs:253
+msgctxt "MaterialForm"
+msgid "{} is out of range"
+msgstr ""
+
+#: src/material_form.rs:259
+msgctxt "MaterialForm"
+msgid "Fill all three scale compensation axes, or leave all three empty"
+msgstr ""
+
+#: src/material_form.rs:263
+msgctxt "MaterialForm"
+msgid "Fill all three values of {}, or leave all three empty"
+msgstr ""
+
+#: src/preferences_filters.rs:59
+msgctxt "PreferencesPage"
+msgid "All"
+msgstr ""
+
+#: src/app_state.rs:434 src/lib.rs:292
+msgctxt "ErrorDialog"
+msgid "The graphics device was lost"
+msgstr ""
+
+#: src/app_state.rs:717
+msgctxt "ErrorDialog"
+msgid "Unsupported file type"
+msgstr ""
+
+#: src/app_state.rs:721
+msgctxt "ErrorDialog"
+msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/app_state.rs:952
+msgctxt "SaveDialog"
+msgid "Scene not replaced"
+msgstr ""
+
+#: src/app_state.rs:955
+msgctxt "SaveDialog"
+msgid ""
+"The scene changed while saving, so the file does not hold its current state. "
+"Nothing was replaced."
+msgstr ""
+
+#: src/repair_run.rs:178 src/repair_run.rs:212
+msgctxt "RepairDialog"
+msgid "Repair failed"
+msgstr ""
+
+#: src/repair_run.rs:180
+msgctxt "RepairDialog"
+msgid "The repair worker crashed."
+msgstr ""
+
+#: src/repair_run.rs:189
+msgctxt "RepairDialog"
+msgid "Repair discarded"
+msgstr ""
+
+#: src/repair_run.rs:192
+msgctxt "RepairDialog"
+msgid "The scene changed while repairing; nothing was applied."
+msgstr ""
+
+#: src/repair_run.rs:205
+msgctxt "RepairDialog"
+msgid "Mesh repair"
+msgstr ""
+
+#: src/repair_run.rs:216
+msgctxt "RepairDialog"
+msgid "The scene rejected the repair edit; nothing was changed."
+msgstr ""
+
+#: src/repair_run.rs:312
+msgctxt "RepairDialog"
+msgid "No problems found."
+msgstr ""
+
+#: src/repair_run.rs:316
+msgctxt "RepairDialog"
+msgid "{} mesh(es) repaired"
+msgstr ""
+
+#: src/repair_run.rs:322
+msgctxt "RepairDialog"
+msgid "{} mesh(es) could not be fully repaired"
+msgstr ""
+
+#: src/repair_run.rs:332
+msgctxt "RepairDialog"
+msgid "{} mesh(es) still not edge-manifold"
+msgstr ""
+
+#: src/repair_run.rs:360
+msgctxt "RepairDialog"
+msgid "removed {} degenerate face(s)"
+msgstr ""
+
+#: src/repair_run.rs:364
+msgctxt "RepairDialog"
+msgid "reoriented {} face(s)"
+msgstr ""
+
+#: src/repair_run.rs:368
+msgctxt "RepairDialog"
+msgid "could not be fully repaired: {}"
+msgstr ""
+
+#: src/repair_run.rs:372
+msgctxt "RepairDialog"
+msgid "still not edge-manifold"
+msgstr ""
+
+#: src/repair_run.rs:403
+msgctxt "RepairDialog"
+msgid "Mesh {}"
+msgstr ""
+
+#: src/profile_forking.rs:52
+msgctxt "ForkDialog"
+msgid "Enter a name for the forked profile"
+msgstr ""
+
+#: src/profile_forking.rs:53
+msgctxt "ForkDialog"
+msgid "Enter a brand for the forked profile"
+msgstr ""
+
+#: src/profile_forking.rs:57
+msgctxt "ForkDialog"
+msgid "Could not derive a free profile id from that name"
+msgstr ""
+
+#: src/support_gen_run.rs:150
+msgctxt "GenSupportDialog"
+msgid "Support generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:222 src/support_gen_run.rs:243
+msgctxt "GenSupportDialog"
+msgid "Support-structures generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:226
+msgctxt "GenSupportDialog"
+msgid ""
+"The scene rejected one or more generated support structures; nothing was "
+"changed for those."
+msgstr ""
+
+#: src/support_gen_run.rs:236
+msgctxt "GenSupportDialog"
+msgid "Support-structures generated"
+msgstr ""
+
+#: src/support_gen_run.rs:272
+msgctxt "GenSupportDialog"
+msgid ""
+"{} of {} Support structure(s) added to the scene. Estimated material: {} g."
+msgstr ""
+
+#: src/support_gen_run.rs:281
+msgctxt "GenSupportDialog"
+msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
+msgstr ""
+
+#: src/print_format.rs:72
+msgctxt "SlicePanel"
+msgid "this build cannot write it yet"
+msgstr ""
+
+#: src/print_format.rs:148
+msgctxt "SlicePanel"
+msgid ".goo (automatic)"
+msgstr ""
+
+#: src/print_format.rs:149
+msgctxt "SlicePanel"
+msgid ".ctb (automatic)"
+msgstr ""
+
+#: src/print_format.rs:159
+msgctxt "SlicePanel"
+msgid ".goo (V3.0)"
+msgstr ""
+
+#: src/print_format.rs:160
+msgctxt "SlicePanel"
+msgid ".goo (V5.1)"
+msgstr ""
+
+#: src/print_format.rs:161
+msgctxt "SlicePanel"
+msgid ".ctb (v5)"
+msgstr ""
+
+#: src/print_format.rs:163
+msgctxt "SlicePanel"
+msgid ".ctb (v5 encrypted)"
+msgstr ""
+
+#: src/graphics_status.rs:69
+msgctxt "ErrorDialog"
+msgid "The 3D view is still starting up. Please try again in a moment."
+msgstr ""
+
+#: src/graphics_status.rs:74
+msgctxt "ErrorDialog"
+msgid ""
+"The 3D view could not start: this window renders through {}, which this "
+"build cannot use for 3D."
+msgstr ""
+
+#: src/graphics_status.rs:80
+msgctxt "ErrorDialog"
+msgid "{} Files cannot be opened in this window."
+msgstr ""
+
+#: src/graphics_status.rs:86
+msgctxt "ErrorDialog"
+msgid ""
+"The graphics device was lost. Save your work and restart the application."
+msgstr ""
+
+#: src/mesh_loader.rs:66
+msgctxt "ErrorDialog"
+msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/lib.rs:297
+msgctxt "ErrorDialog"
+msgid ""
+"The application has to close; restart it once the graphics driver is back."
+msgstr ""
+
+#: src/export_print_file.rs:263
+msgctxt "ErrorDialog"
+msgid "Cannot export for the printer"
+msgstr ""
+
+#: src/export_print_file.rs:277
+msgctxt "FileDialog"
+msgid "Printer files"
+msgstr ""
+
+#: src/profile_extending.rs:60 src/profile_extending.rs:92
+msgctxt "ExtendDialog"
+msgid "Generic"
+msgstr ""
+
+#: src/profile_transfer.rs:93
+msgctxt "PreferencesPage"
+msgid "Importing this package would overwrite existing profiles:"
+msgstr ""
+
+#: src/profile_transfer.rs:98
+msgctxt "PreferencesPage"
+msgid "Printers"
+msgstr ""
+
+#: src/profile_transfer.rs:103
+msgctxt "PreferencesPage"
+msgid "Materials"
+msgstr ""
+
+#: src/profile_transfer.rs:108
+msgctxt "PreferencesPage"
+msgid "Material extensions"
+msgstr ""

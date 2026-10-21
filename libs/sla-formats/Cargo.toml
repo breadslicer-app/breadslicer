@@ -1,0 +1,33 @@
+[package]
+name = "sc-sla-formats"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Writers for SLA-printer file formats and debug per-layer outputs."
+categories = ["rendering::data-formats"]
+keywords = ["3d", "slicer", "resin", "sla"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-3mf.workspace = true
+sc-mesh-core.workspace = true
+sc-mesh-formats.workspace = true
+sc-print-primitives.workspace = true
+sc-scene.workspace = true
+sc-sl1cer.workspace = true
+
+aes.workspace = true
+cbc.workspace = true
+crc32fast.workspace = true
+png = "0.18.1"
+sha2.workspace = true
+
+[dev-dependencies]
+sc-mesh-fixtures.workspace = true
+
+proptest.workspace = true
+tempfile = "3.23.0"

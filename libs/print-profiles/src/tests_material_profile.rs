@@ -1,0 +1,306 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+use sc_print_primitives::PrinterId;
+
+use super::calibration_target::CalibrationTarget;
+use super::material_physical::MaterialPhysical;
+use super::material_profile::{MaterialProfile, MaterialProfileReservedSection};
+
+fn target(raw: &str) -> CalibrationTarget {
+    CalibrationTarget::from_printer(&PrinterId::new(raw).unwrap())
+}
+
+const MINIMAL_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+name = "Blu"
+family = "standard"
+profile_version = "1.0.0"
+
+[intent]
+target_energy_density_mj_per_cm2 = 15.5
+
+[defaults]
+bottom_layer_count = 6
+"#;
+
+const WITH_PER_PRINTER_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+name = "Blu"
+family = "standard"
+profile_version = "1.0.0"
+
+[intent]
+target_energy_density_mj_per_cm2 = 15.5
+
+[defaults]
+bottom_layer_count = 6
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+lift_distance_mm = 6.0
+
+[per_printer."elegoo-saturn-4"]
+normal_exposure_sec = 2.8
+bottom_exposure_sec = 35.0
+"#;
+
+#[test]
+fn deserialise_parses_minimal_profile_with_empty_per_printer() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    assert_eq!(parsed.identity.brand.as_str(), "Siraya Tech");
+    assert_eq!(
+        parsed
+            .intent
+            .target_energy_density_mj_per_cm2
+            .map(|v| v.value()),
+        Some(15.5)
+    );
+    assert_eq!(parsed.defaults.bottom_layer_count, Some(6));
+    assert!(parsed.per_printer.is_empty());
+}
+
+#[test]
+fn deserialise_parses_profile_with_per_printer_entries() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(WITH_PER_PRINTER_TOML).unwrap();
+    assert_eq!(parsed.per_printer.len(), 2);
+    let saturn_ultra = target("elegoo-saturn-4-ultra");
+    let entry = parsed.per_printer.get(&saturn_ultra).unwrap();
+    assert_eq!(entry.normal_exposure_sec.map(|v| v.value()), Some(2.5));
+    assert_eq!(entry.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
+    assert_eq!(entry.lift_distance_mm.map(|v| v.value()), Some(6.0));
+    let saturn = target("elegoo-saturn-4");
+    let entry = parsed.per_printer.get(&saturn).unwrap();
+    assert_eq!(entry.normal_exposure_sec.map(|v| v.value()), Some(2.8));
+}
+
+#[test]
+fn a_profile_written_before_the_physical_section_still_parses() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    assert_eq!(parsed.physical, MaterialPhysical::default());
+}
+
+#[test]
+fn deserialise_parses_the_physical_section() {
+    let toml = format!("{MINIMAL_TOML}\n[physical]\ncured_density_g_per_cm3 = 1.15\n");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    assert_eq!(
+        parsed.physical.cured_density_g_per_cm3.map(|d| d.value()),
+        Some(1.15),
+    );
+}
+
+#[test]
+fn roundtrip_preserves_the_physical_section() {
+    let toml = format!(
+        "{MINIMAL_TOML}\n[physical]\nliquid_density_g_per_cm3 = 1.1\ncured_density_g_per_cm3 = 1.15\n",
+    );
+    let original: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    let rendered = toml_edit::ser::to_string(&original).unwrap();
+    let parsed: MaterialProfile = toml_edit::de::from_str(&rendered).unwrap();
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn deserialise_rejects_per_environment_section() {
+    let toml = format!("{MINIMAL_TOML}\n[per_environment.cold]\nbias = 0.1\n");
+    let err = toml_edit::de::from_str::<MaterialProfile>(&toml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("per_environment"), "msg: {msg}");
+    assert!(msg.contains("v0"), "msg: {msg}");
+}
+
+#[test]
+fn deserialise_rejects_per_session_state_section() {
+    let toml = format!("{MINIMAL_TOML}\n[per_session_state.fresh_resin]\nbias = 0.1\n");
+    let err = toml_edit::de::from_str::<MaterialProfile>(&toml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("per_session_state"), "msg: {msg}");
+    assert!(msg.contains("v0"), "msg: {msg}");
+}
+
+#[test]
+fn deserialise_rejects_per_printer_constraints_as_nested_section() {
+    let toml = format!(
+        "{MINIMAL_TOML}\n[per_printer.\"elegoo-saturn-4-ultra\"]\nnormal_exposure_sec = 2.5\n\n[per_printer.\"elegoo-saturn-4-ultra\".constraints]\nz_step_mm = 0.01\n",
+    );
+    let err = toml_edit::de::from_str::<MaterialProfile>(&toml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("constraints"), "msg: {msg}");
+    assert!(msg.contains("elegoo-saturn-4-ultra"), "msg: {msg}");
+    assert!(msg.contains("v0"), "msg: {msg}");
+}
+
+#[test]
+fn deserialise_rejects_per_printer_constraints_as_inline_table() {
+    let toml = format!(
+        "{MINIMAL_TOML}\n[per_printer.\"elegoo-saturn-4-ultra\"]\nnormal_exposure_sec = 2.5\nconstraints = {{ z_step_mm = 0.01 }}\n",
+    );
+    let err = toml_edit::de::from_str::<MaterialProfile>(&toml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("constraints"), "msg: {msg}");
+    assert!(msg.contains("elegoo-saturn-4-ultra"), "msg: {msg}");
+}
+
+#[test]
+fn per_printer_constraints_error_variant_carries_printer_id() {
+    let toml = format!(
+        "{MINIMAL_TOML}\n[per_printer.\"elegoo-saturn-4-ultra\"]\nnormal_exposure_sec = 2.5\n\n[per_printer.\"elegoo-saturn-4-ultra\".constraints]\nz_step_mm = 0.01\n",
+    );
+    let err = toml_edit::de::from_str::<MaterialProfile>(&toml);
+    assert!(err.is_err());
+}
+
+#[test]
+fn deserialise_rejects_invalid_per_printer_id() {
+    let toml = format!("{MINIMAL_TOML}\n[per_printer.\"Bad-Caps\"]\nnormal_exposure_sec = 2.5\n",);
+    assert!(toml_edit::de::from_str::<MaterialProfile>(&toml).is_err());
+}
+
+#[test]
+fn extension_flag_defaults_to_false() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    assert!(!parsed.extension);
+}
+
+#[test]
+fn extension_flag_parses_when_present() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    assert!(parsed.extension);
+}
+
+#[test]
+fn serialise_omits_the_extension_flag_when_false() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&parsed).unwrap();
+    assert!(
+        !serialised.contains("extension"),
+        "should not emit extension when false: {serialised}"
+    );
+}
+
+#[test]
+fn serialise_emits_the_extension_flag_before_the_sections_when_true() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    // The pretty serialiser renders the sections as standard tables,
+    // making the flag-before-tables ordering observable.
+    let serialised = toml_edit::ser::to_string_pretty(&parsed).unwrap();
+    let flag_pos = serialised.find("extension = true").unwrap();
+    let identity_pos = serialised.find("[identity]").unwrap();
+    assert!(flag_pos < identity_pos, "serialised: {serialised}");
+}
+
+#[test]
+fn roundtrip_preserves_the_extension_flag() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let original: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+    assert!(roundtripped.extension);
+}
+
+#[test]
+fn roundtrip_with_per_printer_entries_preserves_value() {
+    let original: MaterialProfile = toml_edit::de::from_str(WITH_PER_PRINTER_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn roundtrip_keeps_a_second_travel_stage_inside_the_block_that_declared_it() {
+    let toml = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+name = "Standard Grey"
+family = "standard"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 2
+
+[per_printer."elegoo-mars-5"]
+normal_exposure_sec = 2.5
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer."elegoo-mars-3"]
+normal_exposure_sec = 2.8
+lift_distance_mm = 5.0
+"#;
+    let original: MaterialProfile = toml_edit::de::from_str(toml).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+    let two_stage = roundtripped
+        .per_printer
+        .get(&target("elegoo-mars-5"))
+        .unwrap();
+    assert_eq!(
+        two_stage.second_travel.map(|s| s.lift_speed_mm_min.value()),
+        Some(230.0)
+    );
+    let single_stage = roundtripped
+        .per_printer
+        .get(&target("elegoo-mars-3"))
+        .unwrap();
+    assert!(single_stage.second_travel.is_none());
+}
+
+#[test]
+fn roundtrip_minimal_preserves_value() {
+    let original: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn serialise_does_not_emit_reserved_sections() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(WITH_PER_PRINTER_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&parsed).unwrap();
+    assert!(
+        !serialised.contains("per_environment"),
+        "should not emit per_environment: {serialised}"
+    );
+    assert!(
+        !serialised.contains("per_session_state"),
+        "should not emit per_session_state: {serialised}"
+    );
+    assert!(
+        !serialised.contains("constraints"),
+        "should not emit per-printer constraints: {serialised}"
+    );
+}
+
+#[test]
+fn reserved_section_display_messages_are_descriptive() {
+    let env = MaterialProfileReservedSection::PerEnvironment;
+    assert!(format!("{env}").contains("per_environment"));
+
+    let session = MaterialProfileReservedSection::PerSessionState;
+    assert!(format!("{session}").contains("per_session_state"));
+
+    let pp = MaterialProfileReservedSection::PerPrinterConstraints {
+        target: target("elegoo-saturn-4-ultra"),
+    };
+    let msg = format!("{pp}");
+    assert!(msg.contains("elegoo-saturn-4-ultra"), "msg: {msg}");
+    assert!(msg.contains("constraints"), "msg: {msg}");
+}

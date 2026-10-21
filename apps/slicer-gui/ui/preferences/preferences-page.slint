@@ -1,0 +1,31 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+export component PreferencesPage inherits VerticalLayout {
+    in property <string> title;
+    // When true the page uses the default `stretch` alignment, so a
+    // child with a nonzero `vertical-stretch` (a gallery or list) fills
+    // the remaining height. When false the children keep their minimum
+    // size and pack at the top, which suits the short field pages.
+    in property <bool> fill: false;
+
+    padding: 16px;
+    spacing: 12px;
+    alignment: root.fill ? LayoutAlignment.stretch : LayoutAlignment.start;
+
+    accessible-role: tab-panel;
+    accessible-label: root.title;
+
+    Text {
+        text: root.title;
+        font-size: 1.2rem;
+        font-weight: 700;
+        // Title is already exposed as the panel's accessible-label; avoid
+        // a duplicate node in the a11y tree.
+        accessible-role: none;
+    }
+
+    @children
+}

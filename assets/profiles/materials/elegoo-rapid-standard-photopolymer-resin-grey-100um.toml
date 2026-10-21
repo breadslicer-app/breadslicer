@@ -1,0 +1,34 @@
+[identity]
+id = "elegoo-rapid-standard-photopolymer-resin-grey-100um"
+brand = "ELEGOO"
+family = "standard"
+name = "Rapid Standard Photopolymer Resin (Grey, 100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+# NOTE: This parameter works for Fast Resin + Fast Speed(Hollow model, wall thickness>2mm, model has holes)
+[per_printer.elegoo-mars-4-ultra]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 40.0
+wait_before_cure_sec = 0.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+second_travel = { lift_distance_mm = 1.0, lift_speed_mm_min = 1000.0, retract_speed_mm_min = 1000.0 }
+
+# NOTE: This parameter works for Fast Resin + Fast Speed(Hollow model, wall thickness>2mm, model has holes)
+[per_printer.elegoo-saturn-3-ultra]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+second_travel = { lift_distance_mm = 1.0, lift_speed_mm_min = 1000.0, retract_speed_mm_min = 1000.0 }

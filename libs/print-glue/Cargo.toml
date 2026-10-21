@@ -1,0 +1,28 @@
+[package]
+name = "sc-print-glue"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Application services joining crates that do not know each other, such as the print profiles and the slicing engine, or the scene and the build volume."
+categories = ["data-structures"]
+keywords = ["3d", "printing", "resin", "sla", "slicing"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-mesh-core = { workspace = true }
+sc-print-primitives = { workspace = true }
+sc-print-profiles = { workspace = true }
+sc-scene = { workspace = true }
+sc-sl1cer = { workspace = true }
+sc-sla-formats = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+sc-mesh-fixtures = { workspace = true }
+sc-scene-fixtures = { workspace = true }
+toml_edit = { workspace = true }

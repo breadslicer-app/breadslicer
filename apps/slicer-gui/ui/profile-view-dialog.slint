@@ -1,0 +1,415 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, ComboBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
+import { ThemePreference } from "preferences/appearance.slint";
+
+// One displayed value of the profile viewer. `value` is already
+// formatted on the Rust side; unset optional fields arrive as the
+// translated "not set" text rather than an empty string.
+export struct ProfileViewField {
+    label: string,
+    value: string,
+}
+
+// One section of the profile viewer: identity, intent, defaults, or a
+// calibration block. The section holding the calibration the default
+// printer would use is highlighted.
+export struct ProfileViewSection {
+    title: string,
+    highlighted: bool,
+    fields: [ProfileViewField],
+}
+
+// A labelled text field of the editor. External updates (re-seeding
+// after a target switch) must be pushed back into the LineEdit
+// explicitly: its text binding breaks the first time the user types.
+export component EditField inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <string> value;
+
+    spacing: 8px;
+
+    Text {
+        text: root.label;
+        font-size: 0.85rem;
+        color: Palette.foreground.transparentize(0.3);
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    input := LineEdit {
+        text: root.value;
+        width: 130px;
+        edited(t) => {
+            root.value = t;
+        }
+    }
+
+    changed value => {
+        input.text = root.value;
+    }
+}
+
+// View of a material profile: every section and every field, including
+// unset ones. Bundled profiles are shown read-only; custom profiles
+// additionally get the edit mode, where the defaults are editable and
+// one calibration pair per session can be picked and edited.
+export component ProfileViewDialog inherits Window {
+    title: @tr("ProfileViewDialog" => "Resin profile");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+
+    // Headline: the resin's display name, plus the profile origin.
+    in property <string> profile-name;
+    // Optional notice under the headline (e.g. that a fresh fork is
+    // already saved); hidden when empty.
+    in property <string> note;
+    in property <[ProfileViewSection]> sections;
+
+    // Edit mode. `editable` turns the edit cards on; extensions keep
+    // their defaults inherited from the parent profile, so their
+    // editor hides the defaults card via `defaults-editable`.
+    in property <bool> editable: false;
+    in property <bool> defaults-editable: false;
+    in property <string> error-message;
+
+    in-out property <string> scale-x-text;
+    in-out property <string> scale-y-text;
+    in-out property <string> scale-z-text;
+    in-out property <string> defaults-bottom-count-text;
+    in-out property <string> defaults-wait-before-cure-text;
+    in-out property <string> defaults-wait-after-cure-text;
+    in-out property <string> defaults-wait-after-lift-text;
+    in-out property <string> defaults-light-pwm-text;
+    in-out property <string> defaults-bottom-light-pwm-text;
+
+    // One calibration pair per editing session: the picker lists the
+    // profile's own blocks and the value fields appear once one is
+    // picked.
+    in property <[string]> edit-target-labels;
+    in-out property <int> edit-target-index: -1;
+    in-out property <string> normal-exposure-text;
+    in-out property <string> bottom-exposure-text;
+    in-out property <string> block-bottom-count-text;
+    in-out property <string> wait-before-cure-text;
+    in-out property <string> wait-after-cure-text;
+    in-out property <string> wait-after-lift-text;
+    in-out property <string> bottom-wait-before-cure-text;
+    in-out property <string> bottom-wait-after-cure-text;
+    in-out property <string> bottom-wait-after-lift-text;
+    in-out property <string> lift-distance-text;
+    in-out property <string> lift-speed-text;
+    in-out property <string> retract-speed-text;
+    in-out property <string> second-lift-distance-text;
+    in-out property <string> second-lift-speed-text;
+    in-out property <string> second-retract-speed-text;
+    in-out property <string> bottom-lift-distance-text;
+    in-out property <string> bottom-lift-speed-text;
+    in-out property <string> bottom-retract-speed-text;
+    in-out property <string> bottom-second-lift-distance-text;
+    in-out property <string> bottom-second-lift-speed-text;
+    in-out property <string> bottom-second-retract-speed-text;
+    in-out property <string> light-pwm-text;
+    in-out property <string> bottom-light-pwm-text;
+
+    callback edit-target-changed(int);
+    callback save-requested();
+    callback close-requested();
+
+    min-width: 420px;
+    preferred-width: 480px;
+    min-height: 320px;
+    preferred-height: 560px;
+
+    forward-focus: close-button;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            Text {
+                text: root.profile-name;
+                font-size: 1.1rem;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            if root.note != "": Text {
+                text: root.note;
+                font-size: 0.85rem;
+                color: Palette.foreground.transparentize(0.3);
+                wrap: word-wrap;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 12px;
+                    alignment: start;
+
+                    for section in root.sections: Rectangle {
+                        border-radius: 6px;
+                        border-width: section.highlighted ? 2px : 1px;
+                        border-color: section.highlighted
+                            ? Palette.accent-background
+                            : Palette.border;
+                        background: Palette.alternate-background;
+                        height: section-body.preferred-height;
+
+                        section-body := VerticalLayout {
+                            padding: 10px;
+                            spacing: 6px;
+
+                            Text {
+                                text: section.title;
+                                font-size: 0.9rem;
+                                font-weight: 700;
+                            }
+
+                            for field in section.fields: HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: field.label;
+                                    font-size: 0.85rem;
+                                    color: Palette.foreground.transparentize(0.3);
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: field.value;
+                                    font-size: 0.85rem;
+                                    horizontal-alignment: right;
+                                }
+                            }
+                        }
+                    }
+
+                    if root.editable && root.defaults-editable: Rectangle {
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.alternate-background;
+                        height: defaults-edit-body.preferred-height;
+
+                        defaults-edit-body := VerticalLayout {
+                            padding: 10px;
+                            spacing: 6px;
+
+                            Text {
+                                text: @tr("ProfileViewDialog" => "Defaults");
+                                font-size: 0.9rem;
+                                font-weight: 700;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Scale compensation x (%)");
+                                value <=> root.scale-x-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Scale compensation y (%)");
+                                value <=> root.scale-y-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Scale compensation z (%)");
+                                value <=> root.scale-z-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Bottom layer count");
+                                value <=> root.defaults-bottom-count-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait before cure (s)");
+                                value <=> root.defaults-wait-before-cure-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait after cure (s)");
+                                value <=> root.defaults-wait-after-cure-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait after lift (s)");
+                                value <=> root.defaults-wait-after-lift-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Light power (%)");
+                                value <=> root.defaults-light-pwm-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Bottom light power (%)");
+                                value <=> root.defaults-bottom-light-pwm-text;
+                            }
+                        }
+                    }
+
+                    if root.editable && root.edit-target-labels.length > 0: Rectangle {
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.alternate-background;
+                        height: block-edit-body.preferred-height;
+
+                        block-edit-body := VerticalLayout {
+                            padding: 10px;
+                            spacing: 6px;
+
+                            Text {
+                                text: @tr("ProfileViewDialog" => "Edit calibration values");
+                                font-size: 0.9rem;
+                                font-weight: 700;
+                            }
+                            ComboBox {
+                                model: root.edit-target-labels;
+                                current-index <=> root.edit-target-index;
+                                selected => {
+                                    root.edit-target-changed(self.current-index);
+                                }
+                            }
+                            if root.edit-target-index >= 0: VerticalLayout {
+                                spacing: 6px;
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Normal exposure (s)");
+                                    value <=> root.normal-exposure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom exposure (s)");
+                                    value <=> root.bottom-exposure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom layer count");
+                                    value <=> root.block-bottom-count-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait before cure (s)");
+                                    value <=> root.wait-before-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait after cure (s)");
+                                    value <=> root.wait-after-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait after lift (s)");
+                                    value <=> root.wait-after-lift-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait before cure (s)");
+                                    value <=> root.bottom-wait-before-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait after cure (s)");
+                                    value <=> root.bottom-wait-after-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait after lift (s)");
+                                    value <=> root.bottom-wait-after-lift-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Lift distance (mm)");
+                                    value <=> root.lift-distance-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Lift speed (mm/min)");
+                                    value <=> root.lift-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Retract speed (mm/min)");
+                                    value <=> root.retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Second lift distance (mm)");
+                                    value <=> root.second-lift-distance-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Second lift speed (mm/min)");
+                                    value <=> root.second-lift-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Second retract speed (mm/min)");
+                                    value <=> root.second-retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom lift distance (mm)");
+                                    value <=> root.bottom-lift-distance-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom lift speed (mm/min)");
+                                    value <=> root.bottom-lift-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom retract speed (mm/min)");
+                                    value <=> root.bottom-retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom second lift distance (mm)");
+                                    value <=> root.bottom-second-lift-distance-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom second lift speed (mm/min)");
+                                    value <=> root.bottom-second-lift-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom second retract speed (mm/min)");
+                                    value <=> root.bottom-second-retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Light power (%)");
+                                    value <=> root.light-pwm-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom light power (%)");
+                                    value <=> root.bottom-light-pwm-text;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.error-message;
+                    color: #d32f2f;
+                    font-size: 0.85rem;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                if root.editable: Button {
+                    text: @tr("ProfileViewDialog" => "Save");
+                    primary: true;
+                    clicked => {
+                        root.save-requested();
+                    }
+                }
+                close-button := Button {
+                    text: @tr("ProfileViewDialog" => "Close");
+                    clicked => {
+                        root.close-requested();
+                    }
+                }
+            }
+        }
+    }
+}

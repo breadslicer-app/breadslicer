@@ -1,0 +1,1189 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 13:01+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: src/scene_save.rs:103
+msgctxt "ErrorDialog"
+msgid "Project files are saved as .3mf packages."
+msgstr ""
+
+#: src/viewport/controller.rs:745
+msgctxt "ErrorDialog"
+msgid "Edit failed"
+msgstr ""
+
+#: src/viewport/controller.rs:749
+msgctxt "ErrorDialog"
+msgid "The scene rejected the last edit; nothing was changed."
+msgstr ""
+
+#: src/viewport/controller.rs:1116
+msgctxt "ErrorDialog"
+msgid "The 3D view could not start"
+msgstr ""
+
+#: src/viewport/controller.rs:1119
+msgctxt "ErrorDialog"
+msgid "Files cannot be opened in this window."
+msgstr ""
+
+#: src/viewport/controller.rs:1366
+msgctxt "MeshViewer"
+msgid "FRONT"
+msgstr ""
+
+#: src/viewport/controller.rs:1452
+msgctxt "ErrorDialog"
+msgid "Failed to display the 3D model"
+msgstr ""
+
+#: src/viewport/controller.rs:1455
+msgctxt "ErrorDialog"
+msgid "The rendered texture could not be handed to the UI."
+msgstr ""
+
+#: src/viewport/object_list.rs:53 src/app_state.rs:1941
+#, rust-format
+msgctxt "ObjectList"
+msgid "Object {}"
+msgstr ""
+
+#: src/slice_panel.rs:447 src/print_format.rs:159
+msgctxt "SlicePanel"
+msgid ".goo (V3.0)"
+msgstr ""
+
+#: src/wiring.rs:339
+msgctxt "FileDialog"
+msgid "All supported files"
+msgstr ""
+
+#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:713
+msgctxt "FileDialog"
+msgid "3MF files"
+msgstr ""
+
+#: src/wiring.rs:343 src/wiring.rs:709 src/i18n.rs:104
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr ""
+
+#: src/wiring.rs:345
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr ""
+
+#: src/wiring.rs:348
+msgctxt "FileDialog"
+msgid "All files"
+msgstr ""
+
+#: src/wiring.rs:565
+msgctxt "ErrorDialog"
+msgid "Failed to save"
+msgstr ""
+
+#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:563
+#: src/app_state.rs:762 src/error_dialog.rs:600 src/export_print_file.rs:280
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "File: {}"
+msgstr ""
+
+#: src/wiring.rs:686
+msgctxt "ErrorDialog"
+msgid "Failed to export"
+msgstr ""
+
+#: src/wiring.rs:701
+msgctxt "FileDialog"
+msgid "STL (binary)"
+msgstr ""
+
+#: src/wiring.rs:705
+msgctxt "FileDialog"
+msgid "STL (ASCII)"
+msgstr ""
+
+#: src/scene_export.rs:86
+msgctxt "ErrorDialog"
+msgid ""
+"Unable to infer file format from filename. Use one of: .stl (binary "
+"STL), .stla (ASCII STL), .obj, or .3mf."
+msgstr ""
+
+#: src/scene_export.rs:88
+msgctxt "ErrorDialog"
+msgid "No scene loaded"
+msgstr ""
+
+#: src/slice_projection.rs:70
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not load the printer profile: {}"
+msgstr ""
+
+#: src/slice_projection.rs:73
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not load the resin profile: {}"
+msgstr ""
+
+#: src/slice_projection.rs:76
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not measure the scene bounds: {}"
+msgstr ""
+
+#: src/slice_projection.rs:79
+msgctxt "ErrorDialog"
+msgid "The scene has no geometry to slice."
+msgstr ""
+
+#: src/slice_projection.rs:83
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"The scene's top is at z = {} mm; nothing sits above the build plate (z = 0). "
+"Move the model above the plate before slicing."
+msgstr ""
+
+#: src/slice_projection.rs:88 src/export_print_file.rs:82
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not resolve the print configuration: {}"
+msgstr ""
+
+#: src/slice_projection.rs:92
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not derive the layer count: {}"
+msgstr ""
+
+#: src/slice_projection.rs:94
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Slicing failed: {}"
+msgstr ""
+
+#: src/slice_projection.rs:97
+msgctxt "ErrorDialog"
+msgid "The slice layers could not be merged (internal layer-grid mismatch)."
+msgstr ""
+
+#: src/slice_projection.rs:101
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not fingerprint the slice inputs: {}"
+msgstr ""
+
+#: src/slice_projection.rs:104
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The slicer panicked: {}"
+msgstr ""
+
+#: src/profile_transfer/mod.rs:92
+msgctxt "PreferencesPage"
+msgid "Importing this package would overwrite existing profiles:"
+msgstr ""
+
+#: src/profile_transfer/mod.rs:97
+msgctxt "PreferencesPage"
+msgid "Printers"
+msgstr ""
+
+#: src/profile_transfer/mod.rs:102
+msgctxt "PreferencesPage"
+msgid "Materials"
+msgstr ""
+
+#: src/profile_transfer/mod.rs:107
+msgctxt "PreferencesPage"
+msgid "Material extensions"
+msgstr ""
+
+#: src/mesh_render/error.rs:50
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its mesh pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:55
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its outline pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:60
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its gizmo geometry: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:65
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its gizmo pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:70
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its build plate pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:75
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its slice cap pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:80
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The 3D view could not build its plate label pipeline: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:144
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the build plate geometry: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:149
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the multisample buffers: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:154
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the output image: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:159
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the slice cap texture: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:164
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the plate label texture: {}"
+msgstr ""
+
+#: src/mesh_render/error.rs:169
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the image readback buffer: {}"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:103
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"Object '{}' has more vertices ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:109
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"An object has more vertices ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:114
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"Object '{}' has more triangles ({}) than this graphics device can hold in "
+"one buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:120
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"An object has more triangles ({}) than this graphics device can hold in one "
+"buffer"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:159
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the vertex buffer of object '{}' ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:168
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the vertex buffer of an object ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:176
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the index buffer of object '{}' ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:185
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the index buffer of an object ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:190
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The graphics device refused the per-object transform table ({} bytes)"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:211
+msgctxt "ErrorDialog"
+msgid "The graphics device was lost while uploading the scene"
+msgstr ""
+
+#: src/mesh_render/scene_upload.rs:223
+msgctxt "ErrorDialog"
+msgid "Graph has no leaves to render"
+msgstr ""
+
+#: src/scene_loader.rs:492
+msgctxt "ErrorDialog"
+msgid "Failed to prepare the 3D view"
+msgstr ""
+
+#: src/scene_loader.rs:495
+msgctxt "ErrorDialog"
+msgid ""
+"The scene could not be handed to the graphics device. The 3D view shows the "
+"build plate alone until the next successful update."
+msgstr ""
+
+#: src/scene_loader.rs:515
+msgctxt "ErrorDialog"
+msgid "Failed to draw the 3D view"
+msgstr ""
+
+#: src/scene_loader.rs:519
+msgctxt "ErrorDialog"
+msgid "The cut is drawn without its fill until another layer is shown."
+msgstr ""
+
+#: src/scene_loader.rs:523
+msgctxt "ErrorDialog"
+msgid "The 3D view keeps its last image until it is resized."
+msgstr ""
+
+#: src/scene_loader.rs:562 src/error_dialog.rs:599
+msgctxt "ErrorDialog"
+msgid "Failed to open 3D model"
+msgstr ""
+
+#: src/language.rs:98 src/preferences_window/mod.rs:1583
+msgctxt "AppearancePreferences"
+msgid "System"
+msgstr ""
+
+#: src/material_form/mod.rs:140
+msgctxt "MaterialForm"
+msgid "Normal exposure"
+msgstr ""
+
+#: src/material_form/mod.rs:141
+msgctxt "MaterialForm"
+msgid "Bottom exposure"
+msgstr ""
+
+#: src/material_form/mod.rs:142
+msgctxt "MaterialForm"
+msgid "Bottom layer count"
+msgstr ""
+
+#: src/material_form/mod.rs:143
+msgctxt "MaterialForm"
+msgid "Wait before cure"
+msgstr ""
+
+#: src/material_form/mod.rs:144
+msgctxt "MaterialForm"
+msgid "Wait after cure"
+msgstr ""
+
+#: src/material_form/mod.rs:145
+msgctxt "MaterialForm"
+msgid "Wait after lift"
+msgstr ""
+
+#: src/material_form/mod.rs:146
+msgctxt "MaterialForm"
+msgid "Bottom wait before cure"
+msgstr ""
+
+#: src/material_form/mod.rs:147
+msgctxt "MaterialForm"
+msgid "Bottom wait after cure"
+msgstr ""
+
+#: src/material_form/mod.rs:148
+msgctxt "MaterialForm"
+msgid "Bottom wait after lift"
+msgstr ""
+
+#: src/material_form/mod.rs:149
+msgctxt "MaterialForm"
+msgid "Lift distance"
+msgstr ""
+
+#: src/material_form/mod.rs:150
+msgctxt "MaterialForm"
+msgid "Lift speed"
+msgstr ""
+
+#: src/material_form/mod.rs:151
+msgctxt "MaterialForm"
+msgid "Retract speed"
+msgstr ""
+
+#: src/material_form/mod.rs:152
+msgctxt "MaterialForm"
+msgid "Second lift distance"
+msgstr ""
+
+#: src/material_form/mod.rs:153
+msgctxt "MaterialForm"
+msgid "Second lift speed"
+msgstr ""
+
+#: src/material_form/mod.rs:154
+msgctxt "MaterialForm"
+msgid "Second retract speed"
+msgstr ""
+
+#: src/material_form/mod.rs:155
+msgctxt "MaterialForm"
+msgid "Bottom lift distance"
+msgstr ""
+
+#: src/material_form/mod.rs:156
+msgctxt "MaterialForm"
+msgid "Bottom lift speed"
+msgstr ""
+
+#: src/material_form/mod.rs:157
+msgctxt "MaterialForm"
+msgid "Bottom retract speed"
+msgstr ""
+
+#: src/material_form/mod.rs:159
+msgctxt "MaterialForm"
+msgid "Bottom second lift distance"
+msgstr ""
+
+#: src/material_form/mod.rs:161
+msgctxt "MaterialForm"
+msgid "Bottom second lift speed"
+msgstr ""
+
+#: src/material_form/mod.rs:163
+msgctxt "MaterialForm"
+msgid "Bottom second retract speed"
+msgstr ""
+
+#: src/material_form/mod.rs:165
+msgctxt "MaterialForm"
+msgid "Light power"
+msgstr ""
+
+#: src/material_form/mod.rs:166
+msgctxt "MaterialForm"
+msgid "Bottom light power"
+msgstr ""
+
+#: src/material_form/mod.rs:167
+msgctxt "MaterialForm"
+msgid "Scale compensation x"
+msgstr ""
+
+#: src/material_form/mod.rs:168
+msgctxt "MaterialForm"
+msgid "Scale compensation y"
+msgstr ""
+
+#: src/material_form/mod.rs:169
+msgctxt "MaterialForm"
+msgid "Scale compensation z"
+msgstr ""
+
+#: src/material_form/mod.rs:210
+msgctxt "MaterialForm"
+msgid "the second travel stage"
+msgstr ""
+
+#: src/material_form/mod.rs:211
+msgctxt "MaterialForm"
+msgid "the bottom second travel stage"
+msgstr ""
+
+#: src/material_form/mod.rs:245
+#, rust-format
+msgctxt "MaterialForm"
+msgid "{} must be a number"
+msgstr ""
+
+#: src/material_form/mod.rs:252
+#, rust-format
+msgctxt "MaterialForm"
+msgid "{} is out of range"
+msgstr ""
+
+#: src/material_form/mod.rs:258
+msgctxt "MaterialForm"
+msgid "Fill all three scale compensation axes, or leave all three empty"
+msgstr ""
+
+#: src/material_form/mod.rs:262
+#, rust-format
+msgctxt "MaterialForm"
+msgid "Fill all three values of {}, or leave all three empty"
+msgstr ""
+
+#: src/preferences_filters.rs:59 src/preferences_window/mod.rs:1549
+msgctxt "PreferencesPage"
+msgid "All"
+msgstr ""
+
+#: src/app_state.rs:510 src/lib.rs:291
+msgctxt "ErrorDialog"
+msgid "The graphics device was lost"
+msgstr ""
+
+#: src/app_state.rs:761
+msgctxt "ErrorDialog"
+msgid "Unsupported file type"
+msgstr ""
+
+#: src/app_state.rs:765
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/app_state.rs:995
+msgctxt "SaveDialog"
+msgid "Scene not replaced"
+msgstr ""
+
+#: src/app_state.rs:998
+msgctxt "SaveDialog"
+msgid ""
+"The scene changed while saving, so the file does not hold its current state. "
+"Nothing was replaced."
+msgstr ""
+
+#: src/repair_run.rs:179 src/repair_run.rs:212
+msgctxt "RepairDialog"
+msgid "Repair failed"
+msgstr ""
+
+#: src/repair_run.rs:181
+msgctxt "RepairDialog"
+msgid "The repair worker crashed."
+msgstr ""
+
+#: src/repair_run.rs:190
+msgctxt "RepairDialog"
+msgid "Repair discarded"
+msgstr ""
+
+#: src/repair_run.rs:193
+msgctxt "RepairDialog"
+msgid "The scene changed while repairing; nothing was applied."
+msgstr ""
+
+#: src/repair_run.rs:205
+msgctxt "RepairDialog"
+msgid "Mesh repair"
+msgstr ""
+
+#: src/repair_run.rs:216
+msgctxt "RepairDialog"
+msgid "The scene rejected the repair edit; nothing was changed."
+msgstr ""
+
+#: src/repair_run.rs:320
+msgctxt "RepairDialog"
+msgid "No problems found."
+msgstr ""
+
+#: src/repair_run.rs:327
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} mesh repaired"
+msgid_plural "{n} meshes repaired"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:338
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} mesh could not be fully repaired"
+msgid_plural "{n} meshes could not be fully repaired"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:349
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} mesh still not edge-manifold"
+msgid_plural "{n} meshes still not edge-manifold"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:360
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} mesh still has zero-area faces"
+msgid_plural "{n} meshes still have zero-area faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:406
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} degenerate face"
+msgid_plural "removed {n} degenerate faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:417
+#, rust-format
+msgctxt "RepairDialog"
+msgid "reoriented {n} face"
+msgid_plural "reoriented {n} faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:428
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} collinear face"
+msgid_plural "removed {n} collinear faces"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:437
+#, rust-format
+msgctxt "RepairDialog"
+msgid "could not be fully repaired: {}"
+msgstr ""
+
+#: src/repair_run.rs:441
+msgctxt "RepairDialog"
+msgid "still not edge-manifold"
+msgstr ""
+
+#: src/repair_run.rs:447
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} zero-area face remains"
+msgid_plural "{n} zero-area faces remain"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/repair_run.rs:461
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Mesh {}"
+msgstr ""
+
+#: src/slice_run.rs:372
+msgctxt "ErrorDialog"
+msgid "Cannot slice"
+msgstr ""
+
+#: src/slice_run.rs:376
+msgctxt "ErrorDialog"
+msgid "Choose a printer and a resin before slicing."
+msgstr ""
+
+#: src/slice_run.rs:385
+msgctxt "ErrorDialog"
+msgid "Slicing failed"
+msgstr ""
+
+#: src/support_gen_run.rs:147
+msgctxt "GenSupportDialog"
+msgid "Support generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:221 src/support_gen_run.rs:243
+msgctxt "GenSupportDialog"
+msgid "Support-structures generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:225
+msgctxt "GenSupportDialog"
+msgid ""
+"The scene rejected one or more generated support structures; nothing was "
+"changed for those."
+msgstr ""
+
+#: src/support_gen_run.rs:235
+msgctxt "GenSupportDialog"
+msgid "Support-structures generated"
+msgstr ""
+
+#: src/support_gen_run.rs:273
+#, rust-format
+msgctxt "GenSupportDialog"
+msgid ""
+"{} of {n} Support structure added to the scene. Estimated material: {} g."
+msgid_plural ""
+"{} of {n} Support structures added to the scene. Estimated material: {} g."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/support_gen_run.rs:283
+#, rust-format
+msgctxt "GenSupportDialog"
+msgid "{n} Support structure added to the scene. Estimated material: {} g."
+msgid_plural ""
+"{n} Support structures added to the scene. Estimated material: {} g."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/print_format.rs:72
+msgctxt "SlicePanel"
+msgid "this build cannot write it yet"
+msgstr ""
+
+#: src/print_format.rs:148
+msgctxt "SlicePanel"
+msgid ".goo (automatic)"
+msgstr ""
+
+#: src/print_format.rs:149
+msgctxt "SlicePanel"
+msgid ".ctb (automatic)"
+msgstr ""
+
+#: src/print_format.rs:160
+msgctxt "SlicePanel"
+msgid ".goo (V5.1)"
+msgstr ""
+
+#: src/print_format.rs:161
+msgctxt "SlicePanel"
+msgid ".ctb (v5)"
+msgstr ""
+
+#: src/print_format.rs:163
+msgctxt "SlicePanel"
+msgid ".ctb (v5 encrypted)"
+msgstr ""
+
+#: src/graphics_status.rs:66
+msgctxt "ErrorDialog"
+msgid "The 3D view is still starting up. Please try again in a moment."
+msgstr ""
+
+#: src/graphics_status.rs:71
+#, rust-format
+msgctxt "ErrorDialog"
+msgid ""
+"The 3D view could not start: this window renders through {}, which this "
+"build cannot use for 3D."
+msgstr ""
+
+#: src/graphics_status.rs:77
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "{} Files cannot be opened in this window."
+msgstr ""
+
+#: src/graphics_status.rs:83
+msgctxt "ErrorDialog"
+msgid ""
+"The graphics device was lost. Save your work and restart the application."
+msgstr ""
+
+#: src/profile_extending/mod.rs:58 src/profile_extending/mod.rs:89
+#: src/preferences_window/extend_dialog.rs:387
+msgctxt "ExtendDialog"
+msgid "Generic"
+msgstr ""
+
+#: src/profile_forking/mod.rs:51
+msgctxt "ForkDialog"
+msgid "Enter a name for the forked profile"
+msgstr ""
+
+#: src/profile_forking/mod.rs:52
+msgctxt "ForkDialog"
+msgid "Enter a brand for the forked profile"
+msgstr ""
+
+#: src/profile_forking/mod.rs:56
+msgctxt "ForkDialog"
+msgid "Could not derive a free profile id from that name"
+msgstr ""
+
+#: src/error_dialog.rs:499
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "caused by: {}"
+msgstr ""
+
+#: src/mesh_loader.rs:55
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/mesh_loader.rs:286
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The mesh loader panicked: {}"
+msgstr ""
+
+#: src/lib.rs:296
+msgctxt "ErrorDialog"
+msgid ""
+"The application has to close; restart it once the graphics driver is back."
+msgstr ""
+
+#: src/profile_view/mod.rs:62
+msgctxt "ProfileViewDialog"
+msgid "not set"
+msgstr ""
+
+#: src/profile_view/mod.rs:96
+msgctxt "ProfileViewDialog"
+msgid "Bundled"
+msgstr ""
+
+#: src/profile_view/mod.rs:97
+msgctxt "ProfileViewDialog"
+msgid "Custom"
+msgstr ""
+
+#: src/profile_view/mod.rs:100
+msgctxt "ProfileViewDialog"
+msgid "Identity"
+msgstr ""
+
+#: src/profile_view/mod.rs:104
+msgctxt "ProfileViewDialog"
+msgid "Brand"
+msgstr ""
+
+#: src/profile_view/mod.rs:108
+msgctxt "ProfileViewDialog"
+msgid "Name"
+msgstr ""
+
+#: src/profile_view/mod.rs:112
+msgctxt "ProfileViewDialog"
+msgid "Family"
+msgstr ""
+
+#: src/profile_view/mod.rs:116
+msgctxt "ProfileViewDialog"
+msgid "Profile version"
+msgstr ""
+
+#: src/profile_view/mod.rs:119
+msgctxt "ProfileViewDialog"
+msgid "Origin"
+msgstr ""
+
+#: src/profile_view/mod.rs:126
+msgctxt "ProfileViewDialog"
+msgid "Intent"
+msgstr ""
+
+#: src/profile_view/mod.rs:130
+msgctxt "ProfileViewDialog"
+msgid "Target energy density (mJ/cm2)"
+msgstr ""
+
+#: src/profile_view/mod.rs:134
+msgctxt "ProfileViewDialog"
+msgid "Target layer height (mm)"
+msgstr ""
+
+#: src/profile_view/mod.rs:154
+msgctxt "ProfileViewDialog"
+msgid "Defaults"
+msgstr ""
+
+#: src/profile_view/mod.rs:158
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation (x/y/z)"
+msgstr ""
+
+#: src/profile_view/mod.rs:162 src/profile_view/mod.rs:313
+msgctxt "ProfileViewDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: src/profile_view/mod.rs:166 src/profile_view/mod.rs:317
+msgctxt "ProfileViewDialog"
+msgid "Wait before cure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:170 src/profile_view/mod.rs:321
+msgctxt "ProfileViewDialog"
+msgid "Wait after cure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:174 src/profile_view/mod.rs:325
+msgctxt "ProfileViewDialog"
+msgid "Wait after lift (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:178 src/profile_view/mod.rs:401
+msgctxt "ProfileViewDialog"
+msgid "Light power (%)"
+msgstr ""
+
+#: src/profile_view/mod.rs:182 src/profile_view/mod.rs:405
+msgctxt "ProfileViewDialog"
+msgid "Bottom light power (%)"
+msgstr ""
+
+#: src/profile_view/mod.rs:224 src/preferences_window/profile_editor.rs:481
+#: src/preferences_window/profile_editor.rs:523
+msgctxt "ProfileViewDialog"
+msgid "Generic"
+msgstr ""
+
+#: src/profile_view/mod.rs:286
+msgctxt "ProfileViewDialog"
+msgid "Generic calibration"
+msgstr ""
+
+#: src/profile_view/mod.rs:289
+#, rust-format
+msgctxt "ProfileViewDialog"
+msgid "Calibration: {}"
+msgstr ""
+
+#: src/profile_view/mod.rs:305
+msgctxt "ProfileViewDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:309
+msgctxt "ProfileViewDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:329
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:333
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:337
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: src/profile_view/mod.rs:341
+msgctxt "ProfileViewDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: src/profile_view/mod.rs:345
+msgctxt "ProfileViewDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:349
+msgctxt "ProfileViewDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:353
+msgctxt "ProfileViewDialog"
+msgid "Second lift distance (mm)"
+msgstr ""
+
+#: src/profile_view/mod.rs:357
+msgctxt "ProfileViewDialog"
+msgid "Second lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:361
+msgctxt "ProfileViewDialog"
+msgid "Second retract speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:365
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: src/profile_view/mod.rs:369
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:373
+msgctxt "ProfileViewDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:377
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift distance (mm)"
+msgstr ""
+
+#: src/profile_view/mod.rs:385
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view/mod.rs:393
+msgctxt "ProfileViewDialog"
+msgid "Bottom second retract speed (mm/min)"
+msgstr ""
+
+#: src/export_print_file.rs:73
+msgctxt "ErrorDialog"
+msgid "Nothing has been sliced yet, so there is nothing to write."
+msgstr ""
+
+#: src/export_print_file.rs:77
+msgctxt "ErrorDialog"
+msgid ""
+"The held slice is out of date and no longer describes this plate. Slice it "
+"again before exporting."
+msgstr ""
+
+#: src/export_print_file.rs:87
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Cannot describe this print to the machine: {}"
+msgstr ""
+
+#: src/export_print_file.rs:90
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Could not write the printer file: {}"
+msgstr ""
+
+#: src/export_print_file.rs:91
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The writer panicked: {}"
+msgstr ""
+
+#: src/export_print_file.rs:279
+msgctxt "ErrorDialog"
+msgid "Cannot export for the printer"
+msgstr ""
+
+#: src/export_print_file.rs:293
+msgctxt "FileDialog"
+msgid "Printer files"
+msgstr ""
+
+#: src/preferences_window/profile_editor.rs:49
+msgctxt "ProfileViewDialog"
+msgid ""
+"The forked profile is already in your library. Close keeps it unchanged."
+msgstr ""
+
+#: src/preferences_window/profile_editor.rs:194
+#: src/preferences_window/profile_editor.rs:478
+#: src/preferences_window/mod.rs:913
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "{} (extended)"
+msgstr ""
+
+#: src/preferences_window/mod.rs:544 src/preferences_window/mod.rs:568
+msgctxt "FileDialog"
+msgid "Profile package"
+msgstr ""
+
+#: src/preferences_window/mod.rs:589
+msgctxt "PreferencesPage"
+msgid "Overwrite"
+msgstr ""
+
+#: src/preferences_window/mod.rs:591
+msgctxt "PreferencesPage"
+msgid "Overwrite existing profiles?"
+msgstr ""
+
+#: src/preferences_window/mod.rs:595 src/preferences_window/mod.rs:670
+msgctxt "PreferencesPage"
+msgid "Cancel"
+msgstr ""
+
+#: src/preferences_window/mod.rs:652
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "Deleting the extension of {} removes every calibration pair it adds."
+msgstr ""
+
+#: src/preferences_window/mod.rs:659
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "Deleting {} removes the custom profile file."
+msgstr ""
+
+#: src/preferences_window/mod.rs:664
+msgctxt "PreferencesPage"
+msgid "Delete"
+msgstr ""
+
+#: src/preferences_window/mod.rs:666
+msgctxt "PreferencesPage"
+msgid "Delete profile?"
+msgstr ""
+
+#: src/preferences_window/mod.rs:1012
+msgctxt "PreferencesPage"
+msgid "Generic"
+msgstr ""
+
+#: src/preferences_window/mod.rs:1037
+msgctxt "PreferencesPage"
+msgid "No calibration data"
+msgstr ""
+
+#: src/preferences_window/fork_dialog.rs:104
+#, rust-format
+msgctxt "ForkDialog"
+msgid "{} (fork)"
+msgstr ""

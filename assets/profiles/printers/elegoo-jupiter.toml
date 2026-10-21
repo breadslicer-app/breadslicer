@@ -1,0 +1,39 @@
+[identity]
+id = "elegoo-jupiter"
+manufacturer = "ELEGOO"
+family = "Jupiter"
+name = "Jupiter"
+profile_version = "1.0.0"
+image_asset_path = "images/elegoo-jupiter.png"
+
+[hardware.build_volume]
+x_mm = 277.848
+y_mm = 156.264
+z_mm = 300.0
+
+[hardware.pixel_resolution]
+x = 5448
+y = 3064
+
+[hardware.pixel_size_microns]
+x = 51.0
+y = 51.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

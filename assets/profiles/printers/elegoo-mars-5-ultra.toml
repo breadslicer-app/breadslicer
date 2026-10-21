@@ -1,0 +1,44 @@
+[identity]
+id = "elegoo-mars-5-ultra"
+manufacturer = "ELEGOO"
+family = "Mars"
+name = "Mars 5 Ultra"
+profile_version = "3.0.0"
+image_asset_path = "images/elegoo-mars-5-ultra.png"
+
+[hardware.build_volume]
+x_mm = 153.36
+y_mm = 77.76
+z_mm = 165.0
+
+[hardware.pixel_resolution]
+x = 8520
+y = 4320
+
+[hardware.pixel_size_microns]
+x = 18.0
+y = 18.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = true
+network_protocol = "sdcp"
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[[capabilities.output_formats]]
+format = "goo"
+version = "v3.0"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

@@ -1,0 +1,205 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+import { FavouriteStar } from "./favourite-star.slint";
+import { FilterTabs } from "./filter-tabs.slint";
+
+// One printer tile. `id-index` is the printer's index in the Rust
+// catalog and the stable handle carried through selection callbacks;
+// the visible `printer-cards` model may be a filtered subset, so tile
+// position is not a usable identity.
+export struct PrinterCard {
+    name: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    is-custom: bool,
+    is-favourite: bool,
+    id-index: int,
+}
+
+export component PrinterPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Printer");
+    fill: true;
+
+    in property <[PrinterCard]> printer-cards;
+    in property <[string]> manufacturer-tabs;
+    in-out property <int> current-manufacturer-index: 0;
+    // Catalog index of the selected printer, or -1 when none is chosen.
+    in-out property <int> selected-printer-index: -1;
+    // Position of the selected printer within the visible (filtered)
+    // `printer-cards` model, or -1 when it is filtered out.
+    in property <int> selected-visible-index: -1;
+    // True until the one-time scroll to the selected printer has run.
+    // Bound to window-level state so recreating this component (the
+    // section sits behind a conditional) cannot re-arm the scroll.
+    in-out property <bool> initial-scroll-pending: false;
+    in property <string> search-text;
+
+    callback manufacturer-tab-changed(int);
+    callback search-changed(string);
+    callback printer-selected(int);
+    // Toggle the printer's global favourite status. Carries the catalog
+    // index (the stable handle), same as `printer-selected`.
+    callback favourite-toggled(int);
+    callback import-requested();
+    callback export-printers-requested();
+
+    property <length> tile-w: 128px;
+    property <length> tile-h: 148px;
+    property <length> tile-gap: 12px;
+
+    FilterTabs {
+        tabs: root.manufacturer-tabs;
+        current-index: root.current-manufacturer-index;
+        tab-changed(i) => {
+            root.current-manufacturer-index = i;
+            root.manufacturer-tab-changed(i);
+        }
+    }
+
+    search-input := LineEdit {
+        placeholder-text: @tr("PreferencesPage" => "Search models");
+        text: root.search-text;
+        accessible-label: @tr("PreferencesPage" => "Search printer models");
+        edited(t) => {
+            root.search-changed(t);
+        }
+    }
+
+    // Image-forward gallery: tiles flow left-to-right, wrapping into as
+    // many columns as the current viewport width fits (at least one).
+    // The column count is derived from `gallery.visible-width` so the
+    // grid reflows as the window resizes, and each row is centred in the
+    // leftover horizontal space. Build volume is deliberately not shown;
+    // it is a consequence of the choice, not a selection criterion.
+    gallery := ScrollView {
+        vertical-stretch: 1;
+        property <int> columns: Math.max(1, Math.floor((self.visible-width + root.tile-gap) / (root.tile-w + root.tile-gap)));
+        property <length> row-width: self.columns * root.tile-w + (self.columns - 1) * root.tile-gap;
+        property <length> x-offset: Math.max(0px, (self.visible-width - self.row-width) / 2);
+        content-height: Math.ceil(root.printer-cards.length / self.columns) * (root.tile-h + root.tile-gap);
+
+        // Centres the selected printer's row in the viewport, clamped
+        // to the scrollable range.
+        function centre-selected() {
+            if (root.selected-visible-index >= 0 && self.visible-width > 0px) {
+                self.content-y = -Math.min(
+                    Math.max(0px, self.content-height - self.visible-height),
+                    Math.max(0px,
+                        Math.floor(root.selected-visible-index / self.columns)
+                            * (root.tile-h + root.tile-gap)
+                            - (self.visible-height - root.tile-h) / 2));
+            }
+        }
+
+        // A width change reflows the columns and moves every tile, so
+        // the selection would otherwise drift out of view on resize.
+        changed visible-width => {
+            self.centre-selected();
+        }
+
+        // First-open path. The resize callback above cannot observe
+        // the initial 0-to-laid-out width transition when layout
+        // completes before the callback is installed, so this polls
+        // until the size is real, scrolls once, and disarms itself
+        // through `initial-scroll-pending`.
+        Timer {
+            interval: 16ms;
+            running: root.initial-scroll-pending;
+            triggered => {
+                if (gallery.visible-width > 0px) {
+                    root.initial-scroll-pending = false;
+                    gallery.centre-selected();
+                }
+            }
+        }
+        for card[i] in root.printer-cards: Rectangle {
+            x: gallery.x-offset + Math.mod(i, gallery.columns) * (root.tile-w + root.tile-gap);
+            y: Math.floor(i / gallery.columns) * (root.tile-h + root.tile-gap);
+            width: root.tile-w;
+            height: root.tile-h;
+            border-radius: 6px;
+            border-width: card.id-index == root.selected-printer-index ? 2px : 1px;
+            border-color: card.id-index == root.selected-printer-index
+                ? Palette.accent-background
+                : Palette.border;
+            background: Palette.alternate-background;
+
+            TouchArea {
+                clicked => {
+                    root.selected-printer-index = card.id-index;
+                    root.printer-selected(card.id-index);
+                }
+            }
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+
+                if card.has-thumbnail: Image {
+                    source: card.thumbnail;
+                    image-fit: contain;
+                    height: 96px;
+                }
+                if !card.has-thumbnail: Rectangle {
+                    height: 96px;
+                    border-radius: 4px;
+                    background: Palette.background;
+                    Text {
+                        text: @tr("PreferencesPage" => "No image");
+                        color: Palette.foreground.transparentize(0.5);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: card.name;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    font-size: 0.9rem;
+                }
+                if card.is-custom: Text {
+                    text: @tr("PreferencesPage" => "custom");
+                    color: Palette.foreground.transparentize(0.4);
+                    font-size: 0.7rem;
+                    horizontal-alignment: center;
+                }
+            }
+
+            // Favourite toggle, overlaid at the top-right corner and
+            // declared after the select TouchArea so its own TouchArea
+            // is on top: a star click toggles the favourite without
+            // also selecting the printer.
+            FavouriteStar {
+                x: parent.width - self.width - 4px;
+                y: 4px;
+                favourite: card.is-favourite;
+                toggled => {
+                    root.favourite-toggled(card.id-index);
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        vertical-stretch: 0;
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: @tr("PreferencesPage" => "Import package...");
+            clicked => {
+                root.import-requested();
+            }
+        }
+        Button {
+            text: @tr("PreferencesPage" => "Export printers...");
+            clicked => {
+                root.export-printers-requested();
+            }
+        }
+    }
+}

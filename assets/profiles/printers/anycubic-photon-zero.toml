@@ -1,0 +1,39 @@
+[identity]
+id = "anycubic-photon-zero"
+manufacturer = "Anycubic"
+family = "Photon"
+name = "Photon Zero"
+profile_version = "1.0.0"
+image_asset_path = "images/anycubic-photon-zero.png"
+
+[hardware.build_volume]
+x_mm = 98.637
+y_mm = 55.44
+z_mm = 150.0
+
+[hardware.pixel_resolution]
+x = 854
+y = 480
+
+[hardware.pixel_size_microns]
+x = 115.5
+y = 115.49999999999999
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pw0"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

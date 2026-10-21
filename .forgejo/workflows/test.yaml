@@ -1,0 +1,100 @@
+# NOTE - All workflows are disabled for now until we manage to provision our own
+#        runners. Codeberg is running on fumes, and we gain nothing by adding
+#        more stress to their systems. We have define a fake task just to pass
+#        validation.
+
+name: Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: "choice"
+        default: "prod"
+        options:
+          - "prod"
+      target:
+        description: "Target to run"
+        type: "choice"
+        options:
+          - "fake"
+
+jobs:
+  fake:
+    if: ${{ inputs.target == 'fake' && contains(fromJSON('["andreuz"]'), github.actor) }}
+    runs-on: "codeberg-small"
+    timeout-minutes: 1
+    steps:
+      - name: "Run fake task"
+        run: "true"
+
+# on: [] # [push]
+
+# jobs:
+  # check:
+    # name: "Check, Clippy & Build"
+    # runs-on: "codeberg-small"
+    # steps:
+    #   - name: "Checkout Repository"
+    #     uses: "actions/checkout@v4"
+
+      # NOTE: Everything is disabled because Codeberg Runners are so saturated
+      #       that they keep always failing due to OOM-kills.
+      #       We perform all checks in our pre-commit & pre-push git hooks.
+
+      #- name: "Get rustup from cache"
+      #  uses: "actions/cache@v5"
+      #  id: "rustup-cache"
+      #  with:
+      #    path: |
+      #      ~/.rustup
+      #      ~/.cargo/bin
+      #    key: "rustup-stable"
+
+      #- name: "Get Rust crates from cache"
+      #  uses: "actions/cache@v5"
+      #  id: "crates-cache"
+      #  with:
+      #    path: |
+      #      ~/.cargo/registry/index/
+      #      ~/.cargo/registry/cache/
+      #      ~/.cargo/git/db/
+      #    key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}
+      #    restore-keys: |
+      #      crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
+      #      crates-${{ runner.os }}-
+
+      #- name: "Get pre-compiled code from cache"
+      #  uses: "actions/cache@v5"
+      #  id: "compilations-cache"
+      #  with:
+      #    path: |
+      #      target/
+      #    key: target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.run_number }}
+      #    restore-keys: |
+      #      target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-
+      #      target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-
+      #      target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-
+      #      target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
+      #      target-${{ runner.os }}-
+
+      #- name: "Install Rust"
+      #  if: "steps.rustup-cache.outputs.cache-hit != 'true'"
+      #  run: |
+      #    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+      #- name: "Add cargo to PATH"
+      #  run: "echo \"$HOME/.cargo/bin\" >> $GITHUB_PATH"
+
+      #- name: "Basic Checks"
+      #  run: "cargo check"
+
+      #- name: "Clippy Checks"
+      #  run: "cargo clippy -- -D warnings"
+
+      # - name: "Compile"
+      #   run: "cargo build"
+
+      # - name: "Test"
+      #   run: "cargo test"

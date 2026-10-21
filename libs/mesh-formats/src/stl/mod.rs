@@ -1,0 +1,254 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+mod facet_normals;
+mod stla;
+mod stlb;
+#[cfg(test)]
+mod tests_roundtrip;
+#[cfg(test)]
+mod tests_stla_equivalence;
+mod writers;
+
+// Binary STL spec byte sizes, shared by the reader and the writer so that both
+// use the same header and triangle-record layout.
+pub(crate) const STL_HEADER_BYTES: usize = 80;
+pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
+// 3*4 normal bytes + 3*(3*4) vertex bytes + 2 attribute bytes
+pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
+
+use std::io::{Cursor, Read, Seek, Write};
+
+use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
+use sc_mesh_core::{IndexedMesh, MeshMetadata, Triangle, indexed_mesh_from_soup};
+use sc_scene::{Scene, SceneError};
+
+use crate::error::{LoadStlError, WriteSceneError};
+use crate::messages::LoadStlWarning;
+use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
+use crate::scene_writer::{FlattenWarning, FlattenedScene, flatten_graph_to_mesh};
+use crate::slurp::slurp;
+use facet_normals::resolve_facet_normals;
+
+pub use writers::{write_stla, write_stla_with_progress, write_stlb, write_stlb_with_progress};
+
+type Result<T> = std::result::Result<T, LoadStlError>;
+
+/// Format marker for the binary STL format. Implements [`MeshReader`] via
+/// static dispatch.
+#[derive(Debug)]
+pub struct StlBin;
+
+impl sealed::Sealed for StlBin {}
+
+impl MeshReader for StlBin {
+    type Error = LoadStlError;
+    type Warning = LoadStlWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
+        read_stlb(reader)
+    }
+}
+
+impl MeshWriter for StlBin {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
+        scene: &Scene,
+        writer: &mut W,
+        mut progress: F,
+    ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
+        progress(WriteSceneProgress::Flatten { done: 0, total: 1 });
+        let flattened = flatten_graph_to_mesh(scene)?;
+        progress(WriteSceneProgress::Flatten { done: 1, total: 1 });
+        let normals = flattened_facet_normals(scene, &flattened)?;
+        writers::write_stlb_facets(&flattened.mesh, &normals, writer, progress)?;
+        Ok(flattened.warnings)
+    }
+}
+
+/// Format marker for the ASCII STL format. Like [`StlBin`], it implements
+/// [`MeshReader`] via static dispatch.
+#[derive(Debug)]
+pub struct StlAscii;
+
+impl sealed::Sealed for StlAscii {}
+
+impl MeshReader for StlAscii {
+    type Error = LoadStlError;
+    type Warning = LoadStlWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
+        read_stla(reader).map(|scene| (scene, Vec::new()))
+    }
+}
+
+impl MeshWriter for StlAscii {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
+        scene: &Scene,
+        writer: &mut W,
+        mut progress: F,
+    ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
+        progress(WriteSceneProgress::Flatten { done: 0, total: 1 });
+        let flattened = flatten_graph_to_mesh(scene)?;
+        progress(WriteSceneProgress::Flatten { done: 1, total: 1 });
+        let normals = flattened_facet_normals(scene, &flattened)?;
+        writers::write_stla_facets(&flattened.mesh, &normals, writer, progress)?;
+        Ok(flattened.warnings)
+    }
+}
+
+/// Format marker for the auto-detecting STL reader. Detection order: a byte
+/// length that matches the binary layout exactly for the declared triangle
+/// count means binary; otherwise a `solid` header line means ASCII; anything
+/// else is treated as binary. Use [`StlBin`] or [`StlAscii`] directly when the
+/// variant is known.
+#[derive(Debug)]
+pub struct Stl;
+
+impl sealed::Sealed for Stl {}
+
+impl MeshReader for Stl {
+    type Error = LoadStlError;
+    type Warning = LoadStlWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
+        read_stl(reader)
+    }
+}
+
+/// Reads an STL document of either kind, detected as [`Stl`] describes. The
+/// binary route can emit header warnings; the ASCII route has none.
+pub fn read_stl<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
+where
+    R: Read + Seek,
+{
+    let bytes = slurp(read)?;
+    // Binary first: a byte length that matches the binary layout exactly for
+    // the declared triangle count identifies a binary file even when its header
+    // text starts with `solid` (such files exist in the wild). Only then does a
+    // `solid` header line select the ASCII parser; everything else is treated
+    // as binary.
+    if stlb::matches_exact_binary_layout(&bytes) {
+        return stlb::read_stlb_slice(&bytes);
+    }
+    let mut cursor = Cursor::new(&bytes[..]);
+    if stla::probe(&mut cursor)? {
+        stla::read_stla_slice(&bytes).map(|scene| (scene, Vec::new()))
+    } else {
+        stlb::read_stlb_slice(&bytes)
+    }
+}
+
+pub fn read_stla<R>(read: &mut R) -> Result<Scene>
+where
+    R: Read + Seek,
+{
+    let bytes = slurp(read)?;
+    stla::read_stla_slice(&bytes)
+}
+
+/// Reads a binary STL document, and returns any header warning with it.
+pub fn read_stlb<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
+where
+    R: Read + Seek,
+{
+    let bytes = slurp(read)?;
+    stlb::read_stlb_slice(&bytes)
+}
+
+/// Returns the facet normals of `flattened`, the flattening of `scene`.
+fn flattened_facet_normals(
+    scene: &Scene,
+    flattened: &FlattenedScene,
+) -> std::result::Result<Vec<[u32; 3]>, SceneError> {
+    let sources = flattened
+        .occurrences
+        .iter()
+        .map(|occurrence| Ok((scene.mesh_at_leaf(occurrence.leaf)?, &occurrence.world)))
+        .collect::<std::result::Result<Vec<_>, SceneError>>()?;
+    Ok(resolve_facet_normals(&flattened.mesh, sources))
+}
+
+/// A facet record of an STL file: the bits of its declared normal, and its soup
+/// triangle.
+struct Facet {
+    declared_normal: [u32; 3],
+    triangle: Triangle,
+}
+
+/// Builds the mesh of `facets` with `metadata`, 1 face per facet in file order,
+/// and captures the declared normals into its metadata.
+fn mesh_from_facets(metadata: MeshMetadata, facets: Vec<Facet>) -> Result<IndexedMesh> {
+    let (soup, declared): (Vec<Triangle>, Vec<[u32; 3]>) = facets
+        .into_iter()
+        .map(|facet| (facet.triangle, facet.declared_normal))
+        .unzip();
+    let mut mesh = indexed_mesh_from_soup(None, soup, u32::MAX as usize)?;
+    let declared = DeclaredFacetNormals::capture(&mesh, declared)
+        .expect("indexed_mesh_from_soup emits 1 face per soup triangle");
+    mesh.set_meta(Some(MeshMetadata {
+        declared_facet_normals: Some(declared),
+        ..metadata
+    }));
+    Ok(mesh)
+}
+
+#[cfg(test)]
+mod stl_bin_reader_tests {
+    use std::io::Cursor;
+
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
+
+    use super::{MeshReader, StlBin, write_stlb};
+
+    fn one_triangle_buffer() -> Vec<u8> {
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 100.0, 100.0]),
+                Vertex::new([0.0, 100.0, 0.0]),
+                Vertex::new([0.0, 0.0, 100.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+        };
+        let mut buf = Vec::new();
+        write_stlb(&mesh, &mut buf).expect("write_stlb succeeds");
+        buf
+    }
+
+    #[test]
+    fn read_starts_at_the_current_stream_position() {
+        // A reader positioned past leading garbage parses only the remainder.
+        // This also exercises the slurp's exact-size reservation with a
+        // non-zero start offset.
+        let mut bytes = vec![0xAB_u8; 7];
+        bytes.extend_from_slice(&one_triangle_buffer());
+        let mut reader = Cursor::new(bytes);
+        reader.set_position(7);
+        let (scene, warnings) = super::read_stlb(&mut reader).expect("read_stlb succeeds");
+        assert!(warnings.is_empty());
+        assert_eq!(scene.reachable_leaf_count(), 1);
+    }
+
+    #[test]
+    fn read_returns_a_one_leaf_scene_with_no_warnings() {
+        let mut reader = Cursor::new(one_triangle_buffer());
+        let (scene, warnings) = StlBin::read(&mut reader).expect("StlBin::read succeeds");
+
+        assert!(warnings.is_empty());
+        assert_eq!(scene.reachable_leaf_count(), 1);
+        let leaf = scene
+            .first_leaf_id()
+            .expect("reachable_leaf_count == 1 implies a leaf exists");
+        let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
+    }
+}

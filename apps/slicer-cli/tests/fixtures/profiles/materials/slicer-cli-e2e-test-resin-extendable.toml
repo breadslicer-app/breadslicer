@@ -1,0 +1,21 @@
+# Fake material profile used only by the slicer-cli end-to-end
+# tests. Carries an intent layer height and defaults but NO
+# per-printer calibration block: on its own it cannot resolve a full
+# print configuration for the slicer-cli-e2e-test printer. The e2e
+# tests pair it with a same-id extension installed into a temporary
+# user library, which supplies the missing calibration. The 0.2 mm
+# intent layer height keeps the e2e layer-count assertions (5 layers
+# for the cube, 10 for the prisms) valid.
+
+[identity]
+id = "slicer-cli-e2e-test-resin-extendable"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Extendable Resin"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.2
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }

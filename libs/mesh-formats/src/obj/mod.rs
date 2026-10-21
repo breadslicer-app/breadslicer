@@ -1,0 +1,54 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+mod reader;
+#[cfg(test)]
+mod tests_reader_equivalence;
+#[cfg(test)]
+mod tests_writer_shared_subtrees;
+mod writer;
+
+use std::io::{Read, Seek, Write};
+
+use sc_scene::Scene;
+
+use crate::error::{LoadObjError, WriteSceneError};
+use crate::messages::LoadObjWarning;
+use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
+use crate::scene_writer::FlattenWarning;
+
+pub use reader::read_obj;
+pub use writer::{write_obj, write_obj_with_progress};
+
+/// Format marker for the OBJ format. Implements [`MeshReader`] via
+/// static dispatch; the dispatcher in [`crate::loader`] invokes
+/// `Obj::read(reader)`.
+#[derive(Debug)]
+pub struct Obj;
+
+impl sealed::Sealed for Obj {}
+
+impl MeshReader for Obj {
+    type Error = LoadObjError;
+    type Warning = LoadObjWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
+        read_obj(reader)
+    }
+}
+
+impl MeshWriter for Obj {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
+        scene: &Scene,
+        writer: &mut W,
+        progress: F,
+    ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
+        write_obj_with_progress(scene, writer, progress)?;
+        Ok(Vec::new())
+    }
+}

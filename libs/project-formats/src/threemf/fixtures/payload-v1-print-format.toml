@@ -1,0 +1,11 @@
+version = 1
+
+[profiles]
+printer = "test-printer"
+
+[print]
+first_layer_height_mm = 0.05
+
+[print.output_format]
+format = "goo"
+version = "v3.0"

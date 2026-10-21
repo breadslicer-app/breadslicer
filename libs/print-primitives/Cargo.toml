@@ -1,0 +1,25 @@
+[package]
+name = "sc-print-primitives"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Shared primitive types for the resin-printing pipeline: build volume, pixel resolution, mirror flags, validated millimetre lengths."
+categories = ["data-structures"]
+keywords = ["3d", "printing", "resin", "sla", "primitives"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-mesh-core.workspace = true
+nonempty-collections = { workspace = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+float-cmp = { workspace = true }
+toml_edit = { workspace = true }
+
+[features]
+serde = ["dep:serde", "nonempty-collections/serde"]

@@ -1,0 +1,485 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Palette } from "std-widgets.slint";
+
+export enum AxisView {
+    Front,
+    Back,
+    Right,
+    Left,
+    Top,
+    Bottom,
+}
+
+// Snapshot of keyboard modifier state at the moment of a pointer event.
+// Carried alongside the cursor coordinates on every viewport-pointer
+// callback so the controller's drag FSM can read modifier state inline
+// (Slint's `moved` callback alone does not carry modifiers, so the move
+// path is dispatched through `pointer-event(Move)` instead).
+export struct PointerModifiers {
+    shift: bool,
+    control: bool,
+    alt: bool,
+    meta: bool,
+}
+
+export component MeshViewer inherits Rectangle {
+    in property <image> rendering;
+    in property <string> placeholder-text: "";
+
+    // 0 = none, 1 = rotating, 2 = panning
+    property <int> active-gesture: 0;
+    // Whether the left button is currently pressed (for selection /
+    // gizmo drag, see the pointer-down/move/up callbacks). Tracked
+    // separately from `active-gesture` so a left-press doesn't stop
+    // the user from also right-dragging to rotate the camera.
+    property <bool> left-pressed: false;
+    property <length> last-x;
+    property <length> last-y;
+
+    callback viewport-resized(length, length);
+    callback rotate-drag(length, length);
+    callback pan-drag(length, length);
+    callback zoom-at(length, length, length);
+    callback frame-view-requested();
+    callback axis-view-requested(AxisView);
+    // Left-button events. `down` fires on press, `up` on release;
+    // `move` fires while the left button is held (and no camera
+    // gesture is active). The Rust side decides whether a press →
+    // release was a "click" (small movement) or a "drag", so this
+    // callback set is finer-grained than Slint's built-in `clicked`.
+    callback viewport-pointer-down(length, length, PointerModifiers);
+    callback viewport-pointer-move(length, length, PointerModifiers);
+    callback viewport-pointer-up(length, length, PointerModifiers);
+    callback selection-cleared();
+    // Keyboard gizmo focus. `T`/`R`/`S` give the corresponding
+    // operation type keyboard focus; arrow / PageUp / PageDown
+    // events drive the per-frame integrator while a focus is
+    // active. `gizmo-keyboard-focus-active` is mirrored from the
+    // Rust controller so the FocusScope's key-pressed handler
+    // knows whether to hijack the arrow keys (focus active) or
+    // route them to the camera (focus None).
+    in property <bool> gizmo-keyboard-focus-active: false;
+    callback gizmo-focus-translate-pressed();
+    callback gizmo-focus-rotate-pressed();
+    callback gizmo-focus-scale-pressed();
+    // The `int` codes encode axis × sign:
+    //   0 = +X, 1 = -X, 2 = +Y, 3 = -Y, 4 = +Z, 5 = -Z.
+    callback gizmo-arrow-pressed(int);
+    callback gizmo-arrow-released(int);
+    // Tab / Shift+Tab selection cycling. `+1` advances forward,
+    // `-1` advances backward. The Slint side `accept`s Tab only
+    // when `can-cycle-selection` is true (i.e., the scene has at
+    // least one object); otherwise Tab falls through to native
+    // focus traversal.
+    in property <bool> can-cycle-selection: false;
+    callback selection-cycle(int);
+    // Copy / paste of the current selection. Bound from the
+    // FocusScope's key-pressed handler on `Ctrl+C` / `Ctrl+V` (and
+    // `Cmd+C` / `Cmd+V` on macOS). The Rust side decides whether
+    // there is anything to copy or paste; the callbacks fire even
+    // on empty selections and the controller bails silently.
+    callback copy-pressed();
+    callback paste-pressed();
+    // Fires when the cursor leaves the viewport rectangle. The
+    // paste path uses this to clear its cached hover-cursor so a
+    // `Ctrl+V` after the cursor has left falls back to the
+    // viewport-centre placement instead of anchoring on a stale
+    // last-known position.
+    callback viewport-pointer-leave();
+
+    // Right-click context menu. The Rust side classifies the
+    // right-button press / release as a click (menu) or a drag
+    // (camera orbit, kept on `pointer-event`) and, on a click,
+    // invokes `show-context-menu` with the press pixel + the two
+    // visibility flags. Menu-item clicks fire the matching
+    // *-pressed callback; the popup auto-closes on click outside.
+    property <length> context-anchor-x: 0px;
+    property <length> context-anchor-y: 0px;
+    property <bool> context-can-copy: false;
+    property <bool> context-can-paste: false;
+    property <bool> context-can-delete: false;
+    callback show-context-menu(length, length, bool, bool, bool);
+    show-context-menu(x, y, copy, paste, del) => {
+        root.context-anchor-x = x;
+        root.context-anchor-y = y;
+        root.context-can-copy = copy;
+        root.context-can-paste = paste;
+        root.context-can-delete = del;
+        ctx-menu.show({ x: x, y: y });
+    }
+    callback context-copy-pressed();
+    // Paste from the context menu carries the anchor pixel so
+    // Rust can place the new object at the right-click position
+    // rather than at the (drifted) cursor when the menu entry was
+    // clicked.
+    callback context-paste-pressed(length, length);
+    // Delete fires through the same callback regardless of surface
+    // (Delete key, context menu, or the Edit > Delete menu item):
+    // the Rust handler is a single document.delete_selected_root_leaf
+    // call, no per-surface state to carry.
+    callback delete-requested();
+    // Right-button press / release events. The Rust side
+    // classifies the gesture as click (context menu) or drag
+    // (camera orbit / pan, also driven by the existing
+    // active-gesture state in this component); these callbacks
+    // give Rust the press / release positions it needs to make
+    // the classification.
+    callback viewport-right-pointer-down(length, length);
+    callback viewport-right-pointer-up(length, length);
+
+    accessible-role: image;
+    accessible-label: root.rendering.width == 0
+        ? (root.placeholder-text != "" ? root.placeholder-text : @tr("MeshViewer" => "3D model viewer, empty"))
+        : @tr("MeshViewer" => "3D model viewer");
+    accessible-description: @tr("MeshViewer" => "Right-click drag or arrow keys to rotate. Shift with right-click drag, middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
+
+    // Viewport background stays dark regardless of OS theme: the CAD/DCC
+    // convention, keeps the light-grey mesh legible under both light and
+    // dark app chrome. The border follows the Palette so it blends with the
+    // surrounding chrome.
+    background: #1e1e1e;
+    border-color: Palette.border;
+    border-width: 1px;
+
+    changed width => {
+        root.viewport-resized(self.width, self.height);
+    }
+    changed height => {
+        root.viewport-resized(self.width, self.height);
+    }
+
+    Image {
+        source: root.rendering;
+        image-fit: fill;
+        width: parent.width;
+        height: parent.height;
+        // Accessibility metadata lives on the enclosing MeshViewer.
+        accessible-role: none;
+    }
+
+    if (root.rendering.width == 0 || root.rendering.height == 0): Text {
+        text: root.placeholder-text;
+        color: #888;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: text;
+        accessible-label: self.text;
+    }
+
+    fs := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        // Accessibility metadata lives on the enclosing MeshViewer.
+        accessible-role: none;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.selection-cleared();
+                return accept;
+            }
+            if (event.text == Key.Home || event.text == "f" || event.text == "F") {
+                root.frame-view-requested();
+                return accept;
+            }
+            // T / R / S → keyboard gizmo focus. The Rust side gates
+            // on whether a selection exists; an unselected viewport
+            // sees these as no-ops.
+            if (event.text == "t" || event.text == "T") {
+                root.gizmo-focus-translate-pressed();
+                return accept;
+            }
+            if (event.text == "r" || event.text == "R") {
+                root.gizmo-focus-rotate-pressed();
+                return accept;
+            }
+            if (event.text == "s" || event.text == "S") {
+                root.gizmo-focus-scale-pressed();
+                return accept;
+            }
+            // Ctrl flips each axis to its opposite, matching the
+            // Blender/CAD convention for numpad-based view switching.
+            if (event.text == "1") {
+                root.axis-view-requested(event.modifiers.control ? AxisView.Back : AxisView.Front);
+                return accept;
+            }
+            if (event.text == "3") {
+                root.axis-view-requested(event.modifiers.control ? AxisView.Left : AxisView.Right);
+                return accept;
+            }
+            if (event.text == "7") {
+                root.axis-view-requested(event.modifiers.control ? AxisView.Bottom : AxisView.Top);
+                return accept;
+            }
+            // Arrow / PageUp / PageDown keys are hijacked by the
+            // gizmo integrator while keyboard focus is active. Without
+            // focus they keep their existing camera-rotate / pan /
+            // zoom bindings; with focus they emit
+            // `gizmo-arrow-pressed(code)` and the camera doesn't
+            // hear them.
+            if (event.text == Key.LeftArrow) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(1);
+                } else if (event.modifiers.shift) {
+                    root.pan-drag(-30px, 0px);
+                } else {
+                    root.rotate-drag(-20px, 0px);
+                }
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(0);
+                } else if (event.modifiers.shift) {
+                    root.pan-drag(30px, 0px);
+                } else {
+                    root.rotate-drag(20px, 0px);
+                }
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(2);
+                } else if (event.modifiers.shift) {
+                    root.pan-drag(0px, -30px);
+                } else {
+                    root.rotate-drag(0px, -20px);
+                }
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(3);
+                } else if (event.modifiers.shift) {
+                    root.pan-drag(0px, 30px);
+                } else {
+                    root.rotate-drag(0px, 20px);
+                }
+                return accept;
+            }
+            if (event.text == Key.PageUp) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(4);
+                } else {
+                    root.zoom-at(120px, root.width / 2, root.height / 2);
+                }
+                return accept;
+            }
+            if (event.text == Key.PageDown) {
+                if (root.gizmo-keyboard-focus-active) {
+                    root.gizmo-arrow-pressed(5);
+                } else {
+                    root.zoom-at(-120px, root.width / 2, root.height / 2);
+                }
+                return accept;
+            }
+            // `+` / `=` / `-` keep their zoom binding regardless of
+            // focus, they aren't axis keys, so there's nothing to
+            // hijack.
+            if (event.text == "+" || event.text == "=") {
+                root.zoom-at(120px, root.width / 2, root.height / 2);
+                return accept;
+            }
+            if (event.text == "-") {
+                root.zoom-at(-120px, root.width / 2, root.height / 2);
+                return accept;
+            }
+            // Ctrl+C / Ctrl+V (and Cmd+C / Cmd+V on macOS) copy /
+            // paste the current selection. The branches are gated
+            // on `control || meta` so both Linux/Windows and macOS
+            // conventions work; modifier-less C / V are reserved for
+            // future plain-key bindings and fall through.
+            if ((event.text == "c" || event.text == "C")
+                && (event.modifiers.control || event.modifiers.meta)) {
+                root.copy-pressed();
+                return accept;
+            }
+            if ((event.text == "v" || event.text == "V")
+                && (event.modifiers.control || event.modifiers.meta)) {
+                root.paste-pressed();
+                return accept;
+            }
+            // Tab / Shift+Tab cycle through the scene's objects when
+            // anything is loaded. Only accepted when there's
+            // something to cycle, an empty viewport leaves Tab to
+            // native focus traversal so the user can leave the
+            // viewport with the keyboard. `Key.Backtab` is the X11 /
+            // Qt convention for Shift+Tab; on Mac / Win the same
+            // gesture arrives as `Key.Tab` with `modifiers.shift`.
+            if (event.text == Key.Backtab && root.can-cycle-selection) {
+                root.selection-cycle(-1);
+                return accept;
+            }
+            if (event.text == Key.Tab && root.can-cycle-selection) {
+                root.selection-cycle(event.modifiers.shift ? -1 : 1);
+                return accept;
+            }
+            if (event.text == Key.Delete) {
+                root.delete-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        key-released(event) => {
+            // Only the keyboard-focus-driven arrow events need a
+            // matching release. Other keys are momentary (T/R/S
+            // toggle focus, Esc cascades) and have no held state.
+            if (!root.gizmo-keyboard-focus-active) {
+                return reject;
+            }
+            if (event.text == Key.RightArrow) {
+                root.gizmo-arrow-released(0);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) {
+                root.gizmo-arrow-released(1);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.gizmo-arrow-released(2);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.gizmo-arrow-released(3);
+                return accept;
+            }
+            if (event.text == Key.PageUp) {
+                root.gizmo-arrow-released(4);
+                return accept;
+            }
+            if (event.text == Key.PageDown) {
+                root.gizmo-arrow-released(5);
+                return accept;
+            }
+            return reject;
+        }
+
+        ta := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.active-gesture == 1 ? MouseCursor.grabbing : (root.active-gesture == 2 ? MouseCursor.move : MouseCursor.default);
+
+            // The paste path's cursor anchor caches the last move
+            // position; when the cursor leaves the viewport, drop
+            // that cache so `Ctrl+V` falls back to the viewport
+            // centre instead of anchoring on a stale pixel.
+            changed has-hover => {
+                if (!self.has-hover) {
+                    root.viewport-pointer-leave();
+                }
+            }
+
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    fs.focus();
+                    root.last-x = ta.mouse-x;
+                    root.last-y = ta.mouse-y;
+                    if (event.button == PointerEventButton.left) {
+                        root.left-pressed = true;
+                        root.viewport-pointer-down(ta.mouse-x, ta.mouse-y, {
+                            shift: event.modifiers.shift,
+                            control: event.modifiers.control,
+                            alt: event.modifiers.alt,
+                            meta: event.modifiers.meta,
+                        });
+                    } else if (event.button == PointerEventButton.right) {
+                        root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        root.viewport-right-pointer-down(ta.mouse-x, ta.mouse-y);
+                    } else if (event.button == PointerEventButton.middle) {
+                        root.active-gesture = 2;
+                    }
+                } else if (event.kind == PointerEventKind.up) {
+                    if (event.button == PointerEventButton.left) {
+                        root.left-pressed = false;
+                        root.viewport-pointer-up(ta.mouse-x, ta.mouse-y, {
+                            shift: event.modifiers.shift,
+                            control: event.modifiers.control,
+                            alt: event.modifiers.alt,
+                            meta: event.modifiers.meta,
+                        });
+                    } else if (event.button == PointerEventButton.right) {
+                        root.active-gesture = 0;
+                        root.viewport-right-pointer-up(ta.mouse-x, ta.mouse-y);
+                    } else if (event.button == PointerEventButton.middle) {
+                        root.active-gesture = 0;
+                    }
+                } else if (event.kind == PointerEventKind.move && root.active-gesture == 0) {
+                    // Camera gestures (right/middle drag) take priority
+                    // over the move stream, when one is active we
+                    // suppress moves entirely so the gizmo drag FSM
+                    // doesn't fight the camera. Otherwise the same
+                    // callback drives both the left-pressed drag-update
+                    // path and the no-button hover-tint path, so the
+                    // controller can hit-test the gizmo handles in
+                    // both states. The Move case lives in
+                    // `pointer-event` (not `moved`) because only
+                    // `pointer-event` carries the `event.modifiers`
+                    // snapshot the drag FSM needs to read the Shift
+                    // state inline.
+                    root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                        shift: event.modifiers.shift,
+                        control: event.modifiers.control,
+                        alt: event.modifiers.alt,
+                        meta: event.modifiers.meta,
+                    });
+                }
+            }
+
+            moved => {
+                if (root.active-gesture == 1) {
+                    root.rotate-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
+                    root.last-x = ta.mouse-x;
+                    root.last-y = ta.mouse-y;
+                } else if (root.active-gesture == 2) {
+                    root.pan-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
+                    root.last-x = ta.mouse-x;
+                    root.last-y = ta.mouse-y;
+                }
+            }
+
+            scroll-event(event) => {
+                root.zoom-at(event.delta-y, ta.mouse-x, ta.mouse-y);
+                return accept;
+            }
+        }
+
+        // ContextMenuArea owns the popup lifecycle natively: it
+        // renders the items as platform-styled menu entries,
+        // dismisses on click-outside or Escape, and routes
+        // selection through the MenuItem `activated` callback.
+        // `enabled: false` disables its built-in right-click
+        // trigger; the click-vs-drag detection lives in Rust and
+        // calls `show({x, y})` explicitly when the gesture is a
+        // click.
+        ctx-menu := ContextMenuArea {
+            enabled: false;
+            Menu {
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Copy");
+                    activated => {
+                        root.context-copy-pressed();
+                    }
+                }
+                if (root.context-can-delete): MenuItem {
+                    title: @tr("MeshViewer" => "Delete");
+                    activated => {
+                        root.delete-requested();
+                    }
+                }
+                if (root.context-can-paste): MenuItem {
+                    title: @tr("MeshViewer" => "Paste");
+                    activated => {
+                        root.context-paste-pressed(
+                            root.context-anchor-x,
+                            root.context-anchor-y,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

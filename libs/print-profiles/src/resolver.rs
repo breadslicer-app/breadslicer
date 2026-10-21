@@ -1,0 +1,1255 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Composition of a printer profile, an effective material, and a
+//! set of per-print scene overrides into a [`ResolvedPrintConfig`].
+//!
+//! The public entry point is [`resolve`]. The pipeline runs the
+//! following layers:
+//!
+//! - Pick calibrated values from the material's per-printer block
+//!   matched to the printer's id, else from its `generic-machine`
+//!   block (recorded as a warning), then fall back to material-level
+//!   defaults for fields that have defaults coverage
+//!   (`bottom_layer_count`, `scale_compensation_pct`, the two light
+//!   PWMs and the three normal-layer wait times; the bottom waits
+//!   and the bottom motion are calibrated per printer or not at
+//!   all).
+//! - Derive from material intent where the prior layer left a
+//!   field unset and the intent has the inputs needed. Today only
+//!   `layer_height_mm` (intent passthrough from
+//!   `target_layer_height_mm`) and `normal_exposure_sec` (derived
+//!   from `target_energy_density_mj_per_cm2` divided by the
+//!   printer's declared `light_intensity_mw_per_cm2` at the picked
+//!   `light_pwm` duty) are derivable.
+//! - Drop what the printer cannot act on: a machine that does not
+//!   split its travel loses the calibrated second stage, with a
+//!   warning, so a resin calibrated for a machine that does stays
+//!   usable on one that does not.
+//! - Validate each picked value against the printer's constraints:
+//!   snap-to-multiple, snap-into-range, snap-at-max, or
+//!   reject-below-min per the policy table. Snaps that exceed the
+//!   warning threshold emit an `Autosnap` warning. A second travel
+//!   stage adds to the first, so its distance is clamped against
+//!   what the lift ceiling leaves, and a ceiling the first stage
+//!   already fills drops the stage.
+//! - Apply per-print scene overrides. Each override overwrites
+//!   the picked value, emits an `OverrideRecord` with the prior
+//!   value captured, and re-runs the per-field policy chain so
+//!   that the override is itself constrained.
+//! - Fill what nothing about the resin stated, from the printer's
+//!   own `[defaults]` or from this project's figure, each reported as
+//!   [`ResolveWarning::UncalibratedFallback`] so a caller can say the
+//!   print is running on a number nobody measured. Only
+//!   `bottom_layer_count` needs this, because a print cannot run
+//!   without one and no source publishes it.
+//! - Assemble the resolved configuration. Any required field
+//!   still unset surfaces as
+//!   [`ResolveError::MissingRequiredField`]; a wait still unset
+//!   resolves to zero instead, which is what a resin naming no
+//!   pause is asking for, a bottom wait or bottom motion still unset
+//!   resolves to its normal-layer counterpart, and a light PWM still
+//!   unset resolves to full power.
+//!
+//! `bottom_exposure_sec` has no automatic derivation; it must be
+//! supplied via calibration or override. Inputs that are silently
+//! incomplete (e.g. an intent that names a target energy density
+//! but a printer that does not declare its light intensity) cause
+//! the corresponding derivation to skip without a warning; the
+//! field is left unset, deferring to the override layer or to the
+//! assembly-time required-field check.
+
+use sc_print_primitives::{
+    DensityGPerCm3, LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
+    PositiveFiniteSec, ScaleCompensation,
+};
+
+use crate::effective_material::EffectiveMaterial;
+use crate::material_defaults::MaterialDefaults;
+use crate::material_intent::MaterialIntent;
+use crate::material_per_printer::MaterialPerPrinter;
+use crate::material_physical::MaterialPhysical;
+use crate::material_resolved::MaterialResolved;
+use crate::override_record::OverrideRecord;
+use crate::policy::{
+    AUTOSNAP_WARNING_THRESHOLD, ApplyResult, ConstraintPolicy, policies_for, relative_delta_exceeds,
+};
+use crate::printer_capabilities::PrinterCapabilities;
+use crate::printer_constraints::PrinterConstraints;
+use crate::printer_defaults::PrinterDefaults;
+use crate::printer_profile::PrinterProfile;
+use crate::resolve_error::ResolveError;
+use crate::resolve_warning::{FallbackLevel, IntentSource, ResolveWarning};
+use crate::resolved_field::ResolvedField;
+use crate::resolved_print_config::ResolvedPrintConfig;
+use crate::scene_overrides::SceneOverrides;
+use crate::second_travel_stage::SecondTravelStage;
+use crate::value_source::ValueSource;
+
+/// Cured density assumed when no profile states one: the median of
+/// the figures resin vendors publish for their unfilled photopolymers,
+/// which cluster tightly enough that the assumption is worth more than
+/// reporting nothing. Filled resins run heavier and need stating.
+const TYPICAL_CURED_DENSITY: DensityGPerCm3 = match DensityGPerCm3::new(1.17) {
+    Ok(density) => density,
+    Err(_) => panic!("1.17 g/cm^3 is a density"),
+};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PickedValues {
+    pub layer_height_mm: Option<PositiveFiniteMm>,
+    pub normal_exposure_sec: Option<PositiveFiniteSec>,
+    pub bottom_exposure_sec: Option<PositiveFiniteSec>,
+    pub bottom_layer_count: Option<u32>,
+    pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_after_lift_sec: Option<NonNegativeFiniteSec>,
+    pub lift_distance_mm: Option<PositiveFiniteMm>,
+    pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub bottom_lift_distance_mm: Option<PositiveFiniteMm>,
+    pub bottom_lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub bottom_retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub light_pwm: Option<LightPwm>,
+    pub bottom_light_pwm: Option<LightPwm>,
+    pub scale_compensation_pct: Option<ScaleCompensation>,
+    pub cured_density_g_per_cm3: Option<DensityGPerCm3>,
+    pub second_travel: Option<SecondTravelStage>,
+    pub bottom_second_travel: Option<SecondTravelStage>,
+}
+
+pub(crate) fn pick_and_derive_material(
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+) -> (PickedValues, Vec<ResolveWarning>, Vec<OverrideRecord>) {
+    let mut picked = PickedValues::default();
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+
+    if let Some((key, block)) = material.calibration_for(&printer.identity.id) {
+        apply_per_printer(block, &mut picked, &mut records);
+        if key.printer_id() != &printer.identity.id {
+            warnings.push(ResolveWarning::GenericCalibrationUsed);
+        }
+    }
+    apply_defaults(
+        material.defaults(),
+        &mut picked,
+        &mut warnings,
+        &mut records,
+    );
+    apply_physical(material.physical(), &mut picked, &mut records);
+    apply_intent_derivation(
+        material.intent(),
+        &printer.constraints,
+        &mut picked,
+        &mut warnings,
+        &mut records,
+    );
+    apply_uncalibrated_fallbacks(&printer.defaults, &mut picked, &mut warnings);
+
+    (picked, warnings, records)
+}
+
+fn apply_per_printer(
+    per_printer: &MaterialPerPrinter,
+    picked: &mut PickedValues,
+    records: &mut Vec<OverrideRecord>,
+) {
+    if let Some(value) = per_printer.normal_exposure_sec {
+        picked.normal_exposure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::NormalExposureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_exposure_sec {
+        picked.bottom_exposure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomExposureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_layer_count {
+        picked.bottom_layer_count = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLayerCount,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: f64::from(value),
+        });
+    }
+    if let Some(value) = per_printer.wait_before_cure_sec {
+        picked.wait_before_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.wait_after_cure_sec {
+        picked.wait_after_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.wait_after_lift_sec {
+        picked.wait_after_lift_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_before_cure_sec {
+        picked.bottom_wait_before_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitBeforeCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_after_cure_sec {
+        picked.bottom_wait_after_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_after_lift_sec {
+        picked.bottom_wait_after_lift_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterLiftSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.lift_distance_mm {
+        picked.lift_distance_mm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftDistanceMm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.lift_speed_mm_min {
+        picked.lift_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.retract_speed_mm_min {
+        picked.retract_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::RetractSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_lift_distance_mm {
+        picked.bottom_lift_distance_mm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftDistanceMm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_lift_speed_mm_min {
+        picked.bottom_lift_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_retract_speed_mm_min {
+        picked.bottom_retract_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomRetractSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.light_pwm {
+        picked.light_pwm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_light_pwm {
+        picked.bottom_light_pwm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if let Some(value) = per_printer.second_travel {
+        picked.second_travel = Some(value);
+        record_second_stage(value, &NORMAL_SECOND_STAGE, records);
+    }
+    // The bottom layers inherit the normal stage here rather than at
+    // assembly, so each stage is clamped against the lift ceiling its
+    // own first stage leaves. Only a stage the block declares is
+    // recorded: an inherited one is a substitution, and the absence
+    // of a record is what says so.
+    if let Some(value) = per_printer.bottom_second_travel {
+        record_second_stage(value, &BOTTOM_SECOND_STAGE, records);
+    }
+    picked.bottom_second_travel = per_printer.bottom_second_travel.or(picked.second_travel);
+}
+
+/// Note where each of a stage's 3 numbers came from, since a record
+/// carries one number and the report that reads them works field by
+/// field.
+fn record_second_stage(
+    stage: SecondTravelStage,
+    fields: &SecondStageFields,
+    records: &mut Vec<OverrideRecord>,
+) {
+    for (field, value) in [
+        (fields.lift_distance, stage.lift_distance_mm.value()),
+        (fields.lift_speed, stage.lift_speed_mm_min.value()),
+        (fields.retract_speed, stage.retract_speed_mm_min.value()),
+    ] {
+        records.push(OverrideRecord {
+            field,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value,
+        });
+    }
+}
+
+/// Take the resin's measured constants as stated. There is no layer
+/// below this one to derive them from and no per-printer variant of
+/// them, so a record is emitted without a warning: nothing was left
+/// uncalibrated, the vendor either published the figure or did not.
+fn apply_physical(
+    physical: &MaterialPhysical,
+    picked: &mut PickedValues,
+    records: &mut Vec<OverrideRecord>,
+) {
+    if let Some(value) = physical.cured_density_g_per_cm3 {
+        picked.cured_density_g_per_cm3 = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::CuredDensityGPerCm3,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+}
+
+/// How many layers take the bottom exposure when nothing else says.
+///
+/// The figure this project ships for a resin nobody has calibrated,
+/// which is what the generic material profiles carry. A print that runs
+/// on it is reported as uncalibrated, because plate adhesion is a
+/// property of the resin and the machine together.
+pub const UNCALIBRATED_BOTTOM_LAYER_COUNT: u32 = 5;
+
+/// Fill what neither the resin nor its defaults stated, from the
+/// machine's own expectation or, failing that, from ours.
+///
+/// No [`OverrideRecord`] is written for these, because a record means
+/// somebody chose the value for this print. These are what happens when
+/// nobody did, and the warning is how a caller learns it.
+fn apply_uncalibrated_fallbacks(
+    defaults: &PrinterDefaults,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+) {
+    if picked.bottom_layer_count.is_none() {
+        let (value, from) = match defaults.bottom_layer_count {
+            Some(value) => (value, FallbackLevel::Machine),
+            None => (UNCALIBRATED_BOTTOM_LAYER_COUNT, FallbackLevel::Slicer),
+        };
+        picked.bottom_layer_count = Some(value);
+        warnings.push(ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::BottomLayerCount,
+            from,
+        });
+    }
+    if picked.scale_compensation_pct.is_none() {
+        // Unstated shrinkage means none was measured, not that a
+        // figure is missing, so the print runs the dimensions as
+        // modelled and the report says the print is uncompensated.
+        picked.scale_compensation_pct = Some(ScaleCompensation::NONE);
+        warnings.push(ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::ScaleCompensationPct,
+            from: FallbackLevel::Unadjusted,
+        });
+    }
+}
+
+fn apply_defaults(
+    defaults: &MaterialDefaults,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+    records: &mut Vec<OverrideRecord>,
+) {
+    if picked.bottom_layer_count.is_none()
+        && let Some(value) = defaults.bottom_layer_count
+    {
+        picked.bottom_layer_count = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::BottomLayerCount,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLayerCount,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: f64::from(value),
+        });
+    }
+    if picked.wait_before_cure_sec.is_none()
+        && let Some(value) = defaults.wait_before_cure_sec
+    {
+        picked.wait_before_cure_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitBeforeCureSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.wait_after_cure_sec.is_none()
+        && let Some(value) = defaults.wait_after_cure_sec
+    {
+        picked.wait_after_cure_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitAfterCureSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.wait_after_lift_sec.is_none()
+        && let Some(value) = defaults.wait_after_lift_sec
+    {
+        picked.wait_after_lift_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitAfterLiftSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.light_pwm.is_none()
+        && let Some(value) = defaults.light_pwm
+    {
+        picked.light_pwm = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::LightPwm,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if picked.bottom_light_pwm.is_none()
+        && let Some(value) = defaults.bottom_light_pwm
+    {
+        picked.bottom_light_pwm = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::BottomLightPwm,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if picked.scale_compensation_pct.is_none()
+        && let Some(value) = defaults.scale_compensation_pct
+    {
+        picked.scale_compensation_pct = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::ScaleCompensationPct,
+        });
+    }
+}
+
+fn apply_intent_derivation(
+    intent: &MaterialIntent,
+    constraints: &PrinterConstraints,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+    records: &mut Vec<OverrideRecord>,
+) {
+    if picked.layer_height_mm.is_none()
+        && let Some(value) = intent.target_layer_height_mm
+    {
+        picked.layer_height_mm = Some(value);
+        warnings.push(ResolveWarning::DerivedFromIntent {
+            field: ResolvedField::LayerHeightMm,
+            source: IntentSource::TargetLayerHeight,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::LayerHeightMm,
+            source: ValueSource::Derived,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.normal_exposure_sec.is_none()
+        && let (Some(energy_density), Some(light_intensity)) = (
+            intent.target_energy_density_mj_per_cm2,
+            constraints.light_intensity_mw_per_cm2,
+        )
+        // A duty cycle scales average optical power, so the panel
+        // delivers the intensity the printer declares only at full
+        // power. A duty of zero divides to a non-finite exposure and
+        // leaves the field unset, which the required-field check
+        // then reports.
+        && let Ok(typed) = PositiveFiniteSec::new(
+            energy_density.value()
+                / (light_intensity.value() * picked.light_pwm.unwrap_or(LightPwm::FULL).duty()),
+        )
+    {
+        picked.normal_exposure_sec = Some(typed);
+        warnings.push(ResolveWarning::DerivedFromIntent {
+            field: ResolvedField::NormalExposureSec,
+            source: IntentSource::TargetEnergyDensity,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::NormalExposureSec,
+            source: ValueSource::Derived,
+            prior_value: None,
+            final_value: typed.value(),
+        });
+    }
+}
+
+/// Drop what the printer cannot act on, so a resin calibrated for a
+/// machine that splits its travel stays usable on one that does not.
+pub(crate) fn apply_capabilities(
+    capabilities: &PrinterCapabilities,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+) {
+    if capabilities.two_stage_lift {
+        return;
+    }
+    let normal = picked.second_travel.take();
+    let bottom = picked.bottom_second_travel.take();
+    if normal.is_some() || bottom.is_some() {
+        warnings.push(ResolveWarning::SecondTravelStageUnsupported);
+    }
+}
+
+pub(crate) fn apply_constraints(
+    picked: &mut PickedValues,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<(), ResolveError> {
+    if let Some(value) = picked.layer_height_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.layer_height_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.lift_distance_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::LiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.lift_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::LiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped).expect("snapped lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.retract_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::RetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped retract speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.bottom_lift_distance_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped)
+                .expect("snapped bottom lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.bottom_lift_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.bottom_retract_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomRetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom retract speed stays positive-finite"),
+        );
+    }
+    if let Some(stage) = picked.second_travel {
+        picked.second_travel = constrain_second_stage(
+            stage,
+            picked.lift_distance_mm,
+            &NORMAL_SECOND_STAGE,
+            constraints,
+            warnings,
+        )?;
+    }
+    if let Some(stage) = picked.bottom_second_travel {
+        picked.bottom_second_travel = constrain_second_stage(
+            stage,
+            picked.bottom_lift_distance_mm.or(picked.lift_distance_mm),
+            &BOTTOM_SECOND_STAGE,
+            constraints,
+            warnings,
+        )?;
+    }
+    Ok(())
+}
+
+fn apply_field_policies(
+    field: ResolvedField,
+    initial: f64,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<f64, ResolveError> {
+    let mut current = initial;
+    for policy in policies_for(field, constraints) {
+        current = apply_policy(field, current, policy, warnings)?;
+    }
+    Ok(current)
+}
+
+fn apply_policy(
+    field: ResolvedField,
+    value: f64,
+    policy: ConstraintPolicy,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<f64, ResolveError> {
+    match policy.apply(value) {
+        ApplyResult::Unchanged => Ok(value),
+        ApplyResult::Snapped { snapped, reason } => {
+            if relative_delta_exceeds(value, snapped, AUTOSNAP_WARNING_THRESHOLD) {
+                warnings.push(ResolveWarning::Autosnap {
+                    field,
+                    requested: value,
+                    snapped,
+                    reason,
+                });
+            }
+            Ok(snapped)
+        }
+        ApplyResult::RejectedBelow { minimum } => Err(ResolveError::RejectedBelowMinimum {
+            field,
+            value,
+            minimum,
+        }),
+    }
+}
+
+/// The field ids one second stage answers to, so the normal and the
+/// bottom stage share the clamping and still name themselves in a
+/// warning.
+struct SecondStageFields {
+    lift_distance: ResolvedField,
+    lift_speed: ResolvedField,
+    retract_speed: ResolvedField,
+}
+
+const NORMAL_SECOND_STAGE: SecondStageFields = SecondStageFields {
+    lift_distance: ResolvedField::SecondLiftDistanceMm,
+    lift_speed: ResolvedField::SecondLiftSpeedMmMin,
+    retract_speed: ResolvedField::SecondRetractSpeedMmMin,
+};
+
+const BOTTOM_SECOND_STAGE: SecondStageFields = SecondStageFields {
+    lift_distance: ResolvedField::BottomSecondLiftDistanceMm,
+    lift_speed: ResolvedField::BottomSecondLiftSpeedMmMin,
+    retract_speed: ResolvedField::BottomSecondRetractSpeedMmMin,
+};
+
+/// Bring a second stage inside the printer's limits: its speeds
+/// against the same ranges the first stage answers to, its distance
+/// against what the lift ceiling leaves once the first stage has
+/// taken its share.
+///
+/// Returns `None` when the ceiling leaves the stage no distance, so
+/// the platform makes the whole move in one stage.
+fn constrain_second_stage(
+    stage: SecondTravelStage,
+    first_stage_distance_mm: Option<PositiveFiniteMm>,
+    fields: &SecondStageFields,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<Option<SecondTravelStage>, ResolveError> {
+    let lift_speed = apply_field_policies(
+        fields.lift_speed,
+        stage.lift_speed_mm_min.value(),
+        constraints,
+        warnings,
+    )?;
+    let retract_speed = apply_field_policies(
+        fields.retract_speed,
+        stage.retract_speed_mm_min.value(),
+        constraints,
+        warnings,
+    )?;
+    let distance = match (constraints.lift_distance_max_mm, first_stage_distance_mm) {
+        (Some(max), Some(first)) => apply_policy(
+            fields.lift_distance,
+            stage.lift_distance_mm.value(),
+            ConstraintPolicy::SnapAtMaximum {
+                max: max.value() - first.value(),
+            },
+            warnings,
+        )?,
+        _ => stage.lift_distance_mm.value(),
+    };
+    let Ok(lift_distance_mm) = PositiveFiniteMm::new(distance) else {
+        return Ok(None);
+    };
+    Ok(Some(SecondTravelStage {
+        lift_distance_mm,
+        lift_speed_mm_min: PositiveFiniteMmPerMin::new(lift_speed)
+            .expect("snapped second lift speed stays positive-finite"),
+        retract_speed_mm_min: PositiveFiniteMmPerMin::new(retract_speed)
+            .expect("snapped second retract speed stays positive-finite"),
+    }))
+}
+
+pub(crate) fn apply_scene_overrides(
+    overrides: &SceneOverrides,
+    picked: &mut PickedValues,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+    records: &mut Vec<OverrideRecord>,
+) -> Result<(), ResolveError> {
+    if let Some(value) = overrides.layer_height_mm {
+        let prior = picked.layer_height_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LayerHeightMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.layer_height_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.normal_exposure_sec {
+        let prior = picked.normal_exposure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::NormalExposureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.normal_exposure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_exposure_sec {
+        let prior = picked.bottom_exposure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomExposureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_exposure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_layer_count {
+        let prior = picked.bottom_layer_count.map(f64::from);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLayerCount,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: f64::from(value),
+        });
+        picked.bottom_layer_count = Some(value);
+    }
+    if let Some(value) = overrides.wait_before_cure_sec {
+        let prior = picked.wait_before_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_before_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.wait_after_cure_sec {
+        let prior = picked.wait_after_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_after_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.wait_after_lift_sec {
+        let prior = picked.wait_after_lift_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_after_lift_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_wait_before_cure_sec {
+        let prior = picked.bottom_wait_before_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitBeforeCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_before_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_wait_after_cure_sec {
+        let prior = picked.bottom_wait_after_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_after_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_wait_after_lift_sec {
+        let prior = picked.bottom_wait_after_lift_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterLiftSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_after_lift_sec = Some(value);
+    }
+    if let Some(value) = overrides.lift_distance_mm {
+        let prior = picked.lift_distance_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftDistanceMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.lift_speed_mm_min {
+        let prior = picked.lift_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped).expect("snapped lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.retract_speed_mm_min {
+        let prior = picked.retract_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::RetractSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::RetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped retract speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.bottom_lift_distance_mm {
+        let prior = picked.bottom_lift_distance_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftDistanceMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped)
+                .expect("snapped bottom lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.bottom_lift_speed_mm_min {
+        let prior = picked.bottom_lift_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.bottom_retract_speed_mm_min {
+        let prior = picked.bottom_retract_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomRetractSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomRetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom retract speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.light_pwm {
+        let prior = picked.light_pwm.map(|v| v.percent());
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.percent(),
+        });
+        picked.light_pwm = Some(value);
+    }
+    if let Some(value) = overrides.bottom_light_pwm {
+        let prior = picked.bottom_light_pwm.map(|v| v.percent());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.percent(),
+        });
+        picked.bottom_light_pwm = Some(value);
+    }
+    if let Some(value) = overrides.scale_compensation_pct {
+        // Compound field: no OverrideRecord is emitted because the
+        // scalar `final_value` field cannot represent the three
+        // per-axis values.
+        picked.scale_compensation_pct = Some(value);
+    }
+    Ok(())
+}
+
+fn assemble(
+    printer: PrinterProfile,
+    material: &EffectiveMaterial,
+    picked: PickedValues,
+    overrides_applied: Vec<OverrideRecord>,
+    warnings: Vec<ResolveWarning>,
+) -> Result<ResolvedPrintConfig, ResolveError> {
+    let layer_height_mm = picked
+        .layer_height_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm,
+        })?;
+    let normal_exposure_sec =
+        picked
+            .normal_exposure_sec
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::NormalExposureSec,
+            })?;
+    let bottom_exposure_sec =
+        picked
+            .bottom_exposure_sec
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::BottomExposureSec,
+            })?;
+    // Never missing: a fallback fills it when nothing calibrated does.
+    let bottom_layer_count = picked
+        .bottom_layer_count
+        .unwrap_or(UNCALIBRATED_BOTTOM_LAYER_COUNT);
+    let lift_distance_mm = picked
+        .lift_distance_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LiftDistanceMm,
+        })?;
+    let lift_speed_mm_min = picked
+        .lift_speed_mm_min
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LiftSpeedMmMin,
+        })?;
+    let retract_speed_mm_min =
+        picked
+            .retract_speed_mm_min
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::RetractSpeedMmMin,
+            })?;
+    // Never missing: an unstated compensation resolves to none.
+    let scale_compensation_pct = picked
+        .scale_compensation_pct
+        .unwrap_or(ScaleCompensation::NONE);
+    let wait_before_cure_sec = picked
+        .wait_before_cure_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
+    let wait_after_cure_sec = picked
+        .wait_after_cure_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
+    let wait_after_lift_sec = picked
+        .wait_after_lift_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
+
+    Ok(ResolvedPrintConfig {
+        printer,
+        material_resolved: MaterialResolved {
+            identity: material.identity().clone(),
+            layer_height_mm,
+            normal_exposure_sec,
+            bottom_exposure_sec,
+            bottom_layer_count,
+            wait_before_cure_sec,
+            wait_after_cure_sec,
+            wait_after_lift_sec,
+            bottom_wait_before_cure_sec: picked
+                .bottom_wait_before_cure_sec
+                .unwrap_or(wait_before_cure_sec),
+            bottom_wait_after_cure_sec: picked
+                .bottom_wait_after_cure_sec
+                .unwrap_or(wait_after_cure_sec),
+            bottom_wait_after_lift_sec: picked
+                .bottom_wait_after_lift_sec
+                .unwrap_or(wait_after_lift_sec),
+            lift_distance_mm,
+            lift_speed_mm_min,
+            retract_speed_mm_min,
+            bottom_lift_distance_mm: picked.bottom_lift_distance_mm.unwrap_or(lift_distance_mm),
+            bottom_lift_speed_mm_min: picked.bottom_lift_speed_mm_min.unwrap_or(lift_speed_mm_min),
+            bottom_retract_speed_mm_min: picked
+                .bottom_retract_speed_mm_min
+                .unwrap_or(retract_speed_mm_min),
+            second_travel: picked.second_travel,
+            bottom_second_travel: picked.bottom_second_travel,
+            light_pwm: picked.light_pwm.unwrap_or(LightPwm::FULL),
+            bottom_light_pwm: picked.bottom_light_pwm.unwrap_or(LightPwm::FULL),
+            scale_compensation_pct,
+            cured_density_g_per_cm3: picked
+                .cured_density_g_per_cm3
+                .unwrap_or(TYPICAL_CURED_DENSITY),
+        },
+        overrides_applied,
+        warnings,
+    })
+}
+
+/// Compose a printer profile, an effective material, and a set of
+/// per-print scene overrides into a fully-resolved print
+/// configuration.
+///
+/// See the module docstring for the pipeline steps. Errors with
+/// [`ResolveError::RejectedBelowMinimum`] when a constrained value
+/// falls below the printer's safety minimum, or with
+/// [`ResolveError::MissingRequiredField`] when no resolution layer
+/// supplied a required value.
+pub fn resolve(
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    overrides: &SceneOverrides,
+) -> Result<ResolvedPrintConfig, ResolveError> {
+    let (mut picked, mut warnings, mut records) = pick_and_derive_material(printer, material);
+    apply_capabilities(&printer.capabilities, &mut picked, &mut warnings);
+    apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
+    apply_scene_overrides(
+        overrides,
+        &mut picked,
+        &printer.constraints,
+        &mut warnings,
+        &mut records,
+    )?;
+    assemble(printer.clone(), material, picked, records, warnings)
+}
+
+/// Resolve only the layer height, the sole material parameter geometry
+/// slicing needs. Runs the same intent derivation and constraint
+/// snapping as [`resolve`], but does not require the print parameters
+/// (exposure, lift, speeds) to resolve. This lets a scene be sliced
+/// into geometry with any printer + material pairing, leaving the full
+/// print configuration for the SLA output step.
+///
+/// A present `requested` value is a per-print choice that replaces
+/// the profile-supplied height and runs the same constraint policy
+/// chain, mirroring the layer-height arm of [`resolve`]'s scene
+/// overrides; with a request present, the profiles do not need to
+/// supply a layer height at all.
+///
+/// Errors with [`ResolveError::RejectedBelowMinimum`] when the layer
+/// height violates a printer constraint, or with
+/// [`ResolveError::MissingRequiredField`] when `requested` is absent
+/// and neither the material's intent nor a default supplies a layer
+/// height.
+pub fn resolve_layer_height(
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    requested: Option<PositiveFiniteMm>,
+) -> Result<PositiveFiniteMm, ResolveError> {
+    let (mut picked, mut warnings, _records) = pick_and_derive_material(printer, material);
+    apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
+    if let Some(value) = requested {
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            &printer.constraints,
+            &mut warnings,
+        )?;
+        return Ok(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite")
+        );
+    }
+    picked
+        .layer_height_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm,
+        })
+}
+
+/// Quantise `value` onto the printer's z-step grid, when the printer
+/// declares one. Total: without a declared z step the value passes
+/// through unchanged, and a value below half a step snaps up to one
+/// step, the same policy the layer-height resolution applies.
+///
+/// This is for per-print heights that must land on the motion grid
+/// WITHOUT running the full layer-height constraint chain. The
+/// first-layer height is the deliberate case: the declared
+/// layer-height range describes normal-layer curing and does not
+/// bind a first layer, which legitimately runs thicker under its
+/// longer exposure, while the z-step grid is a property of the
+/// motion system and binds every layer boundary.
+pub fn snap_to_z_step(
+    constraints: &PrinterConstraints,
+    value: PositiveFiniteMm,
+) -> PositiveFiniteMm {
+    let Some(step) = constraints.z_step_mm else {
+        return value;
+    };
+    let policy = ConstraintPolicy::SnapToMultiple { step: step.value() };
+    match policy.apply(value.value()) {
+        ApplyResult::Snapped { snapped, .. } => {
+            PositiveFiniteMm::new(snapped).expect("snapped height stays positive-finite")
+        }
+        // SnapToMultiple never rejects; both remaining arms keep the
+        // input, which is the policy's totality contract.
+        ApplyResult::Unchanged | ApplyResult::RejectedBelow { .. } => value,
+    }
+}

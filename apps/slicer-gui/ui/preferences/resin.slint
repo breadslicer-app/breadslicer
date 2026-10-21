@@ -1,0 +1,318 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+import { FavouriteStar } from "./favourite-star.slint";
+import { FilterTabs } from "./filter-tabs.slint";
+
+// Kind of a calibration tag; decides its colors.
+export enum PillKind {
+    // Calibration for the configured default printer.
+    our-printer,
+    // The generic calibration, applying as a fallback to any printer without a
+    // specific block.
+    generic,
+    // Calibration for another printer. Also used for every tag when no default
+    // printer is configured, so the whole list renders dim.
+    other,
+    // Salient marker for a profile without any calibration data.
+    no-data,
+}
+
+// One calibration tag: the printer name, or the translated "Generic" /
+// "No calibration data" texts.
+export struct ResinPill {
+    label: string,
+    kind: PillKind,
+}
+
+// One resin row. `id-index` is the material's index in the Rust catalog and the
+// stable handle carried through the callbacks; an extension row shares its
+// parent's index, so selecting either row selects the same resin.
+export struct ResinRow {
+    name: string,
+    brand: string,
+    family: string,
+    pills: [ResinPill],
+    is-custom: bool,
+    is-favourite: bool,
+    is-extension: bool,
+    can-extend: bool,
+    id-index: int,
+}
+
+export component ResinPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Resin");
+    fill: true;
+
+    in property <[ResinRow]> resin-rows;
+    // Catalog index of the selected resin, or -1 when none is chosen.
+    in-out property <int> selected-resin-index: -1;
+    in property <[string]> brand-tabs;
+    in-out property <int> current-brand-index: 0;
+    in property <string> search-text;
+
+    // A `text:` binding is dropped once the user types in the field, so an
+    // external update needs its own assignment.
+    changed search-text => {
+        search-input.text = root.search-text;
+    }
+
+    callback brand-tab-changed(int);
+    callback search-changed(string);
+    callback resin-selected(int);
+    // Toggle the resin's global favourite status. Carries the catalog index;
+    // base and extension rows share it, so the favourite is per-material.
+    callback favourite-toggled(int);
+    callback view-requested(int);
+    callback fork-requested(int);
+    callback extend-requested(int);
+    // Edit and Delete carry whether the request came from an extension row:
+    // the same catalog index then targets the extension file instead of the
+    // full profile.
+    callback edit-requested(int, bool);
+    callback delete-requested(int, bool);
+    callback import-requested();
+    callback export-materials-requested();
+
+    // Tag palette: green shade for the default printer's tag, yellow/orange for
+    // generic, gray for unmatched printers, red for the no-data marker; light
+    // and dark variants follow the theme.
+    pure function pill-background(kind: PillKind) -> brush {
+        if (kind == PillKind.our-printer) {
+            return Palette.color-scheme == ColorScheme.dark ? #1d4a29 : #cdeed6;
+        }
+        if (kind == PillKind.generic) {
+            return Palette.color-scheme == ColorScheme.dark ? #4a3d14 : #fcecc5;
+        }
+        if (kind == PillKind.no-data) {
+            return Palette.color-scheme == ColorScheme.dark ? #571e24 : #f6d3d7;
+        }
+        return Palette.foreground.transparentize(0.92);
+    }
+
+    pure function pill-foreground(kind: PillKind) -> brush {
+        if (kind == PillKind.our-printer) {
+            return Palette.color-scheme == ColorScheme.dark ? #a9e8b8 : #0d5223;
+        }
+        if (kind == PillKind.generic) {
+            return Palette.color-scheme == ColorScheme.dark ? #f0d284 : #6b4e00;
+        }
+        if (kind == PillKind.no-data) {
+            return Palette.color-scheme == ColorScheme.dark ? #f2b4bc : #8a1c28;
+        }
+        return Palette.foreground.transparentize(0.45);
+    }
+
+    FilterTabs {
+        tabs: root.brand-tabs;
+        current-index: root.current-brand-index;
+        tab-changed(i) => {
+            root.current-brand-index = i;
+            root.brand-tab-changed(i);
+        }
+    }
+
+    search-input := LineEdit {
+        placeholder-text: @tr("PreferencesPage" => "Search resins");
+        text: root.search-text;
+        accessible-label: @tr("PreferencesPage" => "Search resins by brand, name or family");
+        edited(t) => {
+            root.search-changed(t);
+        }
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for row in root.resin-rows: Rectangle {
+            height: row-content.preferred-height;
+            background: row.id-index == root.selected-resin-index
+                ? Palette.selection-background
+                : transparent;
+
+            row-menu := ContextMenuArea {
+                Menu {
+                    MenuItem {
+                        title: @tr("PreferencesPage" => "View");
+                        activated => {
+                            root.view-requested(row.id-index);
+                        }
+                    }
+                    MenuItem {
+                        title: @tr("PreferencesPage" => "Fork...");
+                        activated => {
+                            root.fork-requested(row.id-index);
+                        }
+                    }
+                    if row.can-extend: MenuItem {
+                        title: @tr("PreferencesPage" => "Extend...");
+                        activated => {
+                            root.extend-requested(row.id-index);
+                        }
+                    }
+                    if row.is-custom: MenuItem {
+                        title: @tr("PreferencesPage" => "Edit");
+                        activated => {
+                            root.edit-requested(row.id-index, row.is-extension);
+                        }
+                    }
+                    if row.is-custom: MenuItem {
+                        title: @tr("PreferencesPage" => "Delete...");
+                        activated => {
+                            root.delete-requested(row.id-index, row.is-extension);
+                        }
+                    }
+                }
+
+                // Behind the row content so the row buttons, drawn on top,
+                // still receive their own clicks while a click anywhere else on
+                // the row selects the resin. The TouchArea grabs presses of
+                // every button, so the right-click that would open the
+                // surrounding ContextMenuArea never reaches it; the menu is
+                // opened explicitly instead.
+                TouchArea {
+                    clicked => {
+                        root.selected-resin-index = row.id-index;
+                        root.resin-selected(row.id-index);
+                    }
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down
+                            && event.button == PointerEventButton.right) {
+                            row-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                        }
+                    }
+                }
+
+                row-content := HorizontalLayout {
+                    padding: 8px;
+                    // Extension rows indent under their parent.
+                    padding-left: row.is-extension ? 32px : 8px;
+                    spacing: 8px;
+
+                    // Leading favourite toggle. Its own TouchArea sits
+                    // on top of the row's select area, so a star click
+                    // toggles the favourite without selecting the resin.
+                    VerticalLayout {
+                        alignment: center;
+                        FavouriteStar {
+                            favourite: row.is-favourite;
+                            toggled => {
+                                root.favourite-toggled(row.id-index);
+                            }
+                        }
+                    }
+
+                    // Takes all the free width of the row, so the pills
+                    // wrap only at the action buttons.
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 4px;
+
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 8px;
+                            Text {
+                                text: row.brand + " " + row.name;
+                                font-size: 0.95rem;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: row.family;
+                                font-size: 0.75rem;
+                                color: Palette.foreground.transparentize(0.4);
+                                vertical-alignment: center;
+                            }
+                            // The custom mark: set apart from the calibration
+                            // tags, own color family.
+                            if row.is-custom: Rectangle {
+                                background: Palette.color-scheme == ColorScheme.dark ? #3d2a5e : #e6dcf5;
+                                border-radius: 4px;
+                                width: custom-text.preferred-width + 10px;
+                                custom-text := Text {
+                                    text: @tr("PreferencesPage" => "custom");
+                                    color: Palette.color-scheme == ColorScheme.dark ? #cdb8f0 : #4b2a82;
+                                    font-size: 0.7rem;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // An empty flexbox has a maximum width of 0, and the
+                        // action buttons then stretch over the row. Slint
+                        // measures the height of a conditional flexbox at its
+                        // preferred width, not at its real width.
+                        if row.pills.length > 0: FlexboxLayout {
+                            height: self.preferred-height;
+                            spacing: 4px;
+                            alignment: start;
+                            for pill in row.pills: pill-tag := Rectangle {
+                                property <string> tip: pill.kind == PillKind.no-data
+                                    ? @tr("PreferencesPage" => "No calibration data")
+                                    : pill.kind == PillKind.generic
+                                        ? @tr("PreferencesPage" => "Generic calibration")
+                                        : @tr("PreferencesPage" => "Calibration: {}", pill.label);
+                                background: root.pill-background(pill.kind);
+                                border-radius: 9px;
+                                width: pill-text.preferred-width + 14px;
+                                height: pill-text.preferred-height + 6px;
+                                pill-text := Text {
+                                    text: pill.label;
+                                    color: root.pill-foreground(pill.kind);
+                                    font-size: 0.75rem;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                Tooltip {
+                                    text: @markdown("\{pill-tag.tip}");
+                                }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Button {
+                                text: @tr("PreferencesPage" => "View");
+                                clicked => {
+                                    root.view-requested(row.id-index);
+                                }
+                            }
+                            if row.is-custom: Button {
+                                text: @tr("PreferencesPage" => "Edit");
+                                clicked => {
+                                    root.edit-requested(row.id-index, row.is-extension);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        vertical-stretch: 0;
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: @tr("PreferencesPage" => "Import package...");
+            clicked => {
+                root.import-requested();
+            }
+        }
+        Button {
+            text: @tr("PreferencesPage" => "Export materials...");
+            clicked => {
+                root.export-materials-requested();
+            }
+        }
+    }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "support-gen-chalyplex"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+authors = ["Sohail Siadat <sohail@entomind.co.uk>"]
+description = "Reserved: the chalyplex support-generation algorithm family (Sobolev/weak-formulation based). Developed elsewhere; empty placeholder here."
+categories = ["algorithms"]
+keywords = ["geometry", "support"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

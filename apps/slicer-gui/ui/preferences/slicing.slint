@@ -1,0 +1,48 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { ComboBox } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+
+export component SlicingPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Slicing");
+
+    // Anti-aliasing level, as an index into `aa-options`. The order must
+    // match `aa_level.rs` on the Rust side: 0 = Off, 1 = 2x, 2 = 4x,
+    // 3 = 8x.
+    in-out property <int> current-aa-index: 0;
+    callback aa-level-changed(int);
+
+    property <[string]> aa-options: [
+        @tr("SlicingPreferences" => "Off"),
+        @tr("SlicingPreferences" => "2x"),
+        @tr("SlicingPreferences" => "4x"),
+        @tr("SlicingPreferences" => "8x"),
+    ];
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("SlicingPreferences" => "Anti-aliasing");
+            vertical-alignment: center;
+            // Slint has no labelled-by relation; mirror the caption onto
+            // the ComboBox via accessible-label and hide this text from
+            // the a11y tree to avoid a disconnected duplicate.
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: root.aa-options;
+            current-index: root.current-aa-index;
+            accessible-label: @tr("SlicingPreferences" => "Anti-aliasing");
+            selected(_value) => {
+                root.current-aa-index = self.current-index;
+                root.aa-level-changed(self.current-index);
+            }
+        }
+    }
+}

@@ -1,0 +1,39 @@
+[identity]
+id = "anycubic-photon-s"
+manufacturer = "Anycubic"
+family = "Photon"
+name = "Photon S"
+profile_version = "1.0.0"
+image_asset_path = "images/anycubic-photon-s.png"
+
+[hardware.build_volume]
+x_mm = 120.96
+y_mm = 68.04
+z_mm = 165.0
+
+[hardware.pixel_resolution]
+x = 2560
+y = 1440
+
+[hardware.pixel_size_microns]
+x = 47.25
+y = 47.25000000000001
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pws"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

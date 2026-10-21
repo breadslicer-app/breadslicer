@@ -1,0 +1,11 @@
+extension = true
+
+[identity]
+id = "test-resin"
+brand = "SoulCrafted"
+family = "test"
+name = "Test Resin"
+profile_version = "1.0.0"
+
+[per_printer.test-printer]
+exposure_s = 2.4

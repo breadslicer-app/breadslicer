@@ -1,0 +1,28 @@
+[package]
+name = "sc-mesh-formats"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "A library to load, inspect & write 3d mesh data."
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh", "stl"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+any_ascii.workspace = true
+float-cmp.workspace = true
+rayon.workspace = true
+sc-3mf.workspace = true
+sc-mesh-core.workspace = true
+sc-scene.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+proptest.workspace = true
+sc-mesh-fixtures.workspace = true
+sc-scene-fixtures.workspace = true
+tempfile = "3.23.0"

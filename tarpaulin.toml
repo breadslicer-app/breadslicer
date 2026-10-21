@@ -1,0 +1,51 @@
+# Workspace-level cargo-tarpaulin configuration.
+#
+# Loaded by `scripts/coverage.sh` via `cargo tarpaulin --config tarpaulin.toml`.
+# Tarpaulin reads the `[default]` profile when no `--profile` is passed.
+
+[default]
+workspace = true
+
+# Follow subprocess execution so the slicer-cli binary's lines are
+# attributed to its source files. Without this, integration tests in
+# `apps/slicer-cli/tests/cli.rs` spawn the binary via `assert_cmd`
+# and the binary's code reads as 0/0 in the coverage report.
+follow-exec = true
+
+# The default ptrace engine segfaults when --follow-exec meets
+# assert_cmd's fork+exec subprocess pattern. The llvm engine handles
+# the same scenario cleanly and (separately) covers more
+# instrumentation patterns.
+engine = "Llvm"
+
+# Keep the tarpaulin build tree off the normal incremental-build path.
+# Tarpaulin rebuilds with `--cfg=tarpaulin -Clink-dead-code`, which
+# invalidates a regular `cargo build` cache if it shares target/.
+target-dir = "target/tarpaulin"
+
+# Reports land here. `scripts/coverage.sh` reads the stdout log to
+# print the per-file table.
+output-dir = "target/coverage"
+out = ["Stdout", "Json"]
+
+# Reuse the tarpaulin build tree across runs to keep iteration fast.
+# Drop this flag if a rustflags change makes a re-run flaky.
+skip-clean = true
+
+# Trim generated code that has no business in the headline percentage.
+# Patterns use shell-glob semantics; `*` does not cross `/`. The llvm
+# engine builds under target/debug/, while ptrace builds under
+# target/release/; cover both so the config survives an engine switch.
+exclude-files = [
+    "target/debug/build/skia-bindings-*/out/skia/bindings.rs",
+    "target/debug/build/glutin_egl_sys-*/out/egl_bindings.rs",
+    "target/debug/build/glutin_glx_sys-*/out/glx_bindings.rs",
+    "target/debug/build/glutin_glx_sys-*/out/glx_extra_bindings.rs",
+    "target/debug/build/sc-slicer-gui-*/out/main-window.rs",
+    "target/release/build/skia-bindings-*/out/skia/bindings.rs",
+    "target/release/build/glutin_egl_sys-*/out/egl_bindings.rs",
+    "target/release/build/glutin_glx_sys-*/out/glx_bindings.rs",
+    "target/release/build/glutin_glx_sys-*/out/glx_extra_bindings.rs",
+    "target/release/build/sc-slicer-gui-*/out/main-window.rs",
+    "target/package/*",
+]

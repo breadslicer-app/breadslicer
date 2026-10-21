@@ -1,0 +1,26 @@
+# Fake material profile used only by the slicer-cli end-to-end
+# tests. Fully calibrated for the slicer-cli-e2e-test printer, so the
+# resolver produces a complete configuration with no overrides. The
+# 0.2 mm intent layer height keeps the e2e layer-count assertions
+# (5 layers for the cube, 10 for the prisms) valid.
+
+[identity]
+id = "slicer-cli-e2e-test-resin"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.2
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."slicer-cli-e2e-test"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0

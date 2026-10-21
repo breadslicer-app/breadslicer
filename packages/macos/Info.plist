@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- CFBundleShortVersionString and CFBundleVersion are deliberately absent.
+	     build.sh inserts both into its staged copy, taking the number from the
+		 crate itself. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>sc-slicer-gui</string>
+	<!-- Named in full, suffix included. CoreFoundation appends `.icns` only
+	     when the value carries no extension, and this name has dots: drop the
+	     suffix and it goes looking for a file called `it.soulcrafted.slicer`,
+		 finds nothing, and falls back to the generic application icon without
+		 a word. build.sh checks the name resolves. -->
+	<key>CFBundleIconFile</key>
+	<string>it.soulcrafted.slicer.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>it.soulcrafted.slicer</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>SoulCrafted Slicer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>3D model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>3mf</string>
+				<string>obj</string>
+				<string>stl</string>
+				<string>stla</string>
+				<string>stlb</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics-design</string>
+	<!-- Checked against `rustc --print deployment-target` at build time: the
+	     floor the binaries are actually built for lives in the toolchain, and
+		 this must not promise support below it. -->
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright 2026 MyMiniFactory Ltd, CTRLback SCCL. Licensed under AGPL-3.0-only.</string>
+</dict>
+</plist>

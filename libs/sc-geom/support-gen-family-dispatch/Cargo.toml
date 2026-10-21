@@ -1,0 +1,19 @@
+[package]
+name = "support-gen-family-dispatch"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+authors = ["Sohail Siadat <sohail@entomind.co.uk>"]
+description = "Dispatches a support-generation job to one of several algorithm variants (support-gen-trivial, support-gen-chalyplex, ...) behind one shared interface."
+categories = ["algorithms"]
+keywords = ["geometry", "support", "csg", "handler", "transport"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+generic-geom-alg-family-dispatch = { path = "../generic-geom-alg-family-dispatch", version = "0.0.1" }
+sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
+
+[dev-dependencies]

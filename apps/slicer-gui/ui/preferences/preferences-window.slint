@@ -1,0 +1,185 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Palette } from "std-widgets.slint";
+import { SideBar } from "../sidebar.slint";
+import { AppearancePreferences, ThemePreference } from "./appearance.slint";
+import { PrinterPreferences, PrinterCard } from "./printer.slint";
+import { ResinPreferences, ResinRow } from "./resin.slint";
+import { SlicingPreferences } from "./slicing.slint";
+
+export component PreferencesWindow inherits Window {
+    title: @tr("Preferences");
+    default-font-family: "Noto Sans";
+
+    min-width: 520px;
+    min-height: 360px;
+    preferred-width: 680px;
+    preferred-height: 540px;
+
+    // Land initial focus on the tab list so arrow keys work straight away.
+    // Escape still works from any descendant: the wrapping FocusScope
+    // intercepts it via key-event bubbling.
+    forward-focus: side-bar;
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+    in property <[string]> language-options;
+    in-out property <int> current-language-index: 0;
+    in-out property <int> current-aa-index: 0;
+
+    in property <[PrinterCard]> printer-cards;
+    in property <[string]> manufacturer-tabs;
+    in-out property <int> current-manufacturer-index: 0;
+    in-out property <int> selected-printer-index: -1;
+    in property <int> selected-visible-printer-index: -1;
+    in property <string> printer-search-text;
+    // Armed once at startup; the printer gallery disarms it after its
+    // one-time scroll to the selected printer. Lives here so it
+    // survives the section component being destroyed and recreated.
+    property <bool> printer-initial-scroll-pending: true;
+
+    in property <[ResinRow]> resin-rows;
+    in-out property <int> selected-resin-index: -1;
+    in property <[string]> resin-brand-tabs;
+    in-out property <int> current-brand-index: 0;
+    in property <string> resin-search-text;
+
+    callback close-requested();
+    callback theme-changed(ThemePreference);
+    callback language-changed(int);
+    callback aa-level-changed(int);
+    callback manufacturer-tab-changed(int);
+    callback printer-search-changed(string);
+    callback printer-selected(int);
+    callback printer-favourite-toggled(int);
+    callback brand-tab-changed(int);
+    callback resin-search-changed(string);
+    callback resin-selected(int);
+    callback resin-favourite-toggled(int);
+    callback view-requested(int);
+    callback fork-requested(int);
+    callback extend-requested(int);
+    callback edit-requested(int, bool);
+    callback delete-requested(int, bool);
+    callback import-requested();
+    callback export-printers-requested();
+    callback export-materials-requested();
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            side-bar := SideBar {
+                title: @tr("PreferencesMenu" => "Preferences Sections");
+                model: [
+                    @tr("PreferencesMenu" => "UI & Theme"),
+                    @tr("PreferencesMenu" => "Printer"),
+                    @tr("PreferencesMenu" => "Resin"),
+                    @tr("PreferencesMenu" => "Slicing"),
+                ];
+            }
+
+            if(side-bar.current-item == 0) : AppearancePreferences {
+                current-theme: root.theme;
+                language-options: root.language-options;
+                current-language-index: root.current-language-index;
+                theme-selected(t) => {
+                    root.theme = t;
+                    root.theme-changed(t);
+                }
+                language-selected(i) => {
+                    root.current-language-index = i;
+                    root.language-changed(i);
+                }
+            }
+            if(side-bar.current-item == 1) : PrinterPreferences {
+                printer-cards: root.printer-cards;
+                manufacturer-tabs: root.manufacturer-tabs;
+                current-manufacturer-index <=> root.current-manufacturer-index;
+                selected-printer-index <=> root.selected-printer-index;
+                selected-visible-index: root.selected-visible-printer-index;
+                initial-scroll-pending <=> root.printer-initial-scroll-pending;
+                search-text: root.printer-search-text;
+                manufacturer-tab-changed(i) => {
+                    root.manufacturer-tab-changed(i);
+                }
+                search-changed(t) => {
+                    root.printer-search-changed(t);
+                }
+                printer-selected(i) => {
+                    root.printer-selected(i);
+                }
+                favourite-toggled(i) => {
+                    root.printer-favourite-toggled(i);
+                }
+                import-requested => {
+                    root.import-requested();
+                }
+                export-printers-requested => {
+                    root.export-printers-requested();
+                }
+            }
+            if(side-bar.current-item == 2) : ResinPreferences {
+                resin-rows: root.resin-rows;
+                selected-resin-index <=> root.selected-resin-index;
+                brand-tabs: root.resin-brand-tabs;
+                current-brand-index <=> root.current-brand-index;
+                search-text: root.resin-search-text;
+                brand-tab-changed(i) => {
+                    root.brand-tab-changed(i);
+                }
+                search-changed(t) => {
+                    root.resin-search-changed(t);
+                }
+                resin-selected(i) => {
+                    root.resin-selected(i);
+                }
+                favourite-toggled(i) => {
+                    root.resin-favourite-toggled(i);
+                }
+                view-requested(i) => {
+                    root.view-requested(i);
+                }
+                fork-requested(i) => {
+                    root.fork-requested(i);
+                }
+                extend-requested(i) => {
+                    root.extend-requested(i);
+                }
+                edit-requested(i, is-extension) => {
+                    root.edit-requested(i, is-extension);
+                }
+                delete-requested(i, is-extension) => {
+                    root.delete-requested(i, is-extension);
+                }
+                import-requested => {
+                    root.import-requested();
+                }
+                export-materials-requested => {
+                    root.export-materials-requested();
+                }
+            }
+            if(side-bar.current-item == 3) : SlicingPreferences {
+                current-aa-index <=> root.current-aa-index;
+                aa-level-changed(i) => {
+                    root.aa-level-changed(i);
+                }
+            }
+        }
+    }
+}

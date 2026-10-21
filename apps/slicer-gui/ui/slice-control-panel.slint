@@ -1,0 +1,437 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, ComboBox, LineEdit, Palette } from "std-widgets.slint";
+
+// Always-visible control panel for the Slice section: the scene's
+// printer and resin pickers and its first-layer-height field (the
+// Slice action lands here later). It positions and sizes itself within
+// the window client area through its own geometry properties, so the
+// window places it as an overlay rather than inside a layout. Draggable by
+// the title bar and resizable from the bottom-left corner; both track
+// the cursor in absolute window coordinates so they stay stable while
+// the panel moves under the drag. It has no close or minimize control:
+// the panel is the primary slicing control and is shown whenever the
+// Slice section is active.
+export component SliceControlPanel inherits Rectangle {
+    // Window client area, used to keep the panel fully inside the
+    // window while dragging and resizing.
+    in property <length> available-width;
+    in property <length> available-height;
+
+    in property <[string]> printer-options;
+    in-out property <int> printer-current-index: -1;
+    in property <[string]> resin-options;
+    in-out property <int> resin-current-index: -1;
+    // The printer files the selected printer declares it takes and
+    // this build can write.
+    in property <[string]> print-format-options;
+    in-out property <int> print-format-current-index: -1;
+    // One line per declared printer file that is not on offer, saying
+    // why. Empty when the printer declares nothing beyond what the
+    // dropdown holds.
+    in property <string> print-format-note;
+
+    // Whether the export action can run. Computed on the Rust side,
+    // which is the only place that knows whether a slice is held and
+    // whether the chosen format has a writer.
+    in property <bool> export-enabled;
+
+    // True while a printer file or a project is being written: both
+    // go through the same worker and the same progress panel.
+    in property <bool> export-in-progress;
+
+    // The scene's first-layer height, as the millimetre text shown in
+    // the field. Empty when no per-print height is set.
+    in-out property <string> first-layer-height-text;
+
+    // True while a slice is running: disables the Slice button (the
+    // modal covers the window separately).
+    in property <bool> slicing-in-progress;
+
+    // True to show the transient "already up to date" hint above the
+    // Slice button, shown after a press whose inputs match the held
+    // slice. The Rust side raises it and lowers it again after a delay;
+    // the opacity animation fades it in and out.
+    in property <bool> slice-up-to-date;
+
+    // A picker choice made by the user; carries the picked option's
+    // index into the matching options model.
+    callback printer-picked(int);
+    callback resin-picked(int);
+    callback print-format-picked(int);
+    // A first-layer-height edit; carries the field's current text. The
+    // Rust side parses it (millimetres) and ignores invalid input.
+    callback first-layer-height-edited(string);
+    // The Slice action: build the slice profile and run the engine.
+    callback slice-requested();
+    // The export action: write the held slice as the selected printer
+    // file.
+    callback export-requested();
+
+    // External updates (a scene's own value on install/refresh) must be
+    // pushed back into the LineEdit explicitly: its text binding breaks
+    // the first time the user types.
+    changed first-layer-height-text => {
+        first-layer-height-input.text = root.first-layer-height-text;
+    }
+    // Fired when a drag or resize gesture ends, so the window can
+    // persist the panel's geometry. Deliberately not fired per pointer
+    // move, to keep persistence to gesture boundaries.
+    callback geometry-committed();
+
+    // Layout metrics.
+    property <length> title-bar-height: 30px;
+    property <length> edge-margin: 12px;
+    property <length> panel-min-width: 200px;
+    property <length> panel-max-width: 420px;
+    // Room for the three labelled pickers, the first-layer-height
+    // field, the two buttons, a print-format note of up to three
+    // lines, plus the body paddings. A longer note is clipped rather
+    // than pushing the export button out of the panel.
+    property <length> body-height: 430px;
+    property <length> panel-min-height: root.title-bar-height + root.body-height;
+    property <length> panel-max-height: Math.max(root.panel-min-height, root.available-height - 2 * root.edge-margin);
+
+    // Live geometry, stored relative to the window edges so a resize
+    // keeps the panel pinned to its corner instead of drifting across
+    // the viewport. `anchor-right` / `anchor-bottom` pick which pair of
+    // edges the panel hugs; `offset-x` / `offset-y` are the distances
+    // from those edges to the matching panel edges. The default hugs
+    // the top-left corner, clear of the top-right object-list panel and
+    // the right-edge slice slider that lands later.
+    in-out property <bool> anchor-right: false;
+    in-out property <bool> anchor-bottom: false;
+    in-out property <length> offset-x: root.edge-margin;
+    in-out property <length> offset-y: root.edge-margin;
+    in-out property <length> panel-width: 240px;
+    // 0px means "auto-size to the content"; a positive value is the
+    // height the user pinned by dragging the resize handle.
+    in-out property <length> panel-height: 0px;
+
+    property <length> auto-body-height: root.title-bar-height + root.body-height;
+    property <length> effective-height: root.panel-height > 0px
+        ? Math.min(Math.max(root.panel-height, root.panel-min-height), root.panel-max-height)
+        : Math.min(Math.max(root.auto-body-height, root.panel-min-height), root.panel-max-height);
+
+    // Position derived from the anchored edges and offsets, so it tracks
+    // the window size automatically on resize.
+    property <length> raw-x: root.anchor-right
+        ? root.available-width - root.offset-x - root.width
+        : root.offset-x;
+    property <length> raw-y: root.anchor-bottom
+        ? root.available-height - root.offset-y - root.height
+        : root.offset-y;
+
+    // Rendered geometry, clamped to the limits and to the window.
+    width: Math.min(Math.max(root.panel-width, root.panel-min-width), root.panel-max-width);
+    height: root.effective-height;
+    x: Math.min(Math.max(root.raw-x, 0px), Math.max(0px, root.available-width - root.width));
+    y: Math.min(Math.max(root.raw-y, 0px), Math.max(0px, root.available-height - root.height));
+
+    // Re-derive the anchored edges and offsets from an absolute top-left
+    // position, hugging the edges of the quadrant the panel's centre
+    // falls in. Both drag and resize funnel through here so the two
+    // representations stay in sync.
+    function reanchor(abs-left: length, abs-top: length) {
+        if (abs-left + root.width / 2 > root.available-width / 2) {
+            root.anchor-right = true;
+            root.offset-x = Math.max(0px, root.available-width - (abs-left + root.width));
+        } else {
+            root.anchor-right = false;
+            root.offset-x = Math.max(0px, abs-left);
+        }
+        if (abs-top + root.height / 2 > root.available-height / 2) {
+            root.anchor-bottom = true;
+            root.offset-y = Math.max(0px, root.available-height - (abs-top + root.height));
+        } else {
+            root.anchor-bottom = false;
+            root.offset-y = Math.max(0px, abs-top);
+        }
+    }
+
+    background: Palette.background.darker(0.15);
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 8px;
+    clip: true;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: #0000004d;
+    drop-shadow-offset-y: 3px;
+
+    accessible-role: groupbox;
+    accessible-label: @tr("SlicePanel" => "Slice setup");
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Title bar doubles as the drag handle.
+        Rectangle {
+            height: root.title-bar-height;
+            background: Palette.background.darker(0.3);
+
+            drag-area := TouchArea {
+                mouse-cursor: move;
+
+                property <length> press-cursor-x;
+                property <length> press-cursor-y;
+                property <length> press-x;
+                property <length> press-y;
+
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                        self.press-cursor-x = self.absolute-position.x + self.mouse-x;
+                        self.press-cursor-y = self.absolute-position.y + self.mouse-y;
+                        self.press-x = root.x;
+                        self.press-y = root.y;
+                    }
+                    if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                        root.geometry-committed();
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        root.reanchor(
+                            Math.min(
+                                Math.max(
+                                    self.press-x
+                                        + ((self.absolute-position.x + self.mouse-x) - self.press-cursor-x),
+                                    0px
+                                ),
+                                Math.max(0px, root.available-width - root.width)
+                            ),
+                            Math.min(
+                                Math.max(
+                                    self.press-y
+                                        + ((self.absolute-position.y + self.mouse-y) - self.press-cursor-y),
+                                    0px
+                                ),
+                                Math.max(0px, root.available-height - root.height)
+                            )
+                        );
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                Text {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                    text: @tr("SlicePanel" => "Print Setup");
+                    overflow: elide;
+                    accessible-role: none;
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("SlicePanel" => "Printer");
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+                printer-combo := ComboBox {
+                    model: root.printer-options;
+                    current-index <=> root.printer-current-index;
+                    enabled: root.printer-options.length > 0;
+                    selected => {
+                        root.printer-picked(printer-combo.current-index);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("SlicePanel" => "Resin");
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+                resin-combo := ComboBox {
+                    model: root.resin-options;
+                    current-index <=> root.resin-current-index;
+                    enabled: root.resin-options.length > 0;
+                    selected => {
+                        root.resin-picked(resin-combo.current-index);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("SlicePanel" => "First layer height (mm)");
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+                first-layer-height-input := LineEdit {
+                    text: root.first-layer-height-text;
+                    placeholder-text: @tr("SlicePanel" => "from resin profile");
+                    accessible-label: @tr("SlicePanel" => "First layer height in millimetres");
+                    edited(t) => {
+                        root.first-layer-height-edited(t);
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+            }
+
+            Text {
+                text: @tr("SlicePanel" => "Slice is up to date.");
+                font-size: 0.8rem;
+                color: Palette.foreground.transparentize(0.3);
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                opacity: root.slice-up-to-date ? 1.0 : 0.0;
+                animate opacity {
+                    duration: 400ms;
+                }
+                accessible-role: none;
+            }
+
+            Button {
+                text: @tr("SlicePanel" => "Slice");
+                primary: true;
+                // A printer and a resin must be chosen, and no slice may
+                // already be running.
+                enabled: root.printer-current-index >= 0
+                    && root.resin-current-index >= 0
+                    && !root.slicing-in-progress;
+                clicked => {
+                    root.slice-requested();
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("SlicePanel" => "Print format");
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+                print-format-combo := ComboBox {
+                    model: root.print-format-options;
+                    current-index <=> root.print-format-current-index;
+                    enabled: root.print-format-options.length > 0;
+                    selected => {
+                        root.print-format-picked(print-format-combo.current-index);
+                    }
+                }
+                if root.print-format-note != "": Text {
+                    text: root.print-format-note;
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                    wrap: word-wrap;
+                }
+            }
+
+            Button {
+                text: @tr("SlicePanel" => "Export for printer");
+                enabled: root.export-enabled
+                    && !root.slicing-in-progress
+                    && !root.export-in-progress;
+                clicked => {
+                    root.export-requested();
+                }
+            }
+        }
+    }
+
+    // Bottom-left resize handle. The top and right edges stay anchored:
+    // dragging left grows the width, dragging down grows the height.
+    resize-area := TouchArea {
+        x: 0px;
+        y: root.height - self.height;
+        width: 16px;
+        height: 16px;
+        mouse-cursor: nesw-resize;
+
+        property <length> press-cursor-x;
+        property <length> press-cursor-y;
+        property <length> press-right;
+        property <length> press-top;
+        property <length> press-width;
+        property <length> press-height;
+
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                self.press-cursor-x = self.absolute-position.x + self.mouse-x;
+                self.press-cursor-y = self.absolute-position.y + self.mouse-y;
+                self.press-right = root.x + root.width;
+                self.press-top = root.y;
+                self.press-width = root.width;
+                self.press-height = root.height;
+            }
+            if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                root.geometry-committed();
+            }
+        }
+
+        moved => {
+            if (self.pressed) {
+                root.panel-width = Math.min(
+                    Math.max(
+                        self.press-width
+                            - ((self.absolute-position.x + self.mouse-x) - self.press-cursor-x),
+                        root.panel-min-width
+                    ),
+                    root.panel-max-width
+                );
+                root.panel-height = Math.min(
+                    Math.max(
+                        self.press-height
+                            + ((self.absolute-position.y + self.mouse-y) - self.press-cursor-y),
+                        root.panel-min-height
+                    ),
+                    Math.max(root.panel-min-height, root.available-height - self.press-top - root.edge-margin)
+                );
+                // The top and right edges stay put: re-derive the anchor
+                // from the fixed top-right corner and the new size.
+                root.reanchor(self.press-right - root.width, self.press-top);
+            }
+        }
+
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 16;
+            viewbox-height: 16;
+            stroke: Palette.foreground.transparentize(0.5);
+            stroke-width: 1.5px;
+
+            MoveTo {
+                x: 0;
+                y: 7;
+            }
+            LineTo {
+                x: 9;
+                y: 16;
+            }
+            MoveTo {
+                x: 0;
+                y: 2;
+            }
+            LineTo {
+                x: 14;
+                y: 16;
+            }
+        }
+    }
+}

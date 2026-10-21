@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SoulCrafted Slicer
+GenericName=Resin 3D Printer Slicer
+Comment=Open Source Community-Driven Slicer for Resin 3D Printers
+Exec=sc-slicer-gui %F
+Icon=it.soulcrafted.slicer
+Terminal=false
+Categories=Graphics;3DGraphics;
+MimeType=model/stl;model/obj;model/3mf;
+StartupNotify=true

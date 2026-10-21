@@ -1,0 +1,33 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Typed document model for the 3D Model part, with XML parsing and
+//! serialization. Coordinates stay in the document's declared unit; converting
+//! to millimetres is the caller's job via [`Unit::scale_to_mm`].
+
+mod element_run;
+mod numbers;
+mod read;
+pub mod resource_ids;
+pub mod serialization;
+mod slice;
+#[cfg(test)]
+mod tests_element_run;
+#[cfg(test)]
+mod tests_serialization;
+mod types;
+mod write;
+
+pub use read::parse_model;
+pub use slice::{
+    MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
+    SliceVertex,
+};
+pub use types::{
+    BaseMaterial, BaseMaterialsGroup, BuildItem, Component, Matrix3D, MeshData, Metadata,
+    ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, TriangleRef, Unit,
+    Vertex3,
+};
+pub use write::write_model;

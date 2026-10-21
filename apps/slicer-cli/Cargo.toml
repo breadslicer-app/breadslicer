@@ -1,0 +1,40 @@
+[package]
+name = "sc-slicer-cli"
+version = "0.3.1"
+edition.workspace = true
+license = "AGPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sc-slicer-cli"
+
+[dependencies]
+sc-app-paths.workspace = true
+sc-geom.workspace = true
+sc-mesh-core.workspace = true
+sc-mesh-formats.workspace = true
+sc-print-glue.workspace = true
+sc-print-primitives.workspace = true
+sc-print-profiles.workspace = true
+sc-project-formats.workspace = true
+sc-scene.workspace = true
+sc-sl1cer.workspace = true
+sc-sla-formats.workspace = true
+
+anyhow.workspace = true
+
+bpaf = "0.9.24"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+sc-3mf.workspace = true
+sc-mesh-fixtures.workspace = true
+
+assert_cmd = "2.0.18"
+png = "0.18.1"
+predicates = "3.1.3"
+tempfile = "3.23.0"

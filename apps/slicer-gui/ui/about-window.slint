@@ -1,0 +1,91 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, Palette } from "std-widgets.slint";
+import { ThemePreference } from "./preferences/appearance.slint";
+
+export component AboutWindow inherits Window {
+    title: @tr("About SoulCrafted Slicer");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    in property <string> app-version: "";
+    in property <ThemePreference> theme: ThemePreference.System;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    // Font sizes in `rem`: 1rem = Window.default-font-size at render time,
+    // so these track OS text-size preferences automatically. Centralised
+    // here to preserve the visual hierarchy and make it easy to tweak.
+    property <length> font-title: 1.8rem;
+    property <length> font-secondary: 0.9rem;
+    property <length> font-footnote: 0.85rem;
+
+    min-width: 420px;
+    min-height: 400px;
+    max-width: 420px;
+    max-height: 400px;
+    preferred-width: 420px;
+    preferred-height: 400px;
+
+    callback close-requested();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../assets/images/soulcrafted.svg");
+                width: 144px;
+                height: 144px;
+            }
+        }
+
+        Text {
+            text: @tr("SoulCrafted Slicer");
+            font-size: root.font-title;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "Version {0}", root.app-version);
+            font-size: root.font-secondary;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "An open source slicer for resin 3D printers.");
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "Licensed under AGPL-3.0-only");
+            font-size: root.font-footnote;
+            horizontal-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 8px;
+
+            Button {
+                text: @tr("About" => "Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,5 @@
+version = 2
+
+[profiles.printer]
+id = "test-printer"
+pinned_revision = 4

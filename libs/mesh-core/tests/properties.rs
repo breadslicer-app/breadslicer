@@ -1,0 +1,708 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Property tests for `sc-mesh-core` algebra. These complement the
+ * example-based tests embedded in each module by checking algebraic
+ * identities (commutativity, associativity, inverse/identity laws) over
+ * generated inputs.
+ *
+ * Float strategies are deliberately narrow: bounded magnitude, no NaN /
+ * ±∞ / subnormals, and `prop_assume!` to reject near-degenerate cases.
+ * Comparisons use `float_cmp::approx_eq` per the project's float rule.
+ */
+
+use float_cmp::approx_eq;
+use proptest::prelude::*;
+use sc_mesh_core::Aabb;
+use sc_mesh_core::aabb::arvo_transformed_aabb;
+use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
+use sc_mesh_core::primitives::{Vector3D, Vertex};
+use sc_mesh_core::transform::AffineTransform3D;
+
+// ---------------------------------------------------------------------
+// Strategies
+// ---------------------------------------------------------------------
+
+/// Bounded finite f32 generator: magnitude up to ~1e3 to keep
+/// `squared_norm` and `mul_add` chains far from overflow, no
+/// subnormals or NaN.
+fn bounded_f32() -> impl Strategy<Value = f32> {
+    -1.0e3_f32..1.0e3_f32
+}
+
+/// Bounded finite f64 generator: magnitude up to ~1e3 for the same
+/// reasons.
+fn bounded_f64() -> impl Strategy<Value = f64> {
+    -1.0e3_f64..1.0e3_f64
+}
+
+fn vector3d_f32() -> impl Strategy<Value = Vector3D<f32>> {
+    (bounded_f32(), bounded_f32(), bounded_f32()).prop_map(|(x, y, z)| Vector3D::new([x, y, z]))
+}
+
+fn vector3d_f64() -> impl Strategy<Value = Vector3D<f64>> {
+    (bounded_f64(), bounded_f64(), bounded_f64()).prop_map(|(x, y, z)| Vector3D::new([x, y, z]))
+}
+
+/// f32 generator that occasionally emits NaN, ±∞, signed zero, or a
+/// subnormal value alongside ordinary bounded coordinates. Used by
+/// rejection-contract property tests: public APIs given pathological
+/// input must either return Err or a fully finite result, never panic
+/// and never return a non-finite "successful" answer the caller
+/// cannot distinguish from a valid one.
+fn pathological_f32() -> impl Strategy<Value = f32> {
+    prop_oneof![
+        1 => Just(f32::NAN),
+        1 => Just(f32::INFINITY),
+        1 => Just(f32::NEG_INFINITY),
+        1 => Just(0.0_f32),
+        1 => Just(-0.0_f32),
+        1 => Just(f32::MIN_POSITIVE / 2.0),
+        20 => bounded_f32(),
+    ]
+}
+
+/// Builds a triangle whose sin²(θ) sits within roughly one order of
+/// magnitude of `DEGENERACY_SIN_SQ_THRESHOLD` (1e-12) on either side.
+/// edge1 has length 1 along +X; edge2 = 0.5·edge1 + perp·Y, so
+/// sin²(θ) = perp² / (0.25 + perp²). The `perp` range
+/// `[3e-7, 3e-6]` produces sin² in `[3.6e-13, 3.6e-11]`. The triangle
+/// is anchored at a random base vertex to keep the scale-invariant
+/// test surface meaningful.
+fn near_degeneracy_threshold_triangle() -> impl Strategy<Value = [Vertex; 3]> {
+    (
+        3.0e-7_f32..3.0e-6_f32,
+        -10.0_f32..10.0_f32,
+        -10.0_f32..10.0_f32,
+        -10.0_f32..10.0_f32,
+    )
+        .prop_map(|(perp, bx, by, bz)| {
+            let v0 = Vertex::new([bx, by, bz]);
+            let v1 = Vertex::new([bx + 1.0, by, bz]);
+            let v2 = Vertex::new([bx + 0.5, by + perp, bz]);
+            [v0, v1, v2]
+        })
+}
+
+// ---------------------------------------------------------------------
+// Vector3D properties
+// ---------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    #[test]
+    fn dot_product_is_commutative_f32(a in vector3d_f32(), b in vector3d_f32()) {
+        let ab = a.dot_product(&b);
+        let ba = b.dot_product(&a);
+        // Tight relative tolerance: same operands re-ordered.
+        prop_assert!(
+            approx_eq!(f32, ab, ba, epsilon = 1e-3),
+            "dot(a,b)={ab}, dot(b,a)={ba}"
+        );
+    }
+
+    #[test]
+    fn dot_product_is_commutative_f64(a in vector3d_f64(), b in vector3d_f64()) {
+        let ab = a.dot_product(&b);
+        let ba = b.dot_product(&a);
+        prop_assert!(
+            approx_eq!(f64, ab, ba, epsilon = 1e-9),
+            "dot(a,b)={ab}, dot(b,a)={ba}"
+        );
+    }
+
+    #[test]
+    fn cross_product_is_anti_commutative_f64(a in vector3d_f64(), b in vector3d_f64()) {
+        // cross(a, b) == -cross(b, a) , exact under reorder of the same
+        // arithmetic, but `mul_add` rounding can cause 1-ulp differences,
+        // so we still use approx_eq.
+        let ab = a.cross_product(&b);
+        let ba = b.cross_product(&a);
+        for i in 0..3 {
+            prop_assert!(
+                approx_eq!(f64, ab[i], -ba[i], epsilon = 1e-9),
+                "axis {i}: cross(a,b)={}, cross(b,a)={}",
+                ab[i],
+                ba[i]
+            );
+        }
+    }
+
+    #[test]
+    fn cross_product_is_orthogonal_to_inputs_f64(
+        a in vector3d_f64(),
+        b in vector3d_f64(),
+    ) {
+        let c = a.cross_product(&b);
+        let dot_a = c.dot_product(&a);
+        let dot_b = c.dot_product(&b);
+        // Magnitude-relative tolerance: |c| can be ~1e6 (bounded coords squared),
+        // so absolute zero with 1e-6 epsilon would be too strict.
+        let scale = c.norm().max(a.norm()).max(b.norm()).max(1.0);
+        prop_assert!(
+            approx_eq!(f64, dot_a / scale, 0.0, epsilon = 1e-9),
+            "cross·a not orthogonal: {dot_a} (scale {scale})"
+        );
+        prop_assert!(
+            approx_eq!(f64, dot_b / scale, 0.0, epsilon = 1e-9),
+            "cross·b not orthogonal: {dot_b} (scale {scale})"
+        );
+    }
+
+    #[test]
+    fn diff_norm_is_symmetric_f32(a in vector3d_f32(), b in vector3d_f32()) {
+        // ‖a - b‖ == ‖b - a‖.
+        let n_ab = a.diff(&b).norm();
+        let n_ba = b.diff(&a).norm();
+        prop_assert!(
+            approx_eq!(f32, n_ab, n_ba, epsilon = 1e-4),
+            "‖a-b‖={n_ab}, ‖b-a‖={n_ba}"
+        );
+    }
+
+    #[test]
+    fn squared_norm_equals_dot_with_self_f64(a in vector3d_f64()) {
+        let sq = a.squared_norm();
+        let dot = a.dot_product(&a);
+        prop_assert!(
+            approx_eq!(f64, sq, dot, epsilon = 1e-9),
+            "squared_norm={sq}, dot(a,a)={dot}"
+        );
+    }
+
+    #[test]
+    fn norm_is_non_negative_f32(a in vector3d_f32()) {
+        let n = a.norm();
+        prop_assert!(n >= 0.0, "norm is negative: {n}");
+        prop_assert!(n.is_finite(), "norm is non-finite: {n}");
+    }
+
+    #[test]
+    fn f32_to_f64_to_f32_round_trip(v in vector3d_f32()) {
+        // Casting f32 -> f64 -> f32 is lossless for any finite, non-NaN
+        // f32 (f64 can exactly represent every f32, the back cast picks
+        // the same value bit-for-bit).
+        let widened: Vector3D<f64> = v.into();
+        let back: Vector3D<f32> = widened.into();
+        prop_assert_eq!(v, back);
+    }
+}
+
+// ---------------------------------------------------------------------
+// Triangle-normal properties
+// ---------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// `compute_normal_from_triangle_vertices` is scale-invariant:
+    /// scaling all three vertices by a positive factor must produce
+    /// the same unit normal as the unscaled triangle. The threshold
+    /// in the function is dimensionless (sin²(θ) of the edges), so
+    /// the property holds for any scale.
+    ///
+    /// `prop_assume!` skips near-degenerate inputs whose accept/reject
+    /// outcome can flip across scale due to f32 quantisation, that is
+    /// expected and orthogonal to the property under test.
+    #[test]
+    fn compute_normal_is_scale_invariant(
+        v0 in vector3d_f32(),
+        v1 in vector3d_f32(),
+        v2 in vector3d_f32(),
+        scale in 1.0e-2_f32..1.0e2_f32,
+    ) {
+        let p0 = Vertex::new(v0.coords());
+        let p1 = Vertex::new(v1.coords());
+        let p2 = Vertex::new(v2.coords());
+
+        // Skip near-degenerate triangles (sin² safely above the 1e-12
+        // function threshold). Computed in f64 to mirror the function.
+        let v0d = p0.to_f64();
+        let v1d = p1.to_f64();
+        let v2d = p2.to_f64();
+        let e1 = v1d.diff(&v0d);
+        let e2 = v2d.diff(&v0d);
+        let cross_mag_sq = e1.cross_product(&e2).squared_norm();
+        let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
+        prop_assume!(edges_mag_sq_product > 0.0);
+        prop_assume!(cross_mag_sq / edges_mag_sq_product > 1.0e-6);
+
+        let n_unscaled = compute_normal_from_triangle_vertices(&[p0, p1, p2]).unwrap();
+        let scaled = [
+            Vertex::new([
+                v0.coords()[0] * scale,
+                v0.coords()[1] * scale,
+                v0.coords()[2] * scale,
+            ]),
+            Vertex::new([
+                v1.coords()[0] * scale,
+                v1.coords()[1] * scale,
+                v1.coords()[2] * scale,
+            ]),
+            Vertex::new([
+                v2.coords()[0] * scale,
+                v2.coords()[1] * scale,
+                v2.coords()[2] * scale,
+            ]),
+        ];
+        let n_scaled = compute_normal_from_triangle_vertices(&scaled).unwrap();
+
+        let nu = n_unscaled.coords();
+        let ns = n_scaled.coords();
+        for i in 0..3 {
+            prop_assert!(
+                approx_eq!(f32, nu[i], ns[i], epsilon = 1.0e-3),
+                "axis {i}: unscaled={}, scaled={}",
+                nu[i],
+                ns[i],
+            );
+        }
+    }
+
+    /// Rejection contract under pathological f32 input: NaN / ±∞ /
+    /// signed zero / subnormal coordinates must not produce a "Ok"
+    /// result with non-finite components, and must not panic. Either
+    /// the routine returns Err (the usual outcome for these inputs)
+    /// or it returns a finite unit normal (when the pathology
+    /// happens to cancel out, e.g. all-zero vertex shifts that still
+    /// leave a valid triangle).
+    #[test]
+    fn compute_normal_never_returns_non_finite_or_panics_on_pathological_input(
+        v0 in (pathological_f32(), pathological_f32(), pathological_f32()),
+        v1 in (pathological_f32(), pathological_f32(), pathological_f32()),
+        v2 in (pathological_f32(), pathological_f32(), pathological_f32()),
+    ) {
+        let verts = [
+            Vertex::new([v0.0, v0.1, v0.2]),
+            Vertex::new([v1.0, v1.1, v1.2]),
+            Vertex::new([v2.0, v2.1, v2.2]),
+        ];
+        if let Ok(n) = compute_normal_from_triangle_vertices(&verts) {
+            let c = n.coords();
+            for (i, x) in c.iter().enumerate() {
+                prop_assert!(x.is_finite(), "axis {i} non-finite in Ok result: {c:?}");
+            }
+            let mag_sq = c[0].mul_add(c[0], c[1].mul_add(c[1], c[2] * c[2]));
+            prop_assert!(
+                (mag_sq - 1.0).abs() < 1.0e-5,
+                "Ok result is not unit length: mag²={mag_sq}",
+            );
+        }
+    }
+
+    /// Triangle generators straddle `DEGENERACY_SIN_SQ_THRESHOLD` by
+    /// design (sin² in roughly [3.6e-13, 3.6e-11], one order of
+    /// magnitude on either side of the 1e-12 threshold). The contract
+    /// is the same as above: a successful result must be a finite
+    /// unit normal; rejection is also acceptable. This catches any
+    /// future change to the threshold or its comparison logic that
+    /// would leak NaN / non-unit outputs into "Ok".
+    #[test]
+    fn compute_normal_at_degeneracy_threshold_is_finite_or_errs(
+        verts in near_degeneracy_threshold_triangle(),
+    ) {
+        if let Ok(n) = compute_normal_from_triangle_vertices(&verts) {
+            let c = n.coords();
+            for (i, x) in c.iter().enumerate() {
+                prop_assert!(x.is_finite(), "axis {i} non-finite in Ok result: {c:?}");
+            }
+            let mag_sq = c[0].mul_add(c[0], c[1].mul_add(c[1], c[2] * c[2]));
+            prop_assert!(
+                (mag_sq - 1.0).abs() < 1.0e-4,
+                "Ok result is not unit length: mag²={mag_sq}",
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// AffineTransform3D properties
+// ---------------------------------------------------------------------
+
+fn affine_rotation_or_translation() -> impl Strategy<Value = AffineTransform3D> {
+    // A grab-bag of well-conditioned transforms: pure translation, axis
+    // rotation, uniform scale, and arbitrary axis-angle. All have a
+    // determinant well away from zero, so inverse() is reliable.
+    prop_oneof![
+        (bounded_f64(), bounded_f64(), bounded_f64())
+            .prop_map(|(x, y, z)| AffineTransform3D::from_translation([x, y, z])),
+        (-std::f64::consts::PI..std::f64::consts::PI).prop_map(AffineTransform3D::from_rotation_x),
+        (-std::f64::consts::PI..std::f64::consts::PI).prop_map(AffineTransform3D::from_rotation_y),
+        (-std::f64::consts::PI..std::f64::consts::PI).prop_map(AffineTransform3D::from_rotation_z),
+        (0.1_f64..10.0_f64).prop_map(AffineTransform3D::from_uniform_scale),
+    ]
+}
+
+fn axis_angle_safe() -> impl Strategy<Value = ([f64; 3], f64)> {
+    // Generate axes with magnitude clearly above the f64::EPSILON
+    // threshold the constructor rejects. Bound the angle to one full
+    // turn either way: Rodrigues is well-defined everywhere, this just
+    // makes failure cases readable.
+    (
+        (
+            -10.0_f64..10.0_f64,
+            -10.0_f64..10.0_f64,
+            -10.0_f64..10.0_f64,
+        ),
+        -std::f64::consts::TAU..std::f64::consts::TAU,
+    )
+        .prop_filter(
+            "axis must have magnitude >> sqrt(EPSILON)",
+            |((x, y, z), _)| x.mul_add(*x, y.mul_add(*y, z * z)) > 1.0,
+        )
+        .prop_map(|((x, y, z), a)| ([x, y, z], a))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    #[test]
+    fn compose_with_identity_is_identity_left(t in affine_rotation_or_translation()) {
+        let id = AffineTransform3D::identity();
+        let composed = id.compose(&t);
+        for i in 0..3 {
+            for j in 0..3 {
+                prop_assert!(
+                    approx_eq!(f64, composed.linear()[i][j], t.linear()[i][j], epsilon = 1e-12),
+                );
+            }
+            prop_assert!(
+                approx_eq!(f64, composed.translation()[i], t.translation()[i], epsilon = 1e-12),
+            );
+        }
+    }
+
+    #[test]
+    fn compose_with_identity_is_identity_right(t in affine_rotation_or_translation()) {
+        let id = AffineTransform3D::identity();
+        let composed = t.compose(&id);
+        for i in 0..3 {
+            for j in 0..3 {
+                prop_assert!(
+                    approx_eq!(f64, composed.linear()[i][j], t.linear()[i][j], epsilon = 1e-12),
+                );
+            }
+            prop_assert!(
+                approx_eq!(f64, composed.translation()[i], t.translation()[i], epsilon = 1e-12),
+            );
+        }
+    }
+
+    #[test]
+    fn compose_is_associative(
+        a in affine_rotation_or_translation(),
+        b in affine_rotation_or_translation(),
+        c in affine_rotation_or_translation(),
+    ) {
+        // (A ∘ B) ∘ C == A ∘ (B ∘ C). With well-conditioned generators
+        // the structural comparison holds to ~1e-9.
+        let left = a.compose(&b).compose(&c);
+        let right = a.compose(&b.compose(&c));
+        for i in 0..3 {
+            for j in 0..3 {
+                prop_assert!(
+                    approx_eq!(f64, left.linear()[i][j], right.linear()[i][j], epsilon = 1e-9),
+                    "linear[{i}][{j}]: left={}, right={}",
+                    left.linear()[i][j], right.linear()[i][j]
+                );
+            }
+            prop_assert!(
+                approx_eq!(f64, left.translation()[i], right.translation()[i], epsilon = 1e-7),
+            );
+        }
+    }
+
+    #[test]
+    fn compose_apply_equals_sequential_apply(
+        a in affine_rotation_or_translation(),
+        b in affine_rotation_or_translation(),
+        v in vector3d_f32(),
+    ) {
+        // (A ∘ B)(v) == A(B(v)).
+        let v = Vertex::new(v.coords());
+        let composed = a.compose(&b).apply_to_vertex(v);
+        let sequential = a.apply_to_vertex(b.apply_to_vertex(v));
+        // The two routes accumulate slightly different f32 rounding, so
+        // the tolerance is loose relative to the bounded coord range.
+        for (i, (c, s)) in composed.iter().zip(sequential.iter()).enumerate() {
+            prop_assert!(
+                approx_eq!(f32, *c, *s, epsilon = 1e-1),
+                "axis {i}: composed={c}, sequential={s}",
+            );
+        }
+    }
+
+    #[test]
+    fn inverse_then_apply_is_round_trip(
+        t in affine_rotation_or_translation(),
+        v in vector3d_f32(),
+    ) {
+        let v = Vertex::new(v.coords());
+        let inv = t.inverse().expect("generator only produces well-conditioned transforms");
+        let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
+        // Loose tolerance: f64 internals lose precision when we round-
+        // trip through f32 once and then once more.
+        for (i, (r, x)) in round_trip.iter().zip(v.iter()).enumerate() {
+            prop_assert!(
+                approx_eq!(f32, *r, *x, epsilon = 5e-2),
+                "axis {i}: round_trip={r}, v={x}",
+            );
+        }
+    }
+
+    #[test]
+    fn from_axis_angle_with_non_zero_axis_succeeds_and_has_unit_determinant(
+        (axis, angle) in axis_angle_safe(),
+    ) {
+        let t = AffineTransform3D::from_axis_angle(axis, angle).unwrap();
+        let det = t.determinant();
+        prop_assert!(
+            approx_eq!(f64, det, 1.0, epsilon = 1e-9),
+            "det={det} for axis={axis:?}, angle={angle}"
+        );
+    }
+
+    #[test]
+    fn from_axis_angle_is_invariant_to_axis_scaling(
+        (axis, angle) in axis_angle_safe(),
+        scale in 0.1_f64..10.0_f64,
+    ) {
+        // The constructor normalises the axis, so any positive scale
+        // should yield the same matrix.
+        let unit = AffineTransform3D::from_axis_angle(axis, angle).unwrap();
+        let scaled = AffineTransform3D::from_axis_angle(
+            [axis[0] * scale, axis[1] * scale, axis[2] * scale],
+            angle,
+        ).unwrap();
+        for i in 0..3 {
+            for j in 0..3 {
+                prop_assert!(
+                    approx_eq!(f64, unit.linear()[i][j], scaled.linear()[i][j], epsilon = 1e-12),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn from_axis_angle_with_negated_axis_is_inverse_rotation(
+        (axis, angle) in axis_angle_safe(),
+    ) {
+        // R(-axis, angle) == R(axis, -angle): negating the axis flips
+        // the right-handed direction of rotation.
+        let r = AffineTransform3D::from_axis_angle(axis, angle).unwrap();
+        let r_neg_axis = AffineTransform3D::from_axis_angle(
+            [-axis[0], -axis[1], -axis[2]],
+            angle,
+        ).unwrap();
+        let r_neg_angle = AffineTransform3D::from_axis_angle(axis, -angle).unwrap();
+        for i in 0..3 {
+            for j in 0..3 {
+                prop_assert!(
+                    approx_eq!(
+                        f64,
+                        r_neg_axis.linear()[i][j],
+                        r_neg_angle.linear()[i][j],
+                        epsilon = 1e-12
+                    ),
+                );
+                let _ = r; // r itself isn't compared here; kept to keep the test self-explanatory.
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// Aabb::transformed_arvo properties
+// ---------------------------------------------------------------------
+
+/// Generator for a non-empty axis-aligned bounding box: picks two
+/// finite f32 corners and sorts them per-axis so `min[i] <= max[i]`.
+fn aabb_strategy() -> impl Strategy<Value = ([f32; 3], [f32; 3])> {
+    (
+        (
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+        ),
+        (
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+        ),
+    )
+        .prop_map(|((ax, ay, az), (bx, by, bz))| {
+            (
+                [ax.min(bx), ay.min(by), az.min(bz)],
+                [ax.max(bx), ay.max(by), az.max(bz)],
+            )
+        })
+}
+
+/// Generator for an affine transform with bounded entries. Builds a
+/// composition of translation × rotation × non-uniform scale so the
+/// linear part exercises non-trivial entries beyond the diagonal.
+fn affine_strategy() -> impl Strategy<Value = AffineTransform3D> {
+    (
+        (-5.0_f64..5.0_f64, -5.0_f64..5.0_f64, -5.0_f64..5.0_f64),
+        (0.25_f64..4.0_f64, 0.25_f64..4.0_f64, 0.25_f64..4.0_f64),
+        -std::f64::consts::PI..std::f64::consts::PI,
+        (0.1_f64..1.0_f64, 0.1_f64..1.0_f64, 0.1_f64..1.0_f64),
+        -std::f64::consts::PI..std::f64::consts::PI,
+    )
+        .prop_map(|(t, s, theta_z, axis, theta_axis)| {
+            let translation = AffineTransform3D::from_translation([t.0, t.1, t.2]);
+            let scale = AffineTransform3D::from_non_uniform_scale([s.0, s.1, s.2]);
+            let rot_z = AffineTransform3D::from_rotation_z(theta_z);
+            let rot_axis =
+                AffineTransform3D::from_axis_angle([axis.0, axis.1, axis.2], theta_axis).unwrap();
+            translation
+                .compose(&rot_z)
+                .compose(&rot_axis)
+                .compose(&scale)
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// `Aabb::transformed_arvo` must be a conservative enclosure of
+    /// the transformed AABB: every one of the eight transformed
+    /// corners of the local box must lie inside the returned world
+    /// box. This is the algorithm's defining contract: the
+    /// closed-form formula approximates the per-corner method by an
+    /// outer bound, never a tighter one.
+    #[test]
+    fn transformed_arvo_contains_every_transformed_corner(
+        (mn, mx) in aabb_strategy(),
+        a in affine_strategy(),
+    ) {
+        let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
+        let world = local.transformed_arvo(&a);
+
+        let corners = [
+            [mn[0], mn[1], mn[2]],
+            [mx[0], mn[1], mn[2]],
+            [mn[0], mx[1], mn[2]],
+            [mx[0], mx[1], mn[2]],
+            [mn[0], mn[1], mx[2]],
+            [mx[0], mn[1], mx[2]],
+            [mn[0], mx[1], mx[2]],
+            [mx[0], mx[1], mx[2]],
+        ];
+
+        let world_min = world.min().coords();
+        let world_max = world.max().coords();
+        // Tolerance scales with the world-AABB diagonal so f32
+        // round-off in the per-corner forward path doesn't cause
+        // spurious failures for large transformed boxes.
+        let diag = ((world_max[0] - world_min[0]).powi(2)
+            + (world_max[1] - world_min[1]).powi(2)
+            + (world_max[2] - world_min[2]).powi(2))
+        .sqrt();
+        let eps = (diag * 1e-4).max(1e-4);
+
+        for corner in corners {
+            let transformed = a.apply_to_vertex(Vertex::new(corner)).coords();
+            for axis in 0..3 {
+                prop_assert!(
+                    transformed[axis] >= world_min[axis] - eps,
+                    "corner {transformed:?} below world min {world_min:?} on axis {axis}",
+                );
+                prop_assert!(
+                    transformed[axis] <= world_max[axis] + eps,
+                    "corner {transformed:?} above world max {world_max:?} on axis {axis}",
+                );
+            }
+        }
+    }
+
+    /// `Aabb::transformed_arvo` for a translation transform exactly
+    /// equals the local AABB shifted by the translation vector:
+    /// translations are tight, not just conservative, in Arvo's
+    /// formula.
+    #[test]
+    fn transformed_arvo_is_tight_for_pure_translation(
+        (mn, mx) in aabb_strategy(),
+        t in (-5.0_f64..5.0_f64, -5.0_f64..5.0_f64, -5.0_f64..5.0_f64),
+    ) {
+        let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
+        let a = AffineTransform3D::from_translation([t.0, t.1, t.2]);
+        let world = local.transformed_arvo(&a);
+        let world_min = world.min().coords();
+        let world_max = world.max().coords();
+        let expected_min = [mn[0] + t.0 as f32, mn[1] + t.1 as f32, mn[2] + t.2 as f32];
+        let expected_max = [mx[0] + t.0 as f32, mx[1] + t.1 as f32, mx[2] + t.2 as f32];
+        for axis in 0..3 {
+            prop_assert!(
+                approx_eq!(f32, world_min[axis], expected_min[axis], epsilon = 1e-4),
+            );
+            prop_assert!(
+                approx_eq!(f32, world_max[axis], expected_max[axis], epsilon = 1e-4),
+            );
+        }
+    }
+
+    /// Conservativeness contract for the f32 monomorphisation of
+    /// [`arvo_transformed_aabb`] (the path the GUI's picker uses to
+    /// gate per-triangle tests). The f32 AABB must contain every
+    /// corner of the local box transformed at f64 precision, within a
+    /// tolerance that scales with the world-AABB diagonal. The f64
+    /// reference is computed by direct matrix-vector product against
+    /// the transform's stored linear/translation parts, so the only
+    /// precision loss in the comparison is the final f32 cast.
+    #[test]
+    fn f32_arvo_transformed_aabb_contains_every_high_precision_corner(
+        (mn, mx) in aabb_strategy(),
+        a in affine_strategy(),
+    ) {
+        let m = a.linear();
+        let t = a.translation();
+        let m_f32: [[f32; 3]; 3] = [
+            [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+            [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+            [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+        ];
+        let t_f32 = [t[0] as f32, t[1] as f32, t[2] as f32];
+        let (world_min, world_max) =
+            arvo_transformed_aabb::<f32>(mn, mx, &m_f32, &t_f32);
+
+        let corners = [
+            [mn[0], mn[1], mn[2]],
+            [mx[0], mn[1], mn[2]],
+            [mn[0], mx[1], mn[2]],
+            [mx[0], mx[1], mn[2]],
+            [mn[0], mn[1], mx[2]],
+            [mx[0], mn[1], mx[2]],
+            [mn[0], mx[1], mx[2]],
+            [mx[0], mx[1], mx[2]],
+        ];
+
+        let diag = ((world_max[0] - world_min[0]).powi(2)
+            + (world_max[1] - world_min[1]).powi(2)
+            + (world_max[2] - world_min[2]).powi(2))
+        .sqrt();
+        let eps = (diag * 1e-4).max(1e-4);
+
+        for corner in corners {
+            let cf = [corner[0] as f64, corner[1] as f64, corner[2] as f64];
+            let transformed_f64 = [
+                m[0][0] * cf[0] + m[0][1] * cf[1] + m[0][2] * cf[2] + t[0],
+                m[1][0] * cf[0] + m[1][1] * cf[1] + m[1][2] * cf[2] + t[1],
+                m[2][0] * cf[0] + m[2][1] * cf[1] + m[2][2] * cf[2] + t[2],
+            ];
+            for axis in 0..3 {
+                let high = transformed_f64[axis] as f32;
+                prop_assert!(
+                    high >= world_min[axis] - eps,
+                    "corner {transformed_f64:?} below world_min {world_min:?} on axis {axis}",
+                );
+                prop_assert!(
+                    high <= world_max[axis] + eps,
+                    "corner {transformed_f64:?} above world_max {world_max:?} on axis {axis}",
+                );
+            }
+        }
+    }
+}

@@ -1,0 +1,88 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { ComboBox } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+
+export enum ThemePreference { System, Light, Dark }
+
+export component AppearancePreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "UI & Theme");
+
+    in-out property <ThemePreference> current-theme: ThemePreference.System;
+    callback theme-selected(ThemePreference);
+
+    // Language model is built in Rust (see src/language.rs): index 0 is
+    // always "System (use the OS locale)", indices 1.. are the bundled
+    // translations in the order produced by build.rs.
+    in property <[string]> language-options;
+    in-out property <int> current-language-index: 0;
+    callback language-selected(int);
+
+    // Order must match the `theme-for-index` / `index-for-theme` mappings
+    // below; changing it requires updating both.
+    property <[string]> theme-options: [
+        @tr("AppearancePreferences" => "System"),
+        @tr("AppearancePreferences" => "Light"),
+        @tr("AppearancePreferences" => "Dark"),
+    ];
+
+    function theme-for-index(i: int) -> ThemePreference {
+        if (i == 1) { return ThemePreference.Light; }
+        if (i == 2) { return ThemePreference.Dark; }
+        return ThemePreference.System;
+    }
+
+    function index-for-theme(t: ThemePreference) -> int {
+        if (t == ThemePreference.Light) { return 1; }
+        if (t == ThemePreference.Dark) { return 2; }
+        return 0;
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Theme");
+            vertical-alignment: center;
+            // Slint has no labelled-by relation; mirror the visible caption
+            // onto the ComboBox via accessible-label and hide this text from
+            // the a11y tree to avoid a disconnected duplicate announcement.
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: root.theme-options;
+            current-index: root.index-for-theme(root.current-theme);
+            accessible-label: @tr("AppearancePreferences" => "Theme");
+            selected(_value) => {
+                root.current-theme = root.theme-for-index(self.current-index);
+                root.theme-selected(root.current-theme);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Language");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: root.language-options;
+            current-index: root.current-language-index;
+            accessible-label: @tr("AppearancePreferences" => "Language");
+            selected(_value) => {
+                root.current-language-index = self.current-index;
+                root.language-selected(self.current-index);
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "sc-mesh-spatial"
+version = "0.2.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Spatial-query acceleration over sc-mesh-core types"
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh", "spatial", "aabb"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-mesh-core.workspace = true
+sc-scene.workspace = true
+sc-scene-edit.workspace = true
+
+[dev-dependencies]
+float-cmp.workspace = true
+proptest.workspace = true

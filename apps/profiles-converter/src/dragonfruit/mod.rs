@@ -1,0 +1,1536 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+//! The DragonFruit source-format adapter.
+//!
+//! [`DragonFruitReader`] implements the [`ProfileReader`](crate::reader::ProfileReader)
+//! port for DragonFruit's plugin JSON: it reads each input (a file, or a
+//! directory of `.json` files), deserialises the records, and maps them
+//! into our domain profiles. This is the only module that knows the
+//! DragonFruit schema; the rest of the crate stays format-agnostic.
+
+pub mod material;
+mod preset_index;
+pub mod printer;
+
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use sc_print_primitives::{MaterialId, NonEmptyString, PrinterId};
+use sc_print_profiles::{MaterialDefaults, MaterialProfile};
+use serde_json::Value;
+
+use crate::printer_library::PrinterLibrary;
+use crate::profile::{ConvertedPrinter, ConvertedProfile};
+use crate::reader::{ProfileReader, SourceReading};
+use crate::source_note::SourceNote;
+use material::{MaterialMapError, RawMaterial, map_material};
+use preset_index::{Preset, PresetIndex};
+use printer::{Classification, MappedPrinter, PrinterMapError, RawPrinter, map_printer};
+
+/// Reads DragonFruit plugin JSON into our domain profiles.
+#[derive(Clone, Debug, Default)]
+pub struct DragonFruitReader {
+    printers: Option<PrinterLibrary>,
+}
+
+impl DragonFruitReader {
+    /// A reader with no printer library, which cannot tell which
+    /// machines split their travel and so splits no calibration block.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A reader that consults `printers` for what each machine can do.
+    pub fn consulting(printers: PrinterLibrary) -> Self {
+        Self {
+            printers: Some(printers),
+        }
+    }
+}
+
+/// Everything that can go wrong reading DragonFruit inputs.
+#[derive(Debug)]
+pub enum DragonFruitError {
+    /// A file could not be read.
+    ReadFile { path: PathBuf, source: io::Error },
+    /// A directory could not be listed.
+    ReadDir { path: PathBuf, source: io::Error },
+    /// A file's bytes were not valid DragonFruit JSON.
+    ParseJson {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    /// A printer record could not be mapped to a domain profile.
+    MapPrinter {
+        path: PathBuf,
+        index: usize,
+        source: PrinterMapError,
+    },
+    /// A material record could not be mapped to a domain profile.
+    MapMaterial {
+        path: PathBuf,
+        index: usize,
+        source: MaterialMapError,
+    },
+    /// A record announced its kind but did not deserialise as one.
+    ParseRecord {
+        path: PathBuf,
+        index: usize,
+        kind: RecordKind,
+        source: serde_json::Error,
+    },
+    /// A record is neither a printer nor a material.
+    UnrecognisedRecord { path: PathBuf, index: usize },
+    /// Two material records share an id but cannot be merged.
+    ConflictingMaterial {
+        id: String,
+        conflict: MaterialConflict,
+    },
+    /// Two printer records describe one machine but disagree on more
+    /// than the container it writes.
+    ConflictingPrinter { id: String },
+}
+
+/// Why two material records that share an id could not be merged.
+#[derive(Clone, Copy, Debug)]
+pub enum MaterialConflict {
+    /// They disagree on the resin's shared identity, intent, or defaults.
+    SharedFields,
+    /// They give different settings for a printer they both target.
+    PrinterSettings,
+}
+
+impl fmt::Display for MaterialConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SharedFields => {
+                write!(f, "records disagree on the resin's shared fields")
+            }
+            Self::PrinterSettings => write!(
+                f,
+                "records give different settings for a printer they both target",
+            ),
+        }
+    }
+}
+
+impl fmt::Display for DragonFruitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadFile { path, source } => {
+                write!(f, "failed to read {}: {source}", path.display())
+            }
+            Self::ReadDir { path, source } => {
+                write!(f, "failed to list directory {}: {source}", path.display())
+            }
+            Self::ParseJson { path, source } => write!(
+                f,
+                "failed to parse {} as DragonFruit JSON: {source}",
+                path.display(),
+            ),
+            Self::MapPrinter {
+                path,
+                index,
+                source,
+            } => write!(f, "{}: record #{index}: {source}", path.display()),
+            Self::MapMaterial {
+                path,
+                index,
+                source,
+            } => write!(f, "{}: record #{index}: {source}", path.display()),
+            Self::ParseRecord {
+                path,
+                index,
+                kind,
+                source,
+            } => write!(
+                f,
+                "{}: record #{index}: not a valid {} record: {source}",
+                path.display(),
+                kind.name(),
+            ),
+            Self::UnrecognisedRecord { path, index } => write!(
+                f,
+                "{}: record #{index}: neither a printer nor a material",
+                path.display(),
+            ),
+            Self::ConflictingMaterial { id, conflict } => {
+                write!(f, "material {id:?}: {conflict}")
+            }
+            Self::ConflictingPrinter { id } => write!(
+                f,
+                "printer {id:?}: records describe one machine but disagree beyond the container it writes",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DragonFruitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ReadFile { source, .. } => Some(source),
+            Self::ReadDir { source, .. } => Some(source),
+            Self::ParseJson { source, .. } => Some(source),
+            Self::ParseRecord { source, .. } => Some(source),
+            Self::MapPrinter { source, .. } => Some(source),
+            Self::MapMaterial { source, .. } => Some(source),
+            Self::UnrecognisedRecord { .. } => None,
+            Self::ConflictingMaterial { .. } => None,
+            Self::ConflictingPrinter { .. } => None,
+        }
+    }
+}
+
+impl ProfileReader for DragonFruitReader {
+    type Error = DragonFruitError;
+
+    fn read(&self, inputs: &[&Path]) -> Result<SourceReading, DragonFruitError> {
+        let collected = collect_records(inputs)?;
+        let printers = map_printers(collected.printers, self.printers.as_ref())?;
+        let mut notes = printers.notes;
+        if self.printers.is_none() {
+            notes.insert(0, SourceNote::NoPrinterLibrary);
+        }
+        let mut about_materials = Vec::new();
+        let mut note = |note: SourceNote| {
+            if !about_materials.contains(&note) {
+                about_materials.push(note);
+            }
+        };
+        let mut profiles = printers.profiles;
+        profiles.extend(map_materials(
+            collected.materials,
+            &printers.presets,
+            &mut note,
+        )?);
+        let profiles = merge_records(profiles, &mut note)?;
+        notes.extend(about_materials);
+        Ok(SourceReading { profiles, notes })
+    }
+}
+
+/// One record as read, with where it came from so a failure to map it
+/// can say which record it was.
+struct CollectedRecord<T> {
+    record: T,
+    path: PathBuf,
+    index: usize,
+}
+
+/// Every record the inputs hold, split by kind.
+#[derive(Default)]
+struct Collected {
+    printers: Vec<CollectedRecord<RawPrinter>>,
+    materials: Vec<CollectedRecord<RawMaterial>>,
+}
+
+/// Read every input path into its records, a path being a file or a
+/// directory of `.json` files.
+fn collect_records(inputs: &[&Path]) -> Result<Collected, DragonFruitError> {
+    let mut collected = Collected::default();
+    for input in inputs {
+        for file in json_files(input)? {
+            let from_file = collect_file(&file)?;
+            collected.printers.extend(from_file.printers);
+            collected.materials.extend(from_file.materials);
+        }
+    }
+    Ok(collected)
+}
+
+/// What the printer phase produced: the profiles, the presets a
+/// material resolves through, and what it could not settle.
+struct MappedPrinters {
+    profiles: Vec<ConvertedProfile>,
+    presets: PresetIndex,
+    notes: Vec<SourceNote>,
+}
+
+/// Map every collected printer record, resolving each one's image
+/// reference against the directory of the file it came from, and index
+/// the machines by the preset id each record carries.
+///
+/// The indexed id is the one the profile itself carries, so a material
+/// block cannot end up keyed to an id no written printer has. Whether
+/// the machine splits its travel comes from `library`, our own word on
+/// the hardware, and is `false` for a machine it does not hold.
+fn map_printers(
+    records: Vec<CollectedRecord<RawPrinter>>,
+    library: Option<&PrinterLibrary>,
+) -> Result<MappedPrinters, DragonFruitError> {
+    let mut profiles = Vec::with_capacity(records.len());
+    let mut presets = PresetIndex::default();
+    let mut notes = Vec::new();
+    for CollectedRecord {
+        record,
+        path,
+        index,
+    } in records
+    {
+        let mapped = map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
+            path: path.clone(),
+            index,
+            source,
+        })?;
+        let printer = mapped.profile.identity.id.clone();
+        let mut note = |note: SourceNote| {
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+        };
+        let ours = library.and_then(|library| library.splits_travel(&printer));
+        if library.is_some() && ours.is_none() {
+            note(SourceNote::MachineOutsideTheLibrary {
+                printer: printer.clone(),
+            });
+        }
+        report_classification(&mapped, &printer, ours, &mut note);
+        let splits_travel = ours.unwrap_or(false);
+        presets.insert(
+            &mapped.preset_id,
+            Preset {
+                printer,
+                container: mapped.container,
+                splits_travel,
+            },
+        );
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        let image_source = mapped
+            .image_ref
+            .as_deref()
+            .map(|reference| resolve_image(base, reference));
+        profiles.push(ConvertedProfile::Printer(ConvertedPrinter {
+            profile: mapped.profile,
+            image_source,
+        }));
+    }
+    Ok(MappedPrinters {
+        profiles,
+        presets,
+        notes,
+    })
+}
+
+/// Say what the source claims about a machine that our own profile does
+/// not carry: how it separates a layer, and how deep its panel is.
+///
+/// `ours` is what our library says about the travel, absent when it does
+/// not hold the machine, in which case there is nothing to disagree
+/// with.
+fn report_classification(
+    mapped: &MappedPrinter,
+    printer: &PrinterId,
+    ours: Option<bool>,
+    note: &mut impl FnMut(SourceNote),
+) {
+    match &mapped.classification {
+        Some(Classification::TiltingVat) => note(SourceNote::TiltingVat {
+            printer: printer.clone(),
+        }),
+        Some(Classification::Unrecognised(classification)) => {
+            note(SourceNote::UnrecognisedClassification {
+                printer: printer.clone(),
+                classification: classification.clone(),
+            });
+        }
+        Some(classification) => {
+            if let Some(theirs) = classification.splits_travel()
+                && ours.is_some_and(|ours| ours != theirs)
+            {
+                note(SourceNote::TravelSplitDisagrees {
+                    printer: printer.clone(),
+                    source_splits: theirs,
+                });
+            }
+        }
+        None => {}
+    }
+    if let Some(bits) = mapped.panel_bits {
+        note(SourceNote::PanelBitDepth {
+            printer: printer.clone(),
+            bits,
+        });
+    }
+}
+
+/// Map every collected material record against the machines the run's
+/// printer records describe.
+fn map_materials(
+    records: Vec<CollectedRecord<RawMaterial>>,
+    presets: &PresetIndex,
+    note: &mut impl FnMut(SourceNote),
+) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    let mut profiles = Vec::with_capacity(records.len());
+    for CollectedRecord {
+        record,
+        path,
+        index,
+    } in records
+    {
+        let mapped =
+            map_material(record, presets).map_err(|source| DragonFruitError::MapMaterial {
+                path,
+                index,
+                source,
+            })?;
+        if let Some(advice) = mapped.advice {
+            note(SourceNote::AdviceInTheName {
+                material: mapped.profile.identity.id.clone(),
+                advice,
+            });
+        }
+        profiles.push(ConvertedProfile::Material(mapped.profile));
+    }
+    Ok(profiles)
+}
+
+/// Fold records that describe the same thing into one profile.
+///
+/// DragonFruit ships a single resin as several records, one per target
+/// printer and often in separate files (the same resin calibrated for
+/// each of a family's printer variants). Each record maps to a
+/// material with a single `per_printer` entry; this pass combines records
+/// with the same id into one profile that carries every per-printer
+/// block. Records that share an id but disagree on the resin's shared
+/// fields, or on the settings for a printer they both target, are a
+/// conflict rather than a silent overwrite.
+///
+/// It keys its presets by output container too, so one machine arrives
+/// once per container it writes. Those records describe the same
+/// machine, so they fold into one profile that declares every one of
+/// those containers.
+fn merge_records(
+    profiles: Vec<ConvertedProfile>,
+    note: &mut impl FnMut(SourceNote),
+) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    let mut printers: BTreeMap<PrinterId, ConvertedPrinter> = BTreeMap::new();
+    let mut materials: BTreeMap<MaterialId, MaterialProfile> = BTreeMap::new();
+    let mut names: BTreeMap<MaterialId, Vec<(NonEmptyString, usize)>> = BTreeMap::new();
+    for profile in profiles {
+        match profile {
+            ConvertedProfile::Printer(incoming) => {
+                match printers.entry(incoming.profile.identity.id.clone()) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(incoming);
+                    }
+                    Entry::Occupied(mut slot) => merge_printer_into(slot.get_mut(), incoming)?,
+                }
+            }
+            ConvertedProfile::Material(incoming) => {
+                count_name(
+                    names.entry(incoming.identity.id.clone()).or_default(),
+                    &incoming.identity.name,
+                );
+                match materials.entry(incoming.identity.id.clone()) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(incoming);
+                    }
+                    Entry::Occupied(mut slot) => {
+                        merge_material_into(slot.get_mut(), incoming, note)?;
+                    }
+                }
+            }
+        }
+    }
+    for (id, counted) in names {
+        settle_name(materials.get_mut(&id), &counted, note);
+    }
+    let mut merged: Vec<ConvertedProfile> = printers
+        .into_values()
+        .map(ConvertedProfile::Printer)
+        .collect();
+    merged.extend(materials.into_values().map(ConvertedProfile::Material));
+    Ok(merged)
+}
+
+/// Merge `incoming` into `existing`, which name one machine, or report
+/// them as a conflict.
+///
+/// The containers a machine writes are the one field 2 records for it
+/// are expected to differ in; anything else means the 2 records are not
+/// describing the same machine after all.
+fn merge_printer_into(
+    existing: &mut ConvertedPrinter,
+    incoming: ConvertedPrinter,
+) -> Result<(), DragonFruitError> {
+    let mut probe = existing.profile.clone();
+    probe.capabilities.output_formats = incoming.profile.capabilities.output_formats.clone();
+    if probe != incoming.profile {
+        return Err(DragonFruitError::ConflictingPrinter {
+            id: existing.profile.identity.id.as_str().to_owned(),
+        });
+    }
+    for binding in incoming.profile.capabilities.output_formats {
+        if !existing
+            .profile
+            .capabilities
+            .output_formats
+            .iter()
+            .any(|held| *held == binding)
+        {
+            existing.profile.capabilities.output_formats.push(binding);
+        }
+    }
+    if existing.image_source.is_none() {
+        existing.image_source = incoming.image_source;
+    }
+    Ok(())
+}
+
+/// Merge `incoming` into `existing`, which share a material id, or report
+/// the first disagreement.
+/// Add one record's spelling of a name to `counted`, keeping the order
+/// the spellings were first read in.
+fn count_name(counted: &mut Vec<(NonEmptyString, usize)>, name: &NonEmptyString) {
+    match counted.iter_mut().find(|(seen, _)| seen == name) {
+        Some((_, times)) => *times += 1,
+        None => counted.push((name.clone(), 1)),
+    }
+}
+
+/// Give the profile the name most of its records use, and report every
+/// other spelling.
+///
+/// The odd spelling out is a mistake in one record rather than a second
+/// name, so the count decides it; spellings that tie keep the one read
+/// first.
+fn settle_name(
+    profile: Option<&mut MaterialProfile>,
+    counted: &[(NonEmptyString, usize)],
+    note: &mut impl FnMut(SourceNote),
+) {
+    let Some(profile) = profile else {
+        return;
+    };
+    let Some((kept, _)) = counted.iter().fold(
+        None,
+        |best: Option<&(NonEmptyString, usize)>, candidate| match best {
+            Some(best) if best.1 >= candidate.1 => Some(best),
+            _ => Some(candidate),
+        },
+    ) else {
+        return;
+    };
+    profile.identity.name = kept.clone();
+    for (spelling, _) in counted.iter().filter(|(spelling, _)| spelling != kept) {
+        note(SourceNote::NameSpelledDifferently {
+            material: profile.identity.id.clone(),
+            kept: kept.as_str().to_owned(),
+            passed_over: spelling.as_str().to_owned(),
+        });
+    }
+}
+
+fn merge_material_into(
+    existing: &mut MaterialProfile,
+    incoming: MaterialProfile,
+    note: &mut impl FnMut(SourceNote),
+) -> Result<(), DragonFruitError> {
+    if existing.intent != incoming.intent {
+        return Err(DragonFruitError::ConflictingMaterial {
+            id: existing.identity.id.as_str().to_owned(),
+            conflict: MaterialConflict::SharedFields,
+        });
+    }
+    if existing.identity != incoming.identity {
+        // 2 records that reach the same id are the same resin, so a
+        // name that differs is a spelling, settled once every record has
+        // been counted.
+        let mut spelled_alike = incoming.identity.clone();
+        spelled_alike.name = existing.identity.name.clone();
+        if existing.identity != spelled_alike {
+            return Err(DragonFruitError::ConflictingMaterial {
+                id: existing.identity.id.as_str().to_owned(),
+                conflict: MaterialConflict::SharedFields,
+            });
+        }
+    }
+    if existing.defaults != incoming.defaults {
+        // A bottom layer count that changes with the machine is the one
+        // difference a profile can absorb, because every block carries
+        // its own copy of it.
+        let without_count = |defaults: MaterialDefaults| MaterialDefaults {
+            bottom_layer_count: None,
+            ..defaults
+        };
+        if without_count(existing.defaults) != without_count(incoming.defaults) {
+            return Err(DragonFruitError::ConflictingMaterial {
+                id: existing.identity.id.as_str().to_owned(),
+                conflict: MaterialConflict::SharedFields,
+            });
+        }
+        existing.defaults.bottom_layer_count = None;
+        note(SourceNote::DefaultVariesByMachine {
+            material: existing.identity.id.clone(),
+            field: "bottom_layer_count",
+        });
+    }
+    for (printer_id, settings) in incoming.per_printer {
+        match existing.per_printer.entry(printer_id) {
+            Entry::Vacant(slot) => {
+                slot.insert(settings);
+            }
+            Entry::Occupied(slot) => {
+                if *slot.get() != settings {
+                    return Err(DragonFruitError::ConflictingMaterial {
+                        id: existing.identity.id.as_str().to_owned(),
+                        conflict: MaterialConflict::PrinterSettings,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve one input path to the JSON files it contributes: a directory
+/// yields its `.json` entries (sorted for a deterministic order); a file
+/// yields itself.
+fn json_files(path: &Path) -> Result<Vec<PathBuf>, DragonFruitError> {
+    if !path.is_dir() {
+        return Ok(vec![path.to_owned()]);
+    }
+    let mut files = Vec::new();
+    let entries = fs::read_dir(path).map_err(|source| DragonFruitError::ReadDir {
+        path: path.to_owned(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| DragonFruitError::ReadDir {
+            path: path.to_owned(),
+            source,
+        })?;
+        let entry_path = entry.path();
+        if entry_path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
+            files.push(entry_path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Which kind of record a DragonFruit value announces.
+#[derive(Clone, Copy, Debug)]
+pub enum RecordKind {
+    Printer,
+    Material,
+}
+
+impl RecordKind {
+    /// Read the kind a record announces through the id field it carries,
+    /// or `None` when it carries neither.
+    ///
+    /// The discriminant is the id field alone, never how much of a
+    /// struct the record happens to satisfy: both shapes are mostly
+    /// optional fields, so a printer record with a misspelled key would
+    /// otherwise deserialise as an all-absent material.
+    fn of(value: &Value) -> Option<Self> {
+        if value.get("presetId").is_some() {
+            Some(Self::Printer)
+        } else if value.get("templateId").is_some() {
+            Some(Self::Material)
+        } else {
+            None
+        }
+    }
+
+    /// Name this kind for a message.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Printer => "printer",
+            Self::Material => "material",
+        }
+    }
+}
+
+/// Parse one DragonFruit file (an array of records) into its typed
+/// records. An empty array contributes nothing; a record that announces
+/// neither kind is an error naming its position.
+///
+/// Every record is classified on its own, so one file may hold both
+/// kinds.
+fn collect_file(path: &Path) -> Result<Collected, DragonFruitError> {
+    let bytes = fs::read(path).map_err(|source| DragonFruitError::ReadFile {
+        path: path.to_owned(),
+        source,
+    })?;
+    let values: Vec<Value> =
+        serde_json::from_slice(&bytes).map_err(|source| DragonFruitError::ParseJson {
+            path: path.to_owned(),
+            source,
+        })?;
+    let mut collected = Collected::default();
+    for (index, value) in values.into_iter().enumerate() {
+        match RecordKind::of(&value) {
+            Some(kind @ RecordKind::Printer) => collected.printers.push(CollectedRecord {
+                record: parse_record(value, path, index, kind)?,
+                path: path.to_owned(),
+                index,
+            }),
+            Some(kind @ RecordKind::Material) => collected.materials.push(CollectedRecord {
+                record: parse_record(value, path, index, kind)?,
+                path: path.to_owned(),
+                index,
+            }),
+            None => {
+                return Err(DragonFruitError::UnrecognisedRecord {
+                    path: path.to_owned(),
+                    index,
+                });
+            }
+        }
+    }
+    Ok(collected)
+}
+
+/// Deserialise one classified record, tagging a failure with the file,
+/// the record's position and the kind it announced.
+fn parse_record<T: serde::de::DeserializeOwned>(
+    value: Value,
+    path: &Path,
+    index: usize,
+    kind: RecordKind,
+) -> Result<T, DragonFruitError> {
+    serde_json::from_value(value).map_err(|source| DragonFruitError::ParseRecord {
+        path: path.to_owned(),
+        index,
+        kind,
+        source,
+    })
+}
+
+/// Resolve a record's image reference against the directory of the file
+/// it came from, stripping a leading `./`. An absolute reference is
+/// returned unchanged.
+fn resolve_image(base: &Path, reference: &str) -> PathBuf {
+    let relative = reference.strip_prefix("./").unwrap_or(reference);
+    base.join(relative)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use sc_print_primitives::FormatKind;
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn record(preset_id: &str) -> String {
+        format!(
+            r#"{{
+                "presetId": "{preset_id}", "profileVersion": 1,
+                "manufacturer": "TestCorp", "family": "Series", "name": "{preset_id}",
+                "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                "display": {{ "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }}
+            }}"#
+        )
+    }
+
+    fn ids(profiles: &[ConvertedProfile]) -> Vec<String> {
+        profiles
+            .iter()
+            .map(|profile| match profile {
+                ConvertedProfile::Printer(printer) => {
+                    printer.profile.identity.id.as_str().to_owned()
+                }
+                ConvertedProfile::Material(_) => panic!("expected only printers"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reads_all_records_from_a_single_file() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        fs::write(
+            &file,
+            format!("[{}, {}]", record("printer-a"), record("printer-b")),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+        assert_eq!(
+            ids(&profiles),
+            vec!["testcorp-printer-a", "testcorp-printer-b"],
+        );
+    }
+
+    #[test]
+    fn walks_a_directory_of_json_files_in_order_and_ignores_others() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", record("printer-a")),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", record("printer-b")),
+        )
+        .unwrap();
+        fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
+        assert_eq!(
+            ids(&profiles),
+            vec!["testcorp-printer-a", "testcorp-printer-b"],
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_reported_with_its_path() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("broken.json");
+        fs::write(&file, "{ not valid ]").unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        assert!(matches!(err, DragonFruitError::ParseJson { .. }));
+        assert!(err.to_string().contains("broken.json"));
+    }
+
+    #[test]
+    fn a_record_that_cannot_map_is_reported_with_its_index() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        // The second record names no manufacturer, so no machine.
+        let nameless = r#"{
+            "presetId": "printer-b", "profileVersion": 1,
+            "manufacturer": "", "family": "Series", "name": "printer-b",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        fs::write(&file, format!("[{}, {nameless}]", record("printer-a"))).unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        match err {
+            DragonFruitError::MapPrinter { index, .. } => assert_eq!(index, 1),
+            other => panic!("expected MapPrinter, got {other}"),
+        }
+    }
+
+    #[test]
+    fn every_printer_is_mapped_before_any_material() {
+        let dir = tempdir().unwrap();
+        // Both records are unmappable, and the files are walked in name
+        // order, so whichever error surfaces names the phase that ran
+        // first.
+        fs::write(
+            dir.path().join("a-materials.json"),
+            r#"[{
+                "templateId": "brandless", "profileVersion": 1,
+                "name": "Brandless", "brand": "", "resinFamily": "standard"
+            }]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b-printers.json"),
+            r#"[{
+                "presetId": "nameless", "profileVersion": 1,
+                "manufacturer": "", "family": "Series", "name": "nameless",
+                "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+                "pixelSize": { "x": 100.0, "y": 100.0 },
+                "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+            }]"#,
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(err, DragonFruitError::MapPrinter { .. }), "{err}");
+    }
+
+    /// The same machine as the source ships it for 2 containers: one
+    /// preset per container, identical in everything else.
+    fn record_for_container(container: &str) -> String {
+        format!(
+            r#"{{
+                "presetId": "elegoo-saturn-4-{container}", "profileVersion": 1,
+                "manufacturer": "ELEGOO", "family": "Saturn", "name": "Saturn 4",
+                "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                "display": {{
+                    "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".{container}"
+                }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn one_machine_shipped_per_container_becomes_one_profile_declaring_both() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        fs::write(
+            &file,
+            format!(
+                "[{}, {}]",
+                record_for_container("goo"),
+                record_for_container("ctb"),
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+
+        assert_eq!(ids(&profiles), vec!["elegoo-saturn-4"]);
+        let ConvertedProfile::Printer(printer) = &profiles[0] else {
+            panic!("expected a printer");
+        };
+        let declared: Vec<FormatKind> = printer
+            .profile
+            .capabilities
+            .output_formats
+            .iter()
+            .map(|binding| binding.format.clone())
+            .collect();
+        assert_eq!(declared, vec![FormatKind::Goo, FormatKind::Ctb]);
+    }
+
+    #[test]
+    fn two_machines_of_one_name_that_differ_in_hardware_are_a_conflict() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        let taller = record_for_container("ctb").replace("\"height\": 40.0", "\"height\": 90.0");
+        fs::write(
+            &file,
+            format!("[{}, {taller}]", record_for_container("goo")),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, DragonFruitError::ConflictingPrinter { id } if id == "elegoo-saturn-4"),
+            "err: {err}",
+        );
+    }
+
+    fn material_record(template_id: &str) -> String {
+        format!(
+            r#"{{
+                "templateId": "{template_id}", "profileVersion": 1,
+                "name": "{template_id}", "brand": "TestResin", "resinFamily": "standard",
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4, "bottomExposureSec": 26.0,
+                "bottomLayerCount": 5, "liftDistanceMm": 6.0, "liftSpeedMmMin": 65.0,
+                "retractSpeedMmMin": 150.0
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_file_of_material_records_is_classified_as_materials() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("materials.json");
+        fs::write(&file, format!("[{}]", material_record("standard-405"))).unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-standard-405");
+            }
+            other => panic!("expected one material, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_directory_mixing_printer_and_material_files_yields_both_kinds() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("printers.json"),
+            format!("[{}]", record("printer-a")),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("materials.json"),
+            format!("[{}]", material_record("resin-a")),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
+        let printers = profiles
+            .iter()
+            .filter(|p| matches!(p, ConvertedProfile::Printer(_)))
+            .count();
+        let materials = profiles
+            .iter()
+            .filter(|p| matches!(p, ConvertedProfile::Material(_)))
+            .count();
+        assert_eq!((printers, materials), (1, 1));
+    }
+
+    #[test]
+    fn a_record_of_neither_kind_is_rejected_by_its_position() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("mystery.json");
+        fs::write(
+            &file,
+            format!("[{}, {{ \"somethingElse\": true }}]", record("printer-a")),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::UnrecognisedRecord { index: 1, .. }
+        ));
+        assert!(err.to_string().contains("record #1"), "{err}");
+    }
+
+    #[test]
+    fn one_file_holding_both_kinds_maps_each_record_as_itself() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("mixed.json");
+        fs::write(
+            &file,
+            format!(
+                "[{}, {}]",
+                record("printer-a"),
+                material_record("standard-405")
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [
+                ConvertedProfile::Printer(printer),
+                ConvertedProfile::Material(material),
+            ] => {
+                assert_eq!(printer.profile.identity.id.as_str(), "testcorp-printer-a");
+                assert_eq!(material.identity.id.as_str(), "testresin-standard-405");
+            }
+            other => panic!("expected one printer and one material, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_record_that_announces_a_kind_but_does_not_fit_it_names_both() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        // A printer record with no build volume: it announces its kind
+        // through `presetId` and then fails to deserialise as one.
+        fs::write(
+            &file,
+            format!(
+                "[{}, {{ \"presetId\": \"printer-b\", \"profileVersion\": 1 }}]",
+                record("printer-a")
+            ),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ParseRecord {
+                index: 1,
+                kind: RecordKind::Printer,
+                ..
+            }
+        ));
+        let message = err.to_string();
+        assert!(message.contains("record #1"), "{message}");
+        assert!(message.contains("printer record"), "{message}");
+    }
+
+    #[test]
+    fn an_empty_array_contributes_nothing() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("empty.json");
+        fs::write(&file, "[]").unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+        assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn resolves_the_image_path_against_the_files_directory() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        let json = r#"[{
+            "presetId": "img", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Img",
+            "imageAssetPath": "./assets/img.png",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }]"#;
+        fs::write(&file, json).unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [ConvertedProfile::Printer(printer)] => {
+                assert_eq!(
+                    printer.image_source,
+                    Some(dir.path().join("assets/img.png")),
+                );
+            }
+            other => panic!("expected one printer, got {other:?}"),
+        }
+    }
+
+    /// A record carrying the 2 keys we read only to report: the
+    /// classification of how the machine separates a layer, and the
+    /// panel's bit depth.
+    fn classified_record(name: &str, mode: &str, bit_depth: &str) -> String {
+        format!(
+            r#"[{{
+                "presetId": "{name}-goo", "profileVersion": 1,
+                "manufacturer": "TestCorp", "family": "Series", "name": "{name}",
+                "antiAliasing": true,
+                {bit_depth}
+                "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                "display": {{
+                    "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo",
+                    "settingsMode": "{mode}"
+                }}
+            }}]"#
+        )
+    }
+
+    fn read_one(dir: &Path, json: &str) -> SourceReading {
+        let file = dir.join("printers.json");
+        fs::write(&file, json).unwrap();
+        DragonFruitReader::new().read(&[file.as_path()]).unwrap()
+    }
+
+    /// We have no way to describe a vat that tilts, so the profile
+    /// written for one describes a platform that lifts. The run says so.
+    #[test]
+    fn a_tilting_vat_machine_converts_and_is_reported() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("tilter", "tilting", ""));
+
+        assert_eq!(ids(&reading.profiles), vec!["testcorp-tilter"]);
+        assert!(
+            reading.notes.contains(&SourceNote::TiltingVat {
+                printer: PrinterId::new("testcorp-tilter").unwrap(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    #[test]
+    fn a_classification_this_converter_does_not_know_is_reported_verbatim() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("future", "peristaltic", ""));
+
+        assert!(
+            reading
+                .notes
+                .contains(&SourceNote::UnrecognisedClassification {
+                    printer: PrinterId::new("testcorp-future").unwrap(),
+                    classification: "peristaltic".to_owned(),
+                }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    #[test]
+    fn a_stated_panel_bit_depth_is_reported() {
+        let dir = tempdir().unwrap();
+        let json = classified_record("shallow", "twostage", r#""bitDepth": { "bits": 3 },"#);
+
+        let reading = read_one(dir.path(), &json);
+
+        assert!(
+            reading.notes.contains(&SourceNote::PanelBitDepth {
+                printer: PrinterId::new("testcorp-shallow").unwrap(),
+                bits: 3,
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    /// Without a library there is nothing to disagree with, so the only
+    /// note is the one saying the library is missing.
+    #[test]
+    fn a_classification_alone_raises_no_disagreement() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("plain", "twostage", ""));
+
+        assert_eq!(reading.notes, vec![SourceNote::NoPrinterLibrary]);
+    }
+
+    fn material_for(template_id: &str, name: &str, preset: &str, normal_exposure: f64) -> String {
+        format!(
+            r#"{{
+                "templateId": "{template_id}", "profileVersion": 1,
+                "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
+                "validForPresets": ["{preset}"],
+                "layerHeightMm": 0.05, "normalExposureSec": {normal_exposure},
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_material_converted_without_its_printers_is_refused() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("materials.json");
+        fs::write(
+            &file,
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        match err {
+            DragonFruitError::MapMaterial {
+                source: MaterialMapError::UnknownPreset { preset, .. },
+                ..
+            } => assert_eq!(preset, "printer-a"),
+            other => panic!("expected an unknown preset, got {other}"),
+        }
+    }
+
+    /// The printer records for the presets `material_for` names, which a
+    /// material can only be mapped against.
+    fn printers_for_both_presets(dir: &Path) {
+        fs::write(
+            dir.join("printers.json"),
+            format!("[{}, {}]", record("printer-a"), record("printer-b")),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn material_records_sharing_an_id_merge_their_per_printer_blocks() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-b", 2.4)),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-blu");
+                let printers: Vec<&str> =
+                    material.per_printer.keys().map(|id| id.as_str()).collect();
+                assert_eq!(printers, vec!["testcorp-printer-a", "testcorp-printer-b"]);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+    }
+
+    /// The source files one resin once per machine, under a key that
+    /// carries the machine. Ours is one profile whatever they file.
+    #[test]
+    fn one_resin_filed_under_two_keys_becomes_one_profile_with_a_block_each() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            format!(
+                "[{}]",
+                material_for("blu-printer-a", "Blu", "printer-a", 2.4)
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!(
+                "[{}]",
+                material_for("blu-printer-b", "Blu", "printer-b", 3.0)
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-blu");
+                let exposures: Vec<(&str, Option<f64>)> = material
+                    .per_printer
+                    .iter()
+                    .map(|(printer, block)| {
+                        (
+                            printer.as_str(),
+                            block.normal_exposure_sec.map(|value| value.value()),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    exposures,
+                    vec![
+                        ("testcorp-printer-a", Some(2.4)),
+                        ("testcorp-printer-b", Some(3.0)),
+                    ],
+                );
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+    }
+
+    fn named_record(key: &str, name: &str, preset: &str) -> String {
+        format!(
+            r#"[{{
+                "templateId": "{key}", "profileVersion": 1,
+                "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
+                "validForPresets": ["{preset}"],
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4,
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }}]"#
+        )
+    }
+
+    /// One resin, mistyped by one record of 3. The odd one out is the
+    /// mistake, whether or not it is read first.
+    #[test]
+    fn one_resin_spelled_2_ways_takes_the_spelling_most_records_use() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        let spaced = "Blu (Clear V2 / Emerald Blue)";
+        let tight = "Blu (Clear V2/Emerald Blue)";
+        // The mistyped one is read first, so first-read and majority
+        // disagree.
+        fs::write(
+            dir.path().join("a.json"),
+            named_record("b-a", tight, "printer-a"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            named_record("b-b", spaced, "printer-b"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("c.json"),
+            named_record("b-c", spaced, "printer-b"),
+        )
+        .unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.name.as_str(), spaced);
+                assert_eq!(material.per_printer.len(), 2);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::NameSpelledDifferently {
+                material: MaterialId::new("testresin-blu-clear-v2-emerald-blue").unwrap(),
+                kept: spaced.to_owned(),
+                passed_over: tight.to_owned(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    /// On some machines the source glues printing advice to the name.
+    /// It is the same resin, and the advice is not what it is called, so
+    /// it reaches the run's notes and not the profile.
+    #[test]
+    fn a_resin_advised_on_one_machine_is_still_one_resin() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            named_record(
+                "b-a",
+                "Blu Nylon Black-(Use Extra Heavy support)",
+                "printer-a",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            named_record("b-b", "Blu Nylon Black", "printer-b"),
+        )
+        .unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-blu-nylon-black");
+                assert_eq!(material.identity.name.as_str(), "Blu Nylon Black");
+                assert_eq!(material.per_printer.len(), 2);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::AdviceInTheName {
+                material: MaterialId::new("testresin-blu-nylon-black").unwrap(),
+                advice: "Use Extra Heavy support".to_owned(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    /// A number that changes with the machine is not a default. Every
+    /// block carries its own, so the profile keeps none and says so.
+    #[test]
+    fn a_bottom_layer_count_that_differs_per_machine_leaves_the_defaults() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        let record = |key: &str, preset: &str, bottom: u32| {
+            format!(
+                r#"[{{
+                    "templateId": "{key}", "profileVersion": 1,
+                    "name": "Rebound 55A Black", "brand": "TestResin", "resinFamily": "flexible",
+                    "validForPresets": ["{preset}"],
+                    "layerHeightMm": 0.05, "normalExposureSec": 5.3,
+                    "bottomExposureSec": 30.0, "bottomLayerCount": {bottom},
+                    "liftDistanceMm": 6.0, "liftSpeedMmMin": 32.0, "retractSpeedMmMin": 200.0
+                }}]"#
+            )
+        };
+        fs::write(dir.path().join("a.json"), record("r-a", "printer-a", 3)).unwrap();
+        fs::write(dir.path().join("b.json"), record("r-b", "printer-b", 4)).unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.defaults.bottom_layer_count, None);
+                let counts: Vec<Option<u32>> = material
+                    .per_printer
+                    .values()
+                    .map(|block| block.bottom_layer_count)
+                    .collect();
+                assert_eq!(counts, vec![Some(3), Some(4)]);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::DefaultVariesByMachine {
+                material: MaterialId::new("testresin-rebound-55a-black").unwrap(),
+                field: "bottom_layer_count",
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    #[test]
+    fn materials_sharing_an_id_but_disagreeing_on_shared_fields_conflict() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        // One resin by brand and name, but the 2 records disagree on a
+        // field a profile carries once.
+        fs::write(
+            dir.path().join("b.json"),
+            r#"[{
+                "templateId": "blu-b", "profileVersion": 1,
+                "name": "Blu", "brand": "TestResin", "resinFamily": "flexible",
+                "validForPresets": ["printer-b"],
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4,
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }]"#,
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ConflictingMaterial {
+                conflict: MaterialConflict::SharedFields,
+                ..
+            },
+        ));
+    }
+
+    #[test]
+    fn materials_disagreeing_on_a_shared_printer_block_conflict() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        // Same id, same shared fields, same target printer, but the
+        // per-printer exposure differs.
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 3.0)),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ConflictingMaterial {
+                conflict: MaterialConflict::PrinterSettings,
+                ..
+            },
+        ));
+    }
+}

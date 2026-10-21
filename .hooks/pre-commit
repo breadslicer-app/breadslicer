@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -eu;
+
+STAGED_RS_FILES=$( (git diff --staged --relative --name-only --diff-filter=ACMR \
+  | grep -E "\.rs$" \
+  | tr '\n' ' ' \
+) || echo "");
+
+STAGED_UI_FILES=$( (git diff --staged --relative --name-only --diff-filter=ACMR \
+  | grep -E "\.slint$" \
+  | tr '\n' ' ' \
+) || echo "");
+
+if [ ! -z "${STAGED_RS_FILES}" ]; then
+    cargo fmt;
+    git add $STAGED_RS_FILES;
+fi
+
+if echo "${STAGED_RS_FILES} ${STAGED_UI_FILES}" | grep -q "apps/slicer-gui/"; then
+    sh apps/slicer-gui/scripts/extract-translatable-strings.sh;
+    git add apps/slicer-gui/i18n/*.pot
+fi
+
+# TODO: Format Slint files (`slint-lsp format` is not as "nice" as `cargo fmt`)
+
+cargo check --all-targets --all-features;
+cargo clippy --all-targets --all-features -- -D warnings;
+cargo test --all-targets --all-features;

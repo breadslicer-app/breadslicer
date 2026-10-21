@@ -1,0 +1,1375 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, Palette, ProgressIndicator, Slider } from "std-widgets.slint";
+import { AboutWindow } from "about-window.slint";
+import { ErrorDialog } from "error-dialog.slint";
+import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
+import { ObjectListPanel } from "./object-list-panel.slint";
+import { SliceControlPanel } from "./slice-control-panel.slint";
+import { SliceViewPanel } from "./slice-view-panel.slint";
+import { ThemePreference } from "./preferences/appearance.slint";
+import { PreferencesWindow } from "./preferences/preferences-window.slint";
+import { ExtendDialog } from "extend-dialog.slint";
+import { ForkDialog } from "fork-dialog.slint";
+import { InfoDialog } from "info-dialog.slint";
+import { ProfileViewDialog } from "profile-view-dialog.slint";
+import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
+import { SliceOverwriteDialog } from "slice-overwrite-dialog.slint";
+
+// Embeds Noto Sans into the executable and registers it process wide.
+// Text layout then resolves to this in-memory font instead of scanning
+// the system font set through fontconfig, which otherwise stalls the UI
+// thread the first time any text is laid out (e.g. opening a menu).
+import "../assets/fonts/NotoSans-Variable.ttf";
+
+export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, InfoDialog, PointerModifiers, PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, SliceOverwriteDialog, ThemePreference }
+
+// Load-pipeline phase shown by the floating progress panel. Values
+// mirror the Rust-side worker phases; the Rust poll maps between the
+// two.
+export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
+
+// Phases of a project save, mirroring the Rust-side worker phases; the
+// Rust poll maps between the two.
+// Shared by the save and export flows: both drive the same progress
+// panel and busy flag, and each phase value maps onto one panel line.
+// Flattening is only ever set by exports (STL formats merge the scene
+// into one mesh first); saves start at Serializing.
+export enum SavePhase { Flattening, Serializing, Compressing, Writing }
+
+// Menu presentation for the main window. `Bar` shows the top menu bar;
+// `Compact` hides it to reclaim vertical space. Linux and Windows only:
+// macOS always resolves to `Bar` in Rust because it renders a global
+// top-of-screen menu bar. Persisted app-wide.
+export enum MenuLayout { Bar, Compact }
+
+// Workspace section shown by the floating pill switcher. `Prepare` is
+// a placeholder for future mesh repair/validation tooling; `Transform`
+// hosts the scene-editing tools (move/rotate/scale, delete, paste);
+// `Slice` hosts the slicing flow. Per-window live state, not persisted;
+// Rust picks the initial value from the loaded mesh's health.
+export enum WorkspaceSection { Prepare, Transform, Slice }
+
+// One segment of the section pill. Highlights when it is the active
+// section and reports clicks; the parent maps the click to a section
+// change request routed through Rust.
+component SectionTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+
+    border-radius: 12px;
+    background: self.active ? Palette.accent-background : transparent;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+
+        Text {
+            text: root.label;
+            color: root.active ? Palette.accent-foreground : Palette.foreground;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    // Window title. Once a file is open it shows the file's name (with a
+    // `*` prefix while there are unsaved changes); with no file open it
+    // falls back to the application name.
+    title: root.document-name != ""
+        ? (root.scene-dirty ? "* " : "") + root.document-name
+        : @tr("SoulCrafted Slicer");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    min-height: 400px;
+    min-width: 600px;
+    preferred-width: 600px;
+    preferred-height: 400px;
+
+    in property <image> mesh-rendering;
+    in property <bool> loading: false;
+    in property <bool> has-scene: false;
+    in property <bool> can-undo: false;
+    in property <bool> can-redo: false;
+    // True while the loaded scene has unsaved changes (mirrored from
+    // the document's dirty tracking); prefixes the title with `*`.
+    in property <bool> scene-dirty: false;
+    // Name of the currently open file (with extension), mirrored from
+    // the document's source path. Empty when no file is open, which
+    // makes the title fall back to the application name.
+    in property <string> document-name: "";
+    // True while the user is dragging a file over the window (between
+    // winit's `HoveredFile` and the matching `DroppedFile` /
+    // `HoveredFileCancelled`). Toggled from Rust; drives the
+    // translucent "Drop to open" overlay below. Wayland users won't
+    // see this until winit ships Wayland DnD support upstream.
+    in property <bool> drop-hovering: false;
+    // True from worker dispatch (a file was actually picked and
+    // handed to the load pipeline) until the load ends on any path;
+    // drives the floating progress panel below. Distinct from
+    // `loading`, which is already true while the file dialog is
+    // still open and nothing is being read yet.
+    in property <bool> load-in-progress: false;
+    // Current load phase and its 0..1 fraction, polled from Rust
+    // while `load-in-progress` is true.
+    in property <LoadPhase> load-phase: LoadPhase.ReadingFile;
+    in property <float> load-progress: 0.0;
+    // True from save dispatch (the write worker was spawned) until the
+    // write ends on any path; drives the floating save-progress panel
+    // and disables the Save commands. Current phase and its 0..1
+    // fraction are polled from Rust while it is true.
+    in property <bool> saving-in-progress: false;
+    in property <SavePhase> save-phase: SavePhase.Serializing;
+    in property <float> save-progress: 0.0;
+    in property <ThemePreference> theme: ThemePreference.System;
+    in property <[StandardListViewItem]> object-list: [];
+    in-out property <int> selected-object-index: -1;
+    in-out property <bool> show-object-list: true;
+    // Floating object-list panel geometry, persisted per window. The
+    // position is stored relative to the window edges: `anchor-right` /
+    // `anchor-bottom` pick the corner the panel hugs and `offset-x` /
+    // `offset-y` are the distances to those edges, so a resize keeps the
+    // panel pinned to its corner. Width is a length; height uses 0px to
+    // mean "auto-size to the row count". Defaults place the panel at the
+    // top right; Rust overwrites them at window creation when a previous
+    // session saved a position.
+    in-out property <bool> object-list-anchor-right: true;
+    in-out property <bool> object-list-anchor-bottom: false;
+    in-out property <length> object-list-offset-x: 12px;
+    in-out property <length> object-list-offset-y: 12px;
+    in-out property <length> object-list-width: 220px;
+    in-out property <length> object-list-height: 0px;
+    in-out property <bool> object-list-minimized: false;
+    // Set from Rust at window creation (cfg!(target_os = "macos")).
+    // Selects the platform's fullscreen accelerator shown in the View
+    // menu: Cmd+Ctrl+F on macOS, F11 elsewhere.
+    in property <bool> is-macos: false;
+    // Menu presentation, pushed from the persisted preference. macOS
+    // always resolves to Bar in Rust because it renders a global menu
+    // bar.
+    in property <MenuLayout> menu-layout: MenuLayout.Bar;
+    // Active workspace section, driven by Rust: the pill switcher
+    // reflects it and clicking a segment requests a change through
+    // `section-change-requested` rather than writing it directly, so
+    // Rust stays the single source of truth (it also sets the initial
+    // section from mesh health at load time).
+    in property <WorkspaceSection> workspace-section: WorkspaceSection.Prepare;
+    // Slice control panel picker models and selection, driven by Rust.
+    // Each list is the union of the global favourites, the global
+    // default, and the scene's current choice; `*-current-index` is the
+    // selected entry in the matching options model, or -1 when none is
+    // selected.
+    in property <[string]> slice-printer-options: [];
+    in-out property <int> slice-printer-current-index: -1;
+    in property <[string]> slice-resin-options: [];
+    in-out property <int> slice-resin-current-index: -1;
+    in property <[string]> slice-print-format-options: [];
+    in-out property <int> slice-print-format-current-index: -1;
+    in property <string> slice-print-format-note;
+    in property <bool> slice-export-enabled: false;
+    in-out property <string> slice-first-layer-height-text;
+    // Slice run state, driving the Slice button's disabled state and the
+    // input-capturing progress modal. `slicing-in-progress` is set by the
+    // Rust driver when a slice starts and cleared on every exit path.
+    in-out property <bool> slicing-in-progress: false;
+    // Repair run state: set by the Rust driver when a repair starts
+    // and cleared on every exit path. Gates the Repair button and
+    // undo/redo (an undo landing mid-run would invalidate the
+    // worker's result).
+    in-out property <bool> repairing-in-progress: false;
+
+    // support-generatoin run state (Menu: Tools > Generate Support (trivial for test)):
+    // set when the job is submitted and cleared on
+    // completion, error, or submission failure. `support-gen-phase` /
+    // `support-gen-progress` are polled from Rust while it is true.
+    in-out property <bool> support-gen-in-progress: false;
+    in property <string> support-gen-phase: "";
+    in property <float> support-gen-progress: 0.0;
+
+    in property <int> slice-completed: 0;
+    in property <int> slice-total: 0;
+    in property <float> slice-progress: 0.0;
+    // Raised by the Rust driver after a Slice press whose inputs already
+    // match the held slice, then lowered again after a short delay; shows
+    // the transient "already up to date" hint in the Slice panel.
+    in property <bool> slice-up-to-date: false;
+    // Slice control panel geometry (per-window live state). Same
+    // anchor/offset model as the object-list panel; the defaults hug the
+    // top-left corner, clear of the top-right object-list panel. Height
+    // 0px auto-sizes to the content.
+    in-out property <bool> slice-panel-anchor-right: false;
+    in-out property <bool> slice-panel-anchor-bottom: false;
+    in-out property <length> slice-panel-offset-x: 12px;
+    in-out property <length> slice-panel-offset-y: 12px;
+    in-out property <length> slice-panel-width: 240px;
+    in-out property <length> slice-panel-height: 0px;
+    // Slice viewing (per-layer height slider). `slice-layer-count` is the
+    // held slice's layer count, driven by Rust: 0 disables the slider, a
+    // positive n sizes it to indices 0..n-1. `selected-layer-index` is the
+    // slider's current layer (a `float` so it can two-way bind to the
+    // Slider's value; it only ever holds whole layer numbers, which Rust
+    // rounds when it reads them).
+    in property <int> slice-layer-count: 0;
+    in-out property <float> selected-layer-index: 0;
+    // Floating slice-view panel: shows the selected layer's 2D cross-
+    // section. Toggled from the View menu (`show-slice-view`) on top of
+    // the section/slice gate. Geometry is persisted per window with the
+    // same anchor/offset model as the object-list panel; the defaults
+    // hug the bottom-left corner, clear of the other panels. Height 0px
+    // auto-sizes. `slice-view-image` is the cross-section pushed by Rust.
+    in-out property <bool> show-slice-view: true;
+    in-out property <bool> slice-view-anchor-right: false;
+    in-out property <bool> slice-view-anchor-bottom: true;
+    in-out property <length> slice-view-offset-x: 12px;
+    in-out property <length> slice-view-offset-y: 12px;
+    in-out property <length> slice-view-width: 240px;
+    in-out property <length> slice-view-height: 0px;
+    in-out property <bool> slice-view-minimized: false;
+    in property <image> slice-view-image;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    callback open-file-requested();
+    callback close-current-scene();
+    callback save-requested();
+    callback save-as-requested();
+    callback export-as-requested();
+    callback scene-load-finished();
+    callback show-about-requested();
+    callback show-preferences-requested();
+    callback new-window-requested();
+    // Requests the persisted menu layout be switched to the given value.
+    // Rust routes it through the preferences bus so every window and the
+    // settings file stay in sync.
+    callback menu-layout-change-requested(MenuLayout);
+    // Requests a workspace-section switch from the pill switcher. Rust
+    // updates the per-window section state and pushes it back into
+    // `workspace-section`.
+    callback section-change-requested(WorkspaceSection);
+    // Reports the object-list panel's new visibility so Rust can persist
+    // it. Per-window live state: the settings file records the last
+    // value but other open windows keep their own panel visibility.
+    callback object-list-visibility-changed(bool);
+    // Reports the panel's geometry (anchor-right, anchor-bottom,
+    // offset-x, offset-y, width, height, minimized) after a drag,
+    // resize, or minimize so Rust can persist it. Also per-window live
+    // state.
+    callback object-list-geometry-changed(bool, bool, length, length, length, length, bool);
+    // A printer/resin pick from the Slice control panel; carries the
+    // picked option's index into the matching options model.
+    callback slice-printer-picked(int);
+    callback slice-resin-picked(int);
+    callback slice-print-format-picked(int);
+    callback slice-first-layer-height-edited(string);
+    // The Slice panel's export action: write the held slice as the
+    // selected printer file.
+    callback slice-export-requested();
+    // Slice lifecycle: `slice-requested` from the panel button starts a
+    // run; `slice-cancel-requested` from the modal trips the cancel
+    // token; `slice-finished` is invoked from the Rust worker to drain
+    // the result on the UI thread.
+    callback slice-requested();
+    callback slice-cancel-requested();
+    callback slice-finished();
+    // Reports the Slice control panel's geometry (anchor-right,
+    // anchor-bottom, offset-x, offset-y, width, height) after a drag or
+    // resize so Rust can persist it. Per-window live state.
+    callback slice-panel-geometry-changed(bool, bool, length, length, length, length);
+    // Reports the slice-view panel's new visibility so Rust can persist
+    // it. Per-window live state, like the object-list panel.
+    callback slice-view-visibility-changed(bool);
+    // Reports the slice-view panel's geometry (anchor-right,
+    // anchor-bottom, offset-x, offset-y, width, height, minimized) after
+    // a drag, resize, or minimize so Rust can persist it.
+    callback slice-view-geometry-changed(bool, bool, length, length, length, length, bool);
+    // The slice height slider moved: Rust repaints so the mesh clip
+    // follows the selected layer.
+    callback selected-layer-changed();
+    callback viewport-resized(length, length);
+    callback rotate-drag(length, length);
+    callback pan-drag(length, length);
+    callback zoom-at(length, length, length);
+    callback frame-view-requested();
+    callback axis-view-requested(AxisView);
+    callback object-list-selection-changed(int);
+    callback viewport-pointer-down(length, length, PointerModifiers);
+    callback viewport-pointer-move(length, length, PointerModifiers);
+    callback viewport-pointer-up(length, length, PointerModifiers);
+    callback selection-cleared();
+    callback undo-requested();
+    callback redo-requested();
+    callback repair-requested();
+    callback repair-finished();
+    // Tools > Generate Support (trivial): runs `sc-geom`'s
+    // support-generation trivial (stub) algorithm end to end against the loaded scene.
+    // Each generated component (mesh) is pasted into the scene as a real object (see
+    // `support-gen-in-progress` above) and the run is reported through
+    // an info dialog. It is for end-to-end testing of integration.
+    // N ot a real support-generation feature yet.
+    // It proves the crate's interface works inside the GUI.
+
+    callback support-gen-requested();
+    in property <bool> gizmo-keyboard-focus-active: false;
+    callback gizmo-focus-translate-pressed();
+    callback gizmo-focus-rotate-pressed();
+    callback gizmo-focus-scale-pressed();
+    callback gizmo-arrow-pressed(int);
+    callback gizmo-arrow-released(int);
+    // Tab / Shift+Tab selection cycling, the property gates whether
+    // the viewport's FocusScope accepts Tab or lets it fall through
+    // to native focus traversal. True iff a scene with at least one
+    // object is loaded.
+    callback selection-cycle(int);
+    // Copy / paste: forwarded from the embedded MeshViewer's
+    // `Ctrl+C` / `Ctrl+V` handler. The Rust wiring layer routes
+    // these to the app-wide clipboard so a copy in one window is
+    // pasteable in any other.
+    callback copy-pressed();
+    callback paste-pressed();
+    // Cursor left the viewport rectangle. The Rust paste path
+    // clears its cached hover-cursor on this event so a subsequent
+    // `Ctrl+V` falls back to the viewport-centre placement.
+    callback viewport-pointer-leave();
+    // Right-click context menu. `show-context-menu` is invoked
+    // from Rust after the right-click is classified as a click
+    // (not an orbit drag); it forwards the call into the embedded
+    // MeshViewer which positions and shows the PopupWindow.
+    // `context-copy-pressed` / `context-paste-pressed` surface the
+    // menu-item activations so the Rust wiring can route them to
+    // the AppState clipboard methods.
+    callback show-context-menu(length, length, bool, bool, bool);
+    show-context-menu(x, y, copy, paste, del) => {
+        mv.show-context-menu(x, y, copy, paste, del);
+    }
+    callback context-copy-pressed();
+    callback context-paste-pressed(length, length);
+    // Single Delete callback shared by the Delete key, the
+    // context-menu Delete item, and the Edit > Delete menu item.
+    callback delete-requested();
+    // Right-button press / release positions for the context-menu
+    // click-vs-orbit classifier on the Rust side.
+    callback viewport-right-pointer-down(length, length);
+    callback viewport-right-pointer-up(length, length);
+
+    MenuBar {
+        // In Compact layout the bar is hidden; it stays mounted so its
+        // shortcuts keep firing (a hidden MenuBar reclaims its space but
+        // still registers accelerators). macOS always resolves to Bar in
+        // Rust, so the bar is never hidden there.
+        visible: root.menu-layout == MenuLayout.Bar;
+
+        Menu {
+            title: @tr("MenuBar" => "File");
+
+            MenuItem {
+                title: @tr("MenuBar" => "New Window");
+                shortcut: @keys(Control + Shift + N);
+                activated => {
+                    root.new-window-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Open…");
+                shortcut: @keys(Control + O);
+                enabled: !root.loading;
+                activated => {
+                    root.open-file-requested();
+                }
+            }
+            // TODO: "Open Recent"
+            MenuItem {
+                title: @tr("MenuBar" => "Close");
+                shortcut: @keys(Control + W);
+                enabled: root.loading || root.has-scene;
+                activated => {
+                    root.close-current-scene();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Save");
+                shortcut: @keys(Control + S);
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.save-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Save As…");
+                shortcut: @keys(Control + Shift + S);
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.save-as-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Export As…");
+                shortcut: @keys(Control + Shift + E);
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.export-as-requested();
+                }
+            }
+        }
+
+        Menu {
+            title: @tr("MenuBar" => "Edit");
+            MenuItem {
+                title: @tr("MenuBar" => "Undo");
+                shortcut: @keys(Control + Z);
+                enabled: root.has-scene && !root.loading && root.can-undo
+                    && !root.repairing-in-progress
+                    && root.workspace-section != WorkspaceSection.Slice;
+                activated => {
+                    root.undo-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Redo");
+                shortcut: @keys(Control + Shift + Z);
+                enabled: root.has-scene && !root.loading && root.can-redo
+                    && !root.repairing-in-progress
+                    && root.workspace-section != WorkspaceSection.Slice;
+                activated => {
+                    root.redo-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Delete");
+                enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                    && root.workspace-section == WorkspaceSection.Transform;
+                activated => {
+                    root.delete-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Preferences");
+                shortcut: @keys(Control + Comma);
+                activated => {
+                    root.show-preferences-requested();
+                }
+            }
+        }
+
+        Menu {
+            title: @tr("MenuBar" => "Tools");
+
+            MenuItem {
+                title: @tr("MenuBar" => "Generate Support (trivial for test)…");
+                enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                activated => {
+                    root.support-gen-requested();
+                }
+            }
+        }
+
+        Menu {
+            title: @tr("MenuBar" => "View");
+
+            MenuItem {
+                title: root.show-object-list
+                    ? @tr("MenuBar" => "Hide Object List")
+                    : @tr("MenuBar" => "Show Object List");
+                shortcut: @keys(Control + L);
+                enabled: root.has-scene;
+                activated => {
+                    root.show-object-list = !root.show-object-list;
+                    root.object-list-visibility-changed(root.show-object-list);
+                }
+            }
+
+            MenuItem {
+                title: root.show-slice-view
+                    ? @tr("MenuBar" => "Hide Slice View")
+                    : @tr("MenuBar" => "Show Slice View");
+                enabled: root.has-scene;
+                activated => {
+                    root.show-slice-view = !root.show-slice-view;
+                    root.slice-view-visibility-changed(root.show-slice-view);
+                }
+            }
+
+            // Switches between the top menu bar and the compact corner
+            // menu button. Title flips like the object-list toggle above.
+            // Disabled on macOS, which keeps its global menu bar.
+            MenuItem {
+                title: root.menu-layout == MenuLayout.Compact
+                    ? @tr("MenuBar" => "Show Menu Bar")
+                    : @tr("MenuBar" => "Hide Menu Bar");
+                enabled: !root.is-macos;
+                activated => {
+                    root.menu-layout-change-requested(
+                        root.menu-layout == MenuLayout.Compact
+                            ? MenuLayout.Bar
+                            : MenuLayout.Compact);
+                }
+            }
+
+            MenuSeparator { }
+
+            // Two-way bound to the window's full-screen state: the
+            // checkable item's built-in toggle flips full-screen, and
+            // OS-driven changes (for example the macOS green button)
+            // flow back into the checkmark. The MenuBar is an isolation
+            // boundary, so this reads root from inside the item.
+            MenuItem {
+                title: @tr("MenuBar" => "Fullscreen");
+                checkable: true;
+                checked <=> root.full-screen;
+                shortcut: root.is-macos
+                    ? @keys(Control + Meta + F)
+                    : @keys(F11);
+            }
+        }
+
+        Menu {
+            title: @tr("MenuBar" => "Help");
+            MenuItem {
+                title: @tr("MenuBar" => "Documentation");
+                enabled: false;
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Show Release Notes");
+                enabled: false;
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Report Issue");
+                enabled: false;
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Check for Updates…");
+                enabled: false;
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "About");
+                activated => {
+                    root.show-about-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "View License");
+                enabled: false;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 0px;
+
+        mv := MeshViewer {
+            horizontal-stretch: 1;
+            rendering: root.mesh-rendering;
+            placeholder-text: @tr("Open a 3D model to visualize it here");
+            gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
+            // Tab cycles selection while a scene is loaded; without a
+            // scene there's nothing to cycle, so Tab returns to its
+            // native role of moving focus through the GUI's
+            // interactive elements.
+            can-cycle-selection: root.has-scene;
+            viewport-resized(w, h) => {
+                root.viewport-resized(w, h);
+            }
+            rotate-drag(dx, dy) => {
+                root.rotate-drag(dx, dy);
+            }
+            pan-drag(dx, dy) => {
+                root.pan-drag(dx, dy);
+            }
+            zoom-at(dy, x, y) => {
+                root.zoom-at(dy, x, y);
+            }
+            frame-view-requested() => {
+                root.frame-view-requested();
+            }
+            axis-view-requested(view) => {
+                root.axis-view-requested(view);
+            }
+            viewport-pointer-down(x, y, modifiers) => {
+                root.viewport-pointer-down(x, y, modifiers);
+            }
+            viewport-pointer-move(x, y, modifiers) => {
+                root.viewport-pointer-move(x, y, modifiers);
+            }
+            viewport-pointer-up(x, y, modifiers) => {
+                root.viewport-pointer-up(x, y, modifiers);
+            }
+            selection-cleared() => {
+                root.selection-cleared();
+            }
+            gizmo-focus-translate-pressed() => {
+                root.gizmo-focus-translate-pressed();
+            }
+            gizmo-focus-rotate-pressed() => {
+                root.gizmo-focus-rotate-pressed();
+            }
+            gizmo-focus-scale-pressed() => {
+                root.gizmo-focus-scale-pressed();
+            }
+            gizmo-arrow-pressed(code) => {
+                root.gizmo-arrow-pressed(code);
+            }
+            gizmo-arrow-released(code) => {
+                root.gizmo-arrow-released(code);
+            }
+            selection-cycle(delta) => {
+                root.selection-cycle(delta);
+            }
+            copy-pressed() => {
+                root.copy-pressed();
+            }
+            paste-pressed() => {
+                root.paste-pressed();
+            }
+            viewport-pointer-leave() => {
+                root.viewport-pointer-leave();
+            }
+            context-copy-pressed() => {
+                root.context-copy-pressed();
+            }
+            context-paste-pressed(x, y) => {
+                root.context-paste-pressed(x, y);
+            }
+            delete-requested() => {
+                root.delete-requested();
+            }
+            viewport-right-pointer-down(x, y) => {
+                root.viewport-right-pointer-down(x, y);
+            }
+            viewport-right-pointer-up(x, y) => {
+                root.viewport-right-pointer-up(x, y);
+            }
+        }
+
+    }
+
+    // Floating object-list panel. Overlaps the viewport at the top
+    // right by default and can be dragged, resized, minimized, or
+    // closed. Only present once a scene with at least one object is
+    // loaded and the View menu keeps it enabled.
+    if (root.has-scene && root.show-object-list && root.object-list.length > 0): ObjectListPanel {
+        available-width: root.width;
+        available-height: root.height;
+        anchor-right <=> root.object-list-anchor-right;
+        anchor-bottom <=> root.object-list-anchor-bottom;
+        offset-x <=> root.object-list-offset-x;
+        offset-y <=> root.object-list-offset-y;
+        panel-width <=> root.object-list-width;
+        panel-height <=> root.object-list-height;
+        minimized <=> root.object-list-minimized;
+        model: root.object-list;
+        selected-index <=> root.selected-object-index;
+        selection-changed(idx) => {
+            root.object-list-selection-changed(idx);
+        }
+        geometry-committed => {
+            root.object-list-geometry-changed(
+                root.object-list-anchor-right,
+                root.object-list-anchor-bottom,
+                root.object-list-offset-x,
+                root.object-list-offset-y,
+                root.object-list-width,
+                root.object-list-height,
+                root.object-list-minimized);
+        }
+        close-requested => {
+            root.show-object-list = false;
+            root.object-list-visibility-changed(false);
+            // Reset geometry to defaults so reopening within the same
+            // session starts fresh. This does not persist; only drag,
+            // resize, and minimize gestures do.
+            root.object-list-anchor-right = true;
+            root.object-list-anchor-bottom = false;
+            root.object-list-offset-x = 12px;
+            root.object-list-offset-y = 12px;
+            root.object-list-width = 220px;
+            root.object-list-height = 0px;
+            root.object-list-minimized = false;
+        }
+    }
+
+    // Floating Slice control panel: the scene's printer and resin
+    // pickers. Present only while the Slice section is active; not
+    // closable (it is the primary slicing control). Overlaps the
+    // viewport at the top left by default.
+    if (root.has-scene && root.workspace-section == WorkspaceSection.Slice): SliceControlPanel {
+        available-width: root.width;
+        available-height: root.height;
+        anchor-right <=> root.slice-panel-anchor-right;
+        anchor-bottom <=> root.slice-panel-anchor-bottom;
+        offset-x <=> root.slice-panel-offset-x;
+        offset-y <=> root.slice-panel-offset-y;
+        panel-width <=> root.slice-panel-width;
+        panel-height <=> root.slice-panel-height;
+        printer-options: root.slice-printer-options;
+        printer-current-index <=> root.slice-printer-current-index;
+        resin-options: root.slice-resin-options;
+        resin-current-index <=> root.slice-resin-current-index;
+        print-format-options: root.slice-print-format-options;
+        print-format-current-index <=> root.slice-print-format-current-index;
+        print-format-note: root.slice-print-format-note;
+        export-enabled: root.slice-export-enabled;
+        export-in-progress: root.saving-in-progress;
+        first-layer-height-text <=> root.slice-first-layer-height-text;
+        slicing-in-progress: root.slicing-in-progress;
+        slice-up-to-date: root.slice-up-to-date;
+        printer-picked(i) => {
+            root.slice-printer-picked(i);
+        }
+        resin-picked(i) => {
+            root.slice-resin-picked(i);
+        }
+        print-format-picked(i) => {
+            root.slice-print-format-picked(i);
+        }
+        first-layer-height-edited(t) => {
+            root.slice-first-layer-height-edited(t);
+        }
+        slice-requested => {
+            root.slice-requested();
+        }
+        export-requested => {
+            root.slice-export-requested();
+        }
+        geometry-committed => {
+            root.slice-panel-geometry-changed(
+                root.slice-panel-anchor-right,
+                root.slice-panel-anchor-bottom,
+                root.slice-panel-offset-x,
+                root.slice-panel-offset-y,
+                root.slice-panel-width,
+                root.slice-panel-height);
+        }
+    }
+
+    // Floating slice-view panel: the selected layer's 2D cross-section.
+    // Present only in the Slice section, with the View toggle on and a
+    // held slice; draggable, resizable, minimizable, and closable.
+    if (root.has-scene && root.show-slice-view
+        && root.workspace-section == WorkspaceSection.Slice
+        && root.slice-layer-count > 0): SliceViewPanel {
+        available-width: root.width;
+        available-height: root.height;
+        anchor-right <=> root.slice-view-anchor-right;
+        anchor-bottom <=> root.slice-view-anchor-bottom;
+        offset-x <=> root.slice-view-offset-x;
+        offset-y <=> root.slice-view-offset-y;
+        panel-width <=> root.slice-view-width;
+        panel-height <=> root.slice-view-height;
+        minimized <=> root.slice-view-minimized;
+        content: root.slice-view-image;
+        geometry-committed => {
+            root.slice-view-geometry-changed(
+                root.slice-view-anchor-right,
+                root.slice-view-anchor-bottom,
+                root.slice-view-offset-x,
+                root.slice-view-offset-y,
+                root.slice-view-width,
+                root.slice-view-height,
+                root.slice-view-minimized);
+        }
+        close-requested => {
+            root.show-slice-view = false;
+            root.slice-view-visibility-changed(false);
+            // Reset geometry to defaults so reopening within the same
+            // session starts fresh. This does not persist; only drag,
+            // resize, and minimize gestures do.
+            root.slice-view-anchor-right = false;
+            root.slice-view-anchor-bottom = true;
+            root.slice-view-offset-x = 12px;
+            root.slice-view-offset-y = 12px;
+            root.slice-view-width = 240px;
+            root.slice-view-height = 0px;
+            root.slice-view-minimized = false;
+        }
+    }
+
+    // Floating workspace-section switcher (Prepare | Transform | Slice).
+    // Fixed top-center, not draggable, not persisted. The content-area
+    // origin already sits below the menu bar when the bar is shown and
+    // near the window top in Compact layout, so a small top offset keeps
+    // the pill clear of the menu in either layout. Present only once a
+    // scene is loaded: the sections act on a model.
+    if root.has-scene: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 8px;
+        width: pill-layout.preferred-width;
+        height: pill-layout.preferred-height;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: self.height / 2;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000040;
+
+        pill-layout := HorizontalLayout {
+            padding: 4px;
+            spacing: 2px;
+
+            SectionTab {
+                label: @tr("Workspace" => "Prepare");
+                active: root.workspace-section == WorkspaceSection.Prepare;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Prepare);
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+            SectionTab {
+                label: @tr("Workspace" => "Transform");
+                active: root.workspace-section == WorkspaceSection.Transform;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Transform);
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+            SectionTab {
+                label: @tr("Workspace" => "Slice");
+                active: root.workspace-section == WorkspaceSection.Slice;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Slice);
+                }
+            }
+        }
+    }
+
+    // Prepare-section tool surface: the mesh repair action. Fixed
+    // below the section pill, sharing its visual language; not
+    // draggable, not persisted. The button stays enabled on a healthy
+    // scene: pressing it then reports "no problems found" through the
+    // results dialog, which beats a mysteriously disabled button.
+    if root.has-scene && root.workspace-section == WorkspaceSection.Prepare: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 56px;
+        width: repair-layout.preferred-width;
+        height: repair-layout.preferred-height;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 8px;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000040;
+
+        repair-layout := HorizontalLayout {
+            padding: 8px;
+
+            Button {
+                text: @tr("Prepare" => "Repair meshes");
+                enabled: !root.loading && !root.slicing-in-progress
+                    && !root.repairing-in-progress;
+                clicked => {
+                    root.repair-requested();
+                }
+            }
+        }
+    }
+
+    // Per-layer height slider on the viewport's right edge. Present
+    // whenever the Slice section is active, so the strip it occupies is
+    // visible before slicing too; disabled until a slice exists
+    // (`slice-layer-count > 0`). Its value is the selected layer index,
+    // with the top layer (the maximum) at the top of the track.
+    if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
+        x: parent.width - self.width - 12px;
+        y: 64px;
+        width: 32px;
+        height: parent.height - 128px;
+
+        Slider {
+            width: parent.width;
+            height: parent.height;
+            orientation: Orientation.vertical;
+            enabled: root.slice-layer-count > 0;
+            minimum: 0;
+            maximum: Math.max(0, root.slice-layer-count - 1);
+            step: 1;
+            value <=> root.selected-layer-index;
+            changed(v) => {
+                root.selected-layer-changed();
+            }
+        }
+    }
+
+    // Compact-layout menu button: a floating chip at the top-left that
+    // opens the same menus as the hidden bar. Its items carry no
+    // shortcut because Slint only registers accelerators on MenuBar
+    // items; the hidden MenuBar keeps the shortcuts working. Behaviour
+    // is single-sourced: every item calls the same root callbacks as the
+    // bar. Present only in Compact layout, which Rust never selects on
+    // macOS.
+    if root.menu-layout == MenuLayout.Compact: hamburger := ContextMenuArea {
+        x: 8px;
+        y: 8px;
+        width: 32px;
+        height: 28px;
+
+        Menu {
+            Menu {
+                title: @tr("MenuBar" => "File");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "New Window");
+                    activated => {
+                        root.new-window-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Open…");
+                    enabled: !root.loading;
+                    activated => {
+                        root.open-file-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Close");
+                    enabled: root.loading || root.has-scene;
+                    activated => {
+                        root.close-current-scene();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Save");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.save-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Save As…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.save-as-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Export As…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.export-as-requested();
+                    }
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "Edit");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Undo");
+                    enabled: root.has-scene && !root.loading && root.can-undo
+                    && !root.repairing-in-progress
+                    && root.workspace-section != WorkspaceSection.Slice;
+                    activated => {
+                        root.undo-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Redo");
+                    enabled: root.has-scene && !root.loading && root.can-redo
+                    && !root.repairing-in-progress
+                    && root.workspace-section != WorkspaceSection.Slice;
+                    activated => {
+                        root.redo-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Delete");
+                    enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                    && root.workspace-section == WorkspaceSection.Transform;
+                    activated => {
+                        root.delete-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Preferences");
+                    activated => {
+                        root.show-preferences-requested();
+                    }
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "Tools");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Generate Support (trivial for test)…");
+                    enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                    activated => {
+                        root.support-gen-requested();
+                    }
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "View");
+
+                MenuItem {
+                    title: root.show-object-list
+                        ? @tr("MenuBar" => "Hide Object List")
+                        : @tr("MenuBar" => "Show Object List");
+                    enabled: root.has-scene;
+                    activated => {
+                        root.show-object-list = !root.show-object-list;
+                        root.object-list-visibility-changed(root.show-object-list);
+                    }
+                }
+
+                MenuItem {
+                    title: root.show-slice-view
+                        ? @tr("MenuBar" => "Hide Slice View")
+                        : @tr("MenuBar" => "Show Slice View");
+                    enabled: root.has-scene;
+                    activated => {
+                        root.show-slice-view = !root.show-slice-view;
+                        root.slice-view-visibility-changed(root.show-slice-view);
+                    }
+                }
+
+                MenuItem {
+                    title: root.menu-layout == MenuLayout.Compact
+                        ? @tr("MenuBar" => "Show Menu Bar")
+                        : @tr("MenuBar" => "Hide Menu Bar");
+                    enabled: !root.is-macos;
+                    activated => {
+                        root.menu-layout-change-requested(
+                            root.menu-layout == MenuLayout.Compact
+                                ? MenuLayout.Bar
+                                : MenuLayout.Compact);
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Fullscreen");
+                    checkable: true;
+                    checked <=> root.full-screen;
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "Help");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Documentation");
+                    enabled: false;
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Show Release Notes");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Report Issue");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Check for Updates…");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "About");
+                    activated => {
+                        root.show-about-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "View License");
+                    enabled: false;
+                }
+            }
+        }
+
+        Rectangle {
+            border-radius: 6px;
+            background: #00000055;
+
+            VerticalLayout {
+                alignment: center;
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 3px;
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+            }
+
+            TouchArea {
+                clicked => {
+                    hamburger.show({ x: 0, y: parent.height });
+                }
+            }
+        }
+    }
+
+    // Drop-target overlay. Sibling of the main HorizontalLayout above,
+    // so it renders on top while drop-hovering is true and disappears
+    // otherwise. The Rectangle does not intercept pointer events, so
+    // OS-level drag events still reach the window underneath.
+    if root.drop-hovering: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Palette.background.transparentize(0.25);
+        border-color: Palette.accent-background;
+        border-width: 3px;
+
+        Text {
+            text: @tr("Drop to open");
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: Palette.foreground;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Floating load-progress panel: bottom-centered, visible only
+    // while a file load is actually in flight. A plain Rectangle
+    // without a TouchArea, so pointer events pass through to the
+    // viewport underneath.
+    if root.load-in-progress: Rectangle {
+        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
+        height: progress-panel-layout.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 16px;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 6px;
+
+        progress-panel-layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.load-phase == LoadPhase.ReadingFile
+                    ? @tr("Reading file…")
+                    : root.load-phase == LoadPhase.PreparingGeometry
+                    ? @tr("Preparing geometry…")
+                    : @tr("Uploading to GPU…");
+                color: Palette.foreground;
+            }
+
+            ProgressIndicator {
+                progress: root.load-progress;
+            }
+        }
+    }
+
+    // Floating support generator progress panel: same placement/style as the
+    // load panel. `support-gen-phase` is passed straight through from
+    // the Rust-side `JobProgress.phase` string rather than mapped
+    // through an enum, since it is purely informational here.
+    if root.support-gen-in-progress: Rectangle {
+        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
+        height: support-gen-progress-panel-layout.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 16px;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 6px;
+
+        support-gen-progress-panel-layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.support-gen-phase == ""
+                    ? @tr("Generating support structure…")
+                    : root.support-gen-phase;
+                color: Palette.foreground;
+            }
+
+            ProgressIndicator {
+                progress: root.support-gen-progress;
+            }
+        }
+    }
+
+    // Floating save-progress panel: same placement as the load panel
+    // (they never run at once, since saving is disabled while loading
+    // and vice versa). A plain Rectangle without a TouchArea, so pointer
+    // events pass through to the viewport underneath.
+    if root.saving-in-progress: Rectangle {
+        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
+        height: save-progress-panel-layout.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 16px;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 6px;
+
+        save-progress-panel-layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.save-phase == SavePhase.Flattening
+                    ? @tr("Preparing geometry…")
+                    : root.save-phase == SavePhase.Serializing
+                    ? @tr("Serializing model…")
+                    : root.save-phase == SavePhase.Compressing
+                    ? @tr("Compressing…")
+                    : @tr("Writing file…");
+                color: Palette.foreground;
+            }
+
+            ProgressIndicator {
+                progress: root.save-progress;
+            }
+        }
+    }
+
+    // Input-capturing slice modal: a full-window dim that swallows
+    // pointer and keyboard events so the scene can't be edited mid-slice,
+    // with a centered progress card and a Cancel button. Last child, so
+    // it renders on top of everything. Shown only while a slice runs.
+    if root.slicing-in-progress: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #000000cc;
+
+        // Swallow pointer events targeted at the scene underneath.
+        TouchArea { }
+
+        // Grab the keyboard: Escape cancels, other keys are swallowed.
+        modal-focus := FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.slice-cancel-requested();
+                }
+                return accept;
+            }
+        }
+
+        Rectangle {
+            width: Math.min(parent.width * 60%, 360px);
+            height: slice-card.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.background;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 8px;
+
+            slice-card := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: @tr("SlicePanel" => "Slicing...");
+                    font-weight: 600;
+                    color: Palette.foreground;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.slice-total > 0
+                        ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
+                        : @tr("SlicePanel" => "Preparing...");
+                    color: Palette.foreground.transparentize(0.3);
+                    horizontal-alignment: center;
+                }
+                ProgressIndicator {
+                    progress: root.slice-progress;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("SlicePanel" => "Cancel");
+                        clicked => {
+                            root.slice-cancel-requested();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

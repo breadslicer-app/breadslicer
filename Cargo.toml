@@ -1,0 +1,108 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/icon-gen",
+    "apps/profiles-converter",
+    "apps/slicer-cli",
+    "apps/slicer-gui",
+    "libs/3mf",
+    "libs/app-paths",
+    "libs/mesh-core",
+    "libs/mesh-fixtures",
+    "libs/mesh-formats",
+    "libs/mesh-spatial",
+    "libs/message-catalog",
+    "libs/print-glue",
+    "libs/print-primitives",
+    "libs/print-profiles",
+    "libs/project-formats",
+    "libs/scene",
+    "libs/scene-edit",
+    "libs/scene-fixtures",
+    "libs/sl1cer",
+    "libs/sla-formats",
+]
+
+# `sc-geom` (see: `libs/sc-geom/Cargo.toml`) roots its own nested workspace.
+# As a workspace for its sibling crates, so it stays out of the main repo's workspace.
+# If not excluded below, cargo path dependencies ->leads to "multiple workspace roots".
+exclude = ["libs/sc-geom"]
+
+[workspace.package]
+edition      = "2024"
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+rust-version = "1.98.1"
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = false
+strip = true
+
+[workspace.dependencies]
+sc-3mf = { path = "libs/3mf", version = "0.2.0" }
+sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
+sc-mesh-core = { path = "libs/mesh-core", version = "0.2.0" }
+sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
+sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }
+sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.2.0" }
+sc-message-catalog = { path = "libs/message-catalog", version = "0.1.0" }
+sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
+sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
+sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
+sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
+sc-scene = { path = "libs/scene", version = "0.2.0" }
+sc-scene-edit = { path = "libs/scene-edit", version = "0.2.0" }
+sc-scene-fixtures = { path = "libs/scene-fixtures", version = "0.2.0" }
+sc-sl1cer = { path = "libs/sl1cer", version = "0.2.0" }
+sc-sla-formats = { path = "libs/sla-formats", version = "0.2.0" }
+
+sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
+
+
+aes = "0.9.3"
+any_ascii = "0.3.3"
+anyhow = "1.0.102"
+cbc = { version = "0.2.1", default-features = false }
+chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
+crc32fast = "1.5.0"
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+float-cmp = "0.10.0"
+itoa = "1.0.18"
+memchr = "2.8.3"
+nonempty-collections = "1.3.0"
+proptest = "1.7.0"
+quick-xml = "0.41.0"
+rayon = "1.12.0"
+ryu = "1.0.23"
+semver = { version = "1.0.28", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.10"
+toml_edit = { version = "0.25.12", features = ["serde"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[workspace.lints.rust]
+# "deny" instead of "forbid": slicer-cli's Windows file-identity read carries
+# a scoped allow.
+unsafe_code = "deny"
+
+# Block non-ASCII and visually confusable identifiers (homoglyph and
+# trojan-source identifier attacks). The bidi text-flow control lints
+# (text_direction_codepoint_in_literal / _in_comment) are already
+# deny-by-default in rustc.
+non_ascii_idents         = "deny"
+confusable_idents        = "deny"
+mixed_script_confusables = "deny"
+uncommon_codepoints      = "deny"
+
+missing_debug_implementations = "deny"
+unreachable_pub               = "deny"
+unused_qualifications         = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }

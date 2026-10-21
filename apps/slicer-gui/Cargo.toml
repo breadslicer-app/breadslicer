@@ -1,0 +1,84 @@
+[package]
+name = "sc-slicer-gui"
+version = "0.3.1"
+edition.workspace = true
+license = "AGPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "sc_slicer_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sc-slicer-gui"
+path = "src/main.rs"
+
+[dependencies]
+sc-app-paths = { workspace = true }
+sc-geom = { workspace = true }
+sc-mesh-core = { workspace = true }
+sc-mesh-formats = { workspace = true }
+sc-mesh-spatial = { workspace = true }
+sc-print-glue = { workspace = true }
+sc-print-primitives = { workspace = true, features = ["serde"] }
+sc-print-profiles = { workspace = true }
+sc-project-formats = { workspace = true }
+sc-scene = { workspace = true }
+sc-scene-edit = { workspace = true }
+sc-sl1cer = { workspace = true }
+sc-sla-formats = { workspace = true }
+
+anyhow = { workspace = true }
+bytemuck = { version = "1.18", features = ["derive"] }
+futures-channel = "0.3"
+glam = "0.32.1"
+ico = "0.5"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+harfrust = "0.8"
+newtypes = "0.6.0"
+rfd = "0.17.2"
+swash = { version = "0.2.10", default-features = false, features = [
+    "render",
+    "scale",
+] }
+# Slint's default feature set minus FemtoVG renderer.
+slint = { version = "1.18.1", default-features = false, features = [
+    "accessibility",
+    "backend-winit",
+    "compat-1-2",
+    "image-default-formats",
+    "renderer-skia",
+    "renderer-software",
+    "std",
+    "unstable-wgpu-30",
+    "unstable-winit-030",
+] }
+# Note: keep wgpu version in sync with that used by Sling.
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+pollster = "0.4"
+serde = { version = "1.0.228", features = ["derive"] }
+sys-locale = "0.3.2"
+toml = "1.1.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", features = ["objc2-core-services"] }
+
+[build-dependencies]
+sc-message-catalog = { workspace = true }
+slint-build = "1.18.1"
+toml = "1.1.2"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.31"
+
+[dev-dependencies]
+sc-mesh-fixtures = { workspace = true }
+sc-print-primitives = { workspace = true }
+sc-scene-fixtures = { workspace = true }
+
+float-cmp = { workspace = true }
+tempfile = "3.23.0"
