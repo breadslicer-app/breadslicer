@@ -33,16 +33,6 @@ use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 use super::half_edges;
 use super::validated::ValidatedEdgeManifoldMesh;
 
-/// Canonical key for an undirected mesh edge: `(lo, hi)` with `lo <= hi`.
-/// Constructed via [`edge_key`].
-pub type EdgeKey = (VertexIndex, VertexIndex);
-
-/// Canonicalises an unordered vertex pair into an [`EdgeKey`].
-#[inline]
-pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
-    if a <= b { (a, b) } else { (b, a) }
-}
-
 /// Precomputed topology over an edge-manifold mesh.
 ///
 /// Built once via [`MeshTopology::from_edge_manifold`]; edge lookups
@@ -74,6 +64,10 @@ impl MeshTopology {
         // 1 scan over the sorted runs yields the edge table and the per-face
         // neighbor across each edge slot; the latter is what the ring walks
         // step through.
+        // #[gamma::skip(arith.div_to_mul, reason = "capacity hint only")]
+        // #[gamma::skip(arith.div_to_rem, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
         let mut edges: Vec<(u64, [FaceIndex; 2])> = Vec::with_capacity(records.len() / 2);
         let mut face_adj: Vec<[FaceIndex; 3]> = vec![[FaceIndex::from(0_usize); 3]; faces.len()];
         for run in records.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
@@ -86,9 +80,10 @@ impl MeshTopology {
             );
             let f0 = half_edges::face_of(run[0].1);
             let f1 = half_edges::face_of(run[1].1);
+            // #[gamma::skip(literal.int_increment, reason = "a run has 1 key")]
             edges.push((run[0].0, [f0, f1]));
-            face_adj[f0.get()][half_edges::slot_of(run[0].1)] = f1;
-            face_adj[f1.get()][half_edges::slot_of(run[1].1)] = f0;
+            face_adj[f0.get()][half_edges::slot_of(run[0].1).index()] = f1;
+            face_adj[f1.get()][half_edges::slot_of(run[1].1).index()] = f0;
         }
 
         // Incident faces per vertex, CSR, ascending face order (so each ring
@@ -100,10 +95,14 @@ impl MeshTopology {
                 ring_offsets[usize::from(v) + 1] += 1;
             }
         }
-        for k in 1..ring_offsets.len() {
+        for k in
+            // #[gamma::skip(literal.int_increment, reason = "index 0 stays 0")]
+            1..ring_offsets.len()
+        {
             ring_offsets[k] += ring_offsets[k - 1];
         }
         let mut incident = vec![FaceIndex::from(0_usize); ring_offsets[vertex_count]];
+        // #[gamma::skip(range.exclusive_to_inclusive, reason = "unused entry")]
         let mut cursors = ring_offsets[..vertex_count].to_vec();
         for (idx, face) in faces.iter().enumerate() {
             for &v in &face.vertices {
@@ -128,6 +127,10 @@ impl MeshTopology {
 
         let mut ring_faces = Vec::with_capacity(ring_offsets[vertex_count]);
         let mut fan_bounds = vec![0usize];
+        // #[gamma::skip(arith.add_to_mul, reason = "capacity hint only")]
+        // #[gamma::skip(arith.add_to_sub, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_decrement, reason = "capacity hint only")]
+        // #[gamma::skip(literal.int_increment, reason = "capacity hint only")]
         let mut vertex_fan_ranges = Vec::with_capacity(vertex_count + 1);
         vertex_fan_ranges.push(0);
         for fans in &fans_per_vertex {
@@ -211,13 +214,19 @@ fn walk_cyclic_fans(
         }
         let mut fan = Vec::new();
         let mut current = start;
+        // #[gamma::skip(option.none_to_some, reason = "no edge has key 0")]
         let mut prev_edge: Option<u64> = None;
 
-        loop {
+        // Each step adds a different incident face to the fan, so the walk
+        // closes within this bound.
+        // #[gamma::skip(range.exclusive_to_inclusive, reason = "walk closes")]
+        // #[gamma::skip(expr.increment, reason = "walk closes")]
+        for _ in 0..incident.len() {
             fan.push(current);
             visited.insert(current);
 
             let [v0, v1, v2] = faces[current.get()].vertices;
+            // #[gamma::skip(literal.int_increment, reason = "always written")]
             let mut through_vertex: [(u64, usize); 2] = [(0, 0); 2];
             let mut written = 0;
             for (slot, &(a, b)) in [(v0, v1), (v1, v2), (v2, v0)].iter().enumerate() {
@@ -254,29 +263,6 @@ fn walk_cyclic_fans(
     }
 
     fans
-}
-
-#[cfg(test)]
-mod edge_key_tests {
-    use super::*;
-
-    fn vi(i: u32) -> VertexIndex {
-        VertexIndex::from(i)
-    }
-
-    #[test]
-    fn edge_key_canonicalises_to_lo_hi() {
-        let forward = edge_key(vi(3), vi(7));
-        let reverse = edge_key(vi(7), vi(3));
-        assert_eq!(forward, reverse);
-        assert_eq!(forward, (vi(3), vi(7)));
-    }
-
-    #[test]
-    fn edge_key_equal_endpoints_collapses_cleanly() {
-        let degenerate = edge_key(vi(5), vi(5));
-        assert_eq!(degenerate, (vi(5), vi(5)));
-    }
 }
 
 #[cfg(test)]
@@ -494,6 +480,13 @@ mod mesh_topology_tests {
     }
 
     #[test]
+    fn vertex_fans_returns_none_for_the_1st_index_past_the_vertices() {
+        let mesh = tetrahedron();
+        let topo = topology(&mesh);
+        assert!(topo.vertex_fans(vi(4)).is_none());
+    }
+
+    #[test]
     fn bowtie_pinch_vertex_has_two_lobe_fans_and_others_have_one() {
         let mesh = bowtie();
         let topo = topology(&mesh);
@@ -520,6 +513,20 @@ mod mesh_topology_tests {
             assert_eq!(count, 1, "vertex {v} expected a single fan");
         }
     }
+
+    #[test]
+    fn bowtie_pinch_vertex_fans_hold_each_incident_face_once() {
+        let mesh = bowtie();
+        let topo = topology(&mesh);
+        let mut faces: Vec<usize> = topo
+            .vertex_fans(vi(0))
+            .expect("pinch vertex has incident faces")
+            .flatten()
+            .map(|f| f.get())
+            .collect();
+        faces.sort_unstable();
+        assert_eq!(faces, [0, 1, 2, 4, 5, 6]);
+    }
 }
 
 #[cfg(test)]
@@ -529,7 +536,7 @@ mod sorted_topology_equivalence_tests {
     use proptest::prelude::*;
 
     use crate::indexed_mesh::mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Vertex};
+    use crate::primitives::{EdgeKey, IndexedTriangle, Vertex};
 
     use super::*;
 
@@ -558,7 +565,7 @@ mod sorted_topology_equivalence_tests {
             let face_idx = FaceIndex::from(idx);
             let [v0, v1, v2] = face.vertices;
             for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
-                acc.entry(edge_key(a, b)).or_default().push(face_idx);
+                acc.entry(EdgeKey::new(a, b)).or_default().push(face_idx);
             }
         }
         acc.into_iter()
@@ -610,7 +617,7 @@ mod sorted_topology_equivalence_tests {
             let mut written = 0;
             for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
                 if a == vertex || b == vertex {
-                    through_vertex[written] = Some(edge_key(a, b));
+                    through_vertex[written] = Some(EdgeKey::new(a, b));
                     written += 1;
                 }
             }
@@ -693,7 +700,8 @@ mod sorted_topology_equivalence_tests {
         let reference = reference_topology(&witness);
 
         assert_eq!(topo.edge_count(), reference.edge_to_faces.len());
-        for (&(a, b), &pair) in &reference.edge_to_faces {
+        for (&edge, &pair) in &reference.edge_to_faces {
+            let (a, b) = edge.vertices();
             assert_eq!(
                 topo.edge_faces(a, b),
                 Some(pair),

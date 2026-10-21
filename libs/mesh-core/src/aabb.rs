@@ -264,6 +264,18 @@ mod aabb_tests {
     }
 
     #[test]
+    fn box_inverted_on_1_axis_only_is_empty() {
+        for axis in 0..3 {
+            let mut min = [0.0; 3];
+            let mut max = [1.0; 3];
+            min[axis] = f32::INFINITY;
+            max[axis] = f32::NEG_INFINITY;
+            let aabb = Aabb::from_min_max(Vertex::new(min), Vertex::new(max));
+            assert!(aabb.is_empty(), "axis {axis}");
+        }
+    }
+
+    #[test]
     fn from_min_max_with_equal_corners_is_a_point() {
         let v = Vertex::new([1.0, 2.0, 3.0]);
         let aabb = Aabb::from_min_max(v, v);

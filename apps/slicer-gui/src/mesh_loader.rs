@@ -14,6 +14,7 @@
 //! reaches `deposit`.
 
 use std::any::Any;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -39,6 +40,27 @@ use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = MAX_MESH_FILE_SIZE_BYTES / (1024 * 1024);
 
+/// A scene file over the size ceiling, refused before it is read. Its text is
+/// in the language in force each time it is formatted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FileTooLarge {
+    /// The size of the file, in whole MiB.
+    pub(crate) size_mib: u64,
+}
+
+impl fmt::Display for FileTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ctr!(
+            "ErrorDialog",
+            "File is {} MiB, which exceeds the {} MiB limit.",
+            self.size_mib,
+            MAX_MESH_FILE_SIZE_MIB
+        ))
+    }
+}
+
+impl std::error::Error for FileTooLarge {}
+
 pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = SUPPORTED_SCENE_FILE_EXTENSIONS;
 
 /// Returns whether `path`'s extension is in [`SUPPORTED_MESH_EXTENSIONS`],
@@ -48,10 +70,11 @@ pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
     is_supported_scene_file_extension(path)
 }
 
-/// Checks the file at `path` against the size ceiling. Returns `Err` if the
-/// file is over the limit; `Ok(())` otherwise. A `metadata()` failure falls
-/// through as `Ok(())`: the worker will hit the same problem when it opens the
-/// file and surface a more specific error from the parser.
+/// Checks the file at `path` against the size ceiling. Returns a
+/// [`FileTooLarge`] error if the file is over the limit; `Ok(())` otherwise. A
+/// `metadata()` failure falls through as `Ok(())`: the worker will hit the same
+/// problem when it opens the file and surface a more specific error from the
+/// parser.
 pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
     let Ok(meta) = std::fs::metadata(path) else {
         return Ok(());
@@ -59,16 +82,10 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
     if meta.len() <= MAX_MESH_FILE_SIZE_BYTES {
         return Ok(());
     }
-    let size_mib = meta.len() / (1024 * 1024);
-    Err(anyhow::Error::msg(
-        ctr!(
-            "ErrorDialog",
-            "File is {} MiB, which exceeds the {} MiB limit.",
-            size_mib,
-            MAX_MESH_FILE_SIZE_MIB
-        )
-        .to_string(),
-    ))
+    Err(FileTooLarge {
+        size_mib: meta.len() / (1024 * 1024),
+    }
+    .into())
 }
 
 /// What to do with a path the user asked to open, given whether the window has
@@ -124,7 +141,7 @@ pub(crate) fn start_load_with_ticket(
         let reason = loader
             .graphics_unavailable()
             .unwrap_or(GraphicsUnavailable::AwaitingSetup);
-        ticket.deposit(path, Err(anyhow::Error::msg(reason.message())));
+        ticket.deposit(path, Err(anyhow::Error::new(reason)));
         return;
     };
     let sink = loader.progress_sink();
@@ -255,14 +272,32 @@ fn prepare_scene(
     })
 }
 
+/// A panic of the load worker, with its message. Its text is in the language in
+/// force each time it is formatted.
+#[derive(Debug)]
+pub(crate) struct LoaderPanicked {
+    message: String,
+}
+
+impl fmt::Display for LoaderPanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ctr!(
+            "ErrorDialog",
+            "The mesh loader panicked: {}",
+            self.message
+        ))
+    }
+}
+
+impl std::error::Error for LoaderPanicked {}
+
 /// Runs `body`, turning a panic into an error that carries the panic message.
 pub(crate) fn guard_worker<T>(body: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(result) => result,
-        Err(payload) => {
-            let msg = panic_message(&payload);
-            Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-        }
+        Err(payload) => Err(anyhow::Error::new(LoaderPanicked {
+            message: panic_message(&payload),
+        })),
     }
 }
 

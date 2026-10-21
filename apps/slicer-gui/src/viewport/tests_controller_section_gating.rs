@@ -3,51 +3,19 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Section gating: layout tools are silenced outside the Transform
-//! section, undo/redo is silenced only in Slice, and selection stays
-//! live everywhere.
+//! Section gating: layout tools are silenced outside the Transform section,
+//! undo/redo is silenced only in Slice, and selection stays live everywhere.
 //!
 //! These drive the controller with a light single-leaf fixture. The
-//! pointer-drag gate (which needs a camera, a viewport, and gizmo
-//! geometry) lives in the `viewport_click_tests` module next to that
-//! scaffolding.
-
-use std::sync::Arc;
-
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::primitives::Vertex;
-use sc_mesh_core::transform::Transform3D;
-use sc_scene::{LeafPayload, Scene};
+//! pointer-drag gate (which needs a camera, a viewport, and gizmo geometry)
+//! lives in the `viewport_click_tests` module next to that scaffolding.
 
 use super::controller::ViewportController;
 use super::keyboard_drive::KbdFocus;
 use crate::WorkspaceSection;
+use crate::test_support::scenes::graph_with_one_leaf;
 
-fn empty_leaf_mesh() -> IndexedMesh {
-    IndexedMesh {
-        meta: None,
-        vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-        faces: vec![],
-    }
-}
-
-/// Loader-faithful single-leaf graph under one identity-Group root.
-fn graph_with_one_leaf() -> Scene {
-    let mut g = Scene::new();
-    let root = g.add_group(None, Transform3D::Identity);
-    g.add_root(root).expect("group root");
-    let leaf = g
-        .add_leaf(
-            None,
-            Transform3D::Identity,
-            LeafPayload::Mesh(Arc::new(empty_leaf_mesh())),
-        )
-        .expect("add leaf");
-    g.add_child(root, leaf).expect("attach leaf");
-    g
-}
-
-/// A controller holding one selected leaf, parked in `section`.
+/// A controller holding 1 selected leaf, parked in `section`.
 fn controller_in(section: WorkspaceSection) -> ViewportController {
     let ctrl = ViewportController::new_for_test();
     ctrl.install_graph_for_test(graph_with_one_leaf());

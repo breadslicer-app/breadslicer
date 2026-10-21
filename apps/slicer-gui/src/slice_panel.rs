@@ -311,6 +311,8 @@ impl PanelUpdate {
             PreferencesChange::Favourites
             | PreferencesChange::DefaultPrinter
             | PreferencesChange::DefaultResin => Some(Self::Full),
+            // The format labels and the note come from `ctr!`.
+            PreferencesChange::Language => Some(Self::Full),
             // A slice ran with an AA level, so the level moves only the export
             // gate.
             PreferencesChange::AaLevel => Some(Self::ExportGate),
@@ -319,7 +321,6 @@ impl PanelUpdate {
             PreferencesChange::OutputFormat => None,
             PreferencesChange::Theme
             | PreferencesChange::MenuLayout
-            | PreferencesChange::Language
             | PreferencesChange::ObjectListPanel
             | PreferencesChange::SliceControlPanel
             | PreferencesChange::SliceViewPanel
@@ -377,7 +378,7 @@ mod panel_update_tests {
             (PreferencesChange::OutputFormat, None),
             (PreferencesChange::Theme, None),
             (PreferencesChange::MenuLayout, None),
-            (PreferencesChange::Language, None),
+            (PreferencesChange::Language, Some(PanelUpdate::Full)),
             (PreferencesChange::ObjectListPanel, None),
             (PreferencesChange::SliceControlPanel, None),
             (PreferencesChange::SliceViewPanel, None),
@@ -398,5 +399,53 @@ mod panel_update_tests {
             PanelUpdate::for_preferences_change(PreferencesChange::OutputFormat),
             None,
         );
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use slint::Model;
+
+    use super::*;
+    use crate::i18n::ctr;
+    use crate::language::InstalledTranslations;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::ui_language::UiLanguage;
+
+    #[test]
+    fn a_language_change_pushes_the_format_labels_again() {
+        let (labels, expected) = on_fresh_slint_thread(|| {
+            let printer = PrinterId::new("listed-printer").expect("valid printer id");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(printer.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = ProfileCatalog::from_entries(
+                vec![printer_entry(printer, "Alpha", [120.0, 68.0, 150.0])],
+                Vec::new(),
+            );
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let _ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&window), &bus);
+            let _bridge = SlicePanelBridge::install(
+                &window,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus.clone(),
+                SceneDocument::new(),
+            );
+            window.set_slice_print_format_options(ModelRc::new(VecModel::from(vec![
+                SharedString::from("sentinel"),
+            ])));
+            pick_language(&bus, "es");
+            let labels: Vec<String> = window
+                .get_slice_print_format_options()
+                .iter()
+                .map(|label| label.to_string())
+                .collect();
+            (labels, ctr!("SlicePanel", ".goo (V3.0)").to_string())
+        });
+        assert_eq!(labels, [expected]);
     }
 }

@@ -13,10 +13,9 @@
 //!
 //! The buckets are powered by the [`MeshErrorReport`] trait, which exposes a
 //! variant name and an optional representative face index for each error. The
-//! trait is implemented for [`MeshVertexError`](super::MeshVertexError),
-//! [`MeshFaceError`](super::MeshFaceError) and
-//! [`MeshEdgeManifoldError`](super::MeshEdgeManifoldError); other validation
-//! error enums can opt in by implementing it.
+//! trait is implemented for [`MeshVertexError`], [`MeshFaceError`] and
+//! [`MeshEdgeManifoldError`]; other validation error enums can opt in by
+//! implementing it.
 
 use crate::primitives::FaceIndex;
 
@@ -207,6 +206,15 @@ mod example_face_tests {
     #[test]
     fn manifold_empty_mesh_has_no_example_face() {
         assert_eq!(MeshEdgeManifoldError::EmptyMesh.example_face(), None);
+    }
+
+    #[test]
+    fn manifold_boundary_edge_returns_its_face_index() {
+        let err = MeshEdgeManifoldError::BoundaryEdge {
+            edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
+            face_idx: 17_usize.into(),
+        };
+        assert_eq!(err.example_face(), Some(17_usize.into()));
     }
 
     #[test]

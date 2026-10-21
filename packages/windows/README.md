@@ -41,8 +41,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 It stages the payload and, when Inno Setup is installed, emits
-`sc-slicer-setup-<version>-x64.exe` under `.cache`. Without Inno Setup it stops
-after staging and prints where to get it.
+`sc-slicer-setup-<version>-x86_64.exe` under `.cache`. Without Inno Setup it
+stops after staging and prints where to get it.
 
 ## Regenerating the icon
 

@@ -29,6 +29,9 @@ SOURCE_LIST="$CACHE/source.source.json"
 METAINFO_NAME=it.soulcrafted.slicer.metainfo.xml
 REPO="$CACHE/repo"
 APP_IDS='it.soulcrafted.slicer it.soulcrafted.slicer.cli'
+# Given to every build and export, so a bundle name cannot claim an
+# architecture other than the one built.
+ARCH=$(flatpak --default-arch)
 
 echo "Checking the vendored sources ..."
 sh "$SCRIPT_DIR/check-vendored-sources.sh"
@@ -39,6 +42,10 @@ sh "$REPO_ROOT/scripts/render-metainfo.sh" \
     "$REPO_ROOT/packages/shared/$METAINFO_NAME" \
     "$REPO_ROOT/apps/slicer-gui/Cargo.toml" \
     "$CACHE/$METAINFO_NAME"
+
+# The release version is the one Flatpak reports for the package, so the
+# bundle names carry it.
+VERSION=$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' "$CACHE/$METAINFO_NAME")
 
 cat > "$CACHE/metainfo.source.json" <<EOF
 [
@@ -96,6 +103,7 @@ EOF
 for APP_ID in $APP_IDS; do
     echo "Building $APP_ID ..."
     flatpak-builder --user --force-clean \
+        --arch="$ARCH" \
         --state-dir="$CACHE/flatpak-builder" \
         --repo="$REPO" \
         "$CACHE/build/$APP_ID" \
@@ -104,11 +112,12 @@ done
 
 echo "Exporting the bundles ..."
 for APP_ID in $APP_IDS; do
-    flatpak build-bundle "$REPO" "$CACHE/$APP_ID.flatpak" "$APP_ID"
+    flatpak build-bundle --arch="$ARCH" \
+        "$REPO" "$CACHE/$APP_ID-$VERSION-$ARCH.flatpak" "$APP_ID"
 done
 
 echo
 for APP_ID in $APP_IDS; do
-    echo "Built: $CACHE/$APP_ID.flatpak"
+    echo "Built: $CACHE/$APP_ID-$VERSION-$ARCH.flatpak"
 done
 echo "Install each with: flatpak install --user <path>"

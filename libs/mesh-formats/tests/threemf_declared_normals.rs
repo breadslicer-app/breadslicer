@@ -174,7 +174,9 @@ fn with_part(bytes: Vec<u8>, part: &str, data: Vec<u8>) -> Vec<u8> {
             .add_part(name.clone(), content_type, data)
             .expect("a unique name");
         for relationship in source.part_relationships(name) {
-            package.add_part_relationship(name, relationship.clone());
+            package
+                .add_part_relationship(name, relationship.clone())
+                .expect("a part name as the source");
         }
     }
     if source.part_data(&target).is_none() {

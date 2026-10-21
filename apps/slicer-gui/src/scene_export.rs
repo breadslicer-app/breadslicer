@@ -8,6 +8,7 @@
 //! layer drives the file dialog and the worker thread, then calls in here to
 //! snapshot the scene and produce the file.
 
+use std::fmt;
 use std::path::Path;
 
 use anyhow::Result;
@@ -17,6 +18,7 @@ use sc_mesh_formats::scene_writer::{self, FlattenWarning};
 use sc_scene::Scene;
 
 use crate::export_progress::ExportPhase;
+use crate::i18n::ctr;
 use crate::scene_document::SceneDocument;
 
 /// Fallback extension for a source path that gives no better one. Binary STL is
@@ -65,6 +67,31 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
 pub(crate) fn prepare_export(doc: &SceneDocument) -> Option<Scene> {
     doc.with_scene(|spatial| spatial.graph().clone())
 }
+
+/// Why "Export As" writes no file, found before the write starts. Its text is
+/// in the language in force each time it is formatted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExportRefusal {
+    /// The picked file name has no extension of a format the exporter writes.
+    UnknownExtension,
+    /// No scene is loaded.
+    NoScene,
+}
+
+impl fmt::Display for ExportRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::UnknownExtension => ctr!(
+                "ErrorDialog",
+                "Unable to infer file format from filename. Use one of: .stl (binary STL), .stla (ASCII STL), .obj, or .3mf."
+            ),
+            Self::NoScene => ctr!("ErrorDialog", "No scene loaded"),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for ExportRefusal {}
 
 /// Writes a snapshotted scene to `target` in `format`, reporting each phase
 /// through `progress`. Pure with respect to the document, so it runs on a
@@ -526,5 +553,15 @@ mod scene_export_tests {
             export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
         assert!(warnings.is_empty());
         let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn the_refusals_say_why_no_file_is_written() {
+        assert_eq!(
+            ExportRefusal::UnknownExtension.to_string(),
+            "Unable to infer file format from filename. Use one of: .stl (binary STL), .stla \
+             (ASCII STL), .obj, or .3mf."
+        );
+        assert_eq!(ExportRefusal::NoScene.to_string(), "No scene loaded");
     }
 }

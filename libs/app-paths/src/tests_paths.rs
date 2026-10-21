@@ -11,7 +11,12 @@ use std::path::{Component, PathBuf};
 
 use tempfile::tempdir;
 
-use super::{APP_ID, all_app_dirs, bundled_data_dirs, home_dir, project_dirs};
+use super::{
+    APP_ID, all_app_dirs, bundled_data_dirs, bundled_data_dirs_from, home_dir, project_dirs,
+};
+
+#[cfg(target_os = "linux")]
+use super::data_search_bases;
 
 #[cfg(not(target_os = "linux"))]
 use super::exe_relative_bases;
@@ -67,12 +72,52 @@ fn bundled_data_dirs_are_all_absolute() {
 }
 
 #[test]
+fn bundled_data_dirs_end_with_the_source_tree_assets() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("the crate sits 2 levels below the workspace root");
+    let last = bundled_data_dirs()
+        .pop()
+        .expect("the source tree has assets/");
+    assert_eq!(
+        fs::canonicalize(last).unwrap(),
+        fs::canonicalize(workspace.join("assets")).unwrap()
+    );
+}
+
+#[test]
+fn bundled_data_dirs_from_put_the_source_tree_root_last() {
+    let first = tempdir().unwrap();
+    let second = tempdir().unwrap();
+    let dev = tempdir().unwrap();
+    let roots = vec![first.path().to_path_buf(), second.path().to_path_buf()];
+    assert_eq!(
+        bundled_data_dirs_from(roots, dev.path().to_path_buf()),
+        [first.path(), second.path(), dev.path()],
+    );
+}
+
+#[test]
+fn bundled_data_dirs_from_leave_out_a_missing_source_tree_root() {
+    let installed = tempdir().unwrap();
+    let roots = vec![installed.path().to_path_buf()];
+    let missing = installed.path().join("assets");
+    assert_eq!(bundled_data_dirs_from(roots, missing), [installed.path()]);
+}
+
+#[test]
 fn home_dir_is_absolute_when_resolved() {
     // Environments without a home directory resolve to `None`; when one
     // is available it must be an absolute path.
     if let Some(home) = home_dir() {
         assert!(home.is_absolute(), "home dir should be absolute: {home:?}");
     }
+}
+
+#[test]
+fn project_dirs_resolve_exactly_when_the_home_dir_does() {
+    assert_eq!(project_dirs().is_some(), home_dir().is_some());
 }
 
 #[test]
@@ -97,6 +142,33 @@ fn project_dirs_paths_embed_the_app_identity() {
             "data dir should embed the app or org identifier: {data}",
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn data_search_bases_keep_the_order_of_xdg_data_dirs() {
+    assert_eq!(
+        data_search_bases(Some("/opt/share:/usr/share".into())),
+        [Path::new("/opt/share"), Path::new("/usr/share")],
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn data_search_bases_default_to_the_spec_dirs_when_xdg_data_dirs_is_unset() {
+    assert_eq!(
+        data_search_bases(None),
+        [Path::new("/usr/local/share"), Path::new("/usr/share")],
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn data_search_bases_default_to_the_spec_dirs_when_xdg_data_dirs_is_empty() {
+    assert_eq!(
+        data_search_bases(Some("".into())),
+        [Path::new("/usr/local/share"), Path::new("/usr/share")],
+    );
 }
 
 #[cfg(target_os = "macos")]

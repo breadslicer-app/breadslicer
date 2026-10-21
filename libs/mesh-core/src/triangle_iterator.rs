@@ -127,6 +127,7 @@ pub fn indexed_mesh_from_soup(
     soup: Vec<Triangle>,
     max_vertices: usize,
 ) -> Result<IndexedMesh, IndexedMeshBuildError> {
+    // #[gamma::skip(literal.int_increment, reason = "extra corners unread")]
     let corner_count = soup.len() * 3;
 
     // 1 record per corner: (canonical coordinates, sequence number = face * 3 +
@@ -316,5 +317,24 @@ mod triangle_iterator_tests {
         let mesh = build_indexed_mesh_with_cap(&mut iter, None, 4)
             .expect("4 unique vertices, cap of 4 must succeed");
         assert_eq!(mesh.vertices.len(), 4);
+    }
+
+    #[test]
+    fn as_indexed_mesh_keeps_the_metadata() {
+        let meta = MeshMetadata {
+            name: Some("part".to_owned()),
+            ..MeshMetadata::default()
+        };
+        let mut iter = StubTriangles::new(vec![make_triangle(
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        )]);
+
+        let mesh = iter
+            .as_indexed_mesh(Some(meta.clone()))
+            .expect("3 unique vertices fit the cap");
+
+        assert_eq!(mesh.meta, Some(meta));
     }
 }

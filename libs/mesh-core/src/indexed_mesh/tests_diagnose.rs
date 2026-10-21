@@ -9,8 +9,8 @@
 //! validator's own output, so the policy can never drift from the validators it
 //! reports on.
 
-use crate::indexed_mesh::IndexedMesh;
 use crate::indexed_mesh::diagnose::{FaceDiagnosis, MeshDiagnosis};
+use crate::indexed_mesh::mesh::IndexedMesh;
 use crate::indexed_mesh::validated::MeshEdgeManifoldError;
 use crate::primitives::{IndexedTriangle, Vertex};
 
@@ -104,6 +104,26 @@ fn invalid_vertices_do_not_gate_the_face_results() {
     // A NaN coordinate breaks no face-index rule: the gate passes and the
     // witness-gated validators still run and report.
     assert!(matches!(diagnosis.faces, FaceDiagnosis::Valid { .. }));
+    assert!(diagnosis.has_problems());
+}
+
+#[test]
+fn vertex_errors_alone_are_problems() {
+    // The NaN vertex is in no face, so the face results stay clean.
+    let mut mesh = tetrahedron();
+    mesh.vertices.push(Vertex::new([f32::NAN, 0.0, 0.0]));
+    let diagnosis = mesh.diagnose();
+    assert_eq!(
+        diagnosis.vertex_errors,
+        mesh.validate_vertices().unwrap_err()
+    );
+    assert_eq!(
+        diagnosis.faces,
+        FaceDiagnosis::Valid {
+            zero_area_faces: vec![],
+            edge_manifold_errors: vec![],
+        }
+    );
     assert!(diagnosis.has_problems());
 }
 

@@ -248,6 +248,26 @@ impl fmt::Display for FaceIndex {
     }
 }
 
+/// The key of an undirected mesh edge: the indices of its 2 ends, the lower
+/// 1st, whatever order [`EdgeKey::new`] gets them in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EdgeKey(VertexIndex, VertexIndex);
+
+impl EdgeKey {
+    /// Returns the key of the edge between `a` and `b`.
+    #[inline]
+    pub fn new(a: VertexIndex, b: VertexIndex) -> Self {
+        // #[gamma::skip(relational.le_to_lt, reason = "same pair when a == b")]
+        if a <= b { Self(a, b) } else { Self(b, a) }
+    }
+
+    /// Returns the 2 ends, the lower 1st.
+    #[inline]
+    pub fn vertices(self) -> (VertexIndex, VertexIndex) {
+        (self.0, self.1)
+    }
+}
+
 /// Which of a triangle's 3 corners is being referred to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -383,7 +403,8 @@ mod vector3d_index_tests {
 
 #[cfg(test)]
 mod vertex_canonical_coords_tests {
-    use super::{CanonicalCoords, Vertex};
+    use super::Vertex;
+    use super::canonical_coords::CanonicalCoords;
 
     #[test]
     fn canonical_coords_gives_what_from_coords_gives() {
@@ -393,5 +414,63 @@ mod vertex_canonical_coords_tests {
                 CanonicalCoords::from_coords(coords)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod coord_axis_display_tests {
+    use super::CoordAxis;
+
+    #[test]
+    fn each_axis_renders_its_letter() {
+        let letters: Vec<String> = CoordAxis::ALL.iter().map(ToString::to_string).collect();
+        assert_eq!(letters, ["X", "Y", "Z"]);
+    }
+}
+
+#[cfg(test)]
+mod normal_tests {
+    use super::{Normal, Vector3D};
+
+    #[test]
+    fn to_f64_widens_each_component() {
+        let normal = Normal::from_unit_unchecked([0.6, 0.0, -0.8]);
+        assert_eq!(
+            normal.to_f64(),
+            Vector3D::new([f64::from(0.6_f32), 0.0, f64::from(-0.8_f32)])
+        );
+    }
+}
+
+#[cfg(test)]
+mod vertex_index_tests {
+    use super::VertexIndex;
+
+    #[test]
+    fn offset_adds_to_the_index() {
+        assert_eq!(VertexIndex::from(5_u32).offset(2), VertexIndex::from(7_u32));
+    }
+}
+
+#[cfg(test)]
+mod edge_key_tests {
+    use super::*;
+
+    fn vi(i: u32) -> VertexIndex {
+        VertexIndex::from(i)
+    }
+
+    #[test]
+    fn edge_key_canonicalises_to_lo_hi() {
+        let forward = EdgeKey::new(vi(3), vi(7));
+        let reverse = EdgeKey::new(vi(7), vi(3));
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.vertices(), (vi(3), vi(7)));
+    }
+
+    #[test]
+    fn edge_key_equal_endpoints_collapses_cleanly() {
+        let degenerate = EdgeKey::new(vi(5), vi(5));
+        assert_eq!(degenerate.vertices(), (vi(5), vi(5)));
     }
 }

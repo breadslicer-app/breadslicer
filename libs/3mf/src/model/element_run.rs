@@ -32,7 +32,7 @@ use std::str;
 use memchr::memmem;
 use rayon::prelude::*;
 
-use super::numbers::{parse_f64, parse_index};
+use super::numbers::{number, resource_index};
 use super::slice::{SliceSegment, SliceVertex};
 use super::types::{TriangleRef, Vertex3};
 
@@ -113,13 +113,14 @@ pub(super) fn leading_element_name(input: &[u8]) -> Option<&[u8]> {
     (end > 0).then(|| &rest[..end])
 }
 
-/// The attributes of one leaf element, in document order.
+/// The attributes of 1 leaf element, in document order.
 struct Attributes<'a> {
     entries: [(&'a [u8], &'a str); MAX_ATTRIBUTES],
     len: usize,
 }
 
 impl<'a> Attributes<'a> {
+    // #[gamma::skip(literal.str_to_xyzzy, reason = "only ..len is read")]
     fn new() -> Self {
         Self {
             entries: [(b"", ""); MAX_ATTRIBUTES],
@@ -134,10 +135,11 @@ impl<'a> Attributes<'a> {
             .map(|(_, value)| *value)
     }
 
-    /// Records one attribute, refusing a repeat of a key already seen (the
-    /// event parser reports duplicates as an error) and refusing more entries
-    /// than the schema allows.
+    /// Records 1 attribute, refusing a repeat of a key already seen (the event
+    /// parser reports duplicates as an error) and refusing more entries than
+    /// the schema allows.
     fn push(&mut self, key: &'a [u8], value: &'a str) -> Option<()> {
+        // #[gamma::skip(logical.or_remove_left, reason = "7 keys at most")]
         if self.len == MAX_ATTRIBUTES || self.get(key).is_some() {
             return None;
         }
@@ -159,8 +161,10 @@ fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
 }
 
-/// The characters an element name may use here. A prefixed name is one spelling
+/// The characters an element name may use here. A prefixed name is 1 spelling
 /// of a namespace-qualified element, so the colon belongs.
+// #[gamma::skip(fn_value.bool_true, reason = "names grow: too slow")]
+// #[gamma::skip(relational.eq_to_ne, reason = "names grow: too slow")]
 fn is_name_byte(byte: u8) -> bool {
     is_key_byte(byte) || byte == b':'
 }
@@ -182,10 +186,10 @@ fn skip_space(input: &[u8]) -> &[u8] {
     &input[end..]
 }
 
-/// Read one `<name key="value" ... />` element from the front of `input`,
+/// Read 1 `<name key="value" ... />` element from the front of `input`,
 /// returning its attributes and its length.
 ///
-/// Everything outside that one spelling is refused: a different name, a key
+/// Everything outside that 1 spelling is refused: a different name, a key
 /// outside `keys`, a repeated key, a quoting or spacing variant, a value
 /// needing unescaping, and the `<name></name>` form.
 fn read_element<'a>(
@@ -210,6 +214,7 @@ fn read_element<'a>(
             .position(|byte| !is_key_byte(*byte))
             .unwrap_or(rest.len());
         let (key, tail) = rest.split_at(key_len);
+        // #[gamma::skip(logical.or_remove_left, reason = "no empty key")]
         if key.is_empty() || !keys.contains(&key) {
             return None;
         }
@@ -219,7 +224,11 @@ fn read_element<'a>(
         if !is_plain_value(value) {
             return None;
         }
-        attributes.push(key, str::from_utf8(value).ok()?)?;
+        attributes.push(
+            key,
+            // #[gamma::skip(try.propagate_to_unwrap, reason = "always ASCII")]
+            str::from_utf8(value).ok()?,
+        )?;
         rest = &tail[value_len + 1..];
     }
 }
@@ -227,9 +236,9 @@ fn read_element<'a>(
 fn read_vertex(input: &[u8], name: &[u8]) -> Option<(Vertex3, usize)> {
     let (attributes, length) = read_element(input, name, VERTEX_KEYS)?;
     let vertex = Vertex3 {
-        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
-        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
-        z: parse_f64("vertex", "z", attributes.get(b"z")?).ok()?,
+        x: number(attributes.get(b"x")?)?,
+        y: number(attributes.get(b"y")?)?,
+        z: number(attributes.get(b"z")?)?,
     };
     Some((vertex, length))
 }
@@ -237,10 +246,11 @@ fn read_vertex(input: &[u8], name: &[u8]) -> Option<(Vertex3, usize)> {
 fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(TriangleRef, usize)> {
     let (attributes, length) = read_element(input, name, TRIANGLE_KEYS)?;
     let triangle = TriangleRef {
-        v1: parse_index("triangle", "v1", attributes.get(b"v1")?).ok()?,
-        v2: parse_index("triangle", "v2", attributes.get(b"v2")?).ok()?,
-        v3: parse_index("triangle", "v3", attributes.get(b"v3")?).ok()?,
+        v1: resource_index(attributes.get(b"v1")?)?,
+        v2: resource_index(attributes.get(b"v2")?)?,
+        v3: resource_index(attributes.get(b"v3")?)?,
     };
+    // #[gamma::skip(collection.reverse_array, reason = "3 separate checks")]
     for index in [triangle.v1, triangle.v2, triangle.v3] {
         if index.get() as usize >= vertex_count {
             return None;
@@ -252,8 +262,8 @@ fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(Tria
 fn read_slice_vertex(input: &[u8], name: &[u8]) -> Option<(SliceVertex, usize)> {
     let (attributes, length) = read_element(input, name, SLICE_VERTEX_KEYS)?;
     let vertex = SliceVertex {
-        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
-        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
+        x: number(attributes.get(b"x")?)?,
+        y: number(attributes.get(b"y")?)?,
     };
     Some((vertex, length))
 }
@@ -264,14 +274,14 @@ fn read_slice_segment(
     vertex_count: usize,
 ) -> Option<(SliceSegment, usize)> {
     let (attributes, length) = read_element(input, name, SLICE_SEGMENT_KEYS)?;
-    let end = parse_index("segment", "v2", attributes.get(b"v2")?).ok()?;
+    let end = resource_index(attributes.get(b"v2")?)?;
     if end.get() as usize >= vertex_count {
         return None;
     }
     Some((SliceSegment { end }, length))
 }
 
-/// What one chunk of a run yielded.
+/// What 1 chunk of a run yielded.
 struct Chunk<T> {
     items: Vec<T>,
     /// Offset just past the last accepted element, relative to the chunk, or
@@ -286,6 +296,8 @@ fn read_chunk<T, F>(input: &[u8], read_one: &F) -> Chunk<T>
 where
     F: Fn(&[u8]) -> Option<(T, usize)>,
 {
+    // #[gamma::skip(arith.div_to_mul, reason = "capacity hint only")]
+    // #[gamma::skip(arith.div_to_rem, reason = "capacity hint only")]
     let mut items = Vec::with_capacity(input.len() / ESTIMATED_ELEMENT_LEN);
     let mut accepted_end = None;
     let mut rest = input;
@@ -306,6 +318,7 @@ where
             };
         };
         items.push(item);
+        // #[gamma::skip(stmt.delete_assign, reason = "endless loop")]
         rest = &rest[length..];
         accepted_end = Some(input.len() - rest.len());
     }
@@ -319,30 +332,31 @@ fn run_bound(input: &[u8]) -> usize {
     memmem::find(input, b"</").unwrap_or(input.len())
 }
 
-/// Split `input` into chunks that start on an element boundary, so each can be
-/// read independently. A boundary lands after a `>`; one that lands mid-element
-/// instead (a `>` inside an attribute value) makes its chunk stop immediately,
-/// which shortens the run without changing what it accepted.
-fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
-    let threads = rayon::current_num_threads();
-    if input.len() < MIN_PARALLEL_LEN || threads < 2 {
+/// Split `input` into at most `threads` chunks that can be read in parallel, or
+/// 1 chunk when `threads` is 0. Each chunk after the 1st starts right after a
+/// `>`, which normally ends an element. When that `>` is inside an attribute
+/// value, the run ends before the element that holds it: the run is shorter,
+/// but every element in it is still correct.
+pub(super) fn element_chunks(input: &[u8], threads: usize) -> Vec<Range<usize>> {
+    let Some(target) = input.len().checked_div(threads) else {
         return std::iter::once(0..input.len()).collect();
-    }
-    let target = input.len() / threads;
-    let mut bounds = Vec::with_capacity(threads + 1);
-    bounds.push(0);
+    };
+    let mut bounds = vec![0];
     let mut last = 0;
-    for step in 1..threads {
-        // An element longer than one chunk can push a boundary past the next
+    // #[gamma::skip(literal.int_decrement, reason = "offset 0 is skipped")]
+    let nominals = (1..threads).map(|step| target * step);
+    for nominal in nominals {
+        // An element longer than 1 chunk can push a boundary past the next
         // nominal offset.
-        let nominal = target * step;
         if nominal <= last {
             continue;
         }
+        // #[gamma::skip(loop.break_to_continue, reason = "no later cut")]
         let Some(offset) = memchr::memchr(b'>', &input[nominal..]) else {
             break;
         };
         let boundary = nominal + offset + 1;
+        // #[gamma::skip(loop.break_to_continue, reason = "no later cut")]
         if boundary >= input.len() {
             break;
         }
@@ -359,7 +373,21 @@ where
     F: Fn(&[u8]) -> Option<(T, usize)> + Sync,
 {
     let bounded = &input[..run_bound(input)];
-    let ranges = element_chunks(bounded);
+    // #[gamma::skip(cond.always_true, reason = "1 chunk never reads less")]
+    // #[gamma::skip(relational.lt_to_le, reason = "1 chunk never reads less")]
+    let ranges = if bounded.len() < MIN_PARALLEL_LEN {
+        std::iter::once(0..bounded.len()).collect()
+    } else {
+        element_chunks(bounded, rayon::current_num_threads())
+    };
+    // #[gamma::skip(cond.always_false, reason = "both arms read the same")]
+    // #[gamma::skip(cond.always_true, reason = "both arms read the same")]
+    // #[gamma::skip(cond.negate, reason = "both arms read the same")]
+    // #[gamma::skip(relational.lt_to_gt, reason = "both arms read the same")]
+    // #[gamma::skip(relational.lt_to_le, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_decrement, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_increment, reason = "both arms read the same")]
+    // #[gamma::skip(literal.int_to_zero, reason = "both arms read the same")]
     let chunks: Vec<Chunk<T>> = if ranges.len() < 2 {
         ranges
             .iter()

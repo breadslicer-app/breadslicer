@@ -141,7 +141,7 @@ pub fn write_scene_slices(
                 rel_type: START_PART_REL_TYPE.to_string(),
                 target: slice_part_name,
             },
-        );
+        )?;
     }
 
     let mut root_xml = Vec::new();

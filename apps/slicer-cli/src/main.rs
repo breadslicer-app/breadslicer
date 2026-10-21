@@ -51,6 +51,7 @@ fn main() -> Result<()> {
             target_format,
             fix_zero_length_edges,
             fix_flipped_faces,
+            fix_collinear_faces,
         } => fix(
             source,
             source_format,
@@ -59,6 +60,7 @@ fn main() -> Result<()> {
             RepairPasses {
                 zero_length_edges: fix_zero_length_edges,
                 flipped_faces: fix_flipped_faces,
+                collinear_faces: fix_collinear_faces,
             },
             &mut std::io::stderr(),
         ),

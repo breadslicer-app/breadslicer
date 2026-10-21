@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Language preference: catalogue of bundled locales and the runtime
-//! plumbing that switches between them.
+//! Language preference: catalogue of bundled locales and the runtime plumbing
+//! that switches between them.
 //!
-//! `BundledLanguage` is a real Rust enum generated from `i18n/` by
-//! `build.rs` (see `language_table.rs` in `OUT_DIR`); adding a translation
-//! adds a variant, and any `match` over it has compiler-enforced
-//! exhaustiveness. `LanguagePreference` wraps the System / explicit-locale
-//! distinction so it never has to hide behind an `Option<String>`.
+//! `BundledLanguage` is a real Rust enum generated from `i18n/` by `build.rs`
+//! (see `language_table.rs` in `OUT_DIR`); adding a translation adds a variant,
+//! and any `match` over it has compiler-enforced exhaustiveness.
+//! `LanguagePreference` wraps the System / explicit-locale distinction so it
+//! never has to hide behind an `Option<String>`.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-use slint::{ModelRc, SharedString, VecModel};
+use std::marker::PhantomData;
+
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
 
@@ -21,8 +22,8 @@ use crate::i18n::ctr;
 include!(concat!(env!("OUT_DIR"), "/language_table.rs"));
 
 impl BundledLanguage {
-    /// Position in [`Self::ALL`] (and therefore in [`display_options`]
-    /// minus the leading "System" entry).
+    /// Position in [`Self::ALL`] (and therefore in [`display_options`] minus
+    /// the leading "System" entry).
     fn position(self) -> usize {
         Self::ALL
             .iter()
@@ -31,8 +32,30 @@ impl BundledLanguage {
     }
 }
 
-/// User-selected language. Either an explicit bundled locale or "follow
-/// the OS locale" (resolved at apply time via `sys_locale`).
+/// The translations that Slint bundles into the binary, installed on the
+/// current thread. Slint installs them when the thread creates its first
+/// component and keeps them for the life of the thread; before that, it cannot
+/// select a language.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InstalledTranslations {
+    // Slint keeps the bundle per thread, so the value must not leave it.
+    _thread_bound: PhantomData<*const ()>,
+}
+
+impl InstalledTranslations {
+    /// Returns the translations installed on the thread that created
+    /// `component`.
+    pub(crate) fn proven_by(_component: &impl ComponentHandle) -> Self {
+        // Every generated `new()` installs the bundle before it returns, and a
+        // component cannot leave the thread that created it.
+        Self {
+            _thread_bound: PhantomData,
+        }
+    }
+}
+
+/// User-selected language. Either an explicit bundled locale or "follow the OS
+/// locale" (resolved at apply time via `sys_locale`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum LanguagePreference {
     #[default]
@@ -41,14 +64,10 @@ pub(crate) enum LanguagePreference {
 }
 
 impl LanguagePreference {
-    pub(crate) fn is_system(&self) -> bool {
-        matches!(self, Self::System)
-    }
-
-    /// Map a `ComboBox.current-index` back to the typed preference.
-    /// Index 0 is the "System" entry; indices 1.. follow the order of
-    /// [`BundledLanguage::ALL`]. Out-of-range values silently fall back
-    /// to `System`.
+    /// Map a `ComboBox.current-index` back to the typed preference. Index 0 is
+    /// the "System" entry; indices 1.. follow the order of
+    /// [`BundledLanguage::ALL`]. Out-of-range values silently fall back to
+    /// `System`.
     pub(crate) fn from_combo_index(index: i32) -> Self {
         if index <= 0 {
             return Self::System;
@@ -68,12 +87,12 @@ impl LanguagePreference {
         }
     }
 
-    /// Build the model shown by the language `ComboBox`. Index 0 is
-    /// always the "System" option; subsequent indices match the order of
+    /// Build the model shown by the language `ComboBox`. Index 0 is always the
+    /// "System" option; subsequent indices match the order of
     /// [`BundledLanguage::ALL`].
     ///
-    /// Rebuilt on every language change so the "System" label is
-    /// re-translated against the newly-active language.
+    /// Rebuilt on every language change so the "System" label is re-translated
+    /// against the newly-active language.
     pub(crate) fn display_options() -> ModelRc<SharedString> {
         let mut entries: Vec<SharedString> = Vec::with_capacity(BundledLanguage::ALL.len() + 1);
         entries.push(ctr!("AppearancePreferences", "System"));
@@ -87,14 +106,9 @@ impl LanguagePreference {
 
     /// Apply this preference to the running app.
     ///
-    /// `System` is resolved via `sys_locale::get_locale()` with a
-    /// base-language fallback (e.g. `es` for `es-ES`), mirroring Slint's
-    /// own auto-detection.
-    ///
-    /// Slint's `select_bundled_translation` requires that at least one
-    /// component already exists; the caller is responsible for that
-    /// ordering.
-    pub(crate) fn apply(self) {
+    /// `System` is resolved via `sys_locale::get_locale()` with a base-language
+    /// fallback (e.g. `es` for `es-ES`), mirroring Slint's own auto-detection.
+    pub(crate) fn apply(self, _translations: InstalledTranslations) {
         let detected;
         let target: &str = match self {
             Self::Bundled(lang) => lang.code(),
@@ -103,46 +117,25 @@ impl LanguagePreference {
                 &detected
             }
         };
-
-        if slint::select_bundled_translation(target).is_ok() {
-            return;
-        }
-        let base = base_language(target);
-        if base != target && slint::select_bundled_translation(base).is_ok() {
-            return;
-        }
-        // Nothing matched, fall back to the source language.
-        let _ = slint::select_bundled_translation("");
+        select_first_bundled(target, |code| {
+            slint::select_bundled_translation(code).is_ok()
+        });
     }
 }
 
-// Wire format: `language = "<code>"` for a bundled locale, or `"system"`
-// for the OS-locale fallback. The field is `#[serde(default)]` upstream,
-// so an absent key in TOML deserializes as `System` too.
-impl Serialize for LanguagePreference {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::System => "system".serialize(ser),
-            Self::Bundled(lang) => lang.code().serialize(ser),
-        }
+/// Selects the first code that `select` takes, of `target`, its base language
+/// (`es` for `es-ES`) and `""` (the source strings). `select` returns whether
+/// it took the code.
+fn select_first_bundled(target: &str, mut select: impl FnMut(&str) -> bool) {
+    if select(target) {
+        return;
     }
-}
-
-impl<'de> Deserialize<'de> for LanguagePreference {
-    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(de)?;
-        if s == "system" {
-            return Ok(Self::System);
-        }
-        // Unknown codes are a hard error: a hand-edited config with a
-        // stale or typo'd code shouldn't be silently coerced to System,
-        // because that would mask the user's actual intent. The
-        // top-level settings loader already turns parse errors into a
-        // logged "fall back to defaults".
-        BundledLanguage::from_code(&s)
-            .map(Self::Bundled)
-            .ok_or_else(|| D::Error::custom(format!("unknown language code: {s:?}")))
+    let base = base_language(target);
+    if base != target && select(base) {
+        return;
     }
+    // Nothing matched, fall back to the source language.
+    select("");
 }
 
 fn base_language(locale: &str) -> &str {
@@ -153,7 +146,23 @@ fn base_language(locale: &str) -> &str {
 
 #[cfg(test)]
 mod language_tests {
+    use slint::Model;
+
     use super::*;
+    use crate::slint_ui::ErrorDialog;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    #[test]
+    fn the_system_entry_follows_the_language() {
+        let system = on_fresh_slint_thread(|| {
+            let dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let es = BundledLanguage::from_code("es").expect("`es` must be bundled");
+            LanguagePreference::Bundled(es).apply(InstalledTranslations::proven_by(&dialog));
+            let options = LanguagePreference::display_options();
+            options.row_data(0).expect("the System entry").to_string()
+        });
+        assert_ne!(system, "System");
+    }
 
     #[test]
     fn system_combo_index_is_zero() {
@@ -180,10 +189,9 @@ mod language_tests {
 
     #[test]
     fn english_is_available_as_the_source_language() {
-        // Regression guard: English is injected by build.rs even though
-        // there is no `i18n/en/` directory. Users must be able to pick
-        // it explicitly rather than relying on the System-auto-detects-
-        // English path.
+        // Regression guard: English is injected by build.rs even though there
+        // is no `i18n/en/` directory. Users must be able to pick it explicitly
+        // rather than relying on the System-auto-detects-English path.
         let en =
             BundledLanguage::from_code("en").expect("`en` must be bundled as the source language");
         assert_eq!(en.native_name(), "English");
@@ -204,40 +212,6 @@ mod language_tests {
     }
 
     #[test]
-    fn serde_round_trip_through_toml() {
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        struct W {
-            language: LanguagePreference,
-        }
-
-        let bundled = W {
-            language: LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap()),
-        };
-        let s = toml::to_string(&bundled).unwrap();
-        assert!(s.contains("language = \"es\""), "got {s}");
-        let back: W = toml::from_str(&s).unwrap();
-        assert_eq!(back, bundled);
-
-        let sys = W {
-            language: LanguagePreference::System,
-        };
-        let s = toml::to_string(&sys).unwrap();
-        assert!(s.contains("language = \"system\""), "got {s}");
-        let back: W = toml::from_str(&s).unwrap();
-        assert_eq!(back, sys);
-    }
-
-    #[test]
-    fn deserializing_unknown_code_is_an_error() {
-        #[derive(Deserialize)]
-        struct W {
-            #[allow(dead_code)]
-            language: LanguagePreference,
-        }
-        assert!(toml::from_str::<W>("language = \"xx\"").is_err());
-    }
-
-    #[test]
     fn base_language_strips_region() {
         assert_eq!(base_language("es-ES"), "es");
         assert_eq!(base_language("pt_BR"), "pt");
@@ -246,14 +220,38 @@ mod language_tests {
     }
 
     #[test]
-    fn is_system_distinguishes_the_two_variants() {
-        assert!(LanguagePreference::System.is_system());
-        let en = BundledLanguage::from_code("en").unwrap();
-        assert!(!LanguagePreference::Bundled(en).is_system());
+    fn base_language_handles_empty_input() {
+        assert_eq!(base_language(""), "");
+    }
+
+    /// Returns the codes that `select_first_bundled` tries for `target`, in
+    /// order, when the codes in `accepted` are the ones taken.
+    fn codes_tried(target: &str, accepted: &[&str]) -> Vec<String> {
+        let mut tried = Vec::new();
+        select_first_bundled(target, |code| {
+            tried.push(code.to_owned());
+            accepted.contains(&code)
+        });
+        tried
     }
 
     #[test]
-    fn base_language_handles_empty_input() {
-        assert_eq!(base_language(""), "");
+    fn a_taken_target_ends_the_selection() {
+        assert_eq!(codes_tried("es", &["es"]), ["es"]);
+    }
+
+    #[test]
+    fn a_refused_target_falls_back_to_its_base_language() {
+        assert_eq!(codes_tried("es-ES", &["es"]), ["es-ES", "es"]);
+    }
+
+    #[test]
+    fn nothing_taken_ends_on_the_source_strings() {
+        assert_eq!(codes_tried("ja-JP", &[]), ["ja-JP", "ja", ""]);
+    }
+
+    #[test]
+    fn a_target_that_is_its_own_base_is_tried_once() {
+        assert_eq!(codes_tried("de", &[]), ["de", ""]);
     }
 }

@@ -213,6 +213,7 @@ impl AffineTransform3D {
         let b = &other.linear;
 
         // Linear part: A · B.
+        // #[gamma::skip(literal.float_to_one, reason = "overwritten below")]
         let mut linear = [[0.0_f64; 3]; 3];
         for i in 0..3 {
             for j in 0..3 {
@@ -542,6 +543,12 @@ mod affine_transform_3d_tests {
     }
 
     #[test]
+    fn from_axis_angle_has_zero_translation() {
+        let t = AffineTransform3D::from_axis_angle([1.0, 2.0, 3.0], 0.4).unwrap();
+        assert_eq!(t.translation, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
     fn from_linear_and_translation_stores_inputs_verbatim() {
         let linear = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
         let translation = [10.0, 11.0, 12.0];
@@ -656,6 +663,18 @@ mod affine_transform_3d_tests {
         let t = AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]);
         let v = Vector3D::<f32>::new([1.0, 1.0, 1.0]);
         assert_vector_approx(t.apply_to_vector(v), [2.0, 3.0, 4.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vector_pairs_each_entry_with_its_component() {
+        // All entries and components are different, so a wrong row or column
+        // index changes the result.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let v = Vector3D::<f32>::new([1.0, 10.0, 100.0]);
+        assert_eq!(t.apply_to_vector(v), Vector3D::new([321.0, 654.0, 987.0]));
     }
 
     fn assert_transform_approx(a: &AffineTransform3D, b: &AffineTransform3D, eps: f64) {
@@ -855,6 +874,22 @@ mod affine_transform_3d_tests {
         let v = Vertex::new([1.5, -0.5, 3.25]);
         let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
         assert_vertex_approx(round_trip, v.coords(), 1e-4);
+    }
+
+    #[test]
+    fn inverse_of_a_general_transform_is_exact() {
+        // The determinant is 2 and no cofactor is 0, so each entry of the
+        // inverse depends on the determinant. All values are exact in binary.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0]],
+            [1.0, 10.0, 100.0],
+        );
+        let inv = t.inverse().unwrap();
+        assert_eq!(
+            inv.linear,
+            [[0.5, -0.5, 0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, 0.5]]
+        );
+        assert_eq!(inv.translation, [-45.5, 44.5, -54.5]);
     }
 
     #[test]
@@ -1136,5 +1171,22 @@ mod transform_3d_tests {
     fn determinant_of_affine_delegates_to_inner() {
         let t = Transform3D::Affine(AffineTransform3D::from_uniform_scale(2.0));
         assert_approx_eq!(f64, t.determinant(), 8.0);
+    }
+}
+
+#[cfg(test)]
+mod transform_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn singular_linear_renders_short_phrase() {
+        let msg = format!("{}", TransformError::SingularLinear);
+        assert_eq!(msg, "linear part of the transform is singular");
+    }
+
+    #[test]
+    fn zero_axis_renders_short_phrase() {
+        let msg = format!("{}", TransformError::ZeroAxis);
+        assert_eq!(msg, "rotation axis must be non-zero");
     }
 }

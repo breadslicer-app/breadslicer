@@ -8,6 +8,7 @@
 //! each is repairable by the default passes, and repairing restores
 //! the pristine donor byte for byte.
 
+use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
 use sc_mesh_core::primitives::FaceIndex;
 
@@ -71,9 +72,11 @@ fn each_variant_flips_a_minority_of_faces() {
 fn default_repair_restores_each_variant_to_its_pristine_donor() {
     for (name, mut broken, pristine, flipped) in trio() {
         let report = broken.repair(RepairPasses::default_repair());
-        assert_eq!(report.refusal, None, "{name} must repair cleanly");
+        let RepairEnd::Completed(state) = report.end else {
+            panic!("{name} must repair cleanly: {:?}", report.end);
+        };
         assert!(
-            report.edge_manifold_after,
+            state.edge_manifold,
             "{name} must be edge-manifold after repair"
         );
         let mut fixed: Vec<FaceIndex> = report

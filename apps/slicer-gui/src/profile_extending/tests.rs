@@ -5,12 +5,9 @@
 
 use std::fs;
 
-use sc_print_primitives::{
-    BuildVolume, FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings,
-};
 use sc_print_profiles::load_material_profile_from_path;
 
-use crate::profile_catalog::ProfileSource;
+use crate::test_support::catalog_entries::named_printer_entry;
 
 use super::*;
 
@@ -89,35 +86,19 @@ fn parse(toml: &str) -> MaterialProfile {
     load_material_profile_from_path(&path).unwrap()
 }
 
-/// Compose a base and an optional extension, asserting the pair is
-/// clean.
+/// Compose a base and an optional extension, asserting the pair is clean.
 fn effective(base: MaterialProfile, extension: Option<MaterialProfile>) -> EffectiveMaterial {
     let (material, issues) = EffectiveMaterial::compose(base, extension);
     assert!(issues.is_empty(), "issues: {issues:?}");
     material
 }
 
-fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
-    PrinterCatalogEntry {
-        id: PrinterId::new(id).unwrap(),
-        manufacturer: "Maker".to_owned(),
-        name: name.to_owned(),
-        build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
-        output_formats: OutputFormatBindings::new(OutputFormatBinding {
-            format: FormatKind::Goo,
-            version: Some(NonEmptyString::new("v3.0").unwrap()),
-        }),
-        image_path: None,
-        source: ProfileSource::Bundled,
-    }
-}
-
 fn printers() -> Vec<PrinterCatalogEntry> {
     vec![
-        printer_entry("printer-a", "Printer A"),
-        printer_entry("printer-b", "Printer B"),
-        printer_entry("printer-z", "Printer Z"),
-        printer_entry("generic-machine", "Generic Machine"),
+        named_printer_entry("printer-a", "Printer A"),
+        named_printer_entry("printer-b", "Printer B"),
+        named_printer_entry("printer-z", "Printer Z"),
+        named_printer_entry("generic-machine", "Generic Machine"),
     ]
 }
 
@@ -201,7 +182,7 @@ fn the_generic_target_gets_the_translated_label() {
 #[test]
 fn full_coverage_leaves_nothing_to_extend() {
     let material = effective(parse(BASE_TOML), None);
-    let subset = vec![printer_entry("printer-a", "Printer A")];
+    let subset = vec![named_printer_entry("printer-a", "Printer A")];
     assert!(uncovered_targets(&material, &subset, None).is_empty());
 }
 

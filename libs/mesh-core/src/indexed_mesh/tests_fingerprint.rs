@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::indexed_mesh::{GeometryFingerprint, IndexedMesh, MeshMetadata};
+use crate::indexed_mesh::mesh::geometry_fingerprint::GeometryFingerprint;
+use crate::indexed_mesh::mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Vertex};
 
 const TRIANGLE: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];

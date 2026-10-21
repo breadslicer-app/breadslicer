@@ -1,0 +1,42 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: es\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+
+msgctxt "Menu"
+msgid "File"
+msgstr "Archivo"
+
+msgctxt "Other"
+msgid "File"
+msgstr "Expediente"
+
+#, fuzzy
+msgctxt "Menu"
+msgid "Fuzzy"
+msgstr "Difuso"
+
+msgctxt "Menu"
+msgid "Empty"
+msgstr ""
+
+#~ msgctxt "Menu"
+#~ msgid "Obsolete"
+#~ msgstr "Obsoleto"
+
+msgctxt "Menu"
+msgid "Say \"hi\""
+msgstr "Di \"hola\""
+
+msgctxt "Menu"
+msgid "One file"
+msgid_plural "{n} files"
+msgstr[0] "Un archivo"
+msgstr[1] "{n} archivos"
+
+msgctxt "Menu"
+msgid "No forms"
+msgid_plural "{n} no forms"
+msgstr[0] ""
+msgstr[1] ""

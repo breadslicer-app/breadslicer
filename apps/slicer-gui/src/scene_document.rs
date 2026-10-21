@@ -1187,6 +1187,7 @@ mod scene_document_tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::test_support::scenes::graph_with_one_object;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
@@ -1207,24 +1208,6 @@ mod scene_document_tests {
 
     fn translation(dx: f64) -> Transform3D {
         Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
-    }
-
-    /// Builds a loader-faithful single-object graph: 1 inline-mesh leaf
-    /// attached under the identity-Group root, mirroring the shape a
-    /// single-object file produces.
-    fn graph_with_one_object() -> Scene {
-        let mut g = Scene::new();
-        let root = g.add_group(None, Transform3D::Identity);
-        g.add_root(root).expect("group root");
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
-        g
     }
 
     fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {

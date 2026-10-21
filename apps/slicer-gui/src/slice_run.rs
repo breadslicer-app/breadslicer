@@ -31,7 +31,8 @@ use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
+use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
@@ -153,12 +154,7 @@ impl SliceRun {
             snapshot.aa_level,
             self.document.scene_revision(),
         ) else {
-            self.dialogs.show_error(
-                "Cannot slice",
-                None,
-                "Choose a printer and a resin before slicing.".to_string(),
-                String::new(),
-            );
+            self.dialogs.show_error(missing_selection_texts);
             return;
         };
 
@@ -364,10 +360,32 @@ impl SliceRun {
                 // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
-                self.dialogs
-                    .show_error("Slicing failed", None, err.to_string(), String::new());
+                self.dialogs.show_error(move || slice_failure_texts(&err));
             }
         }
+    }
+}
+
+/// The texts of the dialog that refuses a slice with no printer or no resin.
+fn missing_selection_texts() -> ErrorTexts {
+    ErrorTexts {
+        heading: ctr!("ErrorDialog", "Cannot slice"),
+        context: None,
+        message: ctr!(
+            "ErrorDialog",
+            "Choose a printer and a resin before slicing."
+        ),
+        details: Default::default(),
+    }
+}
+
+/// The texts of the dialog that reports a failed slice run.
+fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
+    ErrorTexts {
+        heading: ctr!("ErrorDialog", "Slicing failed"),
+        context: None,
+        message: failure.to_string().into(),
+        details: Default::default(),
     }
 }
 
@@ -424,27 +442,11 @@ fn capture(scene: &Scene, contours: PlateContours) -> Result<CompletedSlice, Sli
 mod capture_tests {
     use super::*;
 
-    use std::sync::Arc;
-
-    use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_fixtures::unit_cube_mesh;
-    use sc_scene::node::LeafPayload;
     use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
     use sc_sl1cer::geom2d::Point2D;
     use sc_sl1cer::profile::LayerSchedule;
 
-    fn cube_scene() -> Scene {
-        let mut scene = Scene::new();
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-        scene
-    }
+    use crate::test_support::scenes::cube_scene;
 
     fn schedule() -> LayerSchedule {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
@@ -498,5 +500,31 @@ mod capture_tests {
         // the capture, cannot be computed.
         let result = capture(&Scene::new(), contours());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
+    }
+}
+
+#[cfg(test)]
+mod dialog_text_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_selection_asks_for_a_printer_and_a_resin() {
+        let texts = missing_selection_texts();
+        assert_eq!(texts.heading, "Cannot slice");
+        assert_eq!(texts.context, None);
+        assert_eq!(
+            texts.message,
+            "Choose a printer and a resin before slicing."
+        );
+        assert_eq!(texts.details, "");
+    }
+
+    #[test]
+    fn a_failed_run_shows_its_failure() {
+        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry);
+        assert_eq!(texts.heading, "Slicing failed");
+        assert_eq!(texts.context, None);
+        assert_eq!(texts.message, "The scene has no geometry to slice.");
+        assert_eq!(texts.details, "");
     }
 }

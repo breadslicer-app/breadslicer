@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
@@ -12,15 +12,19 @@ use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
 use sc_print_profiles::ProfileLibraries;
+use slint::winit_030::winit;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
+use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
+use crate::error_dialog::{ErrorTexts, InfoTexts};
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
+use crate::language::InstalledTranslations;
 use crate::mesh_loader::{
     LoadDispatch, SUPPORTED_MESH_EXTENSIONS, decide_load_dispatch, is_supported_mesh_extension,
     start_load_with_ticket,
@@ -40,8 +44,9 @@ use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
 use crate::support_gen_run::GenSupportRun;
+use crate::ui_language::UiLanguage;
 use crate::viewport::ViewportController;
-use crate::window_prefs::WindowPreferences;
+use crate::window_prefs::{WindowPreferences, restore_panels};
 use crate::wiring::SaveOutcome;
 
 mod replace_scene_policy {
@@ -147,6 +152,30 @@ mod context_menu_policy {
 
 use context_menu_policy::context_menu_flags;
 
+/// A step of a file drag over a main window.
+#[derive(Debug, PartialEq, Eq)]
+enum FileDrag {
+    /// A file entered the window.
+    Hovered,
+    /// The file left the window, or the drag ended without a drop.
+    HoverCancelled,
+    /// The file was dropped on the window.
+    Dropped(PathBuf),
+}
+
+impl FileDrag {
+    /// Returns the drag step that `event` reports, or `None` for any other
+    /// window event.
+    fn from_winit(event: &winit::event::WindowEvent) -> Option<Self> {
+        match event {
+            winit::event::WindowEvent::HoveredFile(_) => Some(Self::Hovered),
+            winit::event::WindowEvent::HoveredFileCancelled => Some(Self::HoverCancelled),
+            winit::event::WindowEvent::DroppedFile(path) => Some(Self::Dropped(path.clone())),
+            _ => None,
+        }
+    }
+}
+
 thread_local! {
     /// The Slint thread's `AppState`, for delivering a device loss raised on
     /// another thread.
@@ -167,6 +196,12 @@ struct WiredMainWindow {
     // it from `handle_rendering_setup`.
     pending_load: Rc<PendingLoad>,
     _subscription: Subscription,
+    _drivers: WindowDrivers,
+}
+
+/// The drivers of a main window's Slice control panel and of its Slice, Repair
+/// and Generate Support actions.
+struct WindowDrivers {
     /// The Slice control panel's picker bridge. Held so its document and
     /// preferences-bus subscriptions live as long as the window.
     _slice_panel: Rc<SlicePanelBridge>,
@@ -216,13 +251,14 @@ pub(crate) struct AppState {
     clipboard: RefCell<Option<Clipboard>>,
     /// The shared device's lost-device flag.
     device_loss: DeviceLoss,
-    // Bus subscriptions owned by AppState. They run on every `bus.update`;
-    // dropping them unregisters. Stored here so they live as long as
-    // `AppState`. The settings subscription holds the only `Sender` clone;
-    // dropping it lets the saver thread observe channel-closed and exit its
-    // recv loop.
+    /// Keeps the UI language equal to the preference. Set when the first window
+    /// is created: Slint can select a language only once a component exists.
+    ui_language: OnceCell<UiLanguage>,
+    // Bus subscription owned by AppState. It runs on every `bus.update`;
+    // dropping it unregisters. Stored here so it lives as long as `AppState`.
+    // It holds the only `Sender` clone of the settings saver; dropping it lets
+    // the saver thread observe channel-closed and exit its recv loop.
     _settings_sub: Subscription,
-    _language_apply_sub: Subscription,
     // RAII handle that joins the settings-saver worker thread. Declared after
     // `_settings_sub` so the subscription's `Sender` is dropped first;
     // otherwise the join would deadlock waiting for the worker to exit while
@@ -299,29 +335,86 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
-/// Spawns the settings-saver worker thread, with the loop body wired to persist
-/// each coalesced snapshot through `AppSettings::save`.
+/// Saves the changes that `snap` makes to `base` into `file`, and returns the
+/// base of the next save: the settings with `snap` applied when the save
+/// succeeded, `base` when it failed, so that the next save carries the failed
+/// change again.
+fn save_snapshot(
+    file: Option<&SettingsFile>,
+    base: AppSettings,
+    snap: &PreferencesSnapshot,
+) -> AppSettings {
+    let mut ours = base.clone();
+    apply_snapshot_to_settings(&mut ours, snap);
+    let saved = match file {
+        Some(file) => file.save_changes(&base, &ours),
+        None => Err(std::io::Error::other("no config directory available")),
+    };
+    match saved {
+        Ok(()) => ours,
+        Err(err) => {
+            eprintln!("Failed to save settings: {err}");
+            base
+        }
+    }
+}
+
+/// Spawns the settings-saver worker thread. Its first step replaces an unusable
+/// file with the defaults, so that the UI thread never writes; then each
+/// coalesced snapshot goes through [`save_snapshot`]. With no file (the
+/// platform gives no home directory), each save logs an error.
 fn spawn_settings_saver(
-    initial_settings: AppSettings,
+    file: Option<SettingsFile>,
+    loaded: LoadOutcome,
 ) -> std::io::Result<(Sender<PreferencesSnapshot>, SettingsSaverJoin)> {
     let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
     let join = thread::Builder::new()
         .name("settings-saver".into())
         .spawn(move || {
-            let mut settings = initial_settings;
+            if let Some(file) = &file {
+                file.reset_if_unusable(&loaded);
+            }
+            let mut base = loaded.settings();
             run_settings_saver_loop(rx, |snap| {
-                apply_snapshot_to_settings(&mut settings, snap);
-                if let Err(err) = settings.save() {
-                    eprintln!("Failed to save settings: {err}");
-                }
+                base = save_snapshot(file.as_ref(), std::mem::take(&mut base), snap);
             });
         })?;
     Ok((tx, SettingsSaverJoin { join: Some(join) }))
 }
 
+/// Subscribes `window` to the preferences of `bus`: each change applies them to
+/// the window, a `DefaultPrinter` change also sets the build volume of
+/// `controller` to the new default plate, and a `Language` change makes
+/// `controller` build its texts again. `envelope` and `UiLanguage` must
+/// subscribe to `bus` first, so that the listener reads the new plate and the
+/// new language.
+fn subscribe_window_preferences(
+    bus: &Rc<PreferencesBus>,
+    window: &MainWindow,
+    controller: Rc<ViewportController>,
+    envelope: Rc<DefaultEnvelope>,
+) -> Subscription {
+    let window = window.as_weak();
+    bus.subscribe(move |snap, change| {
+        if let Some(w) = window.upgrade() {
+            w.apply_preferences(snap);
+        }
+        if matches!(change, PreferencesChange::DefaultPrinter) {
+            controller.set_build_volume(envelope.current());
+        }
+        if matches!(change, PreferencesChange::Language) {
+            controller.refresh_texts();
+        }
+    })
+}
+
 impl AppState {
     pub(crate) fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
-        let settings = AppSettings::load();
+        let settings_file = SettingsFile::platform_default();
+        let loaded = settings_file
+            .as_ref()
+            .map_or(LoadOutcome::NotRead, SettingsFile::load);
+        let settings = loaded.settings();
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
@@ -359,13 +452,6 @@ impl AppState {
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
         };
-        // Apply the persisted language *once* up front so the very first `@tr`
-        // evaluation during window construction uses the right locale.
-        // `select_bundled_translation` is a no-op until at least 1 Slint
-        // component exists, but the next successful call after the first window
-        // is built will retry.
-        snapshot.language.apply();
-
         let prefs = PreferencesBus::new(snapshot);
 
         // Persistence runs on a dedicated worker thread: the subscription
@@ -373,21 +459,11 @@ impl AppState {
         // worker writes to disk. Off-loading the write keeps the Slint event
         // loop responsive on slow / network-mounted / nearly-full config
         // directories.
-        let (saver_tx, settings_saver) = spawn_settings_saver(settings)?;
+        let (saver_tx, settings_saver) = spawn_settings_saver(settings_file, loaded)?;
         let settings_sub = prefs.subscribe(move |snap, _change| {
             // Channel send is non-blocking; failure means the worker has
             // already exited, which only happens at shutdown.
             let _ = saver_tx.send(snap.clone());
-        });
-
-        // Language side-effect: flip the process-global bundled translation
-        // before per-window listeners re-render. The `PreferencesWindow`'s
-        // listener rebuilds its language combo against the *active*
-        // translation, so this must come first.
-        let language_apply_sub = prefs.subscribe(|snap, change| {
-            if *change == PreferencesChange::Language {
-                snap.language.apply();
-            }
         });
 
         let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
@@ -402,8 +478,8 @@ impl AppState {
             default_envelope,
             clipboard: RefCell::new(None),
             device_loss,
+            ui_language: OnceCell::new(),
             _settings_sub: settings_sub,
-            _language_apply_sub: language_apply_sub,
             _settings_saver: settings_saver,
         });
         DEVICE_LOST_TARGET.with(|target| *target.borrow_mut() = Rc::downgrade(&app));
@@ -430,18 +506,19 @@ impl AppState {
             return;
         }
         if let Some(wired) = windows.values().next() {
-            wired.controller.dialogs().show_error(
-                &ctr!("ErrorDialog", "The graphics device was lost"),
-                None,
-                GraphicsUnavailable::DeviceLost.message(),
-                reason,
-            );
+            wired.controller.dialogs().show_error(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "The graphics device was lost"),
+                context: None,
+                message: GraphicsUnavailable::DeviceLost.message().into(),
+                details: reason.as_str().into(),
+            });
         }
     }
 
     /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        self.on_first_window(&ui);
         // Static platform flag consumed by the View menu to show the correct
         // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
         // has no compile-time platform branch, so the choice is made here and
@@ -449,68 +526,7 @@ impl AppState {
         ui.set_is_macos(cfg!(target_os = "macos"));
         let snapshot = self.prefs.snapshot();
         ui.apply_preferences(&snapshot);
-        // Object-list panel visibility and geometry are per-window live state:
-        // restored once here at creation and deliberately left out of
-        // `apply_preferences`, so a later change in 1 window is saved to disk
-        // without moving or hiding the panel in other windows. An offset or
-        // size field is pushed only when a previous session saved it; leaving a
-        // field untouched keeps the Slint default (top-right anchor, 12px
-        // offsets, 220px width, auto height).
-        ui.set_show_object_list(snapshot.object_list_visible);
-        ui.set_object_list_minimized(snapshot.object_list_minimized);
-        ui.set_object_list_anchor_right(snapshot.object_list_anchor_right);
-        ui.set_object_list_anchor_bottom(snapshot.object_list_anchor_bottom);
-        if let Some(offset_x) = snapshot.object_list_offset_x {
-            ui.set_object_list_offset_x(offset_x);
-        }
-        if let Some(offset_y) = snapshot.object_list_offset_y {
-            ui.set_object_list_offset_y(offset_y);
-        }
-        if let Some(width) = snapshot.object_list_width {
-            ui.set_object_list_width(width);
-        }
-        if let Some(height) = snapshot.object_list_height {
-            ui.set_object_list_height(height);
-        }
-        // Slice control panel geometry: same per-window live semantics as the
-        // object-list panel. An offset or size field is pushed only when a
-        // previous session saved it; leaving a field untouched keeps the Slint
-        // default (top-left anchor, 12px offsets, 240px width, auto height).
-        ui.set_slice_panel_anchor_right(snapshot.slice_panel_anchor_right);
-        ui.set_slice_panel_anchor_bottom(snapshot.slice_panel_anchor_bottom);
-        if let Some(offset_x) = snapshot.slice_panel_offset_x {
-            ui.set_slice_panel_offset_x(offset_x);
-        }
-        if let Some(offset_y) = snapshot.slice_panel_offset_y {
-            ui.set_slice_panel_offset_y(offset_y);
-        }
-        if let Some(width) = snapshot.slice_panel_width {
-            ui.set_slice_panel_width(width);
-        }
-        if let Some(height) = snapshot.slice_panel_height {
-            ui.set_slice_panel_height(height);
-        }
-        // Slice-view panel visibility and geometry: same per-window live
-        // semantics as the object-list panel. An offset or size field is pushed
-        // only when a previous session saved it; leaving a field untouched
-        // keeps the Slint default (bottom-left anchor, 12px offsets, 240px
-        // width, auto height).
-        ui.set_show_slice_view(snapshot.slice_view_visible);
-        ui.set_slice_view_minimized(snapshot.slice_view_minimized);
-        ui.set_slice_view_anchor_right(snapshot.slice_view_anchor_right);
-        ui.set_slice_view_anchor_bottom(snapshot.slice_view_anchor_bottom);
-        if let Some(offset_x) = snapshot.slice_view_offset_x {
-            ui.set_slice_view_offset_x(offset_x);
-        }
-        if let Some(offset_y) = snapshot.slice_view_offset_y {
-            ui.set_slice_view_offset_y(offset_y);
-        }
-        if let Some(width) = snapshot.slice_view_width {
-            ui.set_slice_view_width(width);
-        }
-        if let Some(height) = snapshot.slice_view_height {
-            ui.set_slice_view_height(height);
-        }
+        restore_panels(&ui, &snapshot);
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
         let ctrl = Rc::new(ViewportController::new(
@@ -518,6 +534,7 @@ impl AppState {
             document,
             pending_load.clone(),
             self.device_loss.clone(),
+            &self.prefs,
         ));
         ctrl.register_document_listener();
         // Bus listeners run on `update` only, so the window gets the current
@@ -526,22 +543,76 @@ impl AppState {
         ctrl.set_build_volume(self.default_envelope.current());
 
         crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
-        let slice_panel = SlicePanelBridge::install(
-            &ui,
-            self.catalog.clone(),
-            self.prefs.clone(),
-            ctrl.document(),
-        );
-        crate::export_print_file::wire_export_print_file(&ui, ctrl.clone(), slice_panel.clone());
-        let slice_run = SliceRun::install(&ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
-        let repair_run = RepairRun::install(&ui, ctrl.document(), ctrl.dialogs());
-        let support_gen_run =
-            GenSupportRun::install(&ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        let drivers = self.install_window_drivers(&ui, &ctrl);
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
         self.next_window_id.set(id.wrapping_add(1));
+        self.wire_clipboard(&ui, id);
+        self.wire_context_menu(&ui, &ctrl, id);
+        let subscription = subscribe_window_preferences(
+            &self.prefs,
+            &ui,
+            ctrl.clone(),
+            self.default_envelope.clone(),
+        );
+        self.wire_window_events(&ui, id);
 
+        ui.show()?;
+        // The winit window only exists once shown; set the taskbar icon here so
+        // the live window matches the executable resource.
+        crate::window_icon::apply(ui.window());
+        self.main_windows.borrow_mut().insert(
+            id,
+            WiredMainWindow {
+                window: ui,
+                controller: ctrl,
+                pending_load,
+                _subscription: subscription,
+                _drivers: drivers,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Puts the language preference in force from `ui` on, at the first call;
+    /// later calls do nothing. Slint can select a language only once the thread
+    /// has a component.
+    fn on_first_window(&self, ui: &MainWindow) {
+        self.ui_language
+            .get_or_init(|| UiLanguage::follow(InstalledTranslations::proven_by(ui), &self.prefs));
+    }
+
+    /// Installs on `ui` the drivers of the Slice control panel and of the
+    /// Slice, Repair and Generate Support actions, and wires the printer-file
+    /// export to the control panel.
+    fn install_window_drivers(
+        &self,
+        ui: &MainWindow,
+        ctrl: &Rc<ViewportController>,
+    ) -> WindowDrivers {
+        let slice_panel = SlicePanelBridge::install(
+            ui,
+            self.catalog.clone(),
+            self.prefs.clone(),
+            ctrl.document(),
+        );
+        crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
+        let slice_run = SliceRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
+        let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
+        let support_gen_run =
+            GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        WindowDrivers {
+            _slice_panel: slice_panel,
+            _slice_run: slice_run,
+            _repair_run: repair_run,
+            _support_gen_run: support_gen_run,
+        }
+    }
+
+    /// Binds every copy and paste entry point of window `id` (its keystrokes
+    /// and the items of its context menu) to the app-wide clipboard.
+    fn wire_clipboard(self: &Rc<Self>, ui: &MainWindow, id: u64) {
         // The clipboard is app-wide, so copy and paste live in AppState, but
         // the keystrokes arrive through each window's MeshViewer FocusScope.
         // The closures bound here capture the window id and a Weak back to
@@ -562,10 +633,29 @@ impl AppState {
                 }
             });
         }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_context_copy_pressed(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.copy_selection(id);
+                }
+            });
+        }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_context_paste_pressed(move |x, y| {
+                if let Some(app) = app_weak.upgrade() {
+                    app.paste_at_pixel(id, x, y);
+                }
+            });
+        }
+    }
 
-        // Right-button context menu. Down latches the press position on the
-        // controller; up classifies the gesture and, if it was a click (no
-        // drag), asks AppState to open the menu at the press position.
+    /// Binds the right button of window `id` to its context menu: a click opens
+    /// the menu at the press position, a drag does not.
+    fn wire_context_menu(self: &Rc<Self>, ui: &MainWindow, ctrl: &Rc<ViewportController>, id: u64) {
+        // Down latches the press position on the controller; up classifies the
+        // gesture.
         {
             let ctrl = ctrl.clone();
             ui.on_viewport_right_pointer_down(move |x, y| {
@@ -583,35 +673,11 @@ impl AppState {
                 }
             });
         }
-        {
-            let app_weak = Rc::downgrade(self);
-            ui.on_context_copy_pressed(move || {
-                if let Some(app) = app_weak.upgrade() {
-                    app.copy_selection(id);
-                }
-            });
-        }
-        {
-            let app_weak = Rc::downgrade(self);
-            ui.on_context_paste_pressed(move |x, y| {
-                if let Some(app) = app_weak.upgrade() {
-                    app.paste_at_pixel(id, x, y);
-                }
-            });
-        }
+    }
 
-        let ui_weak = ui.as_weak();
-        let ctrl_for_listener = ctrl.clone();
-        let default_envelope = self.default_envelope.clone();
-        let subscription = self.prefs.subscribe(move |snap, change| {
-            if let Some(w) = ui_weak.upgrade() {
-                w.apply_preferences(snap);
-            }
-            if matches!(change, PreferencesChange::DefaultPrinter) {
-                ctrl_for_listener.set_build_volume(default_envelope.current());
-            }
-        });
-
+    /// Binds the OS events of window `id`: a close request releases the window,
+    /// and a file dropped on it opens in it.
+    fn wire_window_events(self: &Rc<Self>, ui: &MainWindow, id: u64) {
         // On OS-level close: drop our strong handle so the window's
         // `ViewportController`, `Renderer`, scene, and the preference
         // subscription can be released. Without this, hidden windows accumulate
@@ -626,58 +692,36 @@ impl AppState {
             });
         }
 
-        // Drag-and-drop: route the winit `DroppedFile` event for this window's
-        // surface into the shared `open_path_in_window` entry, and toggle the
-        // `drop-hovering` overlay on hover events. winit 0.30 emits these
-        // events on Windows, macOS and X11; its Wayland backend emits none.
+        // Drag-and-drop: hand the winit file events of this window's surface to
+        // `on_file_drag`. winit 0.30 emits these events on Windows, macOS and
+        // X11; its Wayland backend emits none.
         {
-            use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+            use slint::winit_030::{EventResult, WinitWindowAccessor};
             let app_weak = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
             ui.window().on_winit_window_event(move |_window, event| {
-                match event {
-                    winit::event::WindowEvent::HoveredFile(_) => {
-                        if let Some(w) = ui_weak.upgrade() {
-                            w.set_drop_hovering(true);
-                        }
-                    }
-                    winit::event::WindowEvent::HoveredFileCancelled => {
-                        if let Some(w) = ui_weak.upgrade() {
-                            w.set_drop_hovering(false);
-                        }
-                    }
-                    winit::event::WindowEvent::DroppedFile(path) => {
-                        if let Some(w) = ui_weak.upgrade() {
-                            w.set_drop_hovering(false);
-                        }
-                        if let Some(app) = app_weak.upgrade() {
-                            app.open_path_in_window(id, path.clone());
-                        }
-                    }
-                    _ => {}
+                if let Some(drag) = FileDrag::from_winit(event)
+                    && let Some(app) = app_weak.upgrade()
+                    && let Some(w) = ui_weak.upgrade()
+                {
+                    app.on_file_drag(&w, id, drag);
                 }
                 EventResult::Propagate
             });
         }
+    }
 
-        ui.show()?;
-        // The winit window only exists once shown; set the taskbar icon here so
-        // the live window matches the executable resource.
-        crate::window_icon::apply(ui.window());
-        self.main_windows.borrow_mut().insert(
-            id,
-            WiredMainWindow {
-                window: ui,
-                controller: ctrl,
-                pending_load,
-                _subscription: subscription,
-                _slice_panel: slice_panel,
-                _slice_run: slice_run,
-                _repair_run: repair_run,
-                _support_gen_run: support_gen_run,
-            },
-        );
-        Ok(id)
+    /// Applies a step of a file drag to window `id`: the drop overlay shows
+    /// while a file hovers it, and a dropped file opens in it.
+    fn on_file_drag(self: &Rc<Self>, ui: &MainWindow, id: u64, drag: FileDrag) {
+        match drag {
+            FileDrag::Hovered => ui.set_drop_hovering(true),
+            FileDrag::HoverCancelled => ui.set_drop_hovering(false),
+            FileDrag::Dropped(path) => {
+                ui.set_drop_hovering(false);
+                self.open_path_in_window(id, path);
+            }
+        }
     }
 
     /// Routes an external (non-menu) open request into the right place: a path
@@ -713,17 +757,16 @@ impl AppState {
         );
         match action {
             OpenPathAction::RejectUnsupported => {
-                controller.dialogs().show_error(
-                    ctr!("ErrorDialog", "Unsupported file type").as_str(),
-                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                    ctr!(
+                controller.dialogs().show_error(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Unsupported file type"),
+                    context: Some(ctr!("ErrorDialog", "File: {}", path.display())),
+                    message: ctr!(
                         "ErrorDialog",
                         "Only the following file types can be opened: {}",
                         SUPPORTED_MESH_EXTENSIONS.join(", ")
-                    )
-                    .to_string(),
-                    String::new(),
-                );
+                    ),
+                    details: Default::default(),
+                });
             }
             OpenPathAction::DispatchImmediately => {
                 self.dispatch_path_to_loader(window_id, path);
@@ -948,15 +991,14 @@ impl AppState {
             match outcome {
                 SaveOutcome::Saved => {}
                 SaveOutcome::MovedOn => {
-                    dialogs.show_info(
-                        &ctr!("SaveDialog", "Scene not replaced"),
-                        ctr!(
+                    dialogs.show_info(|| InfoTexts {
+                        heading: ctr!("SaveDialog", "Scene not replaced"),
+                        message: ctr!(
                             "SaveDialog",
                             "The scene changed while saving, so the file does not hold its current state. Nothing was replaced."
-                        )
-                        .to_string(),
-                        String::new(),
-                    );
+                        ),
+                        details: Default::default(),
+                    });
                     return;
                 }
                 SaveOutcome::NotSaved => return,
@@ -1047,8 +1089,7 @@ impl AppState {
         {
             // Persist the object-list panel's visibility. It is per-window live
             // state: the bus write reaches the settings saver, and no window
-            // re-applies it (see the restore in `spawn_main_window` and
-            // `window_prefs`).
+            // re-applies it (see `window_prefs::restore_panels`).
             let bus = self.prefs.clone();
             ui.on_object_list_visibility_changed(move |visible| {
                 bus.update(move |snap| {
@@ -1370,6 +1411,7 @@ mod settings_saver_tests {
 
     use super::*;
     use crate::ThemePreference;
+    use crate::language::{BundledLanguage, LanguagePreference};
     use sc_print_primitives::AaLevel;
 
     fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
@@ -1597,14 +1639,775 @@ mod settings_saver_tests {
     #[test]
     fn spawn_settings_saver_joins_cleanly_on_drop() {
         // Smoke test for the production spawn path: drop the sender without
-        // sending any snapshot, so the worker exits via channel-closed before
-        // ever calling `AppSettings::save` (which would touch the user's real
-        // config directory under test). The join in `SettingsSaverJoin::drop`
-        // must complete without hanging, matching the shutdown behaviour
-        // `AppState::drop` relies on.
-        let settings = AppSettings::default();
-        let (tx, saver) = spawn_settings_saver(settings).expect("spawn settings-saver thread");
+        // sending any snapshot, so the worker exits via channel-closed. The
+        // join in `SettingsSaverJoin::drop` must complete without hanging,
+        // matching the shutdown behaviour `AppState::drop` relies on.
+        let (tx, saver) =
+            spawn_settings_saver(None, LoadOutcome::NotRead).expect("spawn settings-saver thread");
         drop(tx);
         drop(saver);
+    }
+
+    #[test]
+    fn the_saver_replaces_an_unusable_file_first() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        std::fs::write(&path, "this is not valid TOML").unwrap();
+        let file = SettingsFile::at(path.clone());
+        let loaded = file.load();
+
+        let (tx, saver) =
+            spawn_settings_saver(Some(file), loaded).expect("spawn settings-saver thread");
+        drop(tx);
+        drop(saver);
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        let version = crate::app_settings::APP_SETTINGS_SCHEMA_VERSION;
+        assert!(
+            written.contains(&format!("version = {version}")),
+            "got:\n{written}"
+        );
+    }
+
+    /// Loads the file at `path` and starts a saver on it, as a new process of
+    /// the app does.
+    fn start_saver(path: PathBuf) -> (Sender<PreferencesSnapshot>, SettingsSaverJoin) {
+        let file = SettingsFile::at(path);
+        let loaded = file.load();
+        spawn_settings_saver(Some(file), loaded).expect("spawn settings-saver thread")
+    }
+
+    #[test]
+    fn two_processes_keep_each_others_changes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let es = LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap());
+        let (to_a, saver_a) = start_saver(path.clone());
+        let (to_b, saver_b) = start_saver(path.clone());
+
+        let a = PreferencesSnapshot {
+            language: es,
+            ..PreferencesSnapshot::for_tests()
+        };
+        to_a.send(a).unwrap();
+        drop(to_a);
+        drop(saver_a);
+        let b = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+        to_b.send(b).unwrap();
+        drop(to_b);
+        drop(saver_b);
+
+        let saved = SettingsFile::at(path).load().settings();
+        assert_eq!(saved.language(), es);
+        assert!(!saved.object_list_visible());
+    }
+
+    #[test]
+    fn two_processes_keep_each_others_favourites() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let x = PrinterId::new("printer-x").unwrap();
+        let y = PrinterId::new("printer-y").unwrap();
+        let (to_a, saver_a) = start_saver(path.clone());
+        let (to_b, saver_b) = start_saver(path.clone());
+
+        let mut a = PreferencesSnapshot::for_tests();
+        a.favourite_printers.insert(x.clone());
+        to_a.send(a).unwrap();
+        drop(to_a);
+        drop(saver_a);
+        let mut b = PreferencesSnapshot::for_tests();
+        b.favourite_printers.insert(y.clone());
+        to_b.send(b).unwrap();
+        drop(to_b);
+        drop(saver_b);
+
+        let saved = SettingsFile::at(path).load().settings();
+        assert_eq!(
+            saved.favourite_printers(),
+            std::collections::BTreeSet::from([x, y])
+        );
+    }
+
+    #[test]
+    fn a_good_save_makes_the_snapshot_the_next_base() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = SettingsFile::at(tmp.path().join("settings.toml"));
+        let snap = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+
+        let next = save_snapshot(Some(&file), AppSettings::default(), &snap);
+        assert!(!next.object_list_visible());
+        assert!(!file.load().settings().object_list_visible());
+    }
+
+    #[test]
+    fn the_save_after_a_failed_one_carries_its_change() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let file = SettingsFile::at(path.clone());
+        // A directory that is not empty in the place of the file makes the save
+        // fail.
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("blocker"), "").unwrap();
+        let es = LanguagePreference::Bundled(BundledLanguage::from_code("es").unwrap());
+        let first = PreferencesSnapshot {
+            language: es,
+            ..PreferencesSnapshot::for_tests()
+        };
+
+        let base = save_snapshot(Some(&file), AppSettings::default(), &first);
+        assert_eq!(base, AppSettings::default());
+
+        // The file comes back empty, which reads as the defaults. A base that
+        // took the failed change would leave `es` out of this save.
+        std::fs::remove_dir_all(&path).unwrap();
+        std::fs::write(&path, "").unwrap();
+        let second = PreferencesSnapshot {
+            object_list_visible: false,
+            ..first
+        };
+        save_snapshot(Some(&file), base, &second);
+
+        let saved = file.load().settings();
+        assert_eq!(saved.language(), es);
+        assert!(!saved.object_list_visible());
+    }
+
+    #[test]
+    fn with_no_file_the_base_stays() {
+        let snap = PreferencesSnapshot {
+            object_list_visible: false,
+            ..PreferencesSnapshot::for_tests()
+        };
+        let next = save_snapshot(None, AppSettings::default(), &snap);
+        assert_eq!(next, AppSettings::default());
+    }
+}
+
+#[cfg(test)]
+mod subscribe_window_preferences_tests {
+    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_print_primitives::PrinterId;
+    use sc_scene_fixtures::meshes_as_roots;
+    use slint::Model;
+
+    use super::*;
+    use crate::ThemePreference;
+    use crate::build_volume::{BuildVolume, NO_PRINTER_BUILD_VOLUME};
+    use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::language_pick::pick_language;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    /// A main window and its controller, subscribed to `bus` after the UI
+    /// language, as `spawn_main_window` does. The catalog holds 1 printer, and
+    /// the default printer of `bus` is not in it, so the default plate starts
+    /// as the placeholder.
+    struct SubscribedWindow {
+        bus: Rc<PreferencesBus>,
+        window: MainWindow,
+        controller: Rc<ViewportController>,
+        _ui_language: UiLanguage,
+        _subscription: Subscription,
+    }
+
+    fn listed_printer() -> PrinterId {
+        PrinterId::new("listed-printer").expect("valid printer id")
+    }
+
+    fn subscribed_window() -> SubscribedWindow {
+        let ghost = PrinterId::new("ghost-printer").expect("valid printer id");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            default_printer: Some(ghost),
+            ..PreferencesSnapshot::for_tests()
+        });
+        let catalog = ProfileCatalog::from_entries(
+            vec![printer_entry(
+                listed_printer(),
+                "Alpha",
+                [120.0, 68.0, 150.0],
+            )],
+            Vec::new(),
+        );
+        let envelope = DefaultEnvelope::new(&bus, Rc::new(RefCell::new(Rc::new(catalog))));
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&window), &bus);
+        let controller = Rc::new(ViewportController::new(
+            &window,
+            SceneDocument::new(),
+            Rc::new(PendingLoad::new()),
+            DeviceLoss::default(),
+            &bus,
+        ));
+        controller.register_document_listener();
+        controller.set_build_volume(envelope.current());
+        let subscription =
+            subscribe_window_preferences(&bus, &window, controller.clone(), envelope);
+        SubscribedWindow {
+            bus,
+            window,
+            controller,
+            _ui_language: ui_language,
+            _subscription: subscription,
+        }
+    }
+
+    fn first_object_name(window: &MainWindow) -> String {
+        window
+            .get_object_list()
+            .row_data(0)
+            .expect("the scene has an object")
+            .text
+            .to_string()
+    }
+
+    #[test]
+    fn a_theme_change_reaches_the_window() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            let before = subscribed.window.get_theme();
+            subscribed.bus.update(|snap| {
+                snap.theme = ThemePreference::Dark;
+                PreferencesChange::Theme
+            });
+            (before, subscribed.window.get_theme())
+        });
+        assert_eq!(before, ThemePreference::System);
+        assert_eq!(after, ThemePreference::Dark);
+    }
+
+    #[test]
+    fn a_default_printer_change_sets_the_new_default_plate() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            let before = subscribed.controller.build_volume();
+            subscribed.bus.update(|snap| {
+                snap.default_printer = Some(listed_printer());
+                PreferencesChange::DefaultPrinter
+            });
+            (before, subscribed.controller.build_volume())
+        });
+        assert_eq!(before, NO_PRINTER_BUILD_VOLUME);
+        assert_eq!(after, BuildVolume::new(120.0, 68.0, 150.0));
+    }
+
+    #[test]
+    fn every_other_change_keeps_the_build_volume() {
+        for change in [
+            PreferencesChange::Theme,
+            PreferencesChange::MenuLayout,
+            PreferencesChange::Language,
+            PreferencesChange::DefaultResin,
+            PreferencesChange::Favourites,
+            PreferencesChange::OutputFormat,
+            PreferencesChange::AaLevel,
+            PreferencesChange::ObjectListPanel,
+            PreferencesChange::SliceControlPanel,
+            PreferencesChange::SliceViewPanel,
+            PreferencesChange::LastOpenDir,
+        ] {
+            let build_volume = on_fresh_slint_thread(move || {
+                let subscribed = subscribed_window();
+                // Not the default plate, so a push of the plate would show.
+                subscribed
+                    .controller
+                    .set_build_volume(BuildVolume::new(10.0, 20.0, 30.0));
+                subscribed.bus.update(move |_| change);
+                subscribed.controller.build_volume()
+            });
+            assert_eq!(
+                build_volume,
+                BuildVolume::new(10.0, 20.0, 30.0),
+                "{change:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_object_names_again() {
+        let (english, spanish, expected) = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            subscribed
+                .controller
+                .install_graph_for_test(meshes_as_roots([unit_cube_mesh()]));
+            pick_language(&subscribed.bus, "en");
+            let english = first_object_name(&subscribed.window);
+            pick_language(&subscribed.bus, "es");
+            let expected = ctr!("ObjectList", "Object {}", 1).to_string();
+            (english, first_object_name(&subscribed.window), expected)
+        });
+        assert_eq!(english, "Object 1");
+        assert_ne!(spanish, english);
+        assert_eq!(spanish, expected);
+    }
+
+    #[test]
+    fn a_language_change_repaints_the_viewport() {
+        let owed = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            subscribed.controller.clear_frame_state_for_test();
+            pick_language(&subscribed.bus, "es");
+            subscribed.controller.redraw_owed_for_test()
+        });
+        assert!(owed);
+    }
+}
+
+#[cfg(test)]
+mod file_drag_tests {
+    use super::*;
+
+    #[test]
+    fn a_hovered_file_is_a_hover() {
+        let event = winit::event::WindowEvent::HoveredFile(PathBuf::from("/models/cube.stl"));
+        assert_eq!(FileDrag::from_winit(&event), Some(FileDrag::Hovered));
+    }
+
+    #[test]
+    fn a_cancelled_hover_is_a_hover_cancel() {
+        let event = winit::event::WindowEvent::HoveredFileCancelled;
+        assert_eq!(FileDrag::from_winit(&event), Some(FileDrag::HoverCancelled));
+    }
+
+    #[test]
+    fn a_dropped_file_keeps_its_path() {
+        let event = winit::event::WindowEvent::DroppedFile(PathBuf::from("/models/cube.stl"));
+        assert_eq!(
+            FileDrag::from_winit(&event),
+            Some(FileDrag::Dropped(PathBuf::from("/models/cube.stl")))
+        );
+    }
+
+    #[test]
+    fn another_window_event_is_no_drag() {
+        let event = winit::event::WindowEvent::Focused(true);
+        assert_eq!(FileDrag::from_winit(&event), None);
+    }
+}
+
+#[cfg(test)]
+mod window_wiring_tests {
+    use std::sync::Arc;
+
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_print_primitives::PrinterId;
+    use sc_scene_edit::SceneFragment;
+    use sc_scene_fixtures::meshes_as_roots;
+    use slint::Model;
+    use slint::platform::WindowEvent;
+
+    use super::*;
+    use crate::language::{BundledLanguage, LanguagePreference};
+    use crate::test_support::catalog_entries::printer_entry;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+    use crate::{ErrorDialog, WorkspaceSection};
+
+    fn listed_printer() -> PrinterId {
+        PrinterId::new("listed-printer").expect("valid printer id")
+    }
+
+    /// Builds an `AppState` that reads and writes no file. The preferences
+    /// start as `snapshot`; the catalog holds 1 printer.
+    fn test_app(snapshot: PreferencesSnapshot) -> Rc<AppState> {
+        let prefs = PreferencesBus::new(snapshot);
+        let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
+            vec![printer_entry(
+                listed_printer(),
+                "Alpha",
+                [120.0, 68.0, 150.0],
+            )],
+            Vec::new(),
+        ))));
+        let default_envelope = DefaultEnvelope::new(&prefs, catalog.clone());
+        Rc::new(AppState {
+            about_window: RefCell::new(None),
+            preferences_window: RefCell::new(None),
+            main_windows: RefCell::new(HashMap::new()),
+            next_window_id: Cell::new(0),
+            // These tests save no settings, so the settings listener does
+            // nothing.
+            _settings_sub: prefs.subscribe(|_, _| {}),
+            ui_language: OnceCell::new(),
+            prefs,
+            catalog,
+            default_envelope,
+            clipboard: RefCell::new(None),
+            device_loss: DeviceLoss::default(),
+            _settings_saver: SettingsSaverJoin { join: None },
+        })
+    }
+
+    /// Creates a main window and its controller as `spawn_main_window` does.
+    fn new_window(app: &AppState) -> (MainWindow, Rc<PendingLoad>, Rc<ViewportController>) {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let pending_load = Rc::new(PendingLoad::new());
+        let controller = Rc::new(ViewportController::new(
+            &window,
+            SceneDocument::new(),
+            pending_load.clone(),
+            app.device_loss.clone(),
+            &app.prefs,
+        ));
+        controller.register_document_listener();
+        controller.set_build_volume(app.default_envelope.current());
+        (window, pending_load, controller)
+    }
+
+    /// Adds a main window to `app` and returns its id. The window gets its
+    /// drivers and its preference listener, but no other callback, and none of
+    /// the parts that need a GPU surface.
+    fn add_window(app: &Rc<AppState>) -> u64 {
+        let (window, pending_load, controller) = new_window(app);
+        let drivers = app.install_window_drivers(&window, &controller);
+        let subscription = subscribe_window_preferences(
+            &app.prefs,
+            &window,
+            controller.clone(),
+            app.default_envelope.clone(),
+        );
+        let id = app.next_window_id.get();
+        app.next_window_id.set(id + 1);
+        app.main_windows.borrow_mut().insert(
+            id,
+            WiredMainWindow {
+                window,
+                controller,
+                pending_load,
+                _subscription: subscription,
+                _drivers: drivers,
+            },
+        );
+        id
+    }
+
+    fn window_of(app: &AppState, id: u64) -> MainWindow {
+        app.main_windows.borrow()[&id].window.clone_strong()
+    }
+
+    fn controller_of(app: &AppState, id: u64) -> Rc<ViewportController> {
+        app.main_windows.borrow()[&id].controller.clone()
+    }
+
+    fn load_cube(controller: &ViewportController) {
+        controller.install_graph_for_test(meshes_as_roots([unit_cube_mesh()]));
+    }
+
+    /// Loads a cube into window `id`, selects it and opens the Transform
+    /// section, where copy and paste work.
+    fn load_selected_cube(app: &AppState, id: u64) {
+        let controller = controller_of(app, id);
+        load_cube(&controller);
+        let leaf = controller
+            .document()
+            .with_scene(|scene| scene.leaf_id_at_index(0))
+            .flatten()
+            .expect("the cube is a leaf");
+        controller
+            .document()
+            .set_selection(Selection::One(LeafId(leaf)));
+        controller.set_section(WorkspaceSection::Transform);
+    }
+
+    fn cube_clipboard() -> Clipboard {
+        Clipboard::new(SceneFragment::from_leaf_snapshot(
+            Arc::new(unit_cube_mesh()),
+            Transform3D::Identity,
+        ))
+    }
+
+    #[test]
+    fn the_drivers_list_the_default_printer_in_the_slice_panel() {
+        let listed = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot {
+                default_printer: Some(listed_printer()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            (
+                window.get_slice_printer_options().row_count(),
+                window.get_slice_printer_current_index(),
+            )
+        });
+        assert_eq!(listed, (1, 0));
+    }
+
+    #[test]
+    fn a_slice_press_without_a_printer_says_why() {
+        let headings = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            window.invoke_slice_requested();
+            controller.dialogs().error_headings_for_test()
+        });
+        assert_eq!(headings, ["Cannot slice"]);
+    }
+
+    #[test]
+    fn a_repair_press_with_a_scene_starts_a_repair() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            load_cube(&controller);
+            controller.set_section(WorkspaceSection::Prepare);
+            let before = window.get_repairing_in_progress();
+            window.invoke_repair_requested();
+            (before, window.get_repairing_in_progress())
+        });
+        assert_eq!((before, after), (false, true));
+    }
+
+    #[test]
+    fn a_support_press_with_a_scene_starts_the_generation() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            load_cube(&controller);
+            let before = window.get_support_gen_in_progress();
+            window.invoke_support_gen_requested();
+            (before, window.get_support_gen_in_progress())
+        });
+        assert_eq!((before, after), (false, true));
+    }
+
+    #[test]
+    fn the_copy_keystroke_copies_the_selection_of_its_own_window() {
+        let copied = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let empty = add_window(&app);
+            let loaded = add_window(&app);
+            load_selected_cube(&app, loaded);
+            app.wire_clipboard(&window_of(&app, empty), empty);
+            app.wire_clipboard(&window_of(&app, loaded), loaded);
+
+            window_of(&app, empty).invoke_copy_pressed();
+            let from_empty = app.clipboard.borrow().is_some();
+            window_of(&app, loaded).invoke_copy_pressed();
+            (from_empty, app.clipboard.borrow().is_some())
+        });
+        assert_eq!(copied, (false, true));
+    }
+
+    #[test]
+    fn the_menu_copy_copies_the_selection_of_its_own_window() {
+        let copied = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let empty = add_window(&app);
+            let loaded = add_window(&app);
+            load_selected_cube(&app, loaded);
+            app.wire_clipboard(&window_of(&app, empty), empty);
+            app.wire_clipboard(&window_of(&app, loaded), loaded);
+
+            window_of(&app, empty).invoke_context_copy_pressed();
+            let from_empty = app.clipboard.borrow().is_some();
+            window_of(&app, loaded).invoke_context_copy_pressed();
+            (from_empty, app.clipboard.borrow().is_some())
+        });
+        assert_eq!(copied, (false, true));
+    }
+
+    /// Returns the number of objects in a window with 1 cube after a paste
+    /// through `press`.
+    fn objects_after_paste(press: fn(&MainWindow)) -> usize {
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            load_selected_cube(&app, id);
+            let controller = controller_of(&app, id);
+            controller.set_viewport_for_test(800.0, 600.0);
+            controller.frame_camera_for_test();
+            *app.clipboard.borrow_mut() = Some(cube_clipboard());
+            let window = window_of(&app, id);
+            app.wire_clipboard(&window, id);
+            press(&window);
+            controller.reachable_leaf_count_for_test()
+        })
+    }
+
+    #[test]
+    fn the_paste_keystroke_pastes_into_its_window() {
+        assert_eq!(
+            objects_after_paste(|window| window.invoke_paste_pressed()),
+            2
+        );
+    }
+
+    #[test]
+    fn the_menu_paste_pastes_into_its_window() {
+        assert_eq!(
+            objects_after_paste(|window| window.invoke_context_paste_pressed(400.0, 300.0)),
+            2
+        );
+    }
+
+    /// Returns each call of the window's `show-context-menu` after a right
+    /// press at `down` and a release at `up`, in the Transform section with a
+    /// filled clipboard and nothing under the cursor.
+    fn menus_after_right_button(
+        down: (f32, f32),
+        up: (f32, f32),
+    ) -> Vec<(f32, f32, bool, bool, bool)> {
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            let controller = controller_of(&app, id);
+            controller.set_section(WorkspaceSection::Transform);
+            *app.clipboard.borrow_mut() = Some(cube_clipboard());
+            let shown = Rc::new(RefCell::new(Vec::new()));
+            window.on_show_context_menu({
+                let shown = shown.clone();
+                move |x, y, copy, paste, delete| {
+                    shown.borrow_mut().push((x, y, copy, paste, delete));
+                }
+            });
+            app.wire_context_menu(&window, &controller, id);
+
+            window.invoke_viewport_right_pointer_down(down.0, down.1);
+            window.invoke_viewport_right_pointer_up(up.0, up.1);
+            shown.take()
+        })
+    }
+
+    #[test]
+    fn a_right_click_shows_the_menu_at_the_press_position() {
+        assert_eq!(
+            menus_after_right_button((100.0, 80.0), (101.0, 81.0)),
+            [(100.0, 80.0, false, true, false)]
+        );
+    }
+
+    #[test]
+    fn a_right_drag_shows_no_menu() {
+        assert!(menus_after_right_button((100.0, 80.0), (300.0, 240.0)).is_empty());
+    }
+
+    #[test]
+    fn a_close_request_releases_only_its_window() {
+        let open = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let closed = add_window(&app);
+            let _kept = add_window(&app);
+            let window = window_of(&app, closed);
+            app.wire_window_events(&window, closed);
+
+            window.window().dispatch_event(WindowEvent::CloseRequested);
+            app.main_windows
+                .borrow()
+                .keys()
+                .copied()
+                .collect::<Vec<u64>>()
+        });
+        assert_eq!(open, [1]);
+    }
+
+    #[test]
+    fn a_hovered_file_shows_the_drop_overlay() {
+        let hovering = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            app.on_file_drag(&window, id, FileDrag::Hovered);
+            window.get_drop_hovering()
+        });
+        assert!(hovering);
+    }
+
+    #[test]
+    fn a_cancelled_hover_hides_the_drop_overlay() {
+        let hovering = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            app.on_file_drag(&window, id, FileDrag::Hovered);
+            app.on_file_drag(&window, id, FileDrag::HoverCancelled);
+            window.get_drop_hovering()
+        });
+        assert!(!hovering);
+    }
+
+    #[test]
+    fn a_dropped_file_hides_the_overlay_and_opens_in_its_window() {
+        let (hovering, queued) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let window = window_of(&app, id);
+            app.on_file_drag(&window, id, FileDrag::Hovered);
+            app.on_file_drag(
+                &window,
+                id,
+                FileDrag::Dropped(PathBuf::from("/models/cube.stl")),
+            );
+            // The window has no GPU device yet, so the path waits on its
+            // pending load.
+            let queued = app.main_windows.borrow()[&id].pending_load.take();
+            (window.get_drop_hovering(), queued)
+        });
+        assert!(!hovering);
+        assert_eq!(queued, Some(PathBuf::from("/models/cube.stl")));
+    }
+
+    fn bundled(code: &str) -> LanguagePreference {
+        LanguagePreference::Bundled(BundledLanguage::from_code(code).expect("bundled language"))
+    }
+
+    /// Returns the heading of a new error dialog, in the language in force.
+    fn error_heading() -> String {
+        ErrorDialog::new()
+            .expect("the headless platform creates components")
+            .get_heading()
+            .to_string()
+    }
+
+    /// Returns the heading of an error dialog created after the first window of
+    /// an app whose stored language is `code`.
+    fn heading_after_first_window(code: &'static str) -> String {
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot {
+                language: bundled(code),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let id = add_window(&app);
+            app.on_first_window(&window_of(&app, id));
+            error_heading()
+        })
+    }
+
+    #[test]
+    fn the_first_window_puts_the_stored_language_in_force() {
+        let spanish = heading_after_first_window("es");
+        let german = heading_after_first_window("de");
+        assert_ne!(spanish, "An error occurred");
+        assert_ne!(german, "An error occurred");
+        assert_ne!(spanish, german);
+    }
+
+    #[test]
+    fn a_language_change_after_the_first_window_is_put_in_force() {
+        let (stored, changed) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot {
+                language: bundled("es"),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let id = add_window(&app);
+            app.on_first_window(&window_of(&app, id));
+            let stored = error_heading();
+            app.prefs.update(|snap| {
+                snap.language = bundled("de");
+                PreferencesChange::Language
+            });
+            (stored, error_heading())
+        });
+        assert_ne!(changed, stored);
+        assert_eq!(changed, heading_after_first_window("de"));
     }
 }

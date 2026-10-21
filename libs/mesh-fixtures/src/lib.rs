@@ -8,11 +8,12 @@
 //! orientable.
 //!
 //! The cuboid family holds a unit cube and 2 rectangular prisms with a
-//! rectangular tunnel along Z or along Y, variants of the 3 with some faces
-//! turned inside out, and a variant of the cube with 2 zero-area faces. 3
-//! tetrahedra cover the slicer's cases at `z = 0`: a vertex on the plane
-//! (saddle), a mesh edge on the plane that the surface crosses, and a mesh edge
-//! along which the surface only touches the plane.
+//! rectangular tunnel along Z or along Y, and variants of the 3: with some
+//! faces turned inside out, with collinear faces (zero-area faces with 3
+//! distinct vertices) in 2 layouts, and beside a flat closed part with a
+//! collinear face. 3 tetrahedra cover the slicer's cases at `z = 0`: a vertex
+//! on the plane (saddle), a mesh edge on the plane that the surface crosses,
+//! and a mesh edge along which the surface only touches the plane.
 //!
 //! 2 fixtures are deliberate exceptions to the "manifold by construction" rule:
 //! [`bowtie_tetrahedra`] and [`cuboid_with_pinched_z_tunnel`] are edge-manifold
@@ -22,6 +23,7 @@
 //! surface.
 
 use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
+use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
 #[cfg(test)]
@@ -390,16 +392,209 @@ pub fn cuboid_with_y_tunnel_and_flipped_faces() -> IndexedMesh {
 /// closes the mesh along it. The mesh stays closed and edge-manifold, with the
 /// volume of the cube.
 pub fn unit_cube_with_collinear_faces() -> IndexedMesh {
-    let mut mesh = unit_cube_mesh();
-    mesh.vertices
-        .extend([Vertex::new([0.0, -0.5, 0.5]), Vertex::new([0.5, -0.5, 0.0])]);
-    let f = IndexedTriangle::from_raw_indices;
     // Faces 2 and 6 of the donor are (4, 5, 6) and (0, 1, 5).
-    mesh.faces[2] = f([4, 8, 6]);
-    mesh.faces[6] = f([0, 1, 9]);
-    mesh.faces
-        .extend([f([8, 5, 6]), f([0, 9, 5]), f([4, 5, 8]), f([1, 5, 9])]);
+    with_collinear_faces(
+        unit_cube_mesh(),
+        &[(2, TriVertexSlot::V0), (6, TriVertexSlot::V1)],
+    )
+}
+
+fn midpoint(vertices: &[Vertex], a: VertexIndex, b: VertexIndex) -> Vertex {
+    let [a, b] = [a, b].map(|v| vertices[usize::from(v)].coords());
+    Vertex::new([0, 1, 2].map(|k| (a[k] + b[k]) / 2.0))
+}
+
+/// Splits each `(face, slot)` of `splits`: the edge of the face that starts at
+/// `slot` gets a new vertex at its midpoint, the face becomes 2 halves that
+/// share its 3rd vertex, and a collinear face closes the edge against the face
+/// across it, which stays whole. The 1st half takes the place of the face; the
+/// 2nd halves and then the collinear faces go after the faces of `mesh`, in the
+/// order of `splits`.
+///
+/// Each split edge must be parallel to an axis, so that its midpoint is exactly
+/// on it, and the split faces must have disjoint edge-neighbourhoods.
+fn with_collinear_faces(mut mesh: IndexedMesh, splits: &[(usize, TriVertexSlot)]) -> IndexedMesh {
+    let mut second_halves = Vec::with_capacity(splits.len());
+    let mut collinear_faces = Vec::with_capacity(splits.len());
+    for &(face_idx, slot) in splits {
+        let start = slot.as_index();
+        let end = (start + 1) % 3;
+        let face = mesh.faces[face_idx];
+        let [a, b] = [face.vertices[start], face.vertices[end]];
+        let middle = VertexIndex::from(mesh.vertices.len() as u32);
+        let point = midpoint(&mesh.vertices, a, b);
+        mesh.vertices.push(point);
+        mesh.faces[face_idx].vertices[end] = middle;
+        let mut second_half = face;
+        second_half.vertices[start] = middle;
+        second_halves.push(second_half);
+        collinear_faces.push(IndexedTriangle {
+            vertices: [a, b, middle],
+        });
+    }
+    mesh.faces.extend(second_halves);
+    mesh.faces.extend(collinear_faces);
     mesh
+}
+
+/// Returns [`cuboid_with_z_tunnel`] with 2 zero-area faces, 34 and 35. Vertex
+/// 16, the middle of the top edge 4-5, splits a face of the top annulus on that
+/// edge, and vertex 17, the middle of the vertical tunnel edge 13-9, splits a
+/// tunnel wall on that edge. The faces across the 2 edges stay whole. The mesh
+/// stays closed and edge-manifold, with the volume of the prism.
+pub fn cuboid_with_z_tunnel_and_collinear_faces() -> IndexedMesh {
+    // Faces 8 and 24 of the donor are (4, 5, 13) and (8, 13, 9).
+    with_collinear_faces(
+        cuboid_with_z_tunnel(),
+        &[(8, TriVertexSlot::V0), (24, TriVertexSlot::V1)],
+    )
+}
+
+/// Returns [`cuboid_with_y_tunnel`] with 2 zero-area faces, 34 and 35. Vertex
+/// 16, the middle of the top edge 4-5, splits a face of the top on that edge,
+/// and vertex 17, the middle of the tunnel edge 11-15, splits a face of the
+/// tunnel top on that edge. The faces across the 2 edges stay whole. The mesh
+/// stays closed and edge-manifold, with the volume of the prism.
+pub fn cuboid_with_y_tunnel_and_collinear_faces() -> IndexedMesh {
+    // Faces 2 and 24 of the donor are (4, 5, 6) and (11, 15, 14).
+    with_collinear_faces(
+        cuboid_with_y_tunnel(),
+        &[(2, TriVertexSlot::V0), (24, TriVertexSlot::V0)],
+    )
+}
+
+/// Turns each quad of `fans` into a fan of 3 faces around the midpoint of its
+/// 1st edge, and closes that edge with a collinear face against the face across
+/// it, which stays whole. A quad is the indices of the 2 faces that cover it
+/// and its 4 vertices in winding order, 1st edge first. The 1st 2 faces of the
+/// fan take the places of the 2 faces; the 3rd faces and then the collinear
+/// faces go after the faces of `mesh`, in the order of `fans`.
+///
+/// Each 1st edge must be parallel to an axis, and the quads must have disjoint
+/// edge-neighbourhoods.
+fn with_collinear_faces_at_fan_centres(
+    mut mesh: IndexedMesh,
+    fans: &[([usize; 2], [u32; 4])],
+) -> IndexedMesh {
+    let mut third_faces = Vec::with_capacity(fans.len());
+    let mut collinear_faces = Vec::with_capacity(fans.len());
+    for &([first, second], quad) in fans {
+        let [q0, q1, q2, q3] = quad.map(VertexIndex::from);
+        let centre = VertexIndex::from(mesh.vertices.len() as u32);
+        let point = midpoint(&mesh.vertices, q0, q1);
+        mesh.vertices.push(point);
+        mesh.faces[first] = IndexedTriangle {
+            vertices: [centre, q1, q2],
+        };
+        mesh.faces[second] = IndexedTriangle {
+            vertices: [centre, q2, q3],
+        };
+        third_faces.push(IndexedTriangle {
+            vertices: [centre, q3, q0],
+        });
+        collinear_faces.push(IndexedTriangle {
+            vertices: [q0, q1, centre],
+        });
+    }
+    mesh.faces.extend(third_faces);
+    mesh.faces.extend(collinear_faces);
+    mesh
+}
+
+/// Returns [`unit_cube_mesh`] with 2 zero-area faces, 14 and 15, whose middle
+/// vertex is the centre of a fan of 3 faces. Vertex 8, the middle of the top
+/// edge 4-5, is the centre of the top, and vertex 9, the middle of the bottom
+/// edge 2-1, is the centre of the bottom. The 2 faces beside each collinear
+/// face share no 3rd vertex, unlike in [`unit_cube_with_collinear_faces`]. The
+/// faces across the 2 edges stay whole. The mesh stays closed and
+/// edge-manifold, with the volume of the cube.
+pub fn unit_cube_with_collinear_faces_at_fan_centres() -> IndexedMesh {
+    with_collinear_faces_at_fan_centres(
+        unit_cube_mesh(),
+        &[([2, 3], [4, 5, 6, 7]), ([0, 1], [2, 1, 0, 3])],
+    )
+}
+
+/// Returns [`cuboid_with_z_tunnel`] with 2 zero-area faces, 34 and 35, built
+/// like [`unit_cube_with_collinear_faces_at_fan_centres`]. Vertex 16, the
+/// middle of the vertical edge 1-5, is the centre of the outer side at y = -1,
+/// and vertex 17, the middle of the vertical tunnel edge 13-9, is the centre of
+/// a tunnel wall.
+pub fn cuboid_with_z_tunnel_and_collinear_faces_at_fan_centres() -> IndexedMesh {
+    with_collinear_faces_at_fan_centres(
+        cuboid_with_z_tunnel(),
+        &[([16, 17], [1, 5, 4, 0]), ([24, 25], [13, 9, 8, 12])],
+    )
+}
+
+/// Returns [`cuboid_with_y_tunnel`] with 2 zero-area faces, 34 and 35, built
+/// like [`unit_cube_with_collinear_faces_at_fan_centres`]. Vertex 16, the
+/// middle of the top edge 4-5, is the centre of the top, and vertex 17, the
+/// middle of the tunnel edge 11-15, is the centre of the tunnel top.
+pub fn cuboid_with_y_tunnel_and_collinear_faces_at_fan_centres() -> IndexedMesh {
+    with_collinear_faces_at_fan_centres(
+        cuboid_with_y_tunnel(),
+        &[([2, 3], [4, 5, 6, 7]), ([24, 25], [11, 15, 14, 10])],
+    )
+}
+
+/// Adds a closed part of 4 faces in 1 plane, with a volume of 0: the collinear
+/// face (R, P, Q), where R is the midpoint of P and Q, the 2 faces (P, R, X)
+/// and (R, Q, X) facing 1 way, and (Q, P, X) facing the other way.
+fn with_flat_tetrahedron(mut mesh: IndexedMesh, p: Vertex, q: Vertex, x: Vertex) -> IndexedMesh {
+    let first = mesh.vertices.len() as u32;
+    let [ip, iq, ir, ix] = [first, first + 1, first + 2, first + 3];
+    mesh.vertices.extend([p, q]);
+    let r = midpoint(&mesh.vertices, VertexIndex::from(ip), VertexIndex::from(iq));
+    mesh.vertices.extend([r, x]);
+    let f = IndexedTriangle::from_raw_indices;
+    mesh.faces.extend([
+        f([ir, ip, iq]),
+        f([ip, ir, ix]),
+        f([ir, iq, ix]),
+        f([iq, ip, ix]),
+    ]);
+    mesh
+}
+
+/// Returns [`unit_cube_mesh`] and, beside it in the plane z = -0.5 of its
+/// bottom, a closed flat tetrahedron whose face 12 is collinear. The 2 faces
+/// beside the collinear face and the face across its long edge all share their
+/// 3rd vertex. The mesh is closed and edge-manifold, with the volume of the
+/// cube.
+pub fn unit_cube_and_flat_tetrahedron() -> IndexedMesh {
+    with_flat_tetrahedron(
+        unit_cube_mesh(),
+        Vertex::new([1.0, 0.0, -0.5]),
+        Vertex::new([2.0, 0.0, -0.5]),
+        Vertex::new([1.5, 0.5, -0.5]),
+    )
+}
+
+/// Returns [`cuboid_with_z_tunnel`] and, beside it in the plane z = 0 of its
+/// bottom, a closed flat tetrahedron like the one of
+/// [`unit_cube_and_flat_tetrahedron`], whose face 32 is collinear. The mesh is
+/// closed and edge-manifold, with the volume of the prism.
+pub fn cuboid_with_z_tunnel_and_flat_tetrahedron() -> IndexedMesh {
+    with_flat_tetrahedron(
+        cuboid_with_z_tunnel(),
+        Vertex::new([2.0, 0.0, 0.0]),
+        Vertex::new([3.0, 0.0, 0.0]),
+        Vertex::new([2.5, 0.5, 0.0]),
+    )
+}
+
+/// Returns [`cuboid_with_y_tunnel`] and, beside it in the plane z = 0 of its
+/// bottom, a closed flat tetrahedron like the one of
+/// [`unit_cube_and_flat_tetrahedron`], whose face 32 is collinear. The mesh is
+/// closed and edge-manifold, with the volume of the prism.
+pub fn cuboid_with_y_tunnel_and_flat_tetrahedron() -> IndexedMesh {
+    with_flat_tetrahedron(
+        cuboid_with_y_tunnel(),
+        Vertex::new([2.0, 0.0, 0.0]),
+        Vertex::new([3.0, 0.0, 0.0]),
+        Vertex::new([2.5, 0.5, 0.0]),
+    )
 }
 
 /// Returns a tetrahedron with V0 and V1 exactly on the plane `z = 0`, and V2

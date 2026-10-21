@@ -82,6 +82,7 @@ pub(crate) enum CmdOptions {
         target_format: Option<MeshFileType>,
         fix_zero_length_edges: bool,
         fix_flipped_faces: bool,
+        fix_collinear_faces: bool,
     },
     Help,
     Inspect {},
@@ -206,6 +207,12 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .adjacent()
         .fallback(RepairPasses::default_repair().flipped_faces);
 
+    let fix_collinear_faces = long("fix-collinear-faces")
+        .help("Removes faces with collinear vertices")
+        .argument::<bool>("FIX_COLLINEAR_FACES")
+        .adjacent()
+        .fallback(RepairPasses::default_repair().collinear_faces);
+
     construct!(CmdOptions::Fix {
         source,
         source_format,
@@ -213,6 +220,7 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         target_format,
         fix_zero_length_edges,
         fix_flipped_faces,
+        fix_collinear_faces,
     })
 }
 

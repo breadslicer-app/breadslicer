@@ -16,12 +16,14 @@
 //! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
 //! or corrupt file; see `PackageReadLimits`.
 
+mod fused_writer;
 pub mod static_part_name;
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 
 use quick_xml::XmlVersion;
+use quick_xml::errors::IllFormedError;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesStart, Event};
 use quick_xml::reader::NsReader;
@@ -32,6 +34,7 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 
+use fused_writer::FusedWriter;
 use static_part_name::{StaticPartName, check_part_name};
 
 /// Chunk size for feeding a part's bytes to the deflater, so a large part
@@ -86,13 +89,17 @@ impl PartName {
         &self.0[1..]
     }
 
+    /// Returns whether OPC treats the 2 names as 1 name, which it does when
+    /// they differ only in ASCII case.
+    fn is_equivalent(&self, other: &PartName) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+
     /// Returns the extension of the final segment, lowercased, if any.
     fn extension_lowercase(&self) -> Option<String> {
+        // #[gamma::skip(try.propagate_to_unwrap, reason = "never None")]
         let file = self.0.rsplit('/').next()?;
-        let (stem, ext) = file.rsplit_once('.')?;
-        if stem.is_empty() {
-            return None;
-        }
+        let (_, ext) = file.rsplit_once('.')?;
         Some(ext.to_ascii_lowercase())
     }
 
@@ -101,6 +108,8 @@ impl PartName {
     fn directory(&self) -> &str {
         match self.0.rfind('/') {
             Some(idx) => &self.0[..=idx],
+            // #[gamma::skip(literal.str_to_empty, reason = "names have a /")]
+            // #[gamma::skip(literal.str_to_xyzzy, reason = "names have a /")]
             None => "/",
         }
     }
@@ -184,31 +193,52 @@ pub struct DecompressionProgress {
     pub total_bytes: u64,
 }
 
-/// An in-memory OPC package: ordered parts plus relationships.
+/// An in-memory OPC package: ordered parts plus relationships. Lookups by part
+/// name ignore ASCII case, as OPC does.
 #[derive(Debug, Default)]
 pub struct Package {
     parts: Vec<Part>,
     /// Package-root relationships (stored at `/_rels/.rels`).
     root_relationships: Vec<Relationship>,
-    /// Per-part relationships, keyed by source part name.
+    /// Per-part relationships, keyed by source part name; equivalent names
+    /// share 1 key.
     part_relationships: BTreeMap<PartName, Vec<Relationship>>,
 }
 
 impl Package {
+    // #[gamma::skip(fn_value.default, reason = "new is Self::default")]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Adds a part. Part names must be unique.
+    /// Adds a part. Part names must be unique, and OPC treats names that differ
+    /// only in ASCII case as 1 name. Names of Relationships parts are refused:
+    /// relationships go through [`Package::add_root_relationship`] and
+    /// [`Package::add_part_relationship`].
     pub fn add_part(
         &mut self,
         name: PartName,
         content_type: &str,
         data: Vec<u8>,
     ) -> Result<(), PackageWriteError> {
-        if self.parts.iter().any(|p| p.name == name) {
+        if is_reserved_for_relationships(&name) {
+            return Err(PackageWriteError::ReservedPartName {
+                name: name.as_str().to_string(),
+            });
+        }
+        if self.find_part(&name).is_some() {
             return Err(PackageWriteError::DuplicatePartName {
                 name: name.as_str().to_string(),
+            });
+        }
+        if let Some((base, derived)) = self
+            .parts
+            .iter()
+            .find_map(|p| derivable_pair(name.as_str(), p.name.as_str()))
+        {
+            return Err(PackageWriteError::DerivablePartNames {
+                base: base.to_string(),
+                derived: derived.to_string(),
             });
         }
         self.parts.push(Part {
@@ -223,11 +253,30 @@ impl Package {
         self.root_relationships.push(relationship);
     }
 
-    pub fn add_part_relationship(&mut self, source: &PartName, relationship: Relationship) {
+    /// Adds a relationship from the part `source`. A Relationships part name is
+    /// refused as the source: OPC allows no relationships from a Relationships
+    /// part.
+    pub fn add_part_relationship(
+        &mut self,
+        source: &PartName,
+        relationship: Relationship,
+    ) -> Result<(), PackageWriteError> {
+        if is_reserved_for_relationships(source) {
+            return Err(PackageWriteError::ReservedPartName {
+                name: source.as_str().to_string(),
+            });
+        }
+        let key = self
+            .part_relationships
+            .keys()
+            .find(|key| key.is_equivalent(source))
+            .unwrap_or(source)
+            .clone();
         self.part_relationships
-            .entry(source.clone())
+            .entry(key)
             .or_default()
             .push(relationship);
+        Ok(())
     }
 
     pub fn part_names(&self) -> impl Iterator<Item = &PartName> {
@@ -235,17 +284,11 @@ impl Package {
     }
 
     pub fn part_content_type(&self, name: &PartName) -> Option<&str> {
-        self.parts
-            .iter()
-            .find(|p| &p.name == name)
-            .map(|p| p.content_type.as_str())
+        self.find_part(name).map(|p| p.content_type.as_str())
     }
 
     pub fn part_data(&self, name: &PartName) -> Option<&[u8]> {
-        self.parts
-            .iter()
-            .find(|p| &p.name == name)
-            .map(|p| p.data.as_slice())
+        self.find_part(name).map(|p| p.data.as_slice())
     }
 
     pub fn root_relationships(&self) -> &[Relationship] {
@@ -254,12 +297,14 @@ impl Package {
 
     pub fn part_relationships(&self, source: &PartName) -> &[Relationship] {
         self.part_relationships
-            .get(source)
-            .map(Vec::as_slice)
+            .iter()
+            .find(|(key, _)| key.is_equivalent(source))
+            .map(|(_, relationships)| relationships.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Resolves the StartPart relationship to the primary 3D Model part's name.
+    /// Resolves the StartPart relationship to the name of the primary 3D Model
+    /// part, as the part spells it.
     pub fn start_part(&self) -> Result<PartName, PackageReadError> {
         let rel = self
             .root_relationships
@@ -272,10 +317,10 @@ impl Package {
                 name: target.clone(),
                 source,
             })?;
-        if self.part_data(&name).is_none() {
-            return Err(PackageReadError::StartPartNotFound { target });
+        match self.find_part(&name) {
+            Some(part) => Ok(part.name.clone()),
+            None => Err(PackageReadError::StartPartNotFound { target }),
         }
-        Ok(name)
     }
 
     /// Serializes the package as a plain deflate-compressed ZIP.
@@ -299,9 +344,10 @@ impl Package {
         writer: W,
         mut progress: impl FnMut(u64, u64),
     ) -> Result<(), PackageWriteError> {
+        self.ensure_no_derivable_names()?;
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let mut archive = ZipWriter::new(writer);
+        let mut archive = ZipWriter::new(FusedWriter::new(writer));
 
         archive.start_file("[Content_Types].xml", options)?;
         archive.write_all(&self.content_types_xml()?)?;
@@ -310,6 +356,8 @@ impl Package {
         archive.write_all(&relationships_xml(&self.root_relationships)?)?;
 
         for (source, relationships) in &self.part_relationships {
+            // #[gamma::skip(cond.always_false, reason = "reads the same")]
+            // #[gamma::skip(loop.delete_continue, reason = "reads the same")]
             if relationships.is_empty() {
                 continue;
             }
@@ -325,7 +373,9 @@ impl Package {
             if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&len) {
                 // Compress the part across threads, then splice the finished
                 // stream in verbatim (no recompression).
+                // #[gamma::skip(try.propagate_to_unwrap, reason = "size fits")]
                 let entry = crate::deflate::parallel_entry(part.name.zip_entry(), &part.data)?;
+                // #[gamma::skip(try.propagate_to_unwrap, reason = "valid ZIP")]
                 let mut source = ZipArchive::new(Cursor::new(entry))?;
                 archive.raw_copy_file(source.by_index(0)?)?;
                 // Report the part's bytes in the same chunk steps the
@@ -403,6 +453,7 @@ impl Package {
             announced_total = announced_total.saturating_add(file.size());
         }
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut item_by_lowercase_name: BTreeMap<String, String> = BTreeMap::new();
         let mut total_bytes: u64 = 0;
         for index in 0..archive.len() {
             let mut file = archive.by_index(index)?;
@@ -410,11 +461,16 @@ impl Package {
                 continue;
             }
             let raw_name = file.name().to_string();
-            let name = if raw_name.starts_with('/') {
-                raw_name
-            } else {
-                format!("/{raw_name}")
-            };
+            let name = format!("/{raw_name}");
+            // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
+            if let Some(first) =
+                item_by_lowercase_name.insert(name.to_ascii_lowercase(), raw_name.clone())
+            {
+                return Err(PackageReadError::EquivalentItemNames {
+                    first,
+                    second: raw_name,
+                });
+            }
             let claimed_size = file.size();
             let ticking = TickingReader {
                 inner: &mut file,
@@ -426,6 +482,12 @@ impl Package {
             let data = read_part_bytes(ticking, claimed_size, &name, limits, total_bytes)?;
             total_bytes += data.len() as u64;
             entries.push((name, data));
+        }
+        if let Some((base, derived)) = find_derivable(&item_by_lowercase_name) {
+            return Err(PackageReadError::DerivableItemNames {
+                base: base.clone(),
+                derived: derived.clone(),
+            });
         }
 
         let content_types_bytes = entries
@@ -445,9 +507,10 @@ impl Package {
                     name: name.clone(),
                     source,
                 })?;
-            if is_relationships_part(&part_name) {
+            if is_reserved_for_relationships(&part_name) {
+                let source = relationships_source(&part_name)?;
                 let relationships = parse_relationships(&data, part_name.as_str())?;
-                match relationships_source(&part_name) {
+                match source {
                     None => package.root_relationships = relationships,
                     Some(source) => {
                         package.part_relationships.insert(source, relationships);
@@ -472,6 +535,7 @@ impl Package {
     /// Builds the `[Content_Types].xml` payload: Default entries for extensions
     /// whose parts all share the same content type, Override entries for
     /// everything else.
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "writes into a Vec")]
     fn content_types_xml(&self) -> Result<Vec<u8>, PackageWriteError> {
         // extension -> unanimous content type (None once conflicting).
         let mut defaults: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -495,6 +559,7 @@ impl Package {
 
         let mut buffer = Vec::new();
         let mut writer = Writer::new(&mut buffer);
+        // #[gamma::skip(option.some_to_none, reason = "UTF-8 is the default")]
         writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
         let mut types = BytesStart::new("Types");
         types.push_attribute(("xmlns", crate::names::CONTENT_TYPES_NS));
@@ -523,6 +588,36 @@ impl Package {
         }
         writer.write_event(Event::End(BytesStart::new("Types").to_end()))?;
         Ok(buffer)
+    }
+
+    /// Fails when 1 of the names that `write_to` writes is derivable from
+    /// another: the parts, `[Content_Types].xml`, and the Relationships parts
+    /// of the package and of every source part.
+    fn ensure_no_derivable_names(&self) -> Result<(), PackageWriteError> {
+        let relationships_parts = self.part_relationships.keys().map(PartName::rels_part_name);
+        // #[gamma::skip(collection.reverse_array, reason = "a map sorts it")]
+        // #[gamma::skip(string.lower_to_upper, reason = "upper works too")]
+        let names: BTreeMap<String, String> = [
+            "/[Content_Types].xml".to_string(),
+            "/_rels/.rels".to_string(),
+        ]
+        .into_iter()
+        .chain(relationships_parts)
+        .chain(self.parts.iter().map(|p| p.name.as_str().to_string()))
+        .map(|name| (name.to_ascii_lowercase(), name))
+        .collect();
+        match find_derivable(&names) {
+            Some((base, derived)) => Err(PackageWriteError::DerivablePartNames {
+                base: base.clone(),
+                derived: derived.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// Returns the part whose name OPC treats as `name`.
+    fn find_part(&self, name: &PartName) -> Option<&Part> {
+        self.parts.iter().find(|p| p.name.is_equivalent(name))
     }
 }
 
@@ -599,7 +694,9 @@ fn read_part_bytes<R: Read>(
     Ok(data)
 }
 
-/// The parsed content-type map of a package.
+/// The parsed content-type map of a package. Its keys are in ASCII lowercase,
+/// because OPC ignores ASCII case when it matches extensions and Override part
+/// names.
 struct ContentTypes {
     defaults: BTreeMap<String, String>,
     overrides: BTreeMap<String, String>,
@@ -607,7 +704,7 @@ struct ContentTypes {
 
 impl ContentTypes {
     fn lookup(&self, part: &PartName) -> Option<&str> {
-        if let Some(ct) = self.overrides.get(part.as_str()) {
+        if let Some(ct) = self.overrides.get(&part.as_str().to_ascii_lowercase()) {
             return Some(ct);
         }
         let ext = part.extension_lowercase()?;
@@ -623,16 +720,47 @@ fn attr_value(attr: &Attribute<'_>) -> Option<String> {
         .map(|v| v.into_owned())
 }
 
+/// The names of the elements that an event loop has opened and not yet closed,
+/// innermost last.
+#[derive(Default)]
+struct OpenElements(Vec<Vec<u8>>);
+
+impl OpenElements {
+    fn track(&mut self, event: &Event<'_>) {
+        match event {
+            Event::Start(e) => self.0.push(e.name().as_ref().to_vec()),
+            Event::End(_) => {
+                self.0.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Fails while an element is still open, with the error that `quick-xml`
+    /// gives for a missing end tag when it skips a subtree.
+    fn ensure_closed(&self) -> Result<(), quick_xml::errors::Error> {
+        match self.0.last() {
+            None => Ok(()),
+            Some(name) => {
+                let name = String::from_utf8_lossy(name).into_owned();
+                Err(IllFormedError::MissingEndTag(name).into())
+            }
+        }
+    }
+}
+
 fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
     let mut reader = NsReader::from_reader(bytes);
     let mut buffer = Vec::new();
     let mut defaults = BTreeMap::new();
     let mut overrides = BTreeMap::new();
+    let mut open = OpenElements::default();
     loop {
-        match reader
+        let event = reader
             .read_event_into(&mut buffer)
-            .map_err(PackageReadError::ContentTypesXml)?
-        {
+            .map_err(PackageReadError::ContentTypesXml)?;
+        open.track(&event);
+        match event {
             Event::Start(e) | Event::Empty(e) => {
                 let local = e.local_name();
                 if local.as_ref() == b"Default" {
@@ -653,7 +781,12 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
                         content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
                             attribute: "ContentType",
                         })?;
-                    defaults.insert(extension.to_ascii_lowercase(), content_type);
+                    if defaults
+                        .insert(extension.to_ascii_lowercase(), content_type)
+                        .is_some()
+                    {
+                        return Err(PackageReadError::DuplicateDefaultExtension { extension });
+                    }
                 } else if local.as_ref() == b"Override" {
                     let mut part_name = None;
                     let mut content_type = None;
@@ -672,14 +805,23 @@ fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
                         content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
                             attribute: "ContentType",
                         })?;
-                    overrides.insert(part_name, content_type);
+                    if overrides
+                        .insert(part_name.to_ascii_lowercase(), content_type)
+                        .is_some()
+                    {
+                        return Err(PackageReadError::DuplicateOverridePartName { part_name });
+                    }
                 }
             }
+            // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
             Event::Eof => break,
             _ => {}
         }
+        // #[gamma::skip(stmt.delete_call, reason = "memory only")]
         buffer.clear();
     }
+    open.ensure_closed()
+        .map_err(PackageReadError::ContentTypesXml)?;
     Ok(ContentTypes {
         defaults,
         overrides,
@@ -690,13 +832,15 @@ fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, Pa
     let mut reader = NsReader::from_reader(bytes);
     let mut buffer = Vec::new();
     let mut relationships = Vec::new();
+    let mut open = OpenElements::default();
+    let xml_error = |source| PackageReadError::RelationshipsXml {
+        part: part.to_string(),
+        source,
+    };
     loop {
-        match reader.read_event_into(&mut buffer).map_err(|source| {
-            PackageReadError::RelationshipsXml {
-                part: part.to_string(),
-                source,
-            }
-        })? {
+        let event = reader.read_event_into(&mut buffer).map_err(xml_error)?;
+        open.track(&event);
+        match event {
             Event::Start(e) | Event::Empty(e) => {
                 if e.local_name().as_ref() != b"Relationship" {
                     continue;
@@ -722,17 +866,22 @@ fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, Pa
                     target: target.ok_or_else(|| missing("Target"))?,
                 });
             }
+            // #[gamma::skip(loop.break_to_continue, reason = "endless loop")]
             Event::Eof => break,
             _ => {}
         }
+        // #[gamma::skip(stmt.delete_call, reason = "memory only")]
         buffer.clear();
     }
+    open.ensure_closed().map_err(xml_error)?;
     Ok(relationships)
 }
 
+// #[gamma::skip(try.propagate_to_unwrap, reason = "writes into a Vec")]
 fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageWriteError> {
     let mut buffer = Vec::new();
     let mut writer = Writer::new(&mut buffer);
+    // #[gamma::skip(option.some_to_none, reason = "UTF-8 is the default")]
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     let mut root = BytesStart::new("Relationships");
     root.push_attribute(("xmlns", crate::names::RELATIONSHIPS_NS));
@@ -748,30 +897,69 @@ fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageW
     Ok(buffer)
 }
 
-/// Returns whether a part is a relationships part (`.../_rels/<name>.rels`).
-fn is_relationships_part(name: &PartName) -> bool {
-    name.as_str().ends_with(".rels")
-        && name
-            .as_str()
-            .rsplit('/')
-            .nth(1)
-            .is_some_and(|dir| dir == "_rels")
+/// Returns whether OPC reserves a name for a Relationships part
+/// (`.../_rels/<name>.rels`, in any ASCII case).
+fn is_reserved_for_relationships(name: &PartName) -> bool {
+    split_relationships_part_name(name).is_some()
 }
 
-/// Returns the source a relationships part describes: `None` for the package
-/// root (`/_rels/.rels`), otherwise the part name.
-fn relationships_source(rels: &PartName) -> Option<PartName> {
-    if rels.as_str() == "/_rels/.rels" {
-        return None;
+/// Splits a name that OPC reserves for Relationships parts into the folder and
+/// the file name of its source: `/3D/_rels/a.model.rels` gives `/3D` and
+/// `a.model`.
+fn split_relationships_part_name(name: &PartName) -> Option<(&str, &str)> {
+    // #[gamma::skip(try.propagate_to_unwrap, reason = "names have a /")]
+    let (folder, file) = name.as_str().rsplit_once('/')?;
+    let (source_folder, rels_folder) = folder.rsplit_once('/')?;
+    let (source_file, extension) = file.rsplit_once('.')?;
+    (rels_folder.eq_ignore_ascii_case("_rels") && extension.eq_ignore_ascii_case("rels"))
+        .then_some((source_folder, source_file))
+}
+
+/// Returns whether `name` is derivable from `base` in the OPC sense: it starts
+/// with `base` and a `/`, in any ASCII case.
+fn is_derivable(name: &str, base: &str) -> bool {
+    let (name, base) = (name.as_bytes(), base.as_bytes());
+    name.len() > base.len()
+        && name[base.len()] == b'/'
+        && name[..base.len()].eq_ignore_ascii_case(base)
+}
+
+/// Returns `(base, derived)` when 1 of the 2 names is derivable from the other.
+fn derivable_pair<'a>(a: &'a str, b: &'a str) -> Option<(&'a str, &'a str)> {
+    if is_derivable(a, b) {
+        Some((b, a))
+    } else if is_derivable(b, a) {
+        Some((a, b))
+    } else {
+        None
     }
-    let full = rels.as_str();
-    let file = full.rsplit('/').next().unwrap_or("");
-    let source_file = file.strip_suffix(".rels").unwrap_or(file);
-    let dir_with_rels = &full[..full.len() - file.len()];
-    let dir = dir_with_rels
-        .strip_suffix("_rels/")
-        .unwrap_or(dir_with_rels);
-    PartName::new(&format!("{dir}{source_file}")).ok()
+}
+
+/// Returns the values `(base, derived)` of 2 keys of `names` where 1 is
+/// derivable from the other, if any. The keys are names in ASCII lowercase.
+fn find_derivable<V>(names: &BTreeMap<String, V>) -> Option<(&V, &V)> {
+    names.iter().find_map(|(key, derived)| {
+        key.match_indices('/')
+            .find_map(|(index, _)| names.get(&key[..index]))
+            .map(|base| (base, derived))
+    })
+}
+
+/// Returns the source of a Relationships part: `None` for the package
+/// (`/_rels/.rels`, in any ASCII case), otherwise the part name. Fails when the
+/// source is not a part name, or is the name of a Relationships part.
+fn relationships_source(rels: &PartName) -> Result<Option<PartName>, PackageReadError> {
+    if rels.as_str().eq_ignore_ascii_case("/_rels/.rels") {
+        return Ok(None);
+    }
+    let source = split_relationships_part_name(rels)
+        .and_then(|(folder, file)| PartName::new(&format!("{folder}/{file}")).ok());
+    match source {
+        Some(source) if !is_reserved_for_relationships(&source) => Ok(Some(source)),
+        _ => Err(PackageReadError::RelationshipsPartWithoutSource {
+            part: rels.as_str().to_string(),
+        }),
+    }
 }
 
 /// Resolves a relationship target against its source directory. Absolute

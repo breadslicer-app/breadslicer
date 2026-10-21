@@ -31,7 +31,7 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
+use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::config::target_format::{
@@ -267,13 +267,13 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
     }
 }
 
-/// Repairs every mesh of `scene` and reports the fixes and the refusals to
-/// `out`.
+/// Repairs every mesh of `scene` and reports the fixes, the refusals and the
+/// zero-area faces that remain to `out`.
 fn repair_scene(scene: &mut Scene, out: &mut dyn Write) {
     let outcomes = scene.repair_meshes(RepairPasses::default_repair());
     let fixes: Vec<MeshFix> = outcomes
         .iter()
-        .flat_map(|outcome| outcome.fixes.iter().cloned())
+        .flat_map(|outcome| outcome.report.fixes.iter().cloned())
         .collect();
     if !fixes.is_empty() {
         show_applied_fixes(&fixes, out);
@@ -281,6 +281,7 @@ fn repair_scene(scene: &mut Scene, out: &mut dyn Write) {
     // Refusals warn but do not abort: the engine's validation gate remains the
     // authority on what can be sliced.
     show_refusal_warnings(&outcomes, out);
+    show_zero_area_warnings(&outcomes, out);
 }
 
 /// Renders a slice-preparation failure for the terminal.

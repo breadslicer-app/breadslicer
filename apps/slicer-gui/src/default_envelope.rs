@@ -69,14 +69,11 @@ fn default_printer_plate(catalog: &ProfileCatalog, chosen: Option<&PrinterId>) -
 
 #[cfg(test)]
 mod default_envelope_tests {
-    use sc_print_primitives::{
-        FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings,
-    };
     use sc_print_profiles::generic_printer_id;
 
     use super::*;
     use crate::preferences_bus::PreferencesSnapshot;
-    use crate::profile_catalog::{PrinterCatalogEntry, ProfileSource};
+    use crate::test_support::catalog_entries::printer_entry;
 
     const OTHER: [f64; 3] = [120.0, 68.0, 150.0];
     const GENERIC: [f64; 3] = [200.0, 200.0, 200.0];
@@ -85,23 +82,6 @@ mod default_envelope_tests {
 
     fn other_printer() -> PrinterId {
         PrinterId::new("other-printer").expect("valid printer id")
-    }
-
-    fn printer_entry(id: PrinterId, manufacturer: &str, plate: [f64; 3]) -> PrinterCatalogEntry {
-        let [x, y, z] = plate;
-        PrinterCatalogEntry {
-            id,
-            manufacturer: manufacturer.to_owned(),
-            name: String::new(),
-            build_volume: sc_print_primitives::BuildVolume::new(x, y, z)
-                .expect("valid build volume"),
-            output_formats: OutputFormatBindings::new(OutputFormatBinding {
-                format: FormatKind::Goo,
-                version: Some(NonEmptyString::new("v3.0").expect("non-empty version")),
-            }),
-            image_path: None,
-            source: ProfileSource::Bundled,
-        }
     }
 
     /// Builds a catalog where the other printer sorts before the Generic

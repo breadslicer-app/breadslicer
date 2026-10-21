@@ -6,13 +6,12 @@
 //! Lifetime-bound witnesses for mesh invariants, layered from weakest to
 //! strongest:
 //!
-//! 1. [`ValidatedFaces`] / [`ValidatedFacesMut`]: every `face.vertices[k]` is
-//!    `< mesh.vertices.len()`. Minted by `IndexedMesh::validated_faces` (or the
-//!    `_mut` form), which runs `validate_faces` once and on success hands back
-//!    a witness whose lifetime ties safe access to the still-valid borrow.
-//!    Routines that index into `vertices` / `faces` without bounds checks live
-//!    on the witness, so the in-range invariant is statically enforced rather
-//!    than relying on the caller's discipline.
+//! 1. [`ValidatedFaces`]: every `face.vertices[k]` is `< mesh.vertices.len()`.
+//!    Minted by `IndexedMesh::validated_faces`, which runs `validate_faces`
+//!    once and on success hands back a witness whose lifetime ties safe access
+//!    to the still-valid borrow. Routines that index into `vertices` / `faces`
+//!    without bounds checks live on the witness, so the in-range invariant is
+//!    statically enforced rather than relying on the caller's discipline.
 //! 2. [`ValidatedEdgeManifoldMesh`]: in addition, every edge is incident to
 //!    exactly 2 faces and consistently oriented across that edge. Minted by
 //!    [`ValidatedFaces::validated_edge_manifold`], which consumes the in-range
@@ -20,14 +19,9 @@
 //!    to the stronger witness. Vertex-manifoldness is deliberately NOT part of
 //!    the claim: pinch vertices pass.
 //!
-//! Operations that preserve the in-range invariant, such as
-//! `fix_faces_orientation` (it reverses the vertex order of faces in place) and
-//! the read-only validators, are methods on the witnesses. Zero-length-edge
-//! face removal lives on `IndexedMesh` itself:
-//! `IndexedMesh::fix_zero_length_edges_into_validated` removes the faces and
-//! returns the witness for the result.
-
-mod fix_faces_orientation;
+//! The read-only validators are methods on the witnesses. The mutable forms of
+//! the witnesses, with the repairs that keep their claims, are in
+//! `validated_mut`.
 
 use std::fmt;
 
@@ -101,14 +95,6 @@ impl fmt::Display for MeshEdgeManifoldError {
 #[derive(Debug)]
 pub struct ValidatedFaces<'a> {
     mesh: &'a IndexedMesh,
-}
-
-/// Mutable witness that the underlying `IndexedMesh`'s face indices are all in
-/// range. Methods on the witness only perform mutations that preserve that
-/// invariant.
-#[derive(Debug)]
-pub struct ValidatedFacesMut<'a> {
-    mesh: &'a mut IndexedMesh,
 }
 
 impl<'a> ValidatedFaces<'a> {
@@ -188,7 +174,7 @@ impl<'a> ValidatedFaces<'a> {
 ///   fans. Such a mesh still bounds a well-defined solid; consumers that need
 ///   the per-vertex fan structure get it from `MeshTopology`.
 /// - Every triangle has non-zero area (covered by
-///   [`ValidatedFaces::validate_face_areas`]).
+///   [`Self::validate_face_areas`]).
 /// - Any particular global winding convention (CCW outward, etc.):
 ///   edge-manifold inputs may still be globally inside-out.
 #[derive(Debug)]
@@ -215,34 +201,16 @@ impl<'a> ValidatedEdgeManifoldMesh<'a> {
     pub fn as_indexed_mesh(&self) -> &IndexedMesh {
         self.mesh
     }
-}
-
-impl<'a> ValidatedFacesMut<'a> {
-    pub(super) fn new_unchecked(mesh: &'a mut IndexedMesh) -> Self {
-        Self { mesh }
-    }
-
-    pub fn vertices(&self) -> &[Vertex] {
-        &self.mesh.vertices
-    }
-
-    pub fn faces(&self) -> &[IndexedTriangle] {
-        &self.mesh.faces
-    }
 
     pub fn validate_face_areas(&self) -> Result<(), Vec<ZeroAreaFace>> {
         validate_face_areas_impl(self.mesh)
     }
-
-    pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
-        validate_edge_manifold_impl(self.mesh)
-    }
 }
 
-/// Carries out `validate_face_areas` for both `ValidatedFaces` and
-/// `ValidatedFacesMut`. The in-range invariant is what makes the unguarded
-/// `mesh.vertices[i]` indexing inside this routine safe; both witness types
-/// only call this on a mesh whose `validate_faces` returned `Ok`.
+/// Carries out `validate_face_areas` for `ValidatedFaces` and
+/// `ValidatedEdgeManifoldMesh`. The in-range invariant is what makes the
+/// unguarded `mesh.vertices[i]` indexing inside this routine safe; every
+/// witness type calls this only on a mesh whose `validate_faces` returned `Ok`.
 fn validate_face_areas_impl(mesh: &IndexedMesh) -> Result<(), Vec<ZeroAreaFace>> {
     let mut errors: Vec<ZeroAreaFace> = vec![];
 

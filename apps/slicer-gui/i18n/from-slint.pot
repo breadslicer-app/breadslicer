@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-09-12 10:24+0000\n"
+"POT-Creation-Date: 2026-10-16 18:11+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -107,83 +107,83 @@ msgctxt "SliceView"
 msgid "Slice View"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:13 ui/slice-overwrite-dialog.slint:73
+#: ui/slice-overwrite-dialog.slint:14 ui/slice-overwrite-dialog.slint:83
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:53
+#: ui/slice-overwrite-dialog.slint:63
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice this scene?"
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:59
+#: ui/slice-overwrite-dialog.slint:69
 msgctxt "SliceOverwriteDialog"
 msgid ""
 "The geometry or the print settings changed since the last slice. Re-slicing "
 "replaces the slice data you already have."
 msgstr ""
 
-#: ui/slice-overwrite-dialog.slint:80
+#: ui/slice-overwrite-dialog.slint:90
 msgctxt "SliceOverwriteDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:15
+#: ui/replace-scene-dialog.slint:16
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:68
+#: ui/replace-scene-dialog.slint:76
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:74
+#: ui/replace-scene-dialog.slint:82
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:87
+#: ui/replace-scene-dialog.slint:94
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:92
+#: ui/replace-scene-dialog.slint:99
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it as a project or export a copy "
 "first to keep the changes you've made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:96
+#: ui/replace-scene-dialog.slint:103
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it or export a copy first to keep the "
 "changes you've made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:110
+#: ui/replace-scene-dialog.slint:117
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:118
+#: ui/replace-scene-dialog.slint:125
 msgctxt "ReplaceSceneDialog"
 msgid "Save As & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:119
+#: ui/replace-scene-dialog.slint:126
 msgctxt "ReplaceSceneDialog"
 msgid "Save & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:126
+#: ui/replace-scene-dialog.slint:133
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:133
+#: ui/replace-scene-dialog.slint:140
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
@@ -208,12 +208,12 @@ msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:253
+#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:237
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:321
+#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:306
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
@@ -253,62 +253,62 @@ msgctxt "SlicingPreferences"
 msgid "Anti-aliasing"
 msgstr ""
 
-#: ui/preferences/resin.slint:50
+#: ui/preferences/resin.slint:48
 msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:128
+#: ui/preferences/resin.slint:120
 msgctxt "PreferencesPage"
 msgid "Search resins"
 msgstr ""
 
-#: ui/preferences/resin.slint:130
+#: ui/preferences/resin.slint:122
 msgctxt "PreferencesPage"
 msgid "Search resins by brand, name or family"
 msgstr ""
 
-#: ui/preferences/resin.slint:158 ui/preferences/resin.slint:298
+#: ui/preferences/resin.slint:139 ui/preferences/resin.slint:283
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr ""
 
-#: ui/preferences/resin.slint:164
+#: ui/preferences/resin.slint:145
 msgctxt "PreferencesPage"
 msgid "Fork..."
 msgstr ""
 
-#: ui/preferences/resin.slint:170
+#: ui/preferences/resin.slint:151
 msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr ""
 
-#: ui/preferences/resin.slint:176 ui/preferences/resin.slint:304
+#: ui/preferences/resin.slint:157 ui/preferences/resin.slint:289
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr ""
 
-#: ui/preferences/resin.slint:182
+#: ui/preferences/resin.slint:163
 msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr ""
 
-#: ui/preferences/resin.slint:267
+#: ui/preferences/resin.slint:256
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: ui/preferences/resin.slint:269
+#: ui/preferences/resin.slint:258
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr ""
 
-#: ui/preferences/resin.slint:270
+#: ui/preferences/resin.slint:259
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/preferences/resin.slint:327
+#: ui/preferences/resin.slint:312
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -318,27 +318,27 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:92
+#: ui/preferences/preferences-window.slint:88
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:94
+#: ui/preferences/preferences-window.slint:90
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:95
+#: ui/preferences/preferences-window.slint:91
 msgctxt "PreferencesMenu"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:96
+#: ui/preferences/preferences-window.slint:92
 msgctxt "PreferencesMenu"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:97
+#: ui/preferences/preferences-window.slint:93
 msgctxt "PreferencesMenu"
 msgid "Slicing"
 msgstr ""
@@ -373,24 +373,24 @@ msgctxt "AppearancePreferences"
 msgid "Language"
 msgstr ""
 
-#: ui/info-dialog.slint:9 ui/info-dialog.slint:13 ui/info-dialog.slint:73
+#: ui/info-dialog.slint:10 ui/info-dialog.slint:14 ui/info-dialog.slint:80
 msgctxt "InfoDialog"
 msgid "Information"
 msgstr ""
 
-#. can't accidentally drop or replace it.
-#: ui/info-dialog.slint:101
+#. drop or replace it.
+#: ui/info-dialog.slint:108
 msgctxt "InfoDialog"
 msgid "Hide details"
 msgstr ""
 
-#. can't accidentally drop or replace it.
-#: ui/info-dialog.slint:101
+#. drop or replace it.
+#: ui/info-dialog.slint:108
 msgctxt "InfoDialog"
 msgid "Show details"
 msgstr ""
 
-#: ui/info-dialog.slint:128
+#: ui/info-dialog.slint:135
 msgctxt "InfoDialog"
 msgid "Close"
 msgstr ""
@@ -550,34 +550,34 @@ msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""
 
-#: ui/error-dialog.slint:9
+#: ui/error-dialog.slint:10
 msgctxt "ErrorDialog"
 msgid "Error"
 msgstr ""
 
-#: ui/error-dialog.slint:13
+#: ui/error-dialog.slint:14
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: ui/error-dialog.slint:74
+#: ui/error-dialog.slint:82
 msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr ""
 
-#. runs automatically.
-#: ui/error-dialog.slint:116
+#. side of the label in RTL runs automatically.
+#: ui/error-dialog.slint:123
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
 msgstr ""
 
-#. runs automatically.
-#: ui/error-dialog.slint:116
+#. side of the label in RTL runs automatically.
+#: ui/error-dialog.slint:123
 msgctxt "ErrorDialog"
 msgid "Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:143
+#: ui/error-dialog.slint:150
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
@@ -842,182 +842,187 @@ msgctxt "ExtendDialog"
 msgid "Add calibration values for a target this resin does not cover yet."
 msgstr ""
 
-#: ui/extend-dialog.slint:116
+#: ui/extend-dialog.slint:119
 msgctxt "ExtendDialog"
 msgid "Copy values from"
 msgstr ""
 
-#: ui/extend-dialog.slint:129
+#: ui/extend-dialog.slint:132
 msgctxt "ExtendDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:133
+#: ui/extend-dialog.slint:136
 msgctxt "ExtendDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:137
+#: ui/extend-dialog.slint:140
 msgctxt "ExtendDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: ui/extend-dialog.slint:141
+#: ui/extend-dialog.slint:144
 msgctxt "ExtendDialog"
 msgid "Wait before cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:145
+#: ui/extend-dialog.slint:148
 msgctxt "ExtendDialog"
 msgid "Wait after cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:149
+#: ui/extend-dialog.slint:152
 msgctxt "ExtendDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:153
+#: ui/extend-dialog.slint:156
 msgctxt "ExtendDialog"
 msgid "Bottom wait before cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:157
+#: ui/extend-dialog.slint:160
 msgctxt "ExtendDialog"
 msgid "Bottom wait after cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:161
+#: ui/extend-dialog.slint:164
 msgctxt "ExtendDialog"
 msgid "Bottom wait after lift (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:165
+#: ui/extend-dialog.slint:168
 msgctxt "ExtendDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:169
+#: ui/extend-dialog.slint:172
 msgctxt "ExtendDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:173
+#: ui/extend-dialog.slint:176
 msgctxt "ExtendDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:177
+#: ui/extend-dialog.slint:180
 msgctxt "ExtendDialog"
 msgid "Second lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:181
+#: ui/extend-dialog.slint:184
 msgctxt "ExtendDialog"
 msgid "Second lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:185
+#: ui/extend-dialog.slint:188
 msgctxt "ExtendDialog"
 msgid "Second retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:189
+#: ui/extend-dialog.slint:192
 msgctxt "ExtendDialog"
 msgid "Bottom lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:193
+#: ui/extend-dialog.slint:196
 msgctxt "ExtendDialog"
 msgid "Bottom lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:197
+#: ui/extend-dialog.slint:200
 msgctxt "ExtendDialog"
 msgid "Bottom retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:201
+#: ui/extend-dialog.slint:204
 msgctxt "ExtendDialog"
 msgid "Bottom second lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:205
+#: ui/extend-dialog.slint:208
 msgctxt "ExtendDialog"
 msgid "Bottom second lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:209
+#: ui/extend-dialog.slint:212
 msgctxt "ExtendDialog"
 msgid "Bottom second retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:213
+#: ui/extend-dialog.slint:216
 msgctxt "ExtendDialog"
 msgid "Light power (%)"
 msgstr ""
 
-#: ui/extend-dialog.slint:217
+#: ui/extend-dialog.slint:220
 msgctxt "ExtendDialog"
 msgid "Bottom light power (%)"
 msgstr ""
 
-#: ui/extend-dialog.slint:235
+#: ui/extend-dialog.slint:238
 msgctxt "ExtendDialog"
 msgid "Save"
 msgstr ""
 
-#: ui/extend-dialog.slint:243
+#: ui/extend-dialog.slint:246
 msgctxt "ExtendDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/fork-dialog.slint:14
+#: ui/fork-dialog.slint:21
 msgctxt "ForkDialog"
 msgid "Fork resin profile"
 msgstr ""
 
-#: ui/fork-dialog.slint:77
+#: ui/fork-dialog.slint:84
 msgctxt "ForkDialog"
 msgid "Fork {}"
 msgstr ""
 
-#: ui/fork-dialog.slint:88
+#: ui/fork-dialog.slint:95
 msgctxt "ForkDialog"
 msgid "Brand"
 msgstr ""
 
-#: ui/fork-dialog.slint:103
+#: ui/fork-dialog.slint:110
 msgctxt "ForkDialog"
 msgid "Name"
 msgstr ""
 
-#: ui/fork-dialog.slint:119
+#: ui/fork-dialog.slint:126
 msgctxt "ForkDialog"
 msgid "Copy from the source:"
 msgstr ""
 
-#: ui/fork-dialog.slint:132
+#: ui/fork-dialog.slint:139
 msgctxt "ForkDialog"
 msgid "Intent"
 msgstr ""
 
-#: ui/fork-dialog.slint:136
+#: ui/fork-dialog.slint:143
 msgctxt "ForkDialog"
 msgid "Defaults"
 msgstr ""
 
-#: ui/fork-dialog.slint:140
+#: ui/fork-dialog.slint:147
 msgctxt "ForkDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/fork-dialog.slint:161
+#: ui/fork-dialog.slint:149
+msgctxt "ForkDialog"
+msgid "Generic"
+msgstr ""
+
+#: ui/fork-dialog.slint:171
 msgctxt "ForkDialog"
 msgid "Create"
 msgstr ""
 
-#: ui/fork-dialog.slint:168
+#: ui/fork-dialog.slint:178
 msgctxt "ForkDialog"
 msgid "Cancel"
 msgstr ""

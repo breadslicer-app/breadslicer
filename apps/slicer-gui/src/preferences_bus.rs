@@ -11,10 +11,11 @@
 //!
 //! Listeners receive the whole new snapshot plus a `PreferencesChange` enum
 //! describing what triggered the dispatch. They can filter by variant if they
-//! only care about specific prefs. Listener order is registration order. The
-//! app-wide listeners subscribe in `AppState::new`, before any window exists,
-//! so the active translation and `DefaultEnvelope` are up to date when a
-//! window's listener runs.
+//! only care about specific prefs. Listener order is registration order.
+//! `DefaultEnvelope` subscribes in `AppState::new`, before any window exists,
+//! and `UiLanguage` when the first window is created, before the listeners of
+//! that window; so the default plate and the active translation are up to date
+//! when a window's listener runs.
 //!
 //! Subscriptions are RAII: the [`Subscription`] handle drops the listener from
 //! the bus on `Drop`. Each window's builder holds its own `Subscription`
@@ -30,7 +31,7 @@ use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
-use crate::{MenuLayout, ThemePreference};
+use crate::slint_ui::{MenuLayout, ThemePreference};
 
 /// Full read-out of every preference. Listeners receive a reference; clone the
 /// fields they care about.
@@ -293,8 +294,14 @@ impl Drop for Subscription {
         let Some(bus) = self.bus.upgrade() else {
             return;
         };
-        let mut inner = bus.inner.borrow_mut();
-        inner.listeners.retain(|(id, _)| *id != self.id);
+        let removed = {
+            let mut inner = bus.inner.borrow_mut();
+            let index = inner.listeners.iter().position(|(id, _)| *id == self.id);
+            index.map(|index| inner.listeners.remove(index))
+        };
+        // Dropped after the borrow ends: the listener can own another
+        // subscription to this bus.
+        drop(removed);
     }
 }
 
@@ -304,7 +311,7 @@ mod preferences_bus_tests {
 
     use std::cell::{Cell, RefCell};
 
-    use crate::{MenuLayout, ThemePreference};
+    use crate::slint_ui::{MenuLayout, ThemePreference};
 
     fn initial() -> PreferencesSnapshot {
         PreferencesSnapshot::for_tests()
@@ -686,6 +693,22 @@ mod preferences_bus_tests {
         drop(bus);
         // sub now holds a dangling Weak; its Drop must silently no-op.
         drop(sub);
+    }
+
+    #[test]
+    fn dropping_a_listener_that_holds_a_subscription_removes_both() {
+        let bus = PreferencesBus::new(initial());
+        let calls = Rc::new(Cell::new(0));
+        let inner = bus.subscribe({
+            let calls = calls.clone();
+            move |_, _| calls.set(calls.get() + 1)
+        });
+        let outer = bus.subscribe(move |_, _| {
+            let _ = &inner;
+        });
+        drop(outer);
+        trigger_theme(&bus, ThemePreference::Dark);
+        assert_eq!(calls.get(), 0);
     }
 
     #[test]

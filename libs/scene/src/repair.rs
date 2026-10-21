@@ -12,25 +12,18 @@
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
-use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, assess_repair};
-use sc_mesh_core::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
+use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, RepairEnd, assess_repair};
+use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairPasses};
 
 /// Everything a repair run did, and did not do, to 1 stored mesh.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneRepairOutcome {
     /// The storage place this outcome describes.
     pub target: MeshTarget,
-    /// Fixes applied, in pass order. Empty for clean and refused targets; can
-    /// be non-empty with a pass-level refusal (the fixes of earlier passes
-    /// stand).
-    pub fixes: Vec<MeshFix>,
-    /// Why the run stopped early for this target, if it did.
-    pub refusal: Option<RepairRefusal>,
-    /// Whether the mesh of the target is edge-manifold after the run, by the
-    /// check the health sweep also uses. `true` does not mean "repaired" (a
-    /// clean mesh reports `true` too), and `refusal: None` does not mean `true`
-    /// (holes are not repairable and not a refusal).
-    pub edge_manifold_after: bool,
+    /// The report of the run on the mesh of the target. A target that the
+    /// assessment finds clean or refused gets no run: its report has no fixes,
+    /// and ends with the state or the refusal of the assessment.
+    pub report: MeshRepairReport,
 }
 
 impl Scene {
@@ -49,43 +42,26 @@ impl Scene {
                 // total.
                 continue;
             };
-            let outcome = match assess_repair(mesh, passes) {
-                RepairAssessment::Clean => SceneRepairOutcome {
-                    target,
+            let report = match assess_repair(mesh, passes) {
+                RepairAssessment::Clean(state) => MeshRepairReport {
                     fixes: Vec::new(),
-                    refusal: None,
-                    edge_manifold_after: mesh_is_edge_manifold(mesh),
+                    end: RepairEnd::Completed(state),
                 },
-                RepairAssessment::Refused(refusal) => SceneRepairOutcome {
-                    target,
+                RepairAssessment::Refused(refusal) => MeshRepairReport {
                     fixes: Vec::new(),
-                    refusal: Some(refusal),
-                    edge_manifold_after: mesh_is_edge_manifold(mesh),
+                    end: RepairEnd::Refused(refusal),
                 },
                 RepairAssessment::Work => {
                     let Some(mesh) = self.target_mesh_mut(target) else {
                         continue;
                     };
-                    let report = mesh.repair(passes);
-                    SceneRepairOutcome {
-                        target,
-                        fixes: report.fixes,
-                        refusal: report.refusal,
-                        edge_manifold_after: report.edge_manifold_after,
-                    }
+                    mesh.repair(passes)
                 }
             };
-            outcomes.push(outcome);
+            outcomes.push(SceneRepairOutcome { target, report });
         }
         outcomes
     }
-}
-
-/// Returns whether `mesh` is edge-manifold, by the check of the health sweep,
-/// for outcomes built without running the passes.
-fn mesh_is_edge_manifold(mesh: &IndexedMesh) -> bool {
-    mesh.validated_faces()
-        .is_ok_and(|faces| faces.validated_edge_manifold().is_ok())
 }
 
 #[cfg(test)]
@@ -94,6 +70,8 @@ mod scene_repair_tests {
 
     use super::*;
     use crate::node::{LeafPayload, NodeId};
+    use sc_mesh_core::indexed_mesh::repair::MeshStateAfterRepair;
+    use sc_mesh_core::indexed_mesh::{IndexedMesh, RepairRefusal};
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
 
@@ -146,6 +124,27 @@ mod scene_repair_tests {
         }
     }
 
+    /// Returns a closed tetrahedron with its 4 vertices in 1 plane: vertex 2 is
+    /// the midpoint of vertices 0 and 1, so face 0 is collinear. No pass has
+    /// work on it.
+    fn flat_tetrahedron() -> IndexedMesh {
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([2.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([1.0, 1.0, 0.0]),
+        ];
+        let faces = [[2, 0, 1], [0, 2, 3], [2, 1, 3], [1, 0, 3]]
+            .into_iter()
+            .map(IndexedTriangle::from_raw_indices)
+            .collect();
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
     fn add_root_group(graph: &mut Scene) -> NodeId {
         let root = graph.add_group(None, Transform3D::Identity);
         graph.add_root(root).unwrap();
@@ -181,29 +180,34 @@ mod scene_repair_tests {
 
         let outcomes = graph.repair_meshes(RepairPasses::default_repair());
 
+        let closed = RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+        });
         assert_eq!(outcomes.len(), 3);
         assert_eq!(outcomes[0].target, MeshTarget::Resource(rid));
-        assert_eq!(outcomes[0].fixes.len(), 1);
-        assert_eq!(outcomes[0].refusal, None);
-        assert!(outcomes[0].edge_manifold_after);
+        assert_eq!(outcomes[0].report.fixes.len(), 1);
+        assert_eq!(outcomes[0].report.end, closed);
 
         assert_eq!(outcomes[1].target, MeshTarget::InlineLeaf(nan_leaf));
-        assert!(outcomes[1].fixes.is_empty());
+        assert!(outcomes[1].report.fixes.is_empty());
         assert!(matches!(
-            outcomes[1].refusal,
-            Some(RepairRefusal::InvalidVertices(_))
+            outcomes[1].report.end,
+            RepairEnd::Refused(RepairRefusal::InvalidVertices(_))
         ));
 
         assert_eq!(outcomes[2].target, MeshTarget::InlineLeaf(clean_leaf));
-        assert!(outcomes[2].fixes.is_empty());
-        assert_eq!(outcomes[2].refusal, None);
-        assert!(outcomes[2].edge_manifold_after);
+        assert!(outcomes[2].report.fixes.is_empty());
+        assert_eq!(outcomes[2].report.end, closed);
 
         // The repaired resource is edge-manifold in the scene, and the refused
         // mesh kept its bytes (NaN compared bitwise).
-        assert!(mesh_is_edge_manifold(
-            graph.target_mesh(MeshTarget::Resource(rid)).unwrap()
-        ));
+        let repaired = graph.target_mesh(MeshTarget::Resource(rid)).unwrap();
+        assert!(
+            repaired
+                .validated_faces()
+                .is_ok_and(|faces| faces.validated_edge_manifold().is_ok())
+        );
         let kept = graph.target_mesh(MeshTarget::InlineLeaf(nan_leaf)).unwrap();
         let expected = nan_tetrahedron();
         assert_eq!(kept.faces, expected.faces);
@@ -264,9 +268,41 @@ mod scene_repair_tests {
         let outcomes = graph.repair_meshes(RepairPasses::default_repair());
 
         assert_eq!(outcomes.len(), 1);
-        assert!(outcomes[0].fixes.is_empty());
-        assert_eq!(outcomes[0].refusal, None);
-        assert!(!outcomes[0].edge_manifold_after);
+        assert_eq!(
+            outcomes[0].report,
+            MeshRepairReport {
+                fixes: Vec::new(),
+                end: RepairEnd::Completed(MeshStateAfterRepair {
+                    edge_manifold: false,
+                    zero_area_face_count: 0,
+                }),
+            }
+        );
+        assert!(Arc::ptr_eq(graph.leaf_mesh_arc(leaf).unwrap(), &held));
+    }
+
+    /// Pins that a target with no work gets the zero-area faces of its mesh in
+    /// its report, and does not fork.
+    #[test]
+    fn a_clean_target_reports_its_zero_area_face_without_work() {
+        let mut graph = Scene::new();
+        let root = add_root_group(&mut graph);
+        let leaf = add_inline_leaf(&mut graph, root, flat_tetrahedron());
+        let held = Arc::clone(graph.leaf_mesh_arc(leaf).unwrap());
+
+        let outcomes = graph.repair_meshes(RepairPasses::default_repair());
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].report,
+            MeshRepairReport {
+                fixes: Vec::new(),
+                end: RepairEnd::Completed(MeshStateAfterRepair {
+                    edge_manifold: true,
+                    zero_area_face_count: 1,
+                }),
+            }
+        );
         assert!(Arc::ptr_eq(graph.leaf_mesh_arc(leaf).unwrap(), &held));
     }
 

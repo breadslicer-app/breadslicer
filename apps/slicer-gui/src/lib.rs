@@ -81,6 +81,7 @@ mod tests_scene_dirty;
 mod tests_scene_loader;
 #[cfg(test)]
 mod tests_slice_result;
+mod ui_language;
 mod viewport;
 mod window_icon;
 mod window_prefs;
@@ -94,9 +95,7 @@ use std::path::PathBuf;
 // lints the workspace denies. Lint attributes are ignored on macro invocations,
 // hence the wrapper module.
 #[allow(missing_debug_implementations, unreachable_pub, unused_qualifications)]
-mod slint_ui {
-    slint::include_modules!();
-}
+mod slint_ui;
 pub use slint_ui::*;
 
 use crate::app_state::AppState;

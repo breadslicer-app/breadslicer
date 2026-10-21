@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
@@ -20,6 +20,7 @@ use slint::wgpu_30::wgpu;
 use super::device_loss::DeviceLoss;
 use super::device_ops::create_buffer_reporting;
 use crate::build_volume::BuildVolume;
+use crate::i18n::ctr;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -95,40 +96,102 @@ pub struct LeafBufferExceedsDeviceLimit {
 
 impl fmt::Display for LeafBufferExceedsDeviceLimit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let what = match self.buffer_kind {
-            LeafBufferKind::Vertex => "vertices",
-            LeafBufferKind::Index => "triangles",
+        let count = self.num_elements;
+        let text = match (self.buffer_kind, &self.leaf_name) {
+            (LeafBufferKind::Vertex, Some(name)) => ctr!(
+                "ErrorDialog",
+                "Object '{}' has more vertices ({}) than this graphics device can hold in one buffer",
+                name,
+                count
+            ),
+            (LeafBufferKind::Vertex, None) => ctr!(
+                "ErrorDialog",
+                "An object has more vertices ({}) than this graphics device can hold in one buffer",
+                count
+            ),
+            (LeafBufferKind::Index, Some(name)) => ctr!(
+                "ErrorDialog",
+                "Object '{}' has more triangles ({}) than this graphics device can hold in one buffer",
+                name,
+                count
+            ),
+            (LeafBufferKind::Index, None) => ctr!(
+                "ErrorDialog",
+                "An object has more triangles ({}) than this graphics device can hold in one buffer",
+                count
+            ),
         };
-        match &self.leaf_name {
-            Some(name) => write!(f, "Object '{name}' has more {what}")?,
-            None => write!(f, "An object has more {what}")?,
-        }
-        write!(
-            f,
-            " ({}) than this graphics device can hold in one buffer",
-            self.num_elements
-        )
+        f.write_str(&text)
     }
 }
 
 impl std::error::Error for LeafBufferExceedsDeviceLimit {}
 
+/// A buffer of the scene upload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UploadBuffer {
+    /// The vertex or index buffer of an object, with the object's name when it
+    /// has one.
+    Object {
+        kind: LeafBufferKind,
+        name: Option<String>,
+    },
+    /// The per-object transform table.
+    TransformTable,
+}
+
 #[derive(Debug)]
 pub struct DeviceRefusedBuffer {
-    /// What the buffer holds, in the user's terms ("index buffer of object
-    /// 'hull'", "per-object transform table").
-    pub what: String,
+    pub what: UploadBuffer,
     pub num_bytes: u64,
     pub source: wgpu::Error,
 }
 
 impl fmt::Display for DeviceRefusedBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "The graphics device refused the {} ({} bytes)",
-            self.what, self.num_bytes
-        )
+        let bytes = self.num_bytes;
+        let text = match &self.what {
+            UploadBuffer::Object {
+                kind: LeafBufferKind::Vertex,
+                name: Some(name),
+            } => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the vertex buffer of object '{}' ({} bytes)",
+                name,
+                bytes
+            ),
+            UploadBuffer::Object {
+                kind: LeafBufferKind::Vertex,
+                name: None,
+            } => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the vertex buffer of an object ({} bytes)",
+                bytes
+            ),
+            UploadBuffer::Object {
+                kind: LeafBufferKind::Index,
+                name: Some(name),
+            } => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the index buffer of object '{}' ({} bytes)",
+                name,
+                bytes
+            ),
+            UploadBuffer::Object {
+                kind: LeafBufferKind::Index,
+                name: None,
+            } => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the index buffer of an object ({} bytes)",
+                bytes
+            ),
+            UploadBuffer::TransformTable => ctr!(
+                "ErrorDialog",
+                "The graphics device refused the per-object transform table ({} bytes)",
+                bytes
+            ),
+        };
+        f.write_str(&text)
     }
 }
 
@@ -143,18 +206,25 @@ pub struct DeviceLostDuringUpload;
 
 impl fmt::Display for DeviceLostDuringUpload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("The graphics device was lost while uploading the scene")
+        f.write_str(&ctr!(
+            "ErrorDialog",
+            "The graphics device was lost while uploading the scene"
+        ))
     }
 }
 
 impl std::error::Error for DeviceLostDuringUpload {}
 
-fn describe_leaf_buffer(buffer: &str, leaf_name: Option<&str>) -> String {
-    match leaf_name {
-        Some(name) => format!("{buffer} of object '{name}'"),
-        None => format!("{buffer} of an object"),
+#[derive(Debug)]
+pub struct NoLeavesToRender;
+
+impl fmt::Display for NoLeavesToRender {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ctr!("ErrorDialog", "Graph has no leaves to render"))
     }
 }
+
+impl std::error::Error for NoLeavesToRender {}
 
 /// Creates a buffer holding `contents`, reporting a refusal instead of
 /// panicking. Empty contents give an empty, unmapped buffer. If the device is
@@ -165,7 +235,7 @@ fn upload_buffer(
     label: &'static str,
     contents: &[u8],
     usage: wgpu::BufferUsages,
-    what: impl FnOnce() -> String,
+    what: impl FnOnce() -> UploadBuffer,
 ) -> Result<wgpu::Buffer> {
     let unpadded = contents.len() as u64;
     // wgpu requires mapped-at-creation sizes to be a multiple of
@@ -305,7 +375,10 @@ impl GpuScene {
                 "mesh-viewer object vertex buffer",
                 bytemuck::cast_slice(&obj.vertices),
                 wgpu::BufferUsages::VERTEX,
-                || describe_leaf_buffer("vertex buffer", obj.name.as_deref()),
+                || UploadBuffer::Object {
+                    kind: LeafBufferKind::Vertex,
+                    name: obj.name.clone(),
+                },
             )?;
             let index_buffer = upload_buffer(
                 device,
@@ -313,7 +386,10 @@ impl GpuScene {
                 "mesh-viewer object index buffer",
                 bytemuck::cast_slice(&obj.indices),
                 wgpu::BufferUsages::INDEX,
-                || describe_leaf_buffer("index buffer", obj.name.as_deref()),
+                || UploadBuffer::Object {
+                    kind: LeafBufferKind::Index,
+                    name: obj.name.clone(),
+                },
             )?;
             objects.push(ObjectDraw {
                 node_id: obj.node_id,
@@ -341,7 +417,7 @@ impl GpuScene {
             },
         )
         .map_err(|source| DeviceRefusedBuffer {
-            what: "per-object transform table".to_string(),
+            what: UploadBuffer::TransformTable,
             num_bytes: model_size,
             source,
         })?;
@@ -626,7 +702,7 @@ fn build_gpu_scene_data(
     )?;
 
     if objects.is_empty() {
-        return Err(anyhow!("Graph has no leaves to render"));
+        return Err(NoLeavesToRender.into());
     }
 
     // World-space scene AABB via `Scene::aabb`, which composes each leaf's
@@ -704,7 +780,13 @@ mod build_gpu_scene_data_tests {
     fn empty_graph_returns_error() {
         // A Group root with no children: the shape an empty-file load produces.
         let (graph, _root) = graph_with_group_root();
-        assert!(build_gpu_scene_data(&graph, |_| {}).is_err());
+        let Err(err) = build_gpu_scene_data(&graph, |_| {}) else {
+            panic!("a graph with no leaf has nothing to render");
+        };
+        assert_eq!(err.to_string(), "Graph has no leaves to render");
+        // A value, not a text: the dialog formats it again after a language
+        // change.
+        assert!(err.downcast_ref::<NoLeavesToRender>().is_some(), "{err:?}");
     }
 
     #[test]
@@ -1500,6 +1582,71 @@ mod leaf_buffer_limit_tests {
         assert_eq!(
             check(&graph).unwrap_err().to_string(),
             "Object 'shell' has more vertices (86) than this graphics device can hold in one buffer"
+        );
+    }
+
+    #[test]
+    fn an_unnamed_vertex_refusal_speaks_of_an_object() {
+        let (graph, _) = graph_of(vec![(mesh(86, 1, None), None)]);
+        assert_eq!(
+            check(&graph).unwrap_err().to_string(),
+            "An object has more vertices (86) than this graphics device can hold in one buffer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod upload_refusal_text_tests {
+    use super::*;
+
+    fn refusal(what: UploadBuffer) -> String {
+        DeviceRefusedBuffer {
+            what,
+            num_bytes: 64,
+            source: wgpu::Error::Validation {
+                source: Box::new(std::io::Error::other("x")),
+                description: "x".to_string(),
+            },
+        }
+        .to_string()
+    }
+
+    fn object(kind: LeafBufferKind, name: Option<&str>) -> UploadBuffer {
+        UploadBuffer::Object {
+            kind,
+            name: name.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn each_refused_buffer_has_its_own_sentence() {
+        assert_eq!(
+            refusal(object(LeafBufferKind::Vertex, Some("hull"))),
+            "The graphics device refused the vertex buffer of object 'hull' (64 bytes)"
+        );
+        assert_eq!(
+            refusal(object(LeafBufferKind::Vertex, None)),
+            "The graphics device refused the vertex buffer of an object (64 bytes)"
+        );
+        assert_eq!(
+            refusal(object(LeafBufferKind::Index, Some("hull"))),
+            "The graphics device refused the index buffer of object 'hull' (64 bytes)"
+        );
+        assert_eq!(
+            refusal(object(LeafBufferKind::Index, None)),
+            "The graphics device refused the index buffer of an object (64 bytes)"
+        );
+        assert_eq!(
+            refusal(UploadBuffer::TransformTable),
+            "The graphics device refused the per-object transform table (64 bytes)"
+        );
+    }
+
+    #[test]
+    fn a_device_lost_during_the_upload_says_so() {
+        assert_eq!(
+            DeviceLostDuringUpload.to_string(),
+            "The graphics device was lost while uploading the scene"
         );
     }
 }

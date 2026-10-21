@@ -55,8 +55,11 @@ pub fn home_dir() -> Option<PathBuf> {
 /// loader merges on top of these roots. Keeping it out is what stops a bundled
 /// lookup from resolving to the user's own library.
 pub fn bundled_data_dirs() -> Vec<PathBuf> {
-    let mut roots = installed_data_dirs();
-    let dev = dev_assets_dir();
+    bundled_data_dirs_from(installed_data_dirs(), dev_assets_dir())
+}
+
+/// [`bundled_data_dirs`] for the given installed roots and source-tree root.
+fn bundled_data_dirs_from(mut roots: Vec<PathBuf>, dev: PathBuf) -> Vec<PathBuf> {
     if dev.is_dir() {
         roots.push(dev);
     }
@@ -67,7 +70,8 @@ pub fn bundled_data_dirs() -> Vec<PathBuf> {
 /// data directories (`XDG_DATA_DIRS`).
 #[cfg(target_os = "linux")]
 fn installed_data_dirs() -> Vec<PathBuf> {
-    all_app_dirs(&data_search_bases(), APPLICATION)
+    let bases = data_search_bases(std::env::var_os("XDG_DATA_DIRS"));
+    all_app_dirs(&bases, APPLICATION)
 }
 
 /// macOS / Windows: every existing data directory relative to the
@@ -109,13 +113,13 @@ fn exe_relative_bases(exe_dir: &Path) -> Vec<PathBuf> {
     vec![exe_dir.to_path_buf(), exe_dir.join("share")]
 }
 
-/// The system XDG data directories: each `XDG_DATA_DIRS` entry (or the spec
-/// defaults `/usr/local/share:/usr/share`). `XDG_DATA_HOME` is not among them:
-/// it is the writable per-user location (the user profile library), never an
-/// install root.
+/// The system XDG data directories: each entry of `xdg_data_dirs`, the value of
+/// `XDG_DATA_DIRS` (or the spec defaults `/usr/local/share:/usr/share` when it
+/// is unset or empty). `XDG_DATA_HOME` is not among them: it is the writable
+/// per-user location (the user profile library), never an install root.
 #[cfg(target_os = "linux")]
-fn data_search_bases() -> Vec<PathBuf> {
-    let dirs = std::env::var_os("XDG_DATA_DIRS")
+fn data_search_bases(xdg_data_dirs: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let dirs = xdg_data_dirs
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("/usr/local/share:/usr/share"));
     std::env::split_paths(&dirs).collect()

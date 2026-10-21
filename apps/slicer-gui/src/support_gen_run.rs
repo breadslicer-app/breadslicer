@@ -3,35 +3,32 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-window driver for Tools > "Generate Support":
-//! the GUI's integration touchpoint for `sc-geom`, mirroring
-//! `apps/slicer-cli`'s `support-gen` subcommand. Not a real
-//! support-generation feature.
+//! Per-window driver for Tools > "Generate Support": the GUI's integration
+//! touchpoint for `sc-geom`, mirroring `apps/slicer-cli`'s `support-gen`
+//! subcommand. Not a real support-generation feature.
 //!
-//! Unlike `SliceRun` / `RepairRun`, no `std::thread::spawn` happens
-//! here: `sc_geom::run_geom_algorithm` already runs the algorithm on its own
-//! worker thread and hands back a pollable `JobHandle`, so this driver
-//! just holds that handle and polls `JobHandle::progress()` /
-//! `try_poll()` from a `slint::Timer` on the UI thread, the same
-//! cadence `SliceRun` polls its atomics at. `artificial_delay_ms` is
-//! set deliberately high here (see `sc_geom::TrivialSupportSpecs`'s
-//! own doc comment) purely so that progress bar has ~2 real seconds
-//! to animate instead of resolving instantly.
+//! Unlike `SliceRun` / `RepairRun`, no `std::thread::spawn` happens here:
+//! `sc_geom::run_geom_algorithm` already runs the algorithm on its own worker
+//! thread and hands back a pollable `JobHandle`, so this driver just holds that
+//! handle and polls `JobHandle::progress()` / `try_poll()` from a
+//! `slint::Timer` on the UI thread, the same cadence `SliceRun` polls its
+//! atomics at. `artificial_delay_ms` is set deliberately high here (see
+//! `sc_geom::TrivialSupportSpecs`'s own doc comment) purely so that progress
+//! bar has ~2 real seconds to animate instead of resolving instantly.
 //!
-//! The support-generation job's "boundary", if it is to be the printer's real build volume.
-//! `ViewportController::build_volume()`, the same envelope the
-//! viewport draws as the plate/cage and the Slice panel derives from
-//! the selected printer: read fresh on every press so a printer
-//! change since the window opened is picked up. That envelope's own
-//! convention already puts the bed at `Z = 0`, so a strut cast
-//! downward from the object lands exactly on the bed without this
-//! driver needing to know that itself.
+//! The support-generation job's "boundary", if it is to be the printer's real
+//! build volume. `ViewportController::build_volume()`, the same envelope the
+//! viewport draws as the plate/cage and the Slice panel derives from the
+//! selected printer: read fresh on every press so a printer change since the
+//! window opened is picked up. That envelope's own convention already puts the
+//! bed at `Z = 0`, so a strut cast downward from the object lands exactly on
+//! the bed without this driver needing to know that itself.
 //!
-//! On completion each generated support structure mesh component is pasted into the scene
-//! through the same `SceneFragment` + `SceneDocument::paste_fragment`
-//! primitive Paste uses, so it is a real, "undo"able scene object (shows
-//! up in the object list, survives save/export) rather than a
-//! throwaway preview. Then the run is summarised in an info dialog alongside it.
+//! On completion each generated support structure mesh component is pasted into
+//! the scene through the same `SceneFragment` + `SceneDocument::paste_fragment`
+//! primitive Paste uses, so it is a real, "undo"able scene object (shows up in
+//! the object list, survives save/export) rather than a throwaway preview. Then
+//! the run is summarised in an info dialog alongside it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -50,7 +47,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::build_volume::BuildVolume;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::scene_document::SceneDocument;
 use crate::viewport::ViewportController;
@@ -66,21 +63,20 @@ pub(crate) struct GenSupportRun {
     ui: slint::Weak<MainWindow>,
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
-    // Read live at each press for its current `build_volume()` --
-    // never cached, so a printer change picks up without reopening
-    // the window.
+    // Read live at each press for its current `build_volume()` -- never cached,
+    // so a printer change picks up without reopening the window.
     controller: Rc<ViewportController>,
-    // The in-flight job, if any. Polled by `poll_timer`; `None` when
-    // no run is in progress.
+    // The in-flight job, if any. Polled by `poll_timer`; `None` when no run is
+    // in progress.
     handle: RefCell<Option<GenSupportHandle>>,
-    // Poll timer driving the progress panel. Behind an `Rc` so its own
-    // callback can stop it through a `Weak` without a cycle.
+    // Poll timer driving the progress panel. Behind an `Rc` so its own callback
+    // can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
 }
 
 impl GenSupportRun {
-    /// Wires the Tools menu callback and returns the driver, which the
-    /// caller keeps alive for the window's lifetime.
+    /// Wires the Tools menu callback and returns the driver, which the caller
+    /// keeps alive for the window's lifetime.
     pub(crate) fn install(
         ui: &MainWindow,
         document: Rc<SceneDocument>,
@@ -102,9 +98,9 @@ impl GenSupportRun {
         run
     }
 
-    /// Handles the menu press: gate, clone, submit, start polling. The
-    /// menu item's `enabled` binding gates most of this too; the
-    /// checks keep the path safe against a racing double-activation.
+    /// Handles the menu press: gate, clone, submit, start polling. The menu
+    /// item's `enabled` binding gates most of this too; the checks keep the
+    /// path safe against a racing double-activation.
     fn start(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -146,18 +142,19 @@ impl GenSupportRun {
                 self.start_poll();
             }
             Err(err) => {
-                self.dialogs.show_error(
-                    &ctr!("GenSupportDialog", "Support generation failed"),
-                    None,
-                    err.to_string(),
-                    String::new(),
-                );
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("GenSupportDialog", "Support generation failed"),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
             }
         }
     }
 
-    /// Starts (or restarts) the progress poll. Stops itself once the
-    /// handle resolves or the window disappears.
+    /// Starts (or restarts) the progress poll. Stops itself once the handle
+    /// resolves or the window disappears.
     fn start_poll(self: &Rc<Self>) {
         let run = self.clone();
         let timer_weak = Rc::downgrade(&self.poll_timer);
@@ -198,8 +195,9 @@ impl GenSupportRun {
         );
     }
 
-    /// Pastes every generated support structure mesh component into the scene as a real, undoable
-    /// object and reports the run through the info/error dialog.
+    /// Pastes every generated support structure mesh component into the scene
+    /// as a real, undoable object and reports the run through the info/error
+    /// dialog.
     fn finish(&self, outcome: Result<GeomAlgorithmResult<TrivialSupportInferredSpecs>, JobError>) {
         match outcome {
             Ok(result) => {
@@ -218,43 +216,45 @@ impl GenSupportRun {
                     };
                 }
                 if let Some(error) = rejection {
-                    self.dialogs.show_error(
-                        &ctr!("GenSupportDialog", "Support-structures generation failed"),
-                        None,
-                        ctr!(
+                    let details = error.to_string();
+                    self.dialogs.show_error(move || ErrorTexts {
+                        heading: ctr!("GenSupportDialog", "Support-structures generation failed"),
+                        context: None,
+                        message: ctr!(
                             "GenSupportDialog",
                             "The scene rejected one or more generated support structures; \
                              nothing was changed for those."
-                        )
-                        .to_string(),
-                        error.to_string(),
-                    );
+                        ),
+                        details: details.as_str().into(),
+                    });
                     return;
                 }
                 let material_g = *result.algorithm_specs.estimated_material_g.value();
-                self.dialogs.show_info(
-                    &ctr!("GenSupportDialog", "Support-structures generated"),
-                    summary_message(inserted, total, material_g),
-                    details_message(&result.recipe, &result.resolution_trail),
-                );
+                let details = details_message(&result.recipe, &result.resolution_trail);
+                self.dialogs.show_info(move || InfoTexts {
+                    heading: ctr!("GenSupportDialog", "Support-structures generated"),
+                    message: summary_message(inserted, total, material_g).into(),
+                    details: details.as_str().into(),
+                });
             }
             Err(err) => {
-                self.dialogs.show_error(
-                    &ctr!("GenSupportDialog", "Support-structures generation failed"),
-                    None,
-                    err.to_string(),
-                    String::new(),
-                );
+                let message = err.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("GenSupportDialog", "Support-structures generation failed"),
+                    context: None,
+                    message: message.as_str().into(),
+                    details: Default::default(),
+                });
             }
         }
     }
 }
 
 /// The printer's real build envelope as a `sc_geom` boundary box.
-/// `BuildVolume`'s own convention already puts the bed at `Z = 0` and
-/// the chamber ceiling at `Z = height_mm`, so a strut cast downward
-/// from the object lands exactly on the bed.
-/// It is for situations where 3D-printer's "bed Z" is inferred, rather than explicitly given.
+/// `BuildVolume`'s own convention already puts the bed at `Z = 0` and the
+/// chamber ceiling at `Z = height_mm`, so a strut cast downward from the object
+/// lands exactly on the bed. It is for situations where 3D-printer's "bed Z" is
+/// inferred, rather than explicitly given.
 fn boundary_box_from_build_volume(build_volume: BuildVolume) -> BoundaryShape {
     let min = build_volume.envelope_min_mm();
     let max = build_volume.envelope_max_mm();
@@ -264,29 +264,32 @@ fn boundary_box_from_build_volume(build_volume: BuildVolume) -> BoundaryShape {
     }
 }
 
-/// One-line rollup for the dialog's message.
+/// 1-line rollup for the dialog's message.
 fn summary_message(inserted: usize, total: usize, material_g: f64) -> String {
     if inserted < total {
+        // The noun follows the total, as in "1 of 2 structures".
         return ctr!(
             "GenSupportDialog",
-            "{} of {} Support structure(s) added to the scene. Estimated material: {} g.",
-            inserted,
+            "{} of {n} Support structure added to the scene. Estimated material: {} g.",
+            "{} of {n} Support structures added to the scene. Estimated material: {} g.",
             total,
+            inserted,
             format!("{material_g:.2}")
         )
         .to_string();
     }
     ctr!(
         "GenSupportDialog",
-        "{} Support structure(s) added to the scene. Estimated material: {} g.",
+        "{n} Support structure added to the scene. Estimated material: {} g.",
+        "{n} Support structures added to the scene. Estimated material: {} g.",
         inserted,
         format!("{material_g:.2}")
     )
     .to_string()
 }
 
-/// Recipe + resolution-trail detail lines, for the dialog's collapsed
-/// "Show details" section.
+/// Recipe + resolution-trail detail lines, for the dialog's collapsed "Show
+/// details" section.
 fn details_message(recipe: &JobRecipe, resolution_trail: &[ResolutionRecord]) -> String {
     let mut lines = vec![format!(
         "algorithm={} version={}",
@@ -299,4 +302,33 @@ fn details_message(recipe: &JobRecipe, resolution_trail: &[ResolutionRecord]) ->
         ));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod support_gen_run_tests {
+    use super::*;
+
+    #[test]
+    fn the_summary_counts_added_structures_in_the_singular_and_the_plural() {
+        assert_eq!(
+            summary_message(1, 1, 2.5),
+            "1 Support structure added to the scene. Estimated material: 2.50 g."
+        );
+        assert_eq!(
+            summary_message(2, 2, 2.5),
+            "2 Support structures added to the scene. Estimated material: 2.50 g."
+        );
+    }
+
+    #[test]
+    fn a_partial_summary_takes_its_form_from_the_total() {
+        assert_eq!(
+            summary_message(0, 1, 2.5),
+            "0 of 1 Support structure added to the scene. Estimated material: 2.50 g."
+        );
+        assert_eq!(
+            summary_message(1, 2, 2.5),
+            "1 of 2 Support structures added to the scene. Estimated material: 2.50 g."
+        );
+    }
 }

@@ -260,6 +260,8 @@ mod attribute_emission_tests {
 #[cfg(test)]
 mod parse_validation_tests {
     use super::*;
+    use quick_xml::errors::{Error as XmlError, IllFormedError};
+    use quick_xml::events::attributes::AttrError;
 
     fn slice_model(body: &str) -> String {
         format!(
@@ -348,6 +350,260 @@ mod parse_validation_tests {
                 SliceSegment { end: index(0) }
             ],
         );
+    }
+
+    const TWO_VERTICES: &str =
+        r#"<s:vertices><s:vertex x="0" y="0"/><s:vertex x="1" y="0"/></s:vertices>"#;
+
+    /// A body whose only slice stack holds 1 slice with `content`.
+    fn slice_body(content: &str) -> String {
+        format!(
+            r#"<resources><s:slicestack id="1"><s:slice ztop="1">{content}</s:slice></s:slicestack></resources><build/>"#,
+        )
+    }
+
+    fn parse_err(body: &str) -> ModelParseError {
+        parse_model(slice_model(body).as_bytes()).expect_err(body)
+    }
+
+    #[test]
+    fn slice_elements_need_their_required_attributes() {
+        for (body, element, attribute) in [
+            ("<resources><s:slicestack/></resources><build/>".to_string(), "slicestack", "id"),
+            (
+                r#"<resources><s:slicestack><s:slice ztop="1"/></s:slicestack></resources><build/>"#.to_string(),
+                "slicestack",
+                "id",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:slice/></s:slicestack></resources><build/>"#.to_string(),
+                "slice",
+                "ztop",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:slice></s:slice></s:slicestack></resources><build/>"#.to_string(),
+                "slice",
+                "ztop",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:sliceref slicepath="/2D/s.model"/></s:slicestack></resources><build/>"#.to_string(),
+                "sliceref",
+                "slicestackid",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:sliceref slicestackid="1"/></s:slicestack></resources><build/>"#.to_string(),
+                "sliceref",
+                "slicepath",
+            ),
+            (
+                slice_body(r#"<s:vertices><s:vertex y="0"/><s:vertex x="1" y="0"/></s:vertices>"#),
+                "vertex",
+                "x",
+            ),
+            (
+                slice_body(r#"<s:vertices><s:vertex x="0"/><s:vertex x="1" y="0"/></s:vertices>"#),
+                "vertex",
+                "y",
+            ),
+            (
+                slice_body(&format!(r#"{TWO_VERTICES}<s:polygon><s:segment v2="1"/></s:polygon>"#)),
+                "polygon",
+                "startv",
+            ),
+            (
+                slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment p1="0"/></s:polygon>"#)),
+                "segment",
+                "v2",
+            ),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(&err, ModelParseError::MissingRequiredAttribute { element: e, attribute: a } if *e == element && *a == attribute),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn slice_numbers_and_indices_must_have_their_schema_type() {
+        for (body, element, attribute, value) in [
+            (
+                r#"<resources><s:slicestack id="1" zbottom="1x"/></resources><build/>"#.to_string(),
+                "slicestack",
+                "zbottom",
+                "1x",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:slice ztop="1x"/></s:slicestack></resources><build/>"#.to_string(),
+                "slice",
+                "ztop",
+                "1x",
+            ),
+            (
+                r#"<resources><s:slicestack id="1"><s:slice ztop="1x"></s:slice></s:slicestack></resources><build/>"#.to_string(),
+                "slice",
+                "ztop",
+                "1x",
+            ),
+            (
+                slice_body(r#"<s:vertices><s:vertex x="1x" y="0"/><s:vertex x="1" y="0"/></s:vertices>"#),
+                "vertex",
+                "x",
+                "1x",
+            ),
+            (
+                slice_body(r#"<s:vertices><s:vertex x="0" y="1x"/><s:vertex x="1" y="0"/></s:vertices>"#),
+                "vertex",
+                "y",
+                "1x",
+            ),
+            (
+                slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="-1"><s:segment v2="1"/></s:polygon>"#)),
+                "polygon",
+                "startv",
+                "-1",
+            ),
+            (
+                slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment v2="-1"/></s:polygon>"#)),
+                "segment",
+                "v2",
+                "-1",
+            ),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(&err, ModelParseError::InvalidNumber { element: e, attribute: a, value: v } if *e == element && *a == attribute && v == value),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn slice_resource_ids_must_be_positive() {
+        for body in [
+            "<resources><s:slicestack id=\"0\"/></resources><build/>",
+            "<resources><s:slicestack id=\"0\"><s:slice ztop=\"1\"/></s:slicestack></resources><build/>",
+            "<resources><s:slicestack id=\"1\"><s:sliceref slicestackid=\"0\" slicepath=\"/2D/s.model\"/></s:slicestack></resources><build/>",
+            "<resources><object id=\"1\" s:slicestackid=\"0\"><mesh/></object></resources><build/>",
+        ] {
+            let err = parse_err(body);
+            assert!(
+                matches!(&err, ModelParseError::InvalidResourceId { value } if value == "0"),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_slice_stack_with_an_earlier_id_is_rejected() {
+        let stack = r#"<s:slicestack id="1"><s:slice ztop="1"/></s:slicestack>"#;
+        for second in [stack, r#"<s:slicestack id="1"/>"#] {
+            let err = parse_err(&format!("<resources>{stack}{second}</resources><build/>"));
+            assert!(
+                matches!(err, ModelParseError::DuplicateResourceId { id: 1 }),
+                "{second}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_polygon_with_an_end_tag_and_no_segment_is_rejected() {
+        let err = parse_err(&slice_body(&format!(
+            r#"{TWO_VERTICES}<s:polygon startv="0"></s:polygon>"#
+        )));
+        assert!(matches!(
+            err,
+            ModelParseError::PolygonWithoutSegments { stack_id: 1 },
+        ));
+    }
+
+    #[test]
+    fn an_index_equal_to_the_vertex_count_is_out_of_range() {
+        // Indices are 0-based, so 2 vertices have the indices 0 and 1.
+        for polygon in [
+            r#"<s:polygon startv="2"><s:segment v2="1"/></s:polygon>"#,
+            r#"<s:polygon startv="0"><s:segment v2="2"/></s:polygon>"#,
+        ] {
+            let err = parse_err(&slice_body(&format!("{TWO_VERTICES}{polygon}")));
+            assert!(
+                matches!(
+                    err,
+                    ModelParseError::SliceIndexOutOfRange {
+                        stack_id: 1,
+                        index: 2,
+                        vertex_count: 2,
+                    },
+                ),
+                "{polygon}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_attribute_on_a_slice_element_is_refused() {
+        // XML 1.0, WFC: Unique Att Spec.
+        for body in [
+            r#"<resources><s:slicestack id="1" id="2"/></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:slice ztop="1" ztop="2"/></s:slicestack></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:slice ztop="1" ztop="2"></s:slice></s:slicestack></resources><build/>"#.to_string(),
+            r#"<resources><s:slicestack id="1"><s:sliceref slicestackid="1" slicestackid="2" slicepath="/2D/s.model"/></s:slicestack></resources><build/>"#.to_string(),
+            slice_body(r#"<s:vertices><s:vertex x="0" x="1" y="0"/><s:vertex x="1" y="0"/></s:vertices>"#),
+            slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0" startv="1"><s:segment v2="1"/></s:polygon>"#)),
+            slice_body(&format!(r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment v2="1" v2="0"/></s:polygon>"#)),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(err, ModelParseError::AttrSyntax(AttrError::Duplicated(..))),
+                "{body}: {err:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn an_undeclared_entity_in_a_slice_attribute_is_refused() {
+        // XML 1.0, WFC: Entity Declared.
+        let body = r#"<resources><object id="1" s:meshresolution="&undefined;"><mesh/></object></resources><build/>"#;
+        let err = parse_err(body);
+        assert!(
+            matches!(err, ModelParseError::Xml(XmlError::Escape(_))),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_mismatched_end_tag_inside_a_skipped_slice_element_is_refused() {
+        // XML 1.0, WFC: Element Type Match. Each case reaches 1 place where the
+        // parser skips a subtree.
+        let foreign = r#"<q:x xmlns:q="urn:q"></q:y>"#;
+        let stack = |content: &str| {
+            format!(
+                r#"<resources><s:slicestack id="1">{content}</s:slicestack></resources><build/>"#
+            )
+        };
+        for body in [
+            stack(r#"<s:sliceref slicestackid="1" slicepath="/2D/s.model"></s:wrong>"#),
+            stack("<s:other></s:wrong>"),
+            stack(foreign),
+            slice_body("<s:other></s:wrong>"),
+            slice_body(foreign),
+            slice_body(
+                r#"<s:vertices><s:vertex x="0" y="0"></s:wrong><s:vertex x="1" y="0"/></s:vertices>"#,
+            ),
+            slice_body(&format!(
+                r#"{TWO_VERTICES}<s:polygon startv="0"><s:segment v2="1"></s:wrong></s:polygon>"#
+            )),
+        ] {
+            let err = parse_err(&body);
+            assert!(
+                matches!(
+                    err,
+                    ModelParseError::Xml(XmlError::IllFormed(
+                        IllFormedError::MismatchedEndTag { .. }
+                    ))
+                ),
+                "{body}: {err:?}",
+            );
+        }
     }
 }
 

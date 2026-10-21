@@ -3,15 +3,13 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Behavioural tests for the load-FSM helpers in
-//! `crate::scene_loader` and for the pure warning formatter
-//! `describe_obj_warning`.
+//! Behavioural tests for the load-FSM helpers in `crate::scene_loader` and for
+//! the pure warning formatter `describe_obj_warning`.
 //!
-//! Tests reach the FSM through `SceneLoader::new_for_test` (which
-//! installs a dangling `slint::Weak`, silencing UI pokes) and the
-//! `drain_deposit_for_test` accessor (which bypasses
-//! `DialogManager::show_error`, the only path on the Slint side
-//! that needs a live event loop).
+//! Tests reach the FSM through `SceneLoader::new_for_test` (which installs a
+//! dangling `slint::Weak`, silencing UI pokes) and the `drain_deposit_for_test`
+//! accessor (which bypasses `DialogManager::show_error`, the only path on the
+//! Slint side that needs a live event loop).
 
 use std::path::PathBuf;
 
@@ -23,10 +21,11 @@ use slint::wgpu_30::wgpu;
 use crate::error_dialog::DialogManager;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::mesh_render::{RenderAllocation, RenderError};
+use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::scene_loader::{SceneLoader, describe_obj_warning, describe_scene_warning};
 
-/// Allocates `count` fresh NodeIds out of a throw-away scene so
-/// tests don't depend on NodeId having a public raw constructor.
+/// Allocates `count` fresh NodeIds out of a throw-away scene so tests don't
+/// depend on NodeId having a public raw constructor.
 fn fresh_node_ids(count: usize) -> Vec<NodeId> {
     let mut graph = Scene::new();
     (0..count)
@@ -35,7 +34,9 @@ fn fresh_node_ids(count: usize) -> Vec<NodeId> {
 }
 
 fn loader() -> SceneLoader {
-    SceneLoader::new_for_test(DialogManager::new())
+    SceneLoader::new_for_test(DialogManager::new(&PreferencesBus::new(
+        PreferencesSnapshot::for_tests(),
+    )))
 }
 
 #[test]
@@ -101,8 +102,8 @@ fn drain_deposit_drops_a_stale_deposit_after_invalidate_and_clear() {
         PathBuf::from("/tmp/scene.stl"),
         Err(anyhow::anyhow!("worker raced an invalidate")),
     );
-    // Bump the generation; the still-deposited result's stamp now
-    // mismatches and drain returns None.
+    // Bump the generation; the still-deposited result's stamp now mismatches
+    // and drain returns None.
     l.invalidate_and_clear();
     assert!(l.drain_deposit_for_test().is_none());
 }
@@ -130,12 +131,12 @@ fn note_render_failure_counts_a_run_and_a_success_ends_it() {
 #[test]
 fn note_upload_failure_counts_a_run_and_a_success_ends_it() {
     let l = loader();
-    l.note_upload_failure(&anyhow::anyhow!("first"));
-    l.note_upload_failure(&anyhow::anyhow!("second"));
+    l.note_upload_failure(anyhow::anyhow!("first"));
+    l.note_upload_failure(anyhow::anyhow!("second"));
     assert_eq!(l.upload_failures_for_test(), 2);
     l.note_upload_success();
     assert_eq!(l.upload_failures_for_test(), 0);
-    l.note_upload_failure(&anyhow::anyhow!("third"));
+    l.note_upload_failure(anyhow::anyhow!("third"));
     assert_eq!(l.upload_failures_for_test(), 1);
 }
 
@@ -168,10 +169,9 @@ fn reset_render_failures_ends_the_run() {
     assert_eq!(l.render_failures_for_test(), 0);
 }
 
-// `describe_obj_warning` exhaustive coverage. The function is a
-// pure formatter over every `LoadObjWarning` variant; each test
-// constructs one variant and asserts the salient tokens land in
-// the output.
+// `describe_obj_warning` exhaustive coverage. The function is a pure formatter
+// over every `LoadObjWarning` variant; each test constructs 1 variant and
+// asserts the salient tokens land in the output.
 
 #[test]
 fn describe_no_vertices() {

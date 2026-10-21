@@ -29,7 +29,7 @@ use sc_sl1cer::VERSION;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat, WriterError};
 
 use crate::MainWindow;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress::ExportPhase;
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
@@ -41,7 +41,8 @@ use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
 use crate::viewport::ViewportController;
 
-/// Why an export produced no file.
+/// Why an export produced no file. Its text is in the language in force each
+/// time it is formatted.
 #[derive(Debug)]
 pub(crate) enum ExportFailure {
     /// The current scene has not been sliced.
@@ -66,21 +67,30 @@ pub(crate) enum ExportFailure {
 
 impl fmt::Display for ExportFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoSlice => write!(
-                f,
+        let text = match self {
+            Self::NoSlice => ctr!(
+                "ErrorDialog",
                 "Nothing has been sliced yet, so there is nothing to write."
             ),
-            Self::Stale => write!(
-                f,
-                "The held slice is out of date and no longer describes this plate. Slice it again before exporting.",
+            Self::Stale => ctr!(
+                "ErrorDialog",
+                "The held slice is out of date and no longer describes this plate. Slice it again before exporting."
             ),
-            Self::Prepare(err) => write!(f, "{err}"),
-            Self::Resolve(err) => write!(f, "Could not resolve the print configuration: {err}"),
-            Self::Program(err) => write!(f, "Cannot describe this print to the machine: {err}"),
-            Self::Write(err) => write!(f, "Could not write the printer file: {err}"),
-            Self::Panicked(msg) => write!(f, "The writer panicked: {msg}"),
-        }
+            Self::Prepare(err) => return err.fmt(f),
+            Self::Resolve(err) => ctr!(
+                "ErrorDialog",
+                "Could not resolve the print configuration: {}",
+                err
+            ),
+            Self::Program(err) => ctr!(
+                "ErrorDialog",
+                "Cannot describe this print to the machine: {}",
+                err
+            ),
+            Self::Write(err) => ctr!("ErrorDialog", "Could not write the printer file: {}", err),
+            Self::Panicked(msg) => ctr!("ErrorDialog", "The writer panicked: {}", msg),
+        };
+        f.write_str(&text)
     }
 }
 
@@ -211,7 +221,7 @@ async fn run_export_flow(
     let job = match prepare_export(&document) {
         Ok(job) => job,
         Err(err) => {
-            show_export_failure(&dialogs, None, &err);
+            show_export_failure(&dialogs, None, err);
             return;
         }
     };
@@ -251,20 +261,26 @@ async fn run_export_flow(
     export_progress.end();
     match outcome {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), &err),
+        Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), err),
         // The sender dropped without sending (event loop gone at shutdown):
         // there is nothing left to report to.
         Err(_canceled) => {}
     }
 }
 
-fn show_export_failure(dialogs: &Rc<DialogManager>, target: Option<&Path>, err: &ExportFailure) {
-    dialogs.show_error(
-        ctr!("ErrorDialog", "Cannot export for the printer").as_str(),
-        target.map(|path| ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-        err.to_string(),
-        String::new(),
-    );
+fn show_export_failure(dialogs: &Rc<DialogManager>, target: Option<&Path>, err: ExportFailure) {
+    let target = target.map(Path::to_path_buf);
+    dialogs.show_error(move || export_failure_texts(target.as_deref(), &err));
+}
+
+/// The texts of the dialog that reports an export with no file written.
+fn export_failure_texts(target: Option<&Path>, failure: &ExportFailure) -> ErrorTexts {
+    ErrorTexts {
+        heading: ctr!("ErrorDialog", "Cannot export for the printer"),
+        context: target.map(|path| ctr!("ErrorDialog", "File: {}", path.display())),
+        message: failure.to_string().into(),
+        details: Default::default(),
+    }
 }
 
 /// Asks for the file to write, seeded with the format's own extension.
@@ -357,19 +373,15 @@ mod export_button_enabled_tests {
 
 #[cfg(test)]
 mod export_job_tests {
-    use std::sync::Arc;
-
-    use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_fixtures::unit_cube_mesh;
     use sc_print_glue::PlateContours;
     use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
     use sc_print_profiles::MaterialProfile;
-    use sc_scene::LeafPayload;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
 
     use super::*;
     use crate::scene_document::SceneRevision;
+    use crate::test_support::scenes::cube_scene;
 
     const PRINTER_TOML: &str = r#"
 [identity]
@@ -442,21 +454,6 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         let printer: PrinterProfile = toml::from_str(PRINTER_TOML).expect("printer profile");
         let material: MaterialProfile = toml::from_str(material_toml).expect("material profile");
         (printer, EffectiveMaterial::from(material))
-    }
-
-    /// Builds a scene with 1 cube leaf as its own root, spanning z = -0.5 to
-    /// 0.5, so half of it stands above the plate.
-    fn cube_scene() -> Scene {
-        let mut scene = Scene::new();
-        let leaf = scene
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
-            )
-            .expect("inline-mesh leaf");
-        scene.add_root(leaf).expect("fresh leaf becomes a root");
-        scene
     }
 
     /// Returns the schedule this scene and these profiles derive, which is what
@@ -577,6 +574,94 @@ mod export_failure_tests {
             matches!(&failure, ExportFailure::Program(err) if *err == cause),
             "{failure}"
         );
+    }
+}
+
+#[cfg(test)]
+mod export_failure_text_tests {
+    use sc_print_glue::SlabTopOutOfRange;
+    use sc_print_profiles::ResolvedField;
+
+    use super::*;
+
+    #[test]
+    fn a_missing_or_stale_slice_says_what_to_do() {
+        assert_eq!(
+            ExportFailure::NoSlice.to_string(),
+            "Nothing has been sliced yet, so there is nothing to write."
+        );
+        assert_eq!(
+            ExportFailure::Stale.to_string(),
+            "The held slice is out of date and no longer describes this plate. Slice it again \
+             before exporting."
+        );
+    }
+
+    #[test]
+    fn a_failed_preparation_shows_the_slice_failure() {
+        assert_eq!(
+            ExportFailure::Prepare(SliceFailure::EmptySceneGeometry).to_string(),
+            "The scene has no geometry to slice."
+        );
+    }
+
+    #[test]
+    fn failures_after_the_slice_name_the_step_that_failed() {
+        assert_eq!(
+            ExportFailure::Resolve(ResolveError::MissingRequiredField {
+                field: ResolvedField::LayerHeightMm,
+            })
+            .to_string(),
+            "Could not resolve the print configuration: required field 'layer_height_mm' has \
+             no value after all resolution layers"
+        );
+        assert_eq!(
+            ExportFailure::Program(UnprojectablePrint::SlabTop(SlabTopOutOfRange {
+                layer_index: 1,
+                z_mm: f64::INFINITY,
+            }))
+            .to_string(),
+            "Cannot describe this print to the machine: layer 1 sits at z = inf mm, which is \
+             not a positive finite height"
+        );
+        assert_eq!(
+            ExportFailure::Write(WriterError::OutputPathInvalid {
+                reason: "no file name".to_string(),
+            })
+            .to_string(),
+            "Could not write the printer file: output path is invalid: no file name"
+        );
+        assert_eq!(
+            ExportFailure::Panicked("boom".to_string()).to_string(),
+            "The writer panicked: boom"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dialog_text_tests {
+    use super::*;
+
+    #[test]
+    fn a_failure_before_the_file_dialog_names_no_file() {
+        let texts = export_failure_texts(None, &ExportFailure::NoSlice);
+        assert_eq!(texts.heading, "Cannot export for the printer");
+        assert_eq!(texts.context, None);
+        assert_eq!(
+            texts.message,
+            "Nothing has been sliced yet, so there is nothing to write."
+        );
+        assert_eq!(texts.details, "");
+    }
+
+    #[test]
+    fn a_failure_after_the_file_dialog_names_the_file() {
+        let failure = ExportFailure::Panicked("boom".to_string());
+        let texts = export_failure_texts(Some(Path::new("/tmp/plate.ctb")), &failure);
+        assert_eq!(texts.heading, "Cannot export for the printer");
+        assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.ctb"));
+        assert_eq!(texts.message, "The writer panicked: boom");
+        assert_eq!(texts.details, "");
     }
 }
 

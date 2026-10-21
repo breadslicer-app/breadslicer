@@ -1,0 +1,25 @@
+# IMPORTANT: Run the tool only with `sh scripts/mutation.sh`: the lists below
+# rely on its sandbox, and the tool copies the whole repository when it runs
+# outside it.
+
+packages = [
+    "sc-mesh-core",
+    "sc-app-paths",
+    "sc-3mf",
+]
+files = [
+    "libs/mesh-core/src/**/*.rs",
+    "libs/app-paths/src/**/*.rs",
+    "libs/3mf/src/**/*.rs",
+]
+include-tests = [
+    "sc_mesh_core", "properties",
+    "sc_app_paths",
+    "sc_3mf", "official_samples", "package_model_roundtrip",
+]
+
+mutators = ["@default"]
+all-features = true
+
+# A deny list, because the tool has no allow form for this key.
+exclude-trait-impls = ["Debug"]

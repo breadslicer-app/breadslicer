@@ -40,16 +40,19 @@ use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
-use crate::error_dialog::DialogManager;
+use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 #[cfg(test)]
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_health::initial_section;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender};
+use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
 use crate::pending_load::PendingLoad;
 use crate::picking;
+use crate::preferences_bus::PreferencesBus;
+#[cfg(test)]
+use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
@@ -78,8 +81,9 @@ impl ViewportController {
         document: Rc<SceneDocument>,
         pending_load: Rc<PendingLoad>,
         device_loss: DeviceLoss,
+        bus: &Rc<PreferencesBus>,
     ) -> Self {
-        let dialogs = DialogManager::new();
+        let dialogs = DialogManager::new(bus);
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
@@ -107,7 +111,7 @@ impl ViewportController {
     /// only observable state. This matches `SceneLoader::new_for_test`.
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
-        let dialogs = DialogManager::new();
+        let dialogs = DialogManager::new(&PreferencesBus::new(PreferencesSnapshot::for_tests()));
         let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
         let save_progress = Rc::new(SaveProgressPanel::new(slint::Weak::default()));
         let export_progress = Rc::new(ExportProgressPanel::new(slint::Weak::default()));
@@ -195,6 +199,14 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn set_viewport_for_test(&self, w: f32, h: f32) {
         self.render.set_viewport(w, h);
+    }
+
+    /// Frames the camera on the build volume, as the first paint does before a
+    /// scene is uploaded.
+    #[cfg(test)]
+    pub(crate) fn frame_camera_for_test(&self) {
+        self.camera
+            .replace_with_framing(None, self.session.build_volume());
     }
 
     #[cfg(test)]
@@ -346,6 +358,16 @@ impl ViewportController {
     /// document without emitting a scene event.
     pub(crate) fn refresh_document_title(&self) {
         self.mirror_title_to_ui();
+    }
+
+    /// Builds the object names and the plate's front label again, in the
+    /// language in force, for a language change.
+    pub(crate) fn refresh_texts(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh_object_list_on(&ui);
+        }
+        // The paint pass builds the label from the text in force.
+        self.mark_dirty();
     }
 
     /// Resets the viewport after a fresh scene install: the camera goes back to
@@ -719,16 +741,15 @@ impl ViewportController {
     /// edits against the live scene, so a rejection indicates a programming
     /// bug, which the dialog makes visible.
     fn show_edit_rejected(&self, error: SceneError) {
-        self.session.dialogs().show_error(
-            &ctr!("ErrorDialog", "Edit failed"),
-            None,
-            ctr!(
+        self.session.dialogs().show_error(move || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Edit failed"),
+            context: None,
+            message: ctr!(
                 "ErrorDialog",
                 "The scene rejected the last edit; nothing was changed."
-            )
-            .to_string(),
-            error.to_string(),
-        );
+            ),
+            details: error.to_string().into(),
+        });
     }
 
     /// Returns whether a repair worker is running. Undo and redo are silenced
@@ -787,8 +808,8 @@ impl ViewportController {
 
     /// Arms the translate keyboard focus (`T`); `R` and `S` arm rotate and
     /// scale the same way. Each needs a selection; without one, the press does
-    /// nothing. Pressing the same focus twice does nothing, so autorepeat does
-    /// not reset the integrator's tick clock.
+    /// nothing. A press of the focus already armed does nothing, so autorepeat
+    /// does not reset the integrator's tick clock.
     pub(crate) fn on_gizmo_focus_translate(&self) {
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
@@ -1086,13 +1107,20 @@ impl ViewportController {
     /// it once, and lets a load parked for this setup report itself against
     /// that reason.
     pub(super) fn post_renderer_refused(&self, err: RendererInitError) {
-        self.session.loader().note_renderer_refused(err.to_string());
-        self.session.dialogs().show_error_deferred(
-            ctr!("ErrorDialog", "The 3D view could not start").to_string(),
-            Some(ctr!("ErrorDialog", "Files cannot be opened in this window.").to_string()),
-            err.to_string(),
-            err.source.to_string(),
-        );
+        self.session
+            .loader()
+            .note_renderer_refused(StageRefusal::new(err.stage, &err.source));
+        self.session
+            .dialogs()
+            .show_error_deferred(move || ErrorTexts {
+                heading: ctr!("ErrorDialog", "The 3D view could not start"),
+                context: Some(ctr!(
+                    "ErrorDialog",
+                    "Files cannot be opened in this window."
+                )),
+                message: err.to_string().into(),
+                details: err.source.to_string().into(),
+            });
         if let Some(path) = self.session.pending_load().take()
             && let Some(ticket) = self.session.loader().begin_load()
         {
@@ -1204,7 +1232,7 @@ impl ViewportController {
                     // `post_renderer_install`, the scene-install fallback, and
                     // each structural edit.
                     self.render.update_frame(FrameState::upload_cleared);
-                    self.session.loader().note_upload_failure(&err);
+                    self.session.loader().note_upload_failure(err);
                 }
                 None => {
                     // The flag is set, but the scene was cleared before this
@@ -1417,18 +1445,18 @@ impl ViewportController {
         self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
-            Err(err) => self.session.dialogs().show_error_deferred(
-                ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
-                Some(
-                    ctr!(
+            Err(err) => self
+                .session
+                .dialogs()
+                .show_error_deferred(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Failed to display the 3D model"),
+                    context: Some(ctr!(
                         "ErrorDialog",
                         "The rendered texture could not be handed to the UI."
-                    )
-                    .to_string(),
-                ),
-                err.to_string(),
-                format!("{err:?}"),
-            ),
+                    )),
+                    message: err.to_string().into(),
+                    details: format!("{err:?}").into(),
+                }),
         }
     }
 
@@ -1456,8 +1484,7 @@ mod selection_tests {
     use std::sync::Arc;
 
     use super::*;
-    use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::primitives::Vertex;
+    use crate::test_support::scenes::empty_leaf_mesh;
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
@@ -1466,14 +1493,6 @@ mod selection_tests {
     /// this.
     fn no_mods() -> PointerModifiers {
         PointerModifiers::default()
-    }
-
-    fn empty_leaf_mesh() -> IndexedMesh {
-        IndexedMesh {
-            meta: None,
-            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![],
-        }
     }
 
     /// Builds a graph of `n` objects in the shape a loader produces: all `n`
@@ -2517,7 +2536,7 @@ mod viewport_click_tests {
 
     #[test]
     fn set_build_volume_is_idempotent_for_equal_values() {
-        // Same value twice: the second call is a no-op and the frame stays
+        // Same value 2 times: the second call is a no-op and the frame stays
         // clean. A subsequent real change re-marks dirty.
         let ctrl = ViewportController::new_for_test();
         let bv = BuildVolume::new(80.0, 80.0, 120.0);
@@ -2888,7 +2907,7 @@ mod keyboard_focus_tests {
         ctrl.set_viewport_for_test(400.0, 200.0);
     }
 
-    /// Drives `kbd_drive.integrate` twice with a real-time pause between the
+    /// Drives `kbd_drive.integrate` 2 times with a real-time pause between the
     /// calls, so the second call sees a positive `dt`. The first call seeds
     /// `last_tick`; the second produces the actual integration step.
     fn integrate_two_ticks(ctrl: &ViewportController) {

@@ -8,6 +8,7 @@ use std::fmt;
 use crate::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
 use super::mesh::IndexedMesh;
+use super::validated::ValidatedFaces;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshVertexError {
@@ -145,6 +146,15 @@ impl IndexedMesh {
         } else {
             Ok(())
         }
+    }
+
+    /// Validates face indices and, on success, returns a witness whose methods
+    /// can index into `vertices` and `faces` without per-call bounds checks.
+    /// Lifetime-tied to `self`: any later mutation of the mesh invalidates the
+    /// witness.
+    pub fn validated_faces(&self) -> Result<ValidatedFaces<'_>, Vec<MeshFaceError>> {
+        self.validate_faces()?;
+        Ok(ValidatedFaces::new_unchecked(self))
     }
 }
 
@@ -400,6 +410,20 @@ mod indexed_mesh_validate_faces_tests {
                 face_idx: 0_usize.into(),
                 vertex_pos: TriVertexSlot::V2,
                 vertex_idx: 99_u32.into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn detects_the_1st_index_past_the_vertices() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 3)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0_usize.into(),
+                vertex_pos: TriVertexSlot::V2,
+                vertex_idx: 3_u32.into(),
             }]
         );
     }

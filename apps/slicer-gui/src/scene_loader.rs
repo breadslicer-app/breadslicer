@@ -50,7 +50,7 @@ use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::error_dialog::{DialogManager, ErrorTexts, format_anyhow_chain};
 use crate::failure_gate::FailureGate;
 use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
 use crate::i18n::ctr;
@@ -58,7 +58,9 @@ use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
 use crate::mesh_health::MeshHealth;
-use crate::mesh_render::{DeviceLoss, GpuScene, RenderAllocation, RenderError};
+use crate::mesh_render::{
+    AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
+};
 use crate::reloaded_slices::ReloadedSlices;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
@@ -401,8 +403,8 @@ impl SceneLoader {
 
     /// Records that a `RenderingSetup`'s device refused the viewport renderer;
     /// the device slot stays empty.
-    pub(crate) fn note_renderer_refused(&self, reason: String) {
-        self.graphics_gap.note_renderer_refused(reason);
+    pub(crate) fn note_renderer_refused(&self, refusal: StageRefusal) {
+        self.graphics_gap.note_renderer_refused(refusal);
     }
 
     /// Empties the device slot after the shared device was lost, and records
@@ -482,22 +484,19 @@ impl SceneLoader {
     }
 
     /// Shows the error dialog only for the first failure of a run.
-    pub(crate) fn note_upload_failure(&self, err: &anyhow::Error) {
+    pub(crate) fn note_upload_failure(&self, err: anyhow::Error) {
         if !self.upload_failures.note_failure() {
             return;
         }
-        self.dialogs.show_error_deferred(
-            ctr!("ErrorDialog", "Failed to prepare the 3D view").to_string(),
-            Some(
-                ctr!(
-                    "ErrorDialog",
-                    "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
-                )
-                .to_string(),
-            ),
-            err.to_string(),
-            format_anyhow_chain(err),
-        );
+        self.dialogs.show_error_deferred(move || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Failed to prepare the 3D view"),
+            context: Some(ctr!(
+                "ErrorDialog",
+                "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
+            )),
+            message: err.to_string().into(),
+            details: format_anyhow_chain(&err).into(),
+        });
     }
 
     /// Shows the error dialog only for the first failure of a run.
@@ -510,22 +509,23 @@ impl SceneLoader {
         if !self.render_failures.note_failure() {
             return;
         }
-        let context = match what {
-            RenderAllocation::CapTexture => ctr!(
-                "ErrorDialog",
-                "The cut is drawn without its fill until another layer is shown."
-            ),
-            _ => ctr!(
-                "ErrorDialog",
-                "The 3D view keeps its last image until it is resized."
-            ),
-        };
-        self.dialogs.show_error_deferred(
-            ctr!("ErrorDialog", "Failed to draw the 3D view").to_string(),
-            Some(context.to_string()),
-            err.to_string(),
-            source.to_string(),
-        );
+        let refusal = AllocationRefusal::new(*what, source);
+        let details = source.to_string();
+        self.dialogs.show_error_deferred(move || ErrorTexts {
+            heading: ctr!("ErrorDialog", "Failed to draw the 3D view"),
+            context: Some(match refusal.what {
+                RenderAllocation::CapTexture => ctr!(
+                    "ErrorDialog",
+                    "The cut is drawn without its fill until another layer is shown."
+                ),
+                _ => ctr!(
+                    "ErrorDialog",
+                    "The 3D view keeps its last image until it is resized."
+                ),
+            }),
+            message: refusal.to_string().into(),
+            details: details.as_str().into(),
+        });
     }
 
     pub(crate) fn note_render_success(&self) {
@@ -558,12 +558,12 @@ impl SceneLoader {
                 Some(prepared)
             }
             Err(err) => {
-                self.dialogs.show_error(
-                    ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
-                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                    err.to_string(),
-                    format_anyhow_chain(&err),
-                );
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("ErrorDialog", "Failed to open 3D model"),
+                    context: Some(ctr!("ErrorDialog", "File: {}", path.display())),
+                    message: err.to_string().into(),
+                    details: format_anyhow_chain(&err).into(),
+                });
                 None
             }
         }
@@ -785,9 +785,12 @@ pub(crate) fn describe_profile_ref_warning(warning: &ProfileRefWarning) -> Strin
 #[cfg(test)]
 mod scene_loader_tests {
     use super::*;
+    use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 
     fn loader() -> SceneLoader {
-        SceneLoader::new_for_test(DialogManager::new())
+        SceneLoader::new_for_test(DialogManager::new(&PreferencesBus::new(
+            PreferencesSnapshot::for_tests(),
+        )))
     }
 
     /// Returns the stub deposit payload of the FSM-only tests: only the

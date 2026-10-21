@@ -320,7 +320,7 @@ if (-not $Iscc) {
     return
 }
 
-$Installer = Join-Path $Cache "sc-slicer-setup-$Version-x64.exe"
+$Installer = Join-Path $Cache "sc-slicer-setup-$Version-x86_64.exe"
 
 # The output name is derived from a version that changes rarely and the
 # output directory is never cleaned, so an installer from an earlier run
