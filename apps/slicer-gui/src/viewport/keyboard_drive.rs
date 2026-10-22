@@ -448,20 +448,22 @@ impl KeyboardDriveState {
             return false;
         };
 
-        // Translate focus is clamped against the build envelope so the object's
-        // transformed AABB cannot leave it. Rotate / Scale paths compose
-        // translation as a pivot side effect and are not clamped. The clamp
-        // re-opens the document's read borrow; `with_scene` returns `None` if
-        // the scene was cleared between the step computation and now, in which
-        // case we keep the unclamped transform.
-        let new_transform = if focus == KbdFocus::Translate {
+        // Same policy as mouse drags: explicit Z stays free; rotate/scale lift
+        // their bounding box above the plate without creating another undo step.
+        let new_transform = if focus == KbdFocus::Translate && (arrows.z_pos || arrows.z_neg) {
+            new_transform
+        } else if focus == KbdFocus::Translate {
             ctx.document
                 .with_scene(|spatial| {
                     clamp_translate_edit(spatial, node_id, running, new_transform, ctx.build_volume)
                 })
                 .unwrap_or(new_transform)
         } else {
-            new_transform
+            ctx.document
+                .with_scene(|spatial| {
+                    super::bed_clearance::keep_above_bed(spatial, node_id, new_transform)
+                })
+                .unwrap_or(new_transform)
         };
 
         ctx.document

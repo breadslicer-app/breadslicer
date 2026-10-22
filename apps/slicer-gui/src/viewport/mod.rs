@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+mod bed_clearance;
 mod camera_controller;
 mod controller;
 mod gizmo_drag;
