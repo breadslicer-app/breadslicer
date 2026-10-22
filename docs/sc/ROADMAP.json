@@ -3,7 +3,7 @@
   "snapshot_date": "2026-10-22",
   "board_id": "sc",
   "behavior_baseline": "22526a29",
-  "policy": "Snapshot de planificación. Estado vivo en Workboard; sólo SC-08/09 autorizadas para ejecución en esta tarea. Done exige evidencia según alcance; ideas no son compromisos. No despacho automático.",
+  "policy": "Snapshot de planificación. Estado vivo en Workboard; ejecución sólo por pedido explícito. SC-08/09/24 completadas en sus alcances. Done exige evidencia; ideas no son compromisos ni despacho automático.",
   "cards": [
     {
       "key": "SC-01",
@@ -380,16 +380,20 @@
       "key": "SC-24",
       "title": "Corpus pequeño y representativo de validación",
       "area": "calidad",
-      "phase": "Siguiente",
-      "scope": "Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grupos, instancias, unidades, escalas negativas/no uniformes y malla rota. Casos grandes sólo locales si tienen datos privados.",
+      "phase": "Corpus verificado",
+      "scope": "Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grupos, instancias, unidades, escalas negativas/no uniformes y malla rota. Casos grandes sólo locales si tienen datos privados. Entrega SC-24: 25 casos sintéticos, 28 assets (27,045 bytes), manifiesto de procedencia/licencia/unidades/hash/expectativas, generador Rust que reutiliza fixtures/APIs existentes y verificador Python. 18 casos geométricos y 13 sondas analíticas; dos generaciones idénticas byte a byte. No GUI, raster completo ni impresión física.",
       "acceptance": "Procedencia, licencia, hash, unidades y expectativas por fixture; distinguir checks geométricos, imágenes y pruebas físicas. Reutilizar mesh/scene-fixtures existentes.",
       "depends_on": [
         "SC-09"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "high",
-      "evidence": [],
-      "implementation_authorized": false
+      "evidence": [
+        "fixtures/sc-corpus/README.md",
+        "fixtures/sc-corpus/v1/MANIFEST.json",
+        "docs/sc/CORPUS-VERIFICATION.json"
+      ],
+      "implementation_authorized": true
     },
     {
       "key": "SC-25",
