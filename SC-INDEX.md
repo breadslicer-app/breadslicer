@@ -19,6 +19,8 @@ se conserva sin reemplazar su autoría ni su documentación.
 - [Inventario reproducible de paquetes](docs/sc/INVENTORY.json).
 - [Roadmap e instrucciones de mantenimiento](docs/sc/ROADMAP.md).
 - [Roadmap estructurado](docs/sc/ROADMAP.json).
+- [Snapshot del tablero con IDs y evidencia](docs/sc/BOARD-SNAPSHOT.json).
+- [Verificación del inventario y respaldo](docs/sc/VERIFICATION.json).
 - [Referencias de investigación](docs/sc/RESEARCH.md).
 - [Tablero SC](https://oc.synrgs.tech/workboard/sc): estado operativo, no ejecución automática.
 
