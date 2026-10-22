@@ -2,12 +2,12 @@
 
 Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **74 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
-No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
+No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
 ## Orden inmediato recomendado
 
 1. SC-24: corpus representativo **completado** (25 casos / 28 assets).
-2. SC-14: comprobar el flujo real guardar/abrir/historial ya existente.
+2. SC-14: flujo guardar/abrir/historial **completado**, con corrección de protección dirty.
 3. SC-10: especificar primer hito de soportes manuales.
 
 Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La validación de perfiles/writers puede avanzar como línea independiente.
@@ -38,7 +38,7 @@ Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La val
 | [SC-11](#sc-11) | backlog | soportes | Modelo paramétrico persistente y geometría de soportes | SC-10, SC-37, SC-38 |
 | [SC-12](#sc-12) | backlog | soportes | Editor manual de soportes en viewport | SC-11, SC-14 |
 | [SC-13](#sc-13) | backlog | presets | Presets propios: geometría, packs y bracing separados | SC-11, SC-23 |
-| [SC-14](#sc-14) | todo | persistencia | Validar flujo existente de proyecto, historial y roundtrip | SC-09, SC-24 |
+| [SC-14](#sc-14) | done | persistencia | Validar flujo existente de proyecto, historial y roundtrip | SC-09, SC-24 |
 | [SC-15](#sc-15) | backlog | soportes | Recorridos y colisiones volumétricas de soportes | SC-11, SC-12, SC-38 |
 | [SC-16](#sc-16) | backlog | soportes | Minis, parenting y refuerzos editables | SC-15, SC-13 |
 | [SC-17](#sc-17) | backlog | soportes | Pipeline de islas y autosupport con resultados editables | SC-48, SC-49, SC-50 |
@@ -238,7 +238,9 @@ Guardar/abrir 3MF YA existe: probar importar varios modelos, transformar, copiar
 
 **Cierre:** Corpus roundtrip sin pérdidas de geometría, escala, pose ni perfiles; guardado atómico, save-as, cancelación y archivo inválido controlados; evidencia exacta de build.
 
-**Depende de:** SC-09, SC-24. Prioridad: high. Estado snapshot: todo.
+**Depende de:** SC-09, SC-24. Prioridad: high. Estado snapshot: done.
+
+**Cierre SC-14:** 14 controles nativos iniciales + 9 de la build corregida; 126 tests focales. Corregida pérdida de cambios al abrir/cerrar dirty. Release separada y baseline aprobada preservada. Clippy estricto conserva deuda anterior (6 diagnósticos); no suite completa ni impresión física. [Informe](PROJECT-FLOW.md).
 
 ## SC-15
 

@@ -7,6 +7,18 @@ Son hashes de bytes del checkout; una conversión de finales de línea también 
 No se ejecutaron suites nuevas: las pruebas citadas son evidencia histórica de la
 build/commit correspondiente. Lectura de código ≠ validación del flujo completo.
 
+## Actualización runtime SC-14
+
+[SC-14](PROJECT-FLOW.md) agrega evidencia posterior al inventario estático:
+14 controles nativos de archivos sobre la baseline y 9 sobre la build corregida;
+126 tests focales. Save/reopen, copy/paste/delete y GX con undo/redo conservan
+geometría; perfiles embebidos se conservan. Reparación nativa tiene undo exacto.
+Archivo→Abrir dirty ahora usa la protección existente; cerrar escena/ventana
+requiere confirmar o guardar correctamente. Cancelaciones y fallo read-only
+verificados. No suite completa, matriz nativa de exportadores ni impresión física.
+Las filas siguientes conservan el alcance histórico de SC-09; esta actualización
+no implica validación de todos los subsistemas.
+
 ## Capacidades y brechas
 
 | Área | Core / fuente | Conexión GUI | Evidencia / límite | Trabajo |

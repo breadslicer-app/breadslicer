@@ -323,6 +323,24 @@ impl DialogManager {
         offer: KeepChangesOffer,
         on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
     ) {
+        self.show_scene_change_confirm(source_name, offer, false, on_choice);
+    }
+
+    pub(crate) fn show_close_scene_confirm(
+        self: &Rc<Self>,
+        offer: KeepChangesOffer,
+        on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
+    ) {
+        self.show_scene_change_confirm(String::new(), offer, true, on_choice);
+    }
+
+    fn show_scene_change_confirm(
+        self: &Rc<Self>,
+        source_name: String,
+        offer: KeepChangesOffer,
+        closing: bool,
+        on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
+    ) {
         let dialog = match ReplaceSceneDialog::new() {
             Ok(d) => d,
             Err(err) => {
@@ -334,6 +352,7 @@ impl DialogManager {
                 return;
             }
         };
+        dialog.set_closing(closing);
         dialog.set_source_name(source_name.into());
         dialog.set_has_unsaved_changes(offer.has_unsaved_changes());
         dialog.set_save_as_mode(offer.save_as_mode());

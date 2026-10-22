@@ -216,7 +216,7 @@
         },
         {
           "path": "apps/slicer-gui/src/app_state.rs",
-          "sha256": "007080cfb59bbc1c18203c2ccba3246a18a1b02949b388e36dcbc9d52146c2fe"
+          "sha256": "745f975beccd9f2a0e4a84e06c43243b3985729b07e6277998509fbe16684f6f"
         },
         {
           "path": "apps/slicer-gui/src/build_volume.rs",
@@ -240,7 +240,7 @@
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
-          "sha256": "2fb75a55105f7d42da9cebd778101e2c8231032d6de7317f5e0dc8a258b6103a"
+          "sha256": "b4db14b77b3bbf04970b5905326dc5be9e3385f4ed8e47494682888ba2ddb7e0"
         },
         {
           "path": "apps/slicer-gui/src/export_print_file.rs",
@@ -664,7 +664,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "3f217acaf0668ac4feafcf69fe817c1c6cf100661073307dda9cb4994ce2cd95"
+          "sha256": "510ac4d326295dd831532bb51aabd19fa3516d7763417b7b208d16d99e936dd2"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -744,7 +744,7 @@
         },
         {
           "path": "apps/slicer-gui/src/wiring.rs",
-          "sha256": "78912f05bb4902279897e4ff2828012dad714b80a3912e6131e7243a6eea09df"
+          "sha256": "dcb5e164fa4ec6768efcf4db70f225986c8703433c2d3d0df41dc494f584a428"
         },
         {
           "path": "apps/slicer-gui/src/workspace_section.rs",

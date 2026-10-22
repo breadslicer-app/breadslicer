@@ -1,0 +1,37 @@
+{
+  "task": "SC-14",
+  "status": "completed_in_defined_scope",
+  "baseline_native_file_checks": 14,
+  "baseline_saved_states": 13,
+  "regression": "Dirty File > Open silently replaced unsaved scene; reproduced on approved build22526a29",
+  "implementation": "Dirty menu open reuses replacement guard after releasing picker ticket; scene/OS close use guarded save/export/discard continuation.",
+  "build": "release passed in 4m14s; candidate copied separately, prior approved EXE preserved",
+  "candidate_exe_sha256": "014dd54974ca222195a93600f6d76d0043704033defbb381db95cb2190b8fa7e",
+  "unit_tests_passed": 126,
+  "unit_test_groups": {
+    "new_guarded_open": 2,
+    "scene_save": 31,
+    "replace_policy": 6,
+    "dirty_history": 42,
+    "clean_window_close": 1,
+    "repair_run": 19,
+    "scene_export": 25
+  },
+  "gui_test_compilation_repair": "Restored missing Transform3D import under cfg(test);26 prior compilation errors had same root cause.",
+  "strict_clippy": "not passed:6 findings in existing runtime code (manual_clamp/result_large_err/collapsible_if)",
+  "scoped_clippy": "passed with only those3 categories allowed via CLI, no source suppressions",
+  "fmt_and_diff_check": "passed",
+  "native_fixed_build": {
+    "checks_passed": 9,
+    "evidence": "evidence/sc14/fixed-verification.json",
+    "scope": "two STL imports via windows/clipboard; dirty open cancel/save/discard; scene and OS close cancel; read-only save failure; Save As cancel; repair and exact undo"
+  },
+  "pending": [],
+  "next_tasks_started": false,
+  "limits": [
+    "No full GUI suite or physical print validation",
+    "Export covered by25 focused unit tests, not a native export-format matrix",
+    "Initial14 checks belong to baseline;9 correction checks belong to new executable",
+    "Strict Clippy has6 pre-existing diagnostics"
+  ]
+}

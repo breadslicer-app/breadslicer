@@ -13,11 +13,12 @@ import { ThemePreference } from "preferences/appearance.slint";
 // export), Cancel (do nothing). The caller wires what each choice means; this
 // component only reports it.
 export component ReplaceSceneDialog inherits Window {
-    title: @tr("ReplaceSceneDialog" => "Open new model");
+    title: root.closing ? @tr("ReplaceSceneDialog" => "Close scene") : @tr("ReplaceSceneDialog" => "Open new model");
     icon: @image-url("../assets/images/soulcrafted.svg");
     default-font-family: "Noto Sans";
 
     in property <string> source-name;
+    in property <bool> closing: false;
     // True when the loaded scene has unsaved changes (per the document's dirty
     // tracking). Hides the Save and Export buttons when false: there's nothing
     // to keep that the user couldn't reproduce by reloading the source file.
@@ -73,7 +74,7 @@ export component ReplaceSceneDialog inherits Window {
                 spacing: 6px;
 
                 Text {
-                    text: @tr("ReplaceSceneDialog" => "Replace the current scene?");
+                    text: root.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?");
                     font-weight: 700;
                     wrap: word-wrap;
                 }
@@ -114,14 +115,16 @@ export component ReplaceSceneDialog inherits Window {
                 spacing: 8px;
 
                 Button {
-                    text: @tr("ReplaceSceneDialog" => "Discard & Open");
+                    text: root.closing ? @tr("ReplaceSceneDialog" => "Discard & Close") : @tr("ReplaceSceneDialog" => "Discard & Open");
                     clicked => {
                         root.discard-requested();
                     }
                 }
 
                 if root.has-unsaved-changes: Button {
-                    text: root.save-as-mode
+                    text: root.closing
+                        ? (root.save-as-mode ? @tr("ReplaceSceneDialog" => "Save As & Close…") : @tr("ReplaceSceneDialog" => "Save & Close"))
+                        : root.save-as-mode
                         ? @tr("ReplaceSceneDialog" => "Save As & Open…")
                         : @tr("ReplaceSceneDialog" => "Save & Open");
                     clicked => {
@@ -130,7 +133,7 @@ export component ReplaceSceneDialog inherits Window {
                 }
 
                 if root.has-unsaved-changes: Button {
-                    text: @tr("ReplaceSceneDialog" => "Export & Open…");
+                    text: root.closing ? @tr("ReplaceSceneDialog" => "Export & Close…") : @tr("ReplaceSceneDialog" => "Export & Open…");
                     clicked => {
                         root.export-requested();
                     }
