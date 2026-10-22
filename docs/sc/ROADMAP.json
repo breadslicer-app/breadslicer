@@ -1,0 +1,1200 @@
+{
+  "schema": 1,
+  "snapshot_date": "2026-10-22",
+  "board_id": "sc",
+  "behavior_baseline": "22526a29",
+  "policy": "Snapshot de planificación. Estado vivo en Workboard; sólo SC-08/09 autorizadas para ejecución en esta tarea. Done exige evidencia según alcance; ideas no son compromisos. No despacho automático.",
+  "cards": [
+    {
+      "key": "SC-01",
+      "title": "Compilacion nativa y validacion de componentes centrales",
+      "area": "base",
+      "phase": "Base verificada",
+      "scope": "Baseline fd238bbd preservada.955 pruebas seleccionadas aprobadas(898unitarias+57espaciales), GUI release y apertura de STL grandes. No suite completa GUI ni impresion validada.",
+      "acceptance": "955 controles registrados en revision inicial; no reejecutados al organizar.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/soulcrafted-gui-native-trial-20261022.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-02",
+      "title": "Gizmo combinado de mover, rotar y escalar",
+      "area": "editor",
+      "phase": "Base verificada",
+      "scope": "Gizmo en Prepare y Transform; Slice solo lectura. Reutiliza implementacion existente; rama selection-gizmo93742b0e preservada.",
+      "acceptance": "Damian confirmo funcionamiento y posteriormente todos los controles.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-03",
+      "title": "Contacto exacto con la cama al rotar y escalar",
+      "area": "editor",
+      "phase": "Base verificada",
+      "scope": "Minimo real de vertices world XYZ, cache de bloques256vertices. Mantiene contacto y elevacion intencional; traslacion Z explicita libre. Una transaccion undo.",
+      "acceptance": "9 controles geometria/timing y62 contrastes de transformaciones; Damian: FUNCIONA PERFECTO.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/SoulCrafted-tight-bed/README-test.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-04",
+      "title": "Transformaciones modales G/R/S con X/Y/Z",
+      "area": "shortcuts",
+      "phase": "Base verificada",
+      "scope": "G mover,R rotar,S escalar; X/Y/Z mundo; Enter/LMB confirma,Esc/RMB cancela. Undo atomico y guardas de revision/seleccion/seccion. No entrada numerica ni Shift+eje aun.",
+      "acceptance": "8 pruebas matematicas y20 nativas; Damian confirmo funcionamiento.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/SoulCrafted-modal-transforms/README-test.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-05",
+      "title": "Camara Blender, encuadre y perspectiva/ortografica",
+      "area": "camara",
+      "phase": "Base verificada",
+      "scope": "MMB orbita,Shift+MMB panea,RMB orbita,rueda zoom.5/boton cambian proyeccion. Picking/render/gizmo coherentes; View Selected y vistas por eje conservan encuadre.",
+      "acceptance": "22 pruebas camara; Damian confirmo todos los controles.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/SoulCrafted-navigation/README-test.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-06",
+      "title": "Radial con tecla ordinal, swipe y confirmacion al soltar",
+      "area": "camara",
+      "phase": "Base verificada",
+      "scope": "Mantener tecla ordinal,mover/resaltar,soltar para ejecutar. Toque permite clic. Fix22526a29: PointerEventKind.move, no moved(drag-only). Umbral central35px. Rama actual experiment/blender-navigation.",
+      "acceptance": "17/17 nativas:6 vistas delta imagen0, sin accion previa a release; centro,bordes,clic,fuera ventana,25ms swipe,fit,proyeccion,Esc,repeticion. Damian confirmo PERFECTO.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/SoulCrafted-navigation-hover-fixed/README-test.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-07",
+      "title": "Revision del informe Lychee y catalogo de presets",
+      "area": "investigacion",
+      "phase": "Base verificada",
+      "scope": "Mapa contactos->rutas->geometria->refuerzos.3 SLA fabrica,4 J3D,3packs(2custom),6bracings. Solo investigacion estatica, NO motor portado ni equivalencia de impresion.",
+      "acceptance": "32 controles independientes;13hashes,888campos,30referencias. Suite original215 no reejecutada.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "C:/Users/dnaon/.openclaw/workspace/output/lychee-support-review-20261022.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-08",
+      "title": "Inventario, respaldo privado GitHub e índice mantenible",
+      "area": "base",
+      "phase": "Inventario",
+      "scope": "Código aprobado 22526a29; ramas históricas y upstream preservados. GitHub privado SynrgStudio/SC-private, desarrollo sc/development, etiqueta sc-editor-verified-20261022. Release portable y hashes. Commit SC-08 34f81984.",
+      "acceptance": "Ramas remotas y privacidad verificadas; ZIP remoto coincide con SHA256 local; índice, recuperación no destructiva y script de inventario disponibles. No cambios funcionales.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "high",
+      "evidence": [
+        "SC-INDEX.md",
+        "docs/sc/BASELINE.md",
+        "docs/sc/INVENTORY.json"
+      ],
+      "implementation_authorized": true
+    },
+    {
+      "key": "SC-09",
+      "title": "Inventario del core y matriz GUI/core/evidencia/brechas",
+      "area": "arquitectura",
+      "phase": "Inventario",
+      "scope": "26 paquetes (20 principal + 6 anidado). Matriz distingue reutilización, integración y validación. Hallazgos: proyectos/reparación/slicing/perfiles ya conectados; soportes demo, Chalyplex vacío; no hollow de producto identificado. Writers GOO3/CTB5/v5enc sí existen.",
+      "acceptance": "Fuentes y hashes trazables, límites de pruebas explícitos; cada brecha mapeada al roadmap. No asumir ausencia por UI ni madurez por tener un tipo/API.",
+      "depends_on": [
+        "SC-08"
+      ],
+      "status": "done",
+      "priority": "high",
+      "evidence": [
+        "docs/sc/CORE-GUI-MATRIX.md",
+        "docs/sc/ROADMAP.json"
+      ],
+      "implementation_authorized": true
+    },
+    {
+      "key": "SC-10",
+      "title": "Especificar primer hito vertical de soportes manuales",
+      "area": "soportes",
+      "phase": "Siguiente",
+      "scope": "Definir colocar contacto, punta/cuerpo/base, seleccionar/editar/borrar, undo, guardar/reabrir y exportar/slicear. Reutilizar scene-edit, picking y jobs existentes; evaluar extensión del contrato sc-geom sin convertir el demo en motor real por nombre.",
+      "acceptance": "Especificación breve con entidades, unidades, estados, cancelación, integración y casos de aceptación; alcance v1 explícito. No programar el hito al cerrar la especificación.",
+      "depends_on": [
+        "SC-09"
+      ],
+      "status": "todo",
+      "priority": "high",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-11",
+      "title": "Modelo paramétrico persistente y geometría de soportes",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Contacto→recorrido→punta/cuerpo/base como fuente de verdad con IDs y vínculos al modelo; mesh derivada determinista, presets versionados y edición reversible. No copiar fuentes propietarias ni depender del demo hexagonal.",
+      "acceptance": "Geometría válida en casos nominales/límite, serialización roundtrip, migración y cambio de modelo/transform sin soportes huérfanos; meshes derivadas regenerables.",
+      "depends_on": [
+        "SC-10",
+        "SC-37",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-12",
+      "title": "Editor manual de soportes en viewport",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edición individual y cancelación; separar navegación y selección de modelos. Reutilizar renderer y gestos existentes.",
+      "acceptance": "Damian completa flujo manual sin clicks ambiguos; un undo por gesto; cancelación exacta; guardas Slice/loading; soportes sobreviven guardar/reabrir.",
+      "depends_on": [
+        "SC-11",
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-13",
+      "title": "Presets propios: geometría, packs y bracing separados",
+      "area": "presets",
+      "phase": "Desarrollo",
+      "scope": "Unidades, rangos, esquemas y migración; biblioteca de presets personales editable/importable. Referencias J3D como datos; bp0 ausente y joinLength ambiguo no se normalizan a ciegas.",
+      "acceptance": "Crear/duplicar/editar/importar/exportar/restaurar; dependencias faltantes visibles; cambiar preset no altera objetos existentes sin acción explícita.",
+      "depends_on": [
+        "SC-11",
+        "SC-23"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-14",
+      "title": "Validar flujo existente de proyecto, historial y roundtrip",
+      "area": "persistencia",
+      "phase": "Siguiente",
+      "scope": "Guardar/abrir 3MF YA existe: probar importar varios modelos, transformar, copiar/pegar/borrar, reparar, undo/redo, perfiles embebidos y exportación. Comparar geometría/transform/identidad y estado dirty. Implementar sólo fallos demostrados.",
+      "acceptance": "Corpus roundtrip sin pérdidas de geometría, escala, pose ni perfiles; guardado atómico, save-as, cancelación y archivo inválido controlados; evidencia exacta de build.",
+      "depends_on": [
+        "SC-09",
+        "SC-24"
+      ],
+      "status": "todo",
+      "priority": "high",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-15",
+      "title": "Recorridos y colisiones volumétricas de soportes",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Vertical antes de inclinado/model-to-model. Contrato de clearance, cuello, longitudes y restricciones. Aceleración espacial existente; rayos de muestreo no certifican ausencia de intersección volumétrica.",
+      "acceptance": "Fixtures cóncavos, paredes finas, huecos, vecinos y escalas; diagnóstico de trayecto imposible; edición/undo conserva anclajes.",
+      "depends_on": [
+        "SC-11",
+        "SC-12",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-16",
+      "title": "Minis, parenting y refuerzos editables",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Grafo de padres/ramas y arriostramientos parametrizados; bases sobre modelo, uniones, patrones y regeneración local. No tratar fuerza heurística como garantía física.",
+      "acceptance": "Sin ciclos/huérfanos; modificar/eliminar padre resuelve dependencias; joints y cruces imprimibles; roundtrip/undo y selección claros.",
+      "depends_on": [
+        "SC-15",
+        "SC-13"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-17",
+      "title": "Pipeline de islas y autosupport con resultados editables",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Hito integrador de SC-48/49/50: usar contornos por capa, categorías y generador propio de contactos/rutas. Preview de propuestas, aceptar parcial, preservar manuales y registrar seed/config.",
+      "acceptance": "Cobertura, falsos positivos, tiempo y memoria medidos en corpus; no duplicar contactos existentes; resultados editables y reproducibles; sin prometer paridad Lychee.",
+      "depends_on": [
+        "SC-48",
+        "SC-49",
+        "SC-50"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-18",
+      "title": "Hito hollow 3D y drenajes propios",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Hito integrador, no duplicar subtareas SC-39…46. Fuente paramétrica persistente, cavidad mesh, agujeros, blockers, tapones, preview/export/slice coherentes. No portar a ciegas DF ni interpretar descripción sc-geom como algoritmo.",
+      "acceptance": "Flujo no destructivo completo y comprobable, espesor físico y fallos explícitos, sin volúmenes atrapados no advertidos; guardado/reapertura e historial.",
+      "depends_on": [
+        "SC-41",
+        "SC-42",
+        "SC-43",
+        "SC-44",
+        "SC-45",
+        "SC-46"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-19",
+      "title": "Salida verificable para la impresora Anycubic elegida",
+      "area": "impresion",
+      "phase": "Desarrollo",
+      "scope": "Primero confirmar modelo/firmware y formato real con Damian. GOO/CTB existentes no implican compatibilidad Anycubic. Decidir writer existente, extensión o puente UVtools según viabilidad y licencia.",
+      "acceptance": "Archivo independiente validado en dimensiones, capas, orientación, exposición y movimiento; aceptación por firmware y prueba física realizadas por Damian antes de declarar producción.",
+      "depends_on": [
+        "SC-32",
+        "SC-35",
+        "SC-36",
+        "SC-66"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-20",
+      "title": "Hito de pulido integral del editor",
+      "area": "ui",
+      "phase": "Desarrollo",
+      "scope": "Agrupa selección, inspector, transformaciones, jerarquía, colocación y accesibilidad. Priorizar con uso real; las bases ya probadas se conservan. Subtareas SC-25…28,60/61/70.",
+      "acceptance": "Flujo cotidiano consistente, atajos descubribles, sin regresión de navegación/modales; cada mejora tiene evidencia y no exige rehacer renderer.",
+      "depends_on": [
+        "SC-25",
+        "SC-26",
+        "SC-27",
+        "SC-28",
+        "SC-61"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-21",
+      "title": "Explorar FEA aproximada de soportes",
+      "area": "idea",
+      "phase": "Ideas",
+      "scope": "Red de vigas con cargas de separación/material/proceso calibrados. Investigación opcional; no bloquear editor/manual/impresión ni presentar mapa de colores como validación mecánica.",
+      "acceptance": "Spike con coste, incertidumbre, correlación experimental y decisión continuar/descartar; sin nueva dependencia de pago.",
+      "depends_on": [
+        "SC-53",
+        "SC-74"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-22",
+      "title": "Evaluar GPU sólo ante cuellos de botella medidos",
+      "area": "idea",
+      "phase": "Ideas",
+      "scope": "Medir CPU, transferencias, VRAM y latencia antes de migrar una etapa; distinguir raster/render ya GPU de geometría computacional.",
+      "acceptance": "Benchmark reproducible, precisión y fallback CPU; decisión fundada. No migración general por intuición.",
+      "depends_on": [
+        "SC-54"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-23",
+      "title": "Revisión estática de hollow Lychee y conservación local",
+      "area": "investigacion",
+      "phase": "Investigación",
+      "scope": "Informe/parámetros/auditoría leídos previamente; 336 archivos cotejados. Registro original 1504 estáticas solapadas +81 auditoría, no reejecutado. 2D≠3D, diferencias preview/export/slice, escala/cachés y diámetro reducido documentados.",
+      "acceptance": "Referencia y límites en RESEARCH.md; backup local fuera de Temp con manifiesto, sin subir bundles/extractos propietarios a GitHub. No es motor implementado.",
+      "depends_on": [],
+      "status": "done",
+      "priority": "normal",
+      "evidence": [
+        "docs/sc/RESEARCH.md"
+      ],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-24",
+      "title": "Corpus pequeño y representativo de validación",
+      "area": "calidad",
+      "phase": "Siguiente",
+      "scope": "Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grupos, instancias, unidades, escalas negativas/no uniformes y malla rota. Casos grandes sólo locales si tienen datos privados.",
+      "acceptance": "Procedencia, licencia, hash, unidades y expectativas por fixture; distinguir checks geométricos, imágenes y pruebas físicas. Reutilizar mesh/scene-fixtures existentes.",
+      "depends_on": [
+        "SC-09"
+      ],
+      "status": "todo",
+      "priority": "high",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-25",
+      "title": "Multiselección y operaciones conjuntas",
+      "area": "editor",
+      "phase": "Desarrollo",
+      "scope": "Selection actual es None/One. Extender selección, caja/Shift, copy/paste/delete/duplicate, pivote y transforms conjuntas sin perder IDs ni coherencia de undo.",
+      "acceptance": "Selección visible y predecible, un undo por operación, scene list y viewport coinciden; recursos compartidos no se duplican sin necesidad.",
+      "depends_on": [
+        "SC-14",
+        "SC-28"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-26",
+      "title": "Transformaciones numéricas, restricciones y snapping",
+      "area": "editor",
+      "phase": "Desarrollo",
+      "scope": "Entrada numérica G/R/S, precisión Shift, planos excluidos, incrementos, world/local y pivotes con HUD claro. Mantener Esc/confirm, foco y contacto cama existentes.",
+      "acceptance": "Unidades mm/grados/factor claras; valores no válidos no mutan escena; cancel restaura exactamente; testeos focales y Damian prueba gestos.",
+      "depends_on": [
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-27",
+      "title": "Colocación precisa: centrar, apoyar, alinear y límites",
+      "area": "editor",
+      "phase": "Desarrollo",
+      "scope": "Reutilizar print-glue placement y mínimo de vértices. Centrar, drop-to-bed, elevación intencional, alineación y avisos fuera de volumen; aclarar política ante escalas invertidas.",
+      "acceptance": "Dimensiones/posición correctas y un undo; no corregir silenciosamente Z intencional; avisos coinciden con exportación.",
+      "depends_on": [
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-28",
+      "title": "Jerarquía de escena y propiedades de objeto",
+      "area": "editor",
+      "phase": "Desarrollo",
+      "scope": "El core tiene grupos/recursos pero la UI lista hojas. Definir árbol, nombres, grupos, visibilidad, bloqueo, selección y qué estado es sólo visual vs imprimible.",
+      "acceptance": "Identidades y jerarquía sobreviven roundtrip; operaciones no borran recursos compartidos; ocultar no cambia export sin política explícita.",
+      "depends_on": [
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-29",
+      "title": "Robustez de importación, unidades y reparación",
+      "area": "geometria",
+      "phase": "Desarrollo",
+      "scope": "Extender/validar readers y repair existentes, no reescribir. Límites, ASCII/binary STL, OBJ multiobjeto, 3MF, winding, degenerados y diagnóstico antes/después.",
+      "acceptance": "No modifica originales; informe de cambios y pérdida, fallo/cancel controlados; unidades explícitas en formatos sin unidad; fixtures adversos.",
+      "depends_on": [
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-30",
+      "title": "Autosave, recuperación de sesión y versiones de proyecto",
+      "area": "persistencia",
+      "phase": "Desarrollo",
+      "scope": "Guardar proyecto existente no es autosave. Snapshots atómicos con límites/retención, recuperación tras crash y no sobrescribir fuente ni perfil del usuario por accidente.",
+      "acceptance": "Interrupción simulada recuperable, sin confundir dirty con guardado; elección de recuperar/descartar y limpieza acotada; compatible con migraciones.",
+      "depends_on": [
+        "SC-14",
+        "SC-59"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-31",
+      "title": "Validez de slices persistidos y AA al reabrir",
+      "area": "slicing",
+      "phase": "Desarrollo",
+      "scope": "Auditar fingerprint/reloaded_slices: AA no está persistido ni en token y vuelve Off según código actual. Decidir qué conserva contours vs raster y comunicar diferencias sin alarmas falsas.",
+      "acceptance": "Cambios de mesh/pose/perfil/AA tienen política correcta y probada; no reutilizar raster obsoleto; roundtrip de configuración explícito.",
+      "depends_on": [
+        "SC-14",
+        "SC-33",
+        "SC-55"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-32",
+      "title": "Perfiles propios e import/export con procedencia",
+      "area": "perfiles",
+      "phase": "Desarrollo",
+      "scope": "Reutilizar print-profiles/forms/libraries. Definir impresora real, materiales, herencia, overrides y defaults visibles; paquetes y perfiles embebidos sin sobrescrituras inesperadas.",
+      "acceptance": "Resolver perfil efectivo y origen por campo; validación de rangos y migraciones; unidades/resolución/mirror correctos. Ajustes físicos confirmados por Damian.",
+      "depends_on": [
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-33",
+      "title": "Validar sliceado CPU en casos geométricos límite",
+      "area": "slicing",
+      "phase": "Desarrollo",
+      "scope": "Contornos, orientación de holes, capas inicial/final, objetos superpuestos, alturas, manifold/cancel y determinismo; reutilizar engine y servicios existentes.",
+      "acceptance": "Contornos y schedules esperados en corpus, cancel sin resultado parcial instalado; límites CSG/reference reportados, no silenciados.",
+      "depends_on": [
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-34",
+      "title": "Coherencia visor de capas, raster y exportación",
+      "area": "slicing",
+      "phase": "Desarrollo",
+      "scope": "Conectar verificación de rutas existentes: sección 3D, contornos, capas raster, printer program y export. Comprobar Z de muestreo frente techo de slab, orientación y píxeles.",
+      "acceptance": "Fixtures con resultados cruzados documentados; tocar perfil/escena invalida sólo lo debido; no llamar equivalentes a previews distintos.",
+      "depends_on": [
+        "SC-33",
+        "SC-35",
+        "SC-55"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-35",
+      "title": "Validar writers existentes y actualizar su catálogo",
+      "area": "impresion",
+      "phase": "Desarrollo",
+      "scope": "Contrastar write.rs/has_writer con UI/docs: GOO3.0, CTB5 y CTB5enc implementados; GOO5.1 rechazado. Verificar bytes/metadata, thumbnails, límites y fallos de I/O.",
+      "acceptance": "Roundtrip/lector independiente o fixture oficial por dialecto; README y UI reflejan soporte exacto; archivo generado no implica prueba física.",
+      "depends_on": [
+        "SC-24",
+        "SC-32"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-36",
+      "title": "Elegir ruta Anycubic y evaluar soluciones existentes",
+      "area": "impresion",
+      "phase": "Decisión pendiente de equipo",
+      "scope": "Identificar equipo/firmware/formato; revisar opciones abiertas mantenidas y UVtools, licencias/coste cero y límites. Sólo después decidir adaptación o writer propio.",
+      "acceptance": "Decisión documentada con muestra válida y plan de validación independiente; no instalar ni comprar servicios por la investigación.",
+      "depends_on": [
+        "SC-09"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-37",
+      "title": "Contrato común de jobs, cancelación y resultados obsoletos",
+      "area": "arquitectura",
+      "phase": "Desarrollo",
+      "scope": "Inventariar workers actuales; ampliar reusable JobHandle/revision/diagnósticos/recipe. Evitar trabajos pesados en gestos y mutaciones después de cambiar de escena.",
+      "acceptance": "Cancelar/cerrar/editar/reabrir durante operación no instala resultados viejos; progreso y errores recuperables; commit de resultado atómico con undo.",
+      "depends_on": [
+        "SC-09",
+        "SC-10"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-38",
+      "title": "Cachés derivadas por contenido, revisión y transformaciones",
+      "area": "arquitectura",
+      "phase": "Desarrollo",
+      "scope": "AABB/BVH/vertex-blocks/GPU/soportes/hollow/slices: dependencias explícitas, priming off-thread, presupuestos y compartir recursos inmutables sin estado global obsoleto.",
+      "acceptance": "Edits/undo/repair/scale invalidan sólo lo afectado; resultados coinciden con cálculo sin caché en casos pequeños; coste frío/caliente medido.",
+      "depends_on": [
+        "SC-09",
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-39",
+      "title": "Especificar contrato hollow 3D y política de espesor",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Diseño de fuente mesh+cavidad derivada, unidades, calidad/error, escala, export/bake, blockers y fallos. Separar futuro raster2D. Requisitos de investigación, no réplica de implementación Lychee.",
+      "acceptance": "Decisiones explícitas de espacio local/world, espesor tras scale, preview vs final y límites; criterios geométricos y memoria antes de código.",
+      "depends_on": [
+        "SC-09",
+        "SC-23"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-40",
+      "title": "Preflight de bibliotecas para offset, booleanos y distancia",
+      "area": "geometria",
+      "phase": "Desarrollo",
+      "scope": "Comparar soluciones abiertas mantenidas para SDF/offset/isosuperficie/booleanos y posibilidad Rust/FFI. Revisar licencias, robustez, fallback, build Windows y coste de memoria.",
+      "acceptance": "Spike acotado con fixtures y decisión de reutilizar/crear, sin nueva plataforma paga. No integrar bundles propietarios ni suponer solución universal.",
+      "depends_on": [
+        "SC-39",
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-41",
+      "title": "Generador de cavidad hollow 3D no destructivo",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Implementar motor elegido con calidad/error y memoria acotados; mesh interior con winding correcto, tratamiento de degenerados y worker cancelable.",
+      "acceptance": "Medir espesor/volumen y topología en corpus; fallos explícitos, preview rápido vs final etiquetados; input original intacto.",
+      "depends_on": [
+        "SC-40",
+        "SC-37",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-42",
+      "title": "Espesor físico bajo transformaciones y escala",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Definir regeneración ante escala uniforme/no uniforme, rotación, mirror, pivotes y bake; evitar timestamp de UI como validez geométrica.",
+      "acceptance": "Espesor en mm cumple tolerancia declarada después de transform/undo/reopen; caché vieja nunca aparenta resultado actual.",
+      "depends_on": [
+        "SC-41",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-43",
+      "title": "Persistencia de parámetros y derivados de hollow",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Extender proyecto 3MF con versión/migración, parámetros, holes/blockers y política de cache/bake. Original recuperable; IDs y dependencias estables.",
+      "acceptance": "Roundtrip y compatibilidad hacia atrás, aviso de datos desconocidos sin pérdida silenciosa; un undo por operación y regeneración reproducible.",
+      "depends_on": [
+        "SC-41",
+        "SC-14",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-44",
+      "title": "Editor y corte geométrico de drenajes",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Colocación por superficie/normal, diámetro/profundidad/inclinación; preview vs corte final, exterior/interior y casos de múltiples paredes. Diferenciar fallo, nominal y diámetro efectivo.",
+      "acceptance": "Mesh sellada en casos soportados; agujero atraviesa pared prevista; diámetro no se reduce silenciosamente; editar/borrar/undo y persistencia.",
+      "depends_on": [
+        "SC-41",
+        "SC-43",
+        "SC-40"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-45",
+      "title": "Blockers y tapones parametrizados de hollow",
+      "area": "hollow",
+      "phase": "Desarrollo",
+      "scope": "Mantener regiones macizas mediante blockers y generar tapones con holgura física independiente; edición, orientación, in-place vs pieza aparte y exportación clara.",
+      "acceptance": "Transformaciones y tolerancias verificadas; no obstruir drenajes sin aviso; objetos separados identificables y roundtrip completo.",
+      "depends_on": [
+        "SC-44",
+        "SC-43"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-46",
+      "title": "Cavidades desconectadas, resina atrapada y ventosas",
+      "area": "analisis",
+      "phase": "Desarrollo",
+      "scope": "Componentes de cavidad, conectividad a exterior/agujeros, mínimos de apertura y análisis de copas por dirección/capas. Heurísticas explícitas, no garantía mecánica.",
+      "acceptance": "Fixtures positivos/negativos y representación útil en viewport/capas; advertencia distingue detección, incertidumbre y acción recomendada.",
+      "depends_on": [
+        "SC-41",
+        "SC-44",
+        "SC-33"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-47",
+      "title": "Evaluar hollow 2D como función separada",
+      "area": "hollow",
+      "phase": "Ideas",
+      "scope": "Opcional: erosión/raster por capas con espesor XY/Z y patrones. No genera cavidad STL por sí solo; distinguir AA/dimming de volumen de relleno.",
+      "acceptance": "Contrato y comparación preview/export en píxeles físicos, límites anisotrópicos y drenajes; no presentarlo como hollow3D.",
+      "depends_on": [
+        "SC-39",
+        "SC-55"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-48",
+      "title": "Detección de islas por continuidad de capas",
+      "area": "analisis",
+      "phase": "Desarrollo",
+      "scope": "Aprovechar contours/raster para componentes nuevos, microislas, enlaces entre capas y umbrales físicos; visualización localizada y navegación a capa.",
+      "acceptance": "Corpus etiquetado, cobertura/falsos positivos medidos, resultados estables ante AA/resolución y cancelación; sin confundir overhang con isla.",
+      "depends_on": [
+        "SC-33",
+        "SC-34"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-49",
+      "title": "Distribución automática de contactos con exclusiones",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Categorías isla/overhang/detalle, separación física, áreas enforcers/blockers y gradientes. Usar presets separados y preservar contactos manuales.",
+      "acceptance": "Seed/config reproducibles; densidad/separación sin unidad ambigua; propuesta revisable y regeneración selectiva sin destruir trabajo.",
+      "depends_on": [
+        "SC-48",
+        "SC-13",
+        "SC-12"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-50",
+      "title": "Construcción de grafo automático y reparación local",
+      "area": "soportes",
+      "phase": "Desarrollo",
+      "scope": "Resolver contactos hacia cama/modelo/ramas, colisiones y bracing con costes explícitos. Reroute local tras edición, no reconstrucción global por cada movimiento.",
+      "acceptance": "Contactos imposibles diagnosticados, sin ciclos ni rutas ocultamente inválidas; reproducible, cancelable y editable tras aceptar.",
+      "depends_on": [
+        "SC-49",
+        "SC-15",
+        "SC-16"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-51",
+      "title": "Política de CSG, instancias y bake imprimible",
+      "area": "geometria",
+      "phase": "Desarrollo",
+      "scope": "Scene representa CSG/reference pero slicing los rechaza. Definir qué evaluar/expandir/bakear, límites de explosión y origen conservado para undo.",
+      "acceptance": "Vista, export y slice coinciden en casos admitidos; casos no admitidos se rechazan claramente; no asumir booleano por tener enum.",
+      "depends_on": [
+        "SC-40",
+        "SC-14",
+        "SC-33"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-52",
+      "title": "Exportación de pieza, soportes y ensamblaje",
+      "area": "geometria",
+      "phase": "Desarrollo",
+      "scope": "Selección/todo, STL plano vs OBJ/3MF estructurado, soportes y hollow incluidos según opción, bake explícito y warnings de pérdida.",
+      "acceptance": "Dimensiones/posición/topología verificadas con lector independiente; malla exportada coincide con preview final y no cambia proyecto fuente.",
+      "depends_on": [
+        "SC-12",
+        "SC-43",
+        "SC-35"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-53",
+      "title": "Calidad geométrica e imprimibilidad de soportes",
+      "area": "calidad",
+      "phase": "Desarrollo",
+      "scope": "Punta, cuello, cuerpo, pie, juntas y refuerzos: watertight donde corresponde, intersecciones útiles, sección mínima y contacto/pentración controlados.",
+      "acceptance": "Fixtures y límites de tamaño/radio probados; mediciones guardadas por preset; no equiparar manifold a suficiente fuerza de impresión.",
+      "depends_on": [
+        "SC-11",
+        "SC-15",
+        "SC-16",
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-54",
+      "title": "Benchmarks reales de carga, edición y memoria",
+      "area": "rendimiento",
+      "phase": "Desarrollo",
+      "scope": "Separar parse/prep/primera imagen/picking/gestos/geometry jobs/export, frío/caliente y memoria CPU/VRAM. No usar captura de pantalla como FPS.",
+      "acceptance": "Corpus y hardware/config registrados, presupuestos comparables antes/después; detectar regresiones sin suites largas por cada cambio trivial.",
+      "depends_on": [
+        "SC-24",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-55",
+      "title": "Validación raster, AA, pixel pitch y orientación",
+      "area": "slicing",
+      "phase": "Desarrollo",
+      "scope": "AA Off/2/4/8, mirror/rotación, umbral de exposición y resolución anisotrópica; comparar contornos con máscara física y capas de writer.",
+      "acceptance": "Fixtures de paredes/detalles/holes con resultados pixel conocidos; AA cambia cobertura sin mover dimensiones nominales fuera de tolerancia.",
+      "depends_on": [
+        "SC-24",
+        "SC-33"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-56",
+      "title": "CLI como harness reproducible y paridad con GUI",
+      "area": "herramientas",
+      "phase": "Desarrollo",
+      "scope": "Reusar slice/convert/diagnose/fix/profiles existentes y servicios core. Añadir casos de batch/regresión y geometría sólo según funciones reales.",
+      "acceptance": "Mismo input/config produce resultado equivalente; códigos de salida/errores/progreso y rutas con espacios correctos; sin duplicar algoritmo GUI.",
+      "depends_on": [
+        "SC-33",
+        "SC-35"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-57",
+      "title": "Consumo de resina y tiempo con calibración",
+      "area": "perfiles",
+      "phase": "Desarrollo",
+      "scope": "Reutilizar volumen y printer_time_calibration; separar estimación geométrica, pérdidas, soportes y schedule mecánico. Datos medidos por equipo/resina.",
+      "acceptance": "Unidades y supuestos visibles, rangos/error frente a mediciones reales; no presentar demora demo ni tiempo CPU como tiempo de impresión.",
+      "depends_on": [
+        "SC-32",
+        "SC-35",
+        "SC-74"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-58",
+      "title": "Build portable y releases reproducibles de desarrollo",
+      "area": "entrega",
+      "phase": "Desarrollo",
+      "scope": "Extender packages/windows, incluir perfiles/licencias/versión/hash y notas. CI focal, firma sólo si se decide; no asociaciones ni instalador obligatorio para probar.",
+      "acceptance": "Artefacto de checkout limpio abre fixtures sin rutas del workspace; manifest de build y rollback; no subir modelos privados ni claves.",
+      "depends_on": [
+        "SC-14",
+        "SC-59"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-59",
+      "title": "Paths, aislamiento de datos y migraciones",
+      "area": "persistencia",
+      "phase": "Desarrollo",
+      "scope": "app-paths usa rutas del OS; definir namespace de nuestra versión, perfiles y portabilidad sin depender de APPDATA override no efectivo. No tocar Lychee/DF.",
+      "acceptance": "Ejecución de desarrollo/portable/normal con datos separados donde se prometa; migración reversible y compatibilidad de perfiles documentadas.",
+      "depends_on": [
+        "SC-09"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-60",
+      "title": "Localización, números, unidades y mensajes propios",
+      "area": "ui",
+      "phase": "Desarrollo",
+      "scope": "Reutilizar message-catalog/i18n; auditar HUD y nuevos textos. Separador decimal, formato/unidades, caracteres/teclados y errores orientados a acción.",
+      "acceptance": "Sin cadenas rotas/mojibake, traducciones no fingen cobertura; edición numérica consistente con locale y atajos probados en teclado de Damian.",
+      "depends_on": [
+        "SC-26"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-61",
+      "title": "Accesibilidad, foco y descubribilidad de atajos",
+      "area": "ui",
+      "phase": "Desarrollo",
+      "scope": "Ayuda de G/R/S, radial/proyección, tooltips, foco teclado y contraste; densidad/inspector, carga/progreso/errores sin bloquear interacción necesaria.",
+      "acceptance": "Acciones descubribles sin memorizar instrucciones; Esc/Enter no actúan sobre control equivocado; navegación por teclado usable y Damian valida.",
+      "depends_on": [
+        "SC-09"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-62",
+      "title": "Mantenimiento de índice, evidencia y board por entrega",
+      "area": "documentacion",
+      "phase": "Continuo",
+      "scope": "Rutina continua, no daemon: al cerrar cambios actualizar matriz/INVENTORY/roadmap, commit/build hash y tarjeta. Board es operativo; snapshot Git es respaldo, no fuente paralela de estado.",
+      "acceptance": "Cada entrega enlaza código/artefacto/prueba y límites; snapshots fechados y sin tareas duplicadas. No marcar esta rutina perpetua como terminada por documentarla.",
+      "depends_on": [
+        "SC-08",
+        "SC-09"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-63",
+      "title": "Seguimiento selectivo de upstream sin perder versión propia",
+      "area": "mantenimiento",
+      "phase": "Continuo",
+      "scope": "Origin Codeberg separado de github; revisar cambios con diff y pruebas focales antes de cherry-pick/merge. Mantener licencias/autoría y baseline propio.",
+      "acceptance": "Cada adopción documenta beneficio/conflictos/regresiones; no auto-sync, PRs públicos ni cambios en DF por esta tarjeta.",
+      "depends_on": [
+        "SC-08",
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-64",
+      "title": "Diagnóstico reproducible y reportes de fallos",
+      "area": "calidad",
+      "phase": "Desarrollo",
+      "scope": "Errores de import/geometry/GPU/export con versión/hash/config y logs acotados. Reporte local voluntario, sin telemetría o subir escenas automáticamente.",
+      "acceptance": "Un fallo se puede reproducir con fixture sintético y logs sin secretos/modelos; UI muestra recuperación y ubicación del reporte.",
+      "depends_on": [
+        "SC-37",
+        "SC-70"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-65",
+      "title": "Recuperación ante fallo, cancelación y cierre concurrente",
+      "area": "calidad",
+      "phase": "Desarrollo",
+      "scope": "Inyección de fallos de I/O, falta de memoria, archivo corrupto y cierre/cambio de escena en jobs. Reutilizar gates/stamps en lugar de callbacks ad hoc.",
+      "acceptance": "Estado consistente, archivos destino intactos ante rechazo y undo no corrompido; no resultados obsoletos ni app colgada al cancelar.",
+      "depends_on": [
+        "SC-14",
+        "SC-37",
+        "SC-38"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-66",
+      "title": "Validación física progresiva con Damian",
+      "area": "impresion",
+      "phase": "Validación con Damian",
+      "scope": "Plan de cubos/dimensiones, detalles, soportes, hollow y drenajes. Validación digital primero; Damian ejecuta pruebas en máquina y confirma resultados reales.",
+      "acceptance": "Registro equipo/firmware/resina/exposición/capas/medidas y criterio pasa/falla; generar archivo no cierra la tarea física. No iniciar impresoras automáticamente.",
+      "depends_on": [
+        "SC-35",
+        "SC-32"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-67",
+      "title": "Orientación asistida y autoarrange",
+      "area": "editor",
+      "phase": "Desarrollo",
+      "scope": "Extensión opcional sobre placement: separación, volumen útil y restricciones, estimar área por capa/altura/contactos/ventosas antes de sugerir orientación.",
+      "acceptance": "Previsualizar/aceptar/undo, no mover trabajo manual sin acción; métricas y límites explícitos, tiempo/memoria medidos.",
+      "depends_on": [
+        "SC-27",
+        "SC-46",
+        "SC-48"
+      ],
+      "status": "backlog",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-68",
+      "title": "Separar componentes, cortar y edición geométrica",
+      "area": "geometria",
+      "phase": "Desarrollo",
+      "scope": "Opcional: split por componentes, plano de corte, caps y merge/bake; evaluar soluciones existentes primero. Conservar original e historial y relaciones de soportes.",
+      "acceptance": "Mesh válida en casos admitidos, referencias migradas o invalidadas explícitamente; roundtrip y no confundir merge con unión booleana.",
+      "depends_on": [
+        "SC-40",
+        "SC-51",
+        "SC-14"
+      ],
+      "status": "backlog",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-69",
+      "title": "Compatibilidad Linux/macOS y empaquetado multiplataforma",
+      "area": "entrega",
+      "phase": "Ideas",
+      "scope": "Sólo cuando se quiera usar esas plataformas: validar builds/paths/renderer/fonts/input y packaging existente; no asumir probado por compilar Windows.",
+      "acceptance": "Prueba nativa por plataforma y backend, límites documentados; no instalar toolchains globales sin necesidad concreta.",
+      "depends_on": [
+        "SC-58",
+        "SC-70"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-70",
+      "title": "Compatibilidad GPU, DPI y controles nativos",
+      "area": "plataforma",
+      "phase": "Desarrollo",
+      "scope": "Renderer wgpu/Slint, fallbacks, resize, monitores/DPI, teclado ordinal/layout, pérdida de foco y device loss. Conservar la semántica hover correcta.",
+      "acceptance": "Arranque y errores claros en hardware disponible, gestos sin regresión en DPI/foco; pruebas focales ante fallos, no suite de mouse extensa rutinaria.",
+      "depends_on": [
+        "SC-24"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-71",
+      "title": "Múltiples placas y cola de trabajos",
+      "area": "editor",
+      "phase": "Ideas",
+      "scope": "Idea posterior: documentos/placas independientes, perfiles por placa, duplicados compartidos de forma segura y batch export con progreso.",
+      "acceptance": "Persistencia e historial por placa, cancelación y nombres de salida sin sobrescritura; no confundir con controlar impresora por red.",
+      "depends_on": [
+        "SC-14",
+        "SC-58"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-72",
+      "title": "Capas adaptativas y perfiles por región",
+      "area": "slicing",
+      "phase": "Ideas",
+      "scope": "Investigación posterior: engine actual usa schedule uniforme con primera capa propia; evaluar coste en raster, writers, preview, fingerprint y perfil de exposición.",
+      "acceptance": "Prototipo con beneficio medido y compatibilidad de formato; no tocar alturas sin coherencia integral ni prometer ahorro universal.",
+      "depends_on": [
+        "SC-33",
+        "SC-35",
+        "SC-55"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-73",
+      "title": "Envío a impresora y conectividad de red",
+      "area": "impresion",
+      "phase": "Ideas",
+      "scope": "Idea separada de generación de archivo. Identificar protocolo del equipo y plugin/proyecto mantenido; credenciales y control explícito del usuario.",
+      "acceptance": "Conexión/envío/cancel/status verificados si se implementa; imprimir requiere acción expresa de Damian; no habilitar servicios por el roadmap.",
+      "depends_on": [
+        "SC-19"
+      ],
+      "status": "triage",
+      "priority": "low",
+      "evidence": [],
+      "implementation_authorized": false
+    },
+    {
+      "key": "SC-74",
+      "title": "Calibración experimental de contactos y material",
+      "area": "soportes",
+      "phase": "Validación con Damian",
+      "scope": "Plan de probetas con radios/penetración/altura/bracing y registros por resina/exposición/impresora/temperatura. Medir ruptura, marcas y estabilidad sin asumir presets universales.",
+      "acceptance": "Resultados físicos de Damian ligados a preset/version/config; recomendaciones con rango e incertidumbre, nunca garantía de resistencia.",
+      "depends_on": [
+        "SC-53",
+        "SC-66"
+      ],
+      "status": "backlog",
+      "priority": "normal",
+      "evidence": [],
+      "implementation_authorized": false
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-22",
+  "scope": "Documentary/static audit; no product code changes, rebuild or fresh runtime suite.",
+  "packages": 26,
+  "root_packages": 20,
+  "nested_packages": 6,
+  "source_hashes_checked": 602,
+  "evidence_files_checked": 12,
+  "board_cards_checked": 74,
+  "existing_card_ids_and_evidence_preserved": 22,
+  "informational_dependencies_checked": 143,
+  "local_document_links_checked": 11,
+  "github_private": true,
+  "release_assets_digest_checked": 2,
+  "baseline_tag": "sc-editor-verified-20261022",
+  "baseline_code": "22526a2961d5b23e1638720e8c219af935efc10e",
+  "research_archive_files": 940,
+  "research_archive_sha256": "ae0a4785cb5c47e2a7c5a5b97a4c3010c4cc78ab6f3a4fd74f4d4551835e24df",
+  "research_archive_contents_verified_by": "output/sc-research-backup.py: every entry re-read and hashed",
+  "automatic_execution": false,
+  "rendered_board_visual_verification": "Not performed: no browser inspection tool available; state readback verified.",
+  "runtime_tests": "Historical evidence only; original suites not re-run during inventory."
+}
