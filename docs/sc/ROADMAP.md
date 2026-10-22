@@ -2,11 +2,11 @@
 
 Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **74 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
-No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. Sólo SC-08/09 se ejecutan por este pedido; el resto se organiza. No hay despacho automático.
+No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
 ## Orden inmediato recomendado
 
-1. SC-24: corpus representativo.
+1. SC-24: corpus representativo **completado** (25 casos / 28 assets).
 2. SC-14: comprobar el flujo real guardar/abrir/historial ya existente.
 3. SC-10: especificar primer hito de soportes manuales.
 
@@ -48,7 +48,7 @@ Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La val
 | [SC-21](#sc-21) | triage | idea | Explorar FEA aproximada de soportes | SC-53, SC-74 |
 | [SC-22](#sc-22) | triage | idea | Evaluar GPU sólo ante cuellos de botella medidos | SC-54 |
 | [SC-23](#sc-23) | done | investigacion | Revisión estática de hollow Lychee y conservación local | — |
-| [SC-24](#sc-24) | todo | calidad | Corpus pequeño y representativo de validación | SC-09 |
+| [SC-24](#sc-24) | done | calidad | Corpus pequeño y representativo de validación | SC-09 |
 | [SC-25](#sc-25) | backlog | editor | Multiselección y operaciones conjuntas | SC-14, SC-28 |
 | [SC-26](#sc-26) | backlog | editor | Transformaciones numéricas, restricciones y snapping | SC-14 |
 | [SC-27](#sc-27) | backlog | editor | Colocación precisa: centrar, apoyar, alinear y límites | SC-14 |
@@ -338,7 +338,11 @@ Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grup
 
 **Cierre:** Procedencia, licencia, hash, unidades y expectativas por fixture; distinguir checks geométricos, imágenes y pruebas físicas. Reutilizar mesh/scene-fixtures existentes.
 
-**Depende de:** SC-09. Prioridad: high. Estado snapshot: todo.
+**Depende de:** SC-09. Prioridad: high. Estado snapshot: done.
+
+**Entrega:** 25 casos sintéticos, 28 assets (27,045 bytes), manifiesto de procedencia/licencia/unidades/hash/expectativas, generador Rust que reutiliza fixtures/APIs existentes y verificador Python. 18 casos geométricos y 13 sondas analíticas; dos generaciones idénticas byte a byte. No GUI, raster completo ni impresión física.
+
+[Corpus](../../fixtures/sc-corpus/README.md) · [Verificación](CORPUS-VERIFICATION.json).
 
 ## SC-25
 

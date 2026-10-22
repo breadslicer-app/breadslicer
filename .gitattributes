@@ -1,0 +1,2 @@
+# Corpus hashes identify exact file bytes on every checkout (including STL ASCII/OBJ).
+fixtures/sc-corpus/v1/* -text

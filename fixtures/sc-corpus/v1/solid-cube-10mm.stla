@@ -1,0 +1,86 @@
+solid solid-cube-10mm
+  facet normal 0e0 0e0 -1e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 0e0 1e1 0e0
+      vertex 1e1 1e1 0e0
+    endloop
+  endfacet
+  facet normal 0e0 0e0 -1e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 1e1 1e1 0e0
+      vertex 1e1 0e0 0e0
+    endloop
+  endfacet
+  facet normal 0e0 0e0 1e0
+    outer loop
+      vertex 0e0 0e0 1e1
+      vertex 1e1 0e0 1e1
+      vertex 1e1 1e1 1e1
+    endloop
+  endfacet
+  facet normal 0e0 0e0 1e0
+    outer loop
+      vertex 0e0 0e0 1e1
+      vertex 1e1 1e1 1e1
+      vertex 0e0 1e1 1e1
+    endloop
+  endfacet
+  facet normal 0e0 1e0 0e0
+    outer loop
+      vertex 0e0 1e1 0e0
+      vertex 0e0 1e1 1e1
+      vertex 1e1 1e1 1e1
+    endloop
+  endfacet
+  facet normal 0e0 1e0 0e0
+    outer loop
+      vertex 0e0 1e1 0e0
+      vertex 1e1 1e1 1e1
+      vertex 1e1 1e1 0e0
+    endloop
+  endfacet
+  facet normal 0e0 -1e0 0e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 1e1 0e0 0e0
+      vertex 1e1 0e0 1e1
+    endloop
+  endfacet
+  facet normal 0e0 -1e0 0e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 1e1 0e0 1e1
+      vertex 0e0 0e0 1e1
+    endloop
+  endfacet
+  facet normal 1e0 0e0 0e0
+    outer loop
+      vertex 1e1 0e0 0e0
+      vertex 1e1 1e1 0e0
+      vertex 1e1 1e1 1e1
+    endloop
+  endfacet
+  facet normal 1e0 0e0 0e0
+    outer loop
+      vertex 1e1 0e0 0e0
+      vertex 1e1 1e1 1e1
+      vertex 1e1 0e0 1e1
+    endloop
+  endfacet
+  facet normal -1e0 0e0 0e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 0e0 0e0 1e1
+      vertex 0e0 1e1 1e1
+    endloop
+  endfacet
+  facet normal -1e0 0e0 0e0
+    outer loop
+      vertex 0e0 0e0 0e0
+      vertex 0e0 1e1 1e1
+      vertex 0e0 1e1 0e0
+    endloop
+  endfacet
+endsolid solid-cube-10mm

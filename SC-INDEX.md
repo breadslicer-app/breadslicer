@@ -14,6 +14,8 @@ se conserva sin reemplazar su autoría ni su documentación.
 
 ## Mapa
 
+- [Corpus SC-24: casos, assets y reproducción](fixtures/sc-corpus/README.md).
+- [Verificación del corpus](docs/sc/CORPUS-VERIFICATION.json).
 - [Reconstrucción, ramas y retorno](docs/sc/BASELINE.md).
 - [Matriz core → GUI → evidencia → trabajo pendiente](docs/sc/CORE-GUI-MATRIX.md).
 - [Inventario reproducible de paquetes](docs/sc/INVENTORY.json).
