@@ -3,7 +3,7 @@
   "snapshot_date": "2026-10-22",
   "board_id": "sc",
   "behavior_baseline": "22526a29",
-  "policy": "Snapshot de planificación. Estado vivo en Workboard; ejecución sólo por pedido explícito. SC-08/09/24 completadas en sus alcances. Done exige evidencia; ideas no son compromisos ni despacho automático.",
+  "policy": "Snapshot de planificación. Estado vivo en Workboard; ejecución sólo por pedido explícito. SC-08/09/14/24 completadas en sus alcances. Done exige evidencia; ideas no son compromisos ni despacho automático.",
   "cards": [
     {
       "key": "SC-01",
@@ -211,17 +211,22 @@
       "key": "SC-14",
       "title": "Validar flujo existente de proyecto, historial y roundtrip",
       "area": "persistencia",
-      "phase": "Siguiente",
+      "phase": "Flujo existente validado y protección dirty corregida",
       "scope": "Guardar/abrir 3MF YA existe: probar importar varios modelos, transformar, copiar/pegar/borrar, reparar, undo/redo, perfiles embebidos y exportación. Comparar geometría/transform/identidad y estado dirty. Implementar sólo fallos demostrados.",
       "acceptance": "Corpus roundtrip sin pérdidas de geometría, escala, pose ni perfiles; guardado atómico, save-as, cancelación y archivo inválido controlados; evidencia exacta de build.",
       "depends_on": [
         "SC-09",
         "SC-24"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "high",
-      "evidence": [],
-      "implementation_authorized": false
+      "evidence": [
+        "docs/sc/PROJECT-FLOW.md",
+        "docs/sc/PROJECT-VERIFICATION.json",
+        "docs/sc/evidence/sc14/baseline-verification.json",
+        "docs/sc/evidence/sc14/fixed-verification.json"
+      ],
+      "implementation_authorized": true
     },
     {
       "key": "SC-15",

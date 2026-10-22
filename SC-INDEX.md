@@ -6,16 +6,27 @@ se conserva sin reemplazar su autoría ni su documentación.
 ## Versión que funciona
 
 - Código aprobado por Damian: `22526a29`, etiqueta `sc-editor-verified-20261022`.
-- Desarrollo: `sc/development`; los cambios de inventario no modifican el programa.
+- Desarrollo: `sc/development`; SC-14 agrega protección de cambios al abrir/cerrar.
 - [GitHub privado](https://github.com/SynrgStudio/SC-private).
 - [Build portable verificada](https://github.com/SynrgStudio/SC-private/releases/tag/sc-editor-verified-20261022).
 - Ejecutable local: `../../output/SoulCrafted-navigation-hover-fixed/sc-slicer-gui.exe`.
 - SHA256 del ejecutable: `ebcc86255426599ed33d08f50bc5aa6650bb5cf91d70944962aecb44db5f01a2`.
 
+## Build de seguridad de proyecto (SC-14)
+
+- Nueva build validada técnicamente, aún no sustituye la aprobación de Damian
+  de la baseline de navegación.
+- [Informe y límites](docs/sc/PROJECT-FLOW.md): 126 tests focales y 9 controles
+  nativos sobre la corrección, además de 14 controles sobre la build inicial.
+- Portable local: `../../output/SoulCrafted-project-safety/sc-slicer-gui.exe`.
+- SHA256: `014dd54974ca222195a93600f6d76d0043704033defbb381db95cb2190b8fa7e`.
+- [Respaldo portable privado](https://github.com/SynrgStudio/SC-private/releases/tag/sc-project-safety-20261022).
+
 ## Mapa
 
 - [Corpus SC-24: casos, assets y reproducción](fixtures/sc-corpus/README.md).
 - [Verificación del corpus](docs/sc/CORPUS-VERIFICATION.json).
+- [SC-14: flujo de proyecto, fallo encontrado y corrección y validación nativa](docs/sc/PROJECT-FLOW.md).
 - [Reconstrucción, ramas y retorno](docs/sc/BASELINE.md).
 - [Matriz core → GUI → evidencia → trabajo pendiente](docs/sc/CORE-GUI-MATRIX.md).
 - [Inventario reproducible de paquetes](docs/sc/INVENTORY.json).
