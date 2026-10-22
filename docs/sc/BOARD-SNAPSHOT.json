@@ -13,11 +13,11 @@
     "archived": 0,
     "byStatus": {
       "backlog": 54,
-      "done": 10,
-      "todo": 3,
+      "done": 11,
+      "todo": 2,
       "triage": 7
     },
-    "updatedAt": 1792705890100
+    "updatedAt": 1792706914507
   },
   "verification": [
     {
@@ -212,7 +212,7 @@
     {
       "key": "SC-24",
       "id": "71109497-a9eb-4a41-87eb-160ba423dbdb",
-      "status": "todo",
+      "status": "done",
       "dependencies": [
         "SC-09"
       ]
@@ -4785,57 +4785,6 @@
       }
     },
     {
-      "id": "71109497-a9eb-4a41-87eb-160ba423dbdb",
-      "title": "SC-24 | Corpus pequeño y representativo de validación",
-      "status": "todo",
-      "priority": "high",
-      "labels": [
-        "SC",
-        "calidad",
-        "propuesta"
-      ],
-      "position": 10,
-      "createdAt": 1792705876442,
-      "updatedAt": 1792705882912,
-      "notes": "Fase: Siguiente. Alcance: Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grupos, instancias, unidades, escalas negativas/no uniformes y malla rota. Casos grandes sólo locales si tienen datos privados.\n\nCriterio de cierre: Procedencia, licencia, hash, unidades y expectativas por fixture; distinguir checks geométricos, imágenes y pruebas físicas. Reutilizar mesh/scene-fixtures existentes.\n\nDependencias de planificación: SC-09.\n\nEvidencia/referencia: docs/sc/CORE-GUI-MATRIX.md y roadmap versionado.\n\nPropuesta: organizar esta tarjeta no autoriza iniciarla. Dependencias informativas; sin ejecución automática.",
-      "sourceUrl": "https://github.com/SynrgStudio/SC-private/blob/sc/development/docs/sc/ROADMAP.md#sc-24",
-      "events": [
-        {
-          "id": "d2b88ca4-6bbb-489e-8ca6-11cc0ad53ef5",
-          "kind": "created",
-          "at": 1792705876442,
-          "toStatus": "todo"
-        },
-        {
-          "id": "8be10f6a-8c00-4901-b24d-859a88f5c710",
-          "kind": "link_added",
-          "at": 1792705882912
-        }
-      ],
-      "metadata": {
-        "links": [
-          {
-            "id": "0dfb0b6c-dd6b-48c5-9f37-58b2370bfea3",
-            "type": "blocked_by",
-            "createdAt": 1792705882911,
-            "targetCardId": "77c2eed3-5be6-40ff-b68f-a700e7d98f1b",
-            "title": "Requiere SC-09 (planificación)"
-          }
-        ],
-        "automation": {
-          "boardId": "sc",
-          "idempotencyKey": "sc-roadmap-20261022-sc-24",
-          "workspaceAccess": {
-            "unrestricted": false,
-            "roots": [
-              "C:\\Users\\dnaon\\.openclaw\\workspace"
-            ],
-            "writable": true
-          }
-        }
-      }
-    },
-    {
       "id": "b410feb4-3631-4c95-8349-2b7014e44b67",
       "title": "SC-14 | Validar flujo existente de proyecto, historial y roundtrip",
       "status": "todo",
@@ -4953,6 +4902,84 @@
         "automation": {
           "boardId": "sc",
           "idempotencyKey": "sc-initial-20261022-sc-10",
+          "workspaceAccess": {
+            "unrestricted": false,
+            "roots": [
+              "C:\\Users\\dnaon\\.openclaw\\workspace"
+            ],
+            "writable": true
+          }
+        }
+      }
+    },
+    {
+      "id": "71109497-a9eb-4a41-87eb-160ba423dbdb",
+      "title": "SC-24 | Corpus pequeño y representativo de validación",
+      "status": "done",
+      "priority": "high",
+      "labels": [
+        "SC",
+        "calidad",
+        "propuesta"
+      ],
+      "position": 10,
+      "createdAt": 1792705876442,
+      "updatedAt": 1792706914507,
+      "notes": "Fase: Corpus verificado. Alcance: Fixtures sintéticos/libres: sólidos, huecos, paredes finas, concavidades, grupos, instancias, unidades, escalas negativas/no uniformes y malla rota. Casos grandes sólo locales si tienen datos privados. Entrega SC-24: 25 casos sintéticos, 28 assets (27,045 bytes), manifiesto de procedencia/licencia/unidades/hash/expectativas, generador Rust que reutiliza fixtures/APIs existentes y verificador Python. 18 casos geométricos y 13 sondas analíticas; dos generaciones idénticas byte a byte. No GUI, raster completo ni impresión física.\n\nCriterio de cierre: Procedencia, licencia, hash, unidades y expectativas por fixture; distinguir checks geométricos, imágenes y pruebas físicas. Reutilizar mesh/scene-fixtures existentes.\n\nDependencia de planificación: SC-09 completada.\n\nEvidencia: https://github.com/SynrgStudio/SC-private/blob/707fbc465fff6de38d2f85567e11e5040b51816f/docs/sc/CORPUS-VERIFICATION.json\n\nCódigo/recetas y corpus: commit 707fbc465fff6de38d2f85567e11e5040b51816f.\n\nSC-14 sigue pendiente: el roundtrip del core no certifica el flujo nativo guardar/abrir/undo. No se inició SC-14 ni otra tarjeta.",
+      "sourceUrl": "https://github.com/SynrgStudio/SC-private/blob/707fbc465fff6de38d2f85567e11e5040b51816f/fixtures/sc-corpus/README.md",
+      "completedAt": 1792706914507,
+      "events": [
+        {
+          "id": "d2b88ca4-6bbb-489e-8ca6-11cc0ad53ef5",
+          "kind": "created",
+          "at": 1792705876442,
+          "toStatus": "todo"
+        },
+        {
+          "id": "8be10f6a-8c00-4901-b24d-859a88f5c710",
+          "kind": "link_added",
+          "at": 1792705882912
+        },
+        {
+          "id": "0e523a1c-7bf0-405e-9f4b-26b353d37af0",
+          "kind": "moved",
+          "at": 1792706914507,
+          "fromStatus": "todo",
+          "toStatus": "done"
+        }
+      ],
+      "metadata": {
+        "links": [
+          {
+            "id": "0dfb0b6c-dd6b-48c5-9f37-58b2370bfea3",
+            "type": "blocked_by",
+            "createdAt": 1792705882911,
+            "targetCardId": "77c2eed3-5be6-40ff-b68f-a700e7d98f1b",
+            "title": "Requiere SC-09 (planificación)"
+          }
+        ],
+        "proof": [
+          {
+            "id": "sc24-corpus-core-20261022",
+            "status": "passed",
+            "createdAt": 1792706914444,
+            "label": "25 casos / 28 assets; core y reproducción",
+            "command": "cargo run --offline --locked --release -p sc-project-formats --example sc_corpus -- <empty-dir>",
+            "url": "https://github.com/SynrgStudio/SC-private/blob/707fbc465fff6de38d2f85567e11e5040b51816f/docs/sc/CORPUS-VERIFICATION.json",
+            "note": "18 casos geométricos, 13 sondas analíticas, 2 recetas core-only, 3 archivos corruptos; 29 archivos idénticos byte a byte entre generaciones. Clippy/fmt pasan; carpeta no vacía rechazada sin mutación. Sin GUI/impresión física."
+          }
+        ],
+        "artifacts": [
+          {
+            "id": "sc24-corpus-assets",
+            "createdAt": 1792706914444,
+            "label": "Corpus pequeño sintético: 28 assets y manifiesto",
+            "path": "C:/Users/dnaon/.openclaw/workspace/repos/SoulCrafted-Slicer/fixtures/sc-corpus/v1"
+          }
+        ],
+        "automation": {
+          "boardId": "sc",
+          "idempotencyKey": "sc-roadmap-20261022-sc-24",
           "workspaceAccess": {
             "unrestricted": false,
             "roots": [
@@ -5561,5 +5588,6 @@
         }
       }
     }
-  ]
+  ],
+  "snapshotContext": "SC-24 closure after core corpus verification"
 }
