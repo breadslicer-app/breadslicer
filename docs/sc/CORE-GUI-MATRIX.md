@@ -62,3 +62,14 @@ SC-24 corpus → SC-14 flujo guardar/abrir/historial → SC-10 contrato del prim
 de soportes. Después modelo SC-11 y editor SC-12, con SC-37/38 para jobs/cachés.
 Hollow tiene su propia especificación y preflight geométrico antes de elegir motor.
 Esto no inicia esas tareas ni bloquea correcciones urgentes de la versión actual.
+
+## Seguimiento SC-24 — corpus (posterior a esta auditoría)
+
+Se completó el [corpus sintético](../../fixtures/sc-corpus/README.md): 25 casos,
+28 assets, procedencia/licencia/unidades y resultados esperados independientes.
+El harness nuevo usa las APIs existentes del core y verifica geometría, sondas de
+contornos, formatos/proyecto y rechazos tipados. Dos generaciones fueron idénticas
+byte a byte; [evidencia actual](CORPUS-VERIFICATION.json). Esta verificación nueva
+no reemplaza la evidencia histórica de SC-09 ni cierra el flujo nativo de SC-14.
+La GUI y su ejecutable aprobado no cambiaron; sólo se agregaron herramientas de
+desarrollo y dos dependencias dev ya presentes en el lockfile (sin nuevas versiones).
