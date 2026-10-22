@@ -12,6 +12,7 @@ mod gizmo_fsm;
 mod input_dispatch;
 mod input_state;
 mod keyboard_drive;
+mod modal_transform;
 mod object_list;
 mod render_host;
 mod render_scheduler;

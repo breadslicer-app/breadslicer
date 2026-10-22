@@ -64,6 +64,8 @@ pub(super) enum PointerUpOutcome {
 }
 
 pub(super) struct InputDispatch {
+    pub(super) modal: Cell<Option<super::modal_transform::ModalGesture>>,
+    pub(super) modal_revision: Cell<Option<crate::scene_document::SceneRevision>>,
     /// Logical-pixel position at which the left button was last
     /// pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     /// `on_pointer_up` reads it to disambiguate click from drag.
@@ -92,6 +94,8 @@ pub(super) struct InputDispatch {
 impl InputDispatch {
     pub(super) fn new() -> Self {
         Self {
+            modal: Cell::new(None),
+            modal_revision: Cell::new(None),
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
@@ -117,6 +121,8 @@ impl InputDispatch {
     /// hover tint is cleared, the click latch is reset, and the
     /// keyboard focus / held-arrows are dropped.
     pub(super) fn reset(&self) {
+        self.modal.set(None);
+        self.modal_revision.set(None);
         self.gizmo_fsm.set_idle();
         self.gizmo_fsm.clear_hover();
         self.input_state.set_idle();
