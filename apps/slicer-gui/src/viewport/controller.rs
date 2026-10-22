@@ -471,13 +471,13 @@ impl ViewportController {
     /// Switches the active workspace section, mirrors it into the UI pill, and
     /// schedules a redraw. No-op when unchanged. Driven both by the pill
     /// switcher and by the load pipeline, which picks the initial section from
-    /// mesh health. Leaving Transform cancels any in-flight gizmo gesture so a
+    /// mesh health. Entering Slice cancels any in-flight gizmo gesture so a
     /// half-finished transform cannot linger in a section that forbids editing.
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
         if !self.session.set_section(section) {
             return;
         }
-        if !self.allows_layout_tools() {
+        if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -491,6 +491,10 @@ impl ViewportController {
     /// selection and camera navigation ignore it.
     pub(crate) fn allows_layout_tools(&self) -> bool {
         crate::workspace_section::allows_layout_tools(self.session.section())
+    }
+
+    fn allows_transform_gizmo(&self) -> bool {
+        crate::workspace_section::allows_transform_gizmo(self.session.section())
     }
 
     /// Returns whether the active section permits undo and redo. Wider than the
@@ -828,9 +832,9 @@ impl ViewportController {
     /// and the coordinator owns the UI handle.
     fn apply_keyboard_focus(&self, focus: KbdFocus) {
         // Arming a focus (Translate, Rotate or Scale) is a transform tool and
-        // is gated to the Transform section; dropping focus (`None`) must
-        // always work so leaving Transform can clear it.
-        if focus != KbdFocus::None && !self.allows_layout_tools() {
+        // is gated to editing sections; dropping focus (`None`) must
+        // always work so entering Slice can clear it.
+        if focus != KbdFocus::None && !self.allows_transform_gizmo() {
             return;
         }
         let Some(new_focus) = self
@@ -870,15 +874,15 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_layout_tools(),
+            self.allows_transform_gizmo(),
         );
     }
 
     pub(crate) fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
         // Track the cursor in every section so a later paste anchors on it; the
-        // gizmo drag and hover only run in the Transform section.
+        // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
-        if !self.allows_layout_tools() {
+        if !self.allows_transform_gizmo() {
             return;
         }
         if self.input.on_pointer_move(
@@ -1396,10 +1400,10 @@ impl ViewportController {
                 let selection_node_id = self.session.document().selection_primary_node_id();
                 // The selection highlight stays visible in every section
                 // (selection is live everywhere). The gizmo is a transform
-                // tool, so its handles only compose in the Transform section:
+                // tool, so its handles compose in Prepare and Transform:
                 // only the selection handed to the composer is gated, and the
                 // object tint keeps the full selection.
-                let gizmo_selection = if self.allows_layout_tools() {
+                let gizmo_selection = if self.allows_transform_gizmo() {
                     selection_node_id
                 } else {
                     None

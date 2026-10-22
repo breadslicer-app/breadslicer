@@ -24,6 +24,12 @@ pub(crate) fn allows_layout_tools(section: WorkspaceSection) -> bool {
     matches!(section, WorkspaceSection::Transform)
 }
 
+/// Transform handles are available on selection in both editing workspaces.
+/// Slice stays read-only so its held layer result cannot be edited underneath it.
+pub(crate) fn allows_transform_gizmo(section: WorkspaceSection) -> bool {
+    !matches!(section, WorkspaceSection::Slice)
+}
+
 /// Whether undo/redo is permitted in `section`: everywhere except
 /// Slice, where the held slice result must not be edited out from
 /// under the layer view. Editing in Prepare (mesh repair) needs its

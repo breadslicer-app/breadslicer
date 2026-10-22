@@ -70,14 +70,14 @@ fn keyboard_focus_arms_in_transform() {
 }
 
 #[test]
-fn leaving_transform_drops_keyboard_focus() {
+fn entering_slice_drops_keyboard_focus() {
     let ctrl = controller_in(WorkspaceSection::Transform);
     ctrl.on_gizmo_focus_rotate();
     assert!(matches!(ctrl.keyboard_focus_for_test(), KbdFocus::Rotate));
-    ctrl.set_section(WorkspaceSection::Prepare);
+    ctrl.set_section(WorkspaceSection::Slice);
     assert!(
         matches!(ctrl.keyboard_focus_for_test(), KbdFocus::None),
-        "switching away from Transform must drop any armed keyboard focus"
+        "switching to Slice must drop any armed keyboard focus"
     );
 }
 
@@ -133,4 +133,18 @@ fn selection_stays_live_outside_transform() {
         None,
         "clearing the selection must work outside the Transform section"
     );
+}
+
+#[test]
+fn gizmo_keyboard_focus_arms_in_prepare_for_all_operations() {
+    let ctrl = controller_in(WorkspaceSection::Prepare);
+    ctrl.on_gizmo_focus_translate();
+    assert!(matches!(
+        ctrl.keyboard_focus_for_test(),
+        KbdFocus::Translate
+    ));
+    ctrl.on_gizmo_focus_rotate();
+    assert!(matches!(ctrl.keyboard_focus_for_test(), KbdFocus::Rotate));
+    ctrl.on_gizmo_focus_scale();
+    assert!(matches!(ctrl.keyboard_focus_for_test(), KbdFocus::Scale));
 }
