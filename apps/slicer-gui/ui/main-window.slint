@@ -310,6 +310,9 @@ export component MainWindow inherits Window {
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
+    in property <bool> orthographic-view: false;
+    callback toggle-projection-requested();
+    callback frame-selected-requested();
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
     callback object-list-selection-changed(int);
@@ -636,6 +639,9 @@ export component MainWindow inherits Window {
             zoom-at(dy, x, y) => {
                 root.zoom-at(dy, x, y);
             }
+            orthographic-view: root.orthographic-view;
+            toggle-projection-requested() => { root.toggle-projection-requested(); }
+            frame-selected-requested() => { root.frame-selected-requested(); }
             frame-view-requested() => {
                 root.frame-view-requested();
             }

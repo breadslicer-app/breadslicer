@@ -87,7 +87,8 @@ pub(super) fn compute_view_proj(
     let diagonal = (aabb_max - aabb_min).length().max(1e-3);
     let aspect = width as f32 / height as f32;
     let view_mat = camera.view_matrix();
-    let proj = Mat4::perspective_rh(fov_y, aspect, NEAR_MULT * diagonal, FAR_MULT * diagonal);
+    let near = (NEAR_MULT * diagonal).min(camera.distance * 0.01).max(1e-5);
+    let proj = camera.projection(fov_y, aspect, near, FAR_MULT * diagonal);
     proj * view_mat
 }
 

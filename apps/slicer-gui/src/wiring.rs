@@ -172,6 +172,14 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_frame_selected_requested(move || ctrl.on_frame_selected());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_toggle_projection_requested(move || ctrl.on_toggle_projection());
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_frame_view_requested(move || ctrl.on_frame_view());
     }
     {

@@ -380,6 +380,9 @@ impl ViewportController {
         self.mirror_modal_to_ui();
         self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
+            ui.set_orthographic_view(false);
+        }
+        if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
             self.refresh_object_list_on(&ui);
             ui.set_selected_object_index(-1);
@@ -411,6 +414,9 @@ impl ViewportController {
     /// and held-arrow bitset.
     fn on_scene_cleared(&self) {
         self.camera.reset();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_orthographic_view(false);
+        }
         self.render.set_frame(FrameState::default());
         self.input.reset();
         self.mirror_modal_to_ui();
@@ -564,6 +570,43 @@ impl ViewportController {
             .on_zoom(wheel_delta, cursor, self.render.viewport())
         {
             self.mark_dirty();
+        }
+    }
+
+    pub(crate) fn on_toggle_projection(&self) {
+        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+            cam.orthographic = !cam.orthographic;
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_orthographic_view(cam.orthographic);
+            }
+            self.mark_dirty();
+        }
+    }
+
+    pub(crate) fn on_frame_selected(&self) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        let document = self.session.document();
+        let Some(id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let bounds = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                query.transformed_aabb(query.world_transform())
+            })
+            .flatten();
+        if let Some(bounds) = bounds {
+            if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+                cam.frame_bounds(
+                    glam::Vec3::from(bounds.min().coords()),
+                    glam::Vec3::from(bounds.max().coords()),
+                    crate::mesh_render::default_fov_y(),
+                    vp.width() / vp.height().max(1.0),
+                );
+                self.mark_dirty();
+            }
         }
     }
 

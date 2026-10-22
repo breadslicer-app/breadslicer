@@ -38,6 +38,7 @@ pub struct OrbitCamera {
     pub pitch: f32,
     pub distance: f32,
     pub up: Vec3,
+    pub orthographic: bool,
 
     scene_center: Vec3,
     /// Drives the initial framing distance and the zoom-OUT limit. Anchored to
@@ -79,6 +80,7 @@ impl OrbitCamera {
             pitch: DEFAULT_PITCH,
             distance: view_radius * DEFAULT_DISTANCE_FACTOR,
             up: Vec3::Z,
+            orthographic: false,
             scene_center,
             view_radius,
             detail_radius,
@@ -93,8 +95,7 @@ impl OrbitCamera {
     }
 
     pub fn set_axis_view(&mut self, view: AxisView) {
-        self.target = self.scene_center;
-        self.distance = self.view_radius * DEFAULT_DISTANCE_FACTOR;
+        // A direction change must not discard the user's current framing.
         let (yaw, pitch) = match view {
             AxisView::Front => (-std::f32::consts::FRAC_PI_2, 0.0),
             AxisView::Back => (std::f32::consts::FRAC_PI_2, 0.0),
@@ -141,7 +142,8 @@ impl OrbitCamera {
     }
 
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.eye(), self.target, self.up)
+        let (_, up) = self.right_and_up();
+        Mat4::look_at_rh(self.eye(), self.target, up)
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -190,7 +192,59 @@ impl OrbitCamera {
     pub fn world_per_pixel_at(&self, point: Vec3, fov_y: f32, viewport_height: f32) -> Option<f32> {
         let forward = (self.target - self.eye()).normalize_or_zero();
         let depth = (point - self.eye()).dot(forward);
-        (depth > 0.0).then(|| world_per_pixel_at_depth(depth, fov_y, viewport_height))
+        (depth > 0.0).then(|| {
+            if self.orthographic {
+                self.world_per_pixel(fov_y, viewport_height)
+            } else {
+                world_per_pixel_at_depth(depth, fov_y, viewport_height)
+            }
+        })
+    }
+
+    /// Both projection modes have the same scale at the orbit target plane.
+    /// Picking, gizmos and rendering must all use this projection.
+    pub fn projection(&self, fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        if self.orthographic {
+            let half_y = self.distance * (fov_y * 0.5).tan();
+            let half_x = half_y * aspect;
+            Mat4::orthographic_rh(-half_x, half_x, -half_y, half_y, near, far)
+        } else {
+            Mat4::perspective_rh(fov_y, aspect, near, far)
+        }
+    }
+
+    /// A screen ray in either projection. Orthographic rays have parallel
+    /// directions and different origins; perspective rays share the eye.
+    pub fn screen_ray(&self, fov_y: f32, width: f32, height: f32, x: f32, y: f32) -> (Vec3, Vec3) {
+        let inverse = self.view_matrix().inverse();
+        let tan_half = (fov_y * 0.5).tan();
+        let px = (2.0 * x / width.max(1.0) - 1.0) * width.max(1.0) / height.max(1.0) * tan_half;
+        let py = (1.0 - 2.0 * y / height.max(1.0)) * tan_half;
+        if self.orthographic {
+            (
+                inverse.transform_point3(Vec3::new(px * self.distance, py * self.distance, 0.0)),
+                inverse.transform_vector3(-Vec3::Z).normalize(),
+            )
+        } else {
+            (
+                self.eye(),
+                inverse
+                    .transform_vector3(Vec3::new(px, py, -1.0))
+                    .normalize(),
+            )
+        }
+    }
+
+    /// Fit a bounding sphere, preserving orientation and projection. The
+    /// narrower FOV controls portrait windows as well as landscape windows.
+    pub fn frame_bounds(&mut self, min: Vec3, max: Vec3, fov_y: f32, aspect: f32) {
+        self.target = (min + max) * 0.5;
+        let radius = ((max - min).length() * 0.5).max(1e-3);
+        self.detail_radius = radius;
+        self.view_radius = self.view_radius.max(radius);
+        let tan_half = (fov_y * 0.5).tan() * aspect.min(1.0).max(0.01);
+        let half_angle = tan_half.atan();
+        self.distance = (1.12 * radius / half_angle.sin()).max(self.min_distance());
     }
 
     fn min_distance(&self) -> f32 {
@@ -478,5 +532,92 @@ mod tests {
             cam.world_per_pixel_at(cam.eye() + backward, 0.8, 720.0)
                 .is_none()
         );
+    }
+    #[test]
+    fn projection_toggle_preserves_target_plane_scale() {
+        let mut cam = OrbitCamera::new(Vec3::new(4.0, 8.0, 2.0), 20.0);
+        let (right, up) = cam.right_and_up();
+        let point = cam.target + right * 7.0 + up * 4.0;
+        let perspective =
+            (cam.projection(0.8, 1.6, 0.01, 1000.0) * cam.view_matrix()).project_point3(point);
+        cam.orthographic = true;
+        let ortho =
+            (cam.projection(0.8, 1.6, 0.01, 1000.0) * cam.view_matrix()).project_point3(point);
+        assert!((perspective.truncate() - ortho.truncate()).length() < 1e-5);
+    }
+
+    #[test]
+    fn orthographic_rays_are_parallel_with_pixel_spaced_origins() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.orthographic = true;
+        let (a, da) = cam.screen_ray(0.8, 1000.0, 600.0, 250.0, 200.0);
+        let (b, db) = cam.screen_ray(0.8, 1000.0, 600.0, 750.0, 200.0);
+        assert!((da - db).length() < 1e-6);
+        assert!(((b - a).length() - 500.0 * cam.world_per_pixel(0.8, 600.0)).abs() < 1e-4);
+        assert!((b - a).dot(da).abs() < 1e-4);
+        assert_approx_eq!(
+            f32,
+            cam.world_per_pixel_at(cam.target, 0.8, 600.0).unwrap(),
+            cam.world_per_pixel_at(cam.target + da * 10.0, 0.8, 600.0)
+                .unwrap(),
+            epsilon = 1e-5
+        );
+    }
+
+    #[test]
+    fn rays_reproject_to_requested_pixels_in_both_modes_and_all_views() {
+        for ortho in [false, true] {
+            for view in [
+                AxisView::Front,
+                AxisView::Back,
+                AxisView::Right,
+                AxisView::Left,
+                AxisView::Top,
+                AxisView::Bottom,
+            ] {
+                let mut cam = OrbitCamera::new(Vec3::new(4.0, 2.0, 8.0), 15.0);
+                cam.orthographic = ortho;
+                cam.set_axis_view(view);
+                let vp = cam.projection(0.8, 1.5, 0.01, 1000.0) * cam.view_matrix();
+                for (x, y) in [(200.0, 150.0), (450.0, 300.0), (750.0, 500.0)] {
+                    let (origin, direction) = cam.screen_ray(0.8, 900.0, 600.0, x, y);
+                    let ndc = vp.project_point3(origin + direction * cam.distance);
+                    assert!(((ndc.x + 1.0) * 450.0 - x).abs() < 0.01);
+                    assert!(((1.0 - ndc.y) * 300.0 - y).abs() < 0.01);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fit_selected_bounds_survive_axis_switch_and_portrait_projection() {
+        for ortho in [false, true] {
+            for aspect in [0.5, 1.8] {
+                let mut cam = OrbitCamera::new(Vec3::ZERO, 100.0);
+                cam.orthographic = ortho;
+                let min = Vec3::new(40.0, 20.0, -5.0);
+                let max = Vec3::new(70.0, 30.0, 60.0);
+                cam.frame_bounds(min, max, 0.8, aspect);
+                let target = cam.target;
+                let distance = cam.distance;
+                for view in [AxisView::Front, AxisView::Right, AxisView::Top] {
+                    cam.set_axis_view(view);
+                    assert_eq!(cam.target, target);
+                    assert_eq!(cam.distance, distance);
+                    let vp = cam.projection(0.8, aspect, 0.01, 10000.0) * cam.view_matrix();
+                    for x in [min.x, max.x] {
+                        for y in [min.y, max.y] {
+                            for z in [min.z, max.z] {
+                                let ndc = vp.project_point3(Vec3::new(x, y, z));
+                                assert!(
+                                    ndc.x.abs() < 1.0 && ndc.y.abs() < 1.0,
+                                    "bounds clipped: {ndc}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
