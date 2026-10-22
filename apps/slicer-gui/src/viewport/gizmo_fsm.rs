@@ -316,7 +316,7 @@ impl GizmoFsm {
         } else {
             ctx.document
                 .with_scene(|spatial| {
-                    super::bed_clearance::keep_above_bed(spatial, node_id, new_transform)
+                    super::bed_clearance::keep_above_bed(spatial, node_id, original, new_transform)
                 })
                 .unwrap_or(new_transform)
         };
