@@ -1,0 +1,106 @@
+FILTER scene_save::scene_save_tests
+
+running 31 tests
+test scene_save::scene_save_tests::save_dispatch_tests::no_scene_classifies_as_no_scene ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_plain_mesh_source_with_a_picked_resin_still_routes_to_save_as ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_plain_mesh_source_with_a_first_layer_height_still_routes_to_save_as ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_plain_mesh_source_with_a_picked_printer_still_routes_to_save_as ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_clean_project_document_writes_nothing ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_clean_plain_mesh_source_still_routes_to_save_as ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_plain_mesh_source_routes_to_save_as ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::a_partial_selection_is_completed_from_the_globals ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::a_held_payload_wins_over_the_globals ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::a_document_without_project_data_snapshots_the_globals ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::a_first_layer_height_alone_still_records_both_globals ... ok
+test scene_save::scene_save_tests::save_target_tests::none_classifies_as_cancelled ... ok
+test scene_save::scene_save_tests::save_target_tests::the_refusal_says_projects_are_3mf_packages ... ok
+test scene_save::scene_save_tests::save_target_tests::a_different_extension_is_rejected ... ok
+test scene_save::scene_save_tests::save_target_tests::a_threemf_extension_is_ready_as_is ... ok
+test scene_save::scene_save_tests::save_target_tests::the_extension_match_is_case_insensitive ... ok
+test scene_save::scene_save_tests::save_target_tests::a_missing_extension_gets_threemf_appended ... ok
+test scene_save::scene_save_tests::save_dispatch_tests::a_dirty_project_document_overwrites_its_source_path ... ok
+test scene_save::scene_save_tests::write_bundle_tests::preparing_without_a_scene_yields_no_bundle ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::held_embedded_documents_are_never_replaced ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::saving_without_a_scene_errors ... ok
+test scene_save::scene_save_tests::payload_for_save_tests::referenced_profiles_get_embedded_from_the_roots ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::a_save_as_of_a_picked_plain_mesh_leaves_the_mesh_file_untouched_and_relocates_the_document ... ok
+test scene_save::scene_save_tests::write_bundle_tests::write_bundle_reports_serialize_then_compress_then_writing ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::a_snapshot_save_records_the_global_references ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::a_save_writes_a_readable_project_and_updates_the_document ... ok
+test scene_save::scene_save_tests::write_bundle_tests::a_prepared_bundle_writes_a_readable_project ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::a_second_save_overwrites_the_same_file ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::slices_persist_when_only_the_printer_was_picked ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::slices_persist_when_sliced_on_the_default_profile ... ok
+test scene_save::scene_save_tests::save_round_trip_tests::slices_persist_when_sliced_with_an_own_first_layer_height ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 1498 filtered out; finished in 0.07s
+
+
+FILTER replace_scene_policy_tests
+
+running 6 tests
+test app_state::replace_scene_policy_tests::clean_document_prompts_with_nothing_to_keep ... ok
+test app_state::replace_scene_policy_tests::dirty_non_project_prompts_with_save_as_new ... ok
+test app_state::replace_scene_policy_tests::dirty_project_prompts_with_save_existing ... ok
+test app_state::replace_scene_policy_tests::map_replace_choice_translates_each_user_choice ... ok
+test app_state::replace_scene_policy_tests::supported_extension_with_no_loaded_document_dispatches_immediately ... ok
+test app_state::replace_scene_policy_tests::unsupported_extension_rejects_regardless_of_load_state ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1523 filtered out; finished in 0.00s
+
+
+FILTER tests_scene_dirty
+
+running 42 tests
+test tests_scene_dirty::baseline_tests::a_fresh_document_is_clean ... ok
+test tests_scene_dirty::baseline_tests::mark_saved_with_an_empty_stack_keeps_the_document_clean ... ok
+test tests_scene_dirty::baseline_tests::a_no_op_commit_stays_clean ... ok
+test tests_scene_dirty::baseline_tests::a_mid_gesture_mutation_without_a_commit_stays_clean ... ok
+test tests_scene_dirty::baseline_tests::mark_saved_returns_the_document_to_clean ... ok
+test tests_scene_dirty::baseline_tests::a_freshly_installed_scene_is_clean ... ok
+test tests_scene_dirty::baseline_tests::a_committed_edit_marks_the_document_dirty ... ok
+test tests_scene_dirty::dirty_changed_event_tests::clearing_a_dirty_document_reports_the_flip ... ok
+test tests_scene_dirty::dirty_changed_event_tests::the_event_fires_after_the_stack_event ... ok
+test tests_scene_dirty::eviction_tests::redo_back_to_a_saved_top_after_draining_reads_clean ... ok
+test tests_scene_dirty::eviction_tests::undoing_every_edit_without_eviction_reads_clean ... ok
+test tests_scene_dirty::eviction_tests::a_save_resets_the_eviction_rule ... ok
+test tests_scene_dirty::eviction_tests::eviction_plus_full_undo_never_reads_clean ... ok
+test tests_scene_dirty::reset_tests::clearing_the_scene_resets_dirty ... ok
+test tests_scene_dirty::reset_tests::installing_a_new_scene_resets_dirty ... ok
+test tests_scene_dirty::save_completion_guard_tests::a_drifted_write_still_becomes_the_save_target ... ok
+test tests_scene_dirty::dirty_changed_event_tests::the_event_fires_only_on_actual_flips ... ok
+test tests_scene_dirty::save_completion_guard_tests::a_scene_replaced_during_the_write_is_not_relabeled ... ok
+test tests_scene_dirty::reset_tests::the_eviction_rule_does_not_survive_an_install ... ok
+test tests_scene_dirty::save_completion_guard_tests::an_edit_landing_during_the_write_keeps_the_document_dirty ... ok
+test tests_scene_dirty::save_completion_guard_tests::a_printer_change_during_the_write_survives_the_recording ... ok
+test tests_scene_dirty::save_completion_guard_tests::an_undisturbed_write_records_the_project_and_cleans_the_document ... ok
+test tests_scene_dirty::save_point_tests::a_new_edit_branch_after_undoing_from_the_save_point_reads_dirty ... ok
+test tests_scene_dirty::save_point_tests::edits_after_a_save_read_dirty_and_undo_back_to_the_save_point_reads_clean ... ok
+test tests_scene_dirty::save_point_tests::redoing_back_to_the_save_point_reads_clean_again ... ok
+test tests_scene_dirty::save_point_tests::undoing_below_the_save_point_reads_dirty ... ok
+test tests_scene_dirty::unsaved_project_state_tests::a_document_opened_from_a_project_stays_a_project_across_picks ... ok
+test tests_scene_dirty::unsaved_project_state_tests::a_loaded_output_format_survives_back_into_the_composed_payload ... ok
+test tests_scene_dirty::unsaved_project_state_tests::a_loaded_payload_becomes_the_selection_and_the_held_embedded_documents ... ok
+test tests_scene_dirty::unsaved_project_state_tests::a_save_clears_the_unsaved_selection ... ok
+test tests_scene_dirty::unsaved_project_state_tests::an_unsaved_selection_keeps_the_document_dirty_after_undoing_edits ... ok
+test tests_scene_dirty::unsaved_project_state_tests::choosing_a_printer_marks_the_document_dirty ... ok
+test tests_scene_dirty::unsaved_project_state_tests::choosing_a_resin_marks_the_document_dirty ... ok
+test tests_scene_dirty::unsaved_project_state_tests::choosing_a_selection_records_it_without_making_the_document_a_project ... ok
+test tests_scene_dirty::unsaved_project_state_tests::clearing_a_first_layer_height_that_was_never_set_is_a_no_op ... ok
+test tests_scene_dirty::unsaved_project_state_tests::installing_a_new_scene_clears_the_unsaved_selection ... ok
+test tests_scene_dirty::unsaved_project_state_tests::clearing_a_selection_that_was_never_set_is_a_no_op ... ok
+test tests_scene_dirty::unsaved_project_state_tests::re_choosing_the_same_printer_is_a_no_op ... ok
+test tests_scene_dirty::unsaved_project_state_tests::printer_and_resin_choices_coexist_on_the_selection ... ok
+test tests_scene_dirty::unsaved_project_state_tests::re_setting_the_same_first_layer_height_is_a_no_op ... ok
+test tests_scene_dirty::unsaved_project_state_tests::setting_a_first_layer_height_marks_the_document_dirty ... ok
+test tests_scene_dirty::unsaved_project_state_tests::the_dirty_event_fires_once_across_a_run_of_selection_changes ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 1487 filtered out; finished in 0.00s
+
+
+FILTER window_wiring_tests::a_close_request_releases_only_its_window
+
+running 1 test
+test app_state::window_wiring_tests::a_close_request_releases_only_its_window ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1528 filtered out; finished in 0.01s

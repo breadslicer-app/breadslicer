@@ -49,6 +49,13 @@ use crate::viewport::ViewportController;
 use crate::window_prefs::{WindowPreferences, restore_panels};
 use crate::wiring::SaveOutcome;
 
+/// What to do only after the user's unsaved work has been handled.
+enum SceneChange {
+    Open(PathBuf),
+    Clear,
+    CloseWindow,
+}
+
 mod replace_scene_policy {
     use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
 
@@ -542,11 +549,21 @@ impl AppState {
         // change.
         ctrl.set_build_volume(self.default_envelope.current());
 
-        crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
+        let id = self.next_window_id.get();
+        let open_app = Rc::downgrade(self);
+        crate::wiring::wire_main_window(
+            &ui,
+            ctrl.clone(),
+            self.prefs.clone(),
+            Rc::new(move |path| {
+                if let Some(app) = open_app.upgrade() {
+                    app.open_path_in_window(id, path);
+                }
+            }),
+        )?;
         let drivers = self.install_window_drivers(&ui, &ctrl);
         self.wire_app_level_menus(&ui);
 
-        let id = self.next_window_id.get();
         self.next_window_id.set(id.wrapping_add(1));
         self.wire_clipboard(&ui, id);
         self.wire_context_menu(&ui, &ctrl, id);
@@ -678,6 +695,14 @@ impl AppState {
     /// Binds the OS events of window `id`: a close request releases the window,
     /// and a file dropped on it opens in it.
     fn wire_window_events(self: &Rc<Self>, ui: &MainWindow, id: u64) {
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_close_current_scene(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.request_scene_close(id, false);
+                }
+            });
+        }
         // On OS-level close: drop our strong handle so the window's
         // `ViewportController`, `Renderer`, scene, and the preference
         // subscription can be released. Without this, hidden windows accumulate
@@ -686,6 +711,15 @@ impl AppState {
             let app_weak = Rc::downgrade(self);
             ui.window().on_close_requested(move || {
                 if let Some(app) = app_weak.upgrade() {
+                    let dirty = app
+                        .main_windows
+                        .borrow()
+                        .get(&id)
+                        .is_some_and(|w| w.controller.document().is_dirty());
+                    if dirty {
+                        app.request_scene_close(id, true);
+                        return CloseRequestResponse::KeepWindowShown;
+                    }
                     app.main_windows.borrow_mut().remove(&id);
                 }
                 CloseRequestResponse::HideWindow
@@ -794,10 +828,10 @@ impl AppState {
                                 app.discard_then_open(window_id, path);
                             }
                             PostPromptAction::SaveThenOpen => {
-                                app.save_then_open(window_id, path);
+                                app.save_then_change(window_id, SceneChange::Open(path));
                             }
                             PostPromptAction::ExportThenOpen => {
-                                app.export_then_open(window_id, path);
+                                app.export_then_change(window_id, SceneChange::Open(path));
                             }
                             PostPromptAction::NoOp => {}
                         }
@@ -963,6 +997,69 @@ impl AppState {
         self.dispatch_path_to_loader(window_id, path);
     }
 
+    fn finish_scene_change(&self, window_id: u64, change: SceneChange) {
+        match change {
+            SceneChange::Open(path) => self.discard_then_open(window_id, path),
+            SceneChange::Clear => {
+                let ctrl = self
+                    .main_windows
+                    .borrow()
+                    .get(&window_id)
+                    .map(|w| w.controller.clone());
+                if let Some(ctrl) = ctrl {
+                    ctrl.on_close_scene();
+                }
+            }
+            SceneChange::CloseWindow => {
+                let window = self.main_windows.borrow_mut().remove(&window_id);
+                if let Some(window) = window {
+                    let _ = window.window.hide();
+                }
+            }
+        }
+    }
+
+    /// Both File > Close and the OS close button must keep dirty work until a
+    /// confirmed discard or a successful, current save/export.
+    fn request_scene_close(self: &Rc<Self>, window_id: u64, close_window: bool) {
+        let ctrl = self
+            .main_windows
+            .borrow()
+            .get(&window_id)
+            .map(|w| w.controller.clone());
+        let Some(ctrl) = ctrl else {
+            return;
+        };
+        ctrl.on_modal_transform_finish(false);
+        let change = if close_window {
+            SceneChange::CloseWindow
+        } else {
+            SceneChange::Clear
+        };
+        if !ctrl.document().is_dirty() {
+            self.finish_scene_change(window_id, change);
+            return;
+        }
+        let offer = if ctrl.document().is_project() {
+            crate::error_dialog::KeepChangesOffer::SaveExisting
+        } else {
+            crate::error_dialog::KeepChangesOffer::SaveAsNew
+        };
+        let app_weak = Rc::downgrade(self);
+        ctrl.dialogs()
+            .show_close_scene_confirm(offer, move |choice| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                match map_replace_choice(choice) {
+                    PostPromptAction::DiscardThenOpen => app.finish_scene_change(window_id, change),
+                    PostPromptAction::SaveThenOpen => app.save_then_change(window_id, change),
+                    PostPromptAction::ExportThenOpen => app.export_then_change(window_id, change),
+                    PostPromptAction::NoOp => {}
+                }
+            });
+    }
+
     /// Runs the Save flow for the Save choice of the replace prompt: overwrite
     /// the document's project file, or fall back to the Save As flow when there
     /// is none. Only once the document is safely on disk does it close the
@@ -972,7 +1069,7 @@ impl AppState {
     /// moved on in the meantime also leaves the scene intact, and says so: the
     /// user asked to replace what they had saved, and that is not what is on
     /// disk.
-    fn save_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+    fn save_then_change(self: &Rc<Self>, window_id: u64, change: SceneChange) {
         let controller = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
@@ -1004,7 +1101,7 @@ impl AppState {
                 SaveOutcome::NotSaved => return,
             }
             if let Some(app) = app_weak.upgrade() {
-                app.discard_then_open(window_id, path);
+                app.finish_scene_change(window_id, change);
             }
         }) {
             eprintln!("Failed to spawn Save & Open task: {err}");
@@ -1016,7 +1113,7 @@ impl AppState {
     /// dispatches the new path. A cancelled export dialog or a failed write
     /// leaves the current scene intact (`run_export_as_flow` shows the failure
     /// dialog itself).
-    fn export_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+    fn export_then_change(self: &Rc<Self>, window_id: u64, change: SceneChange) {
         let controller = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
@@ -1037,7 +1134,7 @@ impl AppState {
                 return;
             }
             if let Some(app) = app_weak.upgrade() {
-                app.discard_then_open(window_id, path);
+                app.finish_scene_change(window_id, change);
             }
         }) {
             eprintln!("Failed to spawn Export & Open task: {err}");

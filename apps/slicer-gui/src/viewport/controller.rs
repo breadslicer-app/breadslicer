@@ -19,6 +19,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+#[cfg(test)]
+use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 

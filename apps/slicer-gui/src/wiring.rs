@@ -77,10 +77,10 @@ pub(crate) fn wire_main_window(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
+    confirm_open: Rc<dyn Fn(PathBuf)>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
-    wire_close_scene(ui, ctrl.clone());
-    wire_open_file(ui, ctrl.clone(), prefs.clone());
+    wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open);
     wire_save(ui, ctrl.clone(), prefs.clone());
     wire_save_as(ui, ctrl.clone(), prefs);
     wire_export_as(ui, ctrl.clone());
@@ -136,10 +136,6 @@ fn install_rendering_notifier(
             }
             _ => {}
         })
-}
-
-fn wire_close_scene(ui: &MainWindow, ctrl: Rc<ViewportController>) {
-    ui.on_close_current_scene(move || ctrl.on_close_scene());
 }
 
 fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
@@ -253,7 +249,12 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 
-fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
+fn wire_open_file(
+    ui: &MainWindow,
+    ctrl: Rc<ViewportController>,
+    prefs: Rc<PreferencesBus>,
+    confirm_open: Rc<dyn Fn(PathBuf)>,
+) {
     {
         let ctrl = ctrl.clone();
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());
@@ -269,9 +270,12 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefe
         let Some(ticket) = ctrl.loader().begin_load() else {
             return;
         };
-        if let Err(err) =
-            slint::spawn_local(run_open_file_flow(ticket, ctrl.clone(), prefs.clone()))
-        {
+        if let Err(err) = slint::spawn_local(run_open_file_flow(
+            ticket,
+            ctrl.clone(),
+            prefs.clone(),
+            confirm_open.clone(),
+        )) {
             eprintln!("Failed to spawn file dialog task: {err}");
             // `ticket` was moved into the future; when `spawn_local` returns
             // `Err`, the future is dropped and the ticket with it, releasing
@@ -293,6 +297,7 @@ async fn run_open_file_flow(
     ticket: LoadTicket,
     ctrl: Rc<ViewportController>,
     prefs: Rc<PreferencesBus>,
+    confirm_open: Rc<dyn Fn(PathBuf)>,
 ) {
     let start_dir =
         resolve_open_dialog_dir(prefs.snapshot().last_open_dir, sc_app_paths::home_dir());
@@ -301,6 +306,14 @@ async fn run_open_file_flow(
         return;
     };
     remember_open_directory(&prefs, &path);
+    let Some((ticket, path)) = route_picked_open(
+        ticket,
+        path,
+        ctrl.document().is_dirty(),
+        confirm_open.as_ref(),
+    ) else {
+        return;
+    };
     let loader = ctrl.loader();
     match mesh_loader::decide_load_dispatch(loader.graphics_unavailable()) {
         LoadDispatch::Start => {
@@ -320,6 +333,69 @@ async fn run_open_file_flow(
             // file.
             ticket.deposit(path, Err(anyhow::Error::new(reason)));
         }
+    }
+}
+
+/// Release the picker gate BEFORE a dirty-document continuation can save/open.
+/// A clean document retains its ticket and the existing failure-preserving load.
+fn route_picked_open(
+    ticket: LoadTicket,
+    path: PathBuf,
+    dirty: bool,
+    confirm_open: &dyn Fn(PathBuf),
+) -> Option<(LoadTicket, PathBuf)> {
+    if dirty {
+        drop(ticket);
+        confirm_open(path);
+        None
+    } else {
+        Some((ticket, path))
+    }
+}
+
+#[cfg(test)]
+mod guarded_open_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::scene_loader::SceneLoader;
+    use std::cell::Cell;
+
+    fn loader() -> SceneLoader {
+        SceneLoader::new_for_test(DialogManager::new(&PreferencesBus::new(
+            PreferencesSnapshot::for_tests(),
+        )))
+    }
+
+    #[test]
+    fn dirty_menu_open_releases_gate_before_confirmation_continuation() {
+        let loader = loader();
+        let ticket = loader.begin_load().unwrap();
+        let called = Cell::new(false);
+        let result = route_picked_open(ticket, PathBuf::from("next.3mf"), true, &|path| {
+            assert_eq!(path, PathBuf::from("next.3mf"));
+            // Save & Open must be able to acquire a fresh load ticket.
+            let next = loader
+                .begin_load()
+                .expect("picker gate still held inside continuation");
+            called.set(true);
+            drop(next);
+        });
+        assert!(called.get());
+        assert!(result.is_none());
+        assert!(loader.begin_load().is_some());
+    }
+
+    #[test]
+    fn clean_menu_open_retains_gate_and_never_calls_destructive_confirmation() {
+        let loader = loader();
+        let ticket = loader.begin_load().unwrap();
+        let result = route_picked_open(ticket, PathBuf::from("broken.3mf"), false, &|_| {
+            panic!("clean load must preserve the current scene on failure")
+        });
+        assert!(result.is_some());
+        assert!(loader.begin_load().is_none());
+        drop(result);
+        assert!(loader.begin_load().is_some());
     }
 }
 
