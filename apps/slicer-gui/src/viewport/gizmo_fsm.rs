@@ -30,6 +30,7 @@ use super::gizmo_drag::{
 };
 use super::translation_clamp::clamp_translate_edit;
 use super::types::{ScreenPoint, ViewportSize};
+use crate::gizmo::axis::Axis;
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
 pub(super) struct StartCtx<'a> {
@@ -296,14 +297,11 @@ impl GizmoFsm {
             return false;
         };
 
-        // Translate drags are clamped against the build envelope so the
-        // object's transformed AABB cannot leave it. Other op kinds (rotate,
-        // scale) compose translation as a pivot side effect and are not
-        // clamped. The clamp re-opens the document's read borrow; `with_scene`
-        // returns `None` if the scene was cleared between the move computation
-        // and now, in which case we keep the unclamped transform (the next
-        // frame will redo the work against a fresh scene).
-        let new_transform = if matches!(new_op, DragOp::Translate { .. }) {
+        // Explicit Z motion stays free. XY keeps the existing envelope policy;
+        // rotation/scale receive only a floor lift, in the same undoable edit.
+        let new_transform = if matches!(new_op, DragOp::Translate { axis: Axis::Z, .. }) {
+            new_transform
+        } else if matches!(new_op, DragOp::Translate { .. }) {
             ctx.document
                 .with_scene(|spatial| {
                     clamp_translate_edit(
@@ -316,7 +314,11 @@ impl GizmoFsm {
                 })
                 .unwrap_or(new_transform)
         } else {
-            new_transform
+            ctx.document
+                .with_scene(|spatial| {
+                    super::bed_clearance::keep_above_bed(spatial, node_id, new_transform)
+                })
+                .unwrap_or(new_transform)
         };
 
         // Persist the (possibly updated) drag state: Rotate's unwrap counter
