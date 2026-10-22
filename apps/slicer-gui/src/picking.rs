@@ -31,7 +31,7 @@
 //! the linear MT walk to about `O(F / cluster_size)` AABB tests, for F faces,
 //! plus `O(cluster_size)` MT tests per hit cluster.
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Vec3, Vec4};
 use sc_mesh_core::Aabb;
 use sc_mesh_core::aabb::arvo_transformed_aabb;
 use sc_mesh_core::geometry::DEGENERACY_SIN_SQ_THRESHOLD;
@@ -97,28 +97,8 @@ pub(crate) fn ray_from_pixel(
     x: f32,
     y: f32,
 ) -> Ray {
-    let aspect = viewport_w / viewport_h;
-    let tan_half = (fov_y * 0.5).tan();
-
-    // NDC: x ∈ [-1, +1] (right), y ∈ [-1, +1] (up). Slint's pixel y grows
-    // downward, so it is flipped here.
-    let ndc_x = (2.0 * x / viewport_w) - 1.0;
-    let ndc_y = 1.0 - (2.0 * y / viewport_h);
-
-    // Right-handed camera-space direction with the camera looking down -Z.
-    // `aspect * tan_half` opens the horizontal extent so that a pixel at
-    // `ndc_x = ±1` lands on the screen edge after projection.
-    let cs_dir = Vec3::new(ndc_x * aspect * tan_half, ndc_y * tan_half, -1.0).normalize();
-
-    // World-space transform. Direction has w = 0 (no translation).
-    let inv_view = camera.view_matrix().inverse();
-    let world_dir = inv_view * Vec4::new(cs_dir.x, cs_dir.y, cs_dir.z, 0.0);
-    let world_dir = Vec3::new(world_dir.x, world_dir.y, world_dir.z).normalize();
-
-    Ray {
-        origin: camera.eye(),
-        direction: world_dir,
-    }
+    let (origin, direction) = camera.screen_ray(fov_y, viewport_w, viewport_h, x, y);
+    Ray { origin, direction }
 }
 
 /// Projects a world-space point onto the viewport in logical-pixel coordinates
@@ -135,9 +115,9 @@ pub(crate) fn project_world_to_screen(
     let view = camera.view_matrix();
     // The near and far depths are placeholders: they only affect z, which the
     // perspective divide below discards.
-    let proj = Mat4::perspective_rh(fov_y, aspect, 0.01, 100.0);
+    let proj = camera.projection(fov_y, aspect, 0.01, 100.0);
     let clip = (proj * view) * Vec4::new(world_point.x, world_point.y, world_point.z, 1.0);
-    if clip.w <= 0.0 {
+    if clip.w <= 0.0 || (world_point - camera.eye()).dot(camera.target - camera.eye()) <= 0.0 {
         return None;
     }
     let ndc_x = clip.x / clip.w;

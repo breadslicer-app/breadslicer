@@ -1,0 +1,80 @@
+// Local viewport navigation overlay. No popup focus transfer: the viewport
+// keeps receiving the shortcut release even while the key is held.
+export component ViewWheel inherits Rectangle {
+    in property <length> origin-x;
+    in property <length> origin-y;
+    in property <bool> orthographic;
+    callback chosen(int);
+    // Keep labels visible near edges; swipe direction is still measured from
+    // the actual cursor position at invocation, not this clamped visual centre.
+    property <length> center-x: max(180px, min(root.width - 180px, root.origin-x));
+    property <length> center-y: max(150px, min(root.height - 150px, root.origin-y));
+    background: #00000018;
+
+    // Codes: N top, S bottom, W left, E right, NW front, NE back,
+    // SE fit selected, SW projection. Boundaries are the 8 equal 45-degree sectors.
+    function direction(dx: length, dy: length) -> int {
+        if (abs(dx) < abs(dy) * 0.41421356) { return dy < 0px ? 0 : 1; }
+        if (abs(dy) < abs(dx) * 0.41421356) { return dx < 0px ? 2 : 3; }
+        if (dy < 0px) { return dx < 0px ? 4 : 5; }
+        return dx < 0px ? 7 : 6;
+    }
+    function swipe(x: length, y: length) {
+        let dx = x - root.origin-x;
+        let dy = y - root.origin-y;
+        if (dx * dx + dy * dy > 140px * 140px) {
+            root.chosen(root.direction(dx, dy));
+        }
+    }
+    for item in [
+        {label: "Top", dx: 0, dy: -112, code: 0},
+        {label: "Bottom", dx: 0, dy: 112, code: 1},
+        {label: "Left", dx: -120, dy: 0, code: 2},
+        {label: "Right", dx: 120, dy: 0, code: 3},
+        {label: "Front", dx: -100, dy: -77, code: 4},
+        {label: "Back", dx: 100, dy: -77, code: 5},
+        {label: "View Selected", dx: 100, dy: 77, code: 6},
+        {label: "Persp / Ortho", dx: -100, dy: 77, code: 7},
+    ]: Rectangle {
+        x: root.center-x + item.dx * 1px - self.width / 2;
+        y: root.center-y + item.dy * 1px - self.height / 2;
+        width: 112px;
+        height: 30px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: #505052;
+        background: root.direction(tracker.mouse-x - root.center-x, tracker.mouse-y - root.center-y) == item.code
+            && abs(tracker.mouse-x - root.center-x) + abs(tracker.mouse-y - root.center-y) > 35px ? #505052 : #232326;
+        Text {
+            text: item.label;
+            color: #eeeeee;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Text {
+        x: root.center-x - 45px;
+        y: root.center-y - 18px;
+        width: 90px;
+        height: 36px;
+        text: root.orthographic ? "Orthographic" : "Perspective";
+        color: #aaaaaa;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    tracker := TouchArea {
+        moved => { if (!self.pressed) { root.swipe(self.mouse-x, self.mouse-y); } }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.up) {
+                let dx = self.mouse-x - root.center-x;
+                let dy = self.mouse-y - root.center-y;
+                if (event.button != PointerEventButton.left || dx * dx + dy * dy < 35px * 35px
+                    || dx * dx + dy * dy > 215px * 215px) { root.chosen(-1); }
+                else { root.chosen(root.direction(dx, dy)); }
+            }
+        }
+        scroll-event(event) => { return accept; }
+    }
+}

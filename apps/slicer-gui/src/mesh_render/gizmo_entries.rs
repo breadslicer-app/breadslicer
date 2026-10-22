@@ -415,7 +415,12 @@ fn arc_camera_roll(camera: &OrbitCamera, pivot: Vec3, axis: Axis) -> f32 {
     // transpose, but glam's `inverse` on rigid rotations is cheap
     // enough to avoid premature optimisation here.
     let world_to_local = world_to_handle_local(axis);
-    let to_camera_world = camera.eye() - pivot;
+    let to_camera_world = camera.eye()
+        - if camera.orthographic {
+            camera.target
+        } else {
+            pivot
+        };
     let to_camera_local = world_to_local.transform_vector3(to_camera_world);
     // YZ-plane projection (drop +X axis component).
     let y = to_camera_local.y;
