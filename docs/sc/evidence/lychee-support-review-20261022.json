@@ -1,0 +1,154 @@
+{
+  "scope": "Independent read-only audit: hashes, CSV/catalog consistency, raw snapshot equality, bindings and source excerpt identity. Not behavioral verification or a re-run of the supplied verification suite.",
+  "passed": true,
+  "checks": [
+    {
+      "check": "hash FINAL-STATIC-REPORT.md",
+      "passed": true
+    },
+    {
+      "check": "hash SLA-SUPPORT-EVIDENCE-MATRIX.md",
+      "passed": true
+    },
+    {
+      "check": "hash LEGACY-ALGORITHM-CLOSURE.md",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\README.md",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\MEDIDAS-Y-PACKS.md",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\SUPPORT-PRESET-CATALOG.json",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\geometry-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\autosupport-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\bracing-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\pack-geometry-bindings.csv",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\legacy-density-presets.json",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\backup-inventory.json",
+      "passed": true
+    },
+    {
+      "check": "hash presets\\backup-support-variants.json",
+      "passed": true
+    },
+    {
+      "check": "all CSV fields match catalog: geometry-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "all CSV fields match catalog: autosupport-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "all CSV fields match catalog: bracing-all-fields.csv",
+      "passed": true
+    },
+    {
+      "check": "30 geometry bindings resolve and match pack paths",
+      "passed": true
+    },
+    {
+      "check": "all four custom geometries match raw snapshot",
+      "passed": true
+    },
+    {
+      "check": "all three packs match raw snapshot",
+      "passed": true
+    },
+    {
+      "check": "six saved bracings",
+      "passed": true
+    },
+    {
+      "check": "source excerpt builtin-support-source.txt",
+      "passed": true
+    },
+    {
+      "check": "source excerpt builtin-autosupport-source.txt",
+      "passed": true
+    },
+    {
+      "check": "enum source Mz",
+      "passed": true
+    },
+    {
+      "check": "enum source Rz",
+      "passed": true
+    },
+    {
+      "check": "enum source Az",
+      "passed": true
+    },
+    {
+      "check": "enum source Dz",
+      "passed": true
+    },
+    {
+      "check": "enum source Nz",
+      "passed": true
+    },
+    {
+      "check": "enum source mt",
+      "passed": true
+    },
+    {
+      "check": "enum source at",
+      "passed": true
+    },
+    {
+      "check": "enum source cO",
+      "passed": true
+    },
+    {
+      "check": "native file identity dddcore.node",
+      "passed": true
+    },
+    {
+      "check": "native file identity legacy/autosupport.node",
+      "passed": true
+    }
+  ],
+  "csv_rows": {
+    "geometry-all-fields.csv": 475,
+    "autosupport-all-fields.csv": 311,
+    "bracing-all-fields.csv": 102
+  },
+  "geometry_bindings": 30,
+  "unresolved_bracing_refs": [
+    {
+      "pack": "asp0",
+      "bracing_id": "bp0"
+    }
+  ],
+  "geometry_counts": {
+    "factory_sla_geometry": 3,
+    "factory_fdm_geometry": 2,
+    "custom_sla_geometry": 4,
+    "saved_autosupport_packs": 3,
+    "custom_autosupport_packs": 2,
+    "saved_bracing_presets": 6
+  }
+}
