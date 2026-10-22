@@ -70,9 +70,12 @@ export component ViewWheel inherits Rectangle {
         vertical-alignment: center;
     }
     tracker := TouchArea {
-        moved => { if (!self.pressed) { root.swipe(self.mouse-x, self.mouse-y); } }
+        // Slint's moved callback is drag-only (requires a mouse grab).
+        // A view-wheel swipe holds a KEY, not a mouse button: use Move events.
         pointer-event(event) => {
-            if (event.kind == PointerEventKind.up) {
+            if (event.kind == PointerEventKind.move) {
+                root.swipe(self.mouse-x, self.mouse-y);
+            } else if (event.kind == PointerEventKind.up) {
                 let dx = self.mouse-x - root.center-x;
                 let dy = self.mouse-y - root.center-y;
                 if (event.button != PointerEventButton.left || dx * dx + dy * dy < 35px * 35px
