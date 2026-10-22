@@ -29,6 +29,7 @@ use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
 use super::input_dispatch::{InputDispatch, PointerUpOutcome};
 use super::keyboard_drive::KbdFocus;
+use super::modal_transform::{ModalGesture, ModalOp};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
@@ -42,7 +43,6 @@ use crate::clipboard;
 use crate::clipboard::Clipboard;
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
-#[cfg(test)]
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_health::initial_section;
@@ -55,7 +55,7 @@ use crate::preferences_bus::PreferencesBus;
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
-use crate::scene_document::{SceneDocument, SceneEvent};
+use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use sc_scene::SceneError;
@@ -278,6 +278,7 @@ impl ViewportController {
             SceneEvent::Installed => self.on_scene_installed(),
             SceneEvent::Cleared => self.on_scene_cleared(),
             SceneEvent::SelectionChanged => {
+                self.on_modal_transform_finish(false);
                 self.mirror_selection_to_ui();
                 self.mark_dirty();
             }
@@ -374,6 +375,9 @@ impl ViewportController {
     /// `None`, so the framing in `on_scene_load_finished` can set it, and the
     /// UI mirrors the new scene's object list and the cleared selection.
     fn on_scene_installed(&self) {
+        self.input.modal.set(None);
+        self.input.modal_revision.set(None);
+        self.mirror_modal_to_ui();
         self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
@@ -409,6 +413,7 @@ impl ViewportController {
         self.camera.reset();
         self.render.set_frame(FrameState::default());
         self.input.reset();
+        self.mirror_modal_to_ui();
         self.render.clear_renderer_scene();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_mesh_rendering(slint::Image::default());
@@ -474,6 +479,7 @@ impl ViewportController {
     /// mesh health. Entering Slice cancels any in-flight gizmo gesture so a
     /// half-finished transform cannot linger in a section that forbids editing.
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
+        self.on_modal_transform_finish(false);
         if !self.session.set_section(section) {
             return;
         }
@@ -508,6 +514,7 @@ impl ViewportController {
     /// leaving the selection intact. Called when the section changes to one
     /// that forbids transforms.
     fn cancel_transform_gestures(&self) {
+        self.on_modal_transform_finish(false);
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
             self.input.abort_gizmo_drag(self.session.document());
         }
@@ -670,6 +677,7 @@ impl ViewportController {
     /// maps to `None`: the UI should not hand one over, but a stale callback
     /// can race with a scene reload.
     pub(crate) fn on_select_by_index(&self, idx: usize) {
+        self.on_modal_transform_finish(false);
         // `leaf_id_at_index` returns `None` past the last reachable leaf.
         let new_sel = self
             .session
@@ -723,6 +731,10 @@ impl ViewportController {
     /// gate can race a freshly emptied stack, so the document's own check
     /// decides.
     pub(crate) fn on_undo_requested(&self) {
+        if self.input.modal.get().is_some() {
+            self.on_modal_transform_finish(false);
+            return;
+        }
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
@@ -733,6 +745,10 @@ impl ViewportController {
 
     /// Handles Edit -> Redo.
     pub(crate) fn on_redo_requested(&self) {
+        if self.input.modal.get().is_some() {
+            self.on_modal_transform_finish(false);
+            return;
+        }
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
@@ -770,6 +786,9 @@ impl ViewportController {
     /// menu and the Edit > Delete menu item. No-op when no scene is loaded,
     /// nothing is selected, or the selection is not a leaf.
     pub(crate) fn on_delete_requested(&self) {
+        if self.input.modal.get().is_some() {
+            return;
+        }
         if !self.allows_layout_tools() {
             return;
         }
@@ -791,6 +810,10 @@ impl ViewportController {
     /// empty space comes here from `on_pointer_up` after no object was hit;
     /// `on_pointer_up` ends any drag first, so a click starts at level 2.
     pub(crate) fn on_clear_selection(&self) {
+        if self.input.modal.get().is_some() {
+            self.on_modal_transform_finish(false);
+            return;
+        }
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
             self.input.abort_gizmo_drag(self.session.document());
             return;
@@ -810,11 +833,203 @@ impl ViewportController {
         self.session.document().set_selection(Selection::None);
     }
 
+    fn mirror_modal_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let gesture = self.input.modal.get();
+            ui.set_modal_transform_active(gesture.is_some());
+            let label = gesture
+                .map(|g| {
+                    let axis = g.axis.map(|i| ["X", "Y", "Z"][i]).unwrap_or(match g.op {
+                        ModalOp::Scale => "Uniform",
+                        _ => "View",
+                    });
+                    format!("{} | {}", g.op.key(), axis)
+                })
+                .unwrap_or_default();
+            ui.set_modal_transform_status(label.into());
+        }
+    }
+
+    pub(crate) fn on_modal_transform_start(&self, code: i32, x: f32, y: f32) {
+        let Some(op) = ModalOp::from_code(code) else {
+            return;
+        };
+        if !self.allows_transform_gizmo()
+            || self.repair_in_flight()
+            || self.ui.upgrade().is_some_and(|ui| ui.get_loading())
+            || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
+        {
+            return;
+        }
+        if self.input.modal.get().is_some_and(|g| g.op == op) {
+            return;
+        }
+        self.on_modal_transform_finish(false);
+        self.apply_keyboard_focus(KbdFocus::None);
+        let Some(viewport) = self.render.viewport() else {
+            return;
+        };
+        let document = self.session.document();
+        let Some(node_id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let gesture = document
+            .with_scene(|spatial| {
+                let camera_slot = self.camera.camera_cell().borrow();
+                let camera = camera_slot.as_ref()?;
+                let query = spatial.leaf(node_id)?;
+                let pivot = gizmo::pivot_for_leaf(spatial, node_id)?;
+                let fov = crate::mesh_render::default_fov_y();
+                let screen = picking::project_world_to_screen(
+                    camera,
+                    fov,
+                    viewport.width(),
+                    viewport.height(),
+                    pivot,
+                )?;
+                let inverse_view = camera.view_matrix().inverse();
+                Some(ModalGesture {
+                    node_id,
+                    original: query.local_transform(),
+                    parent: query.parent_world(),
+                    pivot,
+                    start: [x, y],
+                    cursor: [x, y],
+                    screen_pivot: [screen.0, screen.1],
+                    right: inverse_view.transform_vector3(glam::Vec3::X).normalize(),
+                    up: inverse_view.transform_vector3(glam::Vec3::Y).normalize(),
+                    view_axis: inverse_view.transform_vector3(glam::Vec3::Z).normalize(),
+                    world_per_pixel: camera.world_per_pixel_at(pivot, fov, viewport.height())?,
+                    op,
+                    axis: None,
+                    last_angle: (y - screen.1).atan2(x - screen.0),
+                    angle: 0.0,
+                })
+            })
+            .flatten();
+        self.input.modal.set(gesture);
+        self.input
+            .modal_revision
+            .set(gesture.map(|_| document.scene_revision()));
+        self.input.gizmo_fsm().clear_hover();
+        self.mirror_modal_to_ui();
+        self.mark_dirty();
+    }
+
+    pub(crate) fn on_modal_transform_axis(&self, axis: i32, x: f32, y: f32) {
+        if !(0..3).contains(&axis) {
+            return;
+        }
+        let Some(mut gesture) = self.input.modal.get() else {
+            return;
+        };
+        gesture.axis = Some(axis as usize);
+        self.input.modal.set(Some(gesture));
+        self.mirror_modal_to_ui();
+        self.update_modal(ScreenPoint::new(x, y));
+    }
+
+    fn update_modal(&self, cursor: ScreenPoint) {
+        if self.input.modal_revision.get() != Some(self.session.document().scene_revision()) {
+            self.input.modal.set(None);
+            self.input.modal_revision.set(None);
+            self.mirror_modal_to_ui();
+            return;
+        }
+        let Some(mut gesture) = self.input.modal.get() else {
+            return;
+        };
+        let Some(proposed) = gesture.propose([cursor.x, cursor.y]) else {
+            return;
+        };
+        let result = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let query = spatial.leaf(gesture.node_id)?;
+                let before = query.local_transform();
+                let after = match gesture.op {
+                    ModalOp::Move if gesture.axis == Some(2) => proposed,
+                    ModalOp::Move => {
+                        let baseline =
+                            query.minimum_world_z(gesture.parent.compose(&gesture.original))?;
+                        let next = query.minimum_world_z(gesture.parent.compose(&proposed))?;
+                        let lift = (baseline.min(0.0) - next).max(0.0);
+                        gesture
+                            .world_translation(proposed, glam::Vec3::new(0.0, 0.0, lift as f32))?
+                    }
+                    _ => super::bed_clearance::keep_above_bed(
+                        spatial,
+                        gesture.node_id,
+                        gesture.original,
+                        proposed,
+                    ),
+                };
+                Some((before, after))
+            })
+            .flatten();
+        let Some((before, after)) = result else {
+            self.on_modal_transform_finish(false);
+            return;
+        };
+        self.input.modal.set(Some(gesture));
+        if let Err(error) =
+            self.session
+                .document()
+                .apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                    node_id: gesture.node_id,
+                    before,
+                    after,
+                })
+        {
+            self.on_modal_transform_finish(false);
+            if let EditNotApplied::Rejected(reason) = error {
+                self.show_edit_rejected(reason);
+            }
+        }
+        self.mark_dirty();
+    }
+
+    pub(crate) fn on_modal_transform_finish(&self, confirm: bool) {
+        let Some(gesture) = self.input.modal.take() else {
+            return;
+        };
+        let document = self.session.document();
+        if self.input.modal_revision.take() != Some(document.scene_revision()) {
+            // A new document or externally committed edit owns the scene now.
+            // Never restore a stale snapshot onto a possibly reused node id.
+            self.mirror_modal_to_ui();
+            self.mark_dirty();
+            return;
+        }
+        let current = document
+            .with_scene(|s| s.leaf(gesture.node_id).map(|q| q.local_transform()))
+            .flatten();
+        if let Some(current) = current {
+            if confirm {
+                document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                    node_id: gesture.node_id,
+                    before: gesture.original,
+                    after: current,
+                });
+            } else {
+                let _ = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                    node_id: gesture.node_id,
+                    before: current,
+                    after: gesture.original,
+                });
+            }
+        }
+        self.mirror_modal_to_ui();
+        self.mark_dirty();
+    }
+
     /// Arms the translate keyboard focus (`T`); `R` and `S` arm rotate and
     /// scale the same way. Each needs a selection; without one, the press does
     /// nothing. A press of the focus already armed does nothing, so autorepeat
     /// does not reset the integrator's tick clock.
     pub(crate) fn on_gizmo_focus_translate(&self) {
+        self.on_modal_transform_finish(false);
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
 
@@ -882,6 +1097,10 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
+        if self.input.modal.get().is_some() {
+            self.update_modal(cursor);
+            return;
+        }
         if !self.allows_transform_gizmo() {
             return;
         }
@@ -1489,7 +1708,6 @@ mod selection_tests {
 
     use super::*;
     use crate::test_support::scenes::empty_leaf_mesh;
-    use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
     /// Returns `PointerModifiers::default()`, with all flags off. The selection
@@ -1730,7 +1948,6 @@ mod viewport_click_tests {
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, NodeId, Scene};
     use std::cell::Cell;
     use std::sync::Arc;
@@ -2595,7 +2812,6 @@ mod keyboard_focus_tests {
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, Scene};
 
     /// Builds a loader-shape graph of 1 object: a single inline-mesh leaf under
@@ -3019,7 +3235,6 @@ mod paste_clipboard_tests {
     use super::*;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
-    use sc_mesh_core::transform::Transform3D;
     use sc_scene_edit::SceneFragment;
 
     fn triangle_clipboard() -> Clipboard {

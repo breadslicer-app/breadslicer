@@ -230,6 +230,18 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let ctrl = ctrl.clone();
         ui.on_selection_cycle(move |delta| ctrl.on_selection_cycle(delta));
     }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_modal_transform_start(move |code, x, y| ctrl.on_modal_transform_start(code, x, y));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_modal_transform_axis(move |axis, x, y| ctrl.on_modal_transform_axis(axis, x, y));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_modal_transform_finish(move |confirm| ctrl.on_modal_transform_finish(confirm));
+    }
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 
@@ -240,6 +252,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefe
     }
 
     ui.on_open_file_requested(move || {
+        ctrl.on_modal_transform_finish(false);
         // The Slint event loop keeps processing callbacks while the native file
         // dialog is open, and `enabled: !root.loading` on the menu item cannot
         // stop them. `begin_load` gates the command in Rust before the dialog
@@ -354,6 +367,7 @@ async fn pick_mesh_file(start_dir: Option<PathBuf>) -> Option<PathBuf> {
 
 fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_requested(move || {
+        ctrl.on_modal_transform_finish(false);
         let ctrl = ctrl.clone();
         let defaults = PrintDefaults::from(&prefs.snapshot());
         if let Err(err) = slint::spawn_local(async move {
@@ -493,6 +507,7 @@ async fn save_to_target(
 
 fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_as_requested(move || {
+        ctrl.on_modal_transform_finish(false);
         spawn_save_as_flow(ctrl.clone(), PrintDefaults::from(&prefs.snapshot()));
     });
 }
@@ -571,6 +586,7 @@ fn save_error_texts(target: &Path, err: &anyhow::Error) -> ErrorTexts {
 
 fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_export_as_requested(move || {
+        ctrl.on_modal_transform_finish(false);
         let doc = ctrl.document();
         let dialogs = ctrl.dialogs();
         let export_progress = ctrl.export_progress();

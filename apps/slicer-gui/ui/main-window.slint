@@ -330,6 +330,11 @@ export component MainWindow inherits Window {
     // It proves the crate's interface works inside the GUI.
 
     callback support-gen-requested();
+    in property <bool> modal-transform-active: false;
+    in property <string> modal-transform-status: "";
+    callback modal-transform-start(int, length, length);
+    callback modal-transform-axis(int, length, length);
+    callback modal-transform-finish(bool);
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -608,6 +613,11 @@ export component MainWindow inherits Window {
             horizontal-stretch: 1;
             rendering: root.mesh-rendering;
             placeholder-text: @tr("Open a 3D model to visualize it here");
+            modal-transform-active: root.modal-transform-active;
+            modal-transform-status: root.modal-transform-status;
+            modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
+            modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
+            modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
             gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
             // Tab cycles selection while a scene is loaded; without a
             // scene there's nothing to cycle, so Tab returns to its
@@ -708,6 +718,7 @@ export component MainWindow inherits Window {
         selected-index <=> root.selected-object-index;
         selection-changed(idx) => {
             root.object-list-selection-changed(idx);
+            mv.focus-viewport();
         }
         geometry-committed => {
             root.object-list-geometry-changed(

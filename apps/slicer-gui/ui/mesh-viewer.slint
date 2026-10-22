@@ -27,6 +27,7 @@ export struct PointerModifiers {
 }
 
 export component MeshViewer inherits Rectangle {
+    public function focus-viewport() { fs.focus(); }
     in property <image> rendering;
     in property <string> placeholder-text: "";
 
@@ -62,6 +63,12 @@ export component MeshViewer inherits Rectangle {
     // Rust controller so the FocusScope's key-pressed handler
     // knows whether to hijack the arrow keys (focus active) or
     // route them to the camera (focus None).
+    in property <bool> modal-transform-active: false;
+    in property <string> modal-transform-status: "";
+    callback modal-transform-start(int, length, length);
+    callback modal-transform-axis(int, length, length);
+    callback modal-transform-finish(bool);
+    property <bool> modal-click-pending: false;
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -171,6 +178,9 @@ export component MeshViewer inherits Rectangle {
     }
 
     fs := FocusScope {
+        changed has-focus => {
+            if (!self.has-focus && root.modal-transform-active) { root.modal-transform-finish(false); }
+        }
         width: parent.width;
         height: parent.height;
         // Accessibility metadata lives on the enclosing MeshViewer.
@@ -178,26 +188,39 @@ export component MeshViewer inherits Rectangle {
 
         key-pressed(event) => {
             if (event.text == Key.Escape) {
-                root.selection-cleared();
+                if (root.modal-transform-active) { root.modal-transform-finish(false); }
+                else { root.selection-cleared(); }
                 return accept;
             }
             if (event.text == Key.Home || event.text == "f" || event.text == "F") {
                 root.frame-view-requested();
                 return accept;
             }
-            // T / R / S → keyboard gizmo focus. The Rust side gates
-            // on whether a selection exists; an unselected viewport
-            // sees these as no-ops.
-            if (event.text == "t" || event.text == "T") {
+            // Plain keys only: never steal Save, reload, or modified shortcuts.
+            if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt) {
+                if (event.text == "g" || event.text == "G") {
+                    root.modal-transform-start(0, ta.mouse-x, ta.mouse-y);
+                    return accept;
+                }
+                if (event.text == "r" || event.text == "R") {
+                    root.modal-transform-start(1, ta.mouse-x, ta.mouse-y);
+                    return accept;
+                }
+                if (event.text == "s" || event.text == "S") {
+                    root.modal-transform-start(2, ta.mouse-x, ta.mouse-y);
+                    return accept;
+                }
+            }
+            if (root.modal-transform-active) {
+                if (event.text == Key.Return) { root.modal-transform-finish(true); }
+                if (event.text == "x" || event.text == "X") { root.modal-transform-axis(0, ta.mouse-x, ta.mouse-y); }
+                if (event.text == "y" || event.text == "Y") { root.modal-transform-axis(1, ta.mouse-x, ta.mouse-y); }
+                if (event.text == "z" || event.text == "Z") { root.modal-transform-axis(2, ta.mouse-x, ta.mouse-y); }
+                return accept;
+            }
+            // Retain the original T + arrows workflow as a non-modal alternative.
+            if ((event.text == "t" || event.text == "T") && !event.modifiers.control && !event.modifiers.meta) {
                 root.gizmo-focus-translate-pressed();
-                return accept;
-            }
-            if (event.text == "r" || event.text == "R") {
-                root.gizmo-focus-rotate-pressed();
-                return accept;
-            }
-            if (event.text == "s" || event.text == "S") {
-                root.gizmo-focus-scale-pressed();
                 return accept;
             }
             // Ctrl flips each axis to its opposite, matching the
@@ -378,7 +401,11 @@ export component MeshViewer inherits Rectangle {
                     fs.focus();
                     root.last-x = ta.mouse-x;
                     root.last-y = ta.mouse-y;
-                    if (event.button == PointerEventButton.left) {
+                    if (root.modal-transform-active) {
+                        root.modal-click-pending = true;
+                        if (event.button == PointerEventButton.left) { root.modal-transform-finish(true); }
+                        else if (event.button == PointerEventButton.right) { root.modal-transform-finish(false); }
+                    } else if (event.button == PointerEventButton.left) {
                         root.left-pressed = true;
                         root.viewport-pointer-down(ta.mouse-x, ta.mouse-y, {
                             shift: event.modifiers.shift,
@@ -393,7 +420,8 @@ export component MeshViewer inherits Rectangle {
                         root.active-gesture = 2;
                     }
                 } else if (event.kind == PointerEventKind.up) {
-                    if (event.button == PointerEventButton.left) {
+                    if (root.modal-click-pending) { root.modal-click-pending = false; }
+                    else if (event.button == PointerEventButton.left) {
                         root.left-pressed = false;
                         root.viewport-pointer-up(ta.mouse-x, ta.mouse-y, {
                             shift: event.modifiers.shift,
@@ -442,6 +470,7 @@ export component MeshViewer inherits Rectangle {
             }
 
             scroll-event(event) => {
+                if (root.modal-transform-active) { return accept; }
                 root.zoom-at(event.delta-y, ta.mouse-x, ta.mouse-y);
                 return accept;
             }
@@ -482,4 +511,22 @@ export component MeshViewer inherits Rectangle {
             }
         }
     }
+    if root.modal-transform-active: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 48px;
+        width: status.preferred-width + 24px;
+        height: 32px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: #555;
+        background: #202024;
+        status := Text {
+            text: root.modal-transform-status + "  |  " + @tr("Enter / click: confirm | Esc / right click: cancel");
+            color: #eee;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
 }

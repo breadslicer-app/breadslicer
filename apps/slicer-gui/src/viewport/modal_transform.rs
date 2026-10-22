@@ -1,0 +1,279 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+//! Cursor-driven modal transform math, independent of the UI and document.
+use glam::Vec3;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_scene::NodeId;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModalOp {
+    Move,
+    Rotate,
+    Scale,
+}
+impl ModalOp {
+    pub(super) fn from_code(code: i32) -> Option<Self> {
+        match code {
+            0 => Some(Self::Move),
+            1 => Some(Self::Rotate),
+            2 => Some(Self::Scale),
+            _ => None,
+        }
+    }
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Move => "G",
+            Self::Rotate => "R",
+            Self::Scale => "S",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ModalGesture {
+    pub node_id: NodeId,
+    pub original: Transform3D,
+    pub parent: Transform3D,
+    pub pivot: Vec3,
+    pub start: [f32; 2],
+    pub cursor: [f32; 2],
+    pub screen_pivot: [f32; 2],
+    pub right: Vec3,
+    pub up: Vec3,
+    pub view_axis: Vec3,
+    pub world_per_pixel: f32,
+    pub op: ModalOp,
+    pub axis: Option<usize>,
+    pub last_angle: f32,
+    pub angle: f32,
+}
+impl ModalGesture {
+    pub(super) fn world_translation(&self, local: Transform3D, delta: Vec3) -> Option<Transform3D> {
+        let shift = Transform3D::Affine(AffineTransform3D::from_translation(
+            delta.to_array().map(f64::from),
+        ));
+        Some(
+            self.parent
+                .inverse()
+                .ok()?
+                .compose(&shift.compose(&self.parent.compose(&local))),
+        )
+    }
+    fn about_pivot(&self, delta: AffineTransform3D) -> Option<Transform3D> {
+        let to = Transform3D::Affine(AffineTransform3D::from_translation(
+            self.pivot.to_array().map(f64::from),
+        ));
+        let from = Transform3D::Affine(AffineTransform3D::from_translation(
+            (-self.pivot).to_array().map(f64::from),
+        ));
+        let world = to.compose(
+            &Transform3D::Affine(delta)
+                .compose(&from.compose(&self.parent.compose(&self.original))),
+        );
+        Some(self.parent.inverse().ok()?.compose(&world))
+    }
+    pub(super) fn propose(&mut self, cursor: [f32; 2]) -> Option<Transform3D> {
+        if !cursor.into_iter().all(f32::is_finite) {
+            return None;
+        }
+        self.cursor = cursor;
+        let dx = cursor[0] - self.start[0];
+        let dy = cursor[1] - self.start[1];
+        match self.op {
+            ModalOp::Move => {
+                let delta = if let Some(axis) = self.axis {
+                    let unit = axis_vector(axis);
+                    let sx = unit.dot(self.right);
+                    let sy = -unit.dot(self.up);
+                    let norm = sx * sx + sy * sy;
+                    let distance = if norm > 0.02 {
+                        (dx * sx + dy * sy) / norm
+                    } else {
+                        -dy
+                    };
+                    unit * distance * self.world_per_pixel
+                } else {
+                    (self.right * dx - self.up * dy) * self.world_per_pixel
+                };
+                self.world_translation(self.original, delta)
+            }
+            ModalOp::Scale => {
+                let distance = |p: [f32; 2]| {
+                    ((p[0] - self.screen_pivot[0]).powi(2) + (p[1] - self.screen_pivot[1]).powi(2))
+                        .sqrt()
+                };
+                let radius = distance(self.start);
+                let factor = if radius >= 8.0 {
+                    distance(cursor) / radius
+                } else {
+                    ((dx - dy) * 0.01).exp()
+                }
+                .clamp(0.001, 1000.0);
+                let scale = if let Some(axis) = self.axis {
+                    let mut factors = [1.0; 3];
+                    factors[axis] = f64::from(factor);
+                    AffineTransform3D::from_non_uniform_scale(factors)
+                } else {
+                    AffineTransform3D::from_uniform_scale(f64::from(factor))
+                };
+                self.about_pivot(scale)
+            }
+            ModalOp::Rotate => {
+                let sx = self.start[0] - self.screen_pivot[0];
+                let sy = self.start[1] - self.screen_pivot[1];
+                if sx * sx + sy * sy >= 64.0 {
+                    let raw =
+                        (cursor[1] - self.screen_pivot[1]).atan2(cursor[0] - self.screen_pivot[0]);
+                    let change = (raw - self.last_angle + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
+                    self.angle += change;
+                    self.last_angle = raw;
+                } else {
+                    self.angle = dx * 0.01;
+                }
+                let axis = self.axis.map(axis_vector).unwrap_or(self.view_axis);
+                let sign = if axis.dot(self.view_axis) >= 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let rotation = AffineTransform3D::from_axis_angle(
+                    axis.to_array().map(f64::from),
+                    f64::from(self.angle * sign),
+                )
+                .ok()?;
+                self.about_pivot(rotation)
+            }
+        }
+    }
+}
+fn axis_vector(axis: usize) -> Vec3 {
+    match axis {
+        0 => Vec3::X,
+        1 => Vec3::Y,
+        _ => Vec3::Z,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sc_mesh_core::Vertex;
+    use sc_scene::{LeafPayload, Scene};
+    use std::sync::Arc;
+    fn gesture(op: ModalOp) -> ModalGesture {
+        let mut scene = Scene::new();
+        let id = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(sc_mesh_core::IndexedMesh {
+                    meta: None,
+                    vertices: vec![],
+                    faces: vec![],
+                })),
+            )
+            .unwrap();
+        ModalGesture {
+            node_id: id,
+            original: Transform3D::Identity,
+            parent: Transform3D::Identity,
+            pivot: Vec3::ZERO,
+            start: [100.0, 0.0],
+            cursor: [100.0, 0.0],
+            screen_pivot: [0.0, 0.0],
+            right: Vec3::X,
+            up: Vec3::Y,
+            view_axis: -Vec3::Z,
+            world_per_pixel: 1.0,
+            op,
+            axis: None,
+            last_angle: 0.0,
+            angle: 0.0,
+        }
+    }
+    fn point(t: Transform3D, p: [f32; 3]) -> [f32; 3] {
+        t.apply_to_vertex(Vertex::new(p)).coords()
+    }
+    #[test]
+    fn move_restricts_to_each_world_axis_including_end_on_view() {
+        for axis in 0..3 {
+            let mut g = gesture(ModalOp::Move);
+            g.axis = Some(axis);
+            let p = point(g.propose([130.0, 20.0]).unwrap(), [0.0; 3]);
+            for (i, value) in p.iter().enumerate() {
+                if i != axis {
+                    assert_eq!(*value, 0.0);
+                } else {
+                    assert!(value.abs() > 0.0);
+                }
+            }
+        }
+    }
+    #[test]
+    fn uniform_and_axis_scale() {
+        let mut g = gesture(ModalOp::Scale);
+        assert_eq!(point(g.propose([200.0, 0.0]).unwrap(), [1.0; 3]), [2.0; 3]);
+        for axis in 0..3 {
+            g.axis = Some(axis);
+            let p = point(g.propose([200.0, 0.0]).unwrap(), [1.0; 3]);
+            for (i, v) in p.iter().enumerate() {
+                assert_eq!(*v, if i == axis { 2.0 } else { 1.0 });
+            }
+        }
+    }
+    #[test]
+    fn rotation_fixes_locked_axis() {
+        for axis in 0..3 {
+            let mut g = gesture(ModalOp::Rotate);
+            g.axis = Some(axis);
+            let p = axis_vector(axis).to_array();
+            let actual = point(g.propose([0.0, 100.0]).unwrap(), p);
+            for i in 0..3 {
+                assert!((p[i] - actual[i]).abs() < 1e-5);
+            }
+        }
+    }
+    #[test]
+    fn previews_compose_from_original_not_previous_frame() {
+        let mut g = gesture(ModalOp::Move);
+        g.axis = Some(0);
+        g.propose([130.0, 0.0]);
+        let p = point(g.propose([140.0, 0.0]).unwrap(), [0.0; 3]);
+        assert_eq!(p, [40.0, 0.0, 0.0]);
+    }
+    #[test]
+    fn axis_switch_discards_unwanted_components_without_resetting_origin() {
+        let mut g = gesture(ModalOp::Move);
+        g.propose([130.0, 20.0]);
+        g.axis = Some(1);
+        assert_eq!(
+            point(g.propose([130.0, 20.0]).unwrap(), [0.0; 3]),
+            [0.0, -20.0, 0.0]
+        );
+    }
+    #[test]
+    fn world_constraint_respects_rotated_parent() {
+        let mut g = gesture(ModalOp::Move);
+        g.parent = Transform3D::Affine(AffineTransform3D::from_rotation_z(0.7));
+        g.axis = Some(0);
+        let local = g.propose([130.0, 20.0]).unwrap();
+        let p = point(g.parent.compose(&local), [0.0; 3]);
+        assert!((p[0] - 30.0).abs() < 1e-5 && p[1].abs() < 1e-5);
+    }
+    #[test]
+    fn rotation_unwraps_across_pi() {
+        let mut g = gesture(ModalOp::Rotate);
+        g.propose([-100.0, 1.0]);
+        let first = g.angle;
+        g.propose([-100.0, -1.0]);
+        assert!((g.angle - first).abs() < 0.03);
+    }
+    #[test]
+    fn scale_keeps_pivot_fixed() {
+        let mut g = gesture(ModalOp::Scale);
+        g.pivot = Vec3::new(10.0, 20.0, 30.0);
+        let p = point(g.propose([200.0, 0.0]).unwrap(), g.pivot.to_array());
+        assert_eq!(p, g.pivot.to_array());
+    }
+}
