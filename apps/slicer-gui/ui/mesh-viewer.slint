@@ -30,12 +30,24 @@ export struct PointerModifiers {
 export component MeshViewer inherits Rectangle {
     property <bool> view-wheel-open: false;
     property <bool> view-wheel-key-held: false;
+    property <int> view-wheel-selection: -1;
     property <length> view-wheel-x;
     property <length> view-wheel-y;
     // Spanish keyboard ordinal key, plus US grave/tilde equivalents.
     function is-view-key(text: string) -> bool {
         return text == "º" || text == "ª" || text == "`" || text == "~";
     }
+    function choose-view(code: int) {
+            root.view-wheel-open = false;
+            if (code == 0) { root.axis-view-requested(AxisView.Top); }
+            if (code == 1) { root.axis-view-requested(AxisView.Bottom); }
+            if (code == 2) { root.axis-view-requested(AxisView.Left); }
+            if (code == 3) { root.axis-view-requested(AxisView.Right); }
+            if (code == 4) { root.axis-view-requested(AxisView.Front); }
+            if (code == 5) { root.axis-view-requested(AxisView.Back); }
+            if (code == 6) { root.frame-selected-requested(); }
+            if (code == 7) { root.toggle-projection-requested(); }
+        }
     public function focus-viewport() { fs.focus(); }
     in property <image> rendering;
     in property <string> placeholder-text: "";
@@ -204,6 +216,7 @@ export component MeshViewer inherits Rectangle {
                 if (!root.modal-transform-active && root.active-gesture == 0 && !root.left-pressed && !root.view-wheel-key-held) {
                     root.view-wheel-x = ta.mouse-x;
                     root.view-wheel-y = ta.mouse-y;
+                    root.view-wheel-selection = -1;
                     root.view-wheel-open = !root.view-wheel-open;
                 }
                 root.view-wheel-key-held = true;
@@ -378,7 +391,14 @@ export component MeshViewer inherits Rectangle {
         }
 
         key-released(event) => {
-            if (root.is-view-key(event.text)) { root.view-wheel-key-held = false; return accept; }
+            if (root.is-view-key(event.text)) {
+                root.view-wheel-key-held = false;
+                if (root.view-wheel-open && root.view-wheel-selection >= 0) {
+                    root.choose-view(root.view-wheel-selection);
+                }
+                // No aim: a quick tap leaves the menu open for clicking.
+                return accept;
+            }
             // Only the keyboard-focus-driven arrow events need a
             // matching release. Other keys are momentary (T/R/S
             // toggle focus, Esc cascades) and have no held state.
@@ -580,17 +600,9 @@ export component MeshViewer inherits Rectangle {
         width: parent.width; height: parent.height;
         origin-x: root.view-wheel-x; origin-y: root.view-wheel-y;
         orthographic: root.orthographic-view;
-        chosen(code) => {
-            root.view-wheel-open = false;
-            if (code == 0) { root.axis-view-requested(AxisView.Top); }
-            if (code == 1) { root.axis-view-requested(AxisView.Bottom); }
-            if (code == 2) { root.axis-view-requested(AxisView.Left); }
-            if (code == 3) { root.axis-view-requested(AxisView.Right); }
-            if (code == 4) { root.axis-view-requested(AxisView.Front); }
-            if (code == 5) { root.axis-view-requested(AxisView.Back); }
-            if (code == 6) { root.frame-selected-requested(); }
-            if (code == 7) { root.toggle-projection-requested(); }
-        }
+        key-held: root.view-wheel-key-held;
+        aimed(code) => { root.view-wheel-selection = code; }
+        chosen(code) => { root.choose-view(code); }
     }
 
 }
