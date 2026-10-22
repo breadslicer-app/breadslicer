@@ -447,6 +447,19 @@ impl<'a> ObjectQuery<'a> {
         }
     }
 
+    /// Lowest actual mesh vertex under a world transform. Cached vertex-block
+    /// bounds prune the search; no transformed local-box corners are substituted
+    /// for geometry. Returns None for an empty mesh.
+    pub fn minimum_world_z(&self, transform: Transform3D) -> Option<f64> {
+        match transform {
+            Transform3D::Identity => self.local_aabb().map(|b| f64::from(b.min().coords()[2])),
+            Transform3D::Affine(a) => self
+                .cache
+                .minimum_projection(self.mesh, a.linear()[2])
+                .map(|z| z + a.translation()[2]),
+        }
+    }
+
     /// Compute the object-space triangle clusters over
     /// [`Self::mesh`], cached on first call; `None` when the mesh
     /// has no faces or has corrupt face indices.

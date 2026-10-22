@@ -22,6 +22,7 @@ use crate::clusters::TriangleClusters;
 #[derive(Default)]
 pub(crate) struct MeshSpatial {
     local_aabb: OnceLock<Aabb>,
+    vertex_blocks: OnceLock<Vec<Aabb>>,
     clusters: OnceLock<TriangleClusters>,
     /// Cache for the AABB of the mesh's vertices under a fixed
     /// linear transform (translation excluded). One slot, keyed by
@@ -100,6 +101,50 @@ impl MeshSpatial {
         Some(aabb)
     }
 
+    // Vertex-order blocks preserve exact extrema while cheaply pruning interior
+    // regions. Owned by the mesh cache, so edits cannot reuse stale bounds.
+    fn vertex_blocks(&self, mesh: &IndexedMesh) -> &[Aabb] {
+        self.vertex_blocks.get_or_init(|| {
+            mesh.vertices
+                .chunks(256)
+                .map(|vertices| {
+                    let mut bounds = Aabb::from_min_max(vertices[0], vertices[0]);
+                    for vertex in &vertices[1..] {
+                        bounds.extend(*vertex);
+                    }
+                    bounds
+                })
+                .collect()
+        })
+    }
+
+    pub(crate) fn minimum_projection(&self, mesh: &IndexedMesh, row: [f64; 3]) -> Option<f64> {
+        let project = |v: Vertex| {
+            let p = v.coords();
+            row[0].mul_add(
+                f64::from(p[0]),
+                row[1].mul_add(f64::from(p[1]), row[2] * f64::from(p[2])),
+            )
+        };
+        let mut best = project(*mesh.vertices.first()?);
+        for (vertices, bounds) in mesh.vertices.chunks(256).zip(self.vertex_blocks(mesh)) {
+            let lo = bounds.min().coords();
+            let hi = bounds.max().coords();
+            let corner = Vertex::new(std::array::from_fn(|i| {
+                if row[i] >= 0.0 { lo[i] } else { hi[i] }
+            }));
+            let lower = project(corner);
+            let margin = 1e-9 * (1.0 + best.abs() + lower.abs());
+            if lower > best + margin {
+                continue;
+            }
+            for vertex in vertices {
+                best = best.min(project(*vertex));
+            }
+        }
+        Some(best)
+    }
+
     /// Eagerly populate every cache in this slot. Used by
     /// [`SceneSpatial::primed_graph`](crate::SceneSpatial::primed_graph)
     /// to do the work off the UI thread before the mesh ever reaches
@@ -111,6 +156,7 @@ impl MeshSpatial {
     pub(crate) fn prime(&self, mesh: &IndexedMesh) {
         let _ = self.local_aabb(mesh);
         let _ = self.clusters(mesh);
+        let _ = self.vertex_blocks(mesh);
     }
 }
 

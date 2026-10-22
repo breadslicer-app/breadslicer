@@ -461,7 +461,7 @@ impl KeyboardDriveState {
         } else {
             ctx.document
                 .with_scene(|spatial| {
-                    super::bed_clearance::keep_above_bed(spatial, node_id, new_transform)
+                    super::bed_clearance::keep_above_bed(spatial, node_id, running, new_transform)
                 })
                 .unwrap_or(new_transform)
         };
