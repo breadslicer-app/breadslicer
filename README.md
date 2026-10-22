@@ -1,5 +1,8 @@
 # SoulCrafted Slicer
 
+> Nuestra versión de desarrollo: [índice SC, baseline, inventario y roadmap](SC-INDEX.md).
+> La documentación y atribución del proyecto original se conservan debajo.
+
 ## Introduction
 
 The SoulCrafted Slicer is a community-oriented open source slicer for resin 3d
