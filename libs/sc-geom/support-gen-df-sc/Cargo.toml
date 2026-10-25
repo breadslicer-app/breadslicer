@@ -1,0 +1,19 @@
+[package]
+name = "support-gen-df-sc"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["SynrgStudio"]
+description = "Runs the DragonFruit support port (support-gen-df) on a SoulCrafted scene as a cancellable job, returning the supports as one scene mesh."
+categories = ["algorithms"]
+keywords = ["geometry", "support", "3d-printing", "SLA", "dragonfruit"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
+sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
+sc-scene = { path = "../../scene", version = "0.2.0" }
+support-gen-df = { path = "../support-gen-df", version = "0.0.1" }

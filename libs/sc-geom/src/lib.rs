@@ -46,3 +46,6 @@ pub use support_gen_trivial::{
     SupportPartial, TRIVIAL_SUPPORT_ALGORITHM_ID, TRIVIAL_SUPPORT_VERSION, TrivialSupport,
     TrivialSupportInferredSpecs, TrivialSupportSpecs,
 };
+
+/// The DragonFruit support port, run on a scene (`support-gen-df-sc`).
+pub use support_gen_df_sc as df_supports;

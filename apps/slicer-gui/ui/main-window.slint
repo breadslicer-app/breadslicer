@@ -201,6 +201,9 @@ export component MainWindow inherits Window {
     in-out property <bool> support-gen-in-progress: false;
     in property <string> support-gen-phase: "";
     in property <float> support-gen-progress: 0.0;
+    // Whether the run in progress can be stopped from its panel (the
+    // DragonFruit generator can; the trivial one cannot).
+    in property <bool> support-gen-cancelable: false;
 
     in property <int> slice-completed: 0;
     in property <int> slice-total: 0;
@@ -333,6 +336,12 @@ export component MainWindow inherits Window {
     // It proves the crate's interface works inside the GUI.
 
     callback support-gen-requested();
+    // Tools > Generate Supports (DragonFruit): the native port of
+    // DragonFruit's auto-support (islands, placement, bracing, raft), run on
+    // the scene as a cancellable job. The supports and raft are pasted as one
+    // undoable object. Shares the progress panel above.
+    callback df-support-requested();
+    callback support-gen-cancel-requested();
     in property <bool> modal-transform-active: false;
     in property <string> modal-transform-status: "";
     callback modal-transform-start(int, length, length);
@@ -498,6 +507,14 @@ export component MainWindow inherits Window {
 
         Menu {
             title: @tr("MenuBar" => "Tools");
+
+            MenuItem {
+                title: @tr("MenuBar" => "Generate Supports (DragonFruit)…");
+                enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                activated => {
+                    root.df-support-requested();
+                }
+            }
 
             MenuItem {
                 title: @tr("MenuBar" => "Generate Support (trivial for test)…");
@@ -1082,6 +1099,14 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Tools");
 
                 MenuItem {
+                    title: @tr("MenuBar" => "Generate Supports (DragonFruit)…");
+                    enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                    activated => {
+                        root.df-support-requested();
+                    }
+                }
+
+                MenuItem {
                     title: @tr("MenuBar" => "Generate Support (trivial for test)…");
                     enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                     activated => {
@@ -1283,6 +1308,13 @@ export component MainWindow inherits Window {
 
             ProgressIndicator {
                 progress: root.support-gen-progress;
+            }
+
+            if root.support-gen-cancelable: Button {
+                text: @tr("Cancel");
+                clicked => {
+                    root.support-gen-cancel-requested();
+                }
             }
         }
     }

@@ -21,6 +21,7 @@ use crate::app_settings::AppSettings;
 use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
+use crate::df_support_run::DfSupportRun;
 use crate::error_dialog::{ErrorTexts, InfoTexts};
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
@@ -221,6 +222,7 @@ struct WindowDrivers {
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
+    _df_support_run: Rc<DfSupportRun>,
 }
 
 /// Owns the app-wide state:
@@ -619,11 +621,13 @@ impl AppState {
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        let df_support_run = DfSupportRun::install(ui, ctrl.document(), ctrl.dialogs());
         WindowDrivers {
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _repair_run: repair_run,
             _support_gen_run: support_gen_run,
+            _df_support_run: df_support_run,
         }
     }
 
@@ -2274,6 +2278,23 @@ mod window_wiring_tests {
             (before, window.get_support_gen_in_progress())
         });
         assert_eq!((before, after), (false, true));
+    }
+
+    #[test]
+    fn a_dragonfruit_support_press_starts_a_cancelable_run() {
+        let (before, after, cancelable) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            load_cube(&controller);
+            let before = window.get_support_gen_in_progress();
+            window.invoke_df_support_requested();
+            let after = window.get_support_gen_in_progress();
+            let cancelable = window.get_support_gen_cancelable();
+            window.invoke_support_gen_cancel_requested();
+            (before, after, cancelable)
+        });
+        assert_eq!((before, after, cancelable), (false, true, true));
     }
 
     #[test]
