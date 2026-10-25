@@ -81,7 +81,10 @@ fn a_lifted_cube_gets_supports_and_a_raft() {
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &z| {
             (a.min(z), b.max(z))
         });
-    assert!(lo.abs() < 1e-3, "lowest point on the plate ({lo})");
+    // On the plate, not a rounding error below it (the viewport reads any
+    // vertex under Z = 0 as breaching the build volume).
+    assert_eq!(lo, 0.0, "lowest point on the plate");
+    assert!(zs.iter().all(|z| *z >= 0.0 && z.is_sign_positive()));
     assert!(hi > 7.0, "supports reach the cube ({hi})");
 
     // Pasted back, the support mesh is not a model of the next run.
