@@ -171,4 +171,30 @@ impl Matrix4 {
         self.elements[14] = v.z;
         self
     }
+
+    /// `makeTranslation(x, y, z)`.
+    #[rustfmt::skip]
+    pub fn make_translation(x: f64, y: f64, z: f64) -> Matrix4 {
+        Matrix4::from_column_major([
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            x, y, z, 1.0,
+        ])
+    }
+
+    /// `a.multiply(b)`: `multiplyMatrices(a, b)`, `a * b`.
+    pub fn multiply(&self, b: &Matrix4) -> Matrix4 {
+        let ae = &self.elements;
+        let be = &b.elements;
+        let mut te = [0.0; 16];
+        for row in 0..4 {
+            let (a1, a2, a3, a4) = (ae[row], ae[row + 4], ae[row + 8], ae[row + 12]);
+            for col in 0..4 {
+                let c = col * 4;
+                te[c + row] = a1 * be[c] + a2 * be[c + 1] + a3 * be[c + 2] + a4 * be[c + 3];
+            }
+        }
+        Matrix4 { elements: te }
+    }
 }

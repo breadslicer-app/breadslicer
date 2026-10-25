@@ -13,7 +13,7 @@ use support_gen_df::native::mesh_minima::scan_islands;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, build_rafts,
-    generate_supports, world_soup,
+    generate_supports, support_soup, world_soup,
 };
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -108,8 +108,8 @@ fn scenes() -> Vec<(Vec<ModelInput>, PipelineSettings)> {
     ];
     let sa = PipelineSettings::defaults(0.05);
     let mut sb = PipelineSettings::defaults(0.05);
-    sb.rafts.per_model.insert(
-        "knot".to_owned(),
+    sb.rafts.set_for_model(
+        "knot",
         RaftSettings {
             bottom_mode: RaftBottomMode::Line,
             wall_enabled: false,
@@ -233,7 +233,12 @@ fn by_stage(
         }
     }
     let rafts = build_rafts(&state, models, &settings.rafts).unwrap();
-    (per_model, state, wire_rafts(&rafts))
+    let soup = support_soup(&state, models, settings).unwrap();
+    (
+        per_model,
+        state,
+        json!({ "rafts": wire_rafts(&rafts), "soup": soup }),
+    )
 }
 
 #[test]
@@ -272,7 +277,15 @@ fn facade_matches_the_stages_called_one_by_one() {
             serde_json::to_value(&state).unwrap(),
             "scene {k}: support state"
         );
-        assert_eq!(wire_rafts(&out.rafts), rafts, "scene {k}: rafts");
+        assert_eq!(
+            json!({ "rafts": wire_rafts(&out.rafts), "soup": out.support_soup }),
+            rafts,
+            "scene {k}: rafts and soup"
+        );
+        assert!(
+            !out.support_soup.is_empty(),
+            "scene {k}: supports were tessellated"
+        );
         assert!(
             !out.support.collections.roots.is_empty(),
             "scene {k}: supports were placed"
@@ -297,6 +310,7 @@ fn facade_matches_the_stages_called_one_by_one() {
             ]);
         }
         expected.push((Stage::BuildRafts, n));
+        expected.push((Stage::Tessellate, n));
         assert_eq!(stages, expected, "scene {k}: progress");
     }
 }
@@ -304,7 +318,7 @@ fn facade_matches_the_stages_called_one_by_one() {
 #[test]
 fn cancelling_at_any_stage_returns_cancelled() {
     let (models, settings) = scenes().swap_remove(0);
-    let total = 3 * models.len() + models.len() + 1;
+    let total = 3 * models.len() + models.len() + 2;
     for at in 0..total {
         let cancel = CancelToken::new();
         let mut seen = 0;

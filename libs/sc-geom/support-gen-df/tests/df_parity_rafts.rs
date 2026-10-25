@@ -359,6 +359,7 @@ fn export_rafts_match_dragonfruit() {
                 case["perModel"].clone(),
             )
             .unwrap(),
+            ..Default::default()
         };
         let geoms: Vec<BufferGeometry> = case["models"]
             .as_array()
