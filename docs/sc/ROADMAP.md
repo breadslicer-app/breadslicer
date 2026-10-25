@@ -1,6 +1,6 @@
 # Roadmap propio de SC
 
-Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **74 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
+Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **75 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
@@ -99,6 +99,7 @@ Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La val
 | [SC-72](#sc-72) | triage | slicing | Capas adaptativas y perfiles por región | SC-33, SC-35, SC-55 |
 | [SC-73](#sc-73) | triage | impresion | Envío a impresora y conectividad de red | SC-19 |
 | [SC-74](#sc-74) | backlog | soportes | Calibración experimental de contactos y material | SC-53, SC-66 |
+| [SC-75](#sc-75) | backlog | soportes | Re-colocar miembros huérfanos de un host recortado (bug DF) | — |
 
 ## SC-01
 
@@ -845,3 +846,13 @@ Plan de probetas con radios/penetración/altura/bracing y registros por resina/e
 **Cierre:** Resultados físicos de Damian ligados a preset/version/config; recomendaciones con rango e incertidumbre, nunca garantía de resistencia.
 
 **Depende de:** SC-53, SC-66. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-75
+
+**Re-colocar miembros huérfanos de un host recortado (bug DF)** — Mejoras post-porteo / soportes
+
+Hallado al portar `autoPlace.ts` (bloque 6c, `docs/sc/DF-PORT.md`): DF filtra los huérfanos a re-colocar con `'host trunk culled'`, pero el cull escribe `'trunk culled (blocked)'`, así que leaves/branches de un trunk recortado por atravesar la malla nunca se re-colocan. Arreglo propuesto: marcar el caso con un dato (`OrphanReason::HostCulled` o `host_culled`), re-encolar con área/altura/preset y origen reales del ledger en vez de `islandAreaMm2: 0.05`, re-correr el resize del bosque tras re-colocar, un único recheck sin re-encolar y contadores de recuperados/no recuperados en la analítica. Va detrás de una opción del plan: activada en SC, desactivada en el test de paridad, que sigue comparando bit a bit con DF.
+
+**Cierre:** Test propio sobre los casos del fixture 6c (6 miembros en 3 corridas) que termina con esos miembros soportados, sin colisión ni huérfanos, y cobertura no menor que DF; paridad DF intacta con la opción apagada; revisión visual de Damian cuando esté en la GUI. No tocar el código de referencia de DF.
+
+**Depende de:** porteo DF completo (rama `sc/df-supports`). Prioridad: normal. Estado snapshot: backlog.
