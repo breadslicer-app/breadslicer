@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::clipper::ClipperError;
+use crate::features::slicing::smooth_shafts::ShaftStyle;
 use crate::features::slicing::support_world_triangles::{
     SupportSliceInput, build_support_and_raft_world_triangles,
 };
@@ -108,6 +109,9 @@ pub struct PipelineSettings {
     /// The contact tips' penetration into the model (DragonFruit's
     /// `calculateTipOffset` for the active material and printer).
     pub tip_penetration_mm: f64,
+    /// How the tessellation draws shafts (DragonFruit's spheres, or smooth
+    /// tubes with bicones).
+    pub shaft_style: ShaftStyle,
 }
 
 impl PipelineSettings {
@@ -122,6 +126,7 @@ impl PipelineSettings {
             sdf_cell_mm: 0.5,
             support_tip_shrink_percent: 0.0,
             tip_penetration_mm: 0.0,
+            shaft_style: ShaftStyle::DragonFruit,
         }
     }
 }
@@ -433,6 +438,7 @@ pub fn support_soup(
         plate_clearance_models: &clearance,
         support_tip_shrink_percent: settings.support_tip_shrink_percent,
         tip_penetration_mm: settings.tip_penetration_mm,
+        shaft_style: settings.shaft_style,
     })
 }
 

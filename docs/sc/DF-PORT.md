@@ -659,6 +659,8 @@ Los datos de soportes no son una malla: DF los tesela al slicear (`buildSupportA
 | three `CylinderGeometry`, `SphereGeometry`, `Matrix4.multiply`/`makeTranslation` | `three/primitive_geometry.rs`, `three/matrix4.rs` | Posiciones e índice (sin normales ni UVs, que el teselado no lee) |
 | `Rafts/Crenelated/RaftState.ts` | `rafts/crenelated/raft_state.rs` | La resolución del store: margen del borde acotado a 0,05 mm y sin pared si la base no es sólida (recuerda la última elección sólida). Sin listeners |
 
+Extensión propia de SC, fuera de la paridad: `features/slicing/smooth_shafts.rs` (`ShaftStyle::Smooth`) cambia tramos y esferas por tubos continuos con biconos en las juntas; con `ShaftStyle::DragonFruit` (por defecto) la salida es la de DF.
+
 La fachada (`pipeline.rs`) suma la etapa `Tessellate` y devuelve `support_soup`, la sopa de triángulos que el slicer rasteriza.
 
 **Evidencia:** `scripts/df-oracle/golden_support_triangles.ts` → `tests/fixtures/df_support_triangles.json`, sobre los estados reales de soportes de los bloques 8c y 7:
