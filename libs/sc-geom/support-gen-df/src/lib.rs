@@ -8,6 +8,7 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 pub mod js_math;
+pub mod native;
 pub mod supports;
 pub mod three;
 pub mod three_mesh_bvh;
