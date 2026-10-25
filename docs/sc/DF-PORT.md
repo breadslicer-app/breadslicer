@@ -165,6 +165,55 @@ cual es correcto.
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 49 tests más
 1 de escala ignorado.
 
+## Fase 1, bloque 3 — raycasts, colisión, eje de cono, settings y builders (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| three-mesh-bvh `raycast`, `raycastFirst`, `intersectRay`, `intersectTri`, `acceleratedRaycast` | `three_mesh_bvh/raycast.rs` (`BvhMesh::intersect_object`) | completo: rayo a espacio local con la matriz de mundo, lados front/back/double, orden estable por distancia; sin interpolación de normales/uv (nadie las lee) |
+| three.js `Ray.intersectTriangle`, `Triangle.getNormal`, `Matrix4`/`transformDirection`, `applyAxisAngle` | `three/` | completo |
+| `PlacementLogic/CollisionUtils.ts` | `placement_logic/collision_utils.rs` | completo (bigotes, puente corto, Bézier) |
+| `PlacementLogic/ConeAxisPolicy.ts` | `placement_logic/cone_axis_policy.rs` | completo |
+| `PlacementLogic/StandardPlacement.ts` | `placement_logic/standard_placement.rs` | completo |
+| `PlacementLogic/Grid/gridMath.ts` | `placement_logic/grid/grid_math.rs` | completo |
+| `Settings/{types,defaults,supportSettingsCodec}.ts`, `Settings/state.ts` (normalización) | `settings/` | completo; el store global, sus listeners y `localStorage` son de la GUI |
+| `autoSupport/settings.ts`, `autoBracing/settings.ts` | `auto_support/settings.rs`, `auto_bracing/settings.rs` | completo (`clampNumeric` compartido en `numeric_constraint.rs`) |
+| `autoSupport/parameterSizing.ts` | `auto_support/parameter_sizing.rs` | `applySizingOverridesToSettings`; el sizing empírico va con el Auto |
+| `rendering/SupportBuilder.tsx` | `rendering/support_builder.rs` | `SupportData` y `supportDataForEntity` (el render es de la GUI) |
+| `SupportTypes/Trunk/{trunkBuilder,trunkConstructionJoints,trunkRouteTypes,trunkRouteResolution}.ts` | `support_types/trunk/` | completo; `buildTrunkData` con malla llama a `SmartPlacementV3`, que se porta con el router y alimenta el mismo `buildTrunkDataFromPlacement` |
+| `SupportTypes/Branch/branchBuilder.ts` | `support_types/branch/branch_builder.rs` | completo (búsqueda de socket 4×12×4 con puntaje y preferencia de inclinación, `remapBranchGeometryIds`) |
+| `SupportTypes/Leaf/leafBuilder.ts` | `support_types/leaf/leaf_builder.rs` | completo |
+
+**`Math` de V8, auditado entero.** Fixtures de Node 26 para cada función que usa el
+código de soportes: `acos`, `asin`, `atan`, `atan2`, `exp`, `tan` (fdlibm = crate
+`libm`, 100 %), `sin`/`cos` (fdlibm original, `js_math`), `hypot` (port del
+`MathHypot` de V8: normalización y suma de Kahan, no `sqrt(x²+y²)`) y
+`Number.prototype.toFixed` (redondea la magnitud y desempata alejándose del cero;
+el formateo de Rust desempata a par). `x ** 2` es siempre `x * x` en V8. `pow`,
+`log` y `cbrt` difieren de `libm`/la CRT en algunos casos y todavía no los usa
+código portado; se resuelven con el sizing del Auto.
+
+**Ids deterministas.** El sandbox del oráculo reemplaza `uuid` por un contador
+(`scripts/df-oracle/uuid_stub.mjs`, activado con `DF_ORACLE_DETERMINISTIC_UUID`),
+y los builders de Rust reciben el mismo contador: las entidades se comparan
+enteras, ids incluidos.
+
+**Evidencia:** `scripts/df-oracle/golden_builders.ts` → `tests/fixtures/df_builders.json`:
+320 casos de eje de cono (3 modos), 160 raycasts sobre una malla movida/rotada/escalada
+(lados, near/far, `firstHitOnly`), 320 chequeos de `CollisionUtils`, 160 normalizaciones
+de settings con valores fuera de rango (+ hex de entrada/salida y decodificación),
+160 de `gridMath`, 160 `StandardPlacement`, 160 trunks (sin malla y desde
+colocaciones autoradas con juntas, nodos de grilla, errores; la mitad contra el
+campo de colisión), 160 branches (con/sin malla, settings propios, perfil de punta,
+reconstrucción y `remapBranchGeometryIds`) y 160 leaves. Puntas sobre la superficie
+real del torus knot y en el aire. `tests/df_parity_builders.rs`: **igualdad exacta**.
+Sensibilidad comprobada: cambiar un peso del puntaje del branch (6.75 → 6.76) o el
+orden de hijos de `raycastFirst` falla. Para `toFixed` se agregó un fixture con
+empates construidos (`tests/fixtures/v8_to_fixed.txt`), que encontró un error del
+port (desempate negativo hacia el cero): 146 casos, corregido.
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 55 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:

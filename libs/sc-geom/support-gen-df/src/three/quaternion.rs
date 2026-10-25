@@ -48,6 +48,19 @@ impl Quaternion {
         }
     }
 
+    /// `setFromAxisAngle(axis, angle)`; `axis` is assumed normalized.
+    /// http://www.euclideanspace.com/maths/geometry/rotations/conversions/angleToQuaternion/index.htm
+    pub fn set_from_axis_angle(axis: Vec3, angle: f64) -> Self {
+        let half_angle = angle / 2.0;
+        let s = super::math_utils::js_sin(half_angle);
+        Quaternion::new(
+            axis.x * s,
+            axis.y * s,
+            axis.z * s,
+            super::math_utils::js_cos(half_angle),
+        )
+    }
+
     /// Assumes direction vectors `v_from` and `v_to` are normalized.
     pub fn set_from_unit_vectors(v_from: Vec3, v_to: Vec3) -> Self {
         let mut r = v_from.dot(v_to) + 1.0;
