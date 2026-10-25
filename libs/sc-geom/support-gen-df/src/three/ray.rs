@@ -31,6 +31,87 @@ impl Ray {
         Ray { origin, direction }
     }
 
+    /// `at(t)`: `origin + direction * t`.
+    #[inline]
+    pub fn at(self, t: f64) -> Vec3 {
+        self.origin.add_scaled_vector(self.direction, t)
+    }
+
+    /// `applyMatrix4(m)`: the origin as a point, the direction as a direction
+    /// (renormalized).
+    pub fn apply_matrix4(self, m: &super::Matrix4) -> Ray {
+        Ray {
+            origin: self.origin.apply_matrix4(m),
+            direction: self.direction.transform_direction(m),
+        }
+    }
+
+    /// `intersectTriangle(a, b, c, backfaceCulling)`: the hit point, if any.
+    ///
+    /// Compute the offset origin, edges, and normal.
+    /// from https://github.com/pmjoniak/GeometricTools/blob/master/GTEngine/Include/Mathematics/GteIntrRay3Triangle3.h
+    pub fn intersect_triangle(
+        self,
+        a: Vec3,
+        b: Vec3,
+        c: Vec3,
+        backface_culling: bool,
+    ) -> Option<Vec3> {
+        let edge1 = Vec3::sub_vectors(b, a);
+        let edge2 = Vec3::sub_vectors(c, a);
+        let normal = Vec3::cross_vectors(edge1, edge2);
+
+        // Solve Q + t*D = b1*E1 + b2*E2 (Q = kDiff, D = ray direction,
+        // E1 = kEdge1, E2 = kEdge2, N = Cross(E1,E2)) by
+        //   |Dot(D,N)|*b1 = sign(Dot(D,N))*Dot(D,Cross(Q,E2))
+        //   |Dot(D,N)|*b2 = sign(Dot(D,N))*Dot(D,Cross(E1,Q))
+        //   |Dot(D,N)|*t = -sign(Dot(D,N))*Dot(Q,N)
+        let mut ddn = self.direction.dot(normal);
+        let sign;
+        if ddn > 0.0 {
+            if backface_culling {
+                return None;
+            }
+            sign = 1.0;
+        } else if ddn < 0.0 {
+            sign = -1.0;
+            ddn = -ddn;
+        } else {
+            return None;
+        }
+
+        let diff = Vec3::sub_vectors(self.origin, a);
+        let ddqxe2 = sign * self.direction.dot(Vec3::cross_vectors(diff, edge2));
+
+        // b1 < 0, no intersection
+        if ddqxe2 < 0.0 {
+            return None;
+        }
+
+        let dde1xq = sign * self.direction.dot(edge1.cross(diff));
+
+        // b2 < 0, no intersection
+        if dde1xq < 0.0 {
+            return None;
+        }
+
+        // b1+b2 > 1, no intersection
+        if ddqxe2 + dde1xq > ddn {
+            return None;
+        }
+
+        // Line intersects triangle, check if ray does.
+        let qdn = -sign * diff.dot(normal);
+
+        // t < 0, no intersection
+        if qdn < 0.0 {
+            return None;
+        }
+
+        // Ray intersects triangle.
+        Some(self.at(qdn / ddn))
+    }
+
     /// from https://github.com/pmjoniak/GeometricTools/blob/master/GTEngine/Include/Mathematics/GteDistRaySegment.h
     /// It returns the min distance between the ray and the segment defined by
     /// v0 and v1, with the closest point on each.

@@ -220,6 +220,39 @@ impl Vec3 {
         )
     }
 
+    /// `multiply(v)`, componentwise.
+    #[inline]
+    pub fn multiply(self, v: Vec3) -> Self {
+        Vec3::new(self.x * v.x, self.y * v.y, self.z * v.z)
+    }
+
+    /// `transformDirection(m)`: the upper 3x3 of an affine matrix, then normalized.
+    pub fn transform_direction(self, m: &super::Matrix4) -> Self {
+        let (x, y, z) = (self.x, self.y, self.z);
+        let e = &m.elements;
+        Vec3::new(
+            e[0] * x + e[4] * y + e[8] * z,
+            e[1] * x + e[5] * y + e[9] * z,
+            e[2] * x + e[6] * y + e[10] * z,
+        )
+        .normalize()
+    }
+
+    /// `setFromMatrixScale(m)`: the lengths of the first three columns.
+    pub fn from_matrix_scale(m: &super::Matrix4) -> Self {
+        let e = &m.elements;
+        Vec3::new(
+            Vec3::new(e[0], e[1], e[2]).length(),
+            Vec3::new(e[4], e[5], e[6]).length(),
+            Vec3::new(e[8], e[9], e[10]).length(),
+        )
+    }
+
+    /// `applyAxisAngle(axis, angle)`: rotate about a normalized axis.
+    pub fn apply_axis_angle(self, axis: Vec3, angle: f64) -> Self {
+        self.apply_quaternion(super::Quaternion::set_from_axis_angle(axis, angle))
+    }
+
     #[inline]
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()

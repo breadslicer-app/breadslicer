@@ -14,6 +14,19 @@ impl Triangle {
         Triangle { a, b, c }
     }
 
+    /// `Triangle.getNormal(a, b, c)`: the unit face normal, zero when degenerate.
+    pub fn get_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+        let target = Vec3::sub_vectors(c, b);
+        let v0 = Vec3::sub_vectors(a, b);
+        let target = target.cross(v0);
+
+        let target_length_sq = target.length_sq();
+        if target_length_sq > 0.0 {
+            return target.multiply_scalar(1.0 / target_length_sq.sqrt());
+        }
+        Vec3::ZERO
+    }
+
     /// The point of the triangle closest to `p`.
     ///
     /// algorithm thanks to Real-Time Collision Detection by Christer Ericson,

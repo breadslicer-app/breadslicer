@@ -1,7 +1,7 @@
 //! three-mesh-bvh 0.8.3 (MIT, Garrett Johnson), the part DragonFruit's support
 //! code relies on: `MeshBVH` built with DragonFruit's options (the library
-//! defaults: `CENTER` split, `maxLeafTris` 10, `maxDepth` 40, not indirect) and
-//! `closestPointToPoint`.
+//! defaults: `CENTER` split, `maxLeafTris` 10, `maxDepth` 40, not indirect),
+//! `closestPointToPoint`, `raycast` and `raycastFirst`.
 //!
 //! Ported, not wrapped, because the answers depend on the tree: the build
 //! reorders the triangle index in place, a face index refers to that reordered
@@ -15,9 +15,11 @@
 
 mod build;
 mod closest_point_to_point;
+mod raycast;
 
 pub use build::MeshBvhOptions;
 pub use closest_point_to_point::ClosestPointTarget;
+pub use raycast::{BvhMesh, Face, Intersection, Side};
 
 use crate::three::{Triangle, Vec3};
 
