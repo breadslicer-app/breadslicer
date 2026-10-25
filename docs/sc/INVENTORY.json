@@ -2663,16 +2663,32 @@
           "sha256": "c308a9f764fb299f7e379081fd341d7f2f5c42b54f392ef28b68fa266e056785"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/filtering.rs",
+          "sha256": "3e99919de29b4ced6077ed0a36230025f0c4ed27a86d498768c8ab15bdccc1c3"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/intersection.rs",
+          "sha256": "552abdb9c31dc957f3c65d7b9d294c4ca0ef2612808765bc344d990583a5bcdd"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/mod.rs",
-          "sha256": "2fbd9cef1618f7b2a5a604431357cffa45895293f5d822af15c7d8ee0fad869e"
+          "sha256": "1584c4d71bee918090f3bca71d5d32bbb56327470d49dc5eef1000d5ccfbb789"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/spatial_hash_grid_2d.rs",
+          "sha256": "ecb6be4689cdb8ac89e9536ffa0ce12dfe29629a86de736f2fed09bf433b6a59"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/types.rs",
           "sha256": "3b4ce1e69699f85a31190195d61a5489a4f68e0dc1844328d8128ba808233dbf"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/use_islands.rs",
+          "sha256": "7cf49693b3d263898e9533ea42f28e72a46b87a742c35dbb867787ecfd4b42ce"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/voxel_footprint.rs",
-          "sha256": "8986dd3faae6f682f724a18fb75a94d3366ea80ed4d2c5bfdee8b222c3120812"
+          "sha256": "d168ed200ba99333689a598a92d75dd80b367156fab7abf9132026ba966f6b02"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/volume_analysis/mod.rs",
@@ -3280,7 +3296,7 @@
       "sources": [
         {
           "path": "scripts/df-oracle/islands-harness/src/main.rs",
-          "sha256": "a312917f7be1080f91c3d8a4ace08559c8bae014ad38c24badfd8a6a66c16a89"
+          "sha256": "ed80430fcafc2d06eee2c3df753ff0b540ea6b56ac6d1520efb4bf84014c4ff6"
         }
       ]
     },

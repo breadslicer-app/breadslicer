@@ -407,6 +407,11 @@ fn scenes() -> Vec<(&'static str, Soup)> {
     out
 }
 
+/// A value as the frontend receives it over IPC.
+fn ipc<T: serde::Serialize>(value: &T) -> serde_json::Value {
+    serde_json::from_str(&serde_json::to_string(value).unwrap()).unwrap()
+}
+
 fn main() {
     let path = std::env::args().nth(1).expect("output path");
     let configs = [
@@ -435,8 +440,10 @@ fn main() {
                 "scene": name,
                 "layerHeightMm": layer, "pxMm": px, "supportBufferMm": buffer, "connectivity": conn,
                 "k": k, "angleDeg": angle, "overhangPxMm": oh_px, "hasRaft": raft,
-                "combined": combined,
-                "soupScan": { "regions": regions, "stability": stability },
+                // As Tauri hands them to the frontend: serde_json text, so each
+                // f32 arrives as its shortest decimal read back as a JS number.
+                "combined": ipc(&combined),
+                "soupScan": ipc(&overhang::OverhangScan { regions, stability }),
             }));
         }
     }

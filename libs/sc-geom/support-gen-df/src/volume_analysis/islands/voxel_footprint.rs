@@ -76,3 +76,56 @@ pub fn cell_key_bits(cx: f64, cy: f64) -> u64 {
 pub fn is_empty_footprint(footprint: Option<&VoxelFootprint>) -> bool {
     footprint.is_none_or(|f| f.count == 0)
 }
+
+/// `VoxelFootprintBuilder`: voxels pushed one at a time into `f32` storage, Z
+/// recorded only when the builder was made with it (a missing Z stores 0).
+#[derive(Debug, Clone, Default)]
+pub struct VoxelFootprintBuilder {
+    xy: Vec<f32>,
+    z: Option<Vec<f32>>,
+}
+
+impl VoxelFootprintBuilder {
+    pub fn new(with_z: bool) -> Self {
+        VoxelFootprintBuilder {
+            xy: Vec::new(),
+            z: with_z.then(Vec::new),
+        }
+    }
+
+    pub fn count(&self) -> usize {
+        self.xy.len() / 2
+    }
+
+    pub fn push(&mut self, x: f64, y: f64, z: Option<f64>) {
+        self.xy.push(x as f32);
+        self.xy.push(y as f32);
+        if let Some(zs) = &mut self.z {
+            zs.push(z.unwrap_or(0.0) as f32);
+        }
+    }
+
+    pub fn build(self) -> VoxelFootprint {
+        let count = self.xy.len() / 2;
+        VoxelFootprint {
+            xy: self.xy,
+            z: self.z,
+            count,
+        }
+    }
+}
+
+/// `concatFootprints`: the result carries Z only if every input does.
+pub fn concat_footprints(footprints: &[&VoxelFootprint]) -> VoxelFootprint {
+    let with_z = !footprints.is_empty() && footprints.iter().all(|f| f.z.is_some());
+    let mut xy = Vec::new();
+    let mut z = with_z.then(Vec::new);
+    for f in footprints {
+        xy.extend_from_slice(&f.xy[..f.count * 2]);
+        if let (Some(z), Some(fz)) = (&mut z, &f.z) {
+            z.extend_from_slice(&fz[..f.count]);
+        }
+    }
+    let count = xy.len() / 2;
+    VoxelFootprint { xy, z, count }
+}

@@ -529,6 +529,28 @@ Dependencias nuevas (las mismas que usa DF, ya en caché): `rayon`, `ahash` y `s
 
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios (el módulo `native` conserva los lints de DF para seguir siendo diffable con su fuente); 121 tests más 3 ignorados.
 
+### 8b — la derivación de `useIslands` (hecho)
+
+| Archivo DF | Rust SC | Estado |
+|---|---|---|
+| `volumeAnalysis/Islands/useIslands.ts` (lo que no es React) | `volume_analysis/islands/use_islands.rs` | `derive_islands`: el mapeo de los escaneos a islas, `overhangRegionToIsland`, `consolidateVoxelIslands` (con `dilateVoxelGrid`), `determineContourThreshold` con la reversión de miembros, `mergeOverhangRegions`, la grilla de contactos, `annotateAndCountSupports`, `scanNeedsCoverage` y los valores por defecto del panel. Estado React, marcadores, caché de escaneo y mapeo de puntas desde el store quedan para la GUI |
+| `intersection.ts` | `intersection.rs` | completo |
+| `filtering.ts` | `filtering.rs` | completo (con `TipInfo`) |
+| `spatialHashGrid2D.ts` | `spatial_hash_grid_2d.rs` | completo |
+| `voxelFootprint.ts` (`VoxelFootprintBuilder`, `concatFootprints`) | `voxel_footprint.rs` | completo |
+
+**El IPC importa:** los resultados nativos llegan al frontend de DF como JSON. Cada `f32` llega como el decimal más corto que escribe `ryu` (cuya elección en empates puede diferir de `Display`) y JS lo lee como `f64`; un no-finito llega como `null`. `ipc32` hace esa conversión con `serde_json`, así que las islas de SC llevan exactamente los valores que ve DF. El caso del `null`: el reporte de estabilidad puede traer `adhesionRatio` NaN (8 corridas del fixture). En JS, `null < p/σ` es verdadero (pide cobertura antivuelco), y SC lo reproduce.
+
+**Hallazgo:** con datos del escaneo nativo, la consolidación de vóxeles nunca deja un islote fusionado. Los islotes vóxel nativos no traen huella, ninguno califica para contorno y todos se revierten a sus miembros. Las funciones se prueban igual, aparte, con islotes sintéticos con huella.
+
+**Evidencia:** `scripts/df-oracle/golden_islands_b.ts` → `tests/fixtures/df_islands_b.json`. Lee el fixture nativo en forma IPC y corre la cadena del hook con las funciones de DF; las dos privadas se exportan desde una copia en el sandbox con una línea agregada. Cubre:
+- **156 casos:** 52 escaneos × 3 combinaciones de ajustes del panel (píxel, área mínima, consolidación, contorno, área por soporte, Z de placa, filtros) y de puntas de soporte existentes. Resultado: 848 intersecciones vóxel×mínimo, 184 islas ya soportadas, 901 en la placa.
+- **120 casos directos** de consolidación y contorno.
+
+`tests/df_parity_islands_b.rs`: **igualdad exacta** (huellas por cantidad más FNV-1a de sus bits `f32`; `null` y ausente valen igual). Sensibilidad: 13 de 15 mutaciones fallan. Sobreviven el 90 % de área acumulada del contorno (casi equivalente: solo fija el `K` inicial, que el bucle de caída reemplaza apenas encuentra una) y la banda superior del criterio "apoyado en la placa" (casi no se toca).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 123 tests más 3 ignorados.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
