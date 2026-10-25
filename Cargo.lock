@@ -2746,6 +2746,8 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -4824,6 +4826,7 @@ version = "0.0.2"
 dependencies = [
  "generic-geom-alg-family-dispatch",
  "sc-geom-transport-inprocess",
+ "support-gen-df-sc",
  "support-gen-family-dispatch",
  "support-gen-trivial",
 ]
@@ -5185,6 +5188,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -5555,6 +5559,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "support-gen-df"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "indexmap",
+ "libm",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "support-gen-df-sc"
+version = "0.0.1"
+dependencies = [
+ "sc-geom-transport-inprocess",
+ "sc-mesh-core",
+ "sc-scene",
+ "support-gen-df",
 ]
 
 [[package]]

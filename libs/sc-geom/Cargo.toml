@@ -18,6 +18,7 @@ workspace = true
 generic-geom-alg-family-dispatch = { path = "generic-geom-alg-family-dispatch", version = "0.0.1" }
 sc-geom-transport-inprocess = { path = "sc-geom-transport-inprocess", version = "0.0.1" }
 support-gen-trivial = { path = "support-gen-trivial", version = "0.0.2" }
+support-gen-df-sc = { path = "support-gen-df-sc", version = "0.0.1" }
 support-gen-family-dispatch = { path = "support-gen-family-dispatch", version = "0.0.1" }
 
 [dev-dependencies]
@@ -32,6 +33,7 @@ members = [
     "sc-geom-transport-inprocess",
     "support-gen-chalyplex",
     "support-gen-df",
+    "support-gen-df-sc",
     "support-gen-family-dispatch",
     "support-gen-trivial",
 ]
