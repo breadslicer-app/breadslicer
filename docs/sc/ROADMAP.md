@@ -1,6 +1,6 @@
 # Roadmap propio de SC
 
-Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **76 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
+Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **77 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
@@ -101,6 +101,7 @@ Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La val
 | [SC-74](#sc-74) | backlog | soportes | Calibración experimental de contactos y material | SC-53, SC-66 |
 | [SC-75](#sc-75) | backlog | soportes | Re-colocar miembros huérfanos de un host recortado (bug DF) | — |
 | [SC-76](#sc-76) | backlog | soportes | Mejoras post-porteo DF: lista de hallazgos | SC-75 |
+| [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76 |
 
 ## SC-01
 
@@ -876,3 +877,13 @@ Lista viva de "esto podría estar mejor" anotada durante el porteo (`docs/sc/DF-
 **Cierre:** Cada ítem aplicado con su test propio y la paridad DF intacta con la opción apagada, o descartado con razón escrita; la lista se vacía o queda justificada.
 
 **Depende de:** porteo DF completo (rama `sc/df-supports`); SC-75 es el primer ítem. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-77
+
+**Investigar mover a GPU el pipeline de soportes** — Ideas / rendimiento
+
+Idea de Damian al portar la detección de islas: DF voxeliza en GPU, y la detección nativa puede no coincidir bit a bit en esa etapa. Evaluar qué partes del pipeline (voxelización, campo de distancias, raycasts, router, cobertura) ganan en GPU y con qué tecnología (wgpu/compute shaders u otra opción abierta y mantenida). Considerar el costo en determinismo y reproducibilidad, la portabilidad en Windows y los drivers, y el respaldo en CPU.
+
+**Cierre:** Informe con perfil medido del pipeline nativo, candidatos con ganancia estimada, opción tecnológica con licencia revisada y un prototipo de una etapa con su comparación contra CPU; sin adoptar nada sin medición ni respaldo en CPU.
+
+**Depende de:** porteo DF completo y sus mejoras (SC-76). Prioridad: low. Estado snapshot: triage.
