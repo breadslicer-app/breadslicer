@@ -12,7 +12,7 @@
 //! orders: voxel islands are compared as a set (their `v{n}` ids follow the
 //! order), and the oracle walks perimeter edges in key order, as SoulCrafted
 //! does (its `build_perimeter_loops` gets ordered local containers).
-//! Everything else must be identical.
+//! Everything else must be identical, in the IPC form the frontend reads.
 
 use serde_json::Value;
 
@@ -90,6 +90,11 @@ fn voxel_set(v: &Value) -> Vec<Value> {
     out
 }
 
+/// A value as DragonFruit's frontend receives it over IPC (serde_json text).
+fn ipc<T: serde::Serialize>(value: &T) -> Value {
+    serde_json::from_str(&serde_json::to_string(value).unwrap()).unwrap()
+}
+
 #[test]
 fn native_island_scans_match_dragonfruit() {
     let fixture = fixture();
@@ -117,7 +122,7 @@ fn native_island_scans_match_dragonfruit() {
             Some(num("angleDeg") as f32),
             Some(num("overhangPxMm") as f32),
         );
-        let actual = serde_json::to_value(&combined).unwrap();
+        let actual = ipc(&combined);
         let expected = run["combined"].clone();
         let (av, ev) = (
             voxel_set(&actual["voxelIslands"]),
@@ -145,15 +150,7 @@ fn native_island_scans_match_dragonfruit() {
             num("overhangPxMm") as f32,
             run["hasRaft"].as_bool().unwrap(),
         );
-        assert_same(
-            &serde_json::to_value(&regions).unwrap(),
-            &run["soupScan"]["regions"],
-            &format!("{path}.soupScan.regions"),
-        );
-        assert_same(
-            &serde_json::to_value(&stability).unwrap(),
-            &run["soupScan"]["stability"],
-            &format!("{path}.soupScan.stability"),
-        );
+        let soup_scan = ipc(&support_gen_df::native::overhang::OverhangScan { regions, stability });
+        assert_same(&soup_scan, &run["soupScan"], &format!("{path}.soupScan"));
     }
 }
