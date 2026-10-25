@@ -2080,7 +2080,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/lib.rs",
-          "sha256": "5b06302a888cc21711ed3864263eb0eb9db2f85e5e9ae3595ee94f3b8a00aab2"
+          "sha256": "1645d40467a340fd4cfc11de6f677de390939263022c7b8c4dac3a71de5b05e6"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/native/islands/geometry.rs",
@@ -2137,6 +2137,10 @@
         {
           "path": "libs/sc-geom/support-gen-df/src/native/overhang.rs",
           "sha256": "5b1ffa1a73b026fe2d5159064b61e88aa4a3ab53079e4c6ae4232747cecbdaa6"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/pipeline.rs",
+          "sha256": "1b88b8c3b9a37505bcc8882fdddd92fcf1b06c05e8b963b3ec184f7cd6f5386b"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",
