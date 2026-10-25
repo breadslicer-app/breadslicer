@@ -557,6 +557,35 @@ Prueba de punta a punta, sin código nuevo. Por cada escaneo nativo, DF deriva l
 
 **Evidencia:** `scripts/df-oracle/golden_islands_c.ts` → `tests/fixtures/df_islands_c.json`: 52 bosques sobre las 13 escenas de 8a (1.732 trunks y 2.574 brazos en total). `tests/df_parity_islands_c.rs`: **igualdad exacta** en las islas filtradas, el bosque, la analítica y el resultado. El escaneo combinado se toma en el orden de vóxeles de DF, porque el orden de SC cambia los ids.
 
+## Fase 1, bloque 9 — Rafts
+
+El raft de DF se arma en la exportación (`ExportManager`): círculos por raíz de soporte, huella con la holgura de los modelos apoyados en la placa, base y pared, y en modo línea las vigas. Depende de tres piezas de librerías: `clipper-lib` (booleanas y offset), `ExtrudeGeometry` y Earcut de three, y `mergeGeometries`. El bloque va en tres partes: **9a** Clipper, **9b** la extrusión de three, **9c** la geometría del raft y su ensamblado.
+
+### 9a — Clipper (hecho)
+
+Damian eligió portar `clipper-lib` a mano (sin descargar `geo-clipper`).
+
+| Origen | Rust SC | Estado |
+|---|---|---|
+| `clipper-lib` 6.4.2.2 (port JS de Timo del Clipper 6.4.2 de Angus Johnson, licencia Boost) | `clipper/` | `Clipper`: unión, diferencia, intersección y XOR, con salida en PolyTree o en caminos, `StrictlySimple` y la recorrida `GetFirst`/`GetNext`; `ClipperOffset` para polígonos cerrados (inglete, cuadrado y redondo). Las rutas abiertas, Minkowski y `SimplifyPolygon` no los usa DF y no se portan |
+
+Se sigue al **JS**, no a C#:
+- **Números:** las coordenadas son doubles con enteros y `Round` es el `R2` de V8.
+- **Rango:** el producto de 128 bits (con `i128` en vez de JSBN) solo entra pasado el `loRange` de JS, 47.453.132.
+- **Duplicados:** en `AddPath`, el chequeo de puntos duplicados compara objetos y nunca coincide.
+- **Join horizontal:** `ProcessHorizontal` usa `WindDelta === 0` donde C# usa `!= 0`.
+
+**Hallazgos de `clipper-lib` (anotados en SC-76):**
+- **`ePrev2`:** en `ProcessEdgesAtTopOfScanbeam` hay una variable sin declarar. Con `"use strict"` esa rama lanza `ReferenceError`; en C# usa `ePrev`. SC devuelve `ClipperError::EPrev2`. En 1.500 casos no apareció.
+- **`Error` → `alert`:** `ClipperLib.Error` llama a `alert`. En Node (el oráculo) lanza; en el WebView de la app abriría un diálogo y seguiría. SC lo trata como error.
+
+**Evidencia:** `scripts/df-oracle/golden_clipper.ts` → `tests/fixtures/df_clipper.json`: 1.500 casos con el `clipper-lib` real:
+- uniones y diferencias en PolyTree con `NonZero`, con y sin `StrictlySimple`;
+- offsets en inglete (2, 2) en ambos signos;
+- entradas: discos, cajas, anillos con agujeros, rectángulos de grilla con aristas compartidas, escaleras y peines (horizontales coincidentes, máximos sobre horizontales), duplicados y colineales, estrellas que se autointersecan, copias coincidentes y coordenadas pasado `loRange`.
+
+`tests/df_parity_clipper.rs`: **igualdad exacta** en árboles (contornos, agujeros, hijos y recorrida) y caminos. Sensibilidad: 10 de 13 mutaciones fallan. Sobreviven el `loRange` (equivalente para el raft: mm×1000 nunca llega), el área cero en la reversión de orientación y el `curr == top` de `FindNextLocMin` (casi equivalentes).
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
