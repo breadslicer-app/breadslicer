@@ -6,6 +6,7 @@ pub mod constants;
 pub mod curves;
 pub mod numeric_constraint;
 pub mod placement_logic;
+pub mod placement_logic_v3;
 pub mod rendering;
 pub mod settings;
 pub mod support_primitives;

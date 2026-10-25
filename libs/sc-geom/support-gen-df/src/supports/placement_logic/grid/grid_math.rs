@@ -28,12 +28,14 @@ pub fn grid_node_key_from_xy(x_mm: f64, y_mm: f64, spacing_mm: f64) -> String {
     format!("{},{}", js_number_to_string(gx), js_number_to_string(gy))
 }
 
-/// A grid index as `String(number)` writes it (indices are integers or NaN).
-fn js_number_to_string(value: f64) -> String {
+/// A grid index as `String(number)` writes it (indices are integers, NaN or ±Infinity).
+pub(crate) fn js_number_to_string(value: f64) -> String {
     if value == 0.0 {
         "0".to_owned()
     } else if value.is_nan() {
         "NaN".to_owned()
+    } else if value.is_infinite() {
+        if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned()
     } else {
         format!("{value}")
     }

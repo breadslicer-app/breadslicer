@@ -7,4 +7,5 @@ pub mod grid;
 pub mod joint_constraint_solver;
 pub mod pathfinding;
 pub mod shaft_angle_constraint;
+pub mod smart_placement_search_utils;
 pub mod standard_placement;
