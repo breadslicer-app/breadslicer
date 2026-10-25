@@ -950,6 +950,9 @@ Cargar modelo → auto-soportes → raft → preview en el viewport → slice �
 - **Tubos suaves con biconos (pedido de Damian, 2026-10-25):** las esferas de las juntas se veían como escalones. `features/slicing/smooth_shafts.rs` (de SC, no de DF) arma cada cadena de tramos como un tubo continuo:
   - en los codos dobla sobre un anillo ingletado en el plano bisector;
   - donde DF pone una esfera, ensancha en un bicono: cintura 1,3× el radio y collares cónicos de 2,5× la cintura, como mucho el 40 % del tramo.
+  - Segunda vuelta tras la prueba de Damian:
+    - el cono de contacto de cada tramo es ahora el final del tubo (codo ingletado y luego estrechamiento hasta la punta), sin la junta abierta que dejaba la esfera faltante;
+    - solo hay bicono donde el tramo dobla más de 8°, no en juntas rectas.
   - Va detrás de `ShaftStyle`: `DragonFruit` (paridad, el valor por defecto del port) o `Smooth`, que es el que usa la GUI.
   - Tests: tubos cerrados y orientados hacia afuera, bicono solo en las juntas, y sobre los 52 estados de 8c menos triángulos que DF sin abrir la malla. La paridad DF sigue exacta.
 - **Chequeos:** el adaptador sobre un cubo elevado (soportes, raft en la placa, exclusión de la salida anterior, cancelación) y un test de cableado de la GUI.

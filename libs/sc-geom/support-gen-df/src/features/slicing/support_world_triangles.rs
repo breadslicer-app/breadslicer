@@ -563,6 +563,7 @@ pub fn build_support_and_raft_world_triangles(
                 }
             }
 
+            let mut joined_cones: Vec<&str> = Vec::new();
             if let (Some(shaft), ShaftStyle::Smooth(params)) = (entity.shaft, input.shaft_style) {
                 let hosts = EndpointHosts { root, host_knot };
                 let resolved: Vec<_> = entity
@@ -573,7 +574,31 @@ pub fn build_support_and_raft_world_triangles(
                         resolve_segment_endpoints(shaft, seg, index, hosts).map(|ep| (seg, ep))
                     })
                     .collect();
-                append_smooth_shaft(&mut sink, &resolved, &tessellation, &params);
+                // The shaft's own contact cones become the ends of its tube.
+                let cone_at = |field: Option<&str>| {
+                    field.and_then(|f| entity.cones.iter().find(|(c, _)| *c == f).map(|(_, c)| *c))
+                };
+                let start_cone = (descriptor.lower.kind == SupportEndpointKind::Cone)
+                    .then(|| cone_at(descriptor.lower.field))
+                    .flatten();
+                let end_cone = (descriptor.upper.kind == SupportEndpointKind::Cone)
+                    .then(|| cone_at(descriptor.upper.field))
+                    .flatten();
+                if append_smooth_shaft(
+                    &mut sink,
+                    &resolved,
+                    (start_cone, end_cone),
+                    (input.tip_penetration_mm, tip_scale),
+                    &tessellation,
+                    &params,
+                ) {
+                    joined_cones.extend(
+                        start_cone
+                            .iter()
+                            .chain(end_cone.iter())
+                            .map(|c| c.id.as_str()),
+                    );
+                }
             } else if let Some(shaft) = entity.shaft {
                 for (index, seg) in entity.segments.iter().enumerate() {
                     let hosts = EndpointHosts { root, host_knot };
@@ -634,6 +659,9 @@ pub fn build_support_and_raft_world_triangles(
                     );
                 } else if let Some((_, cone)) = entity.cones.iter().find(|(f, _)| f == field) {
                     debug_assert_ne!(kind, SupportEndpointKind::Disk);
+                    if joined_cones.contains(&cone.id.as_str()) {
+                        continue;
+                    }
                     append_contact_cone_primitive(
                         &mut sink,
                         cone,
@@ -749,46 +777,55 @@ fn append_slice_rafts(
 /// A shaft's resolved segments as smooth tubes: each run of connected
 /// segments is one chain, Beziers sampled as DragonFruit samples them, a
 /// bicone wherever DragonFruit would draw a joint sphere between segments.
+/// The shaft's lower and upper contact cones (`cones`) taper from its first
+/// and last chains to their tips, so the bend into a contact is part of the
+/// tube. Returns whether a tube was drawn (and so the cones with it).
 fn append_smooth_shaft(
     sink: &mut Vec<f32>,
     resolved: &[(
         &Segment,
         crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,
     )],
+    cones: (Option<&ContactCone>, Option<&ContactCone>),
+    (penetration_mm, tip_scale): (f64, f64),
     tessellation: &SupportSliceTessellation,
     params: &super::smooth_shafts::SmoothShaftParams,
-) {
-    let mut points: Vec<ChainPoint> = Vec::new();
-    let mut radii: Vec<f64> = Vec::new();
-    let flush = |sink: &mut Vec<f32>, points: &mut Vec<ChainPoint>, radii: &mut Vec<f64>| {
-        if points.len() >= 2 {
-            append_smooth_chain(
-                sink,
-                points,
-                radii,
-                tessellation.shaft_radial_segments,
-                params,
-            );
-        }
-        points.clear();
-        radii.clear();
+) -> bool {
+    if resolved.is_empty() {
+        return false;
+    }
+    // (socket, tip, radius at the socket, radius at the tip) of a contact.
+    let cone_ends = |cone: &ContactCone| {
+        let n = cone.surface_normal.unwrap_or(cone.normal);
+        let tip = cone.pos.sub(n.multiply_scalar(penetration_mm));
+        (
+            get_final_socket_position(cone),
+            tip,
+            js_max(0.05, cone.profile.body_diameter_mm * 0.5),
+            js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale),
+        )
     };
+    let mut chains: Vec<(Vec<ChainPoint>, Vec<(f64, f64)>)> = Vec::new();
     let mut previous: Option<&Segment> = None;
     for &(seg, ep) in resolved {
         let radius = js_max(0.001, js_max(0.05, seg.diameter) * 0.5);
-        let joined = points
+        let joined = chains
             .last()
+            .and_then(|(points, _)| points.last())
             .is_some_and(|p| p.pos.distance_to(ep.start) <= 1e-6);
         if !joined {
-            flush(sink, &mut points, &mut radii);
-            points.push(ChainPoint {
-                pos: ep.start,
-                bulge: false,
-            });
-        } else if let Some(last) = points.last_mut() {
+            chains.push((
+                vec![ChainPoint {
+                    pos: ep.start,
+                    bulge: false,
+                }],
+                Vec::new(),
+            ));
+        } else if let Some(last) = chains.last_mut().and_then(|(points, _)| points.last_mut()) {
             last.bulge =
                 previous.is_some_and(|p| p.top_joint.is_some()) || seg.bottom_joint.is_some();
         }
+        let (points, radii) = chains.last_mut().unwrap();
         match segment_bezier(seg) {
             Some(curve) => {
                 let steps = tessellation.bezier_steps.max(2);
@@ -805,7 +842,7 @@ fn append_smooth_shaft(
                         pos: p,
                         bulge: false,
                     });
-                    radii.push(radius);
+                    radii.push((radius, radius));
                 }
             }
             None => {
@@ -813,10 +850,72 @@ fn append_smooth_shaft(
                     pos: ep.end,
                     bulge: false,
                 });
-                radii.push(radius);
+                radii.push((radius, radius));
             }
+        }
+        if let Some(last) = points.last_mut() {
+            last.bulge = seg.top_joint.is_some();
         }
         previous = Some(seg);
     }
-    flush(sink, &mut points, &mut radii);
+
+    // The upper contact: on from the last chain through its socket to the tip.
+    if let (Some(cone), Some((points, radii))) = (cones.1, chains.last_mut()) {
+        let (socket, tip, r_socket, r_tip) = cone_ends(cone);
+        let shaft_r = radii.last().map_or(r_socket, |r| r.1);
+        if points
+            .last()
+            .is_some_and(|p| p.pos.distance_to(socket) > 1e-6)
+        {
+            points.push(ChainPoint {
+                pos: socket,
+                bulge: false,
+            });
+            radii.push((shaft_r, shaft_r));
+        }
+        points.push(ChainPoint {
+            pos: tip,
+            bulge: false,
+        });
+        radii.push((r_socket, r_tip));
+    }
+    // The lower contact: from its tip through its socket into the first chain.
+    if let (Some(cone), Some((points, radii))) = (cones.0, chains.first_mut()) {
+        let (socket, tip, r_socket, r_tip) = cone_ends(cone);
+        let shaft_r = radii.first().map_or(r_socket, |r| r.0);
+        if points
+            .first()
+            .is_some_and(|p| p.pos.distance_to(socket) > 1e-6)
+        {
+            points.insert(
+                0,
+                ChainPoint {
+                    pos: socket,
+                    bulge: false,
+                },
+            );
+            radii.insert(0, (shaft_r, shaft_r));
+        }
+        points.insert(
+            0,
+            ChainPoint {
+                pos: tip,
+                bulge: false,
+            },
+        );
+        radii.insert(0, (r_tip, r_socket));
+    }
+
+    for (points, radii) in &chains {
+        if points.len() >= 2 {
+            append_smooth_chain(
+                sink,
+                points,
+                radii,
+                tessellation.shaft_radial_segments,
+                params,
+            );
+        }
+    }
+    true
 }
