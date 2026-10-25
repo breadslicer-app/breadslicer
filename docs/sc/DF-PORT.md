@@ -309,6 +309,78 @@ barridos se agregaron por eso.
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 69 tests más
 1 de escala ignorado.
 
+## Fase 1, bloque 6 — autoSupport
+
+El bloque va en tres partes, cada una con su oráculo: **6a** los pases que llama
+el orquestador, **6b** la colocación en grilla, el puente de cavidad, el perfil de
+diámetros del bosque y las operaciones del store, **6c** `autoPlace.ts` de punta a
+punta. El auto-bracing es su propio bloque: el orquestador lo saltea con
+`debugSkipAutoBracing`, la costura que DF ya tiene.
+
+### `Math.pow`, `Math.log`, `Math.cbrt` de V8 (hecho)
+
+Medido contra Node 26 / V8 14.6 en `tests/fixtures/v8_pow_log.txt` (20000 de cada
+uno, argumentos con forma de sizing y aleatorios amplios):
+
+- **`log`** es el `__ieee754_log` de fdlibm 5.3 (con su elección de fórmula por
+  `i | j`); el crate `libm` trae la reescritura de musl, que difiere en ~0,05 %.
+  Portado en `js_math::log`: **20000/20000**.
+- **`cbrt`** es el `s_cbrt.c` de FreeBSD (semilla por bits, polinomio a 23 bits, un
+  Newton); `libm` trae el cbrt correctamente redondeado de core-math, que V8 14.6
+  no usa (91 %). Portado en `js_math::cbrt`: **20000/20000**.
+- **`pow`**: V8 14.6 compila `math::pow` con `--use-std-math-pow` por defecto: los
+  casos especiales de JS, `y == 2` como `x*x`, `y == 0.5` como `sqrt`, y si no el
+  `pow` del runtime de C. El último bit es del CRT: el UCRT estático de node.exe y
+  la `ucrtbase.dll` del sistema discrepan en 5 de 20000, en un ulp. `js_pow` sigue
+  el camino de V8 sobre el `pow` de la plataforma (en Linux ambos serían glibc).
+  El test admite ≤10 diferencias de exactamente un ulp; `main` de V8 ya pasó a
+  LLVM-libc, así que un Node futuro vuelve a mover este bit.
+
+### 6a — pases de autoSupport (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `autoSupport/parameterSizing.ts` | `auto_support/parameter_sizing.rs` | completo: `sizeParameters`, factores de modelo y altura (con `js_pow`/`js_log`), `presetForArea`; las bandas se resuelven por `SizingBands` |
+| `Settings/presets.ts` (bandas de fábrica) | `SizingBands::factory` | las tres de fábrica; el store de presets y `localStorage` son de la GUI |
+| `autoSupport/loadBudget.ts` | `auto_support/load_budget.rs` | completo |
+| `autoSupport/contactTipCap.ts` | `auto_support/contact_tip_cap.rs` | completo |
+| `autoSupport/coverage.ts` | `auto_support/coverage.rs` | completo |
+| `autoSupport/candidateGeneration.ts` | `auto_support/candidate_generation.rs` | completo |
+| `autoSupport/minimaReinforcement.ts` | `auto_support/minima_reinforcement.rs` | completo |
+| `autoSupport/poseStability.ts` | `auto_support/pose_stability.rs` | completo |
+| `autoSupport/stabilization.ts` | `auto_support/stabilization.rs` | completo (sin el log de calibración) |
+| `autoSupport/gridPlacement.ts` | `auto_support/grid_placement.rs` | completo |
+| `autoSupport/supportBlockers.ts` | `auto_support/support_blockers.rs` | la consulta de contacto; el pincel, su store, historia y hover son de la GUI |
+| `Rafts/Crenelated/geometry/convexHull2d.ts`, `utils/math.ts`, `volumeAnalysis/Islands/{types,voxelFootprint}.ts`, `Matrix3` de three | `rafts/…`, `utils/math.rs`, `volume_analysis/islands/`, `three/matrix3.rs` | lo que estos pases leen |
+
+**Diferencias deliberadas.** DF lee dos settings distintos en estos pases: el
+`autoSettings` del run y el global `getSettings().autoSupport` (preset de sizing,
+topes de escala, margen de punta); acá entran los dos explícitos, donde DF lee
+cada uno. El preset se resuelve contra la tabla que da el llamador (el diseño del
+worker de DF). La malla es `AutoSupportMesh { mesh, side, blocked }`: el campo y
+los rayos, el lado del material con que raycastea, y la máscara de blockers.
+
+**Encontrado al portar.** El "espejo" `SIZING_BANDS` de DF no es exacto: el preset
+de fábrica `structure` hereda la penetración por defecto (0,1 mm), no 0; las bandas
+salen de los presets. three-mesh-bvh arma una raíz por grupo de geometría (un
+`BoxGeometry` trae seis); STL y 3MF no traen grupos y el BVH del port arma una sola
+raíz, así que los oráculos limpian los grupos de sus mallas de prueba.
+
+**Evidencia:** `scripts/df-oracle/golden_autosupport_a.ts` → `tests/fixtures/df_autosupport_a.json`:
+615 llamadas sobre seis mallas (knot, mesa con cajón, cubo sobre un vértice, cubo
+sobre una arista, tablón inclinado, cono colgante; dos con máscara de blockers),
+islas sintéticas con forma real (huellas de vóxeles de 0,25 mm en rectángulo,
+disco, anillo, L, línea y mota; caras de la malla debajo; loops de perímetro),
+settings y settings de auto-support aleatorios y fuera de rango, y regiones
+grandes que desbordan el tope de candidatos por región. Estabilización en las
+seis mallas, con y sin raft (dispara en las cuatro inestables). `tests/df_parity_autosupport_a.rs`:
+**igualdad exacta** (los infinitos llegan como texto y se comparan aparte).
+Sensibilidad: 24 de 25 mutaciones fallan; sobrevive la pertenencia por bucket
+del dedup, que es equivalente (la compuerta de distancia ya la implica).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 71 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
