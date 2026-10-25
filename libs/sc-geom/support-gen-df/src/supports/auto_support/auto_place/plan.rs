@@ -7,11 +7,9 @@
 //! What DragonFruit reads from its stores is passed in: the committed support
 //! state (`getSnapshot()`, which the gap-fill reads), the raft mode
 //! (`getRaftSettingsForModel`) and the live settings (`getSettings()`, on the
-//! context). Auto-bracing (`buildAutoBracedSnapshot`) is not ported yet: a run
-//! that does not set `debugSkipAutoBracing` returns the unbraced forest and
-//! says so in `bracing_skipped`. Logging, timings and progress are DragonFruit's
-//! console and modal and are not reproduced; nor is the store rollback, since
-//! nothing here commits.
+//! context), and the meshes auto-bracing registers for clearance. Logging,
+//! timings and progress are DragonFruit's console and modal and are not
+//! reproduced; nor is the store rollback, since nothing here commits.
 
 use std::collections::HashSet;
 
@@ -34,6 +32,8 @@ use super::report::{
     BySource, CavityFallback, ForestLedgerEntry, ForestReport, ForestScanMetrics,
     PlacementDiagnostics, ReportDiagnostics, build_forest_report, bump, fan_key,
 };
+use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
+use crate::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use crate::supports::auto_support::candidate_generation::{
     deduplicate_candidates, generate_candidates,
 };
@@ -171,8 +171,6 @@ pub struct AutoSupportPlan {
     pub support: SupportState,
     pub analytics: AutoPlaceAnalytics,
     pub result: AutoPlaceResult,
-    /// The run asked for auto-bracing, which this port does not run yet.
-    pub bracing_skipped: bool,
 }
 
 /// The run's inputs beyond the shared context.
@@ -187,6 +185,9 @@ pub struct PlanInput<'a> {
     pub committed: &'a SupportState,
     /// `getRaftSettingsForModel(modelId).bottomMode !== 'off'`.
     pub has_raft: bool,
+    /// The models registered for auto-bracing's clearance checks
+    /// (`getAllMeshEntriesForAutoBrace()`).
+    pub brace_meshes: &'a BraceMeshes<'a>,
 }
 
 fn empty_placed_counts() -> IndexMap<SupportTypeId, i64> {
@@ -388,7 +389,6 @@ pub fn compute_auto_support_plan(
                 status,
                 analytics: None,
             },
-            bracing_skipped: false,
         })
     };
 
@@ -1251,8 +1251,18 @@ pub fn compute_auto_support_plan(
         analytics.forest_report = Some(forest_report);
     }
 
-    // ── 5. Auto-bracing: not ported yet ─────────────────────────────
-    let bracing_skipped = changed && !auto.debug_skip_auto_bracing;
+    // ── 5. Auto-bracing, folded into the plan ───────────────────────
+    if changed && !auto.debug_skip_auto_bracing {
+        let (braced, _) = build_auto_braced_snapshot(
+            &run.draft,
+            &live.auto_bracing,
+            live,
+            input.brace_meshes,
+            input.committed,
+            &mut || ctx.id(),
+        );
+        run.draft = braced;
+    }
 
     let result = AutoPlaceResult {
         placed: run.placed,
@@ -1266,6 +1276,5 @@ pub fn compute_auto_support_plan(
         support: run.draft,
         analytics,
         result,
-        bracing_skipped,
     })
 }
