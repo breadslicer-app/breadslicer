@@ -415,6 +415,59 @@ compuerta del puente).
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 72 tests más
 1 de escala ignorado.
 
+### 6c — `autoPlace.ts` de punta a punta (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `autoSupport/autoPlace.ts` (helpers) | `auto_support/auto_place/helpers.rs` | contexto de la corrida (`PlanMesh`, `PlanCtx`: settings vivos, bandas, malla con su SDF del pool, máscara de blockers, un contador de ids, contadores del router), resolución de normales con disco de rayos, filtro de ya-soportados, colisiones de cono y branch, capacidad de adjunción, host de merge, branch hospedado, pool de muestras de fan, re-hosteo de knots legados, sync cono/fuste y el cull de huérfanos |
+| `autoSupport/autoPlace.ts` (`fanLeafToHost`, `buildConsolidationBranch`) | `auto_support/auto_place/fan.rs` | completo: leaf o branch sobre la muestra más empinada (o más cercana), tier de rescate ancho, motivos de rechazo con distancias |
+| `autoSupport/autoPlace.ts` (`placeOneCandidate`) | `auto_support/auto_place/place.rs` | completo: normal, fans grid→isla y de overhang, merge gridless (leaf o branch), trunk dimensionado y ruteado, diferimiento al stump, fan de cavidad y puente modelo-a-modelo, guarda de pared lateral, decisión de grilla, commit y reintento sin grilla |
+| `autoSupport/autoPlace.ts` (`computeAutoSupportPlan`) | `auto_support/auto_place/plan.rs` | completo salvo auto-bracing: candidatos (estabilización, refuerzo de mínimos, grilla de densidad), dedup, filtro, colocación, consolidación en árboles, gap-fill, fanning de hojas, branches de cobertura en islas planas, resize del bosque, re-hosteo, cull, sync de conos, informe del bosque y presupuesto de carga |
+| `autoSupport/autoPlace.ts` (`buildForestReport`) y `types.ts` | `auto_support/auto_place/report.rs` | completo; `forestReportToText` es de la GUI |
+
+Lo que DF lee de sus stores entra explícito: el estado comprometido
+(`getSnapshot()`, que lee el gap-fill: DF lo deja así a propósito, ver su
+`docs/dev/backlog.md`), el modo de raft del modelo y los settings vivos en el
+contexto. El auto-bracing no está portado: si la corrida no pide
+`debugSkipAutoBracing`, el plan devuelve el bosque sin brazos y lo marca en
+`bracing_skipped`. Logs, tiempos, progreso y el rollback del store son de la
+consola y el modal de DF y no se reproducen (aquí nada se compromete).
+
+**Hallazgo DF:** la re-colocación de huérfanos es código muerto. El filtro busca
+`'host trunk culled'` y el cull escribe `'trunk culled (blocked)'`, así que los
+miembros de un host recortado nunca se vuelven a colocar. El port lo reproduce
+tal cual; arreglarlo es una decisión de producto, no de paridad.
+
+**Evidencia:** `scripts/df-oracle/golden_autosupport_c.ts` → `tests/fixtures/df_autosupport_c.json`:
+140 corridas de `computeAutoSupportPlan` sobre siete mallas (knot, mesa, techo/piso
+con poste, escena baja rotada, cono colgante, cubo sobre una arista, tablón
+inclinado; dos con máscara de blockers, tres sin raft) con settings y overrides de
+auto-support aleatorios (grilla on/off, estabilización y refuerzo de mínimos,
+radios y ángulos de fan, tope de adjunciones), de 0 a 14 islas sintéticas con
+forma real, y un tercio de las corridas construyendo sobre el bosque de una
+corrida anterior tal como lo guarda el store tras el commit (`setSnapshot`
+normaliza las colecciones en `supports`; un `cloneSupportState` del borrador
+pierde los stumps que solo están en la vista). Resultado: 655 trunks, 751 branches,
+388 leaves, 168 sticks, 109 stumps y 37 twigs; 1160 rechazos de construcción, 303
+de grilla y 18 por colisión; 18 reintentos sin grilla; 205 puentes de cavidad y
+fans de cavidad logrados; consolidación con todos sus motivos de rechazo; huérfanos
+por bloqueo, cruce, host bloqueado y host faltante; estados `placed`,
+`no-candidates`, `already-supported` y desactivado. Se comparan el bosque, la
+analítica completa (informe del bosque, presupuesto de carga, `sizingDebug`) y
+el resultado. Un contador de ids y un SDF por malla para toda la corrida.
+`tests/df_parity_autosupport_c.rs`: **igualdad exacta** en las 140 corridas.
+Sensibilidad: 17 de 22 mutaciones fallan. Sobreviven: el filtro de re-colocación
+(equivalente: es el código muerto de arriba); los dos umbrales de isla chica
+(equivalentes con malla: el router V3 siempre deja juntas de ruta y ninguna de
+construcción, y entonces la bandera no cambia nada; invertirla entera tampoco
+mueve el fixture); el mínimo vertical de 1,5 mm de la hoja de merge (casi
+inalcanzable: pide dos contactos a menos de 1,5 mm, que el dedup y el filtro de
+3 mm eliminan) y el tope infinito del tier ancho del fan de cavidad (ningún fan
+de cavidad del fixture necesitó un tramo mayor que el tope derivado).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 73 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
