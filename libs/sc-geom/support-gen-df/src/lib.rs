@@ -7,6 +7,7 @@
 // the ported conditions keep that form rather than restate it per call site.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod clipper;
 pub mod js_math;
 pub mod native;
 pub mod supports;

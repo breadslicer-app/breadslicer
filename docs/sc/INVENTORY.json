@@ -2063,12 +2063,24 @@
       "workspace": "nested-sc-geom",
       "sources": [
         {
+          "path": "libs/sc-geom/support-gen-df/src/clipper/engine.rs",
+          "sha256": "b02fd0db164c7f019d626397cdb59c047145ebb9b5df93bf7dd636417e7fc447"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/clipper/mod.rs",
+          "sha256": "461aca853799ab2f0a4718730ba3fb7473b2c0f63aee7fb70bf528ef6029b965"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/clipper/offset.rs",
+          "sha256": "2947538c3446fae19966f7533af6d9083c0acb26718bb9cd63fcdd0703af7b73"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/js_math.rs",
           "sha256": "f7724227a15eb3f90303df3ce112a2186ee6bbe7006983b87bd861d9ac0d712e"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/lib.rs",
-          "sha256": "1b6a7dd3c35a92c12c7d2f6014cce267d3130b6529c8fe07f84776b21481f877"
+          "sha256": "5b06302a888cc21711ed3864263eb0eb9db2f85e5e9ae3595ee94f3b8a00aab2"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/native/islands/geometry.rs",
