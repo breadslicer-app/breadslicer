@@ -26,6 +26,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::clipper::ClipperError;
+use crate::features::slicing::support_world_triangles::{
+    SupportSliceInput, build_support_and_raft_world_triangles,
+};
 use crate::native::mesh_core::mesh::IndexedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands};
 use crate::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
@@ -100,6 +103,11 @@ pub struct PipelineSettings {
     pub rafts: RaftSettingsStore,
     /// The distance-field cell of each model's pooled SDF.
     pub sdf_cell_mm: f64,
+    /// `supportTipShrinkPercent` of the slice tessellation.
+    pub support_tip_shrink_percent: f64,
+    /// The contact tips' penetration into the model (DragonFruit's
+    /// `calculateTipOffset` for the active material and printer).
+    pub tip_penetration_mm: f64,
 }
 
 impl PipelineSettings {
@@ -112,6 +120,8 @@ impl PipelineSettings {
             supports: SupportSettings::default(),
             rafts: RaftSettingsStore::default(),
             sdf_cell_mm: 0.5,
+            support_tip_shrink_percent: 0.0,
+            tip_penetration_mm: 0.0,
         }
     }
 }
@@ -124,6 +134,7 @@ pub enum Stage {
     DeriveIslands,
     PlanSupports,
     BuildRafts,
+    Tessellate,
 }
 
 /// One progress report: `stage` of model `model` (of `models`) is starting;
@@ -197,6 +208,9 @@ pub struct PipelineOutput {
     /// The support state after every model's plan.
     pub support: SupportState,
     pub rafts: Vec<RaftGroup>,
+    /// What the slicer rasterises (`buildSupportAndRaftWorldTriangles`): every
+    /// support and the global-settings raft, nine floats per triangle.
+    pub support_soup: Vec<f32>,
 }
 
 /// `Box3.getCenter` of the geometry's bounding box.
@@ -378,10 +392,47 @@ pub fn generate_supports(
     step(progress, Stage::BuildRafts, n);
     let rafts = build_rafts(&current, models, &settings.rafts)?;
     check()?;
+    step(progress, Stage::Tessellate, n);
+    let support_soup = support_soup(&current, models, settings)?;
+    check()?;
     Ok(PipelineOutput {
         models: outputs,
         support: current,
         rafts,
+        support_soup,
+    })
+}
+
+/// What the slicer rasterises for `state` (`buildSupportAndRaftWorldTriangles`
+/// as the slice job calls it): the supports of the visible models and the
+/// global raft, cleared of those models.
+pub fn support_soup(
+    state: &SupportState,
+    models: &[ModelInput],
+    settings: &PipelineSettings,
+) -> Result<Vec<f32>, ClipperError> {
+    let visible: HashSet<String> = models
+        .iter()
+        .filter(|m| m.visible)
+        .map(|m| m.id.clone())
+        .collect();
+    let clearance: Vec<PlateFootprintSource<'_>> = models
+        .iter()
+        .filter(|m| m.visible)
+        .map(|m| PlateFootprintSource {
+            geometry: &m.geometry,
+            center: bounding_box_center(&m.geometry),
+            transform: m.transform,
+            visible: Some(true),
+        })
+        .collect();
+    build_support_and_raft_world_triangles(&SupportSliceInput {
+        state: &state.collections,
+        visible_model_ids: &visible,
+        raft: &settings.rafts.global,
+        plate_clearance_models: &clearance,
+        support_tip_shrink_percent: settings.support_tip_shrink_percent,
+        tip_penetration_mm: settings.tip_penetration_mm,
     })
 }
 

@@ -649,6 +649,26 @@ Detalles que importan para la paridad:
 - **Equivalentes:** el margen de la almena (con un solo hueco se cancela) y el atajo de 4 puntos de `simplifyLoop` (DP sobre un cuadrado de una celda cae al mismo fallback).
 - **Casi equivalentes:** los anillos de área cero en `orientRing`, el punto justo a la altura de un vértice en la contención, y los puntos cocirculares en el épsilon de Delaunay.
 
+## Fase 1, bloque 10 — teselado de soportes para el slicer (hecho)
+
+Los datos de soportes no son una malla: DF los tesela al slicear (`buildSupportAndRaftWorldTriangles` en `features/slicing/rasterLayerZipExport.ts`). Es lo que necesita el preview de la GUI (SC-79) y el slice (SC-81).
+
+| Origen | Rust SC | Estado |
+|---|---|---|
+| `rasterLayerZipExport.ts`: `buildSupportAndRaftWorldTriangles`, `resolveSupportSliceTessellation`, `createFrustumGeometryBetween`, `appendJointSphere`, `appendSegmentPrimitive`, `appendContactConePrimitive`, `appendContactDiskPrimitive`, `appendGeometryTriangles` | `features/slicing/support_world_triangles.rs` | Completo para soportes y raft. La penetración de las puntas (`calculateTipOffset`, de los ajustes AA del material) entra como parámetro; su cálculo va con SC-81 |
+| three `CylinderGeometry`, `SphereGeometry`, `Matrix4.multiply`/`makeTranslation` | `three/primitive_geometry.rs`, `three/matrix4.rs` | Posiciones e índice (sin normales ni UVs, que el teselado no lee) |
+| `Rafts/Crenelated/RaftState.ts` | `rafts/crenelated/raft_state.rs` | La resolución del store: margen del borde acotado a 0,05 mm y sin pared si la base no es sólida (recuerda la última elección sólida). Sin listeners |
+
+La fachada (`pipeline.rs`) suma la etapa `Tessellate` y devuelve `support_soup`, la sopa de triángulos que el slicer rasteriza.
+
+**Evidencia:** `scripts/df-oracle/golden_support_triangles.ts` → `tests/fixtures/df_support_triangles.json`, sobre los estados reales de soportes de los bloques 8c y 7:
+- **120 casos:** 1,6 millones de triángulos. Varían los modelos visibles, el encogimiento de la punta, el raft global (los ajustes efectivos del store) y la huella de la escena en la placa. 49 casos modifican el estado: 36 curvan tramos y brazos (Bezier) y el resto deja raíces huérfanas.
+- **141 primitivas de contacto** (conos y discos) con penetración y escala de punta, llamadas desde una copia de sandbox que las exporta.
+
+`tests/df_parity_support_triangles.rs`: **igualdad exacta** en cada float, comparando largo, FNV-1a de los bits `f32` y los primeros 90 valores. Sensibilidad: 13 de 14 mutaciones fallan. Sobrevive una equivalente: el `else if` del raft de línea, porque solo hay base en modo sólido.
+
+**Hallazgo:** el oráculo grababa los ajustes de raft crudos, y el store de DF los normaliza (una base de línea no tiene pared). Ahora graba los efectivos, y el port tiene esa resolución en `RaftSettingsStore`.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:

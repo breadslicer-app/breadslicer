@@ -14,7 +14,7 @@ use super::geometry::generate_unioned_line_raft_mesh::{
     filter_line_raft_edges, generate_unioned_line_raft_mesh,
 };
 use super::geometry::model_plate_footprint::{PlateFootprintSource, collect_model_plate_footprint};
-use super::raft_types::{RaftBottomMode, RaftSettings, SupportBaseCircle};
+use super::raft_types::{RaftBottomMode, SupportBaseCircle};
 use crate::clipper::ClipperError;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::math_utils::js_max;
@@ -38,22 +38,7 @@ pub struct RaftGroup {
     pub meshes: Vec<BufferGeometry>,
 }
 
-/// The raft settings store: the global settings and per-model overrides.
-#[derive(Debug, Clone, Default)]
-pub struct RaftSettingsStore {
-    pub global: RaftSettings,
-    pub per_model: HashMap<String, RaftSettings>,
-}
-
-impl RaftSettingsStore {
-    /// `getRaftSettingsForModel(modelId)`.
-    pub fn for_model(&self, model_id: Option<&str>) -> RaftSettings {
-        match model_id {
-            Some(id) if !id.is_empty() => self.per_model.get(id).copied().unwrap_or(self.global),
-            _ => self.global,
-        }
-    }
-}
+pub use super::raft_state::RaftSettingsStore;
 
 /// The rafts `ExportManager` adds when `includeRaft` is set. `roots` are in
 /// support-state order; `scoped_model_ids` is the export's model filter;

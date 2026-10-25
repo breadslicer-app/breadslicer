@@ -9,6 +9,7 @@ pub mod line3;
 pub mod math_utils;
 pub mod matrix3;
 pub mod matrix4;
+pub mod primitive_geometry;
 pub mod quaternion;
 pub mod ray;
 pub mod shape;
