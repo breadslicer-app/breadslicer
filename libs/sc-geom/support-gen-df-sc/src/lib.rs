@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, Scene, SceneError, bake_mesh_to_world};
+use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
 };
@@ -202,10 +203,11 @@ fn run_df_supports(
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
 ) -> Result<DfSupportOutcome, JobError> {
-    let settings = request
-        .settings
-        .clone()
-        .unwrap_or_else(|| PipelineSettings::defaults(request.layer_height_mm));
+    let settings = request.settings.clone().unwrap_or_else(|| PipelineSettings {
+        // SoulCrafted draws smooth tubes with bicones by default.
+        shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
+        ..PipelineSettings::defaults(request.layer_height_mm)
+    });
     let n = models.len();
     // Reports: geometry per model, three per model, rafts, tessellation.
     let total = (4 * n + 2) as u32;
