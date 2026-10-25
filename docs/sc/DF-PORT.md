@@ -436,7 +436,7 @@ consola y el modal de DF y no se reproducen (aquí nada se compromete).
 **Hallazgo DF:** la re-colocación de huérfanos es código muerto. El filtro busca
 `'host trunk culled'` y el cull escribe `'trunk culled (blocked)'`, así que los
 miembros de un host recortado nunca se vuelven a colocar. El port lo reproduce
-tal cual; arreglarlo es una decisión de producto, no de paridad.
+tal cual; el arreglo queda para después del porteo como SC-75 en `ROADMAP.md`.
 
 **Evidencia:** `scripts/df-oracle/golden_autosupport_c.ts` → `tests/fixtures/df_autosupport_c.json`:
 140 corridas de `computeAutoSupportPlan` sobre siete mallas (knot, mesa, techo/piso
