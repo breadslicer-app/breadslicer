@@ -63,7 +63,7 @@ fn a_bent_chain_is_one_closed_outward_tube_with_a_bicone() {
         point(4.0, 3.0, 30.0, false),
     ];
     let mut soup = Vec::new();
-    append_smooth_chain(&mut soup, &points, &[r; 4], 12, &params);
+    append_smooth_chain(&mut soup, &points, &[(r, r); 4], 12, &params);
 
     let (edges, volume) = topology(&soup);
     assert!(
@@ -118,7 +118,7 @@ fn a_straight_chain_without_bulges_is_a_capped_cylinder() {
     append_smooth_chain(
         &mut soup,
         &points,
-        &[1.0, 1.0],
+        &[(1.0, 1.0), (1.0, 1.0)],
         16,
         &SmoothShaftParams::default(),
     );
@@ -183,4 +183,64 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
         checked += 1;
     }
     assert!(checked > 40, "{checked} states");
+}
+
+#[test]
+fn a_joint_the_shaft_runs_straight_through_does_not_bulge() {
+    let mut soup = Vec::new();
+    // Flagged as a joint, but collinear: no bicone.
+    let points = [
+        point(0.0, 0.0, 0.0, false),
+        point(0.0, 0.0, 5.0, true),
+        point(0.0, 0.0, 9.0, false),
+    ];
+    append_smooth_chain(
+        &mut soup,
+        &points,
+        &[(1.0, 1.0); 2],
+        16,
+        &SmoothShaftParams::default(),
+    );
+    let widest = soup
+        .chunks_exact(3)
+        .map(|p| (p[0] as f64).hypot(p[1] as f64))
+        .fold(0.0_f64, f64::max);
+    assert!(
+        widest <= 1.0 + 1e-6,
+        "no bulge on a straight joint ({widest})"
+    );
+}
+
+#[test]
+fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
+    // Up the shaft, then a 40-degree bend into a cone tapering to its tip.
+    let points = [
+        point(0.0, 0.0, 0.0, false),
+        point(0.0, 0.0, 10.0, true),
+        point(2.0, 0.0, 12.4, false),
+    ];
+    let (shaft, body, tip) = (0.5, 0.45, 0.15);
+    let mut soup = Vec::new();
+    append_smooth_chain(
+        &mut soup,
+        &points,
+        &[(shaft, shaft), (body, tip)],
+        12,
+        &SmoothShaftParams::default(),
+    );
+    let (edges, volume) = topology(&soup);
+    assert!(
+        edges.values().all(|&c| c == 2),
+        "one closed piece through the bend"
+    );
+    assert!(volume > 0.0);
+    // The far end is the tip's radius.
+    let end = points[2].pos;
+    let at_tip = soup
+        .chunks_exact(3)
+        .map(|p| Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
+        .filter(|p| p.distance_to(end) < 0.3)
+        .map(|p| p.distance_to(end))
+        .fold(0.0_f64, f64::max);
+    assert!((at_tip - tip).abs() < 1e-3, "tip radius {at_tip}");
 }

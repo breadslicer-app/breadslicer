@@ -23,6 +23,9 @@ pub struct SmoothShaftParams {
     pub collar_length_ratio: f64,
     /// A collar takes at most this share of its segment's length.
     pub max_collar_fraction: f64,
+    /// A joint bulges only where the shaft turns by more than this: a
+    /// straight run through a joint stays a plain tube.
+    pub min_bend_deg: f64,
 }
 
 impl Default for SmoothShaftParams {
@@ -31,6 +34,7 @@ impl Default for SmoothShaftParams {
             bulge_ratio: 1.3,
             collar_length_ratio: 2.5,
             max_collar_fraction: 0.4,
+            min_bend_deg: 8.0,
         }
     }
 }
@@ -49,7 +53,8 @@ pub enum ShaftStyle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChainPoint {
     pub pos: Vec3,
-    /// For an interior point: whether the tube bulges into a bicone here.
+    /// For an interior point: whether the tube may bulge into a bicone here
+    /// (it does where it bends).
     pub bulge: bool,
 }
 
@@ -125,22 +130,42 @@ fn push_tri(sink: &mut Vec<f32>, a: Vec3, b: Vec3, c: Vec3) {
     }
 }
 
+/// The radius of an edge `len` long, tapering from `r.0` to `r.1`, at
+/// `along` from its start.
+fn radius_at(r: (f64, f64), len: f64, along: f64) -> f64 {
+    if len <= EPS {
+        r.0
+    } else {
+        r.0 + (r.1 - r.0) * (along / len).clamp(0.0, 1.0)
+    }
+}
+
 /// Appends one closed tube along `points`. `radii[e]` is the radius of the
-/// edge from `points[e]` to `points[e + 1]`.
+/// edge from `points[e]` to `points[e + 1]` at its start and at its end (a
+/// contact cone tapers; a shaft does not).
+///
+/// At each interior point the tube passes through a ring mitred into the
+/// plane bisecting the bend. Where the radii on either side differ, or where
+/// a bulge is asked for and the shaft really bends there
+/// ([`SmoothShaftParams::min_bend_deg`]), the ring is a wider waist reached
+/// over conical collars on either side.
 pub fn append_smooth_chain(
     sink: &mut Vec<f32>,
     points: &[ChainPoint],
-    radii: &[f64],
+    radii: &[(f64, f64)],
     radial_segments: u32,
     params: &SmoothShaftParams,
 ) {
-    // Drop repeated points, keeping each edge's radius.
+    // Drop repeated points, keeping each edge's radii.
     let mut pts: Vec<ChainPoint> = Vec::with_capacity(points.len());
-    let mut rad: Vec<f64> = Vec::with_capacity(radii.len());
+    let mut rad: Vec<(f64, f64)> = Vec::with_capacity(radii.len());
     for (i, p) in points.iter().enumerate() {
         if let Some(last) = pts.last()
             && p.pos.distance_to(last.pos) <= 1e-6
         {
+            if let Some(r) = rad.last_mut() {
+                r.1 = radii[i - 1].1;
+            }
             continue;
         }
         if i > 0 {
@@ -160,56 +185,53 @@ pub fn append_smooth_chain(
         .windows(2)
         .map(|w| w[1].pos.distance_to(w[0].pos))
         .collect();
+    let min_bend_cos = params.min_bend_deg.to_radians().cos();
 
     let mut u = any_perpendicular(dirs[0]);
-    let mut rings: Vec<Vec<Vec3>> = vec![circle(pts[0].pos, dirs[0], rad[0], u, n)];
+    let mut rings: Vec<Vec<Vec3>> = vec![circle(pts[0].pos, dirs[0], rad[0].0, u, n)];
     for j in 1..pts.len() - 1 {
         let (d_in, d_out) = (dirs[j - 1], dirs[j]);
-        let (r_in, r_out) = (rad[j - 1], rad[j]);
+        let (e_in, e_out) = (rad[j - 1], rad[j]);
+        let (r_in, r_out) = (e_in.1, e_out.0);
         let joint = pts[j].pos;
         let mitre = normalize(d_in.add(d_out)).unwrap_or(d_in);
-        if pts[j].bulge {
-            let waist = params.bulge_ratio * r_in.max(r_out);
-            let collar = params.collar_length_ratio * waist;
+        let bends = d_in.dot(d_out) < min_bend_cos;
+        let waist = if pts[j].bulge && bends {
+            params.bulge_ratio * r_in.max(r_out)
+        } else {
+            r_in.max(r_out)
+        };
+        let collar = params.collar_length_ratio * waist;
+        if waist > r_in + 1e-9 {
             let l_in = collar.min(params.max_collar_fraction * lens[j - 1]);
-            let l_out = collar.min(params.max_collar_fraction * lens[j]);
             if l_in > 1e-6 {
-                rings.push(circle(
-                    joint.sub(d_in.multiply_scalar(l_in)),
-                    d_in,
-                    r_in,
-                    u,
-                    n,
-                ));
+                let r = radius_at(e_in, lens[j - 1], lens[j - 1] - l_in);
+                rings.push(circle(joint.sub(d_in.multiply_scalar(l_in)), d_in, r, u, n));
             }
-            rings.push(project_onto_plane(
-                &circle(joint, d_in, waist, u, n),
-                d_in,
-                joint,
-                mitre,
-            ));
-            u = transport(u, d_in, d_out);
+        }
+        rings.push(project_onto_plane(
+            &circle(joint, d_in, waist, u, n),
+            d_in,
+            joint,
+            mitre,
+        ));
+        u = transport(u, d_in, d_out);
+        if waist > r_out + 1e-9 {
+            let l_out = collar.min(params.max_collar_fraction * lens[j]);
             if l_out > 1e-6 {
+                let r = radius_at(e_out, lens[j], l_out);
                 rings.push(circle(
                     joint.add(d_out.multiply_scalar(l_out)),
                     d_out,
-                    r_out,
+                    r,
                     u,
                     n,
                 ));
             }
-        } else {
-            rings.push(project_onto_plane(
-                &circle(joint, d_in, r_in, u, n),
-                d_in,
-                joint,
-                mitre,
-            ));
-            u = transport(u, d_in, d_out);
         }
     }
     let last = pts.len() - 1;
-    rings.push(circle(pts[last].pos, dirs[last - 1], rad[last - 1], u, n));
+    rings.push(circle(pts[last].pos, dirs[last - 1], rad[last - 1].1, u, n));
 
     // Side walls between consecutive rings.
     for w in rings.windows(2) {
