@@ -1,6 +1,6 @@
 # Roadmap propio de SC
 
-Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **77 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
+Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **82 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
@@ -11,6 +11,18 @@ No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjet
 3. SC-10: especificar primer hito de soportes manuales.
 
 Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La validación de perfiles/writers puede avanzar como línea independiente.
+
+### Línea de soportes DF (2026-10-25)
+
+El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF-PORT.md`, rama `sc/df-supports`). Orden acordado con Damian: que funcione de punta a punta, después que sea correcto en casos reales, recién después que sea rápido.
+
+1. SC-78: fachada del core de soportes (una entrada, cancelable, con progreso y errores tipados).
+2. SC-79: rebanada vertical en la GUI (modelo → auto-soportes → raft → preview → slice → exportar), sin interacciones finas.
+3. SC-80 y SC-81: arreglar el stitching de `sl1cer` y validar soportes y raft en el slice y el archivo final.
+4. SC-82: benchmarks del pipeline en escenas reales, cada uno con una pregunta concreta.
+5. SC-75 y SC-76: mejoras detrás de opciones, primero las de corrección, con la paridad DF intacta al apagarlas.
+6. Rendimiento: paralelismo en CPU donde SC-82 lo pida, después GPU (SC-77, SC-22).
+7. Interacciones de edición (SC-12) con pruebas de gestos de Damian; validación física (SC-66) solo con autorización.
 
 ## Cómo mantenerlo
 
@@ -101,7 +113,12 @@ Después: SC-37/38 → SC-11 → SC-12. Hollow: SC-39/40 antes del motor. La val
 | [SC-74](#sc-74) | backlog | soportes | Calibración experimental de contactos y material | SC-53, SC-66 |
 | [SC-75](#sc-75) | backlog | soportes | Re-colocar miembros huérfanos de un host recortado (bug DF) | — |
 | [SC-76](#sc-76) | backlog | soportes | Mejoras post-porteo DF: lista de hallazgos | SC-75 |
-| [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76 |
+| [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76, SC-82 |
+| [SC-78](#sc-78) | todo | soportes | Fachada del core de soportes DF portados | — |
+| [SC-79](#sc-79) | backlog | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
+| [SC-80](#sc-80) | backlog | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
+| [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
+| [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 
 ## SC-01
 
@@ -892,4 +909,54 @@ Idea de Damian al portar la detección de islas: DF voxeliza en GPU, y la detecc
 
 **Cierre:** Informe con perfil medido del pipeline nativo, candidatos con ganancia estimada, opción tecnológica con licencia revisada y un prototipo de una etapa con su comparación contra CPU; sin adoptar nada sin medición ni respaldo en CPU.
 
-**Depende de:** porteo DF completo y sus mejoras (SC-76). Prioridad: low. Estado snapshot: triage.
+**Depende de:** porteo DF completo, sus mejoras (SC-76) y los benchmarks (SC-82). Prioridad: low. Estado snapshot: triage.
+
+## SC-78
+
+**Fachada del core de soportes DF portados** — Línea de soportes DF / soportes
+
+Una sola entrada sobre `support-gen-df`, del estilo `generate_supports(escena, ajustes) -> soportes + raft`: escaneo de islas, derivación, plan de auto-soportes con bracing y rafts de exportación. Cancelable y con progreso por etapa, errores tipados (incluido `ClipperError`) y sin estado global. Reutiliza el contrato de jobs de SC si ya existe (SC-37); si no, define el mínimo y lo deja compatible.
+
+**Cierre:** Prueba que corre la fachada sobre escenas del corpus y da exactamente lo mismo que las llamadas por módulo de los tests de paridad; cancelación probada a mitad de cada etapa sin resultados parciales instalados.
+
+**Depende de:** porteo DF completo (hecho). Prioridad: high. Estado snapshot: todo.
+
+## SC-79
+
+**Rebanada vertical GUI: auto-soportes y raft DF de punta a punta** — Línea de soportes DF / soportes
+
+Cargar modelo → auto-soportes → raft → preview en el viewport → slice → exportar, usando la fachada SC-78 desde un job de la GUI. Un undo por operación y resultados obsoletos descartados al editar la escena. Sin interacciones finas (arrastre de joints o knots, snapping, multiselección: van con SC-12).
+
+**Cierre:** Damian genera soportes y raft sobre modelos reales desde la GUI, los ve en el viewport, deshace y exporta; compilación y chequeos focalizados registrados.
+
+**Depende de:** SC-78. Prioridad: high. Estado snapshot: backlog.
+
+## SC-80
+
+**Fallo de stitching de `sl1cer` ("dangling endpoints")** — Línea de soportes DF / slicing
+
+Hallado en la fase 0 del porteo (`docs/sc/DF-PORT.md`): Wolverine centrado falla en el stitching de `sl1cer` a Z 32.5 mm con "2 dangling endpoints". Es de la infraestructura SC, no de los soportes. Reproducir con el caso mínimo, encontrar la causa y arreglarla sin debilitar las protecciones de geometría inválida.
+
+**Cierre:** Caso de regresión que falla antes y pasa después; Wolverine slicea completo; sin regresiones en los chequeos de slicing existentes (SC-33).
+
+**Depende de:** sin dependencia técnica previa. Prioridad: high. Estado snapshot: backlog.
+
+## SC-81
+
+**Soportes y raft DF en el slice y el archivo de salida** — Línea de soportes DF / slicing
+
+Llevar las mallas de soportes y raft de la fachada al slice y a los writers: que el raft quede en las primeras capas, sin huecos ni solapes, y que lo sliceado coincida con el preview.
+
+**Cierre:** Escenas del corpus slicedas con soportes y raft, capas inspeccionadas contra la geometría, archivo de salida validado con el writer correspondiente (SC-35); impresión física solo con autorización (SC-66).
+
+**Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: backlog.
+
+## SC-82
+
+**Benchmarks del pipeline de soportes en escenas reales** — Línea de soportes DF / rendimiento
+
+Medir por etapa (escaneo de islas, derivación, plan, bracing, raft, slice) sobre pocas escenas representativas, frío y caliente, con memoria. Cada medición responde una pregunta concreta; los resultados deciden qué optimizar en CPU y qué evaluar para GPU (SC-77). Parte del marco general de SC-54.
+
+**Cierre:** Corpus y hardware registrados, perfil por etapa con los cuellos de botella identificados y una lista priorizada de optimizaciones con la ganancia esperada.
+
+**Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
