@@ -774,6 +774,9 @@ fn append_slice_rafts(
     Ok(())
 }
 
+/// One tube's centre line and its edges' (start, end) radii.
+type Chain = (Vec<ChainPoint>, Vec<(f64, f64)>);
+
 /// A shaft's resolved segments as smooth tubes: each run of connected
 /// segments is one chain, Beziers sampled as DragonFruit samples them, a
 /// bicone wherever DragonFruit would draw a joint sphere between segments.
@@ -805,7 +808,7 @@ fn append_smooth_shaft(
             js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale),
         )
     };
-    let mut chains: Vec<(Vec<ChainPoint>, Vec<(f64, f64)>)> = Vec::new();
+    let mut chains: Vec<Chain> = Vec::new();
     let mut previous: Option<&Segment> = None;
     for &(seg, ep) in resolved {
         let radius = js_max(0.001, js_max(0.05, seg.diameter) * 0.5);
