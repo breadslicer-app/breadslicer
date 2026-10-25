@@ -10,6 +10,7 @@
 pub mod clipper;
 pub mod js_math;
 pub mod native;
+pub mod pipeline;
 pub mod supports;
 pub mod three;
 pub mod three_mesh_bvh;

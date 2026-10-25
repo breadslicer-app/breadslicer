@@ -114,7 +114,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-75](#sc-75) | backlog | soportes | Re-colocar miembros huérfanos de un host recortado (bug DF) | — |
 | [SC-76](#sc-76) | backlog | soportes | Mejoras post-porteo DF: lista de hallazgos | SC-75 |
 | [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76, SC-82 |
-| [SC-78](#sc-78) | todo | soportes | Fachada del core de soportes DF portados | — |
+| [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
 | [SC-79](#sc-79) | backlog | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | backlog | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
@@ -919,7 +919,14 @@ Una sola entrada sobre `support-gen-df`, del estilo `generate_supports(escena, a
 
 **Cierre:** Prueba que corre la fachada sobre escenas del corpus y da exactamente lo mismo que las llamadas por módulo de los tests de paridad; cancelación probada a mitad de cada etapa sin resultados parciales instalados.
 
-**Depende de:** porteo DF completo (hecho). Prioridad: high. Estado snapshot: todo.
+**Hecho (2026-10-25):** `libs/sc-geom/support-gen-df/src/pipeline.rs`, con `generate_supports(models, state, settings, new_id, progress, cancel)` y `build_rafts`. Por modelo: geometría mundial como `prepareWorldGeom`, escaneo nativo y de overhangs con los valores por defecto del panel de islas, derivación y plan con bracing sobre el estado que dejaron los modelos anteriores. Al final, los rafts del export con la holgura de los modelos visibles. `tests/pipeline.rs` arma dos escenas con mallas del bloque 8a (cubos y mesa con raft sólido; shell rotado y knot oculto con raft de línea por modelo) y verifica:
+- igualdad exacta con las etapas llamadas una por una (islas, resultados, estado de soportes y mallas de raft);
+- el orden de los reportes de progreso;
+- `Cancelled` en cada uno de los 9 límites de etapa.
+
+Límite: la cancelación se revisa **entre** etapas; una etapa larga (el plan) no se interrumpe por dentro. Eso queda para el contrato de jobs (SC-37) cuando SC-79 lo pida.
+
+**Depende de:** porteo DF completo (hecho). Prioridad: high. Estado snapshot: done.
 
 ## SC-79
 
