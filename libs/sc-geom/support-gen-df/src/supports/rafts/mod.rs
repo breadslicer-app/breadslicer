@@ -1,4 +1,4 @@
-//! DragonFruit `src/supports/Rafts/`: the geometry auto-support borrows. The
-//! raft generator itself is ported with the rafts.
+//! DragonFruit `src/supports/Rafts/`: the crenelated raft generator (block 9c)
+//! and the hull auto-support borrows from it.
 
 pub mod crenelated;
