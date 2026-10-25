@@ -27,9 +27,9 @@ use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::{IndexedMesh, ValidatedEdgeManifoldMesh, Vertex};
 use sc_mesh_fixtures::{
-    aob_saddle_tetrahedron, bowtie_tetrahedra, cuboid_with_pinched_z_tunnel, cuboid_with_y_tunnel,
-    cuboid_with_z_tunnel, on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron,
-    unit_cube_mesh,
+    aob_saddle_tetrahedron, bowtie_tetrahedra, coplanar_face_crossing_solid,
+    cuboid_with_pinched_z_tunnel, cuboid_with_y_tunnel, cuboid_with_z_tunnel,
+    on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron, unit_cube_mesh,
 };
 
 use crate::contour::ClosedRing;
@@ -496,6 +496,30 @@ fn on_edge_skim_above_tetrahedron_at_z_zero_emits_no_on_edge_segment() {
     );
 }
 
+#[test]
+fn coplanar_face_crossing_solid_at_z_zero_stitches_through_the_coplanar_border() {
+    // The flat face V0-V1-V2 counts as lying just below the plane, so the
+    // contour runs along its edge V0-V1 shared with the face that rises to V3,
+    // and not along V1-V2 or V2-V0 (their neighbours drop to V4). Dropping the
+    // V0-V1 segment left V0 and V1 with 1 hub endpoint each: the
+    // "2 dangling endpoints" failure of the posed Wolverine at Z 32.5 mm.
+    let mesh = coplanar_face_crossing_solid();
+    let w = witness(&mesh);
+    let topology = MeshTopology::from_edge_manifold(&w);
+    let segments = slice_at(&w, 0.0);
+    let rings = stitch_layer(&segments, 0.0, &topology).expect("coplanar border closes cleanly");
+    assert_eq!(rings.len(), 1, "expected one closed ring, got {rings:?}");
+    let ring = &rings[0];
+    assert_eq!(
+        ring.vertices().len(),
+        3,
+        "expected V0, V1 and the V3-V4 crossing"
+    );
+    // Triangle (0, 0), (2, 0), (1, -1): the cross-section of the upper
+    // tetrahedron just above the coplanar face.
+    assert!((ring.signed_area().abs() - 1.0).abs() < 1e-12);
+}
+
 // =====================================================================
 // Bucketed candidate scan: segments_at_z_for_faces fed by LayerBuckets
 // must reproduce the full scan bit for bit.
@@ -543,6 +567,7 @@ fn bucketed_scan_matches_the_full_scan_on_every_fixture() {
     assert_bucketed_scan_matches_full_scan(&aob_saddle_tetrahedron());
     assert_bucketed_scan_matches_full_scan(&on_edge_crossing_tetrahedron());
     assert_bucketed_scan_matches_full_scan(&on_edge_skim_above_tetrahedron());
+    assert_bucketed_scan_matches_full_scan(&coplanar_face_crossing_solid());
 }
 
 #[test]
