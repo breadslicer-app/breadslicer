@@ -381,6 +381,40 @@ del dedup, que es equivalente (la compuerta de distancia ya la implica).
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 71 tests más
 1 de escala ignorado.
 
+### 6b — grilla, puente de cavidad, perfil del bosque, borrador (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `PlacementLogic/Grid/{gridPlacement,types}.ts` | `placement_logic/grid/grid_placement.rs` | completo: índice de hosts por nodo (raíz y contacto), hosts cerca del nodo, override del stump, adjunción por knot de arriba hacia abajo (leaf o branch, con piso de diámetro y repliegue a la banda), vecinos, compuerta de colisión del trunk, snap y rechazos |
+| `supportTypeRegistry.ts` (`PlacedSupport`, `placementOfResolved`) | `support_type_registry.rs` | la forma genérica de una colocación; el override del stump la devuelve también |
+| `SupportTypes/Trunk/useTrunkPlacement.ts` (`buildCavityBridge`) | `support_types/trunk/cavity_bridge.rs` | completo; el hook de React es de la GUI |
+| `SupportTypes/Trunk/TrunkReplacement/maxConnectedDiameter.ts` | `support_types/trunk/trunk_replacement/max_connected_diameter.rs` | `memberDiameterOf`, `applyDiameterToTrunk`, el perfil escalonado y el resize del bosque; la caminata del grafo conectado va con el store |
+| `PlacementLogic/PlacementUtils.ts` (`calculateSmoothedNormal`) | `placement_logic/placement_utils.rs` | completo (con `getBarycoord` de three) |
+| `autoSupport/supportDraft.ts` | `auto_support/support_draft.rs` | completo |
+
+`decideGridPlacement` lee dos settings, como DF: los de la decisión
+(`args.settings`) y los globales que leen los builders de miembros y la sonda de
+colisión del branch.
+
+**Evidencia:** `scripts/df-oracle/golden_autosupport_b.ts` → `tests/fixtures/df_autosupport_b.json`:
+16 mundos de 30 pasos sobre cuatro mallas (knot, mesa, techo/piso con poste, una
+escena baja rotada): candidato de trunk (ruteado o no), decisión de grilla y
+commit al borrador en un snapshot que crece, con tips agrupados sobre los
+anteriores, pasos de búsqueda gruesos y medio de los mundos cambiando el
+espaciado a mitad de corrida (raíces entre nodos). 480 decisiones (166 trunks,
+41 branches, 3 leaves, 38 stumps; rechazos por colisión, sin adjunción y stump
+bajo la raíz), el snapshot final, el resize del bosque y los diámetros de
+miembro; 163 puentes de cavidad y 137 normales suavizadas. Un solo contador de
+ids para toda la corrida en ambos lados. `tests/df_parity_autosupport_b.rs`:
+**igualdad exacta**. Sensibilidad: 13 de 16 mutaciones fallan; sobreviven el
+`max` de la junta inferior (equivalente: la junta es compartida y el pase de la
+superior ya la cubre) y dos umbrales de casi-roce que el fixture apenas toca (la
+tolerancia de medio paso de `hostsNearNode` entre 0,4 y 0,5, y el radio de la
+compuerta del puente).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 72 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:

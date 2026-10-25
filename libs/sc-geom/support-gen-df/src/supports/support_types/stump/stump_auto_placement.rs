@@ -13,7 +13,9 @@ use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_primitives::contact_cone::contact_cone_utils::get_final_socket_position;
-use crate::supports::support_type_registry::SupportTypeId;
+use crate::supports::support_type_registry::{
+    PlacedSupport, SupportEntityValue, SupportTypeId, placement_of_resolved,
+};
 use crate::supports::types::{LimitationCode, Stump, Vec3};
 use crate::three::math_utils::{js_cos, js_hypot, js_max, js_min, js_sin};
 
@@ -197,22 +199,13 @@ pub struct ContactOverrideRequest<'a> {
     pub mesh: Option<&'a dyn CollisionField>,
 }
 
-/// `PlacedSupport` for a stump. A stump declares no `edges`: its frustum root
-/// IS the support, so it carries no separate primitive into the draft
-/// (`supplied: {}`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlacedStump {
-    pub type_id: SupportTypeId,
-    pub entity: Stump,
-    pub supplied: IndexMap<String, String>,
-}
-
 /// `ContactOverrideResult` for the stump.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StumpOverrideResult {
-    pub placed: PlacedStump,
+    /// A stump declares no `edges`: its frustum root IS the support, so it
+    /// carries no separate primitive into the draft (`supplied: {}`).
+    pub placed: PlacedSupport,
     /// Set when the stump refuses this contact; passed through as the rejection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal: Option<LimitationCode>,
@@ -220,12 +213,13 @@ pub struct StumpOverrideResult {
     pub support_data: SupportData,
 }
 
-fn placed(stump: Stump) -> PlacedStump {
-    PlacedStump {
-        type_id: SupportTypeId::Stump,
-        entity: stump,
-        supplied: IndexMap::new(),
-    }
+fn placed(stump: Stump) -> PlacedSupport {
+    placement_of_resolved(
+        SupportTypeId::Stump,
+        SupportEntityValue::Stump(stump),
+        IndexMap::new(),
+        None,
+    )
 }
 
 pub fn build_stump_contact_override(
