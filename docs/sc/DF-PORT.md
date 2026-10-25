@@ -179,7 +179,7 @@ cual es correcto.
 | `autoSupport/settings.ts`, `autoBracing/settings.ts` | `auto_support/settings.rs`, `auto_bracing/settings.rs` | completo (`clampNumeric` compartido en `numeric_constraint.rs`) |
 | `autoSupport/parameterSizing.ts` | `auto_support/parameter_sizing.rs` | `applySizingOverridesToSettings`; el sizing empírico va con el Auto |
 | `rendering/SupportBuilder.tsx` | `rendering/support_builder.rs` | `SupportData` y `supportDataForEntity` (el render es de la GUI) |
-| `SupportTypes/Trunk/{trunkBuilder,trunkConstructionJoints,trunkRouteTypes,trunkRouteResolution}.ts` | `support_types/trunk/` | completo; `buildTrunkData` con malla llama a `SmartPlacementV3`, que se porta con el router y alimenta el mismo `buildTrunkDataFromPlacement` |
+| `SupportTypes/Trunk/{trunkBuilder,trunkConstructionJoints,trunkRouteTypes,trunkRouteResolution}.ts` | `support_types/trunk/` | completo; `buildTrunkData` con malla es `build_trunk_data_routed` (bloque 4) |
 | `SupportTypes/Branch/branchBuilder.ts` | `support_types/branch/branch_builder.rs` | completo (búsqueda de socket 4×12×4 con puntaje y preferencia de inclinación, `remapBranchGeometryIds`) |
 | `SupportTypes/Leaf/leafBuilder.ts` | `support_types/leaf/leaf_builder.rs` | completo |
 
@@ -212,6 +212,52 @@ empates construidos (`tests/fixtures/v8_to_fixed.txt`), que encontró un error d
 port (desempate negativo hacia el cero): 146 casos, corregido.
 
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 55 tests más
+1 de escala ignorado.
+
+## Fase 1, bloque 4 — router V3 y `buildTrunkData` con malla (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `PlacementLogicV3/EscapeJointSearch.ts` | `placement_logic_v3/escape_joint_search.rs` | completo: caminata a 45° por dirección, búsqueda en la red por anillos ordenados por desvío, presupuesto de 900 sondas, abanico de direcciones |
+| `PlacementLogicV3/SmartPlacementV3.ts` | `placement_logic_v3/smart_placement_v3.rs` | completo: caída recta con desvíos de cono, una diagonal + caída vertical, volumen de raíces, memos, reintento sin grilla por la regla de forma, `RouterStats` |
+| `PlacementLogic/smartPlacementSearchUtils.ts` | `placement_logic/smart_placement_search_utils.rs` | geometría completa; los tipos de nodo y el orden de cola del A* retirado no tienen llamador y no se portan |
+| `PlacementLogic/Grid/nearestCandidateNodeKeys.ts` | `placement_logic/grid/nearest_candidate_node_keys.rs` | completo |
+| `buildTrunkData` con `mesh` | `trunk_builder::build_trunk_data_routed` | completo; `TrunkRouter { sdf, matrix_world, stats }` y la misma `buildTrunkDataFromPlacement` contra ese campo |
+
+**Diferencias deliberadas, ninguna cambia una colocación.** La malla es su campo de
+distancia: el llamador pasa el `SdfCache` del pool y la matriz de mundo
+(`refreshMatrix` lee `mesh.matrixWorld`). Settings y contadores entran como
+argumentos (`getSettings()` y el `routerStats` global). El prewarm de mapas de
+columna de los presets fijados corre en `requestIdleCallback`, que fuera del hilo
+principal del navegador no hace nada (worker de DF y Node); la GUI puede llamar
+`SdfCache::prewarm_column_map`. No se produce el snapshot del overlay de debug ni
+las marcas de perf. Las dos consultas que DF hace sólo para ese overlay
+(columna recta y raíces bajo el socket) se mantienen, porque cachean.
+
+**Evidencia:** `scripts/df-oracle/golden_v3.ts` → `tests/fixtures/df_v3.json`:
+300 búsquedas (libres y en red) contra el modelo analítico de cajas de los tests
+de DF, con predicado de base disperso y opciones fuera de rango; 100 abanicos;
+60 anillos de claves (claves malformadas incluidas); 400 casos de utilidades; y
+703 llamadas al router en orden — `calculateSmartPlacementV3` (con
+`ignoreGrid`, `isPreview`, islas chicas) y `buildTrunkData` con malla (overrides,
+`ignoreGrid`) — sobre cinco escenas: torus knot, la mandíbula y la pared de los
+tests de DF, una mesa con cajón debajo y un knot movido/rotado que deriva a mitad
+de la corrida. Un campo por malla compartido en el orden de DF y los contadores
+del router comparados después de cada llamada. Resultado: 160 rutas de una junta,
+~150 caídas rectas, 26 reintentos sin grilla, rechazos por colisión y ángulo;
+búsquedas `found`/`never-cleared`/`probe-budget`/`no-direction`.
+`tests/df_parity_v3.rs`: **igualdad exacta**, más los 7 tests de
+`smartPlacementV3.test.ts` portados.
+
+Sensibilidad: 15 mutaciones fallan (desempate de la caminata, orden y sentido del
+abanico, orden de desvíos, tolerancia de base recta, muestras de perímetro, claves
+de memo, cubetas de sondas, presupuesto de nodos, tolerancia del techo diagonal,
+pendiente del ajuste por largo). Sobreviven las equivalentes: la regla de forma
+sobre la cadena recta (la base queda a ≤0.05 mm del socket, siempre vertical), la
+holgura de la pata vertical (la base cae bajo la junta) y el techo de los conos
+desviados (la inclinación de la junta es siempre la constante de 45°).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 63 tests más
 1 de escala ignorado.
 
 ## Fases siguientes

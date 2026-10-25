@@ -2112,7 +2112,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/mod.rs",
-          "sha256": "291067e646b35c419a9146de9e0d380236aac48acdf6741b0f85ea5f9b098bfc"
+          "sha256": "259448261210a160b0b4bf5ed4ba0d674216aeb7915a70f0857e2ac9026f652b"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/numeric_constraint.rs",
@@ -2132,11 +2132,15 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/grid/grid_math.rs",
-          "sha256": "232a762dfbf804f93ab2a05a31e838847365e16733a75b4b7b6f5c92e4f348eb"
+          "sha256": "cb09e1c7f861d5333e80b19883e3d77d29796e0d9133141a5553a0bc5022e576"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/grid/mod.rs",
-          "sha256": "8996ffea54ea86a0f2ed0ece8a5712e08bd3b07dd94a355d9b9f52202ee98470"
+          "sha256": "08a740e06c85be7e50d89793bdf5fe57b82279bea98e6d7323d70c237c0a9d90"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/grid/nearest_candidate_node_keys.rs",
+          "sha256": "dad9d30e0cb1616d64b3a9a86d1dc145109513c85172b0d22311f4b462d9230c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/joint_constraint_solver.rs",
@@ -2144,7 +2148,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/mod.rs",
-          "sha256": "819f70bf9ce8baab97d5c18e4cc9fc9848cd11390e4639af02cafcd877a693c3"
+          "sha256": "7fe224b10645cae5166e8bbb3c88ba3639ff9d7aa295fc936b3fc350d181ca4c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/pathfinding/column_clearance_map.rs",
@@ -2167,8 +2171,24 @@
           "sha256": "55bbb343153e1c7e50c2eccb76531c6da45346e18e593e41821f98d79abd263e"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/smart_placement_search_utils.rs",
+          "sha256": "6d26f57e6b8593603ddd95702733571e50fc1291ed8fb40112262b8e18e4c9ce"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/standard_placement.rs",
           "sha256": "31d22b8c17e899a8725f81b5531a5a4cb417757a2cb3240ab9d3f13ab3f9f4f2"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic_v3/escape_joint_search.rs",
+          "sha256": "1eb1cbdc6e0b2c530e71e2bf12243ce40ef52414b6b5e2ebf8def56ba53d1333"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic_v3/mod.rs",
+          "sha256": "65c381cc3cce4ff770197f87a7e48b8ba35e24282e2d508b590878a55b8e6f61"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic_v3/smart_placement_v3.rs",
+          "sha256": "5c04a2b9be481d2e38a1baa755979229b8f6c1cf9459cf171162ad49c6055348"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/rendering/mod.rs",
@@ -2292,7 +2312,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/trunk/trunk_builder.rs",
-          "sha256": "82ffb9001f777ea695de7b3154c55f843b57c82d5506c0e72e1cb5b9c0be020f"
+          "sha256": "8c160674549a9e64accd760e2c314098633bdcfd2d41186c3b8d71e16e1e5ed3"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/trunk/trunk_construction_joints.rs",

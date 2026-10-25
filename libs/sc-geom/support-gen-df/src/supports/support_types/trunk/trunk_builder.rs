@@ -7,8 +7,7 @@
 //!
 //! `build_trunk_data` takes the mesh-free path (`calculateStandardPlacement`);
 //! with a mesh DragonFruit routes through `calculateSmartPlacementV3`, which is
-//! ported with the placement router and then feeds the same
-//! [`build_trunk_data_from_placement`]. Settings are passed in (DragonFruit's
+//! [`build_trunk_data_routed`]; both feed [`build_trunk_data_from_placement`]. Settings are passed in (DragonFruit's
 //! `getSettings()`), ids come from `new_id` (`uuidv4()`), and the mesh is its
 //! collision field.
 
@@ -25,8 +24,12 @@ use crate::supports::auto_support::parameter_sizing::{
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::placement_logic::grid::grid_math::grid_snapped_xy_from_key;
+use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use crate::supports::placement_logic::standard_placement::{
     TrunkPlacementInput, TrunkPlacementResult, calculate_standard_placement,
+};
+use crate::supports::placement_logic_v3::smart_placement_v3::{
+    RouterStats, SmartPlacementV3Context, SmartPlacementV3Input, calculate_smart_placement_v3,
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::support_settings_codec::encode_support_settings_hex;
@@ -44,6 +47,7 @@ use crate::supports::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
     WarningCode,
 };
+use crate::three::Matrix4;
 use crate::three::math_utils::{js_max, js_min};
 
 const JOINT_CHAIN_Z_EPSILON: f64 = 0.0001;
@@ -240,8 +244,7 @@ pub struct TrunkBuildResult {
 /// - ContactCone at the tip
 ///
 /// Returns `None` when a mesh is given: DragonFruit then routes with
-/// `calculateSmartPlacementV3`, whose result goes to
-/// [`build_trunk_data_from_placement`].
+/// `calculateSmartPlacementV3`, which is [`build_trunk_data_routed`].
 pub fn build_trunk_data(
     input: &TrunkBuildInput<'_>,
     settings: &SupportSettings,
@@ -250,6 +253,53 @@ pub fn build_trunk_data(
     if input.mesh.is_some() {
         return None;
     }
+    let placement = calculate_standard_placement(&placement_input(input, settings), settings);
+    Some(build_trunk_data_from_placement(
+        input, &placement, settings, new_id,
+    ))
+}
+
+/// The router's half of `buildTrunkData` with a mesh: the model's pooled
+/// distance field, the mesh's world matrix, and the run's router counters.
+pub struct TrunkRouter<'a> {
+    pub sdf: &'a mut SdfCache,
+    pub matrix_world: Matrix4,
+    pub stats: &'a mut RouterStats,
+}
+
+/// Build trunk data with the model mesh: the V3 router (SDF-backed, bounded)
+/// places it, with the same collision checks for preview and click, and the
+/// placement is built against that same field.
+pub fn build_trunk_data_routed(
+    input: &TrunkBuildInput<'_>,
+    router: &mut TrunkRouter<'_>,
+    settings: &SupportSettings,
+    new_id: &mut dyn FnMut() -> String,
+) -> TrunkBuildResult {
+    let placement = calculate_smart_placement_v3(
+        &SmartPlacementV3Input {
+            placement: placement_input(input, settings),
+            model_id: input.model_id,
+            is_preview: input.is_preview,
+        },
+        router.sdf,
+        router.matrix_world,
+        router.stats,
+        settings,
+        SmartPlacementV3Context {
+            ignore_grid: input.ignore_grid == Some(true),
+        },
+    );
+    let field: &dyn CollisionField = &*router.sdf;
+    let routed = TrunkBuildInput {
+        mesh: Some(field),
+        ..*input
+    };
+    build_trunk_data_from_placement(&routed, &placement, settings, new_id)
+}
+
+/// What both placements are asked: the tip, its profile and the roots' top.
+fn placement_input(input: &TrunkBuildInput<'_>, settings: &SupportSettings) -> TrunkPlacementInput {
     let overrides = input.overrides.as_ref();
     let tip_profile = build_tip_profile(settings, overrides);
     let disk_height = overrides
@@ -259,22 +309,14 @@ pub fn build_trunk_data(
         .and_then(|o| o.roots_cone_height_mm)
         .unwrap_or(settings.roots.cone_height_mm);
 
-    // Roots dimensions
-    let roots_top_z = disk_height + cone_height; // Where the Roots sphere center is
-
-    let placement = calculate_standard_placement(
-        &TrunkPlacementInput {
-            tip_pos: input.tip_pos,
-            tip_normal: input.tip_normal,
-            tip_profile,
-            roots_top_z,
-            is_small_island: input.is_small_island,
-        },
-        settings,
-    );
-    Some(build_trunk_data_from_placement(
-        input, &placement, settings, new_id,
-    ))
+    TrunkPlacementInput {
+        tip_pos: input.tip_pos,
+        tip_normal: input.tip_normal,
+        tip_profile,
+        // Roots dimensions: where the Roots sphere center is
+        roots_top_z: disk_height + cone_height,
+        is_small_island: input.is_small_island,
+    }
 }
 
 pub fn build_trunk_data_from_placement(
