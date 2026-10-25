@@ -1,5 +1,6 @@
 //! DragonFruit `src/supports/autoSupport/`.
 
+pub mod auto_place;
 pub mod candidate_generation;
 pub mod constants;
 pub mod contact_tip_cap;

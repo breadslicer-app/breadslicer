@@ -2083,6 +2083,30 @@
           "sha256": "8f4e33051faf95e0ec523ef5e36ffd7fc6720f6e8e714d3bec39f8c10f29f24e"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/fan.rs",
+          "sha256": "006d4851b884c5e54e9f9b91e7b6b55837922ff79d29627703a25c2eb40cafa4"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/helpers.rs",
+          "sha256": "a8cf4749747057af4c4bc1b1679659967b9a84c2055bd3d450a9b57d53ad1168"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/mod.rs",
+          "sha256": "a5d3cd63f87ca5f3e96397382e86dd1ab80bdd87ae23e875210ecd75c23acdb9"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/place.rs",
+          "sha256": "7f8e3d9acf487d214efeaa8d623858cf51c8098d8e447f672a63be22080107ab"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/plan.rs",
+          "sha256": "134ce9bb67cf22ea1b9d3fe5b37f06aabf491a4b69e90d494445d800ec877e56"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/report.rs",
+          "sha256": "6b9d44ee605a87bfcf2df163a076478a08676fc84d95b1037c3afe2865af7f18"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/candidate_generation.rs",
           "sha256": "4790bc7186f0b5f059612a77d13a1848dcbedc897cbaf268993490cffb23b3d0"
         },
@@ -2112,7 +2136,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/mod.rs",
-          "sha256": "06323770b16ec55a473fe9556b6f2cda54d721faf43f3e1cc2de88b93e7f8bc2"
+          "sha256": "924ab0aaf3237b639fd34ab990dfa904b60d20f06ee274ebef1d72d72a63620c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/parameter_sizing.rs",
@@ -2352,7 +2376,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_type_registry.rs",
-          "sha256": "118bed6de4706961d201aa84421ac52b51d4f5ac526e65071cfaa6b0bc3c92e4"
+          "sha256": "23190241fcf3b93c7de6c1b0cdd85754ea52759b9c3d5eed251432c6ff856d8b"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/brace/brace_span_diameters.rs",
@@ -2444,7 +2468,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/trunk/trunk_builder.rs",
-          "sha256": "8c160674549a9e64accd760e2c314098633bdcfd2d41186c3b8d71e16e1e5ed3"
+          "sha256": "615d850684fdb646a7e772688aba81673b323c8f53519d93dd3cf10645140b3c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/trunk/trunk_construction_joints.rs",

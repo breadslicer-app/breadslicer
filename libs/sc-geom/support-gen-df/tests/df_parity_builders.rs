@@ -287,6 +287,7 @@ fn trunk_input<'a>(c: &'a Value, mesh: Option<&'a dyn CollisionField>) -> TrunkB
         tip_body_diameter_mm: opt(&o["tipBodyDiameterMm"]),
         tip_length_mm: opt(&o["tipLengthMm"]),
         tip_disk_length_override_mm: opt(&o["tipDiskLengthOverrideMm"]),
+        tip_penetration_mm: None,
     });
     TrunkBuildInput {
         tip_pos: read(&input["tipPos"]),

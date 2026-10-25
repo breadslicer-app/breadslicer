@@ -1740,6 +1740,14 @@ pub enum SupportOriginId {
     /// the closest neighbours in the whole forest. Converting them onto the
     /// pillar they ring turns a crown of pillars into one plate contact.
     Reinforcement,
+    // Not origins: the auto pass's cavity fan stamps a leaf with its
+    // candidate's detector source cast to an origin (`candidate.source as
+    // SupportOrigin`). They are written as they are, are not `SUPPORT_ORIGINS`
+    // keys (so not in `ALL`), and convert to nothing, as an unknown key reads.
+    Voxel,
+    Minima,
+    Intersection,
+    Stabilization,
 }
 
 impl SupportOriginId {
@@ -1759,12 +1767,21 @@ impl SupportOriginId {
             SupportOriginId::Island => "island",
             SupportOriginId::Standalone => "standalone",
             SupportOriginId::Reinforcement => "reinforcement",
+            SupportOriginId::Voxel => "voxel",
+            SupportOriginId::Minima => "minima",
+            SupportOriginId::Intersection => "intersection",
+            SupportOriginId::Stabilization => "stabilization",
         }
     }
 
     pub const fn convertible_to_tree(self) -> bool {
         match self {
-            SupportOriginId::Stump | SupportOriginId::Island => false,
+            SupportOriginId::Stump
+            | SupportOriginId::Island
+            | SupportOriginId::Voxel
+            | SupportOriginId::Minima
+            | SupportOriginId::Intersection
+            | SupportOriginId::Stabilization => false,
             SupportOriginId::Overhang
             | SupportOriginId::Standalone
             | SupportOriginId::Reinforcement => true,
