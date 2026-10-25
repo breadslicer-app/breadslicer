@@ -50,14 +50,67 @@ antes de generar soportes, en el stitching de `sl1cer` a Z 32.5 mm
 y sigue presente en esta rama**: el detector de vóxeles de DF no pasa por él.
 Hay que resolverlo aparte de los soportes.
 
+## Fase 1, bloque 1 — tipos, registro y primitivas (hecho)
+
+Crate [`libs/sc-geom/support-gen-df`](../../libs/sc-geom/support-gen-df/)
+(AGPL-3.0-or-later, `NOTICE` con atribución DF y three.js MIT, `COPYING`).
+Un archivo Rust por archivo DF, con el origen en el encabezado.
+
+- **Matemática three.js**: shim propio (`src/three/`) transliterado de three r181
+  (`Vector3`, `Quaternion`, `Line3`, `Ray`, `MathUtils`) en lugar de glam, para
+  conservar el orden de operaciones de three (`normalize` multiplica por
+  `1/length`, `lerp`, `setFromUnitVectors`, `distanceSqToSegment`). `Math.max/min`
+  conservan la semántica JS con NaN.
+- **Datos**: `types.ts` completo con serde y los nombres de campo de DF; un
+  snapshot DF se lee y se reescribe sin cambios. Colecciones en `IndexMap`
+  (orden de inserción de un objeto JS, del que dependen los recorridos DF).
+- **Registro**: los 8 descriptores con todos sus campos y todas las funciones
+  derivadas. Las "ranuras" que DF llena al cargar (`register*`) quedan como
+  listas fijas de pertenencia; el comportamiento se despacha directo cuando se
+  porte cada tipo.
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `types.ts` | `supports/types.rs` | completo |
+| `supportTypeRegistry.ts` | `supports/support_type_registry.rs` | completo (ranuras como listas) |
+| `history/actionTypes.ts` | `add_action`/`remove_action` en el registro | sólo nombres de acción |
+| `constants.ts` | `supports/constants.rs` | completo |
+| `autoSupport/constants.ts` | `supports/auto_support/constants.rs` | completo |
+| `Curves/BezierUtils.ts` | `supports/curves/bezier_utils.rs` | completo |
+| `SupportPrimitives/ContactCone/{types,contactConeUtils}.ts` | `support_primitives/contact_cone/` | lógica completa; el render queda fuera |
+| `SupportPrimitives/ContactDisk/{contactDiskUtils,ContactDiskInteraction}.ts` | `support_primitives/contact_disk/` | lógica completa |
+| `SupportPrimitives/Knot/{knotUtils,segmentEndpoints}.ts` | `support_primitives/knot/` | completo salvo la etiqueta de historial (UI) |
+| `SupportPrimitives/Shaft/shaftTaperGeometry.ts` | `support_primitives/shaft/` | completo |
+| `SupportPrimitives/Joint/jointUtils.ts` | `support_primitives/joint/joint_utils.rs` | `splitSupportShaft`, `findClosestSegment`; `moveJoint` espera al solver de restricciones y a `curveUtils` |
+| `PlacementLogic/CollisionAvoidance.ts` | `placement_logic/collision_avoidance.rs` | completo sobre el trait `CollisionField` (las 3 consultas DF a `SDFCache`); falta portar `SDFCache` |
+| `SupportTypes/Kickstand/types.ts` | `support_types/kickstand/types.rs` | tipos de datos; `KickstandBuildInput` va con el builder |
+
+Diferencias deliberadas, ninguna en un camino normal: un `ContactDisk` en el
+lugar de un socket de cono (DF lanza una excepción leyendo `normal`) se trata
+como "sin contacto" y aplica el stub de respaldo; los ids que DF genera con
+`uuidv4()` los provee quien llama, para poder correr determinista.
+
+**Evidencia** (sin build de la GUI, sin escritorio):
+- 41 tests portados de DF (`supportTypeRegistry`, `derivedTypeSubsets`,
+  `contactDiskNib`, `jointInsertionKnotRemap`, parte de taper de
+  `shaftTaperGeometry`) más los chequeos de consistencia que DF corre al cargar el
+  registro.
+- **Paridad bit a bit con DF**: `scripts/df-oracle/golden_primitives.ts` corre las
+  funciones originales de DF sobre 150 entradas pseudoaleatorias deterministas
+  por función (20 funciones, ~3.000 casos, incluidos contactos degenerados, normales
+  nulas y perfiles legacy) → `tests/fixtures/df_primitives.json`;
+  `tests/df_parity_primitives.rs` las corre en Rust y exige igualdad exacta
+  (tolerancia 0). Un cambio de 1e-7 en una constante o de un ulp en `normalize`
+  hace fallar el test (comprobado).
+- `cargo clippy -p support-gen-df --all-targets` (workspace `deny`) y `cargo fmt` limpios.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
    tipos/registro → primitivas y builders (Trunk, Branch, Leaf, Twig, Stick,
    Stump, Brace, Kickstand) → `PlacementLogicV3` → `autoSupport` → `autoBracing`
-   → `Rafts`. Matemática three.js sobre un shim delgado (glam); raycasts DF
-   sobre el BVH de SC. Se portan los tests de DF y cada módulo se compara con el
-   oráculo antes de avanzar.
+   → `Rafts`. Raycasts y distancias DF sobre el BVH de SC. Se portan los tests
+   de DF y cada módulo se compara con el oráculo antes de avanzar.
 2. **Detección de islas completa**: voxel (TS), overhangs y mínimos (Rust DF, ya
    probados en la rama anterior) sobre raster/topología SC.
 3. **Integración GUI**: jobs cancelables, preview, un undo, 3MF y salida SC;
