@@ -81,8 +81,8 @@ Un archivo Rust por archivo DF, con el origen en el encabezado.
 | `SupportPrimitives/ContactDisk/{contactDiskUtils,ContactDiskInteraction}.ts` | `support_primitives/contact_disk/` | lógica completa |
 | `SupportPrimitives/Knot/{knotUtils,segmentEndpoints}.ts` | `support_primitives/knot/` | completo salvo la etiqueta de historial (UI) |
 | `SupportPrimitives/Shaft/shaftTaperGeometry.ts` | `support_primitives/shaft/` | completo |
-| `SupportPrimitives/Joint/jointUtils.ts` | `support_primitives/joint/joint_utils.rs` | `splitSupportShaft`, `findClosestSegment`; `moveJoint` espera al solver de restricciones y a `curveUtils` |
-| `PlacementLogic/CollisionAvoidance.ts` | `placement_logic/collision_avoidance.rs` | completo sobre el trait `CollisionField` (las 3 consultas DF a `SDFCache`); falta portar `SDFCache` |
+| `SupportPrimitives/Joint/jointUtils.ts` | `support_primitives/joint/joint_utils.rs` | `splitSupportShaft`, `findClosestSegment`, `moveJoint` (bloque 2) |
+| `PlacementLogic/CollisionAvoidance.ts` | `placement_logic/collision_avoidance.rs` | completo sobre el trait `CollisionField`, que implementa `SdfCache` (bloque 2) |
 | `SupportTypes/Kickstand/types.ts` | `support_types/kickstand/types.rs` | tipos de datos; `KickstandBuildInput` va con el builder |
 
 Diferencias deliberadas, ninguna en un camino normal: un `ContactDisk` en el
@@ -103,6 +103,67 @@ como "sin contacto" y aplica el stub de respaldo; los ids que DF genera con
   (tolerancia 0). Un cambio de 1e-7 en una constante o de un ulp en `normalize`
   hace fallar el test (comprobado).
 - `cargo clippy -p support-gen-df --all-targets` (workspace `deny`) y `cargo fmt` limpios.
+
+## Fase 1, bloque 2 — SDF, BVH, restricciones, curvas y `moveJoint` (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `PlacementLogic/Pathfinding/SDFCache.ts` | `placement_logic/pathfinding/sdf_cache.rs` | completo: tabla de celdas en `f32` con su capacidad y el `Map` de desborde en `f64`, cuantización con `Math.round` de JS, firma por normal de cara, marcha con cota, mapa de columnas |
+| `PlacementLogic/Pathfinding/SDFCachePool.ts` | `placement_logic/pathfinding/sdf_cache_pool.rs` | completo; el pool es un valor del worker en vez de un global, y avisa de deriva de matriz |
+| `PlacementLogic/Pathfinding/ColumnClearanceMap.ts` | `placement_logic/pathfinding/column_clearance_map.rs` | completo (`buildMs` no se registra) |
+| `PlacementLogic/ShaftAngleConstraint.ts` | `placement_logic/shaft_angle_constraint.rs` | completo |
+| `PlacementLogic/JointConstraintSolver.ts` | `placement_logic/joint_constraint_solver.rs` | completo; el store se pasa como argumento |
+| `Curves/curveUtils.ts` | `curves/curve_utils.rs` | completo |
+| three-mesh-bvh 0.8.3 (`MeshBVH`, `closestPointToPoint`) | `three_mesh_bvh/` | construcción `CENTER` y búsqueda del punto más cercano; los raycasts vienen con su primer uso |
+
+**BVH.** El BVH no es el de `mesh-spatial`. En esta rama `mesh-spatial` sólo tiene
+clústeres; el BVH SAH de `sc/development` depende del código de soportes viejo
+(`sc_scene::supports`) y no hace la búsqueda "más cercano primero". Además, DF
+depende de *su* árbol: three-mesh-bvh reordena el índice de triángulos, el
+`faceIndex` se refiere a ese orden, y ante un empate exacto el orden de recorrido
+decide qué cara (y qué normal) firma la distancia. Por eso se portó three-mesh-bvh
+(MIT) sobre las posiciones de la malla SC: mismo árbol, mismo índice reordenado,
+mismas cajas `f32`. Wolverine (1,9 M triángulos): construcción 386 ms, 725
+columnas de colisión en 58 ms (release, `tests/wolverine_sdf_scale.rs`, ignorado
+sin el STL privado).
+
+**Trigonometría de V8.** `Math.sin`/`Math.cos` de V8 14.6 (Node 26) son el
+fdlibm 5.3 original, no glibc ni musl: los kernels originales coinciden en 9.176
+de 9.176 argumentos sin reducción, y `libm`/la std de Rust difieren en ~1 %.
+`src/js_math.rs` porta `k_sin`, `k_cos` (con el término `qx`) y
+`__ieee754_rem_pio2` (tabla `npio2_hw` y constantes verificadas contra π de alta
+precisión). `acos` y el resto ya eran fdlibm = crate `libm`.
+`tests/js_math.rs`: 20.008 argumentos de V8, de 1e-9 a 9e5, idénticos bit a bit
+(los que superan 2^19·π/2 usan la reducción Payne–Hanek de `libm`; los ángulos de
+DF no llegan ahí).
+
+Diferencias deliberadas, documentadas en el código:
+- `updateCurvesAtJoint` modifica en el lugar el segmento Bézier del trunk de
+  entrada; el trunk devuelto refleja todas esas escrituras, pero el valor de
+  entrada de Rust no cambia.
+- `removeSegmentCurve` deja el `bias` en el segmento recto; se conserva
+  (`SegmentShape::Straight::stray_bias`) para que el registro sea igual.
+- `moveJoint` sin `maxStandoffMm` con malla: DF propaga `undefined` → NaN; el port
+  propaga NaN igual.
+
+**Evidencia:** `scripts/df-oracle/golden_sdf.ts` → `tests/fixtures/df_sdf.json`
+(5 mallas: cubo, torus knot, torus knot movido/rotado/escalado, lámina abierta
+plegada, malla `ties` con centros justo en los planos de corte). Por malla: índice
+reordenado, 120 `closestPointToPoint` con umbrales, ~700 consultas SDF en orden de
+llamada (exacta, cuantizada, acotada, trilineal, gradiente, `within`,
+`segmentBlocked`, activación del mapa de columnas) con los contadores
+`cellReads`/`bvhQueries` y el tamaño de la caché, y 200 consultas de columnas.
+Además 300 casos de `clampShaftAngle`, `solveJointConstraint`, las 7 operaciones de
+curvas, `moveJoint` (con/sin malla, modo curva, `skipContactConeSolve`, ángulo
+máximo) intercalados con 300 chequeos de colisión sobre la misma caché.
+`tests/df_parity_sdf.rs` exige **igualdad exacta** en todo. Sensibilidad
+comprobada: guardar la caché en `f64` falla en la op 373 del cubo; cambiar el
+desempate de la partición (`>=` → `>`) falla en el índice de `ties`. Quitar el
+épsilon de las cajas no cambia ningún resultado (sólo poda) y no se detecta, lo
+cual es correcto.
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 49 tests más
+1 de escala ignorado.
 
 ## Fases siguientes
 

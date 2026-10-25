@@ -182,8 +182,12 @@ pub struct BezierCurve {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SegmentShape {
     /// `type?: 'straight'`; `explicit` records whether the tag was written.
+    /// `stray_bias` is the `bias` DragonFruit leaves on a segment it
+    /// de-curved (`removeSegmentCurve` does not strip it); nothing reads it,
+    /// but it is part of the record DragonFruit writes.
     Straight {
         explicit: bool,
+        stray_bias: Option<f64>,
     },
     Bezier(BezierCurve),
 }
@@ -209,7 +213,10 @@ impl Segment {
             diameter,
             top_joint: None,
             bottom_joint: None,
-            shape: SegmentShape::Straight { explicit: false },
+            shape: SegmentShape::Straight {
+                explicit: false,
+                stray_bias: None,
+            },
         }
     }
 
@@ -281,8 +288,14 @@ impl TryFrom<RawSegment> for Segment {
                     resolution: raw.resolution.ok_or_else(|| missing("resolution"))?,
                 })
             }
-            Some("straight") => SegmentShape::Straight { explicit: true },
-            None => SegmentShape::Straight { explicit: false },
+            Some("straight") => SegmentShape::Straight {
+                explicit: true,
+                stray_bias: raw.bias,
+            },
+            None => SegmentShape::Straight {
+                explicit: false,
+                stray_bias: raw.bias,
+            },
             Some(other) => return Err(format!("segment {} has unknown type {other:?}", raw.id)),
         };
         Ok(Segment {
@@ -312,10 +325,14 @@ impl From<Segment> for RawSegment {
             resolution: None,
         };
         match segment.shape {
-            SegmentShape::Straight { explicit } => {
+            SegmentShape::Straight {
+                explicit,
+                stray_bias,
+            } => {
                 if explicit {
                     raw.kind = Some("straight".to_owned());
                 }
+                raw.bias = stray_bias;
             }
             SegmentShape::Bezier(curve) => {
                 raw.kind = Some("bezier".to_owned());
