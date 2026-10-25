@@ -2,7 +2,7 @@
   "schema": 1,
   "behavior_baseline": "22526a29",
   "scope": "Tracked Cargo packages and Rust source identities, not runtime verification or test discovery.",
-  "package_count": 27,
+  "package_count": 31,
   "packages": [
     {
       "name": "sc-icon-gen",
@@ -2068,7 +2068,63 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/lib.rs",
-          "sha256": "75b2078782c69dda1bf0451be23c8c41c79bb4b419d6d675c7b9a0cfc6888ddf"
+          "sha256": "1b6a7dd3c35a92c12c7d2f6014cce267d3130b6529c8fe07f84776b21481f877"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/geometry.rs",
+          "sha256": "9cdcd9d41805ff9574dcaa5229245add6ecc079f4b62c743becb93d0a2309549"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/mod.rs",
+          "sha256": "2b8d23317fe36e65a1f087a4b5e09712d852215e84d38e510f825ac57e8b1c54"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/model.rs",
+          "sha256": "4a3770a6012d4850703a3b66590c2bb970ad01d74b3a52c220af06fe46acd14c"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/pipeline.rs",
+          "sha256": "035289e6e64e6e216d3c919e93a456777c8369bb4d99e078482aef527588cba6"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/rasterize.rs",
+          "sha256": "418cb353c92e30770e99d2d817cc8a716f318acfbcb526797b8c45bdddb4105c"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/rle.rs",
+          "sha256": "6fa9893ebf27f3fa61d483b0d5691bf9f09aa503bb886772cc17b083721ec955"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/scan.rs",
+          "sha256": "a784f2f0650389cf1e2e6a295e94974057412ec2c94d85ebbf7db49be3948284"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/islands/tracker.rs",
+          "sha256": "5d256fc0be4285ceb75e9c7388068d0547e0b2d20a6b52e8e01f9bc6ee64dd6a"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/mesh_core/bvh.rs",
+          "sha256": "40fb7a26ad0fddefe13756037ba7e71f78adb5a5c19fb6d05661632c10c1b59c"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/mesh_core/mesh.rs",
+          "sha256": "5cb3d9f45de424bc74e3563e318f5c2ea359dfc545c893c9c0600fe00af2fbbe"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/mesh_core/mod.rs",
+          "sha256": "978e515cd1d7466c30f714717a5a947ff9a145074cf350710fbf98d0b795b157"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/mesh_minima.rs",
+          "sha256": "22625a33fe6d9a3ac980950059c59c018e6741b7e2170e4335f5bf0a18e659c3"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/mod.rs",
+          "sha256": "d5645b0df32b2b366f56ab8416c93c29482fcf4f8e6f0786b41f9799c3fe49e5"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/native/overhang.rs",
+          "sha256": "5b1ffa1a73b026fe2d5159064b61e88aa4a3ab53079e4c6ae4232747cecbdaa6"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",
@@ -3212,6 +3268,58 @@
         {
           "path": "libs/sla-formats/src/write.rs",
           "sha256": "4d2d65c37e900f55fccbd3542204b15068f7741e91114e7444273e8538101616"
+        }
+      ]
+    },
+    {
+      "name": "df-islands-harness",
+      "version": "0.0.0",
+      "manifest": "scripts/df-oracle/islands-harness/Cargo.toml",
+      "license": null,
+      "workspace": "root",
+      "sources": [
+        {
+          "path": "scripts/df-oracle/islands-harness/src/main.rs",
+          "sha256": "a312917f7be1080f91c3d8a4ace08559c8bae014ad38c24badfd8a6a66c16a89"
+        }
+      ]
+    },
+    {
+      "name": "dragonfruit-mesh-repair",
+      "version": "0.0.0",
+      "manifest": "scripts/df-oracle/islands-harness/stubs/mesh-repair/Cargo.toml",
+      "license": null,
+      "workspace": "root",
+      "sources": [
+        {
+          "path": "scripts/df-oracle/islands-harness/stubs/mesh-repair/src/lib.rs",
+          "sha256": "b3342ea509c54faa5bc03fd1ff425a0a2fb06ec1e4d2cbdf0265fe727e563cc0"
+        }
+      ]
+    },
+    {
+      "name": "tauri-macros-stub",
+      "version": "0.0.0",
+      "manifest": "scripts/df-oracle/islands-harness/stubs/tauri-macros/Cargo.toml",
+      "license": null,
+      "workspace": "root",
+      "sources": [
+        {
+          "path": "scripts/df-oracle/islands-harness/stubs/tauri-macros/src/lib.rs",
+          "sha256": "5cca0135ec6775f7f8e28cc0122dcd3f0537d6bf6691d28ff84369ed4027a013"
+        }
+      ]
+    },
+    {
+      "name": "tauri",
+      "version": "0.0.0",
+      "manifest": "scripts/df-oracle/islands-harness/stubs/tauri/Cargo.toml",
+      "license": null,
+      "workspace": "root",
+      "sources": [
+        {
+          "path": "scripts/df-oracle/islands-harness/stubs/tauri/src/lib.rs",
+          "sha256": "c8bc5eb769d16038d0cdb80aadc57dec7d7abbe82ea9924d871d64f42d5bb788"
         }
       ]
     }
