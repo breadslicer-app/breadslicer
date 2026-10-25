@@ -551,6 +551,12 @@ Dependencias nuevas (las mismas que usa DF, ya en caché): `rayon`, `ahash` y `s
 
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 123 tests más 3 ignorados.
 
+### 8c — de la malla al bosque con brazos (hecho)
+
+Prueba de punta a punta, sin código nuevo. Por cada escaneo nativo, DF deriva las islas con los valores por defecto del panel de islas y corre `computeAutoSupportPlan` sobre la malla de la escena con los ajustes por defecto, igual que el panel Auto Supports: auto-bracing activado, modelo registrado para la holgura de brazos, store vacío. SC hace lo mismo con `derive_islands` y `compute_auto_support_plan`.
+
+**Evidencia:** `scripts/df-oracle/golden_islands_c.ts` → `tests/fixtures/df_islands_c.json`: 52 bosques sobre las 13 escenas de 8a (1.732 trunks y 2.574 brazos en total). `tests/df_parity_islands_c.rs`: **igualdad exacta** en las islas filtradas, el bosque, la analítica y el resultado. El escaneo combinado se toma en el orden de vóxeles de DF, porque el orden de SC cambia los ids.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
