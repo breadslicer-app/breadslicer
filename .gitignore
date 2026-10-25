@@ -12,3 +12,9 @@
 
 # Downloaded packaging blobs (large, re-fetched by the vendor scripts)
 /packages/**/.cache
+
+# Local bytecode from the Python validation tools
+__pycache__/
+
+# Private local builds, feedback and third-party research; never publish
+/.local/
