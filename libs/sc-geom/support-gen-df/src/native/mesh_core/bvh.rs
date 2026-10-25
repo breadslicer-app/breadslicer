@@ -1,0 +1,947 @@
+// Copied from DragonFruit (Open Resin Alliance, AGPL-3.0), `rust/dragonfruit-mesh-core/src/bvh.rs` at f331fc55.
+// Native in SoulCrafted: only the Tauri/IPC and file-loading shells are removed.
+
+//! Axis-aligned bounding volume hierarchy over the triangles of an
+//! [`IndexedMesh`].
+//!
+//! Flat and leaf-batched, because the ambient-occlusion bake is the heaviest ray
+//! consumer in the app — eight rays for every vertex of every model in the scene
+//! — and the layout this replaced stored one triangle per node in an enum. A
+//! 2.1M-triangle model built 4.3M of those nodes (~150 MB) about 21 levels deep,
+//! so a ray missed cache on most of its visits: measured 1761 ns per ray against
+//! 133 ns on a 150k-triangle model, i.e. the cost tracked the model rather than
+//! the work. Nodes are now 32 bytes in flat arrays with up to [`LEAF_FACES`]
+//! triangles each, and traversal is ordered by the near child's entry distance
+//! and pruned at the caller's distance cutoff.
+
+use crate::native::mesh_core::mesh::{Aabb, IndexedMesh, Vec3};
+use rayon::prelude::*;
+
+/// Triangles per leaf. Larger leaves cost more triangle tests per visited leaf
+/// and save node visits and cache misses; 8 measured best over `1, 2, 4, 16`.
+const LEAF_FACES: usize = 8;
+/// Marks [`FlatNode::b`] as a leaf's face count rather than a right child.
+const LEAF_FLAG: u32 = 1 << 31;
+/// Traversal stack depth. A binary tree over `faces / LEAF_FACES` leaves is
+/// `log2(that) + 1` deep, so this covers any mesh a u32 face index can address.
+const STACK_DEPTH: usize = 64;
+
+/// One node of the flat tree, laid out for a GPU as much as for this crate.
+///
+/// `#[repr(C)]` and `Pod` are deliberate: the same bytes are uploaded to a
+/// compute shader as a storage buffer, so the field order, the sizes and the
+/// padding are a contract, not an implementation detail. It is 32 bytes:
+///
+/// | offset | field | meaning |
+/// | --- | --- | --- |
+/// | 0 | `min` | AABB lower corner (`f32[3]`) |
+/// | 12 | `max` | AABB upper corner (`f32[3]`) |
+/// | 24 | `a` | internal: left child index; leaf: first index into `faces` |
+/// | 28 | `b` | internal: right child index; leaf: `LEAF_FLAG \| face count` |
+///
+/// A traversal must read it exactly as [`Bvh::ray_nearest_within`] does, because
+/// the two are required to agree: the GPU bake is checked against the CPU bake
+/// on the same mesh, so a shader that mirrors this wrongly shows up as a value
+/// mismatch rather than as a subtle visual difference.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FlatNode {
+    /// AABB lower corner. Not rotated with the transform: the tree is built in
+    /// the mesh's own space, and so is every query against it.
+    pub min: [f32; 3],
+    /// AABB upper corner.
+    pub max: [f32; 3],
+    /// Internal: left child index. Leaf: first index into `faces`.
+    pub a: u32,
+    /// Internal: right child index. Leaf: `leaf_flag` or a face count.
+    pub b: u32,
+}
+
+impl FlatNode {
+    #[inline]
+    fn is_leaf(&self) -> bool {
+        self.b & LEAF_FLAG != 0
+    }
+
+    #[inline]
+    fn face_count(&self) -> usize {
+        (self.b & !LEAF_FLAG) as usize
+    }
+}
+
+pub struct Bvh {
+    nodes: Vec<FlatNode>,
+    /// Triangle indices, grouped by leaf.
+    faces: Vec<u32>,
+    root: u32,
+}
+
+/// The tree's storage as a GPU sees it. [`Bvh::gpu_layout`] carries the contract
+/// a traversal has to satisfy, and the test below is that traversal written in
+/// Rust — the reference a WGSL port is checked against.
+pub struct BvhGpuLayout<'a> {
+    /// 32 bytes per node, [`FlatNode`]'s own layout.
+    pub nodes: &'a [FlatNode],
+    /// Triangle indices, one contiguous run per leaf.
+    pub faces: &'a [u32],
+    /// Index of the root node.
+    pub root: u32,
+    /// The bit in [`FlatNode::b`] that marks a leaf.
+    pub leaf_flag: u32,
+}
+
+impl Bvh {
+    pub fn build(mesh: &IndexedMesh) -> Self {
+        let count = mesh.triangles.len();
+        let mut prims: Vec<(u32, Aabb, Vec3)> = mesh
+            .triangles
+            .par_iter()
+            .enumerate()
+            .map(|(i, tri)| {
+                let a = mesh.positions[tri[0] as usize];
+                let b = mesh.positions[tri[1] as usize];
+                let c = mesh.positions[tri[2] as usize];
+                let mut bb = Aabb::empty();
+                bb.expand(a);
+                bb.expand(b);
+                bb.expand(c);
+                let centroid = a.add(b).add(c).scale(1.0 / 3.0);
+                (i as u32, bb, centroid)
+            })
+            .collect();
+
+        let mut nodes = Vec::with_capacity(count / LEAF_FACES * 2 + 2);
+        let mut faces = vec![0u32; count];
+        let mut written = 0usize;
+        let root = if count == 0 {
+            0
+        } else {
+            build_rec(&mut nodes, &mut faces, &mut written, &mut prims, 0)
+        };
+        Self { nodes, faces, root }
+    }
+
+    /// Visit every face whose own bounding box overlaps `query`.
+    ///
+    /// Takes the mesh because the leaf it lives in may cover neighbours that do
+    /// not overlap; the caller sees exactly the faces the per-face test accepts.
+    pub fn query_aabb<F: FnMut(u32)>(&self, mesh: &IndexedMesh, query: &Aabb, mut visit: F) {
+        if self.nodes.is_empty() {
+            return;
+        }
+        let mut stack = [0u32; STACK_DEPTH];
+        let mut depth = 1usize;
+        stack[0] = self.root;
+        while depth > 0 {
+            depth -= 1;
+            let node = self.nodes[stack[depth] as usize];
+            if !aabb_overlaps(&node, query) {
+                continue;
+            }
+            if node.is_leaf() {
+                for k in 0..node.face_count() {
+                    let face = self.faces[node.a as usize + k];
+                    if face_aabb(mesh, face).overlaps(query) {
+                        visit(face);
+                    }
+                }
+            } else {
+                stack[depth] = node.a;
+                stack[depth + 1] = node.b;
+                depth += 2;
+            }
+        }
+    }
+
+    /// The tree as a compute shader consumes it: the nodes, the faces they point
+    /// at, the root, and the leaf flag.
+    ///
+    /// **A shader must mirror [`Self::ray_nearest_within`], not re-derive it.**
+    /// What it has to reproduce is this, and nothing else:
+    ///
+    /// - `nodes` is a binary tree; each node's `min`/`max` is an AABB in the
+    ///   mesh's own space, and the query ray is intersected with it by the
+    ///   ordinary slab test.
+    /// - `node.b & layout.leaf_flag != 0` marks a leaf, whose triangles are
+    ///   `faces[node.a .. node.a + (node.b & !leaf_flag)]`.
+    /// - the search returns the nearest hit within `max_distance`, except that a
+    ///   hit at or under `saturate_at` may be returned the moment it is found:
+    ///   any such hit weights full strength, so *which* one is not part of the
+    ///   contract, only the distance's clamp.
+    ///
+    /// The GPU bake is checked against the CPU bake on the same mesh, so a
+    /// shader that mirrors this wrongly shows up as a value mismatch rather than
+    /// as a subtle visual difference. The test below is that mirror written in
+    /// Rust, and it is the reference the WGSL traversal is ported from.
+    pub fn gpu_layout(&self) -> BvhGpuLayout<'_> {
+        BvhGpuLayout {
+            nodes: &self.nodes,
+            faces: &self.faces,
+            root: self.root,
+            leaf_flag: LEAF_FLAG,
+        }
+    }
+
+    /// Cast a ray and count intersections. Returns the hit count; used for
+    /// outward-normal voting (odd = inside, even = outside on a closed mesh).
+    pub fn ray_hit_count(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> u32 {
+        self.traverse_count(mesh, origin, dir, &|_| true)
+    }
+
+    /// Like [`ray_hit_count`] but excludes `skip_face` from the hit count.
+    /// Use this when the ray origin is on `skip_face` to prevent self-hits.
+    pub fn ray_hit_count_excluding(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        skip_face: u32,
+    ) -> u32 {
+        self.traverse_count(mesh, origin, dir, &|face| face != skip_face)
+    }
+
+    /// Cast a ray and count intersections while including only faces that
+    /// satisfy `include_face`.
+    ///
+    /// This is used by higher-level repair passes that need to ignore entire
+    /// subsets of faces (for example: all faces of the component currently
+    /// being classified).
+    pub fn ray_hit_count_with_filter<F>(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        include_face: &F,
+    ) -> u32
+    where
+        F: Fn(u32) -> bool,
+    {
+        self.traverse_count(mesh, origin, dir, include_face)
+    }
+
+    /// The triangle nearest `q`, as its squared distance and its face index.
+    ///
+    /// Branch and bound over the same flat nodes the ray queries walk: a node's own distance to the
+    /// query is a lower bound on any triangle under it, so a node already further away than the best
+    /// found is skipped whole. That is what makes this cheap enough to call once per tetrahedron.
+    ///
+    /// A *point* query rather than a ray, because the question the labelling asks is which side of
+    /// the surface a cell is on, and that is answered by the nearest triangle's own normal. A ray
+    /// answers it too, by parity, but parity is meaningless on the open and mis-oriented meshes this
+    /// exists for, while "which side of the nearest triangle am I on" is local and survives a bad
+    /// region elsewhere in the mesh.
+    pub fn nearest_triangle(&self, mesh: &IndexedMesh, q: Vec3) -> Option<(f32, u32)> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let mut best: Option<(f32, u32)> = None;
+        let mut stack = vec![self.root];
+        while let Some(index) = stack.pop() {
+            let node = &self.nodes[index as usize];
+            // Lower bound: squared distance from the query to the node's own box.
+            let dx = (node.min[0] - q.x).max(0.0).max(q.x - node.max[0]);
+            let dy = (node.min[1] - q.y).max(0.0).max(q.y - node.max[1]);
+            let dz = (node.min[2] - q.z).max(0.0).max(q.z - node.max[2]);
+            let box_distance2 = dx * dx + dy * dy + dz * dz;
+            if let Some((best_distance2, _)) = best {
+                if box_distance2 >= best_distance2 {
+                    continue;
+                }
+            }
+            if node.is_leaf() {
+                let start = node.a as usize;
+                for &face in &self.faces[start..start + node.face_count()] {
+                    let [a, b, c] = mesh.tri_positions(face);
+                    let closest = closest_point_on_triangle(q, a, b, c);
+                    let d = q.sub(closest);
+                    let distance2 = d.dot(d);
+                    if best.is_none_or(|(bd, _)| distance2 < bd) {
+                        best = Some((distance2, face));
+                    }
+                }
+            } else {
+                stack.push(node.a);
+                stack.push(node.b);
+            }
+        }
+        best
+    }
+
+    /// Is anything hit within `max_distance` along `dir`?
+    ///
+    /// Unlike [`ray_hit_count`] this stops at the first hit and ignores geometry
+    /// past the cutoff, which is what a visibility query needs: ambient occlusion
+    /// asks whether the sky is blocked *nearby*, not how many walls exist along
+    /// an infinite ray. The cutoff also prunes the traversal, which is most of
+    /// why the bake is affordable.
+    pub fn ray_occluded_within(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        max_distance: f32,
+    ) -> bool {
+        if self.nodes.is_empty() {
+            return false;
+        }
+        let inv_dir = inverse_direction(dir);
+        let entry = node_entry(
+            origin,
+            inv_dir,
+            &self.nodes[self.root as usize],
+            max_distance,
+        );
+        if entry.is_infinite() {
+            return false;
+        }
+        let mut stack = [0u32; STACK_DEPTH];
+        let mut tmin = [0.0f32; STACK_DEPTH];
+        let mut depth = 1usize;
+        stack[0] = self.root;
+        tmin[0] = entry;
+        while depth > 0 {
+            depth -= 1;
+            let node = self.nodes[stack[depth] as usize];
+            if node.is_leaf() {
+                for k in 0..node.face_count() {
+                    let face = self.faces[node.a as usize + k];
+                    let [a, b, c] = mesh.tri_positions(face);
+                    if let Some(t) = ray_tri(origin, dir, a, b, c) {
+                        if (0.0..=max_distance).contains(&t) {
+                            return true;
+                        }
+                    }
+                }
+                continue;
+            }
+            // Push the farther child first so the nearer one is visited next:
+            // occlusion usually hits within a few triangles, and stopping early
+            // is what keeps this bounded.
+            let near = node_entry(origin, inv_dir, &self.nodes[node.a as usize], max_distance);
+            let far = node_entry(origin, inv_dir, &self.nodes[node.b as usize], max_distance);
+            let (first, first_t, second, second_t) = if near <= far {
+                (node.a, near, node.b, far)
+            } else {
+                (node.b, far, node.a, near)
+            };
+            if !second_t.is_infinite() {
+                stack[depth] = second;
+                tmin[depth] = second_t;
+                depth += 1;
+            }
+            if !first_t.is_infinite() {
+                stack[depth] = first;
+                tmin[depth] = first_t;
+                depth += 1;
+            }
+        }
+        false
+    }
+
+    /// Distance to the nearest hit within `max_distance`, or `None`.
+    ///
+    /// Ambient occlusion wants *how close* the blocking geometry is, not merely
+    /// whether there is any: measured on a real model, the deepest crevices are
+    /// occluded by geometry within half a millimetre while a flat base under a
+    /// mass of detail is only occluded by geometry several millimetres away. A
+    /// boolean query cannot tell those apart. Unlike [`Self::ray_occluded_within`]
+    /// this cannot stop at the first hit, so it prunes against the best distance
+    /// found so far instead.
+    ///
+    /// `saturate_at` is the distance below which the caller stops distinguishing
+    /// hits: one found at or under it ends the search. Ambient occlusion passes the
+    /// top of its falloff plateau, where the weight is full strength, so a nearer
+    /// hit cannot shade any darker, and the traversal stops instead of proving
+    /// *which* triangle is nearest. Worth about a tenth of the bake measured on a
+    /// 2.8M-face model, not more, because the rays that decide a value usually
+    /// cross the taper rather than landing inside the plateau.
+    pub fn ray_nearest_within(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        max_distance: f32,
+        saturate_at: f32,
+    ) -> Option<f32> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let saturate = saturate_at.min(max_distance);
+        let inv_dir = inverse_direction(dir);
+        let mut best = max_distance;
+        let mut found = false;
+        let entry = node_entry(origin, inv_dir, &self.nodes[self.root as usize], best);
+        if entry.is_infinite() {
+            return None;
+        }
+        let mut stack = [0u32; STACK_DEPTH];
+        let mut depth = 1usize;
+        stack[0] = self.root;
+        while depth > 0 {
+            depth -= 1;
+            let node = self.nodes[stack[depth] as usize];
+            if node_entry(origin, inv_dir, &node, best).is_infinite() {
+                continue;
+            }
+            if node.is_leaf() {
+                for k in 0..node.face_count() {
+                    let face = self.faces[node.a as usize + k];
+                    let [a, b, c] = mesh.tri_positions(face);
+                    if let Some(t) = ray_tri(origin, dir, a, b, c) {
+                        if t >= 0.0 {
+                            if t <= saturate {
+                                return Some(t);
+                            }
+                            if t < best {
+                                best = t;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            // Near child first: the far one is likelier to be pruned once the
+            // near one has tightened `best`.
+            let near = node_entry(origin, inv_dir, &self.nodes[node.a as usize], best);
+            let far = node_entry(origin, inv_dir, &self.nodes[node.b as usize], best);
+            let (first, second) = if near <= far {
+                (node.a, node.b)
+            } else {
+                (node.b, node.a)
+            };
+            stack[depth] = second;
+            depth += 1;
+            stack[depth] = first;
+            depth += 1;
+        }
+        if found { Some(best) } else { None }
+    }
+
+    fn traverse_count<F>(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        include_face: &F,
+    ) -> u32
+    where
+        F: Fn(u32) -> bool,
+    {
+        if self.nodes.is_empty() {
+            return 0;
+        }
+        let inv_dir = inverse_direction(dir);
+        let mut count = 0u32;
+        let mut stack = [0u32; STACK_DEPTH];
+        let mut depth = 1usize;
+        stack[0] = self.root;
+        while depth > 0 {
+            depth -= 1;
+            let node = self.nodes[stack[depth] as usize];
+            if node_entry(origin, inv_dir, &node, f32::INFINITY).is_infinite() {
+                continue;
+            }
+            if node.is_leaf() {
+                for k in 0..node.face_count() {
+                    let face = self.faces[node.a as usize + k];
+                    if !include_face(face) {
+                        continue;
+                    }
+                    let [a, b, c] = mesh.tri_positions(face);
+                    if ray_tri(origin, dir, a, b, c).is_some() {
+                        count += 1;
+                    }
+                }
+            } else {
+                stack[depth] = node.a;
+                stack[depth + 1] = node.b;
+                depth += 2;
+            }
+        }
+        count
+    }
+}
+
+/// Recursively split `prims` into nodes, appending leaves to `nodes` and their
+/// face indices to `faces`. `written` is the next free slot in `faces`.
+fn build_rec(
+    nodes: &mut Vec<FlatNode>,
+    faces: &mut [u32],
+    written: &mut usize,
+    prims: &mut [(u32, Aabb, Vec3)],
+    _depth: u32,
+) -> u32 {
+    let mut bbox = Aabb::empty();
+    for &(_, bb, _) in prims.iter() {
+        bbox.union(&bb);
+    }
+
+    if prims.len() <= LEAF_FACES {
+        let first = *written as u32;
+        for &(face, _, _) in prims.iter() {
+            faces[*written] = face;
+            *written += 1;
+        }
+        let idx = nodes.len() as u32;
+        nodes.push(FlatNode {
+            min: [bbox.min.x, bbox.min.y, bbox.min.z],
+            max: [bbox.max.x, bbox.max.y, bbox.max.z],
+            a: first,
+            b: LEAF_FLAG | prims.len() as u32,
+        });
+        return idx;
+    }
+
+    // Split along the axis with the largest centroid spread, at the median.
+    let mut cmin = Vec3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+    let mut cmax = Vec3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for &(_, _, c) in prims.iter() {
+        cmin = cmin.min(c);
+        cmax = cmax.max(c);
+    }
+    let ext = cmax.sub(cmin);
+    let axis = if ext.x >= ext.y && ext.x >= ext.z {
+        0
+    } else if ext.y >= ext.z {
+        1
+    } else {
+        2
+    };
+    let mid = prims.len() / 2;
+    prims.select_nth_unstable_by(mid, |a, b| {
+        let (av, bv) = match axis {
+            0 => (a.2.x, b.2.x),
+            1 => (a.2.y, b.2.y),
+            _ => (a.2.z, b.2.z),
+        };
+        av.total_cmp(&bv)
+    });
+    let (left_slice, right_slice) = prims.split_at_mut(mid);
+
+    let left = build_rec(nodes, faces, written, left_slice, _depth + 1);
+    let right = build_rec(nodes, faces, written, right_slice, _depth + 1);
+
+    let idx = nodes.len() as u32;
+    nodes.push(FlatNode {
+        min: [bbox.min.x, bbox.min.y, bbox.min.z],
+        max: [bbox.max.x, bbox.max.y, bbox.max.z],
+        a: left,
+        b: right,
+    });
+    idx
+}
+
+#[inline]
+fn inverse_direction(dir: Vec3) -> Vec3 {
+    let axis = |v: f32| {
+        if v.abs() > 1e-20 {
+            1.0 / v
+        } else {
+            f32::INFINITY
+        }
+    };
+    Vec3::new(axis(dir.x), axis(dir.y), axis(dir.z))
+}
+
+/// Distance along the ray at which it enters `node`, or infinity if it misses or
+/// enters beyond `max_distance`.
+#[inline]
+fn node_entry(origin: Vec3, inv_dir: Vec3, node: &FlatNode, max_distance: f32) -> f32 {
+    let t1 = (node.min[0] - origin.x) * inv_dir.x;
+    let t2 = (node.max[0] - origin.x) * inv_dir.x;
+    let t3 = (node.min[1] - origin.y) * inv_dir.y;
+    let t4 = (node.max[1] - origin.y) * inv_dir.y;
+    let t5 = (node.min[2] - origin.z) * inv_dir.z;
+    let t6 = (node.max[2] - origin.z) * inv_dir.z;
+    let tmin = t1.min(t2).max(t3.min(t4)).max(t5.min(t6)).max(0.0);
+    let tmax = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
+    if tmax < tmin || tmin > max_distance {
+        f32::INFINITY
+    } else {
+        tmin
+    }
+}
+
+#[inline]
+fn aabb_overlaps(node: &FlatNode, query: &Aabb) -> bool {
+    node.min[0] <= query.max.x
+        && node.max[0] >= query.min.x
+        && node.min[1] <= query.max.y
+        && node.max[1] >= query.min.y
+        && node.min[2] <= query.max.z
+        && node.max[2] >= query.min.z
+}
+
+#[inline]
+fn face_aabb(mesh: &IndexedMesh, face: u32) -> Aabb {
+    let [a, b, c] = mesh.tri_positions(face);
+    let mut bb = Aabb::empty();
+    bb.expand(a);
+    bb.expand(b);
+    bb.expand(c);
+    bb
+}
+
+/// Möller–Trumbore triangle intersection; returns `t >= 0` if hit in front.
+
+/// The point of the triangle `(a, b, c)` closest to `p`.
+///
+/// The standard region test: inside the face, on one of the three edges, or at one of the three
+/// corners. Shared with the signed distance field, which needs the same answer for the same reason.
+pub fn closest_point_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let ab = b.sub(a);
+    let ac = c.sub(a);
+    let ap = p.sub(a);
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = p.sub(b);
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = d1 / (d1 - d3);
+        return a.add(ab.scale(v));
+    }
+    let cp = p.sub(c);
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = d2 / (d2 - d6);
+        return a.add(ac.scale(w));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return b.add(c.sub(b).scale(w));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    a.add(ab.scale(v)).add(ac.scale(w))
+}
+
+pub fn ray_tri(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+    const EPS: f32 = 1e-8;
+    let e1 = b.sub(a);
+    let e2 = c.sub(a);
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < EPS {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    let s = origin.sub(a);
+    let u = s.dot(p) * inv_det;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let v = dir.dot(q) * inv_det;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let t = e2.dot(q) * inv_det;
+    if t >= 0.0 { Some(t) } else { None }
+}
+
+/// Triangle/triangle intersection test (no coplanar degenerate handling;
+/// shared edges are treated as non-intersecting). Sufficient for counting
+/// self-intersections as a repair signal.
+pub fn tri_tri_intersect(t0: [Vec3; 3], t1: [Vec3; 3]) -> bool {
+    // If the two triangles share any vertex (positionally identical), skip —
+    // edge/vertex sharing is not a self-intersection.
+    for a in &t0 {
+        for b in &t1 {
+            if (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9 && (a.z - b.z).abs() < 1e-9 {
+                return false;
+            }
+        }
+    }
+    tri_tri_intersect_inner(t0, t1)
+}
+
+fn signed_dist(p: Vec3, n: Vec3, d: f32) -> f32 {
+    p.dot(n) + d
+}
+
+fn tri_tri_intersect_inner(t0: [Vec3; 3], t1: [Vec3; 3]) -> bool {
+    // Plane of t1.
+    let n1 = t1[1].sub(t1[0]).cross(t1[2].sub(t1[0]));
+    let n1_len2 = n1.dot(n1);
+    if n1_len2 < 1e-20 {
+        return false;
+    }
+    let d1 = -n1.dot(t1[0]);
+    let d00 = signed_dist(t0[0], n1, d1);
+    let d01 = signed_dist(t0[1], n1, d1);
+    let d02 = signed_dist(t0[2], n1, d1);
+    if (d00 > 0.0 && d01 > 0.0 && d02 > 0.0) || (d00 < 0.0 && d01 < 0.0 && d02 < 0.0) {
+        return false;
+    }
+
+    let n0 = t0[1].sub(t0[0]).cross(t0[2].sub(t0[0]));
+    let n0_len2 = n0.dot(n0);
+    if n0_len2 < 1e-20 {
+        return false;
+    }
+    let d0 = -n0.dot(t0[0]);
+    let d10 = signed_dist(t1[0], n0, d0);
+    let d11 = signed_dist(t1[1], n0, d0);
+    let d12 = signed_dist(t1[2], n0, d0);
+    if (d10 > 0.0 && d11 > 0.0 && d12 > 0.0) || (d10 < 0.0 && d11 < 0.0 && d12 < 0.0) {
+        return false;
+    }
+
+    // Intersect along the line of intersection of the two planes.
+    let dir = n0.cross(n1);
+    let axis = {
+        let ax = dir.x.abs();
+        let ay = dir.y.abs();
+        let az = dir.z.abs();
+        if ax >= ay && ax >= az {
+            0
+        } else if ay >= az {
+            1
+        } else {
+            2
+        }
+    };
+    let proj = |v: Vec3| match axis {
+        0 => v.x,
+        1 => v.y,
+        _ => v.z,
+    };
+
+    let iv0 = interval_on_line(proj(t0[0]), proj(t0[1]), proj(t0[2]), d00, d01, d02);
+    let iv1 = interval_on_line(proj(t1[0]), proj(t1[1]), proj(t1[2]), d10, d11, d12);
+    let (a0, b0) = iv0;
+    let (a1, b1) = iv1;
+    let lo = a0.max(a1);
+    let hi = b0.min(b1);
+    lo <= hi
+}
+
+fn interval_on_line(p0: f32, p1: f32, p2: f32, d0: f32, d1: f32, d2: f32) -> (f32, f32) {
+    // Find two edges crossing the plane and compute their intersection
+    // parameter along the axis.
+    let mut hits: smallvec::SmallVec<[f32; 2]> = smallvec::SmallVec::new();
+    let edges = [(p0, d0, p1, d1), (p1, d1, p2, d2), (p2, d2, p0, d0)];
+    for (pa, da, pb, db) in edges {
+        if da * db <= 0.0 && (da - db).abs() > 1e-20 {
+            let t = da / (da - db);
+            hits.push(pa + (pb - pa) * t);
+        }
+    }
+    if hits.len() < 2 {
+        return (f32::INFINITY, f32::NEG_INFINITY);
+    }
+    let mut lo = hits[0];
+    let mut hi = hits[0];
+    for &h in &hits[1..] {
+        if h < lo {
+            lo = h;
+        }
+        if h > hi {
+            hi = h;
+        }
+    }
+    (lo, hi)
+}
+#[cfg(test)]
+mod gpu_layout_tests {
+    use super::*;
+    use crate::native::mesh_core::mesh::{IndexedMesh, Vec3};
+
+    fn box_soup(min: [f32; 3], max: [f32; 3]) -> Vec<f32> {
+        let c = [
+            [min[0], min[1], min[2]],
+            [max[0], min[1], min[2]],
+            [max[0], max[1], min[2]],
+            [min[0], max[1], min[2]],
+            [min[0], min[1], max[2]],
+            [max[0], min[1], max[2]],
+            [max[0], max[1], max[2]],
+            [min[0], max[1], max[2]],
+        ];
+        let faces: [[usize; 4]; 6] = [
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+            [0, 1, 5, 4],
+            [1, 2, 6, 5],
+            [2, 3, 7, 6],
+            [3, 0, 4, 7],
+        ];
+        let mut out = Vec::new();
+        for f in faces {
+            for tri in [[f[0], f[1], f[2]], [f[0], f[2], f[3]]] {
+                for i in tri {
+                    out.extend_from_slice(&c[i]);
+                }
+            }
+        }
+        out
+    }
+
+    fn fixture() -> IndexedMesh {
+        let mut soup = box_soup([0.0, 0.0, 0.0], [20.0, 20.0, 4.0]);
+        soup.extend(box_soup([0.0, 8.5, 4.0], [20.0, 9.0, 10.0]));
+        soup.extend(box_soup([0.0, 11.0, 4.0], [20.0, 11.5, 10.0]));
+        IndexedMesh::from_triangle_soup(&soup, 1e-5)
+    }
+
+    /// Slab test against one node's AABB: the entry distance, or infinity when
+    /// the ray misses it or enters past `max`.
+    fn slab_entry(origin: Vec3, inv: Vec3, node: &FlatNode, max: f32) -> f32 {
+        let mut lo = f32::NEG_INFINITY;
+        let mut hi = f32::INFINITY;
+        for axis in 0..3 {
+            let o = [origin.x, origin.y, origin.z][axis];
+            let i = [inv.x, inv.y, inv.z][axis];
+            let t0 = (node.min[axis] - o) * i;
+            let t1 = (node.max[axis] - o) * i;
+            lo = lo.max(t0.min(t1));
+            hi = hi.min(t0.max(t1));
+        }
+        if hi < lo.max(0.0) || lo > max {
+            f32::INFINITY
+        } else {
+            lo.max(0.0)
+        }
+    }
+
+    /// The traversal a compute shader is ported from. Deliberately written
+    /// against the public layout only, so it is the proof that the layout and the
+    /// documented contract are enough to reimplement the query.
+    fn mirror_nearest(
+        layout: &BvhGpuLayout<'_>,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        max_distance: f32,
+        saturate_at: f32,
+    ) -> Option<f32> {
+        if layout.nodes.is_empty() {
+            return None;
+        }
+        let inv = Vec3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
+        let mut best = max_distance;
+        let mut found = false;
+        let mut stack = [0u32; 64];
+        let mut depth = 1usize;
+        stack[0] = layout.root;
+        while depth > 0 {
+            depth -= 1;
+            let node = layout.nodes[stack[depth] as usize];
+            if !slab_entry(origin, inv, &node, best).is_finite() {
+                continue;
+            }
+            if node.b & layout.leaf_flag != 0 {
+                let count = (node.b & !layout.leaf_flag) as usize;
+                for k in 0..count {
+                    let face = layout.faces[node.a as usize + k];
+                    let [a, b, c] = mesh.tri_positions(face);
+                    if let Some(t) = ray_tri(origin, dir, a, b, c) {
+                        if t >= 0.0 {
+                            if t <= saturate_at {
+                                return Some(t);
+                            }
+                            if t < best {
+                                best = t;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            stack[depth] = node.a;
+            stack[depth + 1] = node.b;
+            depth += 2;
+        }
+        if found { Some(best) } else { None }
+    }
+
+    #[test]
+    fn the_leaf_runs_cover_every_triangle_exactly_once() {
+        let mesh = fixture();
+        let bvh = Bvh::build(&mesh);
+        let layout = bvh.gpu_layout();
+        let mut seen = vec![0u32; mesh.triangles.len()];
+        let mut stack = vec![layout.root];
+        while let Some(index) = stack.pop() {
+            let node = layout.nodes[index as usize];
+            if node.b & layout.leaf_flag != 0 {
+                let count = (node.b & !layout.leaf_flag) as usize;
+                for k in 0..count {
+                    seen[layout.faces[node.a as usize + k] as usize] += 1;
+                }
+            } else {
+                stack.push(node.a);
+                stack.push(node.b);
+            }
+        }
+        assert!(
+            seen.iter().all(|c| *c == 1),
+            "a shader indexes faces by leaf run, so every triangle has to appear once: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn the_mirror_traversal_agrees_with_the_crate() {
+        let mesh = fixture();
+        let bvh = Bvh::build(&mesh);
+        let layout = bvh.gpu_layout();
+        let reach = 6.0f32;
+        let plateau = 1.0f32;
+
+        let mut seed = 0x1234_5678u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1 << 24) as f32
+        };
+
+        let mut compared = 0;
+        let mut hits = 0;
+        for _ in 0..512 {
+            let origin = Vec3::new(next() * 20.0, next() * 20.0, 1e-3);
+            let u1 = next().max(1e-3);
+            let phi = std::f32::consts::TAU * next();
+            let dir = Vec3::new(
+                u1.sqrt() * phi.cos(),
+                u1.sqrt() * phi.sin(),
+                (1.0 - u1).sqrt(),
+            );
+            let ours = bvh.ray_nearest_within(&mesh, origin, dir, reach, plateau);
+            let theirs = mirror_nearest(&layout, &mesh, origin, dir, reach, plateau);
+            match (ours, theirs) {
+                (None, None) => {}
+                (Some(a), Some(b)) => {
+                    // Any hit inside the plateau may be returned, so the clamp is
+                    // the comparable quantity, not the distance itself.
+                    assert!(
+                        (a.min(plateau) - b.min(plateau)).abs() < 1e-3,
+                        "origin {origin:?} dir {dir:?}: crate {a} vs mirror {b}"
+                    );
+                    hits += 1;
+                }
+                (a, b) => panic!("disagreement on whether there is a hit: {a:?} vs {b:?}"),
+            }
+            compared += 1;
+        }
+        assert!(
+            compared > 500 && hits > 50,
+            "the test has to actually hit things: {hits} hits"
+        );
+    }
+}

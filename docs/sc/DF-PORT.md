@@ -499,6 +499,36 @@ de cavidad del fixture necesitó un tramo mayor que el tope derivado).
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 77 tests más
 1 de escala ignorado.
 
+## Fase 1, bloque 8 — detección de islas
+
+En la app de escritorio, DF detecta islas en Rust. `useIslands` llama a `scan_islands_from_path` (vóxeles más mínimos de malla más overhangs) y después a `scan_overhangs` sobre la geometría del frontend (overhangs más estabilidad de la pose). El detector TS (`detectVoxelIslands`) es solo el respaldo para navegador y Node. El bloque va en dos partes: **8a**, los escáneres nativos; **8b**, la orquestación TS de `useIslands`, que consolida, clasifica, fusiona y filtra.
+
+### 8a — escáneres nativos (hecho)
+
+Es Rust de DF, así que el port es una **copia** con atribución: solo se quitan los envoltorios de Tauri/IPC, los eventos de progreso, los logs y la carga desde archivo.
+
+| Archivo DF | Rust SC | Estado |
+|---|---|---|
+| `rust/dragonfruit-islands/src/{model,rle,rasterize,scan,tracker,pipeline}.rs` | `native/islands/` | copia; el escaneo en streaming no lo usa el comando combinado y no se copia |
+| `rust/dragonfruit-slicing-engine/src/geometry.rs` (`Vec3`, `Triangle`, `parse_triangles`) | `native/islands/geometry.rs` | copia de lo que usa el rasterizador |
+| `rust/dragonfruit-mesh-core/src/{mesh,bvh}.rs` | `native/mesh_core/` | copia (soldado `IndexedMesh`, BVH); sin `bytemuck` ni el test de layout GPU |
+| `src-tauri/src/mesh_minima.rs` | `native/mesh_minima.rs` | mínimos locales, ajuste del contacto a la superficie y el escaneo combinado como `scan_islands(mesh, …)` sobre la malla ya posada |
+| `src-tauri/src/overhang.rs` | `native/overhang.rs` | completo: regiones de overhang con huella y perímetros, caras empinadas grandes y reporte de estabilidad (`overhang_and_stability_from_soup`) |
+
+Dependencias nuevas (las mismas que usa DF, ya en caché): `rayon`, `ahash` y `smallvec`. Los tests propios de DF que vinieron con la copia (43) pasan en SC.
+
+**Dos órdenes fijados en SC (DF los deja al azar):** DF devuelve los islotes vóxel en orden de `HashMap` y recorre los bordes de perímetro en ese mismo orden; los dos se siembran al azar por proceso. Por eso los ids `v{n}` cambian entre escaneos, y los perímetros cambian cómo se parten, su inicio, su sentido y el inset (hasta 0,22 mm en Z). SC ordena los islotes por id de creación y los bordes por clave. Anotado en SC-76.
+
+**Evidencia:** el oráculo es el Rust real de DF: `scripts/df-oracle/islands-harness` (`run_islands_harness.sh`) compila `overhang.rs` y `mesh_minima.rs` originales junto con los crates `dragonfruit-islands` y `dragonfruit-mesh-core`, con stubs de Tauri y del cargador de archivos. Para que el oráculo sea determinista, `build_perimeter_loops` recibe contenedores ordenados, que es el mismo orden que fija SC. Fixture `tests/fixtures/df_native_islands.json`: 13 escenas procedurales × 4 ajustes de escaneo (capa, píxel, buffer, conectividad, `k`, ángulo, píxel de huella, raft). Las escenas:
+- cubo girado, mesa, conos colgantes, torus knot, esferas, tablón inclinado y cubo sobre una arista;
+- placas en el límite de las caras empinadas (81–87°, 130–170 mm²) y un barril facetado;
+- cáscara hueca, cuenco y superficie inferior ondulada (35 mínimos);
+- la mesa con los vértices compartidos separados unos 4e-4 mm (soldado).
+
+`tests/df_parity_native_islands.rs`: **igualdad exacta** en las 52 corridas, comparando los islotes vóxel como conjunto. Sensibilidad: 8 de 10 mutaciones fallan. Sobreviven la cantidad de cubetas Z del ajuste a superficie (equivalente: solo filtra candidatos) y el umbral `nz ≥ -0,05` del filtro interior de mínimos (casi inalcanzable: pide un mínimo con normal oblicua).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios (el módulo `native` conserva los lints de DF para seguir siendo diffable con su fuente); 121 tests más 3 ignorados.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
