@@ -128,4 +128,47 @@ impl Matrix4 {
         }
         Vec3::new(sx, sy, sz)
     }
+
+    /// `compose(position, quaternion, scale)`.
+    pub fn compose(position: Vec3, quaternion: super::Quaternion, scale: Vec3) -> Matrix4 {
+        let (x, y, z, w) = (quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+        let (x2, y2, z2) = (x + x, y + y, z + z);
+        let (xx, xy, xz) = (x * x2, x * y2, x * z2);
+        let (yy, yz, zz) = (y * y2, y * z2, z * z2);
+        let (wx, wy, wz) = (w * x2, w * y2, w * z2);
+        let (sx, sy, sz) = (scale.x, scale.y, scale.z);
+        Matrix4 {
+            elements: [
+                (1.0 - (yy + zz)) * sx,
+                (xy + wz) * sx,
+                (xz - wy) * sx,
+                0.0,
+                (xy - wz) * sy,
+                (1.0 - (xx + zz)) * sy,
+                (yz + wx) * sy,
+                0.0,
+                (xz + wy) * sz,
+                (yz - wx) * sz,
+                (1.0 - (xx + yy)) * sz,
+                0.0,
+                position.x,
+                position.y,
+                position.z,
+                1.0,
+            ],
+        }
+    }
+
+    /// `makeRotationFromQuaternion(q)`: `compose(0, q, 1)`.
+    pub fn make_rotation_from_quaternion(q: super::Quaternion) -> Matrix4 {
+        Matrix4::compose(Vec3::ZERO, q, Vec3::new(1.0, 1.0, 1.0))
+    }
+
+    /// `setPosition(v)`.
+    pub fn set_position(mut self, v: Vec3) -> Matrix4 {
+        self.elements[12] = v.x;
+        self.elements[13] = v.y;
+        self.elements[14] = v.z;
+        self
+    }
 }

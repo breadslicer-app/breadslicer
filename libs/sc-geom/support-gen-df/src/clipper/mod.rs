@@ -15,7 +15,11 @@
 
 // Clipper's own constants (6.28318530717959 is not TAU), branch shapes and
 // clamps are kept as the JavaScript writes them: they are what parity is with.
-#![allow(clippy::approx_constant, clippy::if_same_then_else, clippy::manual_clamp)]
+#![allow(
+    clippy::approx_constant,
+    clippy::if_same_then_else,
+    clippy::manual_clamp
+)]
 
 mod engine;
 mod offset;

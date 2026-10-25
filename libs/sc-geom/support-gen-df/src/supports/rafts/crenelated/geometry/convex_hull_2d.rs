@@ -2,17 +2,7 @@
 //! Andrew's monotone chain, counter-clockwise, collinear points dropped.
 
 /// A `THREE.Vector2`.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Vec2 {
-    pub x: f64,
-    pub y: f64,
-}
-
-impl Vec2 {
-    pub const fn new(x: f64, y: f64) -> Self {
-        Vec2 { x, y }
-    }
-}
+pub use crate::three::Vector2 as Vec2;
 
 pub fn convex_hull_2d(points: &[Vec2]) -> Vec<Vec2> {
     if points.len() <= 1 {

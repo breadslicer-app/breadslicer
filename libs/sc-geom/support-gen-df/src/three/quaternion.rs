@@ -86,4 +86,21 @@ impl Quaternion {
 
         q.normalize()
     }
+
+    /// `multiplyQuaternions(a, b)`.
+    pub fn multiply_quaternions(a: Quaternion, b: Quaternion) -> Self {
+        let (qax, qay, qaz, qaw) = (a.x, a.y, a.z, a.w);
+        let (qbx, qby, qbz, qbw) = (b.x, b.y, b.z, b.w);
+        Quaternion::new(
+            qax * qbw + qaw * qbx + qay * qbz - qaz * qby,
+            qay * qbw + qaw * qby + qaz * qbx - qax * qbz,
+            qaz * qbw + qaw * qbz + qax * qby - qay * qbx,
+            qaw * qbw - qax * qbx - qay * qby - qaz * qbz,
+        )
+    }
+
+    /// `a.multiply(b)`.
+    pub fn multiply(self, q: Quaternion) -> Self {
+        Quaternion::multiply_quaternions(self, q)
+    }
 }
