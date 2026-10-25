@@ -1,0 +1,21 @@
+[package]
+name = "support-gen-df"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = [
+    "DragonFruit, Open Resin Alliance and contributors",
+    "SynrgStudio",
+]
+description = "Native Rust port of DragonFruit's support system (types, registry, primitives, placement, auto-support, bracing, rafts) for the SoulCrafted Slicer."
+categories = ["algorithms"]
+keywords = ["geometry", "support", "3d-printing", "SLA", "dragonfruit"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+indexmap = { version = "2.14.2", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order", "float_roundtrip"] }

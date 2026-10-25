@@ -31,6 +31,7 @@ members = [
     "generic-geom-alg-family-dispatch",
     "sc-geom-transport-inprocess",
     "support-gen-chalyplex",
+    "support-gen-df",
     "support-gen-family-dispatch",
     "support-gen-trivial",
 ]
