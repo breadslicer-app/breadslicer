@@ -1,0 +1,80 @@
+{
+  "models": [
+    {
+      "name": "wolverine-center-z10",
+      "exercises": "model from C:\\Users\\dnaon\\Projects\\SoulCrafted-Slicer\\.local\\df-oracle\\corpus-wolverine",
+      "islands": 7,
+      "islandSource": "detected",
+      "candidates": 7,
+      "entities": 24,
+      "placedByType": {
+        "trunk": 5,
+        "branch": 0,
+        "leaf": 1,
+        "twig": 1,
+        "stick": 0,
+        "brace": 0,
+        "stump": 0,
+        "kickstand": 0
+      },
+      "entitiesByType": {
+        "trunk": 5,
+        "leaf": 1,
+        "twig": 1,
+        "brace": 16,
+        "kickstand": 1
+      },
+      "contacts": 8,
+      "roots": 6,
+      "joints": 24,
+      "curvedSegments": 0,
+      "memberLengthMm": 216.61166953714638,
+      "memberVolumeMm3": 430.1481501539443,
+      "aboveContact": 0,
+      "worstAboveContactMm": 0,
+      "coveragePct": 100,
+      "islandsCovered": 7,
+      "islandsUncovered": 0,
+      "gridFallbacks": 0,
+      "budgetAdd": 0,
+      "budgetCull": 0,
+      "orphans": 0,
+      "orphansByReason": {},
+      "refusals": {
+        "fan": 0,
+        "merge": 5,
+        "consolidation": 0,
+        "cavityFallbacks": 1
+      },
+      "rejections": {},
+      "deterministic": true,
+      "routerPlacements": 6,
+      "routerCones": 132,
+      "routerProbes": 660,
+      "totalMs": 3925.5587000000014,
+      "phases": {
+        "candidates": 12,
+        "dedup": 1,
+        "support-filter": 45,
+        "placement": 2115,
+        "consolidation": 0,
+        "gap-fill": 0,
+        "analytics": 1,
+        "fanning": 0,
+        "surface-coverage": 0,
+        "resize": 3,
+        "report": 1,
+        "bracing": 11
+      }
+    }
+  ],
+  "differences": [
+    {
+      "name": "wolverine-center-z10",
+      "hard": [
+        "no baseline entry"
+      ],
+      "soft": []
+    }
+  ]
+}
