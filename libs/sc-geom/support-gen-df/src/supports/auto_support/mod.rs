@@ -12,4 +12,5 @@ pub mod pose_stability;
 pub mod settings;
 pub mod stabilization;
 pub mod support_blockers;
+pub mod support_draft;
 pub mod types;
