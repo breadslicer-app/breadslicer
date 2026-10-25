@@ -2,7 +2,7 @@
   "schema": 1,
   "behavior_baseline": "22526a29",
   "scope": "Tracked Cargo packages and Rust source identities, not runtime verification or test discovery.",
-  "package_count": 31,
+  "package_count": 32,
   "packages": [
     {
       "name": "sc-icon-gen",
@@ -216,7 +216,7 @@
         },
         {
           "path": "apps/slicer-gui/src/app_state.rs",
-          "sha256": "a8a5bedf49de4946c1106e020566237542a6861f0546c5cfe00d1e731c23be5c"
+          "sha256": "080ff6960088b6d59862d38711b3bb73afc604ea8cf66ec3d451d3b2138d0cb4"
         },
         {
           "path": "apps/slicer-gui/src/build_volume.rs",
@@ -237,6 +237,10 @@
         {
           "path": "apps/slicer-gui/src/default_envelope.rs",
           "sha256": "41ed58021dd5bb1362e9b759a8bf4fa0822ad6e0541e9947d78d4691fdf14f7b"
+        },
+        {
+          "path": "apps/slicer-gui/src/df_support_run.rs",
+          "sha256": "c13453bc16977ced0eeb631da216a620858eff9a0a3b9a79aa10ffbd5652d4b2"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -312,7 +316,7 @@
         },
         {
           "path": "apps/slicer-gui/src/lib.rs",
-          "sha256": "54f25e9cb942bc97777beb0143e37b60caa6a2209a7aed2c8b06076e4a4ca214"
+          "sha256": "7c941b987eeda681ad9e83e6dc915ac91988b4e1089ed719d78ae3f42d0944d2"
         },
         {
           "path": "apps/slicer-gui/src/load_progress.rs",
@@ -1964,7 +1968,7 @@
       "sources": [
         {
           "path": "libs/sc-geom/src/lib.rs",
-          "sha256": "cec5946fd6bb7428192347bc2a7e24488c743811f8f22d98d85b602d9c36777d"
+          "sha256": "dd409b5242e6ff62938dd8bb0dd5cf35cb40a2352ebec9199a4a9b049282f392"
         }
       ]
     },
@@ -2052,6 +2056,19 @@
         {
           "path": "libs/sc-geom/support-gen-chalyplex/src/lib.rs",
           "sha256": "7bf565244c7b82424ce963c9035b89f4ac9c4f5bd33cf2e3c981b3b4b371d8a9"
+        }
+      ]
+    },
+    {
+      "name": "support-gen-df-sc",
+      "version": "0.0.1",
+      "manifest": "libs/sc-geom/support-gen-df-sc/Cargo.toml",
+      "license": "AGPL-3.0-or-later",
+      "workspace": "nested-sc-geom",
+      "sources": [
+        {
+          "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
+          "sha256": "ca11eb87e366c0dbdd07c270348fed15dbd3494f79af5945c2d18050680e846d"
         }
       ]
     },

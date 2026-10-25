@@ -115,7 +115,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-76](#sc-76) | backlog | soportes | Mejoras post-porteo DF: lista de hallazgos | SC-75 |
 | [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76, SC-82 |
 | [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
-| [SC-79](#sc-79) | backlog | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
+| [SC-79](#sc-79) | todo | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | backlog | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
@@ -937,7 +937,23 @@ Cargar modelo → auto-soportes → raft → preview en el viewport → slice �
 
 **Cierre:** Damian genera soportes y raft sobre modelos reales desde la GUI, los ve en el viewport, deshace y exporta; compilación y chequeos focalizados registrados.
 
-**Depende de:** SC-78. Prioridad: high. Estado snapshot: backlog.
+**Avance (2026-10-25), pendiente de la prueba de Damian:**
+- Hizo falta el teselado de soportes (bloque 10 de `DF-PORT.md`): los datos de DF no son malla.
+- El adaptador `libs/sc-geom/support-gen-df-sc` hace dos cosas:
+  - corre la fachada sobre la escena SC: cada hoja de malla es un modelo en mundo, se rechaza CSG y se salta la malla de soportes de una corrida anterior;
+  - devuelve los soportes y el raft como una malla soldada, `Supports (DragonFruit)`.
+- La GUI (`apps/slicer-gui/src/df_support_run.rs`) agrega el menú **Tools → Generate Supports (DragonFruit)…** con estas reglas:
+  - corre como job con progreso por etapa y botón Cancel en el panel;
+  - si la escena cambió durante la corrida, descarta el resultado;
+  - si no, pega la malla como **un** objeto deshacible y muestra un resumen.
+- **Chequeos:** el adaptador sobre un cubo elevado (soportes, raft en la placa, exclusión de la salida anterior, cancelación) y un test de cableado de la GUI.
+- **Límites de este corte:**
+  - la altura de capa del escaneo es 0,05 mm fija;
+  - los ajustes son los de DF por defecto;
+  - una segunda corrida agrega otro objeto en vez de reemplazar el anterior;
+  - el slice de esa malla (soportes superpuestos en una sola malla) es SC-81.
+
+**Depende de:** SC-78. Prioridad: high. Estado snapshot: todo.
 
 ## SC-80
 
