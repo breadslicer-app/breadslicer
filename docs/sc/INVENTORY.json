@@ -2071,16 +2071,36 @@
           "sha256": "75b2078782c69dda1bf0451be23c8c41c79bb4b419d6d675c7b9a0cfc6888ddf"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",
+          "sha256": "c2693e5fe72aa632f95ced942353f118562077679a368e0a643ab1b18d10e68d"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/brace_diameter.rs",
           "sha256": "8f1418eb17d90425db45ee0ddbeabde0759460787286e36a1e7fcc5b50004beb"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/mesh_clearance.rs",
+          "sha256": "6fe079bd6691d592b232b20668da8fb3c39b35d7d569900a017ed51e5ddc8520"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/mod.rs",
-          "sha256": "da0e8c2dc46c5adbae6a8baa46b102686e9cb9a467c56e066f8944fce3520b0d"
+          "sha256": "61249e45557523e9cf1a46536af70a4e68e23facbc7f986a0515581769e3fc96"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/patterns.rs",
+          "sha256": "73a0dce1ed780c81fe99a4d75128c2fe049ddbe213fd691473b054304df4f837"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/settings.rs",
           "sha256": "8f4e33051faf95e0ec523ef5e36ffd7fc6720f6e8e714d3bec39f8c10f29f24e"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/two_axis_detection.rs",
+          "sha256": "717bcdfbdb8956db879288f556117f65f3fdffb2ee31ef978b519d2dcfa9ea4f"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/voronoi_partitioning.rs",
+          "sha256": "ce684f6b4cbc8d781ea13cc2d7f5d58c119e7a3437f831c8b48bd3f837fabc9e"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/fan.rs",
@@ -2100,7 +2120,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/plan.rs",
-          "sha256": "134ce9bb67cf22ea1b9d3fe5b37f06aabf491a4b69e90d494445d800ec877e56"
+          "sha256": "c92074d7450b732345bd09378df5ffe68f708830c143051da54c3b9113b62839"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/auto_place/report.rs",
@@ -2411,8 +2431,12 @@
           "sha256": "53754e2f4cd324254a5ead02a6d594a3ec62f1cfde431566554ccf26e761d863"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/support_types/kickstand/kickstand_stabiliser.rs",
+          "sha256": "343c91d079db1e3964fc699bbc6210c6c8be1261a5054043bfe10c2766422c42"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/kickstand/mod.rs",
-          "sha256": "b55a052cd16588bdc2b4400fa07a0edca060e5eba8fffdaf93347c68cf029ab7"
+          "sha256": "a4cab5802c04ca9ef916e6acc51b0137e155478030d996963e85b5a7a9577b8a"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_types/kickstand/types.rs",
@@ -2571,12 +2595,16 @@
           "sha256": "f9d1d74b39eed17fb57dcc4214c70e13a59be08a844339fc33fb995feac76fda"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/utils/collation.rs",
+          "sha256": "211a8ff24f5568959d481a9ca764423089a587c7a2425b874e64ade2124c790b"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/utils/math.rs",
           "sha256": "90347b06cdfe328de1c0061e778620099427a0b71941dae386aa9652d11223d1"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/utils/mod.rs",
-          "sha256": "9adfd4e2d69ad31350635826a390bf8f3cbb3cec7553f2fe512514386e44d239"
+          "sha256": "c308a9f764fb299f7e379081fd341d7f2f5c42b54f392ef28b68fa266e056785"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/volume_analysis/islands/mod.rs",

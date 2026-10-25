@@ -14,6 +14,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use support_gen_df::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
 use support_gen_df::supports::auto_support::auto_place::plan::{
     PlanInput, compute_auto_support_plan,
@@ -180,6 +181,8 @@ fn auto_support_plans_match_dragonfruit() {
                 base_state: &base,
                 committed: &committed,
                 has_raft: run["hasRaft"].as_bool().unwrap(),
+                // Every 6c run skips auto-bracing.
+                brace_meshes: &BraceMeshes::new(),
             },
             &ctx,
         );

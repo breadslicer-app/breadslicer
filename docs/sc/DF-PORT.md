@@ -468,6 +468,37 @@ de cavidad del fixture necesitó un tramo mayor que el tope derivado).
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 73 tests más
 1 de escala ignorado.
 
+## Fase 1, bloque 7 — auto-bracing (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `autoBracing/autoBrace.ts` (`buildAutoBracedSnapshot`) | `auto_bracing/auto_brace.rs` | completo: muestras de fustes (trunk, branch, kickstand), partición, pares por modelo (árbol de expansión mínima más un segundo eje por soporte), kickstands generativos, aristas de kickstand, escalera por niveles o zigzag y la reconciliación que suelta kickstands redundantes; `runAutoBracing` y `clearBracesForModel` (store e historial) son de la GUI |
+| `autoBracing/voronoiPartitioning.ts` | `auto_bracing/voronoi_partitioning.rs` | completo (semillas con jitter de V8 `Math.sin`, FNV-1a, reclamo BFS); los marcadores de depuración son de la GUI |
+| `autoBracing/{initialPattern,repeatingPattern,zigzagChain}.ts` | `auto_bracing/patterns.rs` | completo |
+| `autoBracing/twoAxisDetection.ts` | `auto_bracing/two_axis_detection.rs` | completo |
+| `autoBracing/{meshClearance,meshGeometryStore}.ts` | `auto_bracing/mesh_clearance.rs` | completo: nueve rayos doble cara; las mallas registradas entran como parámetro |
+| `SupportTypes/Kickstand/kickstandStabiliser.ts` | `support_types/kickstand/kickstand_stabiliser.rs` | completo: dos pasadas, grilla cardinal, holguras de raíz y fuste, colisión inclinada por punto más cercano del BVH |
+| `localeCompare` de V8 (ICU `en-US`) | `utils/collation.rs` | ASCII imprimible exacto (puntuación < dígitos < letras, mayúscula detrás en empate) |
+
+`computeAutoSupportPlan` ahora corre el auto-bracing donde DF lo corre (paso 5, salvo `debugSkipAutoBracing`); el plan recibe las mallas de holgura y el store comprometido.
+
+**Semántica DF reproducida:** el tipo de una entidad sin `typeId` se resuelve por el store comprometido (`getSupportTypeOf`). `buildKickstandData` no estampa `typeId`, así que un kickstand generado en una pasada no tiene muestras ni brazos en esa pasada. Además, los kickstands auto-generados se regeneran siempre y sus raíces y knots quedan en el snapshot. Están anotados como mejoras en SC-76.
+
+**Evidencia:** `scripts/df-oracle/golden_autobrace.ts` → `tests/fixtures/df_autobrace.json`: 90 corridas sobre las siete mallas de 6c (seis registradas para holgura). Cada corrida planifica un bosque con islas sintéticas (la mitad con el bracing dentro del plan) y lo braza dos veces seguidas como `runAutoBracing`: clon del store, brazos, commit. Antes de la segunda pasada, parte de los kickstands y brazos pasa a ser del usuario. Los ajustes de bracing son aleatorios (patrones cruz, simple y zigzag en las nueve combinaciones; grilla on/off; diámetro, distancias, semillas, largo máximo; quitar o conservar brazos previos). Resultado:
+- 1.093 brazos entre fustes y 62 a kickstands;
+- 98 brazos del usuario conservados;
+- kickstands generados y regenerados;
+- 160 particiones de Voronoi directas, con alcance NaN y planos agrupados;
+- 400 palabras para la colación.
+
+`tests/df_parity_autobrace.rs`: **igualdad exacta** en todo. Sensibilidad: 19 de 24 mutaciones fallan. Sobreviven cinco:
+- la fórmula del puntaje de eje (equivalente: para separaciones de 45° a 90°, `90 − |90 − sep|` es `sep`);
+- el borrado de la reconciliación (casi inalcanzable: pide ejes reales distintos de los preliminares, solo con trunks inclinados);
+- el tope de dos aristas por trunk de kickstand, las muestras de la colisión inclinada y el épsilon del origen de rayo (umbrales que el fixture casi no toca).
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 77 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
