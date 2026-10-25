@@ -76,8 +76,7 @@ fn to_fixed_matches_v8_bit_for_bit() {
 /// The rest of `Math` the support code uses, against V8: `fixtures/v8_math.txt`
 /// (`name args... result` as f64 bits). `acos`, `asin`, `atan`, `atan2`, `exp`
 /// and `tan` are V8's fdlibm, which the `libm` crate reproduces; `hypot` is V8's
-/// own normalized Kahan sum. (`pow`, `log` and `cbrt` differ from `libm` and
-/// are not yet used by ported code.)
+/// own normalized Kahan sum. `pow`, `log` and `cbrt` are checked below.
 #[test]
 fn other_math_functions_match_v8_bit_for_bit() {
     use support_gen_df::three::math_utils::*;
@@ -116,4 +115,45 @@ fn other_math_functions_match_v8_bit_for_bit() {
         mismatches.len(),
         mismatches[..mismatches.len().min(20)].join("\n")
     );
+}
+
+/// `Math.log`, `Math.cbrt` and `Math.pow` against V8: `fixtures/v8_pow_log.txt`
+/// (20000 each; sizing-shaped arguments plus wide random ones).
+///
+/// `log` (fdlibm 5.3) and `cbrt` (FreeBSD `s_cbrt`) are V8's own and match
+/// bit for bit; the `libm` crate's (musl's rewritten log, core-math's
+/// correctly rounded cbrt) do not. `pow` is V8's special cases over the C
+/// runtime's `pow`, so its last bit is the CRT's: Node's static UCRT and the
+/// system DLL disagree on 5 of these 20000, each by one ulp.
+#[test]
+fn log_cbrt_and_pow_match_v8() {
+    use support_gen_df::three::math_utils::{js_cbrt, js_log, js_pow};
+    let text = include_str!("fixtures/v8_pow_log.txt");
+    let bits = |h: &str| f64::from_bits(u64::from_str_radix(h, 16).unwrap());
+    let mut exact_misses = Vec::new();
+    let mut pow_ulps = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.split(' ');
+        let name = parts.next().unwrap();
+        let v: Vec<f64> = parts.map(bits).collect();
+        let expected = *v.last().unwrap();
+        match name {
+            "log" | "cbrt" => {
+                let actual = if name == "log" { js_log(v[0]) } else { js_cbrt(v[0]) };
+                if actual.to_bits() != expected.to_bits() {
+                    exact_misses.push(format!("{line} -> {:016x}", actual.to_bits()));
+                }
+            }
+            _ => {
+                let actual = js_pow(v[0], v[1]);
+                if actual.to_bits() != expected.to_bits() {
+                    pow_ulps.push((actual.to_bits() as i64 - expected.to_bits() as i64).abs());
+                }
+            }
+        }
+    }
+    assert!(exact_misses.is_empty(), "{}", exact_misses.join("
+"));
+    assert!(pow_ulps.len() <= 10, "{} pow differences", pow_ulps.len());
+    assert!(pow_ulps.iter().all(|&u| u == 1), "{pow_ulps:?}");
 }
