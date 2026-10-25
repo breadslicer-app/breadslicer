@@ -142,7 +142,7 @@ impl Vec3 {
             return std::f64::consts::PI / 2.0;
         }
         let theta = self.dot(v) / denominator;
-        clamp(theta, -1.0, 1.0).acos()
+        super::math_utils::js_acos(clamp(theta, -1.0, 1.0))
     }
 
     #[inline]
@@ -171,6 +171,52 @@ impl Vec3 {
             vx + qw * tx + qy * tz - qz * ty,
             vy + qw * ty + qz * tx - qx * tz,
             vz + qw * tz + qx * ty - qy * tx,
+        )
+    }
+
+    /// `applyMatrix4`: a point under a 4x4 matrix, with the projective divide.
+    pub fn apply_matrix4(self, m: &super::Matrix4) -> Self {
+        let (x, y, z) = (self.x, self.y, self.z);
+        let e = &m.elements;
+
+        let w = 1.0 / (e[3] * x + e[7] * y + e[11] * z + e[15]);
+
+        Vec3::new(
+            (e[0] * x + e[4] * y + e[8] * z + e[12]) * w,
+            (e[1] * x + e[5] * y + e[9] * z + e[13]) * w,
+            (e[2] * x + e[6] * y + e[10] * z + e[14]) * w,
+        )
+    }
+
+    /// `clamp(min, max)`, componentwise.
+    #[inline]
+    pub fn clamp(self, min: Vec3, max: Vec3) -> Self {
+        Vec3::new(
+            super::math_utils::clamp(self.x, min.x, max.x),
+            super::math_utils::clamp(self.y, min.y, max.y),
+            super::math_utils::clamp(self.z, min.z, max.z),
+        )
+    }
+
+    /// `min(v)`, componentwise with `Math.min`.
+    #[inline]
+    pub fn min(self, v: Vec3) -> Self {
+        use super::math_utils::js_min;
+        Vec3::new(
+            js_min(self.x, v.x),
+            js_min(self.y, v.y),
+            js_min(self.z, v.z),
+        )
+    }
+
+    /// `max(v)`, componentwise with `Math.max`.
+    #[inline]
+    pub fn max(self, v: Vec3) -> Self {
+        use super::math_utils::js_max;
+        Vec3::new(
+            js_max(self.x, v.x),
+            js_max(self.y, v.y),
+            js_max(self.z, v.z),
         )
     }
 

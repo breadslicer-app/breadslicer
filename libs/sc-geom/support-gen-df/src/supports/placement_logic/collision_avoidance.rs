@@ -7,7 +7,7 @@
 //! DragonFruit makes of an `SDFCache`. The `SDFCache` port implements it.
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min, lerp};
+use crate::three::math_utils::{js_max, js_min, js_round, lerp};
 
 const DEFAULT_FRUSTUM_SEGMENT_COUNT: f64 = 5.0;
 /// Safety margin used only for contact-cone body sampling.
@@ -97,7 +97,7 @@ pub fn is_collision_frustum_blocked(
         );
     }
 
-    let segment_total = js_max(1.0, segment_count.round());
+    let segment_total = js_max(1.0, js_round(segment_count));
     let segment_total_count = segment_total as usize;
 
     for i in 0..segment_total_count {

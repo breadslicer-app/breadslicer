@@ -2063,8 +2063,12 @@
       "workspace": "nested-sc-geom",
       "sources": [
         {
+          "path": "libs/sc-geom/support-gen-df/src/js_math.rs",
+          "sha256": "3fffcc490c61e7a28995c392b319d5e04c5b20b5283067ebc8ff57e4c6476911"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/lib.rs",
-          "sha256": "11ed7b202ce5e3b58b6359e186d5a5d221091b317c1586a3eddad7af5a380c82"
+          "sha256": "8819e3fd9cf4ef4437aad71456e6055e4f4bf70a3be9009a08e125346d7ec8b6"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_support/constants.rs",
@@ -2083,8 +2087,12 @@
           "sha256": "65a3fdf4fe7095a04c86384cb7375049724ef4fe3fa8b8e484764feb4a1756d8"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/supports/curves/curve_utils.rs",
+          "sha256": "f4b1c36e0b0111ce9ddc425b86b563c2749a6146c2393c548b5df2a71f11c576"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/supports/curves/mod.rs",
-          "sha256": "b7b17335d2973d39443e426fed0717fb1935a5eddcf0dadd99d24feda58eea2e"
+          "sha256": "3566b7a761cf6e09b7dbcb158ae9054123ee98342aeab918df6c8e27c1b45b43"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/mod.rs",
@@ -2092,11 +2100,35 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/collision_avoidance.rs",
-          "sha256": "3f6d892a08ae3f8ca9448af2c56b774ef96cf636da91eec568f05268f066b5e5"
+          "sha256": "e4e0386d11fa75df83cc1c0a8e0cf8d458f8008e90ffbb374ec36886abb6764a"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/joint_constraint_solver.rs",
+          "sha256": "b4563f94ee4e49840892e9e3d1a57ffc7ce154b2888ad283157457ee27a01d36"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/mod.rs",
-          "sha256": "1a255dbd92c1b5e7a53cd6fd4ffde45d573941f5a1f0b344134cceebb5103c7a"
+          "sha256": "96c8a7d4e2a9cba3c08c562dee87f48a3991515cef3a6a934ed5ae365940f6b2"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/pathfinding/column_clearance_map.rs",
+          "sha256": "f1c803f9d1b9c09939bd9f7f14942b2cc6e55a624471f76e2bd019a4e7d505d5"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/pathfinding/mod.rs",
+          "sha256": "b1f7cd3fd57d1f48359ca9eab64e11501338cca5a3e490ff526346cdad85e17b"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/pathfinding/sdf_cache.rs",
+          "sha256": "e2226328a8a86f1e01f7b1bfd2b90380093cf975ed37176d02514db0a4a2b196"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/pathfinding/sdf_cache_pool.rs",
+          "sha256": "fc1a827eb6fd6e6be5b7c5ac0ff7f3da54dc8e85dffe3b56325433af7fc97662"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/placement_logic/shaft_angle_constraint.rs",
+          "sha256": "55bbb343153e1c7e50c2eccb76531c6da45346e18e593e41821f98d79abd263e"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_primitives/contact_cone/contact_cone_utils.rs",
@@ -2116,7 +2148,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_primitives/contact_disk/contact_disk_utils.rs",
-          "sha256": "8f2aa62fff9187ced271e80e504866a644be264c675b854a4b7807a805d9f44a"
+          "sha256": "f40d0378b038df6516334141b8ec58d4505832be1820f2730b3b1f1af8af6067"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_primitives/contact_disk/mod.rs",
@@ -2124,7 +2156,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_primitives/joint/joint_utils.rs",
-          "sha256": "28b94da5cba9c6dcd93a47d31cdb879e6b988a3b55adf1e7ac94382f214325cb"
+          "sha256": "be54638d21fb46bc3b44ab9ccc1e2daba1976e70a503cce865d44afdaf6b62fb"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/support_primitives/joint/mod.rs",
@@ -2172,7 +2204,11 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/types.rs",
-          "sha256": "10661523d8425928aa479462154d0a2eb878be06649a6647547e70bbc83ffdd7"
+          "sha256": "618f2a0b51f2146918d18ca6529ca62e1bceec2e67fe097547a0ea70a71e4caf"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/three/box3.rs",
+          "sha256": "42b59225fb215a0f22f08917d0b285cab6f74547752422ba39a0ace6ec0915a0"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/three/line3.rs",
@@ -2180,11 +2216,15 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/three/math_utils.rs",
-          "sha256": "b44afb6fe122056ca8924c80a9510a4df903ab2c6ddd34a5120b862a269e66ef"
+          "sha256": "8d4ee31d12b0c20899baa6040d354f9d723aa6f5bac33a8282989bfbe9aeb56d"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/three/matrix4.rs",
+          "sha256": "0e7b9bc1f8214d17925006a4dd484f4aa36e86f10b43495e672be1d492092fc0"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/three/mod.rs",
-          "sha256": "befb511d2f98db476b30c6baf9eafc5a4ca54631cb21d05033227d864c6e7a29"
+          "sha256": "68b821ce2ab9e588c7688f32f00ec28569cf7a1805d1a05a2f8a529e6efdd38c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/three/quaternion.rs",
@@ -2195,8 +2235,24 @@
           "sha256": "df8a7473bd6bca11c06e0a33e1d9137f885868e5f63c222b1dd954b6f3ebf1d3"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/three/triangle.rs",
+          "sha256": "a7fe164b705192be5b910f5a51ea590eab6185cf6a95b05d19bda0bcad0cb128"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/three/vector3.rs",
-          "sha256": "b8c2e07903906e5c0b6f82612c3c086c92b0e334a46aea195c7db703e91309f8"
+          "sha256": "9c21a132dd322e0adc05fc3e7555f5364ca5f8a10256f41338936c5b4935611e"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/three_mesh_bvh/build.rs",
+          "sha256": "a3f68f09c724fa05fbe8c9cf91f620ea16fc81b977c7761cf7d9b26d9f3c03a0"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/three_mesh_bvh/closest_point_to_point.rs",
+          "sha256": "c13007ec1ca6e8121e4f1d85bb65580f6891e9ccfa965d6d078fecbe525e5c7b"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/three_mesh_bvh/mod.rs",
+          "sha256": "492efdb15523745c736c8ededebfbae2d2f638f439300da53ba3bcdfff25f8df"
         }
       ]
     },

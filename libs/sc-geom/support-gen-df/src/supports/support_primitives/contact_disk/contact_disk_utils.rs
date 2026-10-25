@@ -3,7 +3,7 @@
 use crate::supports::support_primitives::contact_cone::types::ContactDiskProfile;
 use crate::supports::types::Vec3;
 use crate::three::Quaternion;
-use crate::three::math_utils::{js_max, js_min};
+use crate::three::math_utils::{js_acos, js_max, js_min};
 
 const DEFAULT_MIN_DISK_THICKNESS_MM: f64 = 0.1;
 const DEFAULT_STANDOFF_ANGLE_THRESHOLD_RAD: f64 = std::f64::consts::PI / 4.0;
@@ -82,7 +82,7 @@ pub fn calculate_disk_thickness(
     let inv_mag = 1.0 / (n_len_sq * a_len_sq).sqrt();
     let dot = (nx * ax + ny * ay + nz * az) * inv_mag;
     let clamped_dot = js_max(-1.0, js_min(1.0, dot));
-    let angle = clamped_dot.acos();
+    let angle = js_acos(clamped_dot);
 
     if angle <= threshold {
         return min_thickness;
