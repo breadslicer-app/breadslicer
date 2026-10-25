@@ -154,6 +154,10 @@ pub struct TrunkOverrides {
     pub tip_body_diameter_mm: Option<f64>,
     pub tip_length_mm: Option<f64>,
     pub tip_disk_length_override_mm: Option<f64>,
+    /// Not in DragonFruit's declared type, but the auto pass hands the whole
+    /// `sizeParameters` object over and the settings hex reads it; the tip
+    /// profile does not.
+    pub tip_penetration_mm: Option<f64>,
 }
 
 impl TrunkOverrides {
@@ -164,7 +168,7 @@ impl TrunkOverrides {
             tip_contact_diameter_mm: self.tip_contact_diameter_mm,
             tip_body_diameter_mm: self.tip_body_diameter_mm,
             tip_length_mm: self.tip_length_mm,
-            tip_penetration_mm: None,
+            tip_penetration_mm: self.tip_penetration_mm,
             roots_diameter_mm: self.roots_diameter_mm,
             roots_disk_height_mm: self.roots_disk_height_mm,
             roots_cone_height_mm: self.roots_cone_height_mm,

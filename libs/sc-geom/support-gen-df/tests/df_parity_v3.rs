@@ -321,6 +321,7 @@ fn trunk_input(input: &Value) -> TrunkBuildInput<'_> {
         tip_body_diameter_mm: o.get("tipBodyDiameterMm").and_then(opt),
         tip_length_mm: o.get("tipLengthMm").and_then(opt),
         tip_disk_length_override_mm: o.get("tipDiskLengthOverrideMm").and_then(opt),
+        tip_penetration_mm: None,
     });
     TrunkBuildInput {
         tip_pos: read(&input["tipPos"]),
