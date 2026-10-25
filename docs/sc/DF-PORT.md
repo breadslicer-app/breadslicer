@@ -260,6 +260,55 @@ desviados (la inclinación de la junta es siempre la constante de 45°).
 `cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 63 tests más
 1 de escala ignorado.
 
+## Fase 1, bloque 5 — builders Twig, Stick, Stump, Kickstand y Brace (hecho)
+
+| Archivo DF | Rust | Estado |
+|---|---|---|
+| `SupportTypes/Twig/{twigBuilder,twigTaper,twigJointStandoff,twigVerticality}.ts` | `support_types/twig/` | completo; la regla de diámetro de knot registrada es `twig_knot_diameter` |
+| `SupportTypes/Stick/{stickBuilder,stickVerticality}.ts` | `support_types/stick/` | completo (dos pasadas de eje, cono acortado al hueco libre por rayos, tramo libre contra el campo, orden de extremos) |
+| `SupportTypes/shaftVerticality.ts` | `support_types/shaft_verticality.rs` | completo |
+| `twigRegistration.ts`/`stickRegistration.ts` (`registerContactBridgeBuilder`) + `buildContactBridge` | `support_types/contact_bridge.rs` | completo: gates de verticalidad (45° twig, 20° stick), exención manual |
+| `SupportTypes/Stump/{stumpBuilder,stumpAutoPlacement}.ts` | `support_types/stump/` | completo: override de contacto con `STUMP_BELOW_ROOT` y colisión de cono, joint y raíz contra la distancia exacta |
+| `SupportTypes/Kickstand/{kickstandBuilder,kickstandRules,kickstandSettings}.ts` | `support_types/kickstand/` | completo, con `toKickstandPreviewData`; un host inválido es `Err` (DF lanza) |
+| `SupportTypes/Brace/braceSpanDiameters.ts`, `autoBracing/braceDiameter.ts` | `support_types/brace/`, `auto_bracing/brace_diameter.rs` | completo |
+
+**Lo que no es builder y va en otro bloque.** Brace no tiene builder en DF: el
+brace manual lo escribe `BracePlacementController.tsx` y el automático el
+planificador de auto-bracing; su settle (`braceSettle.ts`) es el recálculo de knots
+del store. `kickstandStabiliser.ts` (595 líneas) es el generador de auto-bracing.
+Los grupos de export (`registerSupportExportGroup`) van con el exportador;
+renderers, proxies, marquee, drag preview y placement state son de la GUI.
+
+**Malla.** Los builders reciben `ModelMesh { field, rays }` (`supports/model_mesh.rs`):
+DF les da un `THREE.Mesh` y cada chequeo elige su vista, el campo de distancia del
+pool (`isShaftBlocked`, stump) o el raycaster (`checkShaftCollision`,
+`checkShortBridgeCollision`); acá viajan juntas y cada builder lee la que lee DF.
+El stump lee además los settings de raft en DF, para valores que no usa (offset
+vertical fijo en 0); no se piden.
+
+**Evidencia:** `scripts/df-oracle/golden_builders5.ts` → `tests/fixtures/df_builders5.json`
+(entrando por `state.ts`, como los tests de DF, para que corran las registraciones):
+2040 llamadas en orden — 271 twigs, 483 sticks, 200 bridges registrados (twig,
+stick y un tipo sin builder; manuales y automáticos), 241 stumps, 544 overrides
+de stump, 301 kickstands (hosts inválidos, overrides de layout fuera de rango,
+columnas autoradas, límite de ángulo) — sobre un torus knot, una escena de techo
+y piso con poste (también movida/rotada) y una escena baja con labios y columnas.
+Además de 900 llamadas aleatorias hay barridos dirigidos a los umbrales: puentes y
+kickstands a distancias crecientes del poste, contactos en paredes laterales,
+sticks cortos, empates de orden, stumps acercándose a columnas bajo dos labios.
+Más 200 layouts, 150 tapers (degenerados y casi degenerados) y 200 brace spans.
+`tests/df_parity_builders5.rs`: **igualdad exacta**; `tests/builders5_df_tests.rs`
+porta `manualBridgeCant`, `twigVerticality`, `twigSizing` y `kickstandColumnShape`.
+
+Sensibilidad: 24 de 26 mutaciones fallan. Sobreviven el tope de longitud del cono
+del stump (equivalente: con eje descendente coincide con la longitud estirada) y
+el tope de 5 muestras por cuerpo del stump, que sólo cambia el veredicto en
+contactos al borde. La primera tanda aleatoria dejaba vivas 10 de 19; los
+barridos se agregaron por eso.
+
+`cargo clippy -p support-gen-df --all-targets` y `cargo fmt` limpios; 69 tests más
+1 de escala ignorado.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
