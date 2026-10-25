@@ -586,6 +586,69 @@ Se sigue al **JS**, no a C#:
 
 `tests/df_parity_clipper.rs`: **igualdad exacta** en árboles (contornos, agujeros, hijos y recorrida) y caminos. Sensibilidad: 10 de 13 mutaciones fallan. Sobreviven el `loRange` (equivalente para el raft: mm×1000 nunca llega), el área cero en la reversión de orientación y el `curr == top` de `FindNextLocMin` (casi equivalentes).
 
+### 9b — extrusión de three (hecho)
+
+| Origen (three r181, MIT) | Rust SC | Estado |
+|---|---|---|
+| `extras/lib/earcut.js` (mapbox/earcut 3.0.2, ISC) | `three/earcut.rs` | Completo: anillos enlazados en arena, curva z-order (más de 80 puntos), los tres pases, puntos Steiner, puentes de agujeros |
+| `extras/ShapeUtils.js` | `three/shape_utils.rs` | `area`, `isClockWise`, `triangulateShape` (recorta el duplicado de cierre **en el arreglo del llamador**, como three) |
+| `extras/core/{Path,Shape,CurvePath}.js`, `curves/LineCurve.js` | `three/shape.rs` | Solo rectas, que es lo que usa el raft: `moveTo`, `lineTo`, `closePath`, `setFromPoints`, `getPoints`, `extractPoints` |
+| `geometries/ExtrudeGeometry.js` | `three/extrude_geometry.rs` | Sin bisel ni camino de extrusión (la configuración del raft): tapas, paredes, UVs del `WorldUVGenerator` y los dos grupos |
+| `core/BufferGeometry.js`, `BufferGeometryUtils.mergeGeometries` | `three/buffer_geometry.rs` | Atributos `Float32Array` (redondeo a `f32` en cada `setXYZ`, como three): `computeVertexNormals`, `normalizeNormals`, `applyMatrix4`, `translate`, `toNonIndexed`, `mergeGeometries` |
+| `math/Vector2.js` | `three/vector2.rs` | Lo que usa el raft |
+
+Detalles que importan para la paridad:
+- **`mergeOverlappingPoints`:** compara en anillo, así que un duplicado de cierre borra el **primer** punto, no el último; el agujero queda rotado.
+- **Índices:** `triangulateShape` corre después de calcular `vlen` y puede acortar el contorno, y las paredes usan el largo recortado. Se replica igual.
+- **Orden de `sort` de V8:** con comparadores consistentes, cualquier sort estable da lo mismo que el TimSort de V8. `compareXYSlope` puede dar NaN (dos agujeros con el mismo punto extremo izquierdo y pendientes verticales). Por eso `v8_sort` replica el TimSort de V8 para menos de 64 elementos (una corrida contada más inserción binaria), que es el caso de los agujeros de un raft.
+
+**Evidencia:** `scripts/df-oracle/golden_extrude.ts` → `tests/fixtures/df_extrude.json`. Los atributos largos van como longitud más FNV-1a de los bits `f32`. Los casos:
+- **Earcut:** 600 casos, 140 por encima del umbral del hash. Incluyen colineales, duplicados, agujeros que tocan el contorno o se tocan entre sí, autointersecciones y agujeros de un punto.
+- **`triangulateShape`:** 200 casos.
+- **`ExtrudeGeometry`:** 250 casos, con formas armadas como `polygonSetToShapes` y como `generatePerimeterWall`, seguidos de `computeVertexNormals` y `translate`.
+- **BufferGeometry:** 40 sopas indexadas por normales, `toNonIndexed`, `mergeGeometries` y `translate`.
+
+`tests/df_parity_extrude.rs`: **igualdad exacta** en índices y en cada float. Sensibilidad: 12 de 14 mutaciones fallan. Sobreviven dos, ambas equivalentes o casi:
+- **`<=` → `<` en `sortLinked`:** solo cambia el orden entre z iguales.
+- **`v8_sort` → sort estable:** da lo mismo con un comparador consistente.
+
+### 9c — geometría del raft y su ensamblado (hecho)
+
+| Origen DF (`src/supports/Rafts/Crenelated/`) | Rust SC (`supports/rafts/crenelated/`) | Estado |
+|---|---|---|
+| `RaftTypes.ts`, `RaftDefaults.ts` | `raft_types.rs` | Completo |
+| `signedArea2d`, `computeFootprint`, `insetConvexPolygon`, `computeRaftOuterBoundary` | `geometry/small.rs` | Completo |
+| `convexHull2d` | `geometry/convex_hull_2d.rs` | Ya estaba (6c); ahora sobre `three::Vector2` |
+| `polygonSet2d` | `geometry/polygon_set_2d.rs` | Completo, sobre el Clipper de 9a |
+| `polygonRaster2d` | `geometry/polygon_raster_2d.rs` | Completo |
+| `modelPlateFootprint` (+ `quaternionFromGlobalEuler` de `utils/rotation`) | `geometry/model_plate_footprint.rs` | Completo, sin cachés (ver abajo) |
+| `computeRaftFootprint` | `geometry/compute_raft_footprint.rs` | Completo |
+| `generateChamferedBase`, `generatePerimeterWall`, `generateCrenelatedWallManual`, `generateRaftFromFootprint` | `geometry/generate_*.rs` | Completo |
+| `generateUnionedLineRaftMesh`, `generateChamferedBeam`, `buildLineRaftEdgePairs`, `delaunayTriangulate2d` | `geometry/generate_unioned_line_raft_mesh.rs`, `generate_chamfered_beam.rs`, `build_line_raft_edge_pairs.rs` | Completo |
+| `ExportManager.exportScene`, paso `// 4. Add Raft` | `raft_export.rs` (`build_export_rafts`) | Completo: un raft por modelo, ajustes por modelo, filtro de modelos del export y holgura de los modelos visibles |
+| `RaftState.ts`, `raftFootprintCircles.ts`, `rendering/` | — | Estado de la UI y render: van con la integración GUI |
+
+Detalles que importan para la paridad:
+- **`polygonsFromPolyTree`:** recorre con `GetFirst`/`GetNext` y además baja recursivamente por cada nodo. Así, un nodo bajo el primer nivel se visita una vez por ancestro más la propia: una isla dentro de un agujero sale repetida. SC lo replica.
+- **Mutaciones en el lugar:** `triangulateShape` recorta los anillos de la huella del llamador; SC pasa `&mut`.
+- **Aritmética:** el `reduce` del área en `nestLoops` suma `total + a - b` de izquierda a derecha, no `total + (a - b)`. Esa diferencia de redondeo cambiaba el orden de los bucles.
+- **Errores:** una excepción de Clipper sale de `exportScene` sin capturar y el export falla entero. SC devuelve `Err(ClipperError)` hasta `build_export_rafts`.
+- **Cachés:** DF memoiza tres (índice de triángulos bajos, sombra local y sombra mundial). El índice bajo y la sombra local dan lo mismo que calcular de cero; SC calcula de cero. La sombra mundial no: su clave omite la posición X/Y (SC-76).
+- **Holgura:** `models.filter(model => model.visible)` deja afuera un `visible` sin definir. SC exige `Some(true)`.
+
+**Evidencia:** `scripts/df-oracle/golden_rafts.ts` → `tests/fixtures/df_rafts.json`, con el código real de DF. El paso del raft de `exportScene` está transcrito literal alrededor de las funciones de DF, porque `exportScene` necesita Tauri. Cada modelo tiene su propia geometría, para no tocar la caché de sombra mundial. Los casos:
+- **Conjuntos de polígonos:** 160 casos de unión, diferencia y offset. Incluyen islas en agujeros y coordenadas en medio micrón, donde el `Math.round` de JS difiere del redondeo de Rust.
+- **Raster:** 30 sopas.
+- **Huella de modelos en la placa:** 40 casos con esferas, cajas, toros y cilindros, de frente a la placa e inclinados, indexados y no.
+- **Anillos:** 60 casos con inset, borde exterior y `computeFootprint`, incluidos picos que se pliegan y agujas.
+- **Grafo de vigas:** 60 casos, con y sin backbone.
+- **Mallas de línea:** 40 casos, con anillo de borde y chaflanes, más vigas sueltas.
+- **Export:** 120 escenas con 167 rafts, 59 de ellos con huella recortada; algunos modelos son cajas apoyadas exactamente en z = 0.
+
+`tests/df_parity_rafts.rs`: **igualdad exacta** en cada punto de polígono y cada float de malla. Sensibilidad: 25 de 30 mutaciones fallan. Sobreviven cinco:
+- **Equivalentes:** el margen de la almena (con un solo hueco se cancela) y el atajo de 4 puntos de `simplifyLoop` (DP sobre un cuadrado de una celda cae al mismo fallback).
+- **Casi equivalentes:** los anillos de área cero en `orientRing`, el punto justo a la altura de un vértice en la contención, y los puntos cocirculares en el épsilon de Delaunay.
+
 ## Fases siguientes
 
 1. **Transliteración 1:1** en un crate nuevo que replica `src/supports/`:
