@@ -946,6 +946,7 @@ Cargar modelo → auto-soportes → raft → preview en el viewport → slice �
   - corre como job con progreso por etapa y botón Cancel en el panel;
   - si la escena cambió durante la corrida, descarta el resultado;
   - si no, pega la malla como **un** objeto deshacible y muestra un resumen.
+- **Primera prueba de Damian (2026-10-25):** cubo rotado; soportes, brazos y raft almenado bien. La placa mostraba el aviso de rayas rojas porque 55 vértices de las bases quedaban en −1,7e-16 mm (redondeo al rotar los cilindros). El adaptador ahora apoya en Z = 0 todo vértice a menos de 1e-4 mm por debajo; la salida del port sigue exacta.
 - **Chequeos:** el adaptador sobre un cubo elevado (soportes, raft en la placa, exclusión de la salida anterior, cancelación) y un test de cableado de la GUI.
 - **Límites de este corte:**
   - la altura de capa del escaneo es 0,05 mm fija;
