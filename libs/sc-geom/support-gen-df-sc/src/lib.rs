@@ -118,8 +118,18 @@ pub fn model_from_world_mesh(id: String, mesh: &IndexedMesh) -> ModelInput {
     }
 }
 
-/// A triangle soup welded by exact position; triangles the weld collapses
-/// are dropped.
+/// How far below the plate a vertex may round and still be put on it.
+///
+/// The tessellation rotates each frustum into place, and a base that should
+/// sit at `Z = 0` comes out a few 1e-16 mm below it; SoulCrafted's viewport
+/// (and the build-volume check) reads any vertex under `Z = 0` as the object
+/// breaching the plate. DragonFruit's own slicer clips there, so it never
+/// cared. The port's output stays exact; only this scene mesh is snapped.
+pub const PLATE_SNAP_MM: f32 = 1e-4;
+
+/// A triangle soup welded by exact position, with vertices a rounding error
+/// below the plate put on it ([`PLATE_SNAP_MM`]); triangles the weld
+/// collapses are dropped.
 pub fn weld_soup(soup: &[f32], name: &str) -> Option<IndexedMesh> {
     let mut index_of: HashMap<[u32; 3], u32> = HashMap::new();
     let mut vertices: Vec<Vertex> = Vec::new();
@@ -127,9 +137,14 @@ pub fn weld_soup(soup: &[f32], name: &str) -> Option<IndexedMesh> {
     for tri in soup.chunks_exact(9) {
         let mut ids = [0u32; 3];
         for (k, p) in tri.chunks_exact(3).enumerate() {
-            let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+            let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
+                0.0
+            } else {
+                p[2]
+            };
+            let key = [p[0].to_bits(), p[1].to_bits(), z.to_bits()];
             ids[k] = *index_of.entry(key).or_insert_with(|| {
-                vertices.push(Vertex::new([p[0], p[1], p[2]]));
+                vertices.push(Vertex::new([p[0], p[1], z]));
                 (vertices.len() - 1) as u32
             });
         }
