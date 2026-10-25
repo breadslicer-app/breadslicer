@@ -947,11 +947,17 @@ Cargar modelo → auto-soportes → raft → preview en el viewport → slice �
   - si la escena cambió durante la corrida, descarta el resultado;
   - si no, pega la malla como **un** objeto deshacible y muestra un resumen.
 - **Primera prueba de Damian (2026-10-25):** cubo rotado; soportes, brazos y raft almenado bien. La placa mostraba el aviso de rayas rojas porque 55 vértices de las bases quedaban en −1,7e-16 mm (redondeo al rotar los cilindros). El adaptador ahora apoya en Z = 0 todo vértice a menos de 1e-4 mm por debajo; la salida del port sigue exacta.
+- **Tubos suaves con biconos (pedido de Damian, 2026-10-25):** las esferas de las juntas se veían como escalones. `features/slicing/smooth_shafts.rs` (de SC, no de DF) arma cada cadena de tramos como un tubo continuo:
+  - en los codos dobla sobre un anillo ingletado en el plano bisector;
+  - donde DF pone una esfera, ensancha en un bicono: cintura 1,3× el radio y collares cónicos de 2,5× la cintura, como mucho el 40 % del tramo.
+  - Va detrás de `ShaftStyle`: `DragonFruit` (paridad, el valor por defecto del port) o `Smooth`, que es el que usa la GUI.
+  - Tests: tubos cerrados y orientados hacia afuera, bicono solo en las juntas, y sobre los 52 estados de 8c menos triángulos que DF sin abrir la malla. La paridad DF sigue exacta.
 - **Chequeos:** el adaptador sobre un cubo elevado (soportes, raft en la placa, exclusión de la salida anterior, cancelación) y un test de cableado de la GUI.
 - **Límites de este corte:**
   - la altura de capa del escaneo es 0,05 mm fija;
   - los ajustes son los de DF por defecto;
   - una segunda corrida agrega otro objeto en vez de reemplazar el anterior;
+  - las uniones donde una rama sale de un tronco siguen siendo dos tubos que se cruzan (sin unir);
   - el slice de esa malla (soportes superpuestos en una sola malla) es SC-81.
 
 **Depende de:** SC-78. Prioridad: high. Estado snapshot: todo.

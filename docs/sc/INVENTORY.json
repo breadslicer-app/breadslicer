@@ -2068,7 +2068,7 @@
       "sources": [
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
-          "sha256": "ca11eb87e366c0dbdd07c270348fed15dbd3494f79af5945c2d18050680e846d"
+          "sha256": "1bb5eb351b4eddf3203dbfaa99fe9404ae7d8072ea29384c6c400e471d77d27c"
         }
       ]
     },
@@ -2097,11 +2097,15 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/mod.rs",
-          "sha256": "fdeb1c31387b1f486897e491d60ee9d752e0148c4c6de76ee644412b992b6215"
+          "sha256": "935c8815b9d5825f73eebf7dfb35f49e2c49926f8492e0dec82de9da7a7df248"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/features/slicing/smooth_shafts.rs",
+          "sha256": "193727bab9c3dda3744eb6c8221c8b06cec6d0eb6ce9d0283f8272871b422860"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/support_world_triangles.rs",
-          "sha256": "509e1b25592074b7f0457168c54451d47b600acb9b9b055b4ca174d244064142"
+          "sha256": "d2647f92ad298d880eabc71f5f904b070ec31651612ad1c191a1c195d39dfc46"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/js_math.rs",
@@ -2169,7 +2173,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/pipeline.rs",
-          "sha256": "776f61c66e3eb002146cdbd1aca03a8ad7076ae4a149f60ac45f1436316d1573"
+          "sha256": "d5c70d760ec630bcca47c8d467a253a9a8b69d4dc565a6648b7624670bc71f2f"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",

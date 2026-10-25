@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::smooth_shafts::{ChainPoint, ShaftStyle, append_smooth_chain};
 use crate::clipper::ClipperError;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
@@ -288,6 +289,9 @@ pub struct SupportSliceInput<'a> {
     pub support_tip_shrink_percent: f64,
     /// `calculateTipOffset(...)` for the active material and printer, or 0.
     pub tip_penetration_mm: f64,
+    /// How shafts and joints are drawn (SoulCrafted's option; the default is
+    /// DragonFruit's).
+    pub shaft_style: ShaftStyle,
 }
 
 /// The entity fields the generic walk needs, read per type.
@@ -554,10 +558,23 @@ pub fn build_support_and_raft_world_triangles(
                     js_max(0.05, top_d * 0.5),
                     tessellation.root_radial_segments,
                 );
-                emit_joint(&mut sink, Some(joint));
+                if input.shaft_style == ShaftStyle::DragonFruit {
+                    emit_joint(&mut sink, Some(joint));
+                }
             }
 
-            if let Some(shaft) = entity.shaft {
+            if let (Some(shaft), ShaftStyle::Smooth(params)) = (entity.shaft, input.shaft_style) {
+                let hosts = EndpointHosts { root, host_knot };
+                let resolved: Vec<_> = entity
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, seg)| {
+                        resolve_segment_endpoints(shaft, seg, index, hosts).map(|ep| (seg, ep))
+                    })
+                    .collect();
+                append_smooth_shaft(&mut sink, &resolved, &tessellation, &params);
+            } else if let Some(shaft) = entity.shaft {
                 for (index, seg) in entity.segments.iter().enumerate() {
                     let hosts = EndpointHosts { root, host_knot };
                     let Some(ep) = resolve_segment_endpoints(shaft, seg, index, hosts) else {
@@ -727,4 +744,79 @@ fn append_slice_rafts(
         }
     }
     Ok(())
+}
+
+/// A shaft's resolved segments as smooth tubes: each run of connected
+/// segments is one chain, Beziers sampled as DragonFruit samples them, a
+/// bicone wherever DragonFruit would draw a joint sphere between segments.
+fn append_smooth_shaft(
+    sink: &mut Vec<f32>,
+    resolved: &[(
+        &Segment,
+        crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,
+    )],
+    tessellation: &SupportSliceTessellation,
+    params: &super::smooth_shafts::SmoothShaftParams,
+) {
+    let mut points: Vec<ChainPoint> = Vec::new();
+    let mut radii: Vec<f64> = Vec::new();
+    let flush = |sink: &mut Vec<f32>, points: &mut Vec<ChainPoint>, radii: &mut Vec<f64>| {
+        if points.len() >= 2 {
+            append_smooth_chain(
+                sink,
+                points,
+                radii,
+                tessellation.shaft_radial_segments,
+                params,
+            );
+        }
+        points.clear();
+        radii.clear();
+    };
+    let mut previous: Option<&Segment> = None;
+    for &(seg, ep) in resolved {
+        let radius = js_max(0.001, js_max(0.05, seg.diameter) * 0.5);
+        let joined = points
+            .last()
+            .is_some_and(|p| p.pos.distance_to(ep.start) <= 1e-6);
+        if !joined {
+            flush(sink, &mut points, &mut radii);
+            points.push(ChainPoint {
+                pos: ep.start,
+                bulge: false,
+            });
+        } else if let Some(last) = points.last_mut() {
+            last.bulge =
+                previous.is_some_and(|p| p.top_joint.is_some()) || seg.bottom_joint.is_some();
+        }
+        match segment_bezier(seg) {
+            Some(curve) => {
+                let steps = tessellation.bezier_steps.max(2);
+                for i in 1..=steps {
+                    let t = i as f64 / steps as f64;
+                    let p = get_bezier_point_at_t(
+                        ep.start,
+                        curve.control_point1,
+                        curve.control_point2,
+                        ep.end,
+                        t,
+                    );
+                    points.push(ChainPoint {
+                        pos: p,
+                        bulge: false,
+                    });
+                    radii.push(radius);
+                }
+            }
+            None => {
+                points.push(ChainPoint {
+                    pos: ep.end,
+                    bulge: false,
+                });
+                radii.push(radius);
+            }
+        }
+        previous = Some(seg);
+    }
+    flush(sink, &mut points, &mut radii);
 }
