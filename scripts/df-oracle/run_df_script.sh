@@ -19,6 +19,7 @@ if [ ! -d "$sandbox" ]; then
   git -C "$DF" rev-parse HEAD > "$sandbox/DF_REVISION"
 fi
 cp "$script" "$sandbox/"
+cp "$HERE/register.mjs" "$HERE/uuid_stub.mjs" "$sandbox/"
 
 export DF_ORACLE_PACKAGE_URL="file:///$DF/package.json"
 export NODE_PATH="$DF/node_modules"
