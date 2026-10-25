@@ -6,8 +6,8 @@
 //! The inputs are read through the port's own serde types, so this also holds
 //! the wire format to DragonFruit's. Numbers must agree bit for bit: the port
 //! does the same IEEE arithmetic in the same order, and JSON round-trips f64
-//! exactly (`float_roundtrip`). Should a platform libm ever differ from V8 in
-//! the last ulp of `acos`/`sin`, raise `REL_TOL` rather than the arithmetic.
+//! exactly (`float_roundtrip`). Transcendentals go through V8's own algorithms
+//! (`js_math`, `three::math_utils`), never the platform libm.
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
