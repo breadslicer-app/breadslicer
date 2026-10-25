@@ -8,6 +8,7 @@ pub mod model_mesh;
 pub mod numeric_constraint;
 pub mod placement_logic;
 pub mod placement_logic_v3;
+pub mod rafts;
 pub mod rendering;
 pub mod settings;
 pub mod support_primitives;
