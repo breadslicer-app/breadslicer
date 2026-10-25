@@ -2564,3 +2564,64 @@ pub const JOINT_REMOVAL_TYPES: [SupportTypeId; 3] = [
     SupportTypeId::Branch,
     SupportTypeId::Kickstand,
 ];
+
+// ---------------------------------------------------------------------------
+// Placements in the registry's generic shape (`PlacedSupport`).
+
+/// A support entity of any type: `SupportEntityFor<T>`, carried by value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SupportEntityValue {
+    Trunk(crate::supports::types::Trunk),
+    Branch(crate::supports::types::Branch),
+    Leaf(crate::supports::types::Leaf),
+    Twig(crate::supports::types::Twig),
+    Stick(crate::supports::types::Stick),
+    Brace(crate::supports::types::Brace),
+    Stump(crate::supports::types::Stump),
+    Kickstand(crate::supports::types::Kickstand),
+}
+
+/// A primitive a placement carries into the draft, keyed by the `edges` field
+/// that declares it (`PlacementPrimitives`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PlacementPrimitive {
+    Roots(crate::supports::types::Roots),
+    Knot(crate::supports::types::Knot),
+}
+
+/// The host a placed member hangs from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostRef {
+    pub type_id: SupportTypeId,
+    pub id: String,
+}
+
+/// `PlacedSupport`: a type id with the entity built for it, the primitives it
+/// brings, and the host it hangs from when it hangs from one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlacedSupport {
+    pub type_id: SupportTypeId,
+    pub entity: SupportEntityValue,
+    pub supplied: IndexMap<String, PlacementPrimitive>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_by: Option<HostRef>,
+}
+
+/// `placementOfResolved(typeId, entity, supplied, hostedBy)`.
+pub fn placement_of_resolved(
+    type_id: SupportTypeId,
+    entity: SupportEntityValue,
+    supplied: IndexMap<String, PlacementPrimitive>,
+    hosted_by: Option<HostRef>,
+) -> PlacedSupport {
+    PlacedSupport {
+        type_id,
+        entity,
+        supplied,
+        hosted_by,
+    }
+}
