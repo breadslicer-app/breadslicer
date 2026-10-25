@@ -1,4 +1,5 @@
-//! JavaScript's `Math.sin` and `Math.cos` as V8 computes them.
+//! JavaScript's `Math.sin`, `Math.cos`, `Math.log` and `Math.cbrt` as V8
+//! computes them. (`Math.pow` is `three::math_utils::js_pow`.)
 //!
 //! V8 (`src/base/ieee754.cc`) evaluates them with the original fdlibm 5.3
 //! (Sun Microsystems, freely distributable: "Permission to use, copy, modify,
@@ -222,4 +223,150 @@ pub fn cos(x: f64) -> f64 {
         2 => -kernel_cos(y0, y1),
         _ => kernel_sin(y0, y1, 1),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Math.log: fdlibm 5.3 `__ieee754_log`, with its `i | j` choice of formula.
+// The `libm` crate carries musl's rewrite of it, one combined expression,
+// which differs in the last bit for ~0.05% of arguments.
+
+const LN2_HI: f64 = f64::from_bits(0x3fe62e42_fee00000); // 6.93147180369123816490e-01
+const LN2_LO: f64 = f64::from_bits(0x3dea39ef_35793c76); // 1.90821492927058770002e-10
+const TWO54: f64 = f64::from_bits(0x43500000_00000000); // 1.80143985094819840000e+16
+const LG1: f64 = f64::from_bits(0x3fe55555_55555593); // 6.666666666666735130e-01
+const LG2: f64 = f64::from_bits(0x3fd99999_9997fa04); // 3.999999999940941908e-01
+const LG3: f64 = f64::from_bits(0x3fd24924_94229359); // 2.857142874366239149e-01
+const LG4: f64 = f64::from_bits(0x3fcc71c5_1d8e78af); // 2.222219843214978396e-01
+const LG5: f64 = f64::from_bits(0x3fc74664_96cb03de); // 1.818357216161805012e-01
+const LG6: f64 = f64::from_bits(0x3fc39a09_d078c69f); // 1.531383769920937332e-01
+const LG7: f64 = f64::from_bits(0x3fc2f112_df3e5244); // 1.479819860511658591e-01
+
+/// The low word of a double (`__LO`).
+#[inline]
+fn lo(x: f64) -> u32 {
+    x.to_bits() as u32
+}
+
+/// `x` with its high word replaced (`SET_HIGH_WORD`).
+#[inline]
+fn with_hi(x: f64, word: i32) -> f64 {
+    f64::from_bits(((word as u32 as u64) << 32) | u64::from(lo(x)))
+}
+
+/// `Math.log`.
+pub fn log(x: f64) -> f64 {
+    let mut x = x;
+    let mut hx = hi(x);
+    let lx = lo(x);
+    let mut k: i32 = 0;
+    if hx < 0x00100000 {
+        // x < 2**-1022
+        if ((hx & 0x7fffffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY; // log(+-0) = -inf
+        }
+        if hx < 0 {
+            return f64::NAN; // log(-#) = NaN
+        }
+        k -= 54;
+        x *= TWO54; // subnormal number, scale up x
+        hx = hi(x);
+    }
+    if hx >= 0x7ff00000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000fffff;
+    let i = (hx + 0x95f64) & 0x100000;
+    x = with_hi(x, hx | (i ^ 0x3ff00000)); // normalize x or x/2
+    k += i >> 20;
+    let f = x - 1.0;
+    if (0x000fffff & (2 + hx)) < 3 {
+        // -2**-20 <= f < 2**-20
+        if f == 0.0 {
+            if k == 0 {
+                return 0.0;
+            }
+            let dk = f64::from(k);
+            return dk * LN2_HI + dk * LN2_LO;
+        }
+        let r = f * f * (0.5 - 0.33333333333333333 * f);
+        if k == 0 {
+            return f - r;
+        }
+        let dk = f64::from(k);
+        return dk * LN2_HI - ((r - dk * LN2_LO) - f);
+    }
+    let s = f / (2.0 + f);
+    let dk = f64::from(k);
+    let z = s * s;
+    let mut i = hx - 0x6147a;
+    let w = z * z;
+    let j = 0x6b851 - hx;
+    let t1 = w * (LG2 + w * (LG4 + w * LG6));
+    let t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+    i |= j;
+    let r = t2 + t1;
+    if i > 0 {
+        let hfsq = 0.5 * f * f;
+        if k == 0 {
+            f - (hfsq - s * (hfsq + r))
+        } else {
+            dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f)
+        }
+    } else if k == 0 {
+        f - s * (f - r)
+    } else {
+        dk * LN2_HI - ((s * (f - r) - dk * LN2_LO) - f)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Math.cbrt: FreeBSD's `s_cbrt.c` (Bruce D. Evans' revision of fdlibm's): a
+// bit-pattern seed, a polynomial to 23 bits, one Newton step. The `libm` crate
+// now carries core-math's correctly rounded cbrt, which V8 14.6 does not use.
+
+const B1: u32 = 715094163; // (1023-1023/3-0.03306235651)*2**20
+const B2: u32 = 696219795; // (1023-1023/3-54/3-0.03306235651)*2**20
+const P0: f64 = f64::from_bits(0x3ffe03e6_0f61e692); // 1.87595182427177009643
+const P1: f64 = f64::from_bits(0xbffe28e0_92f02420); // -1.88497979543377169875
+const P2: f64 = f64::from_bits(0x3ff9f160_4a49d6c2); // 1.621429720105354466140
+const P3: f64 = f64::from_bits(0xbfe844cb_bee751d9); // -0.758397934778766047437
+const P4: f64 = f64::from_bits(0x3fc2b000_d4e4edd7); // 0.145996192886612446982
+
+/// `Math.cbrt`.
+pub fn cbrt(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let mut hx = (bits >> 32) as u32;
+    let low = bits as u32;
+    let sign = hx & 0x80000000;
+    hx ^= sign;
+    if hx >= 0x7ff00000 {
+        return x + x; // cbrt(NaN, INF) is itself
+    }
+    let mut t;
+    if hx < 0x00100000 {
+        // zero or subnormal
+        if (hx | low) == 0 {
+            return x; // cbrt(0) is itself
+        }
+        t = TWO54 * x;
+        let high = (t.to_bits() >> 32) as u32;
+        t = f64::from_bits(u64::from(sign | ((high & 0x7fffffff) / 3 + B2)) << 32);
+    } else {
+        t = f64::from_bits(u64::from(sign | (hx / 3 + B1)) << 32);
+    }
+
+    // New cbrt to 23 bits: cbrt(x) = t*cbrt(x/t**3) ~= t*P(t**3/x).
+    let r = (t * t) * (t / x);
+    t *= (P0 + r * (P1 + r * P2)) + ((r * r) * r) * (P3 + r * P4);
+
+    // Round t away from zero to 23 bits.
+    t = f64::from_bits((t.to_bits().wrapping_add(0x80000000)) & 0xffffffff_c0000000);
+
+    // One step Newton iteration to 53 bits with error < 0.667 ulps.
+    let s = t * t; // t*t is exact
+    let mut r = x / s; // error <= 0.5 ulps; |r| < |t|
+    let w = t + t; // t+t is exact
+    r = (r - t) / (w + r); // r-t is exact; w+r ~= 3*t
+    t + t * r // error <= 0.5 + 0.5/3 + epsilon
 }

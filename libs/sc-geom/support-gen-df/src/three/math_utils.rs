@@ -105,6 +105,48 @@ pub fn js_tan(x: f64) -> f64 {
     libm::tan(x)
 }
 
+/// `Math.log`: V8's fdlibm 5.3 (`crate::js_math`).
+#[inline]
+pub fn js_log(x: f64) -> f64 {
+    crate::js_math::log(x)
+}
+
+/// `Math.cbrt`: V8's FreeBSD `s_cbrt` (`crate::js_math`).
+#[inline]
+pub fn js_cbrt(x: f64) -> f64 {
+    crate::js_math::cbrt(x)
+}
+
+/// `Math.pow` and `**`, as V8 14.6 computes them (`src/numbers/ieee754.cc`
+/// `math::pow` under its default `--use-std-math-pow`): the special cases
+/// JavaScript defines differently from C, `y == 2` as `x * x` and `y == 0.5` as
+/// a square root, both as the optimizing compilers emit them, and otherwise the
+/// C runtime's `pow`.
+///
+/// That last step is the platform's, in V8 as here: Node on Windows links its
+/// own static UCRT, whose `pow` differs from the system `ucrtbase.dll` this
+/// calls in the last bit for ~0.025% of arguments (`tests/js_math.rs`). It is
+/// the one `Math` function whose exact result belongs to the C runtime build
+/// rather than to V8.
+pub fn js_pow(x: f64, y: f64) -> f64 {
+    if y.is_nan() {
+        return f64::NAN;
+    }
+    if y.is_infinite() && (x == 1.0 || x == -1.0) {
+        return f64::NAN;
+    }
+    if y == 2.0 {
+        return x * x;
+    }
+    if y == 0.5 {
+        if x.is_infinite() {
+            return f64::INFINITY;
+        }
+        return (x + 0.0).sqrt();
+    }
+    x.powf(y)
+}
+
 /// `MathUtils.degToRad`.
 #[inline]
 pub fn deg_to_rad(degrees: f64) -> f64 {
