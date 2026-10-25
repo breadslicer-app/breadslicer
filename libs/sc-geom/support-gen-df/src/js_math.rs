@@ -289,7 +289,8 @@ pub fn log(x: f64) -> f64 {
             let dk = f64::from(k);
             return dk * LN2_HI + dk * LN2_LO;
         }
-        let r = f * f * (0.5 - 0.33333333333333333 * f);
+        // fdlibm's `0.33333333333333333` literal, as the double it parses to.
+        let r = f * f * (0.5 - f64::from_bits(0x3fd55555_55555555) * f);
         if k == 0 {
             return f - r;
         }

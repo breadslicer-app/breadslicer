@@ -203,19 +203,39 @@ pub fn js_to_fixed_number(x: f64, digits: usize) -> f64 {
     if !x.is_finite() || x.abs() >= 1e21 {
         return x;
     }
+    let magnitude: f64 = fixed_magnitude(x, digits).parse().expect("decimal parses");
+    if x < 0.0 { -magnitude } else { magnitude }
+}
+
+/// `x.toFixed(digits)`, the string. A negative `x` keeps its sign even when it
+/// rounds to zero (`(-0.001).toFixed(2)` is `"-0.00"`); `-0` does not.
+/// Magnitudes from 1e21 up print as `String(x)` does in JavaScript, which the
+/// support code never reaches; they fall back to Rust's exponent form here.
+pub fn js_to_fixed(x: f64, digits: usize) -> String {
+    if x.is_nan() {
+        return "NaN".to_owned();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
+    }
+    if x.abs() >= 1e21 {
+        return format!("{x:e}");
+    }
+    let magnitude = fixed_magnitude(x, digits);
+    if x < 0.0 {
+        format!("-{magnitude}")
+    } else {
+        magnitude
+    }
+}
+
+/// `|x|` to `digits` decimals, ties away from zero (see [`js_to_fixed_number`]).
+fn fixed_magnitude(x: f64, digits: usize) -> String {
     let wide = format!("{:.*}", digits + 40, x.abs());
     let (kept, tail) = wide.split_at(wide.len() - 40);
-    let first = tail.as_bytes()[0];
-    let rest_zero = tail[1..].bytes().all(|b| b == b'0');
-    let round_up_magnitude = if first > b'5' || (first == b'5' && !rest_zero) {
-        true
-    } else if first == b'5' {
-        // An exact tie takes the larger n. `toFixed` rounds the magnitude (the
-        // sign is set aside first), so a tie goes away from zero either way.
-        true
-    } else {
-        false
-    };
+    // On an exact tie `toFixed` takes the larger n; it rounds the magnitude
+    // (the sign is set aside first), so a tie goes away from zero either way.
+    let round_up_magnitude = tail.as_bytes()[0] >= b'5';
     let mut kept: Vec<u8> = kept.trim_end_matches('.').bytes().collect();
     if round_up_magnitude {
         // decimal increment of the last kept digit
@@ -236,9 +256,5 @@ pub fn js_to_fixed_number(x: f64, digits: usize) -> f64 {
             }
         }
     }
-    let magnitude: f64 = String::from_utf8(kept)
-        .expect("ascii")
-        .parse()
-        .expect("decimal parses");
-    if x < 0.0 { -magnitude } else { magnitude }
+    String::from_utf8(kept).expect("ascii")
 }

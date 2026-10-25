@@ -139,7 +139,11 @@ fn log_cbrt_and_pow_match_v8() {
         let expected = *v.last().unwrap();
         match name {
             "log" | "cbrt" => {
-                let actual = if name == "log" { js_log(v[0]) } else { js_cbrt(v[0]) };
+                let actual = if name == "log" {
+                    js_log(v[0])
+                } else {
+                    js_cbrt(v[0])
+                };
                 if actual.to_bits() != expected.to_bits() {
                     exact_misses.push(format!("{line} -> {:016x}", actual.to_bits()));
                 }
@@ -152,8 +156,14 @@ fn log_cbrt_and_pow_match_v8() {
             }
         }
     }
-    assert!(exact_misses.is_empty(), "{}", exact_misses.join("
-"));
+    assert!(
+        exact_misses.is_empty(),
+        "{}",
+        exact_misses.join(
+            "
+"
+        )
+    );
     assert!(pow_ulps.len() <= 10, "{} pow differences", pow_ulps.len());
     assert!(pow_ulps.iter().all(|&u| u == 1), "{pow_ulps:?}");
 }
