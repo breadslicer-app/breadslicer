@@ -117,7 +117,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
 | [SC-79](#sc-79) | done | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
-| [SC-81](#sc-81) | in progress | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
+| [SC-81](#sc-81) | done | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 | [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
 
@@ -1004,9 +1004,9 @@ Llevar las mallas de soportes y raft de la fachada al slice y a los writers: que
 
 **Prueba de Damian (2026-10-26, GUI → `.ctb` de Elegoo → UVTools):** el archivo abre bien y el slice se ve correcto; UVTools marca dos tramos de "high peel force", que dependen del modelo. Sobraban 306 capas vacías al final (contenido hasta 92,5 mm, archivo hasta 123,1 mm). El schedule de capas tomaba la altura de `Scene::aabb()`, que para una malla rotada es la caja local transformada (Arvo), una cota holgada. Ahora `slice_profile_for_scene` usa `Scene::tight_aabb()`, los vértices ya ubicados con la misma cuenta que el bake; hay tests en scene y print-glue, y el de print-glue falla sin el arreglo. La Anycubic M7 Pro no exporta (`azf` sin writer): es SC-19/SC-36.
 
-Falta para cerrar: un `.ctb` nuevo sin capas vacías revisado en UVTools. La impresión física sigue en SC-66.
+**Cerrado (2026-10-26):** Damian volvió a slicear el modelo 617 con soportes DF desde la GUI (Elegoo, 0,1 mm) y lo revisó en UVTools: el archivo abre bien, tiene 937 capas y 93,7 mm de altura total, y no queda ninguna capa vacía. La impresión física sigue en SC-66; la validación sistemática de writers, en SC-35.
 
-**Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: in progress.
+**Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: done.
 
 ## SC-82
 
