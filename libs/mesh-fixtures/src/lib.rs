@@ -616,6 +616,36 @@ pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
     }
 }
 
+/// Returns 2 tetrahedra glued along their shared face V0-V1-V4, so that
+/// face V0-V1-V2 lies flat on the plane `z = 0` with the surface crossing the
+/// plane at its border. V0 (0, 0, 0), V1 (2, 0, 0) and V2 (1, 2, 0) are on the
+/// plane, V3 (1, -1, 1) is above and V4 (1, -1, -1) below. Across the on-edge
+/// V0-V1 the neighbour of the coplanar face rises to V3; across V1-V2 and
+/// V2-V0 its neighbours drop to V4. The lower tetrahedron V0-V1-V2-V4 has the
+/// coplanar face as its top, and the tetrahedron V0-V1-V3-V4 sits on the other
+/// side of the glued face (the plane `y = z`). 5 vertices, 6 faces, 9 edges.
+pub fn coplanar_face_crossing_solid() -> IndexedMesh {
+    let f = IndexedTriangle::from_raw_indices;
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([2.0, 0.0, 0.0]),
+            Vertex::new([1.0, 2.0, 0.0]),
+            Vertex::new([1.0, -1.0, 1.0]),
+            Vertex::new([1.0, -1.0, -1.0]),
+        ],
+        faces: vec![
+            f([0, 1, 2]),
+            f([1, 0, 3]),
+            f([2, 1, 4]),
+            f([0, 2, 4]),
+            f([0, 4, 3]),
+            f([1, 3, 4]),
+        ],
+    }
+}
+
 /// Returns `mesh` with `name` as its name and no other metadata.
 pub fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
     mesh.set_meta(Some(MeshMetadata {

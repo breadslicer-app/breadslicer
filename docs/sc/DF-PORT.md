@@ -46,9 +46,11 @@ Wolverine centrado `5e4e7573…21eeb77489`.
 Comparación con la implementación anterior de SC en las mismas poses de
 diagnóstico: el cubo no terminaba el fan en 600 s (debug) y Wolverine fallaba
 antes de generar soportes, en el stitching de `sl1cer` a Z 32.5 mm
-("2 dangling endpoints"). **Ese fallo de stitching es de la infraestructura SC
-y sigue presente en esta rama**: el detector de vóxeles de DF no pasa por él.
-Hay que resolverlo aparte de los soportes.
+("2 dangling endpoints"). Ese fallo de stitching es de la infraestructura SC
+(el detector de vóxeles de DF no pasa por él). **Arreglado en SC-80**: una
+cara coplanar con el plano de corte dejaba sin segmento la arista que comparte
+con una cara que sube; ahora Wolverine slicea completo (detalle y evidencia en
+`docs/sc/ROADMAP.md`, SC-80).
 
 ## Fase 1, bloque 1 — tipos, registro y primitivas (hecho)
 
