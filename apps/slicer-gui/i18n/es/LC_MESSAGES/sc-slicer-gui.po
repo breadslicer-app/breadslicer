@@ -2303,3 +2303,8 @@ msgstr "{} (bifurcado)"
 #~ msgctxt "ObjectList"
 #~ msgid "No objects to display"
 #~ msgstr "No hay elementos que mostrar"
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr "Preparar soportes en segundo plano"

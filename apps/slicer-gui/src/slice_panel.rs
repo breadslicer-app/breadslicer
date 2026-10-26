@@ -324,7 +324,8 @@ impl PanelUpdate {
             | PreferencesChange::ObjectListPanel
             | PreferencesChange::SliceControlPanel
             | PreferencesChange::SliceViewPanel
-            | PreferencesChange::LastOpenDir => None,
+            | PreferencesChange::LastOpenDir
+            | PreferencesChange::PrescanSupports => None,
         }
     }
 }
@@ -383,6 +384,7 @@ mod panel_update_tests {
             (PreferencesChange::SliceControlPanel, None),
             (PreferencesChange::SliceViewPanel, None),
             (PreferencesChange::LastOpenDir, None),
+            (PreferencesChange::PrescanSupports, None),
         ];
         for (change, update) in expected {
             assert_eq!(

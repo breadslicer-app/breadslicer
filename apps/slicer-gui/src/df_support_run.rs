@@ -14,15 +14,27 @@
 //! welded into one mesh, are pasted into the scene through
 //! `SceneDocument::paste_fragment`: one undoable object, saved and exported
 //! like any other. A later run leaves that object out of its models.
+//!
+//! **Background prescan (SC-82/SC-83).** The island and overhang scans depend
+//! only on the geometry, its pose and the scan settings, so while the scene
+//! sits still a second, lower-key job runs them ahead of time
+//! (`start_df_prescan`, in a pool of half the cores) and the next run starts
+//! from them. Nothing of it is on the transform path: a scene event only
+//! stamps the time; a poll starts the prescan once the scene has been still
+//! for [`PRESCAN_SETTLE`], and cancels it when the scene moves on. Reuse is
+//! safe by construction: the core keys the scans on the baked world geometry,
+//! so a stale scan never matches. Off with the Preferences > Slicing switch.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sc_geom::JobError;
 use sc_geom::JobHandle;
-use sc_geom::df_supports::{DfSupportOutcome, DfSupportRequest, start_df_supports};
+use sc_geom::df_supports::{
+    DfPrescan, DfSupportOutcome, DfSupportRequest, ScanCache, start_df_prescan, start_df_supports,
+};
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
 use sc_scene_edit::SceneFragment;
@@ -33,10 +45,25 @@ use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
-use crate::scene_document::{SceneDocument, SceneRevision};
+use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision, SceneSubscription};
 use crate::slice_projection::load_selected_profiles;
 
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How long the scene must sit still before the prescan starts.
+const PRESCAN_SETTLE: Duration = Duration::from_millis(500);
+
+/// How often the prescan watcher looks at the scene.
+const PRESCAN_POLL_INTERVAL: Duration = Duration::from_millis(150);
+
+/// The background prescan's state.
+#[derive(Default)]
+struct Prescan {
+    /// The job in flight, the scene it started on and when.
+    running: Option<(JobHandle<DfPrescan>, SceneRevision, Instant)>,
+    /// The last finished prescan and the scene it ran on.
+    ready: Option<(SceneRevision, Arc<ScanCache>)>,
+}
 
 pub(crate) struct DfSupportRun {
     ui: slint::Weak<MainWindow>,
@@ -48,6 +75,12 @@ pub(crate) struct DfSupportRun {
     // geometry is discarded rather than pasted.
     started_on: RefCell<Option<SceneRevision>>,
     poll_timer: Rc<slint::Timer>,
+    prescan: RefCell<Prescan>,
+    /// When the scene last changed, live drag ticks included. Stamped by the
+    /// scene subscription; that stamp is all the prescan costs an edit.
+    last_change: Rc<Cell<Instant>>,
+    prescan_timer: slint::Timer,
+    _scene_events: SceneSubscription,
 }
 
 impl DfSupportRun {
@@ -59,6 +92,21 @@ impl DfSupportRun {
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
     ) -> Rc<Self> {
+        let last_change = Rc::new(Cell::new(Instant::now()));
+        let scene_events = document.subscribe({
+            let last_change = last_change.clone();
+            move |event| {
+                if matches!(
+                    event,
+                    SceneEvent::Installed
+                        | SceneEvent::Cleared
+                        | SceneEvent::Mutated
+                        | SceneEvent::Restructured
+                ) {
+                    last_change.set(Instant::now());
+                }
+            }
+        });
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             bus,
@@ -67,7 +115,23 @@ impl DfSupportRun {
             handle: RefCell::new(None),
             started_on: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
+            prescan: RefCell::new(Prescan::default()),
+            last_change,
+            prescan_timer: slint::Timer::default(),
+            _scene_events: scene_events,
         });
+        {
+            let weak = Rc::downgrade(&run);
+            run.prescan_timer.start(
+                slint::TimerMode::Repeated,
+                PRESCAN_POLL_INTERVAL,
+                move || {
+                    if let Some(run) = weak.upgrade() {
+                        run.watch_prescan();
+                    }
+                },
+            );
+        }
         {
             let run = run.clone();
             ui.on_df_support_requested(move || run.start());
@@ -93,7 +157,22 @@ impl DfSupportRun {
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             return;
         };
-        match start_df_supports(&scene, self.request_for_selection()) {
+        let mut request = self.request_for_selection();
+        {
+            let mut prescan = self.prescan.borrow_mut();
+            // The run needs the cores more than a prescan still in flight.
+            if let Some((job, _, _)) = prescan.running.take() {
+                job.cancel();
+            }
+            // A stale entry would simply not match; there is no point
+            // handing it over.
+            if let Some((revision, scans)) = &prescan.ready
+                && !self.document.slice_geometry_changed(*revision)
+            {
+                request.prescanned = Some(scans.clone());
+            }
+        }
+        match start_df_supports(&scene, request) {
             Ok(handle) => {
                 ui.set_support_gen_in_progress(true);
                 ui.set_support_gen_cancelable(true);
@@ -113,6 +192,64 @@ impl DfSupportRun {
                 });
             }
         }
+    }
+
+    /// The prescan watcher, every [`PRESCAN_POLL_INTERVAL`]: collects a
+    /// finished prescan, cancels one the scene has moved on from, and starts
+    /// one once the scene has been still for [`PRESCAN_SETTLE`] and holds no
+    /// matching scans yet. Idle while a support run is in flight, a scene is
+    /// loading or the preference is off.
+    fn watch_prescan(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let mut prescan = self.prescan.borrow_mut();
+        if let Some((job, revision, _)) = &prescan.running
+            && let Some(finished) = job.try_poll()
+        {
+            let revision = *revision;
+            prescan.running = None;
+            if let Ok(done) = finished {
+                prescan.ready = Some((revision, done.scans));
+            }
+        }
+        if !self.bus.snapshot().prescan_supports {
+            if let Some((job, _, _)) = prescan.running.take() {
+                job.cancel();
+            }
+            prescan.ready = None;
+            return;
+        }
+        let last_change = self.last_change.get();
+        if let Some((job, _, started)) = &prescan.running
+            && last_change > *started
+        {
+            // The scene moved under it: its scans would not match.
+            job.cancel();
+            prescan.running = None;
+        }
+        let busy = self.handle.borrow().is_some()
+            || ui.get_loading()
+            || ui.get_support_gen_in_progress()
+            || ui.get_slicing_in_progress();
+        if busy || prescan.running.is_some() || last_change.elapsed() < PRESCAN_SETTLE {
+            return;
+        }
+        if prescan
+            .ready
+            .as_ref()
+            .is_some_and(|(revision, _)| !self.document.slice_geometry_changed(*revision))
+        {
+            return;
+        }
+        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+            return;
+        };
+        let mut request = self.request_for_selection();
+        // Models the last prescan already scanned are taken from it.
+        request.prescanned = prescan.ready.as_ref().map(|(_, scans)| scans.clone());
+        let job = start_df_prescan(&scene, request);
+        prescan.running = Some((job, self.document.scene_revision(), Instant::now()));
     }
 
     /// The request for the printer and resin in force: the layer height the
@@ -291,6 +428,9 @@ fn details_message(outcome: &DfSupportOutcome) -> String {
     let t = &outcome.timings;
     lines.push(String::new());
     lines.push(format!("Time: {:.0} ms", ms(t.total)));
+    if t.entries.iter().any(|e| e.label == "scan:prescanned") {
+        lines.push("  scans prepared in the background".to_owned());
+    }
     for prefix in ["stage:", "auto:"] {
         for e in t.by_cost(prefix) {
             lines.push(format!("  {:<24} {:>8.0} ms", e.label, ms(e.total)));

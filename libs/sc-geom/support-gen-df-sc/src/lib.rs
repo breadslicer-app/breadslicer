@@ -10,6 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
@@ -18,13 +20,16 @@ use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftPa
 use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
 use support_gen_df::perf::PerfFrame;
 use support_gen_df::pipeline::{
-    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
+    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage,
+    generate_supports_with, prescan_models,
 };
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_gen_df::supports::support_type_registry::get_support_type_descriptor;
 use support_gen_df::supports::types::SupportState;
 use support_gen_df::three::Vec3;
 use support_gen_df::three::buffer_geometry::BufferGeometry;
+
+pub use support_gen_df::pipeline::ScanCache;
 
 /// The name the generated support mesh carries.
 pub const DF_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
@@ -39,6 +44,10 @@ pub struct DfSupportRequest {
     /// default material anti-aliasing (`default_tip_offset_mm`); without it
     /// they stop at the surface.
     pub pixel_pitch_mm: Option<[f64; 2]>,
+    /// Scans a [`start_df_prescan`] already made. Models it does not match
+    /// (moved since, other settings) are scanned by the run as usual; the
+    /// result is the same either way.
+    pub prescanned: Option<Arc<ScanCache>>,
     /// Everything else DragonFruit reads from its panels and stores.
     pub settings: Option<PipelineSettings>,
 }
@@ -48,6 +57,7 @@ impl Default for DfSupportRequest {
         DfSupportRequest {
             layer_height_mm: 0.05,
             pixel_pitch_mm: None,
+            prescanned: None,
             settings: None,
         }
     }
@@ -245,25 +255,24 @@ pub fn start_df_supports(
     scene: &Scene,
     request: DfSupportRequest,
 ) -> Result<JobHandle<DfSupportOutcome>, SceneError> {
-    let models = scene_models(scene)?;
+    // Baking a dense model takes a while: done on the worker, so the caller
+    // (the UI thread) only clones the graph, whose meshes are shared.
+    let scene = scene.clone();
     let run = RUN.fetch_add(1, Ordering::Relaxed) + 1;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     Ok(JobHandle::spawn(
         move |worker: &JobWorker<DfSupportOutcome>| {
+            let models = scene_models(&scene).map_err(|e| JobError::Failed(e.to_string()))?;
             run_df_supports(&models, &request, worker, format!("df{stamp}-{run}"))
         },
     ))
 }
 
-fn run_df_supports(
-    models: &[ModelInput],
-    request: &DfSupportRequest,
-    worker: &JobWorker<DfSupportOutcome>,
-    id_prefix: String,
-) -> Result<DfSupportOutcome, JobError> {
-    let settings = request
+/// The pipeline settings a request runs with.
+fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
+    request
         .settings
         .clone()
         .unwrap_or_else(|| PipelineSettings {
@@ -275,7 +284,77 @@ fn run_df_supports(
                 default_tip_offset_mm(request.layer_height_mm, x, y)
             }),
             ..PipelineSettings::defaults(request.layer_height_mm)
-        });
+        })
+}
+
+/// What a prescan hands back.
+#[derive(Debug, Clone)]
+pub struct DfPrescan {
+    pub scans: Arc<ScanCache>,
+    pub models: usize,
+    pub elapsed: Duration,
+}
+
+/// The pool prescans run in: half the cores, so a scan running while the
+/// user works leaves the rest to the viewport.
+fn prescan_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+        rayon::ThreadPoolBuilder::new()
+            .num_threads((cores / 2).max(1))
+            .thread_name(|i| format!("df-prescan-{i}"))
+            .build()
+            .expect("prescan thread pool")
+    })
+}
+
+/// Starts the geometry-only part of a run (the island and overhang scans) on
+/// a worker, in a pool of half the cores, for a later [`start_df_supports`]
+/// to reuse through [`DfSupportRequest::prescanned`]. `request` must carry
+/// the settings that run will use, or the scans will not match; its own
+/// `prescanned`, when set, is an earlier prescan whose models are reused
+/// where they still match. Cancelling stops it between models.
+pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<DfPrescan> {
+    let scene = scene.clone();
+    JobHandle::spawn(move |worker: &JobWorker<DfPrescan>| {
+        let started = Instant::now();
+        let settings = settings_for(&request);
+        prescan_pool().install(|| {
+            let models = scene_models(&scene).map_err(|e| JobError::Failed(e.to_string()))?;
+            let mut scans = ScanCache::default();
+            for model in &models {
+                if worker.is_cancelled() {
+                    return Err(JobError::Cancelled);
+                }
+                let previous = request.prescanned.as_deref();
+                match prescan_models(
+                    std::slice::from_ref(model),
+                    &settings,
+                    previous,
+                    &CancelToken::new(),
+                ) {
+                    Ok(one) => scans.extend(one),
+                    Err(PipelineError::Cancelled) => return Err(JobError::Cancelled),
+                    Err(e) => return Err(JobError::Failed(e.to_string())),
+                }
+            }
+            Ok(DfPrescan {
+                scans: Arc::new(scans),
+                models: models.len(),
+                elapsed: started.elapsed(),
+            })
+        })
+    })
+}
+
+fn run_df_supports(
+    models: &[ModelInput],
+    request: &DfSupportRequest,
+    worker: &JobWorker<DfSupportOutcome>,
+    id_prefix: String,
+) -> Result<DfSupportOutcome, JobError> {
+    let settings = settings_for(request);
     let n = models.len();
     // Reports: geometry per model, three per model, rafts, tessellation.
     let total = (4 * n + 2) as u32;
@@ -286,10 +365,11 @@ fn run_df_supports(
         next += 1;
         format!("{id_prefix}-{next}")
     };
-    let result = generate_supports(
+    let result = generate_supports_with(
         models,
         &SupportState::default(),
         &settings,
+        request.prescanned.as_deref(),
         &mut new_id,
         &mut |p| {
             if worker.is_cancelled() {

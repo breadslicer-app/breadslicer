@@ -319,6 +319,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_favourite_resins(snap.favourite_resins.clone());
     settings.set_output_format_by_printer(snap.output_format_by_printer.clone());
     settings.set_aa_level(snap.aa_level);
+    settings.set_prescan_supports(snap.prescan_supports);
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
     settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
@@ -437,6 +438,7 @@ impl AppState {
             favourite_resins: settings.favourite_resins(),
             output_format_by_printer: settings.output_format_by_printer(),
             aa_level: settings.aa_level(),
+            prescan_supports: settings.prescan_supports(),
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
             object_list_anchor_bottom: settings.object_list_anchor_bottom(),
@@ -2010,6 +2012,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::Favourites,
             PreferencesChange::OutputFormat,
             PreferencesChange::AaLevel,
+            PreferencesChange::PrescanSupports,
             PreferencesChange::ObjectListPanel,
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,

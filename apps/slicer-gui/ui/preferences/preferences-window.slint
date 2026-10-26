@@ -28,6 +28,7 @@ export component PreferencesWindow inherits Window {
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
     in-out property <int> current-aa-index: 0;
+    in-out property <bool> prescan-supports: true;
 
     in property <[PrinterCard]> printer-cards;
     in property <[string]> manufacturer-tabs;
@@ -50,6 +51,7 @@ export component PreferencesWindow inherits Window {
     callback theme-changed(ThemePreference);
     callback language-changed(int);
     callback aa-level-changed(int);
+    callback prescan-supports-changed(bool);
     callback manufacturer-tab-changed(int);
     callback printer-search-changed(string);
     callback printer-selected(int);
@@ -176,8 +178,12 @@ export component PreferencesWindow inherits Window {
             }
             if(side-bar.current-item == 3) : SlicingPreferences {
                 current-aa-index <=> root.current-aa-index;
+                prescan-supports <=> root.prescan-supports;
                 aa-level-changed(i) => {
                     root.aa-level-changed(i);
+                }
+                prescan-supports-changed(on) => {
+                    root.prescan-supports-changed(on);
                 }
             }
         }
