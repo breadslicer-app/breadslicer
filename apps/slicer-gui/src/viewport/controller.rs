@@ -24,14 +24,15 @@ use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 
 use super::camera_controller::CameraController;
-#[cfg(test)]
 use super::gizmo_drag::DragOp;
 use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
 use super::input_dispatch::{InputDispatch, PointerUpOutcome};
 use super::keyboard_drive::KbdFocus;
 use super::modal_transform::{ModalGesture, ModalOp};
-use super::numeric_transform::{NumericEdit, Readout, cheap_readout, readout};
+use super::numeric_transform::{
+    GestureKind, NumericEdit, Readout, cheap_readout, gesture_delta_text, readout,
+};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
@@ -46,6 +47,7 @@ use crate::clipboard::Clipboard;
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::gizmo;
+use crate::gizmo::axis::Axis;
 use crate::i18n::ctr;
 use crate::mesh_health::needs_repair;
 use crate::mesh_loader::start_load_with_ticket;
@@ -895,6 +897,9 @@ impl ViewportController {
     }
 
     fn mirror_modal_to_ui(&self) {
+        // The gesture aids follow the modal state on the next frame.
+        self.readout_owed.set(true);
+        self.render.request_redraw();
         if let Some(ui) = self.ui.upgrade() {
             let gesture = self.input.modal.get();
             ui.set_modal_transform_active(gesture.is_some());
@@ -1374,6 +1379,7 @@ impl ViewportController {
             return;
         };
         let gesture = self.gesture_active();
+        self.refresh_gesture_overlay(&ui);
         let base = self.readout_base.get();
         let translation = |world: Transform3D| match world {
             Transform3D::Identity => [0.0; 3],
@@ -1411,6 +1417,94 @@ impl ViewportController {
         ui.set_selection_rot_y(r.rotation_deg[1] as f32);
         ui.set_selection_rot_z(r.rotation_deg[2] as f32);
         ui.set_selection_scale(r.scale_pct as f32);
+    }
+
+    /// The viewport aids of a gesture in flight (SC-85): what it has done so
+    /// far (distance, degrees, scale) in the chip, and, for a modal G/R/S
+    /// locked to an axis, a line along that axis through the object in the
+    /// axis colour, as Blender draws it. Cleared when no gesture runs.
+    fn refresh_gesture_overlay(&self, ui: &MainWindow) {
+        let document = self.session.document();
+        let modal = self.input.modal.get();
+        let drag = match self.input.gizmo_fsm().current() {
+            GizmoState::Drag {
+                op,
+                original,
+                node_id,
+                ..
+            } => Some((op, original, node_id)),
+            _ => None,
+        };
+        let (node, local_before, kind, axis, parent_known) = match (modal, drag) {
+            (Some(g), _) => {
+                let kind = match g.op {
+                    ModalOp::Move => GestureKind::Move,
+                    ModalOp::Rotate => GestureKind::Rotate,
+                    ModalOp::Scale => GestureKind::Scale,
+                };
+                (g.node_id, g.original, kind, g.axis, Some(g.parent))
+            }
+            (None, Some((op, original, node_id))) => {
+                let (kind, axis) = match op {
+                    DragOp::Translate { axis, .. } => (GestureKind::Move, axis),
+                    DragOp::Rotate { axis, .. } => (GestureKind::Rotate, axis),
+                    DragOp::ScaleAxis { axis, .. } => (GestureKind::Scale, axis),
+                };
+                (
+                    node_id,
+                    original,
+                    kind,
+                    Some(match axis {
+                        Axis::X => 0,
+                        Axis::Y => 1,
+                        Axis::Z => 2,
+                    }),
+                    None,
+                )
+            }
+            (None, None) => {
+                ui.set_gesture_readout(slint::SharedString::default());
+                ui.set_axis_guide_visible(false);
+                return;
+            }
+        };
+        let text = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(node)?;
+                let parent = parent_known.unwrap_or_else(|| query.parent_world());
+                Some(gesture_delta_text(
+                    kind,
+                    parent.compose(&local_before),
+                    query.world_transform(),
+                    axis,
+                ))
+            })
+            .flatten()
+            .unwrap_or_default();
+        ui.set_gesture_readout(text.into());
+
+        // The axis line: modal gestures carry the screen pivot and the
+        // camera's screen axes.
+        let guide = modal.and_then(|g| {
+            let k = g.axis?;
+            let world_axis = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][k];
+            let dir = glam::Vec2::new(world_axis.dot(g.right), -world_axis.dot(g.up));
+            (dir.length() > 1e-3).then(|| (k, g.screen_pivot, dir.normalize()))
+        });
+        match guide {
+            Some((k, [px, py], dir)) => {
+                let reach = 4000.0;
+                let (a, b) = (
+                    glam::Vec2::new(px, py) - dir * reach,
+                    glam::Vec2::new(px, py) + dir * reach,
+                );
+                ui.set_axis_guide_commands(format!("M {} {} L {} {}", a.x, a.y, b.x, b.y).into());
+                let [r, g, b] = [[235, 80, 80], [90, 205, 110], [90, 140, 255]][k];
+                ui.set_axis_guide_color(slint::Color::from_rgb_u8(r, g, b).into());
+                ui.set_axis_guide_visible(true);
+            }
+            None => ui.set_axis_guide_visible(false),
+        }
     }
 
     /// Applies a value typed into the Transform inspector (see

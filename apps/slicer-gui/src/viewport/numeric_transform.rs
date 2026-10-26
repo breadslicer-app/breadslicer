@@ -229,6 +229,92 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
     Some(inverse_parent.compose(&Transform3D::Affine(moved)))
 }
 
+/// What a gesture has done so far, for the viewport chip (SC-85): the
+/// world translation, the rotation angle (signed about `axis` when the
+/// gesture is locked to one) and the scale ratio between `before` and `now`.
+pub(crate) fn gesture_delta_text(
+    kind: GestureKind,
+    before: Transform3D,
+    now: Transform3D,
+    axis: Option<usize>,
+) -> String {
+    let (a, b) = (affine(before), affine(now));
+    match kind {
+        GestureKind::Move => {
+            let (t0, t1) = (a.translation(), b.translation());
+            let d = [t1[0] - t0[0], t1[1] - t0[1], t1[2] - t0[2]];
+            match axis {
+                Some(k) => format!("{} {:+.2} mm", ["X", "Y", "Z"][k], d[k]),
+                None => format!(
+                    "X {:+.2}  Y {:+.2}  Z {:+.2} mm  ({:.2} mm)",
+                    d[0],
+                    d[1],
+                    d[2],
+                    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+                ),
+            }
+        }
+        GestureKind::Rotate => {
+            let deg = rotation_between_deg(a.linear(), b.linear(), axis);
+            match axis {
+                Some(k) => format!("{} {:+.1}°", ["X", "Y", "Z"][k], deg),
+                None => format!("{deg:.1}°"),
+            }
+        }
+        GestureKind::Scale => {
+            let (s0, s1) = (
+                cheap_readout(before).scale_pct,
+                cheap_readout(now).scale_pct,
+            );
+            if s0 <= 0.0 {
+                return String::new();
+            }
+            format!("{:.1} %", s1 / s0 * 100.0)
+        }
+    }
+}
+
+/// Which kind of gesture a delta describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GestureKind {
+    Move,
+    Rotate,
+    Scale,
+}
+
+/// The angle in degrees of the rotation taking `from` to `to` (column scales
+/// divided out); signed by `axis` when given, else unsigned.
+fn rotation_between_deg(from: &[[f64; 3]; 3], to: &[[f64; 3]; 3], axis: Option<usize>) -> f64 {
+    let unit = |m: &[[f64; 3]; 3]| {
+        let s = column_norms(m);
+        let mut r = *m;
+        for row in r.iter_mut() {
+            for (j, v) in row.iter_mut().enumerate() {
+                *v /= s[j].max(1e-12);
+            }
+        }
+        r
+    };
+    let (r0, r1) = (unit(from), unit(to));
+    // delta = r1 * r0^T
+    let mut d = [[0.0; 3]; 3];
+    for (i, row) in d.iter_mut().enumerate() {
+        for (j, cell) in row.iter_mut().enumerate() {
+            *cell = (0..3).map(|k| r1[i][k] * r0[j][k]).sum();
+        }
+    }
+    let cos = ((d[0][0] + d[1][1] + d[2][2] - 1.0) * 0.5).clamp(-1.0, 1.0);
+    let angle = cos.acos().to_degrees();
+    match axis {
+        Some(k) => {
+            // The rotation vector's component along the axis carries the sign.
+            let v = [d[2][1] - d[1][2], d[0][2] - d[2][0], d[1][0] - d[0][1]];
+            if v[k] < 0.0 { -angle } else { angle }
+        }
+        None => angle,
+    }
+}
+
 #[cfg(test)]
 mod numeric_transform_tests {
     use super::*;
@@ -254,6 +340,26 @@ mod numeric_transform_tests {
             AffineTransform3D::from_linear_and_translation(scaled, [0.0; 3]),
         ));
         assert!((r.scale_pct - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deltas_read_as_the_gesture_did() {
+        let id = Transform3D::Identity;
+        let moved = Transform3D::Affine(AffineTransform3D::from_translation([3.0, 0.0, 0.0]));
+        assert_eq!(
+            gesture_delta_text(GestureKind::Move, id, moved, Some(0)),
+            "X +3.00 mm"
+        );
+        let turned = Transform3D::Affine(AffineTransform3D::from_rotation_z(-30f64.to_radians()));
+        assert_eq!(
+            gesture_delta_text(GestureKind::Rotate, id, turned, Some(2)),
+            "Z -30.0°"
+        );
+        let grown = Transform3D::Affine(AffineTransform3D::from_uniform_scale(1.5));
+        assert_eq!(
+            gesture_delta_text(GestureKind::Scale, id, grown, None),
+            "150.0 %"
+        );
     }
 
     #[test]
