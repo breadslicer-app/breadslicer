@@ -3023,7 +3023,7 @@
       "sources": [
         {
           "path": "libs/sl1cer/src/api.rs",
-          "sha256": "3bd3136f1ed3e57d542dcd465ce14b16ca86386be5cab825be59d9a245c24d77"
+          "sha256": "73b9284cee2b56af43e861900aecec5c8dacc91cbb4b796d9b1f6cfeaa771e3d"
         },
         {
           "path": "libs/sl1cer/src/contour.rs",
@@ -3043,7 +3043,7 @@
         },
         {
           "path": "libs/sl1cer/src/lib.rs",
-          "sha256": "7ed8645f8d9b0d309b0bd9157e67734c511dd5b8c457e790e81896d780247b78"
+          "sha256": "d369458184f9e2262ef1248990b2208d2cf1ca8b6d41e1f598a217320899e8a8"
         },
         {
           "path": "libs/sl1cer/src/mesh_slice.rs",
@@ -3074,8 +3074,12 @@
           "sha256": "d126cbe89afcb1d6608d236088cfb6e80f43c86f9e17ab8f083ce3bd464bb8dc"
         },
         {
+          "path": "libs/sl1cer/src/shells.rs",
+          "sha256": "4a11bac3eafa279e3a16648c54aeeb42d475e895499d23af4ee9777e9b34305f"
+        },
+        {
           "path": "libs/sl1cer/src/stitch.rs",
-          "sha256": "0c4179d8a40a3cee9301fb8dbac5b3843ca482b14143f9fca70fd67bc8dfefd3"
+          "sha256": "f425e56b7cf935242ea57ef1bc0b34466f6fb1cb46580b435da322e8119f1d0a"
         },
         {
           "path": "libs/sl1cer/src/tests_mesh_slice.rs",
@@ -3083,7 +3087,7 @@
         },
         {
           "path": "libs/sl1cer/src/tests_slice_scene.rs",
-          "sha256": "969ce690d731d5ee643d525e295c394b0a4265f9822a6361503dd631d8e15bf8"
+          "sha256": "bb56a85ff4401f8c1c10a2ef675d0461455bc7b8c3690909a0e9ef54a4202854"
         },
         {
           "path": "libs/sl1cer/src/z_bins.rs",

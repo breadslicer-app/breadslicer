@@ -493,11 +493,14 @@ mod parallel_equivalence_tests {
         let faces = baked.validated_faces().expect("faces validate");
         let mesh = faces.validated_edge_manifold().expect("mesh is manifold");
         let topology = MeshTopology::from_edge_manifold(&mesh);
+        let shells = crate::shells::FaceShells::build(&mesh);
         let all_faces: Vec<u32> = (0..mesh.faces().len() as u32).collect();
         let layers: Vec<ContourLayer> = profile
             .layer_schedule()
             .iter_z()
-            .map(|z_mm| slice_layer(&mesh, z_mm, &topology, &all_faces).expect("layer slices"))
+            .map(|z_mm| {
+                slice_layer(&mesh, z_mm, &topology, &shells, &all_faces).expect("layer slices")
+            })
             .collect();
         ContourStack::new_unchecked(layers)
     }
@@ -734,5 +737,60 @@ mod pinched_leaf_tests {
                 layer.z_mm()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod overlapping_shell_tests {
+    use super::*;
+
+    /// One mesh of axis-aligned cubes standing on the plate (`z in [0, 1]`),
+    /// each given by its XY centre and side, sharing no vertex.
+    fn cubes(boxes: &[([f32; 2], f32)]) -> IndexedMesh {
+        let cube = unit_cube_mesh();
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for &([cx, cy], side) in boxes {
+            let base = vertices.len() as u32;
+            for v in &cube.vertices {
+                let [x, y, z] = *v.as_array();
+                vertices.push(Vertex::new([cx + x * side, cy + y * side, z + 0.5]));
+            }
+            for f in &cube.faces {
+                faces.push(IndexedTriangle::from_raw_indices(
+                    f.vertices.map(|i| i.get() + base),
+                ));
+            }
+        }
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    /// Every layer holds one hole-free CCW polygon per cube.
+    fn assert_one_outer_per_cube(mesh: IndexedMesh, cubes: usize) {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "shells", mesh);
+        let stack = slice_leaf(&scene, leaf, &four_layer_profile()).expect("cubes slice");
+        assert_eq!(stack.layers().len(), 4);
+        for layer in stack.layers() {
+            assert_eq!(layer.polygons().len(), cubes, "at z {}", layer.z_mm());
+            for polygon in layer.polygons() {
+                assert!(polygon.holes().is_empty(), "at z {}", layer.z_mm());
+                assert!(polygon.outer().signed_area() > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_shell_inside_another_is_not_a_hole() {
+        assert_one_outer_per_cube(cubes(&[([0.0, 0.0], 2.0), ([0.0, 0.0], 0.5)]), 2);
+    }
+
+    #[test]
+    fn crossing_shells_stay_outers() {
+        assert_one_outer_per_cube(cubes(&[([0.0, 0.0], 1.0), ([0.4, 0.3], 1.0)]), 2);
     }
 }

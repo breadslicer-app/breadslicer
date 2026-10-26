@@ -21,12 +21,13 @@ use sc_scene::bake::bake_leaf_to_world;
 use sc_scene::node::{NodeId, NodeKind};
 use sc_scene::{CsgPolicy, ReferencePolicy, Scene, SceneError};
 
-use crate::contour::{ContourLayer, ContourStack};
+use crate::contour::{ClosedRing, ContourLayer, ContourStack};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
 use crate::grouping::group_into_polygons;
 use crate::mesh_slice::segments_at_z_for_faces;
 use crate::profile::SliceProfile;
-use crate::stitch::{normalise_to_ccw, stitch_layer};
+use crate::shells::FaceShells;
+use crate::stitch::{normalise_to_ccw, stitch_layer_with_faces};
 use crate::z_bins::LayerBuckets;
 
 /// Slices the leaf identified by `leaf` in `scene` into a [`ContourStack`],
@@ -454,6 +455,7 @@ where
     F: Fn(SliceProgress) + Sync,
 {
     let topology = MeshTopology::from_edge_manifold(mesh);
+    let shells = FaceShells::build(mesh);
     let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
     let buckets = LayerBuckets::build(mesh, &zs);
     // `Ok(None)` marks a layer skipped by the cancellation poll. The collect is
@@ -465,7 +467,7 @@ where
             if cancel.is_cancelled() {
                 return Ok(None);
             }
-            let layer = slice_layer(mesh, z_mm, &topology, buckets.faces_at(layer_idx))?;
+            let layer = slice_layer(mesh, z_mm, &topology, &shells, buckets.faces_at(layer_idx))?;
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(SliceProgress {
                 completed: done,
@@ -491,16 +493,36 @@ where
 /// face). Pure function of its arguments: the layer tasks run in parallel and
 /// rely on this producing the same bytes no matter which thread or order runs
 /// them.
+///
+/// Outers and holes are grouped per shell (`shells`), in order of each
+/// shell's first ring, so shells that overlap do not read as holes of each
+/// other.
 pub(crate) fn slice_layer(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
+    shells: &FaceShells,
     candidates: &[u32],
 ) -> Result<ContourLayer, SliceError> {
     let segments = segments_at_z_for_faces(mesh, z_mm, topology, candidates);
-    let mut rings = stitch_layer(&segments, z_mm, topology)?;
-    normalise_to_ccw(&mut rings);
-    let polygons = group_into_polygons(rings);
+    let tagged = stitch_layer_with_faces(&segments, z_mm, topology)?;
+    let mut by_shell: Vec<(u32, Vec<ClosedRing>)> = Vec::new();
+    for (ring, face) in tagged {
+        let shell = if shells.count() > 1 {
+            shells.of(face)
+        } else {
+            0
+        };
+        match by_shell.iter_mut().find(|(s, _)| *s == shell) {
+            Some((_, rings)) => rings.push(ring),
+            None => by_shell.push((shell, vec![ring])),
+        }
+    }
+    let mut polygons = Vec::new();
+    for (_, mut rings) in by_shell {
+        normalise_to_ccw(&mut rings);
+        polygons.extend(group_into_polygons(rings));
+    }
     Ok(ContourLayer::new(z_mm, polygons))
 }
 

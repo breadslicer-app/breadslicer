@@ -118,6 +118,19 @@ pub fn stitch_layer(
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Result<Vec<ClosedRing>, SliceError> {
+    Ok(stitch_layer_with_faces(segments, z_mm, topology)?
+        .into_iter()
+        .map(|(ring, _)| ring)
+        .collect())
+}
+
+/// [`stitch_layer`], with each ring's first source face: the rings of a layer
+/// are told apart by the shell they cut (see [`crate::shells`]).
+pub(crate) fn stitch_layer_with_faces(
+    segments: &[Segment],
+    z_mm: f64,
+    topology: &MeshTopology,
+) -> Result<Vec<(ClosedRing, FaceIndex)>, SliceError> {
     // 1 record per segment endpoint, stably sorted by tag: equal tags form
     // contiguous runs in push order (ascending segment index, side A before
     // side B).
@@ -160,7 +173,7 @@ pub fn stitch_layer(
             current_idx = next_idx;
             entry_side = next_entry_side;
         }
-        rings.push(ClosedRing::new(ring_points));
+        rings.push((ClosedRing::new(ring_points), segments[start].source_face));
     }
 
     Ok(rings)
