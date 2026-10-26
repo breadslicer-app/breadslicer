@@ -2125,6 +2125,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hollow-df"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "rayon",
+ "smallvec",
+]
+
+[[package]]
+name = "hollow-df-sc"
+version = "0.0.1"
+dependencies = [
+ "hollow-df",
+ "rayon",
+ "sc-geom-transport-inprocess",
+ "sc-mesh-core",
+ "sc-scene",
+]
+
+[[package]]
 name = "htmlparser"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4825,6 +4845,7 @@ name = "sc-geom"
 version = "0.0.2"
 dependencies = [
  "generic-geom-alg-family-dispatch",
+ "hollow-df-sc",
  "sc-geom-transport-inprocess",
  "support-gen-df-sc",
  "support-gen-family-dispatch",

@@ -1,0 +1,23 @@
+[package]
+name = "hollow-df-sc"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["SynrgStudio"]
+description = "Runs the DragonFruit hollowing port (hollow-df) on a SoulCrafted scene leaf as a cancellable job, reusing the voxel session across moves and rotations."
+categories = ["algorithms"]
+keywords = ["geometry", "hollow", "3d-printing", "SLA", "dragonfruit"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+hollow-df = { path = "../hollow-df", version = "0.0.1" }
+sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
+sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
+sc-scene = { path = "../../scene", version = "0.2.0" }
+rayon = "1.12"
+
+[dev-dependencies]
+sc-sl1cer = { path = "../../sl1cer" }
