@@ -33,6 +33,19 @@ pub trait CollisionField {
     fn segment_blocked(&self, start: Vec3, end: Vec3, radius: f64) -> bool;
     /// Exact signed distance to the mesh (negative inside), unbounded.
     fn exact_signed_distance_at(&self, point: Vec3) -> f64;
+
+    /// Runs `job(0..jobs)` in parallel, each against its own throwaway view
+    /// of this field, and keeps the expensive answers they computed for the
+    /// real queries that follow until [`clear_prefetch`](Self::clear_prefetch).
+    ///
+    /// Purely a speed-up: the real queries stay sequential and in their own
+    /// order, and a kept answer is exactly what they would have computed, so
+    /// results never change however well the jobs guess. A field with nothing
+    /// worth prefetching runs nothing.
+    fn prefetch(&self, _jobs: usize, _job: &(dyn Fn(usize, &dyn CollisionField) + Sync)) {}
+
+    /// Drops what [`prefetch`](Self::prefetch) kept.
+    fn clear_prefetch(&self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
