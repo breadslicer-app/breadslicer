@@ -1102,6 +1102,8 @@ Pedido de Damian (2026-10-26): antes de seguir optimizando, una UI que valga la 
 
 Damian asume que un slicer nunca queda del todo "streamlined"; esto es la base para iterar.
 
+**Disparo del pre-cálculo de soportes (Damian, 2026-10-26):** se dispara al entrar a Supports **o a Hollow**. En las dos pestañas la pose ya está decidida, y con hollow puede hacer falta soportar dentro de la cavidad. Usa la caché por geometría de SC-82/83, ya lista.
+
 **Relevamiento (2026-10-26):**
 - **SC hoy:**
   - secciones Prepare/Transform/Slice con reglas en `workspace_section.rs`;
