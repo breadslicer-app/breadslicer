@@ -11,6 +11,7 @@ pub mod clipper;
 pub mod features;
 pub mod js_math;
 pub mod native;
+pub mod perf;
 pub mod pipeline;
 pub mod supports;
 pub mod three;

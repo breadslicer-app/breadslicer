@@ -175,6 +175,7 @@ impl DfSupportRun {
         }
         let summary = summary_message(&outcome);
         let details = details_message(&outcome);
+        eprintln!("[df-supports] {summary}\n{}", outcome.timings.report());
         let Some(mesh) = outcome.mesh else {
             self.dialogs.show_info(move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "No supports needed"),
@@ -216,12 +217,36 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
     )
 }
 
-/// The placed supports by type.
+/// The placed supports by type, then where the time went: the stages, the
+/// plan's phases and the costliest inner measurements.
 fn details_message(outcome: &DfSupportOutcome) -> String {
-    outcome
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let mut lines: Vec<String> = outcome
         .placed
         .iter()
         .map(|(kind, count)| format!("{kind}: {count}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    let t = &outcome.timings;
+    lines.push(String::new());
+    lines.push(format!("Time: {:.0} ms", ms(t.total)));
+    for prefix in ["stage:", "auto:"] {
+        for e in t.by_cost(prefix) {
+            lines.push(format!("  {:<24} {:>8.0} ms", e.label, ms(e.total)));
+        }
+    }
+    let mut inner: Vec<_> = t
+        .entries
+        .iter()
+        .filter(|e| !e.label.starts_with("stage:") && !e.label.starts_with("auto:"))
+        .collect();
+    inner.sort_by_key(|e| std::cmp::Reverse(e.total));
+    for e in inner.iter().take(6) {
+        lines.push(format!(
+            "  {:<24} {:>8.0} ms ({}x)",
+            e.label,
+            ms(e.total),
+            e.count
+        ));
+    }
+    lines.join("\n")
 }

@@ -347,3 +347,23 @@ fn cancelling_at_any_stage_returns_cancelled() {
         );
     }
 }
+
+/// Prints where a run spends its time: `cargo test --release --test pipeline
+/// timings -- --ignored --nocapture`.
+#[test]
+#[ignore = "a report, not a check"]
+fn timings_report() {
+    for (k, (models, settings)) in scenes().iter().enumerate() {
+        let mut new_id = id_gen();
+        let out = generate_supports(
+            models,
+            &SupportState::default(),
+            settings,
+            &mut new_id,
+            &mut |_| {},
+            &CancelToken::new(),
+        )
+        .unwrap();
+        eprintln!("scene {k}:\n{}", out.timings.report());
+    }
+}
