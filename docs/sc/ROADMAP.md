@@ -6,10 +6,10 @@ No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjet
 
 ## Decisiones de rumbo (2026-10-26, Damian)
 
-- **Separación total de DragonFruit a nivel código, salvo pedido explícito de Damian.**
-  - El código portado (soportes, hollow) pasa a ser nuestro: se cambia, se reemplaza o se mejora cuando haya una forma mejor.
-  - La paridad bit a bit con DF deja de ser una restricción. Sus tests quedan como referencia histórica mientras sirvan, y se retiran cuando un cambio deliberado los rompa. Si un test se retira, el commit lo dice.
-  - Se mantienen siempre los avisos de licencia y autoría del código portado (MIT de DF, AGPL de upstream).
+- **DragonFruit deja de ser un plan cerrado.** No es divorciarse de DF: lo bueno de DF se queda. Pero si encontramos una mejora real, la hacemos aunque nos aleje de cómo lo hace DF, en vez de perderla por "mantenernos con el plan". Aclaración de Damian, 2026-10-26.
+  - El código portado (soportes, hollow) es nuestro para cambiar, reemplazar o mejorar.
+  - La paridad bit a bit con DF ya no es una restricción. Sus tests quedan como referencia mientras sirvan, y se retiran cuando una mejora deliberada los rompa. Si un test se retira, el commit lo dice.
+  - Se mantienen siempre los avisos de licencia y autoría (MIT de DF, AGPL de upstream).
 - **Objetivo: la mejor experiencia de slicing que exista**, no "otro Lychee". Hay que optimizar todo al máximo. Faltar impresoras o detalles es aceptable; una experiencia mediocre, no.
 - **Las reglas estructurales se razonan desde la física, no desde límites fijos.** Ejemplo: el máximo de miembros por tronco no tiene sentido si el tronco ya está arriostrado y anclado al modelo en capas anteriores. La carga real la decide el análisis estructural (SC-21).
 
@@ -163,6 +163,9 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-92](#sc-92) | backlog | comunidad | breadslicer.app: DNS, email y página del proyecto | SC-91 |
 | [SC-93](#sc-93) | backlog | geometria | STL presoportados: separar cuerpos en objetos | SC-29 |
 | [SC-94](#sc-94) | backlog | perfiles | Calibrador guiado de resina (curva de trabajo, detalle, base, XY) | SC-32, SC-66 |
+| [SC-95](#sc-95) | backlog | calidad | Suite propia de probetas: soportes, estructuras y resistencia | SC-94, SC-21 |
+| [SC-96](#sc-96) | backlog | investigacion | Informe completo de UVtools: qué reusar (licencia) y qué superar | — |
+| [SC-97](#sc-97) | in progress | gestion | Repo breadslicer-app/breadslicer, issues de GitHub y microPRs | SC-89 |
 
 ## SC-01
 
@@ -454,6 +457,17 @@ Red de vigas con cargas de separación/material/proceso calibrados. Investigaci�
 - **Primer hito:** presupuesto de fuerza por capa e isla (peel ~12–19 kPa según el film, más succión de copas) y un modelo de vigas del árbol de soportes en las capas críticas.
 - **Dónde va:** como validación después del plan DF, detrás de una opción. Usa σ_punta/σ_peel calibrado con una escalera de probetas (SC-74, SC-94).
 - **Descartado por ahora:** la FEA 3D completa.
+
+**Plan acordado con Damian (2026-10-26): FEA de vigas, no FEA 3D de tetraedros.**
+- **Cargas por capa:** se calculan desde el slice (peel por área, más succión de copas). El árbol de soportes es un pórtico de vigas: troncos, ramas, braces y raft. El modelo ya impreso es rígido y el raft queda empotrado.
+- **Qué se chequea en las capas críticas:** tracción en el cuello de cada punta, flexión en las uniones y pandeo de troncos.
+- **UX:**
+  - un modo **"Stress"** en Supports que pinta cada soporte según su utilización, de verde a rojo;
+  - un botón **"Reforzar puntos débiles"** que engrosa o agrega soportes donde haga falta;
+  - el cálculo corre en segundo plano.
+- **Reglas fijas:** reemplaza a las del estilo "máximo de miembros por tronco". Un tronco arriostrado y anclado reparte carga y admite más miembros si el cálculo lo permite.
+- **FEA 3D local:** solo más adelante, y solo para detalles finos del modelo mismo (espadas, dedos).
+- **Datos de entrada:** calibrado con la suite de probetas (SC-95) y el informe de UVtools (SC-96).
 
 ## SC-22
 
@@ -1523,3 +1537,56 @@ Se guarda por impresora + resina con historial y aviso de obsolescencia. Las geo
 **Cierre (hito 1):** placa de curva de trabajo, carga de espesores, ajuste con R², recomendación por altura de capa y `CalibrationRecord`. La validación física requiere autorización.
 
 **Depende de:** SC-32, SC-66. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-95
+
+**Suite propia de probetas: soportes, estructuras y resistencia** — Calidad
+
+Pedido de Damian (2026-10-26): tests del estilo de Cones of Calibration, pero **nuestros** y varios, a nivel "suite". Todas las geometrías se diseñan y se generan por código en el núcleo, basadas en la literatura (ensayos de tracción, pandeo, adhesión y voladizos en vat photopolymerization). No se copia ningún test sin licencia.
+
+**Familias:**
+1. **Puntas de contacto:** diámetro, ángulo y profundidad de penetración. Escalera de placas sostenidas por n puntas, para obtener `σ_punta/σ_peel` sin celda de carga.
+2. **Tipos de soporte:** tronco simple, con rama, hoja y abanico, y con y sin brace; grosores en escalones.
+3. **Esbeltez:** columnas de largo creciente para el pandeo.
+4. **Estructuras soportadas:** voladizos de ángulo creciente, placas planas de área creciente (peel), copas con y sin drenaje (succión), islas aisladas, puentes.
+5. **Raft y base:** adhesión y pata de elefante (compartido con SC-94).
+
+**Cómo se usa:** cada probeta trae una tabla de lectura (qué escalón falló y dónde se cortó) que se carga en la app. Los resultados se guardan con el perfil de impresora + resina y alimentan el análisis estructural (SC-21).
+
+**Cierre (hito 1):** las familias 1 y 3 generadas por código, con lectura cargable y el resultado guardado en el perfil. La validación física requiere autorización de Damian.
+
+**Depende de:** SC-94, SC-21. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-96
+
+**Informe completo de UVtools** — Investigación
+
+Pedido de Damian (2026-10-26). UVtools tiene análisis de peel, islas, trampas de resina y copas de succión, herramientas de calibración y lectores y escritores de formatos. El informe tiene que cubrir:
+- la licencia exacta y qué se puede portar a un proyecto AGPL;
+- el inventario de funciones con su algoritmo;
+- qué calcula realmente sobre peel y resistencia;
+- un ranking de qué portar, reimplementar o superar.
+
+El resultado va a `docs/sc/`.
+
+**Cierre:** el informe está guardado y las decisiones de reuso, anotadas en SC-21, SC-94 y SC-95.
+
+**Depende de:** —. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-97
+
+**Repo breadslicer-app/breadslicer, issues de GitHub y microPRs** — Gestión
+
+Pedido de Damian (2026-10-26):
+- primer push al repo privado de la organización;
+- el roadmap pasa a issues de GitHub, con etiquetas por área y estado, y dependencias enlazadas;
+- de ahí en adelante se trabaja en microPRs por issue.
+
+**Ideas nuevas:** Damian las deja en una lista; se ordenan, se enlazan y se suben como issues.
+
+**Fuente de verdad:** desde la migración, los issues son el tracker operativo. Este documento queda como contexto y archivo, con el número de issue de cada SC.
+
+**Cierre:** el repo tiene el código, cada tarea abierta tiene su issue enlazado, y el flujo de ideas y microPRs está documentado.
+
+**Depende de:** SC-89. Prioridad: alta. Estado snapshot: in progress.
+
