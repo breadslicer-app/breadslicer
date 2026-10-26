@@ -16,6 +16,7 @@ workspace = true
 sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
 sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
 sc-scene = { path = "../../scene", version = "0.2.0" }
+rayon = "1.12"
 support-gen-df = { path = "../support-gen-df", version = "0.0.1" }
 
 [dev-dependencies]

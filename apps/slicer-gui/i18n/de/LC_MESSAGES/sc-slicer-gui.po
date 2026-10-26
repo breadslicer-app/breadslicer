@@ -2296,3 +2296,8 @@ msgstr "{} (Abzweigung)"
 #~ msgctxt "ObjectList"
 #~ msgid "No objects to display"
 #~ msgstr "Keine Objekte zum Anzeigen"
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr "Stützen im Hintergrund vorbereiten"

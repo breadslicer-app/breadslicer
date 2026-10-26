@@ -390,9 +390,11 @@ fn scan_islands_inner(
     let (overhang_self_support_angle_deg, overhang_px_mm) = overhangs.unwrap_or((None, None));
     let angle_deg = overhang_self_support_angle_deg.unwrap_or(45.0);
     let oh_px_mm = overhang_px_mm.unwrap_or(0.25);
-    let (scan_result, minima_islands, overhang_islands) = std::thread::scope(|s| {
-        // Thread A: voxel rasterization + island scan
-        let voxel_handle = s.spawn(|| {
+    // `rayon::join` rather than threads of their own, so the three (and
+    // their parallel loops) stay in the pool the caller runs in.
+    let (scan_result, (minima_islands, overhang_islands)) = rayon::join(
+        // A: voxel rasterization + island scan
+        || {
             let (masks, _, _, _, _, _) = rasterize_for_island_scan(
                 &triangles,
                 bbox.min.x as f64,
@@ -404,33 +406,24 @@ fn scan_islands_inner(
                 px_mm,
                 layer_height_mm,
             );
-            let result = run_island_scan(&job, &masks, None);
-            result
-        });
-
-        // Thread B: mesh minima scan (uses rayon internally)
-        let minima_handle = s.spawn(|| {
-            let minima = scan_minima_internal(&mesh, k);
-            minima
-        });
-
-        // Thread C: overhang (mesh-normal) classification — the same mesh
-        // the voxel/minima paths use, so the TS side never round-trips
-        // geometry for it.
-        let overhang_handle = s.spawn(|| {
-            if !classify {
-                return Vec::new();
-            }
-            let regions = overhang::classify_overhangs(&mesh, angle_deg, oh_px_mm);
-            regions
-        });
-
-        (
-            voxel_handle.join().unwrap(),
-            minima_handle.join().unwrap(),
-            overhang_handle.join().unwrap(),
-        )
-    });
+            run_island_scan(&job, &masks, None)
+        },
+        || {
+            rayon::join(
+                // B: mesh minima scan (uses rayon internally)
+                || scan_minima_internal(&mesh, k),
+                // C: overhang (mesh-normal) classification - the same mesh
+                // the voxel/minima paths use, so the TS side never
+                // round-trips geometry for it.
+                || {
+                    if !classify {
+                        return Vec::new();
+                    }
+                    overhang::classify_overhangs(&mesh, angle_deg, oh_px_mm)
+                },
+            )
+        },
+    );
 
     // ── 3. Build Z-bucket index for surface-snapping projections ──────
     let z_min = bbox.min.z;

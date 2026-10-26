@@ -5578,6 +5578,7 @@ dependencies = [
 name = "support-gen-df-sc"
 version = "0.0.1"
 dependencies = [
+ "rayon",
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
  "sc-scene",

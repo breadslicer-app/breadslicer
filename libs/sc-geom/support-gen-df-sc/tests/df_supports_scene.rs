@@ -8,7 +8,9 @@ use sc_geom_transport_inprocess::JobError;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
-use support_gen_df_sc::{DF_SUPPORT_MESH_NAME, DfSupportRequest, scene_models, start_df_supports};
+use support_gen_df_sc::{
+    DF_SUPPORT_MESH_NAME, DfSupportRequest, scene_models, start_df_prescan, start_df_supports,
+};
 
 /// A closed 10 mm cube, outward-wound.
 fn cube() -> IndexedMesh {
@@ -159,4 +161,47 @@ fn support_meshes_of_real_scenes_are_edge_manifold() {
         checked += 1;
     }
     assert!(checked >= 8, "{checked} scenes supported");
+}
+
+#[test]
+fn a_prescan_is_reused_and_gives_the_same_supports() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [25.0, 0.0, 6.0])]);
+    let plain = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    let prescan = start_df_prescan(&scene, DfSupportRequest::default())
+        .join()
+        .unwrap();
+    assert_eq!(prescan.models, 2);
+    let request = DfSupportRequest {
+        prescanned: Some(prescan.scans),
+        ..Default::default()
+    };
+    let reused = start_df_supports(&scene, request).unwrap().join().unwrap();
+    let prescanned = reused
+        .timings
+        .entries
+        .iter()
+        .find(|e| e.label == "scan:prescanned")
+        .map(|e| e.count);
+    assert_eq!(
+        prescanned,
+        Some(2),
+        "both models were served from the prescan"
+    );
+    let (a, b) = (plain.mesh.unwrap(), reused.mesh.unwrap());
+    assert_eq!(a.vertices(), b.vertices());
+    assert_eq!(a.faces(), b.faces());
+}
+
+#[test]
+fn a_prescan_can_be_cancelled() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let handle = start_df_prescan(&scene, DfSupportRequest::default());
+    handle.cancel();
+    match handle.join() {
+        Err(JobError::Cancelled) | Ok(_) => {}
+        Err(other) => panic!("unexpected {other:?}"),
+    }
 }

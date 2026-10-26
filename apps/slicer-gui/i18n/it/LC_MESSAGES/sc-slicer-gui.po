@@ -2259,3 +2259,8 @@ msgstr "Generica"
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr "{} (variante)"
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr "Preparare i supporti in background"

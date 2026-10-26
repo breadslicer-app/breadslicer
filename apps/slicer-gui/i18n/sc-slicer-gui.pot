@@ -2177,3 +2177,8 @@ msgstr ""
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr ""

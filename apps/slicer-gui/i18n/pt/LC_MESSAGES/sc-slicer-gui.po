@@ -2277,3 +2277,8 @@ msgstr "{} (derivado)"
 #~ msgctxt "ObjectList"
 #~ msgid "No objects to display"
 #~ msgstr "Nenhum objeto para mostrar"
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr "Preparar suportes em segundo plano"

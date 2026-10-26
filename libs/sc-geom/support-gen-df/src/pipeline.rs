@@ -275,6 +275,195 @@ fn soup_normals(soup: &[f32]) -> Vec<[f32; 3]> {
     triples(&g.normal.unwrap_or_default())
 }
 
+/// The settings an island and overhang scan depend on, with the world
+/// geometry it ran on (as a hash): the same key, the same scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScanKey {
+    soup: u64,
+    soup_len: usize,
+    layer_height: u64,
+    px: u64,
+    support_buffer: u64,
+    connectivity: u8,
+    minima_k: Option<usize>,
+    overhang_px: u32,
+    merge_epsilon: u32,
+    angle: u32,
+    has_raft: bool,
+}
+
+impl ScanKey {
+    fn new(soup: &[f32], settings: &PipelineSettings, angle: f32, has_raft: bool) -> Self {
+        let s = &settings.scan;
+        ScanKey {
+            soup: soup_key(soup),
+            soup_len: soup.len(),
+            layer_height: settings.layer_height_mm.to_bits(),
+            px: s.px_mm.to_bits(),
+            support_buffer: s.support_buffer_mm.to_bits(),
+            connectivity: s.connectivity,
+            minima_k: s.minima_k,
+            overhang_px: s.overhang_px_mm.to_bits(),
+            merge_epsilon: s.merge_epsilon.to_bits(),
+            angle: angle.to_bits(),
+            has_raft,
+        }
+    }
+}
+
+/// A hash of a world soup's exact bits.
+fn soup_key(soup: &[f32]) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = ahash::RandomState::with_seeds(0x5c, 0x82, 0x0d, 0xf5).build_hasher();
+    h.write_usize(soup.len());
+    for pair in soup.chunks(2) {
+        let lo = u64::from(pair[0].to_bits());
+        let hi = pair.get(1).map_or(0, |v| u64::from(v.to_bits()));
+        h.write_u64(lo | (hi << 32));
+    }
+    h.finish()
+}
+
+/// One model's scans, ready to reuse.
+#[derive(Debug, Clone)]
+pub struct PrescannedModel {
+    key: ScanKey,
+    pub combined: CombinedIslandScanResult,
+    pub overhang: OverhangScan,
+    bvh: Arc<MeshBvh>,
+}
+
+/// What [`prescan_models`] computed ahead of a run: the geometry-only work of
+/// [`generate_supports`] (the island and overhang scans, the BVH), keyed by
+/// the world geometry and the scan settings. A model moved, or a setting
+/// changed, simply misses and is scanned again by the run.
+#[derive(Debug, Clone, Default)]
+pub struct ScanCache {
+    models: Vec<Arc<PrescannedModel>>,
+}
+
+impl ScanCache {
+    /// Adds `other`'s models.
+    pub fn extend(&mut self, other: ScanCache) {
+        self.models.extend(other.models);
+    }
+
+    pub fn len(&self) -> usize {
+        self.models.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.models.is_empty()
+    }
+
+    fn scans(&self, key: &ScanKey) -> Option<&PrescannedModel> {
+        self.models.iter().map(|m| &**m).find(|m| &m.key == key)
+    }
+
+    fn bvh(&self, soup: u64) -> Option<Arc<MeshBvh>> {
+        self.models
+            .iter()
+            .find(|m| m.key.soup == soup)
+            .map(|m| m.bvh.clone())
+    }
+}
+
+/// The island scan and the overhang classification of one world soup.
+fn scan_model(
+    soup: &[f32],
+    settings: &PipelineSettings,
+    angle: f32,
+    has_raft: bool,
+) -> (CombinedIslandScanResult, OverhangScan) {
+    let mesh = {
+        let _perf = perf::scope("stage:weld-mesh");
+        IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
+    };
+    let s = &settings.scan;
+    // The island scan and the soup's overhang classification are
+    // independent: run them side by side. (The scan's own overhang
+    // classification is skipped; the soup's is the one derived from.)
+    // `rayon::join` keeps both, and their own parallel loops, in the pool the
+    // caller runs in: a background prescan confined to a few threads stays
+    // there. The timing frame is per thread, so each scan is timed where it
+    // runs and recorded here; `stage:scans` is the wall time of both.
+    perf::mark("stage:scans");
+    let (((regions, stability), t_overhangs), (combined, t_islands)) = rayon::join(
+        || {
+            let t = std::time::Instant::now();
+            // Same weld as the island scan's by default: reuse it.
+            let overhangs = if s.merge_epsilon == OVERHANG_WELD_EPSILON {
+                overhang_and_stability(&mesh, angle, s.overhang_px_mm, has_raft)
+            } else {
+                overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft)
+            };
+            (overhangs, t.elapsed())
+        },
+        || {
+            let t = std::time::Instant::now();
+            let r = scan_islands_without_overhangs(
+                &mesh,
+                settings.layer_height_mm,
+                s.px_mm,
+                s.support_buffer_mm,
+                s.connectivity,
+                s.minima_k,
+            );
+            (r, t.elapsed())
+        },
+    );
+    perf::measure("stage:scans");
+    perf::record("scan:islands", t_islands);
+    perf::record("scan:overhangs", t_overhangs);
+    (combined, OverhangScan { regions, stability })
+}
+
+/// Runs the geometry-only part of [`generate_supports`] for `models` ahead of
+/// time, for [`generate_supports_with`] to reuse: what a run would scan
+/// first, done while nobody waits. A model `previous` already holds (same
+/// world geometry, same settings) is taken from it instead of scanned again.
+pub fn prescan_models(
+    models: &[ModelInput],
+    settings: &PipelineSettings,
+    previous: Option<&ScanCache>,
+    cancel: &CancelToken,
+) -> Result<ScanCache, PipelineError> {
+    let angle = scan_angle(settings);
+    let mut cache = ScanCache::default();
+    for model in models {
+        if cancel.is_cancelled() {
+            return Err(PipelineError::Cancelled);
+        }
+        let soup = world_soup(model);
+        let has_raft = settings.rafts.for_model(Some(&model.id)).bottom_mode != RaftBottomMode::Off;
+        let key = ScanKey::new(&soup, settings, angle, has_raft);
+        if let Some(known) = previous.and_then(|c| c.models.iter().find(|m| m.key == key)) {
+            cache.models.push(known.clone());
+            continue;
+        }
+        let bvh = Arc::new(MeshBvh::new(triples(&soup), None));
+        if cancel.is_cancelled() {
+            return Err(PipelineError::Cancelled);
+        }
+        let (combined, overhang) = scan_model(&soup, settings, angle, has_raft);
+        cache.models.push(Arc::new(PrescannedModel {
+            key,
+            combined,
+            overhang,
+            bvh,
+        }));
+    }
+    Ok(cache)
+}
+
+/// The overhang self-support angle the scans classify by.
+fn scan_angle(settings: &PipelineSettings) -> f32 {
+    settings
+        .supports
+        .auto_support
+        .overhang_self_support_angle_deg as f32
+}
+
 /// Scene-wide supports and rafts. `state` is the support state the run
 /// builds on (and the committed store the gap-fill reads); `new_id` mints
 /// entity ids.
@@ -286,8 +475,25 @@ pub fn generate_supports(
     progress: &mut dyn FnMut(Progress<'_>),
     cancel: &CancelToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    generate_supports_with(models, state, settings, None, new_id, progress, cancel)
+}
+
+/// [`generate_supports`], reusing what `prescanned` ([`prescan_models`]) holds
+/// for any model whose world geometry and scan settings it was taken with.
+/// The output is the same as without it.
+pub fn generate_supports_with(
+    models: &[ModelInput],
+    state: &SupportState,
+    settings: &PipelineSettings,
+    prescanned: Option<&ScanCache>,
+    new_id: &mut dyn FnMut() -> String,
+    progress: &mut dyn FnMut(Progress<'_>),
+    cancel: &CancelToken,
+) -> Result<PipelineOutput, PipelineError> {
     perf::begin_frame();
-    let result = run_pipeline(models, state, settings, new_id, progress, cancel);
+    let result = run_pipeline(
+        models, state, settings, prescanned, new_id, progress, cancel,
+    );
     let timings = perf::end_frame().unwrap_or_default();
     result.map(|out| PipelineOutput { timings, ..out })
 }
@@ -296,6 +502,7 @@ fn run_pipeline(
     models: &[ModelInput],
     state: &SupportState,
     settings: &PipelineSettings,
+    prescanned: Option<&ScanCache>,
     new_id: &mut dyn FnMut() -> String,
     progress: &mut dyn FnMut(Progress<'_>),
     cancel: &CancelToken,
@@ -326,10 +533,17 @@ fn run_pipeline(
         let _perf = perf::scope("stage:world-geometry");
         soups.push(world_soup(model));
     }
-    let bvhs: Vec<Arc<MeshBvh>> = soups
-        .iter()
-        .map(|s| Arc::new(MeshBvh::new(triples(s), None)))
-        .collect();
+    let bvhs: Vec<Arc<MeshBvh>> = {
+        let _perf = perf::scope("stage:bvh");
+        soups
+            .iter()
+            .map(|s| {
+                prescanned
+                    .and_then(|c| c.bvh(soup_key(s)))
+                    .unwrap_or_else(|| Arc::new(MeshBvh::new(triples(s), None)))
+            })
+            .collect()
+    };
     let identity = Matrix4::IDENTITY;
     let brace_meshes: BraceMeshes<'_> = models
         .iter()
@@ -345,10 +559,7 @@ fn run_pipeline(
         })
         .collect();
     let bands = SizingBands::factory();
-    let angle = settings
-        .supports
-        .auto_support
-        .overhang_self_support_angle_deg as f32;
+    let angle = scan_angle(settings);
 
     let mut current = state.clone();
     let mut outputs = Vec::with_capacity(n);
@@ -357,45 +568,14 @@ fn run_pipeline(
         check()?;
         step(progress, Stage::ScanIslands, i);
         let has_raft = settings.rafts.for_model(Some(&model.id)).bottom_mode != RaftBottomMode::Off;
-        let mesh = {
-            let _perf = perf::scope("stage:weld-mesh");
-            IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
+        let key = ScanKey::new(soup, settings, angle, has_raft);
+        let (combined, overhang) = match prescanned.and_then(|c| c.scans(&key)) {
+            Some(hit) => {
+                perf::record("scan:prescanned", std::time::Duration::ZERO);
+                (hit.combined.clone(), hit.overhang.clone())
+            }
+            None => scan_model(soup, settings, angle, has_raft),
         };
-        let s = &settings.scan;
-        // The island scan and the soup's overhang classification are
-        // independent: run them side by side. (The scan's own overhang
-        // classification is skipped; the soup's is the one derived from.)
-        // The timing frame is per thread, so each scan is timed where it
-        // runs and recorded here; `stage:scans` is the wall time of both.
-        perf::mark("stage:scans");
-        let ((combined, t_islands), ((regions, stability), t_overhangs)) =
-            std::thread::scope(|scope| {
-                let islands = scope.spawn(|| {
-                    let t = std::time::Instant::now();
-                    let r = scan_islands_without_overhangs(
-                        &mesh,
-                        settings.layer_height_mm,
-                        s.px_mm,
-                        s.support_buffer_mm,
-                        s.connectivity,
-                        s.minima_k,
-                    );
-                    (r, t.elapsed())
-                });
-                let t = std::time::Instant::now();
-                // Same weld as the island scan's by default: reuse it.
-                let overhangs = if s.merge_epsilon == OVERHANG_WELD_EPSILON {
-                    overhang_and_stability(&mesh, angle, s.overhang_px_mm, has_raft)
-                } else {
-                    overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft)
-                };
-                let overhangs = (overhangs, t.elapsed());
-                (islands.join().expect("island scan panicked"), overhangs)
-            });
-        perf::measure("stage:scans");
-        perf::record("scan:islands", t_islands);
-        perf::record("scan:overhangs", t_overhangs);
-        let overhang = OverhangScan { regions, stability };
 
         check()?;
         step(progress, Stage::DeriveIslands, i);
