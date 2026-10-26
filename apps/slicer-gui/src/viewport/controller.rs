@@ -1217,9 +1217,55 @@ impl ViewportController {
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, _modifiers: PointerModifiers) {
         match self.input.on_pointer_up(self.session.document(), cursor) {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
-            PointerUpOutcome::Click(cursor) => self.run_pick_at(cursor),
+            PointerUpOutcome::Click(cursor) => {
+                if !self.support_tool_click(cursor) {
+                    self.run_pick_at(cursor);
+                }
+            }
             PointerUpOutcome::Nothing => (),
         }
+    }
+
+    /// A click with the Supports tab's Add or Delete tool: hands the world
+    /// point under the cursor to the support driver. Returns whether the
+    /// click was the tool's (a miss with a tool on is still the tool's).
+    fn support_tool_click(&self, cursor: ScreenPoint) -> bool {
+        let Some(ui) = self.ui.upgrade() else {
+            return false;
+        };
+        if self.session.section() != WorkspaceSection::Supports || ui.get_support_tool() == 0 {
+            return false;
+        }
+        let Some(vp) = self.render.viewport() else {
+            return true;
+        };
+        let camera_slot = self.camera.camera_cell().borrow();
+        let Some(camera) = camera_slot.as_ref() else {
+            return true;
+        };
+        let ray = picking::ray_from_pixel(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        drop(camera_slot);
+        let hit = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let id = picking::pick_object(&ray, spatial)?;
+                let t = picking::ray_hits_object_query(&ray, &spatial.leaf(id)?)?;
+                Some(ray.origin + ray.direction * t)
+            })
+            .flatten();
+        if let Some(p) = hit {
+            ui.invoke_support_tool_clicked(p.x, p.y, p.z);
+            self.mark_dirty();
+        }
+        true
     }
 
     /// Clears the dispatcher's cached hover cursor when the cursor leaves the

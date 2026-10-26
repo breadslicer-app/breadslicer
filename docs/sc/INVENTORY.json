@@ -244,7 +244,7 @@
         },
         {
           "path": "apps/slicer-gui/src/df_support_run.rs",
-          "sha256": "b1d4000d63edfb1a10eab9109dc5f14b0577fd80d485646cd0901a925935adc3"
+          "sha256": "fffb350fbb5f845b32403f00c7781c38d671208f4d83e06a9f7bad538aa5cd15"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -672,7 +672,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "15b32c472e549ccd1323e68ffdfc8a82e9144935f39ceb57474b296b05153fd2"
+          "sha256": "30ec2215f4372b0bc9f55b40858bd5438c357441a634d30755955b1c7a3d7959"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -2084,11 +2084,15 @@
       "sources": [
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
-          "sha256": "fd6a43d00bb88a16816828d8c13c716a25bb00c6e869b29773fb2c87ba95c9ff"
+          "sha256": "a87cc60f4d9ded5401488029c42f5a24ad860e6daf07af1f4c37db947ffa1a1d"
         },
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/options.rs",
           "sha256": "3d0c40fb7aaeb24bd52af29887d709c5f97e578465e4b25d3e995a8da444b600"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df-sc/src/session.rs",
+          "sha256": "86618c7f98f33b89f9f12d51a2cf22917d22e3fd563a5ab03230df66e261dfd8"
         }
       ]
     },

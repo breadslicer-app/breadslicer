@@ -36,11 +36,13 @@ use std::time::{Duration, Instant};
 use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{
-    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, RaftMode, ScanCache,
-    start_df_prescan, start_df_supports,
+    DF_SUPPORT_MESH_NAME, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
+    DfSupportSession, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
+use sc_scene::NodeId;
+use sc_scene::node::{LeafPayload, NodeKind};
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
@@ -93,6 +95,11 @@ pub(crate) struct DfSupportRun {
     options: RefCell<DfSupportOptions>,
     /// Built-in presets first, then the person's own.
     presets: RefCell<Vec<Preset>>,
+    /// The last run's supports and every hand edit since, each with the scene
+    /// revision it was drawn into. A click edits the entry matching the
+    /// current scene, so Undo and Redo keep the editor in step; a scene that
+    /// moved on otherwise is refused.
+    sessions: RefCell<Vec<(DfSupportSession, SceneRevision)>>,
 }
 
 /// A named set of options.
@@ -221,7 +228,12 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
+            sessions: RefCell::new(Vec::new()),
         });
+        {
+            let run = run.clone();
+            ui.on_support_tool_clicked(move |x, y, z| run.on_tool_click([x, y, z]));
+        }
         run.reload_presets();
         run.push_options(ui);
         {
@@ -619,6 +631,112 @@ impl DfSupportRun {
         self.push_options(&ui);
     }
 
+    /// The support mesh this driver pasted: its leaf and current mesh.
+    fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
+        self.document
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .find_map(|id| match &spatial.graph().node(id)?.kind {
+                        NodeKind::Leaf(LeafPayload::Mesh(mesh))
+                            if mesh.meta().as_ref().and_then(|m| m.name.as_deref())
+                                == Some(DF_SUPPORT_MESH_NAME) =>
+                        {
+                            Some((id, mesh.clone()))
+                        }
+                        _ => None,
+                    })
+            })
+            .flatten()
+    }
+
+    /// A click in the viewport with the Add (1) or Delete (2) support tool
+    /// of the Supports tab, at the world point it hit. The edit redraws the
+    /// supports and swaps the support mesh as one undoable edit.
+    fn on_tool_click(&self, point: [f32; 3]) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let tool = ui.get_support_tool();
+        if tool == 0 || self.handle.borrow().is_some() {
+            return;
+        }
+        let notice = |heading: slint::SharedString, message: String| {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: heading.clone(),
+                message: message.as_str().into(),
+                details: Default::default(),
+            });
+        };
+        let mut sessions = self.sessions.borrow_mut();
+        if sessions.is_empty() {
+            notice(
+                ctr!("DfSupportDialog", "No supports to edit"),
+                ctr!(
+                    "DfSupportDialog",
+                    "Generate supports first; then add or remove them by hand."
+                )
+                .to_string(),
+            );
+            return;
+        }
+        let Some(current) = sessions
+            .iter()
+            .rposition(|(_, drawn_on)| !self.document.slice_geometry_changed(*drawn_on))
+        else {
+            notice(
+                ctr!("DfSupportDialog", "Supports out of date"),
+                ctr!(
+                    "DfSupportDialog",
+                    "The scene changed since the supports were made; generate them again to edit them."
+                )
+                .to_string(),
+            );
+            return;
+        };
+        let p = point.map(f64::from);
+        let mut edited = sessions[current].0.clone();
+        let result = if tool == 1 {
+            edited.add_trunk_at(p)
+        } else {
+            edited.remove_near(p).map(|_| ())
+        };
+        if let Err(err) = result {
+            ui.set_supports_last_run(err.to_string().into());
+            return;
+        }
+        let mesh = match edited.mesh() {
+            Ok(Some(mesh)) => mesh,
+            Ok(None) => {
+                ui.set_supports_last_run(ctr!(
+                    "DfSupportDialog",
+                    "That was the last support; use Undo to bring it back."
+                ));
+                return;
+            }
+            Err(err) => {
+                ui.set_supports_last_run(err.to_string().into());
+                return;
+            }
+        };
+        let Some((node_id, before)) = self.support_leaf() else {
+            return;
+        };
+        let after = Arc::new(mesh);
+        let swap = sc_scene_edit::SceneEdit::ReplaceLeafMesh {
+            node_id,
+            before,
+            after,
+        };
+        if self.document.apply_edit(swap.clone()).is_ok() {
+            self.document.push_edit(swap);
+            let roots = edited.state().collections.roots.len();
+            sessions.truncate(current + 1);
+            sessions.push((edited, self.document.scene_revision()));
+            ui.set_supports_last_run(format!("{roots} support root(s), edited by hand.").into());
+        }
+    }
+
     fn start_poll(self: &Rc<Self>) {
         let run = self.clone();
         let timer_weak = Rc::downgrade(&self.poll_timer);
@@ -704,7 +822,12 @@ impl DfSupportRun {
             return;
         };
         let fragment = SceneFragment::from_leaf_snapshot(Arc::new(mesh), Transform3D::Identity);
-        if let Err(error) = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]) {
+        let session = outcome.session;
+        let pasted = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]);
+        if pasted.is_ok() {
+            *self.sessions.borrow_mut() = vec![(session, self.document.scene_revision())];
+        }
+        if let Err(error) = pasted {
             let details = error.to_string();
             self.dialogs.show_error(move || ErrorTexts {
                 heading: ctr!("DfSupportDialog", "Support generation failed"),

@@ -71,7 +71,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-09](#sc-09) | done | arquitectura | Inventario del core y matriz GUI/core/evidencia/brechas | SC-08 |
 | [SC-10](#sc-10) | todo | soportes | Especificar primer hito vertical de soportes manuales | SC-09 |
 | [SC-11](#sc-11) | backlog | soportes | Modelo paramétrico persistente y geometría de soportes | SC-10, SC-37, SC-38 |
-| [SC-12](#sc-12) | backlog | soportes | Editor manual de soportes en viewport | SC-11, SC-14 |
+| [SC-12](#sc-12) | in progress | soportes | Editor manual de soportes en viewport | SC-11, SC-14 |
 | [SC-13](#sc-13) | backlog | presets | Presets propios: geometría, packs y bracing separados | SC-11, SC-23 |
 | [SC-14](#sc-14) | done | persistencia | Validar flujo existente de proyecto, historial y roundtrip | SC-09, SC-24 |
 | [SC-15](#sc-15) | backlog | soportes | Recorridos y colisiones volumétricas de soportes | SC-11, SC-12, SC-38 |
@@ -265,9 +265,19 @@ Contacto→recorrido→punta/cuerpo/base como fuente de verdad con IDs y víncul
 
 Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edición individual y cancelación; separar navegación y selección de modelos. Reutilizar renderer y gestos existentes.
 
+**Primera entrega (2026-10-26):** agregar y quitar soportes DF con un clic, en la pestaña Supports.
+- **Herramientas:** en el riel, Agregar (A) y Quitar (X). Agregar hace crecer un tronco DF ruteado desde el punto clickeado del modelo, con la normal de esa cara. Quitar borra la entidad más cercana al clic (hasta 3 mm) y todo lo que cuelga de ella, incluida la raíz huérfana.
+- **Edición:** el estado de soportes del último Generate queda en `DfSupportSession` (`libs/sc-geom/support-gen-df-sc/src/session.rs`). Cada clic regenera la malla de soportes y la cambia con un solo `ReplaceLeafMesh`, así que es un undo por clic. Undo y Redo siguen editables, porque hay una sesión por revisión de escena. Si la escena cambió por otro motivo, pide regenerar.
+- **Pendiente:**
+  - mover punta y braces a mano;
+  - preview del punto antes del clic;
+  - persistir las entidades al guardar (hoy solo sobrevive la malla);
+  - la regeneración por clic corre en el hilo de UI, así que hay que medirla en escenas grandes;
+  - prueba de gestos de Damian.
+
 **Cierre:** Damian completa flujo manual sin clicks ambiguos; un undo por gesto; cancelación exacta; guardas Slice/loading; soportes sobreviven guardar/reabrir.
 
-**Depende de:** SC-11, SC-14. Prioridad: normal. Estado snapshot: backlog.
+**Depende de:** SC-11, SC-14. Prioridad: normal. Estado snapshot: in progress.
 
 ## SC-13
 

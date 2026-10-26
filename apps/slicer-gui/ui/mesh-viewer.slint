@@ -92,6 +92,9 @@ export component MeshViewer inherits Rectangle {
     callback modal-transform-start(int, length, length);
     callback modal-transform-axis(int, length, length);
     callback modal-transform-finish(bool);
+    // A plain letter the active workspace tab may claim for its own tools
+    // (A / X support tools, L layer view); returns whether it did.
+    callback tab-tool-key(string) -> bool;
     property <bool> modal-click-pending: false;
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
@@ -247,6 +250,9 @@ export component MeshViewer inherits Rectangle {
                 }
                 if (event.text == "s" || event.text == "S") {
                     root.modal-transform-start(2, ta.mouse-x, ta.mouse-y);
+                    return accept;
+                }
+                if (!root.modal-transform-active && root.tab-tool-key(event.text)) {
                     return accept;
                 }
             }
