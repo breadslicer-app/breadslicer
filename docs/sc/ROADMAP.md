@@ -295,7 +295,14 @@ Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edició
   - **Marcador instantáneo:** apenas el mouse toca, aparece en el hilo de la UI un punto verde (A) o rojo (X); el fantasma llega detrás.
   - **Borrado más rápido:** el índice de borrado se cachea por estado de soportes, y el worker lo precalienta después de cada edición. Antes, cada hover de X re-serializaba todo (50–70 ms).
   - **Alcance para colgarse:** el clic manual se cuelga de un soporte a hasta 15 mm (el abanico de DF usa 8 mm), con los mismos límites de ángulo y colisión. En Ballena, 5 ramas y 5 troncos contra 3 y 7 antes.
+- **Prueba de Damian del build "e" (2026-10-26):** ahora funciona mucho mejor; el fantasma sigue al mouse y X responde enseguida.
 - **Pendiente:**
+  - **Sacar el marcador instantáneo** (el prisma del hover): se ve raro y tapa el punto exacto donde va el soporte, sobre todo con X.
+  - **Colgarse de soportes cercanos con más decisión.** Con alcance de 15 mm mejoró, pero sigue armando troncos propios teniendo otros claramente cerca. A evaluar:
+    - relajar para el modo manual el ángulo máximo de la rama;
+    - dejar de rechazar por el límite de miembros por tronco;
+    - Shift+clic para forzar colgarse del soporte más cercano;
+    - mostrar en el preview por qué no se cuelga.
   - mover punta y braces a mano;
   - persistir las entidades al guardar (hoy solo sobrevive la malla);
   - la regeneración por clic corre en el hilo de UI, así que hay que medirla en escenas grandes;
