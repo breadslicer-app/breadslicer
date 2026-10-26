@@ -1,9 +1,0 @@
-cargo :     Checking sc-project-formats v0.2.0
-(C:\Users\dnaon\.openclaw\workspace\repos\SoulCrafted-Slicer\libs\project-formats)
-At line:2 char:192
-+ ... -- --check; cargo clippy --offline --locked --release -p sc-project-f ...
-+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (    Checking sc...roject-formats):String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
-
-    Finished `release` profile [optimized] target(s) in 0.56s

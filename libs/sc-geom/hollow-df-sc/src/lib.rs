@@ -1,5 +1,5 @@
 //! Runs the DragonFruit hollowing port (`hollow-df`) on one leaf of a
-//! SoulCrafted scene as a cancellable background job (SC-18, SC-41).
+//! SoulCrafted scene as a cancellable background job (BS-8, BS-29).
 //!
 //! The leaf keeps its mesh and its transform. The hollow is computed in the
 //! leaf's **physical frame**: the world transform `M` is split into a rotation

@@ -1,11 +1,11 @@
 # sc-mesh-formats
 
 Reads and writes 3D mesh files as
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/)
 scenes and meshes.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers.
 
 ## Supported formats
@@ -62,11 +62,11 @@ OBJ's vertex count.
 ## Not included
 
 Mesh editing and repair, which are in
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/);
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/);
 printer output formats such as `.sl1` and `.ctb`, which are in
-[`sc-sla-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sla-formats/);
+[`sc-sla-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sla-formats/);
 project files, which are in
-[`sc-project-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/project-formats/).
+[`sc-project-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/project-formats/).
 No rendering or GPU types.
 
 For the API, see [docs.rs](https://docs.rs/sc-mesh-formats/).

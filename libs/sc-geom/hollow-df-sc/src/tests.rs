@@ -236,7 +236,7 @@ fn bake_mesh_to_world_of(scene: &Scene, leaf: NodeId, mesh: &IndexedMesh) -> Ind
 #[test]
 fn an_undrained_hollow_slices_with_a_hole() {
     // The cavity is its own (inward) shell when no drain joins it to the
-    // outside. The slicer groups contours per shell (SC-81), so this checks it
+    // outside. The slicer groups contours per shell, so this checks it
     // still reads the cavity as a hole rather than as a second solid.
     let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
     let out = run(

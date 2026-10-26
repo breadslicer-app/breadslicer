@@ -1,4 +1,4 @@
-//! Timing report on a real model (SC-82), as the GUI runs it: the model
+//! Timing report on a real model (BS-66), as the GUI runs it: the model
 //! centred, lifted 5 mm off the plate, smooth tubes and robust rafts.
 //!
 //! ```text

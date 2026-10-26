@@ -355,7 +355,7 @@ fn is_default_aa_level(level: &AaLevel) -> bool {
 }
 
 /// The background prescan is off by default: it waits for the Supports tab
-/// (SC-83), which knows when to start it.
+/// (BS-67), which knows when to start it.
 fn default_prescan_supports() -> bool {
     false
 }
