@@ -32,7 +32,9 @@ use crate::features::slicing::support_world_triangles::{
 };
 use crate::native::mesh_core::mesh::IndexedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_without_overhangs};
-use crate::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
+use crate::native::overhang::{
+    OVERHANG_WELD_EPSILON, OverhangScan, overhang_and_stability, overhang_and_stability_from_soup,
+};
 use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -381,8 +383,12 @@ fn run_pipeline(
                     (r, t.elapsed())
                 });
                 let t = std::time::Instant::now();
-                let overhangs =
-                    overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft);
+                // Same weld as the island scan's by default: reuse it.
+                let overhangs = if s.merge_epsilon == OVERHANG_WELD_EPSILON {
+                    overhang_and_stability(&mesh, angle, s.overhang_px_mm, has_raft)
+                } else {
+                    overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft)
+                };
                 let overhangs = (overhangs, t.elapsed());
                 (islands.join().expect("island scan panicked"), overhangs)
             });

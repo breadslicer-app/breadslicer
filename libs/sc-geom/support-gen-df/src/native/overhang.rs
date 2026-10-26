@@ -144,9 +144,31 @@ pub fn overhang_and_stability_from_soup(
     px_mm: f32,
     has_raft: bool,
 ) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
-    let mesh = IndexedMesh::from_triangle_soup(positions, 1e-5);
-    let regions = classify_overhangs(&mesh, self_support_angle_deg, px_mm);
-    let report = compute_stability_report(&mesh, self_support_angle_deg, has_raft);
+    let mesh = {
+        let _p = crate::perf::scope("ovh:weld");
+        IndexedMesh::from_triangle_soup(positions, OVERHANG_WELD_EPSILON)
+    };
+    overhang_and_stability(&mesh, self_support_angle_deg, px_mm, has_raft)
+}
+
+/// The weld [`overhang_and_stability_from_soup`] applies: a caller holding
+/// the soup welded with this epsilon can pass that mesh to
+/// [`overhang_and_stability`] instead.
+pub const OVERHANG_WELD_EPSILON: f32 = 1e-5;
+
+/// [`overhang_and_stability_from_soup`] on a soup already welded with
+/// [`OVERHANG_WELD_EPSILON`].
+pub fn overhang_and_stability(
+    mesh: &IndexedMesh,
+    self_support_angle_deg: f32,
+    px_mm: f32,
+    has_raft: bool,
+) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
+    let regions = classify_overhangs(mesh, self_support_angle_deg, px_mm);
+    let report = {
+        let _p = crate::perf::scope("ovh:stability");
+        compute_stability_report(mesh, self_support_angle_deg, has_raft)
+    };
     (regions, report)
 }
 
@@ -165,6 +187,7 @@ pub fn classify_overhangs(
     // Overhang iff θ < threshold ⟺ normal.z < -cos(threshold).
     let threshold = -self_support_angle_deg.to_radians().cos();
 
+    let _p = crate::perf::scope("ovh:normals");
     let pairs: Vec<(Vec3, bool)> = (0..tri_count)
         .into_par_iter()
         .map(|fi| {
@@ -179,37 +202,13 @@ pub fn classify_overhangs(
         is_overhang.push(o);
     }
 
+    drop(_p);
+    let _p = crate::perf::scope("ovh:edge-map");
     // Triangle adjacency through undirected edges (min, max vertex id).
-    // Fold into thread-local maps, then merge: union-find is order-independent
-    // over the edge pairs, so the result stays deterministic.
-    let edge_tris: HashMap<(u32, u32), Vec<u32>> = mesh
-        .triangles
-        .par_iter()
-        .enumerate()
-        .fold(
-            || HashMap::<(u32, u32), Vec<u32>>::new(),
-            |mut acc, (fi, tri)| {
-                for pair in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
-                    let key = if pair.0 < pair.1 {
-                        pair
-                    } else {
-                        (pair.1, pair.0)
-                    };
-                    acc.entry(key).or_default().push(fi as u32);
-                }
-                acc
-            },
-        )
-        .reduce(
-            || HashMap::<(u32, u32), Vec<u32>>::new(),
-            |mut a, b| {
-                for (k, v) in b {
-                    a.entry(k).or_default().extend(v);
-                }
-                a
-            },
-        );
+    let edge_tris = EdgeTris::build(&mesh.triangles);
 
+    drop(_p);
+    let _p = crate::perf::scope("ovh:union-find");
     // Union-find over overhang triangles sharing an edge.
     let mut parent: Vec<u32> = (0..tri_count as u32).collect();
     fn find(parent: &mut [u32], x: u32) -> u32 {
@@ -235,7 +234,7 @@ pub fn classify_overhangs(
         }
     }
 
-    for tris in edge_tris.values() {
+    for tris in edge_tris.runs() {
         if tris.len() < 2 {
             continue;
         }
@@ -268,17 +267,79 @@ pub fn classify_overhangs(
         return Vec::new();
     }
 
+    drop(_p);
+    let _p = crate::perf::scope("ovh:regions");
     let mut regions: Vec<OverhangRegion> = groups
         .into_par_iter()
         .map(|(_, triangle_ids)| build_region(mesh, &normal, triangle_ids, px_mm, base_z, false))
         .collect();
 
+    drop(_p);
+    let _p = crate::perf::scope("ovh:steep-flats");
     // Steep flats ride the same region shape, so the density grid, the surface
     // sampler and the perimeter ring all treat them as ordinary overhangs.
     regions.extend(classify_steep_flats(
         mesh, &normal, &edge_tris, threshold, px_mm, base_z,
     ));
     regions
+}
+
+/// The triangles around every undirected edge, as runs of one sorted list:
+/// the edges sorted by key `(min vertex, max vertex)`, each with its
+/// triangles in ascending order. A parallel sort of `3 × triangles` pairs,
+/// where hash maps per thread and their merge cost several times more on
+/// meshes of millions of triangles.
+struct EdgeTris {
+    /// Per edge, its key packed as `min << 32 | max`, ascending.
+    keys: Vec<u64>,
+    /// `starts[e]..starts[e + 1]` bounds edge `e`'s run in `tris`.
+    starts: Vec<u32>,
+    tris: Vec<u32>,
+}
+
+impl EdgeTris {
+    fn pack(a: u32, b: u32) -> u64 {
+        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+        (u64::from(lo) << 32) | u64::from(hi)
+    }
+
+    fn build(triangles: &[[u32; 3]]) -> Self {
+        let mut pairs: Vec<(u64, u32)> = triangles
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(fi, t)| {
+                [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])]
+                    .map(|(a, b)| (Self::pack(a, b), fi as u32))
+            })
+            .collect();
+        pairs.par_sort_unstable();
+        let mut keys = Vec::new();
+        let mut starts = Vec::new();
+        let mut tris = Vec::with_capacity(pairs.len());
+        for (i, &(key, tri)) in pairs.iter().enumerate() {
+            if i == 0 || pairs[i - 1].0 != key {
+                keys.push(key);
+                starts.push(i as u32);
+            }
+            tris.push(tri);
+        }
+        starts.push(tris.len() as u32);
+        Self { keys, starts, tris }
+    }
+
+    fn run(&self, e: usize) -> &[u32] {
+        &self.tris[self.starts[e] as usize..self.starts[e + 1] as usize]
+    }
+
+    /// The triangles around the edge `(min, max)`.
+    fn get(&self, key: (u32, u32)) -> Option<&[u32]> {
+        let e = self.keys.binary_search(&Self::pack(key.0, key.1)).ok()?;
+        Some(self.run(e))
+    }
+
+    fn runs(&self) -> impl Iterator<Item = &[u32]> {
+        (0..self.keys.len()).map(|e| self.run(e))
+    }
 }
 
 /// Large planar faces just past the self-support angle — the topple levers
@@ -294,7 +355,7 @@ pub fn classify_overhangs(
 fn classify_steep_flats(
     mesh: &IndexedMesh,
     normal: &[Vec3],
-    edge_tris: &HashMap<(u32, u32), Vec<u32>>,
+    edge_tris: &EdgeTris,
     self_support_threshold: f32,
     px_mm: f32,
     base_z: f32,
@@ -348,7 +409,7 @@ fn classify_steep_flats(
                 } else {
                     (pair.1, pair.0)
                 };
-                if let Some(ts) = edge_tris.get(&key) {
+                if let Some(ts) = edge_tris.get(key) {
                     neighbors.extend_from_slice(ts);
                 }
             }
