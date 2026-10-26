@@ -1,0 +1,28 @@
+DragonFruit hollowing engine, native Rust port
+==============================================
+
+This crate ports the voxel hollowing engine of:
+
+  DragonFruit, Open Resin Alliance and contributors
+  https://github.com/Open-Resin-Alliance/DragonFruit
+  SynrgStudio private downstream revision f331fc555abb31c4bcb28d1a358edb887f0afe07
+
+from these files, each named again in the header of the module that ports it:
+
+  rust/dragonfruit-mesh-repair/src/hollowing.rs   -> src/hollowing.rs (+ tests)
+  rust/dragonfruit-mesh-repair/src/smoothing.rs   -> src/smoothing.rs
+  rust/dragonfruit-mesh-core/src/mesh.rs          -> src/mesh.rs
+  rust/dragonfruit-mesh-core/src/bvh.rs           -> src/bvh.rs
+  rust/dragonfruit-mesh-core/src/halfedge.rs      -> src/topology.rs
+
+Both DragonFruit crates are licensed MIT by their own LICENSE files
+(Copyright (c) 2026 Open Resin Alliance), separately from the AGPL-3.0 of the
+DragonFruit application root. That license is reproduced in COPYING and covers
+this crate, including the parts written for the SoulCrafted Slicer by
+SynrgStudio (src/drain.rs, src/punch.rs, src/engine.rs, src/control.rs,
+src/shapes.rs). The hollowing improvements of the DragonFruit revision above
+(parallel slab voxelization, surface-only preview, model-local grid) are
+SynrgStudio's own commits to DragonFruit.
+
+The SoulCrafted Slicer is AGPL-3.0; MIT code is compatible with it.
+No code from Lychee or any other closed slicer is included.
