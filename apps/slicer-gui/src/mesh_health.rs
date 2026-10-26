@@ -3,15 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Mesh-health status captured at load time and the initial workspace section
-//! derived from it. A scene whose meshes are all closed and edge-manifold is
-//! safe to edit and slice, so it opens in Transform; anything with detected
-//! problems (or not yet checked) opens in Prepare, the section that holds the
-//! mesh-repair action.
+//! Mesh-health status captured at load time. A scene whose meshes are all
+//! closed and edge-manifold is safe to edit and slice; anything with detected
+//! problems (or not yet checked) opens Transform with its repair card in
+//! front.
 
 use sc_scene::Scene;
-
-use crate::WorkspaceSection;
 
 /// Whether a loaded scene's meshes are known to be sound.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -37,14 +34,11 @@ pub(crate) fn scene_mesh_health(scene: &Scene) -> MeshHealth {
     }
 }
 
-/// Returns the workspace section a freshly loaded scene should open in, given
-/// its mesh health. Only a confirmed problem-free scene opens straight into
-/// Transform; problems or an unknown status land in Prepare.
-pub(crate) fn initial_section(health: MeshHealth) -> WorkspaceSection {
-    match health {
-        MeshHealth::ProblemFree => WorkspaceSection::Transform,
-        MeshHealth::Unknown | MeshHealth::HasProblems => WorkspaceSection::Prepare,
-    }
+/// Whether a freshly loaded scene of this health should lead the Transform
+/// inspector with the repair card: anything but a confirmed problem-free
+/// scene.
+pub(crate) fn needs_repair(health: MeshHealth) -> bool {
+    !matches!(health, MeshHealth::ProblemFree)
 }
 
 #[cfg(test)]
@@ -128,27 +122,10 @@ mod mesh_health_tests {
     }
 
     #[test]
-    fn problem_free_opens_in_transform() {
-        assert!(matches!(
-            initial_section(MeshHealth::ProblemFree),
-            WorkspaceSection::Transform
-        ));
-    }
-
-    #[test]
-    fn problems_open_in_prepare() {
-        assert!(matches!(
-            initial_section(MeshHealth::HasProblems),
-            WorkspaceSection::Prepare
-        ));
-    }
-
-    #[test]
-    fn unknown_opens_in_prepare() {
-        assert!(matches!(
-            initial_section(MeshHealth::Unknown),
-            WorkspaceSection::Prepare
-        ));
+    fn only_a_problem_free_scene_skips_the_repair_card() {
+        assert!(!needs_repair(MeshHealth::ProblemFree));
+        assert!(needs_repair(MeshHealth::HasProblems));
+        assert!(needs_repair(MeshHealth::Unknown));
     }
 
     #[test]

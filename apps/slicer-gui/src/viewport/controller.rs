@@ -47,7 +47,7 @@ use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::gizmo;
 use crate::i18n::ctr;
-use crate::mesh_health::initial_section;
+use crate::mesh_health::needs_repair;
 use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
 use crate::pending_load::PendingLoad;
@@ -679,11 +679,14 @@ impl ViewportController {
                 .set_slice_result(reloaded.into_slice_result(geometry));
         }
 
-        // A freshly loaded scene opens in Transform when its meshes are all
-        // clean manifolds, otherwise in Prepare (the home of the repair
-        // tooling). Set after install so the pill, which is gated on a scene
-        // being present, is already showing.
-        self.set_section(initial_section(mesh_health));
+        // A freshly loaded scene opens in Transform, whose inspector leads
+        // with the repair card unless every mesh is a clean manifold. Set
+        // after install so the tabs, gated on a scene being present, are
+        // already showing.
+        self.set_section(WorkspaceSection::Transform);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_mesh_needs_repair(needs_repair(mesh_health));
+        }
 
         if scene_installed {
             self.session.loader().note_upload_success();
@@ -2231,7 +2234,7 @@ mod viewport_click_tests {
         // drag while parked in a non-Transform section.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.set_section(WorkspaceSection::Prepare);
+        ctrl.set_section(WorkspaceSection::Supports);
         ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
         assert!(
             matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle),

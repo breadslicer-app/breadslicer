@@ -865,7 +865,7 @@ impl AppState {
             wired.controller.clone()
         };
         // Copy is a Transform-section tool (it seeds a paste, which mutates the
-        // scene); it stays inert in Prepare and Slice.
+        // scene); it stays inert in every other tab.
         if !controller.allows_layout_tools() {
             return;
         }
@@ -2264,7 +2264,7 @@ mod window_wiring_tests {
             let (window, _pending_load, controller) = new_window(&app);
             let _drivers = app.install_window_drivers(&window, &controller);
             load_cube(&controller);
-            controller.set_section(WorkspaceSection::Prepare);
+            controller.set_section(WorkspaceSection::Transform);
             let before = window.get_repairing_in_progress();
             window.invoke_repair_requested();
             (before, window.get_repairing_in_progress())

@@ -1,0 +1,426 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The right-hand inspector of each workflow tab (SC-84). Each component
+// shows only what its tab acts on; the window binds them to its own
+// properties and callbacks, which Rust drives.
+
+import { ComboBox, LineEdit, ProgressIndicator } from "std-widgets.slint";
+import { Theme } from "../kit/theme.slint";
+import { Icons } from "../kit/icons.slint";
+import { ButtonKind, Card, Dot, InfoRow, Note, ScButton, StatTile } from "../kit/controls.slint";
+
+// A selectable object row.
+component ObjectRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 30px;
+    border-radius: Theme.radius;
+    background: self.selected ? Theme.hover : touch.has-hover ? Theme.raised : transparent;
+    accessible-role: list-item;
+    accessible-label: self.text;
+    accessible-item-selected: self.selected;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 3px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 1.5px;
+            background: root.selected ? Theme.accent : transparent;
+        }
+        Text {
+            text: root.text;
+            color: root.selected ? Theme.text : Theme.text-soft;
+            font-size: Theme.font;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A labelled field stacked over its control.
+component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 4px;
+
+    Text {
+        text: root.label;
+        font-size: Theme.font-sm;
+        color: Theme.text-muted;
+    }
+    @children
+}
+
+export component TransformInspector inherits VerticalLayout {
+    in property <[StandardListViewItem]> objects;
+    in property <int> selected-index: -1;
+    in property <bool> needs-repair;
+    in property <bool> repair-enabled;
+    in property <bool> repairing;
+    callback object-picked(int);
+    callback repair-requested();
+
+    spacing: 12px;
+
+    if root.needs-repair: Card {
+        title: @tr("Inspector" => "MESH CHECK");
+        note: @tr("Inspector" => "Problems found");
+        note-color: Theme.warning;
+        highlighted: true;
+
+        Note {
+            text: @tr("Inspector" => "Some meshes are not watertight. Slicing needs closed meshes; repair fixes most files.");
+        }
+        ScButton {
+            text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");
+            icon: Icons.repair;
+            kind: ButtonKind.primary;
+            enabled: root.repair-enabled;
+            clicked => {
+                root.repair-requested();
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "OBJECTS");
+        note: root.objects.length;
+
+        if root.objects.length == 0: Note {
+            text: @tr("Inspector" => "Open or drop a model to start.");
+        }
+        VerticalLayout {
+            spacing: 2px;
+
+            for item[i] in root.objects: ObjectRow {
+                text: item.text;
+                selected: i == root.selected-index;
+                clicked => {
+                    root.object-picked(i);
+                }
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "TRANSFORM");
+        note: "G · R · S";
+
+        InfoRow {
+            label: @tr("Inspector" => "Move");
+            value: "G";
+        }
+        InfoRow {
+            label: @tr("Inspector" => "Rotate");
+            value: "R";
+        }
+        InfoRow {
+            label: @tr("Inspector" => "Scale");
+            value: "S";
+        }
+        InfoRow {
+            label: @tr("Inspector" => "Lock an axis");
+            value: "X · Y · Z";
+        }
+        Note {
+            text: @tr("Inspector" => "Drag the gizmo, or press a key with the pointer over the model. Enter confirms, Esc cancels. Numeric entry comes next.");
+        }
+    }
+
+    if !root.needs-repair: Card {
+        title: @tr("Inspector" => "MESH CHECK");
+        note: @tr("Inspector" => "No problems");
+        note-color: Theme.success;
+        collapsible: true;
+        expanded: false;
+
+        ScButton {
+            text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");
+            icon: Icons.repair;
+            enabled: root.repair-enabled;
+            clicked => {
+                root.repair-requested();
+            }
+        }
+    }
+}
+
+export component HollowInspector inherits VerticalLayout {
+    spacing: 12px;
+
+    Card {
+        title: @tr("Inspector" => "HOLLOWING");
+        note: @tr("Inspector" => "Coming");
+
+        Note {
+            text: @tr("Inspector" => "Cavity or infill, wall thickness and detail, solid areas and drain holes. The engine is being ported (SC-18); this tab is where it lands.");
+        }
+    }
+    Card {
+        title: @tr("Inspector" => "SUPPORTS");
+        Note {
+            text: @tr("Inspector" => "Supports can be generated before or after hollowing; a hollow model may need supports inside the cavity too.");
+        }
+    }
+}
+
+export component SupportsInspector inherits VerticalLayout {
+    in property <bool> has-scene;
+    in property <bool> running;
+    in property <string> phase;
+    in property <float> progress;
+    in property <bool> cancelable;
+    in property <string> last-run;
+    callback generate-requested();
+    callback cancel-requested();
+
+    spacing: 12px;
+
+    Card {
+        title: @tr("Inspector" => "AUTO SUPPORTS");
+        note: root.running ? @tr("Inspector" => "Working") : "";
+        note-color: Theme.accent;
+
+        ScButton {
+            text: @tr("Inspector" => "Generate supports");
+            icon: Icons.auto;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: root.has-scene && !root.running;
+            clicked => {
+                root.generate-requested();
+            }
+        }
+        if root.running: VerticalLayout {
+            spacing: 6px;
+
+            Text {
+                text: root.phase == "" ? @tr("Inspector" => "Starting…") : root.phase;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+            }
+            ProgressIndicator {
+                progress: root.progress;
+            }
+            if root.cancelable: ScButton {
+                text: @tr("Inspector" => "Cancel");
+                clicked => {
+                    root.cancel-requested();
+                }
+            }
+        }
+        if !root.running && root.last-run != "": Note {
+            text: root.last-run;
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "SETTINGS");
+        note: @tr("Inspector" => "Defaults");
+
+        Note {
+            text: @tr("Inspector" => "Contacts, shafts and raft use the DragonFruit defaults; tip penetration follows the printer. Editable settings and manual tools come next.");
+        }
+    }
+}
+
+export component SliceInspector inherits VerticalLayout {
+    in property <[string]> printer-options;
+    in-out property <int> printer-current-index: -1;
+    in property <[string]> resin-options;
+    in-out property <int> resin-current-index: -1;
+    in-out property <string> first-layer-height-text;
+    in property <bool> slicing;
+    in property <bool> up-to-date;
+    in property <int> layer-count;
+    in property <float> selected-layer;
+    in property <image> layer-image;
+    callback printer-picked(int);
+    callback resin-picked(int);
+    callback first-layer-height-edited(string);
+    callback slice-requested();
+
+    // The LineEdit's text binding breaks the first time the user types, so
+    // a value pushed from Rust is written into it explicitly.
+    changed first-layer-height-text => {
+        first-layer-input.text = root.first-layer-height-text;
+    }
+
+    spacing: 12px;
+
+    Card {
+        title: @tr("Inspector" => "PRINT SETUP");
+
+        Field {
+            label: @tr("SlicePanel" => "Printer");
+            printer-combo := ComboBox {
+                model: root.printer-options;
+                current-index <=> root.printer-current-index;
+                enabled: root.printer-options.length > 0;
+                selected => {
+                    root.printer-picked(printer-combo.current-index);
+                }
+            }
+        }
+        Field {
+            label: @tr("SlicePanel" => "Resin");
+            resin-combo := ComboBox {
+                model: root.resin-options;
+                current-index <=> root.resin-current-index;
+                enabled: root.resin-options.length > 0;
+                selected => {
+                    root.resin-picked(resin-combo.current-index);
+                }
+            }
+        }
+        Field {
+            label: @tr("SlicePanel" => "First layer height (mm)");
+            first-layer-input := LineEdit {
+                text: root.first-layer-height-text;
+                placeholder-text: @tr("SlicePanel" => "from resin profile");
+                accessible-label: @tr("SlicePanel" => "First layer height in millimetres");
+                edited(t) => {
+                    root.first-layer-height-edited(t);
+                }
+            }
+        }
+        ScButton {
+            text: @tr("SlicePanel" => "Slice");
+            icon: Icons.slice;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: root.printer-current-index >= 0 && root.resin-current-index >= 0 && !root.slicing;
+            clicked => {
+                root.slice-requested();
+            }
+        }
+        if root.up-to-date: Note {
+            text: @tr("SlicePanel" => "Slice is up to date.");
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "RESULT");
+        note: root.layer-count > 0 ? @tr("Inspector" => "Sliced") : @tr("Inspector" => "Not sliced");
+        note-color: root.layer-count > 0 ? Theme.success : Theme.text-muted;
+
+        if root.layer-count == 0: Note {
+            text: @tr("Inspector" => "Slice to see the layers, the estimates and the checks.");
+        }
+        if root.layer-count > 0: HorizontalLayout {
+            spacing: 8px;
+
+            StatTile {
+                value: root.layer-count;
+                caption: @tr("Inspector" => "layers");
+            }
+            StatTile {
+                value: Math.round(root.selected-layer) + 1;
+                caption: @tr("Inspector" => "current layer");
+            }
+        }
+        if root.layer-count > 0: Rectangle {
+            height: 180px;
+            background: #0e0f10;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+
+            Image {
+                width: parent.width - 8px;
+                height: parent.height - 8px;
+                source: root.layer-image;
+                image-fit: contain;
+            }
+        }
+    }
+}
+
+export component ExportInspector inherits VerticalLayout {
+    in property <[string]> format-options;
+    in-out property <int> format-current-index: -1;
+    in property <string> format-note;
+    in property <bool> export-enabled;
+    in property <bool> busy;
+    in property <bool> has-scene;
+    callback format-picked(int);
+    callback export-printer-file();
+    callback save-project();
+    callback export-mesh();
+
+    spacing: 12px;
+
+    Card {
+        title: @tr("Inspector" => "PRINTER FILE");
+
+        Field {
+            label: @tr("SlicePanel" => "Print format");
+            format-combo := ComboBox {
+                model: root.format-options;
+                current-index <=> root.format-current-index;
+                enabled: root.format-options.length > 0;
+                selected => {
+                    root.format-picked(format-combo.current-index);
+                }
+            }
+        }
+        if root.format-note != "": Note {
+            text: root.format-note;
+        }
+        ScButton {
+            text: @tr("SlicePanel" => "Export for printer");
+            icon: Icons.file;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: root.export-enabled && !root.busy;
+            clicked => {
+                root.export-printer-file();
+            }
+        }
+        if !root.export-enabled: Note {
+            text: @tr("Inspector" => "Slice first: the printer file is written from the held slice.");
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "ALSO");
+
+        ScButton {
+            text: @tr("Inspector" => "Save project (.3mf with slices)");
+            icon: Icons.save;
+            enabled: root.has-scene && !root.busy;
+            clicked => {
+                root.save-project();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Export mesh (STL / OBJ / 3MF)");
+            icon: Icons.file;
+            enabled: root.has-scene && !root.busy;
+            clicked => {
+                root.export-mesh();
+            }
+        }
+    }
+}

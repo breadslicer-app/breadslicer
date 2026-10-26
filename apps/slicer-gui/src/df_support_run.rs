@@ -15,16 +15,18 @@
 //! `SceneDocument::paste_fragment`: one undoable object, saved and exported
 //! like any other. A later run leaves that object out of its models.
 //!
-//! **Background prescan (SC-82/SC-83).** The island and overhang scans depend
-//! only on the geometry, its pose and the scan settings, so while the scene
-//! sits still a second, lower-key job runs them ahead of time
-//! (`start_df_prescan`, in a pool of half the cores) and the next run starts
-//! from them. Nothing of it is on the transform path: a scene event only
-//! stamps the time; a poll starts the prescan once the scene has been still
-//! for [`PRESCAN_SETTLE`], and cancels it when the scene moves on. Reuse is
-//! safe by construction: the core keys the scans on the baked world geometry,
-//! so a stale scan never matches. Opt-in (Preferences > Slicing) until the
-//! Supports tab (SC-83) decides when to start it.
+//! **Prescan (SC-82/83/84).** The island and overhang scans depend only on
+//! the geometry, its pose and the scan settings, so a second, lower-key job
+//! runs them ahead of time (`start_df_prescan`, in a pool of half the cores)
+//! and the next run starts from them. It starts when the Hollow or Supports
+//! tab is open (the pose is settled there), or, with the Preferences >
+//! Slicing switch, whenever the scene has been still for [`PRESCAN_SETTLE`].
+//! Nothing of it is on the transform path: a scene event only stamps the
+//! time; a poll starts the prescan, and cancels it when the scene moves on.
+//! A Generate press while a prescan of the same scene is running waits for
+//! it rather than scanning twice. Reuse is safe by construction: the core
+//! keys the scans on the baked world geometry, so a stale scan never
+//! matches.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -41,13 +43,13 @@ use sc_print_profiles::resolve_layer_height;
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
-use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision, SceneSubscription};
 use crate::slice_projection::load_selected_profiles;
+use crate::{MainWindow, WorkspaceSection};
 
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -64,6 +66,9 @@ struct Prescan {
     running: Option<(JobHandle<DfPrescan>, SceneRevision, Instant)>,
     /// The last finished prescan and the scene it ran on.
     ready: Option<(SceneRevision, Arc<ScanCache>)>,
+    /// A Generate press waiting for the running prescan: the run starts
+    /// from its scans as soon as it finishes.
+    run_waiting: bool,
 }
 
 pub(crate) struct DfSupportRun {
@@ -143,6 +148,7 @@ impl DfSupportRun {
                 if let Some(handle) = run.handle.borrow().as_ref() {
                     handle.cancel();
                 }
+                run.drop_waiting_run();
             });
         }
         run
@@ -155,16 +161,40 @@ impl DfSupportRun {
         if ui.get_loading() || ui.get_support_gen_in_progress() || self.handle.borrow().is_some() {
             return;
         }
+        {
+            let mut prescan = self.prescan.borrow_mut();
+            let current = prescan
+                .running
+                .as_ref()
+                .is_some_and(|(_, _, started)| self.last_change.get() <= *started);
+            if current {
+                // The scene has not moved since the prescan started: wait for
+                // it rather than scan the same geometry twice.
+                prescan.run_waiting = true;
+                ui.set_support_gen_in_progress(true);
+                ui.set_support_gen_cancelable(true);
+                ui.set_support_gen_progress(0.0);
+                ui.set_support_gen_phase(ctr!("DfSupportDialog", "Preparing scans…"));
+                return;
+            }
+            // A prescan of an older scene would not match: free its cores.
+            if let Some((job, _, _)) = prescan.running.take() {
+                job.cancel();
+            }
+        }
+        self.launch(&ui);
+    }
+
+    /// Starts the run, from the last prescan when it still matches.
+    fn launch(self: &Rc<Self>, ui: &MainWindow) {
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+            ui.set_support_gen_in_progress(false);
+            ui.set_support_gen_cancelable(false);
             return;
         };
         let mut request = self.request_for_selection();
         {
-            let mut prescan = self.prescan.borrow_mut();
-            // The run needs the cores more than a prescan still in flight.
-            if let Some((job, _, _)) = prescan.running.take() {
-                job.cancel();
-            }
+            let prescan = self.prescan.borrow();
             // A stale entry would simply not match; there is no point
             // handing it over.
             if let Some((revision, scans)) = &prescan.ready
@@ -184,6 +214,8 @@ impl DfSupportRun {
                 self.start_poll();
             }
             Err(err) => {
+                ui.set_support_gen_in_progress(false);
+                ui.set_support_gen_cancelable(false);
                 let message = err.to_string();
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("DfSupportDialog", "Support generation failed"),
@@ -195,12 +227,30 @@ impl DfSupportRun {
         }
     }
 
+    /// Cancels a Generate press that is waiting for the prescan, and the
+    /// prescan with it.
+    fn drop_waiting_run(&self) {
+        let mut prescan = self.prescan.borrow_mut();
+        if !prescan.run_waiting {
+            return;
+        }
+        prescan.run_waiting = false;
+        if let Some((job, _, _)) = prescan.running.take() {
+            job.cancel();
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_gen_in_progress(false);
+            ui.set_support_gen_cancelable(false);
+        }
+    }
+
     /// The prescan watcher, every [`PRESCAN_POLL_INTERVAL`]: collects a
-    /// finished prescan, cancels one the scene has moved on from, and starts
-    /// one once the scene has been still for [`PRESCAN_SETTLE`] and holds no
-    /// matching scans yet. Idle while a support run is in flight, a scene is
-    /// loading or the preference is off.
-    fn watch_prescan(&self) {
+    /// finished prescan (starting a run that waited for it), cancels one the
+    /// scene has moved on from, and starts one once the scene has been still
+    /// for [`PRESCAN_SETTLE`] and holds no matching scans yet, in the Hollow
+    /// and Supports tabs or anywhere with the preference on. Idle while a
+    /// support run is in flight or a scene is loading.
+    fn watch_prescan(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -213,21 +263,39 @@ impl DfSupportRun {
             if let Ok(done) = finished {
                 prescan.ready = Some((revision, done.scans));
             }
+            if prescan.run_waiting {
+                prescan.run_waiting = false;
+                drop(prescan);
+                self.launch(&ui);
+                return;
+            }
         }
-        if !self.bus.snapshot().prescan_supports {
-            if let Some((job, _, _)) = prescan.running.take() {
+        let tab_wants = matches!(
+            ui.get_workspace_section(),
+            WorkspaceSection::Hollow | WorkspaceSection::Supports
+        );
+        if !tab_wants && !self.bus.snapshot().prescan_supports {
+            if !prescan.run_waiting
+                && let Some((job, _, _)) = prescan.running.take()
+            {
                 job.cancel();
             }
-            prescan.ready = None;
             return;
         }
         let last_change = self.last_change.get();
         if let Some((job, _, started)) = &prescan.running
             && last_change > *started
         {
-            // The scene moved under it: its scans would not match.
+            // The scene moved under it: its scans would not match. A run
+            // waiting for it starts on its own instead.
             job.cancel();
             prescan.running = None;
+            if prescan.run_waiting {
+                prescan.run_waiting = false;
+                drop(prescan);
+                self.launch(&ui);
+                return;
+            }
         }
         let busy = self.handle.borrow().is_some()
             || ui.get_loading()
@@ -349,6 +417,10 @@ impl DfSupportRun {
             return;
         }
         let summary = summary_message(&outcome);
+        if let Some(ui) = self.ui.upgrade() {
+            let seconds = outcome.timings.total.as_secs_f64();
+            ui.set_supports_last_run(format!("{summary} {seconds:.1} s.").into());
+        }
         let mut details = details_message(&outcome);
         // A release build has no console (Windows GUI subsystem): the full
         // breakdown goes to a log file instead, named in the details.
