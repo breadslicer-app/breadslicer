@@ -117,7 +117,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
 | [SC-79](#sc-79) | done | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
-| [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
+| [SC-81](#sc-81) | in progress | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 | [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
 
@@ -897,6 +897,7 @@ Lista viva de "esto podría estar mejor" anotada durante el porteo (`docs/sc/DF-
 - **Excepción de Clipper aborta todo el export (bloque 9c):** nada la captura en el paso del raft. Arreglo: degradar a raft sin holgura (o sin raft para ese modelo) y avisar.
 - **Raft recalculado de más (rendimiento, bloque 9c):** cada modelo recalcula la huella de todos los modelos en la placa (`collectModelPlateFootprint`), aunque la banda sea la misma, y el modo línea vuelve a inflar la holgura que la huella ya infló. Medir antes de optimizar.
 - **El slice ignora los ajustes de raft por modelo (bug DF, bloque 10):** `buildSupportAndRaftWorldTriangles` usa `getRaftSettings()` global, mientras el export (`ExportManager`) usa `getRaftSettingsForModel`. Un modelo con raft propio se exporta con uno y se slicea con otro. Arreglo: resolver los ajustes por modelo también en el slice.
+- **Raft no manifold (DF, SC-81):** la pared de DF se enreda en footprints cóncavos y la base recortada queda con uniones en T (earcut descarta puntos colineales de la tapa). El rasterizador de DF lo tolera; un slicer de contornos no. Ya arreglado detrás de `robust_raft_geometry` (encendido en SC): falta decidir si la pared vertical de Clipper debe recuperar el chaflán de DF arriba, y medir el costo de `split_t_junctions` (O(aristas abiertas × vértices)) en rafts grandes.
 - **Costos evitables (rendimiento):** la consolidación clona el borrador entero por cada host candidato (`pruned`), y `buildGroupPairs` es O(n²) con vecinos recalculados. Medir antes de optimizar.
 
 **Cierre:** Cada ítem aplicado con su test propio y la paridad DF intacta con la opción apagada, o descartado con razón escrita; la lista se vacía o queda justificada.
@@ -990,7 +991,14 @@ Llevar las mallas de soportes y raft de la fachada al slice y a los writers: que
 
 **Cierre:** Escenas del corpus slicedas con soportes y raft, capas inspeccionadas contra la geometría, archivo de salida validado con el writer correspondiente (SC-35); impresión física solo con autorización (SC-66).
 
-**Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: backlog.
+**Avance (2026-10-26): malla de soportes cerrada y manifold.** `sl1cer` pide hojas edge-manifold. La malla que pega la GUI ya lo es en las 13 escenas de 8a (`support_meshes_of_real_scenes_are_edge_manifold`):
+- el teselado marca dónde termina cada pieza (`TriangleSink`) y el adaptador suelda por pieza (tolerancia 1e-5 mm), sin soldar piezas que se tocan y descartando piezas repetidas;
+- los tubos suaves se parten en codos de más de 120° (tubo, esfera, tubo), donde el anillo de inglete se cruzaba;
+- con `robust_raft_geometry` (por defecto en SC, apagado para paridad), la pared del raft se arma con Clipper y la base recortada se arma sobre anillos sin puntos colineales, partiendo los triángulos de la tapa que earcut dejó con uniones en T (`robust_wall.rs`).
+
+Falta: slicear por componente conexo (piezas superpuestas en una hoja), la penetración de las puntas (`calculateTipOffset`) y validar capas y archivo.
+
+**Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: in progress.
 
 ## SC-82
 

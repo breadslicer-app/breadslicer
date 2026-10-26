@@ -8,7 +8,7 @@
 //! supports and the raft (`buildSupportAndRaftWorldTriangles`), welded by
 //! exact position into one [`IndexedMesh`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
@@ -131,29 +131,79 @@ pub fn model_from_world_mesh(id: String, mesh: &IndexedMesh) -> ModelInput {
 /// cared. The port's output stays exact; only this scene mesh is snapped.
 pub const PLATE_SNAP_MM: f32 = 1e-4;
 
-/// A triangle soup welded by exact position, with vertices a rounding error
-/// below the plate put on it ([`PLATE_SNAP_MM`]); triangles the weld
+/// Vertices of one piece closer than this are the same vertex. The
+/// tessellation interpolates some corners (DragonFruit's crenelated wall
+/// lerps along each edge), and `t = 1` does not always land on the next
+/// corner to the last bit: a 1e-15 mm crack the rasteriser never saw, but an
+/// open edge to the slicer's manifold check. Far below any print resolution.
+pub const WELD_TOLERANCE_MM: f32 = 1e-5;
+
+/// Welds positions within [`WELD_TOLERANCE_MM`] on a grid of that cell
+/// size, looking in the neighbouring cells too so two points either side of
+/// a cell boundary still meet.
+#[derive(Default)]
+struct Welder {
+    cells: HashMap<[i64; 3], Vec<u32>>,
+}
+
+impl Welder {
+    fn index_of(&mut self, p: [f32; 3], vertices: &mut Vec<Vertex>) -> u32 {
+        let cell = p.map(|v| (v / WELD_TOLERANCE_MM).floor() as i64);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+                    if let Some(ids) = self.cells.get(&key) {
+                        for &id in ids {
+                            let q = vertices[id as usize].as_array();
+                            let d2 = (0..3).map(|k| (q[k] - p[k]).powi(2)).sum::<f32>();
+                            if d2 <= WELD_TOLERANCE_MM * WELD_TOLERANCE_MM {
+                                return id;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        vertices.push(Vertex::new(p));
+        let id = (vertices.len() - 1) as u32;
+        self.cells.entry(cell).or_default().push(id);
+        id
+    }
+}
+
+/// A triangle soup welded into one mesh **piece by piece**: each closed piece
+/// of `parts` (`soup.len()` at each piece's end) gets its own vertices, welded
+/// within [`WELD_TOLERANCE_MM`] inside it, so pieces that touch or overlap never share
+/// an edge and the mesh stays edge-manifold (the slicer's precondition). A
+/// piece identical to an earlier one is dropped. Vertices a rounding error
+/// below the plate are put on it ([`PLATE_SNAP_MM`]); triangles the weld
 /// collapses are dropped.
-pub fn weld_soup(soup: &[f32], name: &str) -> Option<IndexedMesh> {
-    let mut index_of: HashMap<[u32; 3], u32> = HashMap::new();
+pub fn weld_parts(soup: &[f32], parts: &[usize], name: &str) -> Option<IndexedMesh> {
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut faces: Vec<IndexedTriangle> = Vec::new();
-    for tri in soup.chunks_exact(9) {
-        let mut ids = [0u32; 3];
-        for (k, p) in tri.chunks_exact(3).enumerate() {
-            let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
-                0.0
-            } else {
-                p[2]
-            };
-            let key = [p[0].to_bits(), p[1].to_bits(), z.to_bits()];
-            ids[k] = *index_of.entry(key).or_insert_with(|| {
-                vertices.push(Vertex::new([p[0], p[1], z]));
-                (vertices.len() - 1) as u32
-            });
+    let mut seen: HashSet<Vec<u32>> = HashSet::new();
+    let mut start = 0;
+    for &end in parts.iter().chain(std::iter::once(&soup.len())) {
+        let piece = &soup[start..end.max(start)];
+        start = end.max(start);
+        if piece.is_empty() || !seen.insert(piece.iter().map(|v| v.to_bits()).collect()) {
+            continue;
         }
-        if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
-            faces.push(IndexedTriangle::from_raw_indices(ids));
+        let mut welder = Welder::default();
+        for tri in piece.chunks_exact(9) {
+            let mut ids = [0u32; 3];
+            for (k, p) in tri.chunks_exact(3).enumerate() {
+                let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
+                    0.0
+                } else {
+                    p[2]
+                };
+                ids[k] = welder.index_of([p[0], p[1], z], &mut vertices);
+            }
+            if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+                faces.push(IndexedTriangle::from_raw_indices(ids));
+            }
         }
     }
     if faces.is_empty() {
@@ -212,6 +262,8 @@ fn run_df_supports(
         .unwrap_or_else(|| PipelineSettings {
             // SoulCrafted draws smooth tubes with bicones by default.
             shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
+            // Walls that slice cleanly on trimmed footprints.
+            robust_raft_geometry: true,
             ..PipelineSettings::defaults(request.layer_height_mm)
         });
     let n = models.len();
@@ -268,7 +320,7 @@ fn run_df_supports(
             }
         }
     }
-    let mesh = weld_soup(&out.support_soup, DF_SUPPORT_MESH_NAME);
+    let mesh = weld_parts(&out.support_soup, &out.support_parts, DF_SUPPORT_MESH_NAME);
     Ok(DfSupportOutcome {
         triangles: mesh.as_ref().map_or(0, |m| m.faces().len()),
         mesh,

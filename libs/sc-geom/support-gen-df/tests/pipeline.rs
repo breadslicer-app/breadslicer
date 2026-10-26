@@ -237,7 +237,7 @@ fn by_stage(
     (
         per_model,
         state,
-        json!({ "rafts": wire_rafts(&rafts), "soup": soup }),
+        json!({ "rafts": wire_rafts(&rafts), "soup": soup.floats, "parts": soup.parts }),
     )
 }
 
@@ -278,7 +278,7 @@ fn facade_matches_the_stages_called_one_by_one() {
             "scene {k}: support state"
         );
         assert_eq!(
-            json!({ "rafts": wire_rafts(&out.rafts), "soup": out.support_soup }),
+            json!({ "rafts": wire_rafts(&out.rafts), "soup": out.support_soup, "parts": out.support_parts }),
             rafts,
             "scene {k}: rafts and soup"
         );

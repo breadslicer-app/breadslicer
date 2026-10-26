@@ -87,6 +87,18 @@ fn a_lifted_cube_gets_supports_and_a_raft() {
     assert!(zs.iter().all(|z| *z >= 0.0 && z.is_sign_positive()));
     assert!(hi > 7.0, "supports reach the cube ({hi})");
 
+    // Edge-manifold, as the slicer requires: every edge (by vertex index)
+    // is shared by exactly two triangles, although pieces overlap.
+    let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
+    for f in mesh.faces() {
+        let v = f.vertices.map(u32::from);
+        for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+            *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let bad = edges.values().filter(|&&c| c != 2).count();
+    assert_eq!(bad, 0, "{bad} edges not shared by exactly two triangles");
+
     // Pasted back, the support mesh is not a model of the next run.
     let again = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (mesh, [0.0, 0.0, 0.0])]);
     assert_eq!(scene_models(&again).unwrap().len(), 1);
@@ -100,4 +112,51 @@ fn cancelling_stops_the_run() {
     // next boundary stops it.
     handle.cancel();
     assert!(matches!(handle.join(), Err(JobError::Cancelled)));
+}
+
+/// The block-8a meshes (tables, knots, spheres, ripples...) placed in one
+/// scene: the support mesh stays edge-manifold however its pieces overlap.
+#[test]
+fn support_meshes_of_real_scenes_are_edge_manifold() {
+    let path = format!(
+        "{}/../support-gen-df/tests/fixtures/df_native_islands.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let meshes = fixture["meshes"].as_object().unwrap();
+    let mut checked = 0;
+    for (name, soup) in meshes {
+        let soup: Vec<f64> = serde_json::from_value(soup.clone()).unwrap();
+        let vertices: Vec<Vertex> = soup
+            .chunks_exact(3)
+            .map(|p| Vertex::new([p[0] as f32, p[1] as f32, p[2] as f32]))
+            .collect();
+        let faces: Vec<IndexedTriangle> = (0..vertices.len() as u32 / 3)
+            .map(|t| IndexedTriangle::from_raw_indices([3 * t, 3 * t + 1, 3 * t + 2]))
+            .collect();
+        let scene = scene_with(vec![(
+            IndexedMesh::new(None, vertices, faces),
+            [0.0, 0.0, 0.0],
+        )]);
+        let outcome = start_df_supports(&scene, DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap();
+        let Some(mesh) = outcome.mesh else { continue };
+        let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
+        for f in mesh.faces() {
+            let v = f.vertices.map(u32::from);
+            for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+                *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        let bad = edges.values().filter(|&&c| c != 2).count();
+        assert_eq!(
+            bad, 0,
+            "{name}: {bad} edges not shared by exactly two triangles"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 8, "{checked} scenes supported");
 }

@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::clipper::ClipperError;
 use crate::features::slicing::smooth_shafts::ShaftStyle;
 use crate::features::slicing::support_world_triangles::{
-    SupportSliceInput, build_support_and_raft_world_triangles,
+    SupportSliceInput, TriangleSink, build_support_and_raft_world_parts,
 };
 use crate::native::mesh_core::mesh::IndexedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_without_overhangs};
@@ -113,6 +113,9 @@ pub struct PipelineSettings {
     /// How the tessellation draws shafts (DragonFruit's spheres, or smooth
     /// tubes with bicones).
     pub shaft_style: ShaftStyle,
+    /// Closed, manifold raft geometry for a contour slicer (SoulCrafted's;
+    /// see `robust_wall`). `false` keeps DragonFruit's.
+    pub robust_raft_geometry: bool,
 }
 
 impl PipelineSettings {
@@ -128,6 +131,7 @@ impl PipelineSettings {
             support_tip_shrink_percent: 0.0,
             tip_penetration_mm: 0.0,
             shaft_style: ShaftStyle::DragonFruit,
+            robust_raft_geometry: false,
         }
     }
 }
@@ -217,6 +221,9 @@ pub struct PipelineOutput {
     /// What the slicer rasterises (`buildSupportAndRaftWorldTriangles`): every
     /// support and the global-settings raft, nine floats per triangle.
     pub support_soup: Vec<f32>,
+    /// `support_soup.len()` at the end of each closed piece of it (see
+    /// `TriangleSink`): weld piece by piece to keep the mesh edge-manifold.
+    pub support_parts: Vec<usize>,
     /// Where the run spent its time (stages, plan phases, router, builders).
     pub timings: PerfFrame,
 }
@@ -444,7 +451,7 @@ fn run_pipeline(
     };
     check()?;
     step(progress, Stage::Tessellate, n);
-    let support_soup = {
+    let support = {
         let _perf = perf::scope("stage:tessellate");
         support_soup(&current, models, settings)?
     };
@@ -453,7 +460,8 @@ fn run_pipeline(
         models: outputs,
         support: current,
         rafts,
-        support_soup,
+        support_soup: support.floats,
+        support_parts: support.parts,
         timings: PerfFrame::default(),
     })
 }
@@ -465,7 +473,7 @@ pub fn support_soup(
     state: &SupportState,
     models: &[ModelInput],
     settings: &PipelineSettings,
-) -> Result<Vec<f32>, ClipperError> {
+) -> Result<TriangleSink, ClipperError> {
     let visible: HashSet<String> = models
         .iter()
         .filter(|m| m.visible)
@@ -481,7 +489,7 @@ pub fn support_soup(
             visible: Some(true),
         })
         .collect();
-    build_support_and_raft_world_triangles(&SupportSliceInput {
+    build_support_and_raft_world_parts(&SupportSliceInput {
         state: &state.collections,
         visible_model_ids: &visible,
         raft: &settings.rafts.global,
@@ -489,6 +497,7 @@ pub fn support_soup(
         support_tip_shrink_percent: settings.support_tip_shrink_percent,
         tip_penetration_mm: settings.tip_penetration_mm,
         shaft_style: settings.shaft_style,
+        robust_raft_geometry: settings.robust_raft_geometry,
     })
 }
 

@@ -663,6 +663,8 @@ Los datos de soportes no son una malla: DF los tesela al slicear (`buildSupportA
 
 Extensión propia de SC, fuera de la paridad: `features/slicing/smooth_shafts.rs` (`ShaftStyle::Smooth`) cambia tramos y esferas por tubos continuos con biconos en las juntas; con `ShaftStyle::DragonFruit` (por defecto) la salida es la de DF.
 
+Otra extensión de SC: `robust_raft_geometry` (`rafts/crenelated/geometry/robust_wall.rs`, apagado por defecto en el port) cierra el raft para un slicer de contornos. La pared se arma con Clipper (el `insetConvexPolygon` de DF se enreda en footprints cóncavos) y la base recortada se arma sobre anillos sin puntos colineales, partiendo las uniones en T que deja earcut al puentear agujeros colineales con el contorno.
+
 La fachada (`pipeline.rs`) suma la etapa `Tessellate` y devuelve `support_soup`, la sopa de triángulos que el slicer rasteriza.
 
 **Evidencia:** `scripts/df-oracle/golden_support_triangles.ts` → `tests/fixtures/df_support_triangles.json`, sobre los estados reales de soportes de los bloques 8c y 7:
