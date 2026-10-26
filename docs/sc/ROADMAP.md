@@ -118,7 +118,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-79](#sc-79) | done | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | done | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
-| [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
+| [SC-82](#sc-82) | paused | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 | [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
 
 ## SC-01
@@ -1077,7 +1077,7 @@ Idea de Damian (2026-10-25): una pestaña Supports propia (sin herramientas de t
 - **GUI:** un evento de escena solo guarda la hora del último cambio; es lo único que agrega al camino del transform. Un poll cada 150 ms arranca el pre-escaneo cuando la escena lleva 500 ms quieta, lo cancela si la escena cambia y le pasa el resultado a Generate Supports. Se apaga en Preferencias → Slicing.
 - **Medición (617 a 90 mm):** el pre-escaneo tarda 5,1 s en segundo plano; Generate Supports pasa de ~20–22 s a 15,2 s, con el mismo digest.
 
-Falta que Damian pruebe que los gestos siguen fluidos mientras escanea un modelo grande.
+**Prueba de Damian (2026-10-26):** el pre-escaneo no se usó. Apretó Generate Supports mientras todavía corría; el botón lo canceló y el escaneo cancelado siguió compitiendo por CPU hasta terminar su modelo. Decisión de Damian: no depender de "que el usuario espere X segundos". El cálculo lo dispara la pestaña Supports al entrar. El pre-escaneo queda **apagado por defecto** (opción en Preferencias → Slicing), con la caché por geometría lista para esa pestaña.
 
 **Cierre:** Damian entra a Supports, aprieta Autosupport sin espera perceptible en sus modelos habituales; cambiar un ajuste no reescanea; ir a Transform y volver sin mover nada no recalcula; mover el modelo marca los soportes y los regenera o pregunta según sean automáticos o editados.
 
