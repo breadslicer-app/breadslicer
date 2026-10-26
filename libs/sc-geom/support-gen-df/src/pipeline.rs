@@ -31,7 +31,7 @@ use crate::features::slicing::support_world_triangles::{
     SupportSliceInput, build_support_and_raft_world_triangles,
 };
 use crate::native::mesh_core::mesh::IndexedMesh;
-use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands};
+use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_without_overhangs};
 use crate::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
@@ -353,22 +353,35 @@ fn run_pipeline(
             IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
         };
         let s = &settings.scan;
-        perf::mark("stage:scan-islands");
-        let combined = scan_islands(
-            &mesh,
-            settings.layer_height_mm,
-            s.px_mm,
-            s.support_buffer_mm,
-            s.connectivity,
-            s.minima_k,
-            Some(angle),
-            Some(s.overhang_px_mm),
-        );
-        perf::measure("stage:scan-islands");
-        perf::mark("stage:scan-overhangs");
-        let (regions, stability) =
-            overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft);
-        perf::measure("stage:scan-overhangs");
+        // The island scan and the soup's overhang classification are
+        // independent: run them side by side. (The scan's own overhang
+        // classification is skipped; the soup's is the one derived from.)
+        // The timing frame is per thread, so each scan is timed where it
+        // runs and recorded here; `stage:scans` is the wall time of both.
+        perf::mark("stage:scans");
+        let ((combined, t_islands), ((regions, stability), t_overhangs)) =
+            std::thread::scope(|scope| {
+                let islands = scope.spawn(|| {
+                    let t = std::time::Instant::now();
+                    let r = scan_islands_without_overhangs(
+                        &mesh,
+                        settings.layer_height_mm,
+                        s.px_mm,
+                        s.support_buffer_mm,
+                        s.connectivity,
+                        s.minima_k,
+                    );
+                    (r, t.elapsed())
+                });
+                let t = std::time::Instant::now();
+                let overhangs =
+                    overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft);
+                let overhangs = (overhangs, t.elapsed());
+                (islands.join().expect("island scan panicked"), overhangs)
+            });
+        perf::measure("stage:scans");
+        perf::record("scan:islands", t_islands);
+        perf::record("scan:overhangs", t_overhangs);
         let overhang = OverhangScan { regions, stability };
 
         check()?;
