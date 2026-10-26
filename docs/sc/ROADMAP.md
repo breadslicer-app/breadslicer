@@ -19,7 +19,7 @@ La línea de soportes DF funciona de punta a punta: modelo → soportes y raft �
    - cambiar un ajuste re-planifica sin re-escanear.
 3. **Hollow** (SC-18, SC-39…46): portar el motor de DragonFruit con las mejoras de Damian, más drenajes y áreas sólidas, en la pestaña Hollow.
 4. **Soportes manuales** (SC-10, SC-11, SC-12): agregar, borrar, mover punta y brace en el viewport.
-5. **Repair** (SC-87): decidir cómo usar Caliper.
+5. **Repair** (SC-87): mejorar el repair propio con lo mejor de DragonFruit; Caliper como extra, con un botón que lo abre o enlaza su descarga.
 6. **Slice y salida:**
    - estimaciones de tiempo, resina y costo, y chequeos;
    - zoom y paneo de la vista de capa (SC-88, SC-34);
@@ -146,7 +146,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-84](#sc-84) | in progress | editor | Rediseño de la UI: Transform → Hollow / Supports → Slice → Export | SC-83, SC-18 |
 | [SC-85](#sc-85) | backlog | editor | Ayudas visuales del gizmo: grados, distancias y línea del eje | SC-84, SC-26 |
 | [SC-86](#sc-86) | backlog | soportes | Panel completo de soportes, lift y presets de Damian | SC-84, SC-83 |
-| [SC-87](#sc-87) | triage | geometria | Repair: evaluar integrar Caliper | SC-29 |
+| [SC-87](#sc-87) | backlog | geometria | Repair: mejorar con DF y Caliper como extra | SC-29 |
 | [SC-88](#sc-88) | backlog | slicing | Vista de capa con zoom y paneo | SC-84, SC-34 |
 
 ## SC-01
@@ -1222,7 +1222,7 @@ Cambiar un ajuste re-planifica sin re-escanear (caché por etapas, SC-83).
 
 ## SC-87
 
-**Repair: evaluar integrar Caliper** — Geometría / reparación
+**Repair: mejorar con DF y Caliper como extra** — Geometría / reparación
 
 Caliper (`C:/Users/dnaon/Downloads/CaliperDevelop`) es la herramienta de análisis y reparación de mallas de Damian (SynrgStudio): C++ con aritmética exacta, cavidades certificadas y repair validado sobre sus modelos (0.8.5). Su código es cerrado y la fuente privada es suya. Damian quiere aprovecharlo en el slicer, en vez del repair actual o del de DragonFruit (`rust/dragonfruit-mesh-repair`), que considera correcto pero no brillante.
 
@@ -1231,7 +1231,14 @@ Caliper (`C:/Users/dnaon/Downloads/CaliperDevelop`) es la herramienta de anális
 - **Alternativa:** que Damian publique bajo una licencia compatible la parte que quiera integrar. La decisión es suya.
 - **Comparación primero:** Caliper, el repair actual de SC y el de DF sobre el corpus (SC-24) y la ballena.
 
-**Cierre:** forma de integración elegida por Damian, con la licencia revisada, y comparación medida; si sigue adelante, Repair en Transform puede usar Caliper cuando está instalado.
+**Decisión de Damian (2026-10-26):**
+- **Repair principal:** el de SC, mejorado con lo que sirva del de DragonFruit (`rust/dragonfruit-mesh-repair`). Se compara sobre el corpus antes de portar nada.
+- **Caliper como extra:** es gratis y Damian no tiene problema en distribuirlo. Va como **programa aparte**, nunca enlazado dentro de SC, para no mezclar licencias. Gratis no es lo mismo que código abierto: enlazado dentro del binario AGPL exigiría publicar su fuente.
+- **Integración:** un botón en Transform, "Reparar con Caliper", que abre la malla en Caliper si está instalado, y si no, enlaza la descarga (`https://github.com/SynrgStudio/caliperreleases/releases/latest`). Más adelante, si Caliper gana un modo por línea de comandos, el resultado puede volver solo a la escena.
+
+**Cierre:**
+- repair de SC comparado con el de DF y mejorado donde gane, con medición sobre el corpus y la ballena;
+- botón de Caliper funcionando (abrir si está instalado, link si no).
 
 **Depende de:** SC-29. Prioridad: normal. Estado snapshot: triage.
 
