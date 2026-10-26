@@ -174,8 +174,12 @@ impl DfSupportRun {
             return;
         }
         let summary = summary_message(&outcome);
-        let details = details_message(&outcome);
-        eprintln!("[df-supports] {summary}\n{}", outcome.timings.report());
+        let mut details = details_message(&outcome);
+        // A release build has no console (Windows GUI subsystem): the full
+        // breakdown goes to a log file instead, named in the details.
+        if let Some(path) = append_timing_log(&summary, &outcome.timings.report()) {
+            details.push_str(&format!("\n\nFull timings: {}", path.display()));
+        }
         let Some(mesh) = outcome.mesh else {
             self.dialogs.show_info(move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "No supports needed"),
@@ -215,6 +219,27 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
         outcome.support.collections.roots.len(),
         outcome.triangles
     )
+}
+
+/// Appends one run's summary and full timing report to
+/// `<local data dir>/logs/df-supports-timings.log`, returning its path, or
+/// `None` when there is no data directory or the write fails (the log is a
+/// diagnostic: a failure never stops the run).
+fn append_timing_log(summary: &str, report: &str) -> Option<std::path::PathBuf> {
+    use std::io::Write;
+    let dir = sc_app_paths::project_dirs()?.data_local_dir().join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("df-supports-timings.log");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()?;
+    writeln!(file, "=== run at unix {stamp}: {summary}\n{report}").ok()?;
+    Some(path)
 }
 
 /// The placed supports by type, then where the time went: the stages, the
