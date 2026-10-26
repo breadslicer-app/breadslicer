@@ -5582,6 +5582,7 @@ dependencies = [
  "sc-geom-transport-inprocess",
  "sc-mesh-core",
  "sc-scene",
+ "serde",
  "support-gen-df",
 ]
 

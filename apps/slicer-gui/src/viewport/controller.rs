@@ -1511,7 +1511,11 @@ impl ViewportController {
     /// [`NumericEdit::from_ui`] for the codes) as one undoable edit. Only in
     /// the Transform tab, with a selection, and never mid-gesture.
     pub(crate) fn on_numeric_edit(&self, code: i32, value: f32) {
-        if !self.allows_layout_tools() || self.gesture_active() {
+        // The lift (and dropping to the plate) is also a Supports setting:
+        // the room under the model the supports fill.
+        let lift_in_supports =
+            self.session.section() == WorkspaceSection::Supports && matches!(code, 2 | 10);
+        if !(self.allows_layout_tools() || lift_in_supports) || self.gesture_active() {
             return;
         }
         let document = self.session.document();

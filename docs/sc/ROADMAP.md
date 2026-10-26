@@ -1233,6 +1233,20 @@ Presets:
 
 Cambiar un ajuste re-planifica sin re-escanear (caché por etapas, SC-83).
 
+**Primera entrega (2026-10-26):** panel en la pestaña Supports.
+- **`DfSupportOptions` (adaptador):** los mismos controles que expone el panel automático de DF:
+  - tamaño Detail/Structure/Anchor, área por soporte, ángulo de voladizo, escala de tamaño, isla mínima y cobertura;
+  - estabilización, bracing y forma Smooth/Classic;
+  - raft sólido, de líneas o apagado, con espesor y pared.
+  Cada valor se acota a los límites de DF; los valores por defecto dejan `PipelineSettings` idéntico.
+- **Lift del objeto** editable desde Supports (y Drop to plate).
+- **Presets:** tres de fábrica (los niveles de DF) más los del usuario, guardados en TOML en la carpeta de datos (guardar y borrar). Las opciones se recuerdan entre sesiones y viajan en el pre-escaneo, así que la clave de escaneo coincide.
+
+Falta:
+- los presets de Damian (Mini 35mm Tall / Figure 75mm+), que necesitan el mapeo campo por campo Lychee → DF documentado en SC-07, sin inventar equivalencias;
+- guardar las opciones dentro del proyecto;
+- prueba de Damian.
+
 **Cierre:** cada opción del pipeline es editable y persiste con el proyecto; lift aplicado; los dos presets de Damian disponibles; Damian genera soportes con ellos en sus minis y los aprueba.
 
 **Depende de:** SC-84, SC-83. Prioridad: high. Estado snapshot: backlog.

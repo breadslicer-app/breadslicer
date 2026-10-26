@@ -168,6 +168,26 @@ export component MainWindow inherits Window {
     // colour (SVG path commands in viewport pixels).
     in property <string> gesture-readout: "";
     in property <bool> axis-guide-visible: false;
+    // The Supports tab options (DfSupportOptions) and presets, pushed by
+    // `DfSupportRun`.
+    in property <[string]> support-preset-names: [];
+    in property <int> support-preset-index: -1;
+    in property <int> support-sizing-index: 1;
+    in property <float> support-density;
+    in property <float> support-angle;
+    in property <float> support-size-scale;
+    in property <float> support-min-island;
+    in property <float> support-coverage;
+    in property <bool> support-stabilization: true;
+    in property <bool> support-bracing: true;
+    in property <bool> support-smooth: true;
+    in property <int> support-raft-index: 0;
+    in property <float> support-raft-thickness;
+    in property <bool> support-raft-wall: true;
+    callback support-option-changed(int, float);
+    callback support-preset-picked(int);
+    callback support-preset-save(string);
+    callback support-preset-delete();
     in property <string> axis-guide-commands: "";
     in property <brush> axis-guide-color: #ffffff;
     // Slice control panel picker models and selection, driven by Rust.
@@ -1103,6 +1123,40 @@ export component MainWindow inherits Window {
                             }
                             cancel-requested => {
                                 root.support-gen-cancel-requested();
+                            }
+                            preset-names: root.support-preset-names;
+                            preset-index: root.support-preset-index;
+                            sizing-index: root.support-sizing-index;
+                            density: root.support-density;
+                            angle: root.support-angle;
+                            size-scale: root.support-size-scale;
+                            min-island: root.support-min-island;
+                            coverage: root.support-coverage;
+                            stabilization: root.support-stabilization;
+                            bracing: root.support-bracing;
+                            smooth: root.support-smooth;
+                            raft-index: root.support-raft-index;
+                            raft-thickness: root.support-raft-thickness;
+                            raft-wall: root.support-raft-wall;
+                            selection-valid: root.selection-valid;
+                            lift: root.selection-pos-z;
+                            option-changed(code, value) => {
+                                root.support-option-changed(code, value);
+                            }
+                            preset-picked(i) => {
+                                root.support-preset-picked(i);
+                            }
+                            preset-save(name) => {
+                                root.support-preset-save(name);
+                            }
+                            preset-delete => {
+                                root.support-preset-delete();
+                            }
+                            lift-edit(v) => {
+                                root.numeric-edit(2, v);
+                            }
+                            drop-to-plate => {
+                                root.numeric-edit(10, 0);
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Slice: SliceInspector {

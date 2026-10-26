@@ -36,7 +36,8 @@ use std::time::{Duration, Instant};
 use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{
-    DfPrescan, DfSupportOutcome, DfSupportRequest, ScanCache, start_df_prescan, start_df_supports,
+    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, RaftMode, ScanCache,
+    start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -87,6 +88,99 @@ pub(crate) struct DfSupportRun {
     last_change: Rc<Cell<Instant>>,
     prescan_timer: slint::Timer,
     _scene_events: SceneSubscription,
+    /// The options the next run uses (the Supports tab), saved across
+    /// sessions.
+    options: RefCell<DfSupportOptions>,
+    /// Built-in presets first, then the person's own.
+    presets: RefCell<Vec<Preset>>,
+}
+
+/// A named set of options.
+#[derive(Clone)]
+struct Preset {
+    name: String,
+    options: DfSupportOptions,
+    built_in: bool,
+}
+
+/// The presets that ship with SoulCrafted: DragonFruit's three sizing tiers.
+fn built_in_presets() -> Vec<Preset> {
+    let tier = |name: &str, sizing: &str| Preset {
+        name: name.to_owned(),
+        options: DfSupportOptions {
+            sizing: sizing.to_owned(),
+            ..Default::default()
+        },
+        built_in: true,
+    };
+    vec![
+        tier("Structure (default)", "structure"),
+        tier("Detail (small miniatures)", "detail"),
+        tier("Anchor (heavy parts)", "anchor"),
+    ]
+}
+
+/// Where the options and presets live: the app's local data folder. Tests
+/// never touch it.
+fn support_data_dir() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    Some(
+        sc_app_paths::project_dirs()?
+            .data_local_dir()
+            .join("supports"),
+    )
+}
+
+fn load_saved_options() -> DfSupportOptions {
+    support_data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("options.toml")).ok())
+        .and_then(|text| toml::from_str::<DfSupportOptions>(&text).ok())
+        .map(|o| o.clamped())
+        .unwrap_or_default()
+}
+
+fn load_user_presets() -> Vec<Preset> {
+    let Some(dir) = support_data_dir().map(|d| d.join("presets")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut presets: Vec<Preset> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+        .filter_map(|e| {
+            let name = e.path().file_stem()?.to_string_lossy().into_owned();
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            let options = toml::from_str::<DfSupportOptions>(&text).ok()?.clamped();
+            Some(Preset {
+                name,
+                options,
+                built_in: false,
+            })
+        })
+        .collect();
+    presets.sort_by_key(|p| p.name.to_lowercase());
+    presets
+}
+
+/// A preset name made safe as a file name.
+fn preset_file_stem(name: &str) -> Option<String> {
+    let stem: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || " -_().".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stem = stem.trim().trim_matches('.').to_owned();
+    (!stem.is_empty()).then_some(stem)
 }
 
 impl DfSupportRun {
@@ -125,7 +219,27 @@ impl DfSupportRun {
             last_change,
             prescan_timer: slint::Timer::default(),
             _scene_events: scene_events,
+            options: RefCell::new(load_saved_options()),
+            presets: RefCell::new(Vec::new()),
         });
+        run.reload_presets();
+        run.push_options(ui);
+        {
+            let run = run.clone();
+            ui.on_support_option_changed(move |code, value| run.on_option(code, value));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_preset_picked(move |i| run.on_preset_picked(i));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_preset_save(move |name| run.on_preset_save(&name));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_preset_delete(move || run.on_preset_delete());
+        }
         {
             let weak = Rc::downgrade(&run);
             run.prescan_timer.start(
@@ -327,6 +441,13 @@ impl DfSupportRun {
     /// surface) when no printer or resin is in force or a profile fails to
     /// load.
     fn request_for_selection(&self) -> DfSupportRequest {
+        let mut request = self.request_for_printer();
+        request.options = self.options.borrow().clone();
+        request
+    }
+
+    /// The layer height and pixel pitch of the printer and resin in force.
+    fn request_for_printer(&self) -> DfSupportRequest {
         let snapshot = self.bus.snapshot();
         let selection = self
             .document
@@ -349,6 +470,153 @@ impl DfSupportRun {
             pixel_pitch_mm: Some([pitch.x.value() / 1000.0, pitch.y.value() / 1000.0]),
             ..defaults
         }
+    }
+
+    /// Pushes the options and the preset list to the Supports tab.
+    fn push_options(&self, ui: &MainWindow) {
+        let o = self.options.borrow().clone();
+        let presets = self.presets.borrow();
+        let names: Vec<slint::SharedString> = presets
+            .iter()
+            .map(|p| slint::SharedString::from(p.name.as_str()))
+            .collect();
+        let current = presets
+            .iter()
+            .position(|p| p.options == o)
+            .map_or(-1, |i| i as i32);
+        ui.set_support_preset_names(slint::ModelRc::new(slint::VecModel::from(names)));
+        ui.set_support_preset_index(current);
+        ui.set_support_sizing_index(match o.sizing.as_str() {
+            "detail" => 0,
+            "anchor" => 2,
+            _ => 1,
+        });
+        ui.set_support_density(o.area_per_support_mm2 as f32);
+        ui.set_support_angle(o.overhang_angle_deg as f32);
+        ui.set_support_size_scale(o.size_scale as f32);
+        ui.set_support_min_island(o.min_island_area_mm2 as f32);
+        ui.set_support_coverage(o.coverage_percent as f32);
+        ui.set_support_stabilization(o.stabilization);
+        ui.set_support_bracing(o.bracing);
+        ui.set_support_smooth(o.smooth_shafts);
+        ui.set_support_raft_index(match o.raft {
+            RaftMode::Solid => 0,
+            RaftMode::Lines => 1,
+            RaftMode::Off => 2,
+        });
+        ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
+        ui.set_support_raft_wall(o.raft_wall);
+    }
+
+    /// Replaces the options, saves them and shows them.
+    fn set_options(&self, options: DfSupportOptions) {
+        let options = options.clamped();
+        if let Some(dir) = support_data_dir()
+            && std::fs::create_dir_all(&dir).is_ok()
+            && let Ok(text) = toml::to_string_pretty(&options)
+        {
+            let _ = std::fs::write(dir.join("options.toml"), text);
+        }
+        *self.options.borrow_mut() = options;
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+    }
+
+    /// An option edited in the Supports tab (codes in the order of its
+    /// fields: sizing, density, angle, size scale, smallest island,
+    /// coverage, stabilization, bracing, smooth, raft bottom, raft
+    /// thickness, raft wall).
+    fn on_option(&self, code: i32, value: f32) {
+        let mut o = self.options.borrow().clone();
+        let v = f64::from(value);
+        let on = value != 0.0;
+        match code {
+            0 => {
+                o.sizing = ["detail", "structure", "anchor"]
+                    .get(value as usize)
+                    .unwrap_or(&"structure")
+                    .to_string();
+            }
+            1 => o.area_per_support_mm2 = v,
+            2 => o.overhang_angle_deg = v,
+            3 => o.size_scale = v,
+            4 => o.min_island_area_mm2 = v,
+            5 => o.coverage_percent = v,
+            6 => o.stabilization = on,
+            7 => o.bracing = on,
+            8 => o.smooth_shafts = on,
+            9 => {
+                o.raft = match value as i32 {
+                    1 => RaftMode::Lines,
+                    2 => RaftMode::Off,
+                    _ => RaftMode::Solid,
+                };
+            }
+            10 => o.raft_thickness_mm = v,
+            11 => o.raft_wall = on,
+            _ => return,
+        }
+        self.set_options(o);
+    }
+
+    fn reload_presets(&self) {
+        let mut presets = built_in_presets();
+        presets.extend(load_user_presets());
+        *self.presets.borrow_mut() = presets;
+    }
+
+    fn on_preset_picked(&self, index: i32) {
+        let picked = self
+            .presets
+            .borrow()
+            .get(index.max(0) as usize)
+            .map(|p| p.options.clone());
+        if let Some(options) = picked {
+            self.set_options(options);
+        }
+    }
+
+    /// Saves the current options as a preset of the person.
+    fn on_preset_save(&self, name: &str) {
+        let Some(stem) = preset_file_stem(name) else {
+            return;
+        };
+        let Some(dir) = support_data_dir().map(|d| d.join("presets")) else {
+            return;
+        };
+        let options = self.options.borrow().clone();
+        if std::fs::create_dir_all(&dir).is_ok()
+            && let Ok(text) = toml::to_string_pretty(&options)
+        {
+            let _ = std::fs::write(dir.join(format!("{stem}.toml")), text);
+        }
+        self.reload_presets();
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+    }
+
+    /// Deletes the selected preset, when it is one of the person's own.
+    fn on_preset_delete(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let index = ui.get_support_preset_index();
+        let target = self
+            .presets
+            .borrow()
+            .get(index.max(0) as usize)
+            .filter(|p| index >= 0 && !p.built_in)
+            .map(|p| p.name.clone());
+        let (Some(name), Some(dir)) = (target, support_data_dir()) else {
+            return;
+        };
+        if let Some(stem) = preset_file_stem(&name) {
+            let _ = std::fs::remove_file(dir.join("presets").join(format!("{stem}.toml")));
+        }
+        self.reload_presets();
+        self.push_options(&ui);
     }
 
     fn start_poll(self: &Rc<Self>) {
