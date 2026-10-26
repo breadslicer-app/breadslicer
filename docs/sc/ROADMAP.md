@@ -120,6 +120,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-81](#sc-81) | done | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | paused | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 | [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
+| [SC-84](#sc-84) | in progress | editor | Rediseño de la UI: Transform → Hollow / Supports → Slice → Export | SC-83, SC-18 |
 
 ## SC-01
 
@@ -1082,3 +1083,40 @@ Idea de Damian (2026-10-25): una pestaña Supports propia (sin herramientas de t
 **Cierre:** Damian entra a Supports, aprieta Autosupport sin espera perceptible en sus modelos habituales; cambiar un ajuste no reescanea; ir a Transform y volver sin mover nada no recalcula; mover el modelo marca los soportes y los regenera o pregunta según sean automáticos o editados.
 
 **Depende de:** SC-79 (soportes en la GUI) y SC-37 (contrato de jobs y resultados obsoletos). Entra con el retrabajo de la UI. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-84
+
+**Rediseño de la UI: Transform → Hollow / Supports → Slice → Export** — Editor / UI
+
+Pedido de Damian (2026-10-26): antes de seguir optimizando, una UI que valga la pena.
+- **Recorrido:** Transform → Hollow / Supports (dos pestañas separadas que se usan en cualquier orden) → Slice → Export.
+- **Estilo:** oscuro sobrio, tipo herramienta profesional. Grises y un solo acento ámbar: la paleta "Synrg Neutral" de su DragonFruit, sin gradientes ni efectos web.
+- **Navegación:** pestañas arriba.
+- **Base:** su propio `docs/internal/ui-ux-roadmap.md` de DragonFruit (riel de herramientas monocromo, inspector fijo a la derecha, W/E/R, barra de estado; referencia Caliper).
+
+**Mockup interactivo:** https://claude.ai/artifact/EkuMQE5HaSJ3Gzfp2Y8Z9v (privado).
+
+**Relevamiento (2026-10-26):**
+- **SC hoy:**
+  - secciones Prepare/Transform/Slice con reglas en `workspace_section.rs`;
+  - `MainWindow` plano de ~1400 líneas y ~100 propiedades, menús duplicados, paneles flotantes copiados tres veces;
+  - sin paleta propia ni íconos, estilo fluent por defecto;
+  - el render wgpu se compone como `Image`, así que los overlays de Slint van encima.
+- **Hollow de DF (base a portar en SC-39…46):**
+  - vóxeles con distancia chamfer 26-vecinos, cavidad suavizada (marching tetrahedra + Taubin) y estabilización manifold;
+  - infill lattice/pillars, áreas sólidas con lazo, drenajes con profundidad automática;
+  - cache con grilla local al modelo (mover y rotar no recalculan) y preview rápida separada del Apply.
+- **A corregir de DF en el hollow:**
+  - el tamaño de vóxel efectivo se recorta en silencio (grilla 24–192) sin mostrarse;
+  - no hay progreso ni cancelación;
+  - no hay tooltips ni resultado (ml ahorrados).
+
+**Cierre:** Damian aprueba el mockup. Después la app tiene:
+- las pestañas del recorrido, con reglas por etapa;
+- la paleta y los componentes propios (campo numérico con unidad, segmentados, tarjetas, riel, barra de estado);
+- el inspector fijo por pestaña;
+- la pestaña Supports conectada a SC-83 (cálculo al entrar, ajustes visibles);
+- la pestaña Hollow con su panel listo para el motor de SC-18;
+- y Damian prueba los gestos y el flujo completo.
+
+**Depende de:** SC-83 (Supports) y SC-18 (motor hollow) para el contenido real de esas pestañas. Prioridad: high. Estado snapshot: in progress.
