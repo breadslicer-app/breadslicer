@@ -134,6 +134,11 @@ msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
+#: ui/replace-scene-dialog.slint:77
+msgctxt "ReplaceSceneDialog"
+msgid "Close the current scene?"
+msgstr ""
+
 #: ui/replace-scene-dialog.slint:76
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
@@ -163,9 +168,24 @@ msgid ""
 "changes you've made."
 msgstr ""
 
+#: ui/replace-scene-dialog.slint:118
+msgctxt "ReplaceSceneDialog"
+msgid "Discard & Close"
+msgstr ""
+
 #: ui/replace-scene-dialog.slint:117
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:126
+msgctxt "ReplaceSceneDialog"
+msgid "Save As & Close…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:126
+msgctxt "ReplaceSceneDialog"
+msgid "Save & Close"
 msgstr ""
 
 #: ui/replace-scene-dialog.slint:125
@@ -176,6 +196,11 @@ msgstr ""
 #: ui/replace-scene-dialog.slint:126
 msgctxt "ReplaceSceneDialog"
 msgid "Save & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:136
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Close…"
 msgstr ""
 
 #: ui/replace-scene-dialog.slint:133
@@ -550,6 +575,11 @@ msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""
 
+#: ui/replace-scene-dialog.slint:16
+msgctxt "ReplaceSceneDialog"
+msgid "Close scene"
+msgstr ""
+
 #: ui/error-dialog.slint:10
 msgctxt "ErrorDialog"
 msgid "Error"
@@ -660,6 +690,11 @@ msgstr ""
 #: ui/main-window.slint:492 ui/main-window.slint:1065
 msgctxt "MenuBar"
 msgid "Tools"
+msgstr ""
+
+#: ui/main-window.slint:512
+msgctxt "MenuBar"
+msgid "Generate Supports (DragonFruit)…"
 msgstr ""
 
 #: ui/main-window.slint:495 ui/main-window.slint:1068
@@ -790,6 +825,11 @@ msgstr ""
 #: ui/main-window.slint:1262
 msgctxt "MainWindow"
 msgid "Generating support structure…"
+msgstr ""
+
+#: ui/main-window.slint:1314
+msgctxt "MainWindow"
+msgid "Cancel"
 msgstr ""
 
 #: ui/main-window.slint:1295
@@ -1037,13 +1077,14 @@ msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr ""
 
-#: ui/mesh-viewer.slint:138
+#: ui/mesh-viewer.slint:169
 msgctxt "MeshViewer"
 msgid ""
-"Right-click drag or arrow keys to rotate. Shift with right-click drag, "
-"middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or "
-"Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
-"for front, right, or top views; hold Control for back, left, or bottom."
+"Right-click drag or arrow keys to rotate. Middle or right drag to orbit. "
+"Shift with middle/right drag or arrow keys to pan. 5 toggles "
+"perspective/orthographic. Scroll, Plus/Minus, or Page Up/Down to zoom. Press "
+"F or Home to frame the model. Press 1, 3, or 7 for front, right, or top "
+"views; hold Control for back, left, or bottom."
 msgstr ""
 
 #: ui/mesh-viewer.slint:462
@@ -1059,6 +1100,11 @@ msgstr ""
 #: ui/mesh-viewer.slint:474
 msgctxt "MeshViewer"
 msgid "Paste"
+msgstr ""
+
+#: ui/mesh-viewer.slint:575
+msgctxt "MeshViewer"
+msgid "Enter / click: confirm | Esc / right click: cancel"
 msgstr ""
 
 #: src/scene_save.rs:103
@@ -1105,6 +1151,37 @@ msgstr ""
 #, rust-format
 msgctxt "ObjectList"
 msgid "Object {}"
+msgstr ""
+
+#: src/df_support_run.rs:102
+msgctxt "DfSupportDialog"
+msgid "Support generation failed"
+msgstr ""
+
+#: src/df_support_run.rs:167
+msgctxt "DfSupportDialog"
+msgid "Supports discarded"
+msgstr ""
+
+#: src/df_support_run.rs:168
+msgctxt "DfSupportDialog"
+msgid ""
+"The scene changed while supports were being generated; nothing was added."
+msgstr ""
+
+#: src/df_support_run.rs:181
+msgctxt "DfSupportDialog"
+msgid "No supports needed"
+msgstr ""
+
+#: src/df_support_run.rs:193
+msgctxt "DfSupportDialog"
+msgid "The scene rejected the generated supports; nothing was changed."
+msgstr ""
+
+#: src/df_support_run.rs:202
+msgctxt "DfSupportDialog"
+msgid "Supports generated"
 msgstr ""
 
 #: src/slice_panel.rs:447 src/print_format.rs:159
