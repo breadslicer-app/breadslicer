@@ -21,9 +21,9 @@ use sc_scene::bake::bake_leaf_to_world;
 use sc_scene::node::{NodeId, NodeKind};
 use sc_scene::{CsgPolicy, ReferencePolicy, Scene, SceneError};
 
-use crate::contour::{ClosedRing, ContourLayer, ContourStack};
+use crate::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
-use crate::grouping::group_into_polygons;
+use crate::grouping::{group_into_polygons, point_in_ring};
 use crate::mesh_slice::segments_at_z_for_faces;
 use crate::profile::SliceProfile;
 use crate::shells::FaceShells;
@@ -496,7 +496,10 @@ where
 ///
 /// Outers and holes are grouped per shell (`shells`), in order of each
 /// shell's first ring, so shells that overlap do not read as holes of each
-/// other.
+/// other. A void shell (a sealed cavity, facing inward) is grouped the same
+/// way and then subtracted: each of its outers becomes a hole of the solid
+/// polygon that encloses it, and each of its holes (solid inside the void)
+/// a polygon of its own.
 pub(crate) fn slice_layer(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
@@ -519,11 +522,60 @@ pub(crate) fn slice_layer(
         }
     }
     let mut polygons = Vec::new();
-    for (_, mut rings) in by_shell {
+    let mut voids = Vec::new();
+    for (shell, mut rings) in by_shell {
         normalise_to_ccw(&mut rings);
-        polygons.extend(group_into_polygons(rings));
+        if shells.count() > 1 && shells.is_void(shell) {
+            voids.extend(group_into_polygons(rings));
+        } else {
+            polygons.extend(group_into_polygons(rings));
+        }
+    }
+    if !voids.is_empty() {
+        polygons = subtract_voids(polygons, voids);
     }
     Ok(ContourLayer::new(z_mm, polygons))
+}
+
+/// Cuts void polygons out of solid ones: a void's outer becomes a hole of the
+/// smallest solid polygon whose outer encloses it (and outside its holes);
+/// the void's own holes are solid islands and become polygons. A void that
+/// no solid encloses is not a cavity but a part with inverted faces (a bad
+/// export); it stays solid, as it sliced before voids were recognised.
+fn subtract_voids(mut solids: Vec<Polygon>, voids: Vec<Polygon>) -> Vec<Polygon> {
+    let mut islands = Vec::new();
+    for void in voids {
+        let (mut outer, holes) = (void.outer().clone(), void.holes().to_vec());
+        let rep = outer.vertices()[0];
+        let host = solids
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                point_in_ring(rep, s.outer()) && !s.holes().iter().any(|h| point_in_ring(rep, h))
+            })
+            .min_by(|(_, a), (_, b)| {
+                a.outer()
+                    .signed_area()
+                    .abs()
+                    .total_cmp(&b.outer().signed_area().abs())
+            })
+            .map(|(i, _)| i);
+        let Some(i) = host else {
+            islands.push(void);
+            continue;
+        };
+        outer.reverse();
+        let s = &solids[i];
+        let mut cut = s.holes().to_vec();
+        cut.push(outer);
+        solids[i] = Polygon::new_unchecked(s.outer().clone(), cut);
+        for mut hole in holes {
+            hole.reverse();
+            islands.push(Polygon::new_unchecked(hole, Vec::new()));
+        }
+    }
+    solids.extend(islands);
+    solids
 }
 
 #[cfg(test)]

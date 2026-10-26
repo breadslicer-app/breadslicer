@@ -12,6 +12,10 @@
 //! cross, and a ring inside another shell's ring would be taken for a hole.
 //! Rings are therefore grouped shell by shell; overlapping shells' polygons
 //! stay separate and the non-zero raster unites them.
+//!
+//! A shell with negative signed volume faces inward: it is a void, such as
+//! the sealed cavity of a hollow without a drain. Its rings are holes of
+//! whatever solid encloses them, not polygons of their own.
 
 use sc_mesh_core::indexed_mesh::ValidatedEdgeManifoldMesh;
 use sc_mesh_core::primitives::FaceIndex;
@@ -21,6 +25,8 @@ pub(crate) struct FaceShells {
     /// Per face, its shell, numbered `0..count` in order of first face.
     labels: Vec<u32>,
     count: u32,
+    /// Per shell, whether it faces inward (negative signed volume).
+    void: Vec<bool>,
 }
 
 impl FaceShells {
@@ -62,8 +68,34 @@ impl FaceShells {
                 }
                 shell_of_root[r]
             })
-            .collect();
-        Self { labels, count }
+            .collect::<Vec<u32>>();
+        // Signed volume per shell (divergence theorem, times 6), in f64
+        // about the mesh's first vertex so far-off models keep precision.
+        let vertices = mesh.vertices();
+        let origin = vertices
+            .first()
+            .map_or([0.0; 3], |v| v.coords().map(f64::from));
+        let at = |i: u32| {
+            let c = vertices[i as usize].coords();
+            [
+                f64::from(c[0]) - origin[0],
+                f64::from(c[1]) - origin[1],
+                f64::from(c[2]) - origin[2],
+            ]
+        };
+        let mut volume = vec![0.0f64; count as usize];
+        for (f, &shell) in faces.iter().zip(&labels) {
+            let [a, b, c] = f.vertices.map(|v| at(v.get()));
+            volume[shell as usize] += a[0] * (b[1] * c[2] - b[2] * c[1])
+                - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]);
+        }
+        let void = volume.iter().map(|&v| v < 0.0).collect();
+        Self {
+            labels,
+            count,
+            void,
+        }
     }
 
     pub(crate) fn count(&self) -> u32 {
@@ -72,5 +104,10 @@ impl FaceShells {
 
     pub(crate) fn of(&self, face: FaceIndex) -> u32 {
         self.labels[face.get()]
+    }
+
+    /// Whether `shell` faces inward (a sealed void).
+    pub(crate) fn is_void(&self, shell: u32) -> bool {
+        self.void[shell as usize]
     }
 }

@@ -158,6 +158,10 @@ fn support_meshes_of_real_scenes_are_edge_manifold() {
             bad, 0,
             "{name}: {bad} edges not shared by exactly two triangles"
         );
+        // The slicer reads an inward-facing shell as a void (a sealed
+        // cavity): every support shell must face outward.
+        let inward = shell_volumes(&mesh).iter().filter(|&&v| v <= 0.0).count();
+        assert_eq!(inward, 0, "{name}: {inward} support shells face inward");
         checked += 1;
     }
     assert!(checked >= 8, "{checked} scenes supported");
@@ -204,6 +208,40 @@ fn a_prescan_can_be_cancelled() {
         Err(JobError::Cancelled) | Ok(_) => {}
         Err(other) => panic!("unexpected {other:?}"),
     }
+}
+
+/// Signed volume (times 6) of every vertex-connected shell.
+fn shell_volumes(mesh: &IndexedMesh) -> Vec<f64> {
+    let n = mesh.vertices().len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(parent: &mut [usize], mut v: usize) -> usize {
+        while parent[v] != v {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        v
+    }
+    for f in mesh.faces() {
+        let [a, b, c] = f.vertices.map(|v| u32::from(v) as usize);
+        for (x, y) in [(a, b), (b, c)] {
+            let (rx, ry) = (root(&mut parent, x), root(&mut parent, y));
+            parent[rx] = ry;
+        }
+    }
+    let mut volumes: std::collections::HashMap<usize, f64> = Default::default();
+    for f in mesh.faces() {
+        let [a, b, c] = f.vertices.map(|v| {
+            mesh.vertices()[u32::from(v) as usize]
+                .coords()
+                .map(f64::from)
+        });
+        let det = a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]);
+        *volumes
+            .entry(root(&mut parent, u32::from(f.vertices[0]) as usize))
+            .or_default() += det;
+    }
+    volumes.into_values().collect()
 }
 
 fn bad_edges(mesh: &IndexedMesh) -> usize {

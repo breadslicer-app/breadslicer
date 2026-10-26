@@ -389,7 +389,18 @@ pub fn start_hollow(
         .cloned()
         .ok_or(SceneError::NotALeaf { node_id: leaf })?;
     let world = scene.world_transform_of(leaf)?;
-    let frame = LeafFrame::of(&world)?;
+    start_hollow_mesh(mesh, &world, request)
+}
+
+/// Starts a hollow of `mesh` posed by `world`, as [`start_hollow`] does for
+/// a leaf. The GUI uses it to hollow a model's original mesh again (new
+/// drains, other settings) after the leaf already shows a hollow.
+pub fn start_hollow_mesh(
+    mesh: Arc<IndexedMesh>,
+    world: &Transform3D,
+    request: HollowRequest,
+) -> Result<JobHandle<HollowOutcome>, SceneError> {
+    let frame = LeafFrame::of(world)?;
     Ok(JobHandle::spawn(
         move |worker: &JobWorker<HollowOutcome>| run_hollow(&mesh, &frame, &request, worker),
     ))

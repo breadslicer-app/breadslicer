@@ -1226,14 +1226,17 @@ impl ViewportController {
         }
     }
 
-    /// A click with the Supports tab's Add or Delete tool: hands the world
-    /// point under the cursor to the support driver. Returns whether the
+    /// A click with a tab tool (the Supports tab's Add or Delete, the Hollow
+    /// tab's drain): hands the world point under the cursor to its driver.
+    /// The drain tool selects the model it hit first. Returns whether the
     /// click was the tool's (a miss with a tool on is still the tool's).
     fn support_tool_click(&self, cursor: ScreenPoint) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
-        if self.session.section() != WorkspaceSection::Supports || ui.get_support_tool() == 0 {
+        let section = self.session.section();
+        let drain = section == WorkspaceSection::Hollow && ui.get_hollow_drain_tool();
+        if !drain && (section != WorkspaceSection::Supports || ui.get_support_tool() == 0) {
             return false;
         }
         let Some(vp) = self.render.viewport() else {
@@ -1258,11 +1261,18 @@ impl ViewportController {
             .with_scene(|spatial| {
                 let id = picking::pick_object(&ray, spatial)?;
                 let t = picking::ray_hits_object_query(&ray, &spatial.leaf(id)?)?;
-                Some(ray.origin + ray.direction * t)
+                Some((id, ray.origin + ray.direction * t))
             })
             .flatten();
-        if let Some(p) = hit {
-            ui.invoke_support_tool_clicked(p.x, p.y, p.z);
+        if let Some((id, p)) = hit {
+            if drain {
+                self.session
+                    .document()
+                    .set_selection(Selection::One(LeafId(id)));
+                ui.invoke_hollow_drain_clicked(p.x, p.y, p.z);
+            } else {
+                ui.invoke_support_tool_clicked(p.x, p.y, p.z);
+            }
             self.mark_dirty();
         }
         true
