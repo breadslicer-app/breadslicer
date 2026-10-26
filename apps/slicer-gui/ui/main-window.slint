@@ -163,6 +163,13 @@ export component MainWindow inherits Window {
     in property <float> selection-scale;
     // A value typed into the Transform inspector: its field code and value.
     callback numeric-edit(int, float);
+    // Gesture aids (SC-85): what the gesture in flight has done so far, and
+    // for a modal G/R/S locked to an axis, a line along it in the axis
+    // colour (SVG path commands in viewport pixels).
+    in property <string> gesture-readout: "";
+    in property <bool> axis-guide-visible: false;
+    in property <string> axis-guide-commands: "";
+    in property <brush> axis-guide-color: #ffffff;
     // Slice control panel picker models and selection, driven by Rust.
     // Each list is the union of the global favourites, the global
     // default, and the scene's current choice; `*-current-index` is the
@@ -975,6 +982,37 @@ export component MainWindow inherits Window {
                         root.viewport-right-pointer-up(x, y);
                     }
                 }
+                }
+
+                if root.axis-guide-visible: Path {
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: parent.width / 1px;
+                    viewbox-height: parent.height / 1px;
+                    commands: root.axis-guide-commands;
+                    stroke: root.axis-guide-color;
+                    stroke-width: 1.5px;
+                    fill: transparent;
+                }
+
+                if root.gesture-readout != "": Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: 12px;
+                    width: readout-text.preferred-width + 24px;
+                    height: 30px;
+                    border-radius: Theme.radius;
+                    background: Theme.chrome;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    readout-text := Text {
+                        text: root.gesture-readout;
+                        font-family: Theme.mono;
+                        font-size: Theme.font;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
                 }
 
                 // Per-layer height slider on the viewport's right edge, in
