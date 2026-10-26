@@ -1444,7 +1444,7 @@ Dominio comprado por Damian en Cloudflare (2026-10-26). Hay que confirmar que el
   - Cada cambio de DNS o de reglas se propone y espera el OK de Damian.
 - **Email Routing:** `hola@` y `bugs@breadslicer.app` reenvían al mail de Damian. Enviar desde el dominio requiere otro servicio (Resend o Gmail con "enviar como").
 - **Página:** una landing simple (GitHub Pages o un Worker) con descarga de builds y link a Discord y GitHub. El conector "Cloudflare Developer Platform" sirve si va en Workers.
-- **Nombres reservados (2026-10-26):** repo privado `SynrgStudio/breadslicer`. La organización de GitHub (`breadslicer-app`, libre al 26/10) y el servidor de Discord los crea Damian desde la web.
+- **Nombres reservados (2026-10-26):** la organización `breadslicer-app` la creó Damian, y el repo privado `breadslicer-app/breadslicer` está vacío. Falta el servidor de Discord, que lo crea Damian.
 
 **Cierre:** el dominio resuelve a la página con HTTPS, los correos llegan al mail de Damian y los nombres de GitHub y Discord están reservados.
 
