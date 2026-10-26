@@ -486,3 +486,45 @@ fn display_texts_name_the_failure() {
         "the scene height yields no valid layer count: the scene height z = NaN mm is not a finite value",
     );
 }
+
+#[test]
+fn a_rotated_model_gets_layers_up_to_its_highest_vertex() {
+    use sc_mesh_core::transform::AffineTransform3D;
+    // An octahedron (vertices on the axes at distance 1) turned 45 degrees
+    // about X and raised by 1: its top vertex is at 1 + sin 45 = 1.707, so
+    // 18 layers of 0.1 mm. Its transformed local box reaches 1 + sqrt 2,
+    // which would schedule 25.
+    let v = |p: [f32; 3]| Vertex::new(p);
+    let octahedron = IndexedMesh {
+        meta: None,
+        vertices: vec![
+            v([1.0, 0.0, 0.0]),
+            v([-1.0, 0.0, 0.0]),
+            v([0.0, 1.0, 0.0]),
+            v([0.0, -1.0, 0.0]),
+            v([0.0, 0.0, 1.0]),
+            v([0.0, 0.0, -1.0]),
+        ],
+        faces: vec![IndexedTriangle::from_raw_indices([0, 2, 4])],
+    };
+    let placed = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 1.0])).compose(
+        &Transform3D::Affine(AffineTransform3D::from_rotation_x(
+            std::f64::consts::FRAC_PI_4,
+        )),
+    );
+    let mut scene = Scene::new();
+    let leaf = scene
+        .add_leaf(None, placed, LeafPayload::Mesh(Arc::new(octahedron)))
+        .expect("inline-mesh leaf");
+    scene.add_root(leaf).expect("fresh leaf becomes a root");
+    let profile = slice_profile_for_scene(
+        &scene,
+        &hardware(),
+        mm(0.1),
+        None,
+        AaLevel::Off,
+        PackingMode::None,
+    )
+    .expect("valid derivation");
+    assert_eq!(uniform_schedule(&profile), (0.1, 0.1, 18));
+}
