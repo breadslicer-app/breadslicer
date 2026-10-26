@@ -672,7 +672,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "2038045537ed2070967a748c27b436d44aa3f27531bc143c0ec94fddc254d575"
+          "sha256": "121e0fe4ac8ebc49a1fd6d1429e019a8a660a19781c674238d08e8b12c3eb4cc"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -700,11 +700,15 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/mod.rs",
-          "sha256": "ba4d4d72ed7cb743ed2df348c47943bcac80053f1355a988e616b039cb7748f1"
+          "sha256": "82bb986928692f424fd4ec8f415a608580fbfdd476433ab1acb578deb648ff7c"
         },
         {
           "path": "apps/slicer-gui/src/viewport/modal_transform.rs",
           "sha256": "b3dc135e6109f3926f55a1913a26d55caaacb8ab65e142074032a190ca712db8"
+        },
+        {
+          "path": "apps/slicer-gui/src/viewport/numeric_transform.rs",
+          "sha256": "b180455bda7ba16e1210a31decc7d7e5a5f617de85c675094a14f8fd5c348b38"
         },
         {
           "path": "apps/slicer-gui/src/viewport/object_list.rs",
@@ -729,6 +733,10 @@
         {
           "path": "apps/slicer-gui/src/viewport/tests_controller_lifecycle.rs",
           "sha256": "5ab8fec797dab9d24203dfee34f16e83a60d3952b3b088ef1b35ae73e367172d"
+        },
+        {
+          "path": "apps/slicer-gui/src/viewport/tests_controller_numeric.rs",
+          "sha256": "8a72ba0fe13dd07e70641d6ed3623de891be476552588e3eebf461a26064f925"
         },
         {
           "path": "apps/slicer-gui/src/viewport/tests_controller_section_gating.rs",
@@ -756,7 +764,7 @@
         },
         {
           "path": "apps/slicer-gui/src/wiring.rs",
-          "sha256": "7cfd48c598d1d97432bdecc1d2f5ebaa0431df629e2c6d21d0fe3bf73fa2f9fd"
+          "sha256": "250fd4b2cf8074b7e5d86ce7bca2dc04d56ac0305df36241d9ade4761d94d36f"
         },
         {
           "path": "apps/slicer-gui/src/workspace_section.rs",

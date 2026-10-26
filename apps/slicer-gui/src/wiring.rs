@@ -236,6 +236,10 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_numeric_edit(move |code, value| ctrl.on_numeric_edit(code, value));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_modal_transform_start(move |code, x, y| ctrl.on_modal_transform_start(code, x, y));
     }
     {
