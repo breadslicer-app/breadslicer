@@ -1279,6 +1279,14 @@ Caliper (`C:/Users/dnaon/Downloads/CaliperDevelop`) es la herramienta de anális
 
 Pedido de Damian (2026-10-26): la imagen de la capa en Slice le encanta; quiere poder hacer zoom y moverse por ella. La vista se puede ampliar a un panel grande o a pantalla dividida, como el modo Printing de DragonFruit, con 3D a la izquierda y capa a la derecha. Debe mostrar la capa en píxeles reales de la impresora, con antialiasing incluido.
 
+**Primera entrega (2026-10-26):**
+- **Vista de capa:** el botón de capas del riel de Slice (L) parte el viewport, con 3D a la izquierda y capa a la derecha (`ui/workspace/layer-view.slint`). Zoom con Ctrl+rueda o con −/Ajustar/+ (hasta 32×, píxeles nítidos desde 4×) y paneo arrastrando o con la rueda.
+- **Estimación en la tarjeta RESULT de Slice:** tiempo de impresión, resina y peso, las mismas cifras que lleva el archivo (`ExportJob::program`). Si la configuración no resuelve, muestra el motivo.
+- **Pendiente:**
+  - la imagen es la del corte que ya existía; falta la capa a resolución real de la impresora con AA;
+  - el costo necesita un precio por resina en el perfil;
+  - prueba de Damian.
+
 **Cierre:** zoom con rueda y paneo con arrastre sobre la capa, a resolución real, sin trabar el slider; probado por Damian.
 
 **Depende de:** SC-84, SC-34. Prioridad: normal. Estado snapshot: backlog.

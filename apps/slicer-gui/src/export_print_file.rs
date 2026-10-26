@@ -125,6 +125,40 @@ pub(crate) fn export_button_enabled(
         })
 }
 
+/// What the held slice will print as: the print time, resin and weight the
+/// printer file will report, from the same program (SC-84 Slice tab).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PrintEstimate {
+    pub time_sec: f64,
+    pub volume_ml: f64,
+    pub mass_g: f64,
+}
+
+/// The estimate of the held slice, or why there is none (no slice, a stale
+/// one, a print configuration that does not resolve).
+pub(crate) fn estimate_held_slice(document: &SceneDocument) -> Result<PrintEstimate, String> {
+    let job = prepare_export(document).map_err(|err| err.to_string())?;
+    let program = job.program();
+    Ok(PrintEstimate {
+        time_sec: program.print_time_sec.value(),
+        volume_ml: program.volume_mm3.value() / 1000.0,
+        mass_g: program.mass_g.value(),
+    })
+}
+
+/// `6 h 12 m`, `14 m`, `45 s`.
+pub(crate) fn format_duration(sec: f64) -> String {
+    let total = sec.max(0.0).round() as u64;
+    let (h, m, s) = (total / 3600, total / 60 % 60, total % 60);
+    if h > 0 {
+        format!("{h} h {m} m")
+    } else if m > 0 {
+        format!("{m} m")
+    } else {
+        format!("{s} s")
+    }
+}
+
 /// Build the export from the held slice and the profiles it was cut under,
 /// reading those profiles from the installed libraries.
 fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> {
@@ -297,6 +331,19 @@ async fn pick_printer_file_target(
         dialog = dialog.set_file_name(format!("{stem}.{extension}"));
     }
     dialog.save_file().await.map(|h| h.path().to_path_buf())
+}
+
+#[cfg(test)]
+mod format_duration_tests {
+    use super::format_duration;
+
+    #[test]
+    fn durations_read_in_the_largest_units() {
+        assert_eq!(format_duration(22_320.0), "6 h 12 m");
+        assert_eq!(format_duration(840.0), "14 m");
+        assert_eq!(format_duration(45.4), "45 s");
+        assert_eq!(format_duration(-3.0), "0 s");
+    }
 }
 
 #[cfg(test)]

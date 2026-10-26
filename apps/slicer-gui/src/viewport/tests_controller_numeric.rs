@@ -67,7 +67,10 @@ fn supports_takes_the_lift_but_not_a_rotation() {
     assert!((size[1] - 1.0).abs() < 1e-6, "no rotation in Supports");
     ctrl.on_numeric_edit(2, 5.0);
     let (bottom, _) = bottom_and_size(&ctrl);
-    assert!((bottom - 5.0).abs() < 1e-4, "the lift is a Supports setting");
+    assert!(
+        (bottom - 5.0).abs() < 1e-4,
+        "the lift is a Supports setting"
+    );
 }
 
 #[test]
