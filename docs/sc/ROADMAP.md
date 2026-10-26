@@ -1108,6 +1108,38 @@ Lo que queda es estructural: el recorrido en sí (~2,7 µs por consulta) o hacer
 
 **Pre-escaneo (2026-10-26):** los escaneos y el BVH salen del tiempo de espera; ver SC-83, primera etapa. Además, los escaneos internos usan `rayon::join` en vez de hilos propios, así que corren en el pool de quien llama, con el mismo resultado.
 
+**Tercera medición (2026-10-26, rama `support-perf-39869c`).** El 617 a 90 mm pasó de **20,6 s a 11,7 s**. Los digests no cambiaron: 617 `a4919dae4f59d8fe`, Asmodeus `dd087dddd80c4a8f`. Las suites de `support-gen-df` y `support-gen-df-sc` pasan y clippy queda limpio. La máquina tiene 8 núcleos y 16 hilos; con otra sesión compilando a la vez, los tiempos suben mucho (ver abajo).
+
+| Etapa | Antes | Después |
+|---|---|---|
+| Búsqueda de juntas (router) | 5,8 s | 3,4 s |
+| Escaneo de islas | 4,4 s | ~1,3 s (voladizos, en paralelo, ~1,2 s) |
+| Colocación | 12,2 s | 7,5 s |
+| Consolidación | 1,5 s | 0,6 s |
+
+- **Router, prefetch especulativo.** Antes de la búsqueda real, las caminatas de las 12 direcciones corren en paralelo, en tramos de 6 pasos y en orden de preferencia, contra vistas descartables de la caché. Guardan las respuestas al BVH que calcularon. La búsqueda real sigue secuencial y en su orden, y toma de ahí lo que coincide. Una respuesta guardada es exactamente lo que se habría calculado: es función pura del punto local, la cota, el BVH y la matriz. Por eso el resultado es idéntico por construcción y la duda sobre el orden `bounded_distance_at`/`distance_at` no aplica. La march quedó genérica sobre el almacén de celdas (`MarchField`), así que el código es uno solo.
+  - Acierto: 99,8 % de las consultas.
+  - Desperdicio: ~45 % de consultas de más. El corte por fin de caminata, junta mejor y presupuesto lo bajó de 2,6 M a 2,1 M; la memo compartida entre hilos evita duplicados.
+  - El límite es el throughput (16,9 s de CPU en 2,2 s de pared), no el camino crítico.
+  - Las tablas usan `ahash` en vez de SipHash.
+  - **Sensibilidad:** con 1 hilo la búsqueda tardó 16,6 s, y con la CPU tomada por otra compilación, 22 s. Por eso se especula solo con ≥ 4 hilos en el pool: con 2 hilos queda en 5,7 s, como antes, y con 4 baja a 3,9 s.
+- **Islas.**
+  - El snap a superficie metía ~30 k triángulos por isla en un `HashSet`; ahora filtra por la caja XY y visita cada triángulo una vez: 1,8 s → 0,1 s. El orden de visita cambió, pero solo decide en empates exactos de distancia, que el `HashSet` ya resolvía al azar.
+  - El rasterizado arma las corridas desde los tramos del scanline, sin la máscara densa de 2100×2218 por capa: 1,6 s → 0,5 s. Un test lo compara con el relleno denso.
+  - Al cortar, los cruces van en `SmallVec` y el hash es `ahash`.
+  - En los mínimos, el BVH de rayos se arma junto a las tablas de vértices y el orden de aristas es paralelo.
+- **Colocación y consolidación.**
+  - `place_one_candidate` coloca en el borrador mismo (`&mut`) en vez de clonar el estado entero por candidato, y el abanico y el merge devuelven nudo y miembro.
+  - La consolidación saca el tronco del borrador y, si se queda, lo reinserta en su índice (`shift_insert`), en vez de clonar por anfitrión.
+- **Medido y descartado:**
+  - especular caminatas enteras por dirección, que deja el camino crítico en la dirección 0 (64–127 pasos): búsqueda en 5,2 s;
+  - tramos de 2, 10 o 20 pasos en vez de 6: sin diferencia que salga del ruido.
+- **Lo que queda**, de mayor a menor:
+  - router, 4,6 s, del que la búsqueda es 3,4 s; sigue limitada por throughput;
+  - colocación fuera del router, ~3 s, donde `collect_fan_shaft_points` por candidato son ~0,5 s y se podría volver incremental;
+  - voladizos, ~1,2 s, en paralelo con islas;
+  - candidatos, 0,6 s.
+
 Hallazgos de paso, ajenos a esta línea:
 - `viewport_click_tests::pointer_down_on_handle_does_not_drag_outside_transform` ya fallaba antes de estos cambios;
 - clippy 1.97 marca 6 avisos en `camera.rs`, `export_print_file.rs` y `viewport/controller.rs`.

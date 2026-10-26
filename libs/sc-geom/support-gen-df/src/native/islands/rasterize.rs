@@ -11,11 +11,11 @@
 //! so that island counts are identical at any `px_mm` resolution.
 
 use indexmap::IndexMap;
+use smallvec::SmallVec;
 
 use crate::native::islands::geometry::Triangle;
 
-use crate::native::islands::model::RleMask;
-use crate::native::islands::rle::rle_encode;
+use crate::native::islands::model::{RleMask, RleRun};
 
 const EPS: f64 = 1e-6;
 
@@ -59,7 +59,8 @@ fn intersect_edge_z(
 fn build_loops(segments: &[(Pt2, Pt2)]) -> Vec<Vec<Pt2>> {
     // Build adjacency map: key → list of connected points
     // IndexMap preserves insertion order — matches JS Map iteration semantics
-    let mut next_map: IndexMap<(i64, i64), Vec<Pt2>> = IndexMap::new();
+    let mut next_map: IndexMap<(i64, i64), SmallVec<[Pt2; 2]>, ahash::RandomState> =
+        IndexMap::with_capacity_and_hasher(segments.len(), ahash::RandomState::new());
 
     for &(a, b) in segments {
         let ka = key2(a.0, a.1);
@@ -68,7 +69,7 @@ fn build_loops(segments: &[(Pt2, Pt2)]) -> Vec<Vec<Pt2>> {
         next_map.entry(kb).or_default().push(a);
     }
 
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = ahash::AHashSet::with_capacity(next_map.len());
     let mut loops = Vec::new();
 
     for (&k, neighbors) in &next_map {
@@ -138,8 +139,11 @@ struct Edge {
     slope: f64, // dx/dy
 }
 
-/// Rasterize polygon loops into a binary mask using edge-table scanline fill.
+/// Rasterize polygon loops into a binary RLE mask using edge-table scanline fill.
 /// Matches TS `rasterizeLoopsToExistingGridScanline` exactly.
+///
+/// SoulCrafted: the fill records each row's spans and merges them into runs,
+/// instead of filling a dense mask and encoding it; the runs are the same.
 fn rasterize_loops(
     loops: &[Vec<Pt2>],
     width: usize,
@@ -147,8 +151,8 @@ fn rasterize_loops(
     origin_x: f64,
     origin_z: f64, // = -bbox.max_y
     px_mm: f64,
-) -> Vec<u8> {
-    let mut data = vec![0u8; width * height];
+) -> RleMask {
+    let mut row_spans: Vec<Vec<(usize, usize)>> = vec![Vec::new(); height];
 
     // TS: const originY = originZ + px_mm * 0.5;
     // (originXCenter is declared but NOT used in the coordinate mapping)
@@ -223,10 +227,7 @@ fn rasterize_loops(
                 let end_x = (end_x as usize).min(width);
 
                 if start_x < end_x {
-                    let row_offset = y * width;
-                    for x in start_x..end_x {
-                        data[row_offset + x] = 1;
-                    }
+                    row_spans[y].push((start_x, end_x));
                 }
 
                 i += 2;
@@ -239,7 +240,41 @@ fn rasterize_loops(
         }
     }
 
-    data
+    let rows = row_spans
+        .into_iter()
+        .map(|mut spans| {
+            spans.sort_unstable();
+            let mut runs: Vec<RleRun> = Vec::with_capacity(spans.len());
+            let mut current: Option<(usize, usize)> = None;
+            for (start, end) in spans {
+                current = match current {
+                    // Overlapping or touching: one run of set pixels.
+                    Some((s, e)) if start <= e => Some((s, e.max(end))),
+                    Some((s, e)) => {
+                        runs.push(run(s, e));
+                        Some((start, end))
+                    }
+                    None => Some((start, end)),
+                };
+            }
+            if let Some((s, e)) = current {
+                runs.push(run(s, e));
+            }
+            runs
+        })
+        .collect();
+    RleMask {
+        rows,
+        width: width as i32,
+        height: height as i32,
+    }
+}
+
+fn run(start: usize, end: usize) -> RleRun {
+    RleRun {
+        start: start as i32,
+        length: (end - start) as i32,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,9 +358,7 @@ pub fn rasterize_for_island_scan(
             let loops = slice_to_loops_from_slice(&bucket_tris, z);
 
             // Step 2: Rasterize loops using edge-table scanline fill
-            let dense = rasterize_loops(&loops, w, h, origin_x, origin_z, px_mm);
-
-            rle_encode(&dense, grid_width, grid_height)
+            rasterize_loops(&loops, w, h, origin_x, origin_z, px_mm)
         })
         .collect();
 
@@ -361,16 +394,14 @@ fn slice_to_loops_from_slice(triangles: &[&Triangle], z: f64) -> Vec<Vec<Pt2>> {
             continue;
         }
 
-        let mut points: Vec<(f64, f64)> = Vec::new();
-        if let Some(p) = intersect_edge_z(v0x, v0y, v0z, v1x, v1y, v1z, z_slice) {
-            points.push(p);
-        }
-        if let Some(p) = intersect_edge_z(v1x, v1y, v1z, v2x, v2y, v2z, z_slice) {
-            points.push(p);
-        }
-        if let Some(p) = intersect_edge_z(v2x, v2y, v2z, v0x, v0y, v0z, z_slice) {
-            points.push(p);
-        }
+        let points: SmallVec<[(f64, f64); 3]> = [
+            intersect_edge_z(v0x, v0y, v0z, v1x, v1y, v1z, z_slice),
+            intersect_edge_z(v1x, v1y, v1z, v2x, v2y, v2z, z_slice),
+            intersect_edge_z(v2x, v2y, v2z, v0x, v0y, v0z, z_slice),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
 
         if points.len() == 2 {
             let a = (points[0].0, -points[0].1);
@@ -397,13 +428,157 @@ pub(crate) fn rasterize_triangles_for_island_scan(
     px_mm: f64,
 ) -> RleMask {
     let loops = slice_to_loops_from_slice(triangles, z);
-    let dense = rasterize_loops(
+    rasterize_loops(
         &loops,
         grid_width as usize,
         grid_height as usize,
         origin_x,
         origin_z,
         px_mm,
-    );
-    rle_encode(&dense, grid_width, grid_height)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::islands::rle::rle_encode;
+
+    /// The dense fill the port started from, as the reference.
+    fn rasterize_loops_dense(
+        loops: &[Vec<Pt2>],
+        width: usize,
+        height: usize,
+        origin_x: f64,
+        origin_z: f64, // = -bbox.max_y
+        px_mm: f64,
+    ) -> Vec<u8> {
+        let mut data = vec![0u8; width * height];
+
+        // TS: const originY = originZ + px_mm * 0.5;
+        // (originXCenter is declared but NOT used in the coordinate mapping)
+        let origin_y = origin_z + px_mm * 0.5;
+
+        for loop_pts in loops {
+            let len = loop_pts.len();
+            if len < 3 {
+                continue;
+            }
+
+            // Build edge table
+            let mut edge_table: Vec<Vec<Edge>> = vec![Vec::new(); height];
+
+            for i in 0..len {
+                let p1 = loop_pts[i];
+                let p2 = loop_pts[(i + 1) % len];
+
+                // TS: const x1 = (p1.x - originX) / px_mm;
+                let x1 = (p1.0 - origin_x) / px_mm;
+                let y1 = (p1.1 - origin_y) / px_mm;
+                let x2 = (p2.0 - origin_x) / px_mm;
+                let y2 = (p2.1 - origin_y) / px_mm;
+
+                if (y1 - y2).abs() < 1e-6 {
+                    continue; // skip horizontal edges
+                }
+
+                let (y_min, y_max, x_val) = if y1 > y2 { (y2, y1, x2) } else { (y1, y2, x1) };
+
+                let slope = (x2 - x1) / (y2 - y1);
+                let start_row = y_min.ceil() as i32;
+                let _end_row = y_max.ceil() as i32;
+
+                if start_row >= height as i32 {
+                    continue;
+                }
+
+                let valid_start_row = start_row.max(0) as usize;
+                let initial_x = x_val + slope * (valid_start_row as f64 - y_min);
+
+                if valid_start_row < height {
+                    edge_table[valid_start_row].push(Edge {
+                        y_max,
+                        x: initial_x,
+                        slope,
+                    });
+                }
+            }
+
+            // Scanline fill with active edge list
+            let mut active_edges: Vec<Edge> = Vec::new();
+
+            for y in 0..height {
+                // Add edges starting at this scanline
+                active_edges.extend(edge_table[y].drain(..));
+
+                // Remove expired edges (y >= yMax)
+                active_edges.retain(|e| (y as f64) < e.y_max);
+
+                // Sort by x
+                active_edges
+                    .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+
+                // Fill between pairs (even-odd rule)
+                let mut i = 0;
+                while i + 1 < active_edges.len() {
+                    // TS: let startX = Math.ceil(e1.x - 0.5);
+                    let start_x = (active_edges[i].x - 0.5).ceil() as i32;
+                    let end_x = (active_edges[i + 1].x - 0.5).ceil() as i32;
+
+                    let start_x = start_x.max(0) as usize;
+                    let end_x = (end_x as usize).min(width);
+
+                    if start_x < end_x {
+                        let row_offset = y * width;
+                        for x in start_x..end_x {
+                            data[row_offset + x] = 1;
+                        }
+                    }
+
+                    i += 2;
+                }
+
+                // Advance edge x positions
+                for edge in &mut active_edges {
+                    edge.x += edge.slope;
+                }
+            }
+        }
+
+        data
+    }
+
+    /// The run-based fill gives the dense fill's mask, including spans that
+    /// leave the grid on either side and loops that overlap.
+    #[test]
+    fn run_fill_matches_dense_fill() {
+        let (w, h, px) = (64usize, 48usize, 0.25);
+        let (ox, oz) = (-2.0, -14.0);
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for case in 0..300 {
+            let loops: Vec<Vec<Pt2>> = (0..1 + case % 4)
+                .map(|_| {
+                    let (cx, cy) = (-4.0 + next() * 24.0, -18.0 + next() * 20.0);
+                    let r = 0.2 + next() * 9.0;
+                    let n = 3 + (next() * 9.0) as usize;
+                    (0..n)
+                        .map(|k| {
+                            let a = k as f64 / n as f64 * std::f64::consts::TAU + next() * 0.5;
+                            let rr = r * (0.3 + next());
+                            (cx + rr * a.cos(), cy + rr * a.sin())
+                        })
+                        .collect()
+                })
+                .collect();
+            let dense = rasterize_loops_dense(&loops, w, h, ox, oz, px);
+            let expected = rle_encode(&dense, w as i32, h as i32);
+            let got = rasterize_loops(&loops, w, h, ox, oz, px);
+            assert_eq!(got.rows, expected.rows, "case {case}");
+        }
+    }
 }

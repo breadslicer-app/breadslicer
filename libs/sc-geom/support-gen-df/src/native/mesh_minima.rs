@@ -64,7 +64,7 @@ impl AdjacencyList {
         }
 
         // 2. Sort and deduplicate to get unique undirected graph edges
-        edges.sort_unstable();
+        edges.par_sort_unstable();
         edges.dedup();
 
         // 3. Populate CSR offset and target vectors
@@ -173,24 +173,28 @@ pub fn scan_minima_internal(mesh: &IndexedMesh, k: Option<usize>) -> Vec<LocalMi
     let tri_count = mesh.triangle_count();
     let vert_count = mesh.vertex_count();
 
-    let mut normals = Vec::with_capacity(tri_count);
-    for fi in 0..tri_count {
-        normals.push(mesh.tri_normal(fi as u32));
-    }
-
-    let adj = AdjacencyList::build(mesh);
-    let mut vert_to_face = vec![u32::MAX; vert_count];
-    let mut vert_to_faces = vec![Vec::new(); vert_count];
-    for fi in 0..tri_count {
-        let tri = mesh.triangles[fi];
-        let face_id = fi as u32;
-        for &u in &tri {
-            vert_to_face[u as usize] = face_id;
-            vert_to_faces[u as usize].push(face_id);
-        }
-    }
-
-    let bvh = Bvh::build(mesh);
+    // The ray-parity BVH and the vertex tables do not depend on each other.
+    let (bvh, (normals, adj, vert_to_face, vert_to_faces)) = rayon::join(
+        || Bvh::build(mesh),
+        || {
+            let normals: Vec<Vec3> = (0..tri_count)
+                .into_par_iter()
+                .map(|fi| mesh.tri_normal(fi as u32))
+                .collect();
+            let adj = AdjacencyList::build(mesh);
+            let mut vert_to_face = vec![u32::MAX; vert_count];
+            let mut vert_to_faces = vec![Vec::new(); vert_count];
+            for fi in 0..tri_count {
+                let tri = mesh.triangles[fi];
+                let face_id = fi as u32;
+                for &u in &tri {
+                    vert_to_face[u as usize] = face_id;
+                    vert_to_faces[u as usize].push(face_id);
+                }
+            }
+            (normals, adj, vert_to_face, vert_to_faces)
+        },
+    );
     let k_val = k.unwrap_or(2);
 
     (0..vert_count)
@@ -431,14 +435,25 @@ fn scan_islands_inner(
     let z_range = (z_max - z_min) as f32;
     let num_buckets = 128;
     let mut z_buckets = vec![Vec::new(); num_buckets];
+    // Per triangle, the first bucket it is in and its XY box, so a snap visits
+    // each candidate once and skips the ones its vertical rays cannot reach.
+    let mut first_bucket = vec![0u32; tri_count];
+    let mut tri_xy = Vec::with_capacity(tri_count);
     for fi in 0..tri_count {
         let [v0, v1, v2] = mesh.tri_positions(fi as u32);
+        tri_xy.push([
+            v0.x.min(v1.x).min(v2.x),
+            v0.x.max(v1.x).max(v2.x),
+            v0.y.min(v1.y).min(v2.y),
+            v0.y.max(v1.y).max(v2.y),
+        ]);
         let t_min_z = v0.z.min(v1.z).min(v2.z);
         let t_max_z = v0.z.max(v1.z).max(v2.z);
         if z_range > 1e-5 {
             let b_start = (((t_min_z - z_min) / z_range) * (num_buckets as f32 - 1.0))
                 .floor()
                 .max(0.0) as usize;
+            first_bucket[fi] = b_start as u32;
             let b_end = (((t_max_z - z_min) / z_range) * (num_buckets as f32 - 1.0))
                 .ceil()
                 .min(num_buckets as f32 - 1.0) as usize;
@@ -478,7 +493,11 @@ fn scan_islands_inner(
                 contact_y,
                 contact_z,
                 epsilon,
-                &z_buckets,
+                &SnapIndex {
+                    z_buckets: &z_buckets,
+                    first_bucket: &first_bucket,
+                    tri_xy: &tri_xy,
+                },
                 z_min,
                 z_range,
                 num_buckets,
@@ -508,15 +527,28 @@ fn scan_islands_inner(
     }
 }
 
+/// The triangle index a surface snap searches: Z buckets, each triangle's
+/// first bucket and its XY box.
+struct SnapIndex<'a> {
+    z_buckets: &'a [Vec<u32>],
+    first_bucket: &'a [u32],
+    tri_xy: &'a [[f32; 4]],
+}
+
+/// How far outside its XY box a triangle is still tried. A vertical ray can
+/// only hit a triangle over its own footprint; the margin is far above the
+/// rounding of the intersection test, so the skipped ones could never hit.
+const SNAP_XY_MARGIN_MM: f32 = 0.01;
+
 /// Surface-snap a raw contact coordinate to the nearest mesh surface triangle
 /// via bidirectional raycasting within a Z-bucket index. Thread-safe: reads
-/// mesh and z_buckets immutably.
+/// mesh and the index immutably.
 fn snap_to_surface(
     raw_x: f32,
     raw_y: f32,
     raw_z: f32,
     epsilon: f32,
-    z_buckets: &[Vec<u32>],
+    index: &SnapIndex<'_>,
     z_min: f32,
     z_range: f32,
     num_buckets: usize,
@@ -528,7 +560,15 @@ fn snap_to_surface(
     let search_min_z = (raw_z - epsilon) as f64;
     let search_max_z = (raw_z + epsilon) as f64;
 
-    let mut candidates = HashSet::new();
+    let z_buckets = index.z_buckets;
+    let reachable = |fi: u32| {
+        let [min_x, max_x, min_y, max_y] = index.tri_xy[fi as usize];
+        raw_x >= min_x - SNAP_XY_MARGIN_MM
+            && raw_x <= max_x + SNAP_XY_MARGIN_MM
+            && raw_y >= min_y - SNAP_XY_MARGIN_MM
+            && raw_y <= max_y + SNAP_XY_MARGIN_MM
+    };
+    let mut candidates = Vec::new();
     if z_range > 1e-5 {
         let b_start = (((search_min_z - z_min as f64) / z_range as f64)
             * (num_buckets as f64 - 1.0))
@@ -537,13 +577,16 @@ fn snap_to_surface(
         let b_end = (((search_max_z - z_min as f64) / z_range as f64) * (num_buckets as f64 - 1.0))
             .ceil()
             .min(num_buckets as f64 - 1.0) as usize;
-        for b in b_start..=b_end {
-            for &fi in &z_buckets[b] {
-                candidates.insert(fi);
+        for (b, bucket) in z_buckets.iter().enumerate().take(b_end + 1).skip(b_start) {
+            for &fi in bucket {
+                // Once per triangle: in the first of its buckets this range covers.
+                if (index.first_bucket[fi as usize] as usize).max(b_start) == b && reachable(fi) {
+                    candidates.push(fi);
+                }
             }
         }
     } else {
-        candidates.extend(z_buckets[0].iter().cloned());
+        candidates.extend(z_buckets[0].iter().copied().filter(|&fi| reachable(fi)));
     }
 
     let ray_down_orig = Vec3::new(raw_x, raw_y, raw_z + epsilon);

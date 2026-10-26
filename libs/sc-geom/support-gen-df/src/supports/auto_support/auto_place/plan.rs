@@ -18,7 +18,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::fan::{
-    FanArgs, FanHostOrder, FanLeafResult, build_consolidation_branch, fan_leaf_to_host,
+    FanArgs, FanHostOrder, FanLeafResult, add_fanned, build_consolidation_branch, fan_leaf_to_host,
 };
 use super::helpers::{
     HostedBranchInput, MAX_FANNING_PASSES, OrphanInfo, OrphanReason, PlanCtx,
@@ -240,7 +240,7 @@ impl RunState {
     ) -> Option<SupportTypeId> {
         let result: PlaceOutcome = place_one_candidate(
             candidate,
-            &self.draft,
+            &mut self.draft,
             &PlaceArgs {
                 grid_host_ids: Some(&self.grid_host_ids),
                 sizing_ctx,
@@ -248,7 +248,6 @@ impl RunState {
             ctx,
             false,
         );
-        self.draft = result.draft;
         let placed_a_grid_host = result
             .kind
             .is_some_and(|k| get_support_type_descriptor(k).can_be_grid_host);
@@ -634,9 +633,6 @@ pub fn compute_auto_support_plan(
             };
             let tip = cone.pos;
             let tip_normal = cone.normal;
-            let mut pruned = run.draft.clone();
-            pruned.collections.trunks.shift_remove(&host_id);
-            pruned.collections.roots.shift_remove(&entity.root_id);
             let host_pool: Vec<_> = pool
                 .iter()
                 .filter(|sp| sp.host_id != host_id)
@@ -645,6 +641,15 @@ pub fn compute_auto_support_plan(
             if host_pool.is_empty() {
                 break;
             }
+            // The draft without this host. SoulCrafted: taken out of the draft
+            // itself and put back where it was if the host stays, instead of
+            // copying the whole draft per host; the state is the same either way.
+            let pruned_trunk = run.draft.collections.trunks.shift_remove_full(&host_id);
+            let pruned_root = run
+                .draft
+                .collections
+                .roots
+                .shift_remove_full(&entity.root_id);
             let fan = fan_leaf_to_host(
                 &FanArgs {
                     target: tip,
@@ -656,7 +661,7 @@ pub fn compute_auto_support_plan(
                     grid_host_fan_radius_mm: GRID_HOST_FAN_RADIUS_MM,
                     max_angle_deg: con_fan_max_angle_deg,
                     max_attachments: auto.max_attachments_per_trunk,
-                    draft: &pruned,
+                    draft: &run.draft,
                     origin: Some(SupportOriginId::Overhang),
                     host_order: FanHostOrder::Nearest,
                     rescue_span_override_mm: None,
@@ -666,11 +671,12 @@ pub fn compute_auto_support_plan(
             match fan {
                 FanLeafResult::Ok {
                     kind,
-                    draft,
+                    parent_knot,
+                    member,
                     entity_id,
                     ..
                 } => {
-                    run.draft = *draft;
+                    add_fanned(&mut run.draft, kind, *parent_knot, *member);
                     pool = host_pool;
                     run.record_conversion(&host_id, host_type_id, kind, &entity_id);
                     converted_this_pass += 1;
@@ -685,7 +691,7 @@ pub fn compute_auto_support_plan(
                             tip_normal,
                             model_id,
                             &host_pool,
-                            &pruned,
+                            &run.draft,
                             con_fan_radius_mm,
                             auto.max_attachments_per_trunk,
                             &format!("auto-con-branch-{host_id}"),
@@ -693,14 +699,22 @@ pub fn compute_auto_support_plan(
                         )
                     })
                     .flatten();
-                    if let Some((draft, branch_id, kind)) = branch {
-                        run.draft = draft;
+                    if let Some((parent_knot, member, branch_id, kind)) = branch {
+                        add_fanned(&mut run.draft, kind, parent_knot, member);
                         pool = host_pool;
                         run.record_conversion(&host_id, host_type_id, kind, &branch_id);
                         converted_this_pass += 1;
                         continue;
                     }
                     bump(&mut con_refusals, fan_key(reason));
+                    // The host stays: back where it was.
+                    let collections = &mut run.draft.collections;
+                    if let Some((index, key, root)) = pruned_root {
+                        collections.roots.shift_insert(index, key, root);
+                    }
+                    if let Some((index, key, trunk)) = pruned_trunk {
+                        collections.trunks.shift_insert(index, key, trunk);
+                    }
                 }
             }
         }
@@ -904,14 +918,15 @@ pub fn compute_auto_support_plan(
             );
             let FanLeafResult::Ok {
                 kind,
-                draft,
+                parent_knot,
+                member,
                 entity_id,
                 ..
             } = fan
             else {
                 continue;
             };
-            run.draft = *draft;
+            add_fanned(&mut run.draft, kind, *parent_knot, *member);
             fanned_count += 1;
             *run.placed.get_mut(&kind).expect("every type") += 1;
             supported_ids.insert(island.id.clone());
@@ -1162,7 +1177,7 @@ pub fn compute_auto_support_plan(
                     };
                     let result = place_one_candidate(
                         &recandidate,
-                        &run.draft,
+                        &mut run.draft,
                         &PlaceArgs {
                             grid_host_ids: Some(&run.grid_host_ids),
                             sizing_ctx: model_ctx.as_ref(),
@@ -1170,7 +1185,6 @@ pub fn compute_auto_support_plan(
                         ctx,
                         false,
                     );
-                    run.draft = result.draft;
                     match result.kind {
                         None => run.rejected_count += 1,
                         Some(kind) => *run.placed.get_mut(&kind).expect("every type") += 1,
