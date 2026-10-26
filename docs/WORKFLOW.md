@@ -1,8 +1,8 @@
 # Cómo trabajamos: ideas, issues y microPRs
 
 Desde el 2026-10-26 el tracker operativo son los **issues de [breadslicer-app/breadslicer](https://github.com/breadslicer-app/breadslicer/issues)**:
-- [`ROADMAP.md`](ROADMAP.md) queda como contexto, decisiones e historial;
-- [`ISSUES.md`](ISSUES.md) traduce cada SC-n a su número de issue.
+- [`ROADMAP.md`](ROADMAP.md) tiene las decisiones de rumbo vigentes;
+- los issues se nombran `BS-<número>: título`.
 
 ## Ideas nuevas
 
@@ -29,6 +29,6 @@ Desde el 2026-10-26 el tracker operativo son los **issues de [breadslicer-app/br
 
 - **`area: …`:** soportes, hollow, slicing, editor, etc.
 - **`state: …`:** `in progress`, `todo`, `backlog`, `triage`, `paused`.
-- **`roadmap`:** vino de la migración del roadmap.
+- **`roadmap`:** parte del plan general.
 - **`idea`:** ideas sin ordenar todavía.
 - **`microPR`:** chico y listo para tomar.

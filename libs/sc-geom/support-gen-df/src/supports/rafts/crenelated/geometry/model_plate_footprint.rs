@@ -6,7 +6,7 @@
 //! local and world shadows by quantised key). Every one returns what a fresh
 //! computation returns for the inputs it is keyed on, so the port computes
 //! fresh; the one difference (a local-shadow key quantised to 1e-5 mm can
-//! serve a band a few nanometres away) is noted in SC-76.
+//! serve a band a few nanometres away) is noted in BS-64.
 
 use super::polygon_raster_2d::rasterize_polygons_to_region;
 use super::polygon_set_2d::{PolygonWithHoles, union_polygon_sets};

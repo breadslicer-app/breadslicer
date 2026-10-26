@@ -5,7 +5,7 @@
 
 //! Section-scoped gating predicates.
 //!
-//! The workspace follows the workflow tabs (SC-84): Transform, then Hollow
+//! The workspace follows the workflow tabs (BS-68): Transform, then Hollow
 //! and Supports in either order, then Slice and Export. Layout tools and the
 //! transform gizmo run in Transform only (the pose is settled by the time
 //! the model is hollowed or supported); undo/redo runs wherever the scene

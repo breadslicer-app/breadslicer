@@ -1,7 +1,0 @@
-[package]
-name = "tauri"
-version = "0.0.0"
-edition = "2021"
-[dependencies]
-tauri-macros-stub = { path = "../tauri-macros" }
-serde = "1"

@@ -13,7 +13,7 @@
 //! - [`mesh`], [`bvh`], [`topology`], [`smoothing`]: the parts of
 //!   DragonFruit's mesh core the engine uses.
 //!
-//! See `NOTICE` for origin and licensing, and `docs/sc/HOLLOW-PORT.md`.
+//! See `NOTICE` for origin and licensing.
 
 pub mod bvh;
 pub mod control;

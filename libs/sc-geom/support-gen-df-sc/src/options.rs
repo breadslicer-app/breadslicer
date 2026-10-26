@@ -1,4 +1,4 @@
-//! The support settings a person edits (SC-86): the knobs DragonFruit's own
+//! The support settings a person edits (BS-70): the knobs DragonFruit's own
 //! auto-support panel exposes, plus the raft and the tube style, as one
 //! serializable value — what a preset saves.
 //!

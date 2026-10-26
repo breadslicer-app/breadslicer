@@ -1,7 +1,7 @@
 /* SPDX-FileCopyrightText: 2026 SynrgStudio */
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
-//! The Transform inspector's typed edits (SC-26/27) on a real controller: each
+//! The Transform inspector's typed edits (BS-14, BS-15) on a real controller: each
 //! is one undoable edit, only in Transform, and lands the object where asked.
 
 use super::controller::ViewportController;

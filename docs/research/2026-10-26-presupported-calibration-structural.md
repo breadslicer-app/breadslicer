@@ -1,8 +1,8 @@
 # Investigaciones del 2026-10-26
 
-Tres relevamientos que pidió Damian. Son propuestas para decidir, no tareas en curso. Cada uno tiene su entrada en el roadmap (SC-93, SC-94 y SC-21).
+Tres relevamientos que pidió Damian. Son propuestas para decidir. Cada uno tiene su issue: BS-77, BS-78 y BS-11.
 
-## 1. STL presoportados: separar cuerpos en objetos (SC-93)
+## 1. STL presoportados: separar cuerpos en objetos (BS-77)
 
 **Hoy:**
 - Un STL se carga como **una sola hoja**. El lector suelda vértices solo por posición exacta (`indexed_mesh_from_soup`).
@@ -26,8 +26,8 @@ Tres relevamientos que pidió Damian. Son propuestas para decidir, no tareas en 
 **UX:**
 - Al importar, si hay N > 1 cuerpos: "1 modelo + 312 soportes + raft (estimado). ¿Separar?". También queda el comando "Separar en cuerpos".
 - **Resultado:** un grupo con Modelo, "Soportes importados" y Raft. Los soportes van en **una sola hoja con índice de cuerpo por cara**, porque miles de hojas castigan el picking y la GPU.
-- **Edición realista:** seleccionar cuerpos de soporte (clic, caja o pincel) y borrarlos; "borrar todos los soportes importados"; generar soportes DF sin tratar los importados como modelo.
-- **Más adelante:** regenerar DF solo donde se borró, usando los puntos de contacto como semillas.
+- **Edición realista:** seleccionar cuerpos de soporte (clic, caja o pincel) y borrarlos; "borrar todos los soportes importados"; generar soportes nuevos sin tratar los importados como modelo.
+- **Más adelante:** regenerar soportes solo donde se borró, usando los puntos de contacto como semillas.
 
 **Hito 1 (unos 2–3 días):** el comando "Separar en cuerpos", sin clasificación.
 - Archivos: nuevo `libs/mesh-core/src/shells.rs`, `scene-edit` (separación como `Compound`), `scene_document.rs`, `wiring.rs` y el menú.
@@ -39,7 +39,7 @@ Tres relevamientos que pidió Damian. Son propuestas para decidir, no tareas en 
   - el slice es igual antes y después;
   - 1M de triángulos se separa en < 2 s.
 
-## 2. El mejor calibrador de resina (SC-94)
+## 2. El mejor calibrador de resina (BS-78)
 
 **Estado del arte:**
 - **UVtools:** Exposure Finder, Blooming, Elephant Foot, XYZ Accuracy, Tolerance.
@@ -67,12 +67,12 @@ Tres relevamientos que pidió Damian. Son propuestas para decidir, no tareas en 
 - El ajuste recupera datos sintéticos con error < 2 % y rechaza menos de 4 puntos o R² < 0,9.
 - La validación física requiere la autorización de Damian.
 
-## 3. Análisis estructural en el auto-support (SC-21)
+## 3. Análisis estructural en el auto-support (BS-11)
 
 **Fuerzas por capa:**
 - **Peel del film:** es la que manda y es ~lineal con el área.
   - AmeraLabs con celda de carga: ~12 kPa con ACF y 13–19 kPa con FEP según el espesor. Una capa de 2000 mm² da ~30 N.
-- **Succión** de copas sin drenaje: puede acercarse a ~100 kPa sobre su área. DF ya calcula `cup_area_mm2`, pero no lo pasa a fuerza.
+- **Succión** de copas sin drenaje: puede acercarse a ~100 kPa sobre su área. el motor de soportes ya calcula `cup_area_mm2`, pero no lo pasa a fuerza.
 - **Arrastre viscoso:** se trata como multiplicador calibrado.
 - **Gravedad:** sumergida casi no cuenta; afuera es ~1 N cada 100 g, y solo importa por palanca.
 
@@ -85,17 +85,17 @@ Tres relevamientos que pidió Damian. Son propuestas para decidir, no tareas en 
 - **(a) Presupuesto de fuerza por capa e isla:** demanda `σ_peel·A + p_suc·A_copa` contra capacidad `Σ A_punta·σ_punta` con factor de seguridad. Usa las áreas de `sl1cer` y las islas existentes; cuesta unos ms.
 - **(b) Modelo de vigas del árbol:** troncos, ramas y riostras como barras. Se resuelve `K·u=f` disperso (faer o nalgebra-sparse) en las capas críticas, con pandeo de Euler. Reparte la carga según la rigidez real.
 - **Descartados por ahora:** (c) FEA 3D con tetraedros, que es lenta y menos precisa que la incertidumbre del material, y (d) GPU, que no hace falta.
-- **Dónde se engancha:** después de `compute_load_budget` en `auto_place/plan.rs`. La remediación sube de tier, agrega puntas en la isla deficitaria o avisa de succión. Va detrás de una opción, apagada en la paridad DF.
+- **Dónde se engancha:** después de `compute_load_budget` en `auto_place/plan.rs`. La remediación sube de tier, agrega puntas en la isla deficitaria o avisa de succión. Va detrás de una opción, apagada por defecto hasta validarla.
 
 **Material:**
 - **σ_peel:** depende del film y el perfil de subida.
 - **σ_punta:** resistencia en verde dentro de la resina; no está publicada y hay que medirla.
 - **E en verde.**
-- **Probeta:** una escalera de placas sostenidas por n puntas da directo `σ_punta/σ_peel` sin celda de carga. Se conecta con la calibración (SC-94 y SC-74).
+- **Probeta:** una escalera de placas sostenidas por n puntas da directo `σ_punta/σ_peel` sin celda de carga. Se conecta con la calibración (BS-78 y BS-62).
 
 **Hito 1:** (a) completo + (b) en las capas críticas, como reporte y remediación opcional. **Aceptación:**
 - Determinista y < 5 % del tiempo del plan.
-- Paridad DF bit a bit con la opción apagada.
+- Con la opción apagada, el resultado no cambia.
 - Tests analíticos: viga, pandeo, reparto entre puntas.
 - Sin colisiones ni huérfanos nuevos.
 - El umbral predicho cae a ±1 escalón de la escalera física. Las impresiones requieren la autorización de Damian.

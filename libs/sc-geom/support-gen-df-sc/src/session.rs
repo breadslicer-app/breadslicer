@@ -1,4 +1,4 @@
-//! Editing supports after a run (SC-10/SC-12): a support is added where the
+//! Editing supports after a run (BS-1, BS-3): a support is added where the
 //! person clicks the model the way DragonFruit's auto-placer places one
 //! contact (`place_one_candidate`): a fan or a merge onto a nearby support,
 //! its own routed trunk, a grid attachment to a neighbour, the gridless
