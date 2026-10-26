@@ -64,6 +64,37 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
+#: src/df_support_run.rs:102
+msgctxt "DfSupportDialog"
+msgid "Support generation failed"
+msgstr ""
+
+#: src/df_support_run.rs:167
+msgctxt "DfSupportDialog"
+msgid "Supports discarded"
+msgstr ""
+
+#: src/df_support_run.rs:168
+msgctxt "DfSupportDialog"
+msgid ""
+"The scene changed while supports were being generated; nothing was added."
+msgstr ""
+
+#: src/df_support_run.rs:181
+msgctxt "DfSupportDialog"
+msgid "No supports needed"
+msgstr ""
+
+#: src/df_support_run.rs:193
+msgctxt "DfSupportDialog"
+msgid "The scene rejected the generated supports; nothing was changed."
+msgstr ""
+
+#: src/df_support_run.rs:202
+msgctxt "DfSupportDialog"
+msgid "Supports generated"
+msgstr ""
+
 #: src/slice_panel.rs:447 src/print_format.rs:159
 msgctxt "SlicePanel"
 msgid ".goo (V3.0)"
