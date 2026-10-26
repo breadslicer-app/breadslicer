@@ -61,9 +61,12 @@ pub enum FanHostOrder {
 /// Where a fan attempt attached, or why it did not.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FanLeafResult {
+    /// The knot on the host and the member hung from it, for the caller to
+    /// add to the draft the fan was asked on ([`add_fanned`]).
     Ok {
         kind: SupportTypeId,
-        draft: Box<SupportState>,
+        parent_knot: Box<Knot>,
+        member: Box<SupportEntityValue>,
         host_type_id: SupportTypeId,
         host_id: String,
         entity_id: String,
@@ -118,6 +121,19 @@ fn knot_for(sp: &FanShaftPoint, id: String) -> Knot {
 
 /// Carry a tip as a leaf (short span) or a branch on the steepest (or nearest)
 /// legal host sample in reach, with a wider rescue tier when none is.
+/// Adds what a fan found to `draft`, the state it was asked on: the knot, then
+/// the member. SoulCrafted: DragonFruit returns a copy of the whole draft with
+/// both added; the caller adding them is the same state without the copy.
+pub fn add_fanned(
+    draft: &mut SupportState,
+    kind: SupportTypeId,
+    parent_knot: Knot,
+    member: SupportEntityValue,
+) {
+    draft_add_primitive(draft, PlacementPrimitive::Knot(parent_knot));
+    draft_add_entity(draft, kind, member);
+}
+
 pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult {
     let FanArgs {
         target,
@@ -309,8 +325,6 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
                 last_blocked = Some(FanLeafRefusal::Capacity);
                 continue;
             }
-            let mut next = draft.clone();
-            draft_add_primitive(&mut next, PlacementPrimitive::Knot(parent_knot));
             built.branch.base.origin = Some(if args.origin == Some(SupportOriginId::Overhang) {
                 SupportOriginId::Overhang
             } else {
@@ -322,10 +336,10 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
                 .type_id
                 .expect("a built member carries its typeId");
             let entity_id = built.branch.base.id.clone();
-            draft_add_entity(&mut next, kind, SupportEntityValue::Branch(built.branch));
             return FanLeafResult::Ok {
                 kind,
-                draft: Box::new(next),
+                parent_knot: Box::new(parent_knot),
+                member: Box::new(SupportEntityValue::Branch(built.branch)),
                 host_type_id: sp.host_type_id,
                 host_id: sp.host_id.clone(),
                 entity_id,
@@ -378,8 +392,6 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
             last_blocked = Some(FanLeafRefusal::Capacity);
             continue;
         }
-        let mut next = draft.clone();
-        draft_add_primitive(&mut next, PlacementPrimitive::Knot(parent_knot));
         if let Some(origin) = args.origin {
             leaf.base.origin = Some(origin);
         }
@@ -388,10 +400,10 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
             .type_id
             .expect("a built member carries its typeId");
         let entity_id = leaf.base.id.clone();
-        draft_add_entity(&mut next, kind, SupportEntityValue::Leaf(leaf));
         return FanLeafResult::Ok {
             kind,
-            draft: Box::new(next),
+            parent_knot: Box::new(parent_knot),
+            member: Box::new(SupportEntityValue::Leaf(leaf)),
             host_type_id: sp.host_type_id,
             host_id: sp.host_id.clone(),
             entity_id,
@@ -408,7 +420,9 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
 }
 
 /// Consolidation fallback: attach the standalone trunk's tip to the steepest
-/// eligible host sample as a ROUTED BRANCH.
+/// eligible host sample as a ROUTED BRANCH. Returns the knot and the branch
+/// for the caller to add to `pruned` ([`add_fanned`]), with the branch's id
+/// and type.
 #[allow(clippy::too_many_arguments)]
 pub fn build_consolidation_branch(
     tip: Vec3,
@@ -420,7 +434,7 @@ pub fn build_consolidation_branch(
     max_attachments: f64,
     knot_id: &str,
     ctx: &PlanCtx<'_>,
-) -> Option<(SupportState, String, SupportTypeId)> {
+) -> Option<(Knot, SupportEntityValue, String, SupportTypeId)> {
     let mesh = ctx.mesh.as_ref();
     let max_link = js_min(50.0, member_max_angle_from_vertical_deg(ctx.live));
     let mut best: Option<&FanShaftPoint> = None;
@@ -486,8 +500,6 @@ pub fn build_consolidation_branch(
         return None;
     }
 
-    let mut d = pruned.clone();
-    draft_add_primitive(&mut d, PlacementPrimitive::Knot(parent_knot));
     built.branch.base.origin = Some(SupportOriginId::Overhang);
     let kind = built
         .branch
@@ -495,6 +507,10 @@ pub fn build_consolidation_branch(
         .type_id
         .expect("a built member carries its typeId");
     let branch_id = built.branch.base.id.clone();
-    draft_add_entity(&mut d, kind, SupportEntityValue::Branch(built.branch));
-    Some((d, branch_id, kind))
+    Some((
+        parent_knot,
+        SupportEntityValue::Branch(built.branch),
+        branch_id,
+        kind,
+    ))
 }

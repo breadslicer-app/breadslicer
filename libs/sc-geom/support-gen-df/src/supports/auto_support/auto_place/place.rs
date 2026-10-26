@@ -7,7 +7,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::fan::{FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, fan_leaf_to_host};
+use super::fan::{
+    FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
+};
 use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, collect_fan_shaft_points,
@@ -81,7 +83,6 @@ impl RejectReason {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaceOutcome {
     pub kind: Option<SupportTypeId>,
-    pub draft: SupportState,
     pub rejected_reason: Option<RejectReason>,
     pub preset: Option<SizingPreset>,
     pub entity_id: Option<String>,
@@ -92,15 +93,9 @@ pub struct PlaceOutcome {
 }
 
 impl PlaceOutcome {
-    fn placed(
-        kind: SupportTypeId,
-        preset: SizingPreset,
-        draft: SupportState,
-        entity_id: String,
-    ) -> Self {
+    fn placed(kind: SupportTypeId, preset: SizingPreset, entity_id: String) -> Self {
         PlaceOutcome {
             kind: Some(kind),
-            draft,
             rejected_reason: None,
             preset: Some(preset),
             entity_id: Some(entity_id),
@@ -111,10 +106,9 @@ impl PlaceOutcome {
         }
     }
 
-    fn rejected(reason: RejectReason, preset: SizingPreset, draft: SupportState) -> Self {
+    fn rejected(reason: RejectReason, preset: SizingPreset) -> Self {
         PlaceOutcome {
             kind: None,
-            draft,
             rejected_reason: Some(reason),
             preset: Some(preset),
             entity_id: None,
@@ -194,9 +188,12 @@ fn build_sized_trunk(input: &TrunkBuildInput<'_>, ctx: &PlanCtx<'_>) -> TrunkBui
 
 /// One candidate through the placement pipeline. `ignore_grid` is set only by
 /// the grid-fallback retry below.
+///
+/// SoulCrafted: the placement is made in `state` itself, which a rejection
+/// leaves untouched, instead of in a copy of the whole state per candidate.
 pub fn place_one_candidate(
     candidate: &CandidatePoint,
-    draft: &SupportState,
+    state: &mut SupportState,
     args: &PlaceArgs<'_>,
     ctx: &PlanCtx<'_>,
     ignore_grid: bool,
@@ -205,7 +202,7 @@ pub fn place_one_candidate(
     let auto = &live.auto_support;
     let grid_enabled = live.grid.enabled && !ignore_grid;
     let mesh = ctx.mesh.as_ref();
-    let mut d = draft.clone();
+    let draft: &SupportState = state;
 
     // Grid points carry the region's exact surface position and normal.
     let (tip_pos, tip_normal) =
@@ -228,14 +225,9 @@ pub fn place_one_candidate(
     );
     // `auto.leafFanRadiusMm ?? LEAF_FAN_RADIUS_MM`: the Rust field is always set.
     let fan_radius = js_max(MIN_LEAF_FAN_RADIUS_MM, auto.leaf_fan_radius_mm);
-    let fan_ok = |fan: FanLeafResult| -> Result<PlaceOutcome, FanLeafResult> {
+    let fan_ok = |fan: FanLeafResult| -> Result<FanLeafResult, FanLeafResult> {
         match fan {
-            FanLeafResult::Ok {
-                kind,
-                draft,
-                entity_id,
-                ..
-            } => Ok(PlaceOutcome::placed(kind, preset, *draft, entity_id)),
+            FanLeafResult::Ok { .. } => Ok(fan),
             refused => Err(refused),
         }
     };
@@ -273,8 +265,8 @@ pub fn place_one_candidate(
                 },
                 ctx,
             );
-            if let Ok(placed) = fan_ok(fan) {
-                return placed;
+            if let Ok(fanned) = fan_ok(fan) {
+                return placed_fan(state, preset, fanned);
             }
         }
     }
@@ -306,7 +298,7 @@ pub fn place_one_candidate(
                 ctx,
             );
             match fan_ok(fan) {
-                Ok(placed) => return placed,
+                Ok(fanned) => return placed_fan(state, preset, fanned),
                 Err(FanLeafResult::Refused { reason, .. }) => fan_refusal = Some(reason),
                 Err(_) => {}
             }
@@ -321,10 +313,10 @@ pub fn place_one_candidate(
         }
         if let Some(host) = host {
             merge_host_found = true;
-            if let Some(placed) = try_merge(
-                candidate, tip_pos, tip_normal, &host, draft, &mut d, preset, ctx,
-            ) {
-                return placed;
+            if let Some(merge) = try_merge(candidate, tip_pos, tip_normal, &host, draft, ctx) {
+                draft_add_primitive(state, PlacementPrimitive::Knot(merge.parent_knot));
+                draft_add_entity(state, merge.kind, merge.member);
+                return PlaceOutcome::placed(merge.kind, preset, merge.id);
             }
         }
     }
@@ -396,7 +388,7 @@ pub fn place_one_candidate(
                 ctx,
             );
             let cavity_fan_refusal = match fan_ok(fan) {
-                Ok(placed) => return placed,
+                Ok(fanned) => return placed_fan(state, preset, fanned),
                 Err(FanLeafResult::Refused {
                     reason,
                     nearest_host_mm,
@@ -462,14 +454,14 @@ pub fn place_one_candidate(
                         BridgeEntity::Stick(s) => SupportEntityValue::Stick(s),
                     };
                     let id = entity_id(&entity);
-                    draft_add_entity(&mut d, bridge.kind, entity);
-                    let mut out = PlaceOutcome::placed(bridge.kind, preset, d, id);
+                    draft_add_entity(state, bridge.kind, entity);
+                    let mut out = PlaceOutcome::placed(bridge.kind, preset, id);
                     out.cavity_fan_refusal = cavity_fan_refusal;
                     return out;
                 }
             }
         }
-        return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset, d);
+        return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset);
     }
 
     // Side-wall guard: no trunk whose contact cone lies within 15° of flat.
@@ -480,7 +472,7 @@ pub fn place_one_candidate(
             live.tip.cone_angle_mode.unwrap_or_default(),
             live.tip.adaptive_cone_angle_offset_deg,
         ) {
-            return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset, d);
+            return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset);
         }
     }
 
@@ -517,7 +509,7 @@ pub fn place_one_candidate(
                     draft,
                 )
             {
-                return PlaceOutcome::rejected(RejectReason::GridRejectOther, preset, d);
+                return PlaceOutcome::rejected(RejectReason::GridRejectOther, preset);
             }
             let type_id = placed.type_id;
             let mut entity = placed.entity;
@@ -532,9 +524,9 @@ pub fn place_one_candidate(
                 );
             }
             let id = entity_id(&entity);
-            draft_commit_support(&mut d, type_id, entity, &placed.supplied);
+            draft_commit_support(state, type_id, entity, &placed.supplied);
             let merge_checked = !grid_enabled && candidate.grid_point != Some(true);
-            let mut out = PlaceOutcome::placed(type_id, preset, d, id);
+            let mut out = PlaceOutcome::placed(type_id, preset, id);
             out.fan_refusal = fan_refusal;
             out.merge_refusal = merge_checked.then_some(if merge_host_found {
                 "rejected"
@@ -553,30 +545,52 @@ pub fn place_one_candidate(
             if grid_enabled {
                 // The lattice could not serve this tip: retry with the grid
                 // off for this candidate alone.
-                let mut fallback = place_one_candidate(candidate, draft, args, ctx, true);
+                let mut fallback = place_one_candidate(candidate, state, args, ctx, true);
                 if fallback.kind.is_some() {
                     fallback.grid_fallback = true;
                 }
                 return fallback;
             }
-            PlaceOutcome::rejected(mapped, preset, d)
+            PlaceOutcome::rejected(mapped, preset)
         }
     }
 }
 
+/// Adds an accepted fan to `state` and reports it as placed.
+fn placed_fan(state: &mut SupportState, preset: SizingPreset, fan: FanLeafResult) -> PlaceOutcome {
+    let FanLeafResult::Ok {
+        kind,
+        parent_knot,
+        member,
+        entity_id,
+        ..
+    } = fan
+    else {
+        unreachable!("only an accepted fan is placed");
+    };
+    add_fanned(state, kind, *parent_knot, *member);
+    PlaceOutcome::placed(kind, preset, entity_id)
+}
+
+/// A merge [`try_merge`] found: the knot on the host and the member hung
+/// from it, for the caller to add to the draft in that order.
+struct Merge {
+    parent_knot: Knot,
+    kind: SupportTypeId,
+    member: SupportEntityValue,
+    id: String,
+}
+
 /// The gridless merge onto `host`: a leaf for a short span, a branch for a
 /// long one, at the highest shaft sample that clears the steep minimum.
-#[allow(clippy::too_many_arguments)]
 fn try_merge(
     candidate: &CandidatePoint,
     tip_pos: Vec3,
     tip_normal: Vec3,
     host: &super::helpers::MergeHost,
     draft: &SupportState,
-    d: &mut SupportState,
-    preset: SizingPreset,
     ctx: &PlanCtx<'_>,
-) -> Option<PlaceOutcome> {
+) -> Option<Merge> {
     let live = ctx.live;
     let mesh = ctx.mesh.as_ref();
     let host_entity = host_entity_of(draft, host.host_type_id, &host.host_id);
@@ -629,7 +643,7 @@ fn try_merge(
         .filter(|&dia| dia != 0.0 && !dia.is_nan())
         .unwrap_or(1.0);
     let parent_knot = Knot {
-        id: free_knot_id(d, &format!("auto-merge-{}", candidate.id)),
+        id: free_knot_id(draft, &format!("auto-merge-{}", candidate.id)),
         parent_shaft_id: if seg_id.is_empty() {
             host.host_id.clone()
         } else {
@@ -695,7 +709,6 @@ fn try_merge(
         if is_host_at_attachment_capacity(host.host_type_id, &host.host_id, cap, draft) {
             return None;
         }
-        draft_add_primitive(d, PlacementPrimitive::Knot(parent_knot));
         let mut leaf = built.leaf;
         leaf.base.origin = Some(member_origin);
         let kind = leaf
@@ -703,8 +716,12 @@ fn try_merge(
             .type_id
             .expect("a built member carries its typeId");
         let id = leaf.base.id.clone();
-        draft_add_entity(d, kind, SupportEntityValue::Leaf(leaf));
-        return Some(PlaceOutcome::placed(kind, preset, d.clone(), id));
+        return Some(Merge {
+            parent_knot,
+            kind,
+            member: SupportEntityValue::Leaf(leaf),
+            id,
+        });
     }
 
     // A long span is a branch, for every origin.
@@ -738,7 +755,6 @@ fn try_merge(
     if is_host_at_attachment_capacity(host.host_type_id, &host.host_id, cap, draft) {
         return None;
     }
-    draft_add_primitive(d, PlacementPrimitive::Knot(parent_knot));
     let mut branch = built.branch;
     branch.base.origin = Some(member_origin);
     let kind = branch
@@ -746,6 +762,10 @@ fn try_merge(
         .type_id
         .expect("a built member carries its typeId");
     let id = branch.base.id.clone();
-    draft_add_entity(d, kind, SupportEntityValue::Branch(branch));
-    Some(PlaceOutcome::placed(kind, preset, d.clone(), id))
+    Some(Merge {
+        parent_knot,
+        kind,
+        member: SupportEntityValue::Branch(branch),
+        id,
+    })
 }
