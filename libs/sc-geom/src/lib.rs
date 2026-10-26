@@ -49,3 +49,7 @@ pub use support_gen_trivial::{
 
 /// The DragonFruit support port, run on a scene (`support-gen-df-sc`).
 pub use support_gen_df_sc as df_supports;
+
+/// The DragonFruit hollowing port, run on a scene leaf (`hollow-df-sc`; the
+/// engine itself is `df_hollow::hollow_df`).
+pub use hollow_df_sc as df_hollow;
