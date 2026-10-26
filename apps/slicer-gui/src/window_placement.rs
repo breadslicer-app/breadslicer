@@ -9,8 +9,14 @@
 //! a large 4K monitor it is a postage stamp. Nothing is remembered between
 //! runs; each new window is fitted to its monitor.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::Duration;
+
 use slint::winit_030::WinitWindowAccessor;
-use slint::{PhysicalPosition, PhysicalSize};
+use slint::{ComponentHandle, PhysicalPosition, PhysicalSize};
+
+use crate::slint_ui::MainWindow;
 
 /// Share of the monitor's width and height a new window takes.
 const SCREEN_SHARE: f64 = 0.8;
@@ -41,10 +47,9 @@ pub(crate) fn placement(monitor: ScreenRect, current: (u32, u32)) -> ScreenRect 
     }
 }
 
-/// Fits a freshly shown `window` to the monitor it is on. Does nothing when
-/// the platform reports no monitor (or no winit window).
-pub(crate) fn fit_to_screen(window: &slint::Window) {
-    let monitor = window
+/// The monitor `window` is on, once its native window exists.
+fn monitor_of(window: &slint::Window) -> Option<ScreenRect> {
+    window
         .with_winit_window(|w| {
             w.current_monitor().map(|m| {
                 let (pos, size) = (m.position(), m.size());
@@ -56,17 +61,60 @@ pub(crate) fn fit_to_screen(window: &slint::Window) {
                 }
             })
         })
-        .flatten();
-    let Some(monitor) = monitor else {
-        return;
-    };
-    if monitor.width == 0 || monitor.height == 0 {
-        return;
-    }
+        .flatten()
+        .filter(|m| m.width > 0 && m.height > 0)
+}
+
+fn fit(window: &slint::Window, monitor: ScreenRect) {
     let current = window.size();
     let target = placement(monitor, (current.width, current.height));
     window.set_size(PhysicalSize::new(target.width, target.height));
     window.set_position(PhysicalPosition::new(target.x, target.y));
+}
+
+/// How often, and for how long, to wait for the native window.
+const RETRY_INTERVAL: Duration = Duration::from_millis(50);
+const RETRIES: u32 = 60;
+
+/// Fits a freshly shown `ui` to the monitor it is on.
+///
+/// The winit backend creates the native window only once the event loop
+/// runs, so right after `show()` at start-up there is none yet: the fit is
+/// retried from a timer (which only fires inside the loop) until the window
+/// and its monitor exist, for up to 3 s. A platform that never reports a
+/// monitor (headless tests) keeps the window's own size.
+pub(crate) fn fit_to_screen(ui: &MainWindow) {
+    if let Some(monitor) = monitor_of(ui.window()) {
+        fit(ui.window(), monitor);
+        return;
+    }
+    let weak = ui.as_weak();
+    let timer = Rc::new(slint::Timer::default());
+    let timer_weak = Rc::downgrade(&timer);
+    let tries = Cell::new(0u32);
+    let keep_alive = RefCell::new(Some(timer.clone()));
+    timer.start(slint::TimerMode::Repeated, RETRY_INTERVAL, move || {
+        let done = match weak.upgrade() {
+            None => true,
+            Some(ui) => match monitor_of(ui.window()) {
+                Some(monitor) => {
+                    fit(ui.window(), monitor);
+                    true
+                }
+                None => {
+                    tries.set(tries.get() + 1);
+                    tries.get() >= RETRIES
+                }
+            },
+        };
+        if done {
+            if let Some(t) = timer_weak.upgrade() {
+                t.stop();
+            }
+            // Drop the timer's own handle once it has stopped.
+            keep_alive.borrow_mut().take();
+        }
+    });
 }
 
 #[cfg(test)]
