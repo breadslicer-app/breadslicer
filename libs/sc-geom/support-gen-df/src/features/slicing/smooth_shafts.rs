@@ -109,13 +109,14 @@ fn circle(center: Vec3, d: Vec3, radius: f64, u: Vec3, n: usize) -> Vec<Vec3> {
         .collect()
 }
 
-/// `ring` slid along `d` onto the plane through `origin` with normal `m`.
-fn project_onto_plane(ring: &[Vec3], d: Vec3, origin: Vec3, m: Vec3) -> Vec<Vec3> {
+/// `ring` slid along `d` onto the plane through `origin` with normal `m`,
+/// no point moving more than `max_shift`.
+fn project_onto_plane(ring: &[Vec3], d: Vec3, origin: Vec3, m: Vec3, max_shift: f64) -> Vec<Vec3> {
     let denom = d.dot(m);
     ring.iter()
         .map(|&p| {
             let t = if denom.abs() > EPS {
-                -p.sub(origin).dot(m) / denom
+                (-p.sub(origin).dot(m) / denom).clamp(-max_shift, max_shift)
             } else {
                 0.0
             };
@@ -123,6 +124,12 @@ fn project_onto_plane(ring: &[Vec3], d: Vec3, origin: Vec3, m: Vec3) -> Vec<Vec3
         })
         .collect()
 }
+
+/// Bends sharper than this (the angle between the two directions) are not
+/// mitred: the mitre ring would stretch past twice the radius, and towards a
+/// U-turn without bound. The tube closes on a ring square to the incoming
+/// edge and leaves on one square to the outgoing edge instead.
+const MAX_MITRE_BEND_DEG: f64 = 120.0;
 
 fn push_tri(sink: &mut Vec<f32>, a: Vec3, b: Vec3, c: Vec3) {
     for p in [a, b, c] {
@@ -209,13 +216,20 @@ pub fn append_smooth_chain(
                 rings.push(circle(joint.sub(d_in.multiply_scalar(l_in)), d_in, r, u, n));
             }
         }
-        rings.push(project_onto_plane(
-            &circle(joint, d_in, waist, u, n),
-            d_in,
-            joint,
-            mitre,
-        ));
-        u = transport(u, d_in, d_out);
+        if d_in.dot(d_out) >= MAX_MITRE_BEND_DEG.to_radians().cos() {
+            rings.push(project_onto_plane(
+                &circle(joint, d_in, waist, u, n),
+                d_in,
+                joint,
+                mitre,
+                2.0 * waist,
+            ));
+            u = transport(u, d_in, d_out);
+        } else {
+            rings.push(circle(joint, d_in, waist, u, n));
+            u = transport(u, d_in, d_out);
+            rings.push(circle(joint, d_out, waist, u, n));
+        }
         if waist > r_out + 1e-9 {
             let l_out = collar.min(params.max_collar_fraction * lens[j]);
             if l_out > 1e-6 {
