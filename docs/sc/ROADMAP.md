@@ -152,6 +152,8 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-90](#sc-90) | backlog | calidad | Log de interacción opcional y "Exportar diagnóstico" | SC-64 |
 | [SC-91](#sc-91) | backlog | marca | Rebrand a Breadslicer: nombre visible y migración de datos | SC-59 |
 | [SC-92](#sc-92) | backlog | comunidad | breadslicer.app: DNS, email y página del proyecto | SC-91 |
+| [SC-93](#sc-93) | backlog | geometria | STL presoportados: separar cuerpos en objetos | SC-29 |
+| [SC-94](#sc-94) | backlog | perfiles | Calibrador guiado de resina (curva de trabajo, detalle, base, XY) | SC-32, SC-66 |
 
 ## SC-01
 
@@ -288,6 +290,11 @@ Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edició
   - **Quitar:** bajó de 15–19 s a 0,1–0,4 s. El chequeo de huérfanos era cuadrático y ahora usa un índice inverso de nombres.
   - **Hilos:** la GUI pasa la sesión al worker de hover como `Arc`, sin copiarla en cada movimiento, y el worker tiene 16 MB de pila.
   - **El cierre con Ballena:** no se reproduce sin interfaz, ni con 1 MB de pila. La congelación de 15–19 s al quitar puede haber sido el "cierre". Ahora `logs/session.log` (`breadcrumbs.rs`) deja el rastro de cada paso crítico para la próxima vez.
+- **Quinta entrega (2026-10-26, "que se vea fluido"):**
+  - **El fantasma sigue al mouse:** antes solo se mostraba la respuesta del último punto, y mientras el mouse se movía todas llegaban viejas, así que el preview aparecía recién al parar. Ahora se muestra la respuesta más nueva que haya.
+  - **Marcador instantáneo:** apenas el mouse toca, aparece en el hilo de la UI un punto verde (A) o rojo (X); el fantasma llega detrás.
+  - **Borrado más rápido:** el índice de borrado se cachea por estado de soportes, y el worker lo precalienta después de cada edición. Antes, cada hover de X re-serializaba todo (50–70 ms).
+  - **Alcance para colgarse:** el clic manual se cuelga de un soporte a hasta 15 mm (el abanico de DF usa 8 mm), con los mismos límites de ángulo y colisión. En Ballena, 5 ramas y 5 troncos contra 3 y 7 antes.
 - **Pendiente:**
   - mover punta y braces a mano;
   - persistir las entidades al guardar (hoy solo sobrevive la malla);
@@ -426,6 +433,11 @@ Red de vigas con cargas de separación/material/proceso calibrados. Investigaci�
 **Cierre:** Spike con coste, incertidumbre, correlación experimental y decisión continuar/descartar; sin nueva dependencia de pago.
 
 **Depende de:** SC-53, SC-74. Prioridad: low. Estado snapshot: triage.
+
+**Investigación (2026-10-26), [`RESEARCH-20261026.md`](RESEARCH-20261026.md) §3:**
+- **Primer hito:** presupuesto de fuerza por capa e isla (peel ~12–19 kPa según el film, más succión de copas) y un modelo de vigas del árbol de soportes en las capas críticas.
+- **Dónde va:** como validación después del plan DF, detrás de una opción. Usa σ_punta/σ_peel calibrado con una escalera de probetas (SC-74, SC-94).
+- **Descartado por ahora:** la FEA 3D completa.
 
 ## SC-22
 
@@ -1458,3 +1470,32 @@ Dominio comprado por Damian en Cloudflare (2026-10-26). Hay que confirmar que el
 **Cierre:** el dominio resuelve a la página con HTTPS, los correos llegan al mail de Damian y los nombres de GitHub y Discord están reservados.
 
 **Depende de:** SC-91. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-93
+
+**STL presoportados: separar cuerpos en objetos** — Geometría
+
+Pedido de Damian (2026-10-26): muchos modelos vienen presoportados con los soportes como cuerpos separados. La idea es reconocerlos como objetos para borrarlos o modificarlos. La investigación está en [`RESEARCH-20261026.md`](RESEARCH-20261026.md) §1:
+- separar por shells conectados, con las cavidades quedándose en su contenedor;
+- clasificar de forma heurística modelo, soportes y raft, solo como sugerencia;
+- los soportes importados van en una sola hoja con índice de cuerpo.
+
+**Cierre (hito 1):** el comando "Separar en cuerpos" cumple los criterios de §1. La clasificación y el aviso al importar quedan para el hito 2.
+
+**Depende de:** SC-29. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-94
+
+**Calibrador guiado de resina** — Perfiles
+
+Pedido de Damian (2026-10-26): "el mejor calibrador". La investigación está en [`RESEARCH-20261026.md`](RESEARCH-20261026.md) §2. Son unas 3 impresiones:
+- curva de trabajo de Jacobs (Dp/Ec), que da la exposición para cualquier altura de capa;
+- detalle y resistencia por conteo;
+- base y pata de elefante;
+- exactitud XY con escala y offset por separado.
+
+Se guarda por impresora + resina con historial y aviso de obsolescencia. Las geometrías son propias, generadas por código; nada de UVtools, que es AGPL, ni de tests sin licencia. Como objetivo ambicioso, lectura por foto.
+
+**Cierre (hito 1):** placa de curva de trabajo, carga de espesores, ajuste con R², recomendación por altura de capa y `CalibrationRecord`. La validación física requiere autorización.
+
+**Depende de:** SC-32, SC-66. Prioridad: normal. Estado snapshot: backlog.
