@@ -1,6 +1,0 @@
-[package]
-name = "dragonfruit-mesh-repair"
-version = "0.0.0"
-edition = "2021"
-[dependencies]
-dragonfruit-mesh-core = { path = "C:/Users/dnaon/.openclaw/workspace/repos/DragonFruit/rust/dragonfruit-mesh-core" }

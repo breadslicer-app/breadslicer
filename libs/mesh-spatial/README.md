@@ -1,14 +1,14 @@
 # sc-mesh-spatial
 
 Cached spatial queries over
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/)
 meshes and
-[`sc-scene`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene/)
+[`sc-scene`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/scene/)
 scenes: bounding boxes and triangle clusters, computed once and
 reused until the geometry changes.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers.
 
 ## Features
@@ -63,9 +63,9 @@ Same as `sc-mesh-core`: right-handed, Z up, millimetres.
 ## Not included
 
 File I/O, which is in
-[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
+[`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/),
 slicing, which is in
-[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/),
+[`sc-sl1cer`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sl1cer/),
 and any rendering or GPU types.
 
 For the API, see [docs.rs](https://docs.rs/sc-mesh-spatial).

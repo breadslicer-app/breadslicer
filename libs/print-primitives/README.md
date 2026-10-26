@@ -6,7 +6,7 @@ display mirroring, anti-aliasing level, scale compensation, and printer and
 material identifiers.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 and shared between its slicing engine and its profile handling.
 
 ## Usage

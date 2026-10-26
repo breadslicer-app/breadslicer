@@ -1,13 +1,13 @@
 # sc-scene
 
 A hierarchical scene graph over
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/)
 meshes: groups, mesh-backed leaves, shared mesh resources, subtree
 references, CSG placeholders, plus expansion, world-space baking,
 validation and repair orchestration.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers.
 
 ## Features
@@ -22,11 +22,11 @@ a slicer for resin 3D printers.
   shared meshes only when a repair would change them.
 
 Typed undo / redo edits and clipboard fragments live in
-[`sc-scene-edit`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene-edit/);
+[`sc-scene-edit`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/scene-edit/);
 file I/O lives in
-[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/);
+[`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/);
 slicing lives in
-[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/).
+[`sc-sl1cer`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sl1cer/).
 This crate carries no rendering or GPU types.
 
 ## Conventions

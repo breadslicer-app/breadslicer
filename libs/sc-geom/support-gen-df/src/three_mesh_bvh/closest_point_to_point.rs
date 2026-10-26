@@ -6,7 +6,7 @@
 //! `CONTAINED`, and each leaf walks its triangles in order with
 //! `iterateOverTriangles`.
 //!
-//! One SoulCrafted shortcut leaves every answer as it was (SC-82): a
+//! One SoulCrafted shortcut leaves every answer as it was (BS-66): a
 //! triangle reports only when it is *strictly* closer than the best so far,
 //! and it is never closer than its own box. So a triangle whose box is
 //! already farther than the best (by more than any rounding of the exact

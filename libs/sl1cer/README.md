@@ -1,12 +1,12 @@
 # sc-sl1cer
 
 A slicing engine for resin 3D printers: takes triangle meshes from
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/)
 and returns per-layer closed polygons, optionally rasterised to grayscale
 pixel layers.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md).
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
 ## Features
 
@@ -71,9 +71,9 @@ is at Z = 0 and layers are slabs of constant thickness along +Z.
 ## Not included
 
 File I/O. Mesh formats are in
-[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/)
+[`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/)
 and printer output formats in
-[`sc-sla-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sla-formats/).
+[`sc-sla-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sla-formats/).
 No support-structure generation, no rendering, no GPU types.
 
 For the API, see [docs.rs](https://docs.rs/sc-sl1cer).
