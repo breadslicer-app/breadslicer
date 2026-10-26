@@ -602,12 +602,14 @@ pub fn calculate_smart_placement_v3(
         return standard;
     }
 
+    let setup = crate::perf::scope("router:setup");
     sdf.refresh_matrix(matrix_world);
     let clearance_mm = column_clearance_mm(settings.shaft.diameter_mm);
     // The router's columns are the bulk of this run's distance-field reads, and
     // the exact column map answers them from one scalar per XY cell. It is
     // clearance-specific: one map per clearance, reused after that.
     sdf.enable_column_map(clearance_mm, COLUMN_MAP_CELL_MM);
+    drop(setup);
 
     match route(input, sdf, stats, settings, context, standard) {
         Some(result) => result,
@@ -780,6 +782,7 @@ fn route(
         let field: &dyn CollisionField = gates.sdf;
         let found = {
             let mut base_fits_at = |x: f64, y: f64| !gates.roots_blocked_at(x, y);
+            let _p = crate::perf::scope("router:joint-search");
             if grid_enabled {
                 find_grid_joint(
                     field,
