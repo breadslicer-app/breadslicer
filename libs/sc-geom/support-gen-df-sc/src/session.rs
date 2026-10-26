@@ -376,12 +376,22 @@ impl DfSupportSession {
     /// through, red (a straight trunk to the plate) when nothing can hold
     /// that point. `NothingThere` when the point is not on a model.
     pub fn preview_add_at(&self, point: [f64; 3]) -> Result<EditPreview, EditError> {
+        self.preview_add(point).map(|(preview, _)| preview)
+    }
+
+    /// [`Self::preview_add_at`], with the session the click would leave when
+    /// it goes through: a click on the same point can take it as is instead
+    /// of placing again.
+    pub fn preview_add(&self, point: [f64; 3]) -> Result<(EditPreview, Option<Self>), EditError> {
         let mut copy = self.clone();
         match copy.place(point) {
-            Ok(added) => Ok(EditPreview {
-                mesh: copy.mesh_of(|id| added.contains(id))?,
-                valid: true,
-            }),
+            Ok(added) => {
+                let preview = EditPreview {
+                    mesh: copy.mesh_of(|id| added.contains(id))?,
+                    valid: true,
+                };
+                Ok((preview, Some(copy)))
+            }
             Err(EditError::NoRoute(_)) => {
                 let (i, tip, normal) = self.contact(point).ok_or(EditError::NothingThere)?;
                 let model_id = self.models[i].id.clone();
@@ -414,10 +424,11 @@ impl DfSupportSession {
                     .collections
                     .trunks
                     .insert(built.trunk.base.id.clone(), built.trunk);
-                Ok(EditPreview {
+                let preview = EditPreview {
                     mesh: copy.mesh_of(|id| ids.contains(id))?,
                     valid: false,
-                })
+                };
+                Ok((preview, None))
             }
             Err(other) => Err(other),
         }

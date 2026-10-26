@@ -271,6 +271,30 @@ pub(crate) fn ray_hits_triangle_oriented(
 /// out-of-range face vertex indices) also give `None`: the picker treats them
 /// as a miss and reports no error.
 pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Option<f32> {
+    ray_hit_face(ray, query).map(|(t, _)| t)
+}
+
+/// The world normal of the face the ray meets first on `query`, turned to
+/// face the ray (out of the surface it hits), with the hit's `t`.
+pub(crate) fn ray_hit_normal(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, Vec3)> {
+    let (t, face) = ray_hit_face(ray, query)?;
+    let mesh = query.mesh();
+    let world = query.world_transform();
+    let [a, b, c] = mesh.faces().get(face)?.vertices.map(|v| {
+        mesh.vertices()
+            .get(usize::from(v))
+            .map(|p| Vec3::from(world.apply_to_vertex(*p).coords()))
+    });
+    let (a, b, c) = (a?, b?, c?);
+    let n = (b - a).cross(c - a).normalize_or_zero();
+    if n == Vec3::ZERO {
+        return None;
+    }
+    Some((t, if n.dot(ray.direction) > 0.0 { -n } else { n }))
+}
+
+/// [`ray_hits_object_query`] with the index of the face hit.
+fn ray_hit_face(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, usize)> {
     let local = local_ray_for_object(ray, &query.world_transform())?;
     let local_ray = Ray {
         origin: local.origin,
@@ -280,14 +304,18 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
     let mesh = query.mesh();
     let vertices = mesh.vertices();
     let faces = mesh.faces();
-    let mut best: Option<f32> = None;
+    let mut best: Option<(f32, usize)> = None;
     for (face_range, aabb) in clusters.iter() {
         let aabb_min = Vec3::from(aabb.min().coords());
         let aabb_max = Vec3::from(aabb.max().coords());
         if !ray_hits_aabb(&local_ray, aabb_min, aabb_max) {
             continue;
         }
-        for face in &faces[face_range.start as usize..face_range.end as usize] {
+        for (index, face) in faces[face_range.start as usize..face_range.end as usize]
+            .iter()
+            .enumerate()
+        {
+            let index = face_range.start as usize + index;
             let v0 = Vec3::from(vertices.get(usize::from(face.vertices[0]))?.coords());
             let v1 = Vec3::from(vertices.get(usize::from(face.vertices[1]))?.coords());
             let v2 = Vec3::from(vertices.get(usize::from(face.vertices[2]))?.coords());
@@ -296,8 +324,8 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
             {
                 let t = t_local / local.world_to_local_scale;
                 best = Some(match best {
-                    Some(prev) if prev <= t => prev,
-                    _ => t,
+                    Some(prev) if prev.0 <= t => prev,
+                    _ => (t, index),
                 });
             }
         }

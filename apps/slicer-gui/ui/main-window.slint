@@ -193,7 +193,8 @@ export component MainWindow inherits Window {
     // The cursor over the model with a tab tool armed: the world point and
     // whether there is one (false clears the preview).
     callback support-tool-hover(float, float, float, bool);
-    callback hollow-drain-hover(float, float, float, bool);
+    // The drain tool's hover: point, surface normal (world), whether on the model.
+    callback hollow-drain-hover(float, float, float, float, float, float, bool);
     // A tab tool was armed or put away, or the tab changed.
     callback tab-tools-changed();
     changed support-tool => {
@@ -208,6 +209,9 @@ export component MainWindow inherits Window {
     // The Hollow tab (SC-18): the selected model's hollow job, its options
     // (HollowRun::on_option) and the drain tool (a click drills a drain).
     in property <bool> hollow-running: false;
+    // The Hollow tab is computing (a hollow or its preview): work done ahead
+    // elsewhere waits so it stays responsive.
+    in property <bool> hollow-busy: false;
     in property <string> hollow-phase;
     in property <float> hollow-progress;
     in property <string> hollow-last-run;
@@ -228,7 +232,7 @@ export component MainWindow inherits Window {
     callback hollow-restore();
     callback hollow-clear-drains();
     callback hollow-option-changed(int, float);
-    callback hollow-drain-clicked(float, float, float);
+    callback hollow-drain-clicked(float, float, float, float, float, float);
     // The held slice's estimate (the printer file's own figures), or why
     // there is none.
     in property <bool> slice-estimate-valid: false;
@@ -1010,8 +1014,8 @@ export component MainWindow inherits Window {
                     modal-transform-status: root.modal-transform-status;
                     modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
                     tab-tool-key(key) => {
-                        if root.workspace-section == WorkspaceSection.Hollow && root.hollow-model-state == 1
-                            && !root.hollow-running && (key == "d" || key == "D") {
+                        if root.workspace-section == WorkspaceSection.Hollow && root.selection-valid
+                            && root.hollow-model-state != 2 && !root.hollow-running && (key == "d" || key == "D") {
                             root.hollow-drain-tool = !root.hollow-drain-tool;
                             return true;
                         }

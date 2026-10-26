@@ -78,7 +78,7 @@ pub(crate) trait MeshRenderer {
 
     /// Install the preview overlay pieces drawn over the scene (`None`
     /// clears them). Re-uploads only when `pieces` is a different `Arc`.
-    fn set_overlay(&mut self, _pieces: Option<&std::sync::Arc<[super::OverlayMesh]>>) {}
+    fn set_overlay(&mut self, _pieces: Option<&super::Overlay>) {}
 
     /// Draw the models alone and copy the frame off the GPU, for a
     /// picture that is not going on screen, such as the one a printer
@@ -152,7 +152,7 @@ impl MeshRenderer for Renderer {
         Renderer::preview_pixels(self, graph, build_volume, camera, width, height)
     }
 
-    fn set_overlay(&mut self, pieces: Option<&std::sync::Arc<[super::OverlayMesh]>>) {
+    fn set_overlay(&mut self, pieces: Option<&super::Overlay>) {
         Renderer::set_overlay(self, pieces);
     }
 }

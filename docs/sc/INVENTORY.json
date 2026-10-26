@@ -244,7 +244,7 @@
         },
         {
           "path": "apps/slicer-gui/src/df_support_run.rs",
-          "sha256": "eae6ea42e4b3a39667c400ae1768812ab1db12251c74ef9c0ae0a13ce236a37f"
+          "sha256": "acfa81b9c42259fd1af63bac395d2b46a5ce2ae92c760aa4ec5cf034e5cc670b"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -312,7 +312,7 @@
         },
         {
           "path": "apps/slicer-gui/src/hollow_run.rs",
-          "sha256": "5c2b0a3799327240c89a49db3e7db8f1085d4acd92b93db6f15b3c1a178e67a3"
+          "sha256": "1a84b4ad1421569de2fc4fb83098a778b1068861e5381fc80999703f104dd1dd"
         },
         {
           "path": "apps/slicer-gui/src/i18n.rs",
@@ -324,7 +324,7 @@
         },
         {
           "path": "apps/slicer-gui/src/lib.rs",
-          "sha256": "7295a37af210c3ff445ae02ad8186ceb5458dcc1a78c7721dca6c56f07aec23e"
+          "sha256": "b470b478300639eedf480b70ffae55e37ac75f7426df02770442d5739f4f3ec7"
         },
         {
           "path": "apps/slicer-gui/src/load_progress.rs",
@@ -384,11 +384,11 @@
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/mod.rs",
-          "sha256": "b12c1e4555b9d3ffff60baca59887a6952e85853bad0cd847adacc051ebb3ef3"
+          "sha256": "0ea8a43c73ca3d5df3d9b4bedfa087f75e154389ae61e77c6a50cd09feb7d523"
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/overlay.rs",
-          "sha256": "f6b308270ba498f0390671f93b5ef51665711a63873d0815c4e244b9a4225f8d"
+          "sha256": "3dd3d91f9112ac7e1e3cd3693bec11f32fc1b7507a7d05522653b90f1343ebde"
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/pipelines/cap.rs",
@@ -428,7 +428,7 @@
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/renderer_trait.rs",
-          "sha256": "3f83d9f52a43eba8f42ead3f361e8ee0be13fb720bc831eb8d28433135fd0040"
+          "sha256": "b131dbf019eda1e83e4a432fd0922741e79b365ca91d8b66419af7bc1d3f29f4"
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/scene_upload.rs",
@@ -440,7 +440,7 @@
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/tests_gpu.rs",
-          "sha256": "a08326a659e76215d6434675a8daee2ae3895b95010cef1209c54f6faa5bd173"
+          "sha256": "14bd9ee57d7e5b17655a5505d30e4a841cd9694ee91f3a289e57ae04a9e1a631"
         },
         {
           "path": "apps/slicer-gui/src/pending_load.rs",
@@ -448,7 +448,7 @@
         },
         {
           "path": "apps/slicer-gui/src/picking.rs",
-          "sha256": "98441f8349affc31aae6e0158147deeb3303cf89e066cbfe2cccbf422b02c0bb"
+          "sha256": "61ca8f79fa985da8a5e080cab06b0a9ab747b96fae8cab4a47c2f559f281c6bf"
         },
         {
           "path": "apps/slicer-gui/src/preferences_bus.rs",
@@ -680,7 +680,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "c67da1f95dddd8f8c540229b78142d5cbacbcdfc61a15fe0980bb315c9880c5e"
+          "sha256": "84b221ed044a2dafd0ae42301526e404a2716b04f8c53a4839531dcb4ec64cc4"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -2182,7 +2182,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/session.rs",
-          "sha256": "78870802d049aef789185f5cde5593eb7b8b96e64f2c9db8a4e4a7a77515b2eb"
+          "sha256": "9a66e22f42d0f0fb85c9acf2ba1bc77c64b6026b76d760f90b6da76a6f177d69"
         }
       ]
     },
