@@ -87,7 +87,7 @@ pub(crate) struct ViewportController {
     readout_base: Cell<Option<(Readout, [f64; 3])>>,
     /// Preview pieces drawn over the scene (a support or drain before it is
     /// placed, a hollow cavity), set by the tab drivers.
-    overlay: RefCell<Option<std::sync::Arc<[crate::mesh_render::OverlayMesh]>>>,
+    overlay: RefCell<Option<crate::mesh_render::Overlay>>,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -596,10 +596,7 @@ impl ViewportController {
     }
 
     /// Whether the overlay now shown is `pieces`.
-    pub(crate) fn preview_overlay_is(
-        &self,
-        pieces: &std::sync::Arc<[crate::mesh_render::OverlayMesh]>,
-    ) -> bool {
+    pub(crate) fn preview_overlay_is(&self, pieces: &crate::mesh_render::Overlay) -> bool {
         self.overlay
             .borrow()
             .as_ref()
@@ -607,10 +604,7 @@ impl ViewportController {
     }
 
     /// Shows `pieces` over the scene until replaced (`None` clears them).
-    pub(crate) fn set_preview_overlay(
-        &self,
-        pieces: Option<std::sync::Arc<[crate::mesh_render::OverlayMesh]>>,
-    ) {
+    pub(crate) fn set_preview_overlay(&self, pieces: Option<crate::mesh_render::Overlay>) {
         let changed = match (&*self.overlay.borrow(), &pieces) {
             (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
             (None, None) => false,
@@ -1287,7 +1281,7 @@ impl ViewportController {
         &self,
         tool: TabTool,
         cursor: ScreenPoint,
-    ) -> Option<(sc_scene::NodeId, glam::Vec3)> {
+    ) -> Option<(sc_scene::NodeId, glam::Vec3, glam::Vec3)> {
         let vp = self.render.viewport()?;
         let ray = {
             let camera_slot = self.camera.camera_cell().borrow();
@@ -1312,7 +1306,9 @@ impl ViewportController {
                 let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
                     is_supports(id) == (tool == TabTool::RemoveSupport)
                 })?;
-                Some((id, ray.origin + ray.direction * t))
+                let normal = picking::ray_hit_normal(&ray, &spatial.leaf(id)?)
+                    .map_or(glam::Vec3::Z, |(_, n)| n);
+                Some((id, ray.origin + ray.direction * t, normal))
             })
             .flatten()
     }
@@ -1330,12 +1326,12 @@ impl ViewportController {
         };
         // The preview showed what this click does; the edit replaces it.
         self.set_preview_overlay(None);
-        if let Some((id, p)) = self.tab_tool_hit(tool, cursor) {
+        if let Some((id, p, n)) = self.tab_tool_hit(tool, cursor) {
             if tool == TabTool::Drain {
                 self.session
                     .document()
                     .set_selection(Selection::One(LeafId(id)));
-                ui.invoke_hollow_drain_clicked(p.x, p.y, p.z);
+                ui.invoke_hollow_drain_clicked(p.x, p.y, p.z, n.x, n.y, n.z);
             } else {
                 ui.invoke_support_tool_clicked(p.x, p.y, p.z);
             }
@@ -1355,9 +1351,9 @@ impl ViewportController {
             return;
         };
         let hit = self.tab_tool_hit(tool, cursor);
-        let p = hit.map_or(glam::Vec3::ZERO, |(_, p)| p);
+        let (p, n) = hit.map_or((glam::Vec3::ZERO, glam::Vec3::Z), |(_, p, n)| (p, n));
         if tool == TabTool::Drain {
-            ui.invoke_hollow_drain_hover(p.x, p.y, p.z, hit.is_some());
+            ui.invoke_hollow_drain_hover(p.x, p.y, p.z, n.x, n.y, n.z, hit.is_some());
         } else {
             ui.invoke_support_tool_hover(p.x, p.y, p.z, hit.is_some());
         }
@@ -1375,7 +1371,7 @@ impl ViewportController {
         self.input.on_pointer_leave();
         self.set_preview_overlay(None);
         if let Some(ui) = self.ui.upgrade() {
-            ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, false);
+            ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, false);
         }
     }
 

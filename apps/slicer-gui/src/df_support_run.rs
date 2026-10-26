@@ -37,7 +37,7 @@ use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{
     DF_SUPPORT_MESH_NAME, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
-    DfSupportSession, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    DfSupportSession, EditPreview, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -75,6 +75,27 @@ const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long the scene must sit still before the prescan starts.
 const PRESCAN_SETTLE: Duration = Duration::from_millis(500);
 
+/// How long the scene must sit still (and the Hollow tab idle) before the
+/// supports are generated ahead of a Generate press.
+const SPECULATE_SETTLE: Duration = Duration::from_millis(1500);
+
+/// Supports generated ahead of a Generate press, for the scene and request
+/// they were made for. A request is told apart by its printer figures and
+/// options (`ahead_key`).
+#[derive(Default)]
+struct Ahead {
+    running: Option<(JobHandle<DfSupportOutcome>, SceneRevision, String)>,
+    ready: Option<(SceneRevision, String, DfSupportOutcome)>,
+}
+
+/// What tells two requests apart for [`Ahead`].
+fn ahead_key(request: &DfSupportRequest) -> String {
+    format!(
+        "{:?}|{:?}|{:?}",
+        request.layer_height_mm, request.pixel_pitch_mm, request.options
+    )
+}
+
 /// How often the prescan watcher looks at the scene.
 const PRESCAN_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
@@ -101,6 +122,8 @@ pub(crate) struct DfSupportRun {
     started_on: RefCell<Option<SceneRevision>>,
     poll_timer: Rc<slint::Timer>,
     prescan: RefCell<Prescan>,
+    /// Supports computed while the person works on something else.
+    ahead: RefCell<Ahead>,
     /// When the scene last changed, live drag ticks included. Stamped by the
     /// scene subscription; that stamp is all the prescan costs an edit.
     last_change: Rc<Cell<Instant>>,
@@ -118,14 +141,85 @@ pub(crate) struct DfSupportRun {
     sessions: RefCell<Vec<(DfSupportSession, SceneRevision)>>,
     /// The viewport, for the hover preview of the hand tools.
     ctrl: Rc<ViewportController>,
-    /// Where the cursor rests with a hand tool armed; the preview is drawn
-    /// for it once the cursor has stopped for [`HOVER_SETTLE`].
-    hover: Cell<Option<[f32; 3]>>,
-    hover_timer: slint::Timer,
+    /// Computes hand-tool previews off the UI thread, always the latest.
+    hover_worker: HoverWorker,
+    /// The latest hover asked for; older answers are dropped.
+    hover_generation: Cell<u64>,
+    hover_poll: slint::Timer,
+    /// The last preview drawn, for a click on the same point to reuse.
+    last_preview: RefCell<Option<HoverAnswer>>,
 }
 
-/// How long the cursor rests before the hand tool's preview is drawn.
-const HOVER_SETTLE: Duration = Duration::from_millis(40);
+/// How often the UI looks for a finished preview.
+const HOVER_POLL: Duration = Duration::from_millis(16);
+
+/// A preview to compute: the session to edit, where, and with which tool.
+struct HoverAsk {
+    generation: u64,
+    base: DfSupportSession,
+    /// Which session (its index and the scene it was drawn on) `base` is.
+    from: (usize, SceneRevision),
+    point: [f32; 3],
+    tool: i32,
+}
+
+/// A computed preview.
+struct HoverAnswer {
+    generation: u64,
+    from: (usize, SceneRevision),
+    point: [f32; 3],
+    tool: i32,
+    preview: Option<EditPreview>,
+    /// For an Add that goes through: the session the click leaves.
+    edited: Option<DfSupportSession>,
+}
+
+/// One background thread answering the newest ask; asks that queue up
+/// behind a slow one are skipped.
+struct HoverWorker {
+    asks: std::sync::mpsc::Sender<HoverAsk>,
+    answer: Arc<std::sync::Mutex<Option<HoverAnswer>>>,
+}
+
+impl HoverWorker {
+    fn spawn() -> Self {
+        let (asks, inbox) = std::sync::mpsc::channel::<HoverAsk>();
+        let answer = Arc::new(std::sync::Mutex::new(None));
+        let out = answer.clone();
+        let _ = std::thread::Builder::new()
+            .name("support-hover-preview".into())
+            .spawn(move || {
+                while let Ok(mut ask) = inbox.recv() {
+                    while let Ok(newer) = inbox.try_recv() {
+                        ask = newer;
+                    }
+                    let p = ask.point.map(f64::from);
+                    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if ask.tool == 1 {
+                            ask.base.preview_add(p)
+                        } else {
+                            ask.base.preview_remove_at(p).map(|v| (v, None))
+                        }
+                    }));
+                    let (preview, edited) = match done {
+                        Ok(Ok((preview, edited))) => (Some(preview), edited),
+                        _ => (None, None),
+                    };
+                    if let Ok(mut slot) = out.lock() {
+                        *slot = Some(HoverAnswer {
+                            generation: ask.generation,
+                            from: ask.from,
+                            point: ask.point,
+                            tool: ask.tool,
+                            preview,
+                            edited,
+                        });
+                    }
+                }
+            });
+        HoverWorker { asks, answer }
+    }
+}
 
 /// A named set of options.
 #[derive(Clone)]
@@ -249,6 +343,7 @@ impl DfSupportRun {
             started_on: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
+            ahead: RefCell::new(Ahead::default()),
             last_change,
             prescan_timer: slint::Timer::default(),
             _scene_events: scene_events,
@@ -256,8 +351,10 @@ impl DfSupportRun {
             presets: RefCell::new(Vec::new()),
             sessions: RefCell::new(Vec::new()),
             ctrl,
-            hover: Cell::new(None),
-            hover_timer: slint::Timer::default(),
+            hover_worker: HoverWorker::spawn(),
+            hover_generation: Cell::new(0),
+            hover_poll: slint::Timer::default(),
+            last_preview: RefCell::new(None),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -322,6 +419,9 @@ impl DfSupportRun {
             return;
         };
         if ui.get_loading() || ui.get_support_gen_in_progress() || self.handle.borrow().is_some() {
+            return;
+        }
+        if self.take_ahead(&ui) {
             return;
         }
         {
@@ -464,6 +564,12 @@ impl DfSupportRun {
             || ui.get_loading()
             || ui.get_support_gen_in_progress()
             || ui.get_slicing_in_progress();
+        if ui.get_slicing_in_progress()
+            && let Some((job, _, _)) = self.ahead.borrow_mut().running.take()
+        {
+            // A slice is waited on; supports ahead of time are not.
+            job.cancel();
+        }
         if busy || prescan.running.is_some() || last_change.elapsed() < PRESCAN_SETTLE {
             return;
         }
@@ -472,6 +578,10 @@ impl DfSupportRun {
             .as_ref()
             .is_some_and(|(revision, _)| !self.document.slice_geometry_changed(*revision))
         {
+            // Scanned: with time to spare, generate ahead.
+            let scans = prescan.ready.as_ref().map(|(_, scans)| scans.clone());
+            drop(prescan);
+            self.generate_ahead(&ui, scans);
             return;
         }
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
@@ -482,6 +592,83 @@ impl DfSupportRun {
         request.prescanned = prescan.ready.as_ref().map(|(_, scans)| scans.clone());
         let job = start_df_prescan(&scene, request);
         prescan.running = Some((job, self.document.scene_revision(), Instant::now()));
+    }
+
+    /// Keeps the supports generated ahead in step with the scene: drops them
+    /// when it moves or the Hollow tab gets busy (its previews come first),
+    /// collects a finished run, and starts one once the scene has been still
+    /// for [`SPECULATE_SETTLE`] with nothing matching yet.
+    fn generate_ahead(&self, ui: &MainWindow, scans: Option<Arc<ScanCache>>) {
+        let mut ahead = self.ahead.borrow_mut();
+        let hollow_busy = ui.get_hollow_busy();
+        if let Some((job, revision, key)) = &ahead.running {
+            if hollow_busy || self.document.slice_geometry_changed(*revision) {
+                job.cancel();
+                ahead.running = None;
+            } else if let Some(finished) = job.try_poll() {
+                let (revision, key) = (*revision, key.clone());
+                ahead.running = None;
+                if let Ok(outcome) = finished {
+                    ahead.ready = Some((revision, key, outcome));
+                }
+            }
+        }
+        // Supports already in the scene are being edited, not awaited.
+        if ahead.running.is_some()
+            || hollow_busy
+            || self.last_change.get().elapsed() < SPECULATE_SETTLE
+            || self.support_leaf().is_some()
+        {
+            return;
+        }
+        let mut request = self.request_for_selection();
+        let key = ahead_key(&request);
+        if ahead.ready.as_ref().is_some_and(|(revision, k, _)| {
+            *k == key && !self.document.slice_geometry_changed(*revision)
+        }) {
+            return;
+        }
+        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+            return;
+        };
+        request.prescanned = scans;
+        if let Ok(job) = start_df_supports(&scene, request) {
+            ahead.running = Some((job, self.document.scene_revision(), key));
+        }
+    }
+
+    /// A Generate press finds the supports generated ahead: pasted at once
+    /// when ready for this scene and request, or the run in flight is taken
+    /// over (its progress shows). Returns whether it took them.
+    fn take_ahead(self: &Rc<Self>, ui: &MainWindow) -> bool {
+        let key = ahead_key(&self.request_for_selection());
+        let mut ahead = self.ahead.borrow_mut();
+        if let Some((revision, k, _)) = &ahead.ready
+            && *k == key
+            && !self.document.slice_geometry_changed(*revision)
+        {
+            let (revision, _, outcome) = ahead.ready.take().expect("checked above");
+            drop(ahead);
+            *self.started_on.borrow_mut() = Some(revision);
+            self.finish(Ok(outcome));
+            return true;
+        }
+        let matches = ahead.running.as_ref().is_some_and(|(_, revision, k)| {
+            *k == key && !self.document.slice_geometry_changed(*revision)
+        });
+        if !matches {
+            return false;
+        }
+        let (job, revision, _) = ahead.running.take().expect("checked above");
+        drop(ahead);
+        ui.set_support_gen_in_progress(true);
+        ui.set_support_gen_cancelable(true);
+        ui.set_support_gen_progress(0.0);
+        ui.set_support_gen_phase(slint::SharedString::default());
+        *self.handle.borrow_mut() = Some(job);
+        *self.started_on.borrow_mut() = Some(revision);
+        self.start_poll();
+        true
     }
 
     /// The request for the printer and resin in force: the layer height the
@@ -697,49 +884,63 @@ impl DfSupportRun {
     }
 
     /// The cursor moved over the model (`Some`) or off it with a hand tool
-    /// armed: the preview follows once the cursor rests.
+    /// armed: the newest point goes to the preview worker; the UI never
+    /// waits for it.
     fn on_tool_hover(self: &Rc<Self>, point: Option<[f32; 3]>) {
-        self.hover.set(point);
-        if point.is_none() {
-            self.hover_timer.stop();
+        let generation = self.hover_generation.get() + 1;
+        self.hover_generation.set(generation);
+        let ask = point.and_then(|point| {
+            let ui = self.ui.upgrade()?;
+            let tool = ui.get_support_tool();
+            if tool == 0 || self.handle.borrow().is_some() {
+                return None;
+            }
+            let current = self.current_session()?;
+            let sessions = self.sessions.borrow();
+            let (base, drawn_on) = &sessions[current];
+            Some(HoverAsk {
+                generation,
+                base: base.clone(),
+                from: (current, *drawn_on),
+                point,
+                tool,
+            })
+        });
+        let Some(ask) = ask else {
+            self.hover_poll.stop();
             self.ctrl.set_preview_overlay(None);
+            return;
+        };
+        if self.hover_worker.asks.send(ask).is_err() {
             return;
         }
         let weak = Rc::downgrade(self);
-        self.hover_timer
-            .start(slint::TimerMode::SingleShot, HOVER_SETTLE, move || {
+        self.hover_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
                 if let Some(run) = weak.upgrade() {
-                    run.draw_hover_preview();
+                    run.take_hover_answer();
                 }
             });
     }
 
-    /// Draws what a click where the cursor rests would do: the support it
-    /// adds (green, or red where nothing can hold that point) or what it
-    /// removes (red). Nothing when there is no editable session.
-    fn draw_hover_preview(&self) {
-        let (Some(ui), Some(point)) = (self.ui.upgrade(), self.hover.get()) else {
-            return;
-        };
-        let tool = ui.get_support_tool();
-        if tool == 0 || self.handle.borrow().is_some() {
-            return;
-        }
-        let Some(current) = self.current_session() else {
-            self.ctrl.set_preview_overlay(None);
-            return;
-        };
-        let p = point.map(f64::from);
-        let preview = {
-            let sessions = self.sessions.borrow();
-            let session = &sessions[current].0;
-            if tool == 1 {
-                session.preview_add_at(p)
-            } else {
-                session.preview_remove_at(p)
+    /// Draws the worker's answer for the newest hover, once it is there: the
+    /// support a click adds (green, or red where nothing can hold that point)
+    /// or what it removes (red).
+    fn take_hover_answer(&self) {
+        let answer = {
+            let Ok(mut slot) = self.hover_worker.answer.lock() else {
+                return;
+            };
+            match slot.as_ref() {
+                Some(a) if a.generation == self.hover_generation.get() => slot.take(),
+                _ => return,
             }
         };
-        let piece = preview.ok().map(|preview| {
+        self.hover_poll.stop();
+        let Some(answer) = answer else {
+            return;
+        };
+        let piece = answer.preview.as_ref().map(|preview| {
             let tint = if preview.valid {
                 OverlayTint::Valid
             } else {
@@ -748,7 +949,8 @@ impl DfSupportRun {
             overlay_of(&preview.mesh, tint)
         });
         self.ctrl
-            .set_preview_overlay(piece.map(|piece| Arc::from(vec![piece])));
+            .set_preview_overlay(piece.map(|piece| Arc::from(vec![Arc::new(piece)])));
+        *self.last_preview.borrow_mut() = Some(answer);
     }
 
     fn on_tool_click(&self, point: [f32; 3]) {
@@ -766,8 +968,9 @@ impl DfSupportRun {
                 details: Default::default(),
             });
         };
-        let mut sessions = self.sessions.borrow_mut();
-        if sessions.is_empty() {
+        // No borrow of the sessions is held across the edit: the scene events
+        // it fires, and the hover preview, read them.
+        if self.sessions.borrow().is_empty() {
             notice(
                 ctr!("DfSupportDialog", "No supports to edit"),
                 ctr!(
@@ -790,27 +993,45 @@ impl DfSupportRun {
             return;
         };
         let p = point.map(f64::from);
-        let mut edited = sessions[current].0.clone();
-        let result = if tool == 1 {
-            edited.add_trunk_at(p)
-        } else {
-            edited.remove_near(p).map(|_| ())
-        };
-        if let Err(err) = result {
-            ui.set_supports_last_run(err.to_string().into());
-            return;
-        }
-        let mesh = match edited.mesh() {
-            Ok(Some(mesh)) => mesh,
-            Ok(None) => {
+        // The preview of this very point already placed it: take that.
+        let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
+            let drawn_on = self.sessions.borrow()[current].1;
+            (answer.tool == tool && answer.point == point && answer.from == (current, drawn_on))
+                .then_some(answer.edited)
+                .flatten()
+        });
+        let reused = previewed.is_some();
+        let mut edited = previewed.unwrap_or_else(|| self.sessions.borrow()[current].0.clone());
+        // The port is DragonFruit's code on hand-picked input: a panic in it
+        // is an edit that failed, not a reason to lose the person's work.
+        let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if !reused {
+                if tool == 1 {
+                    edited.add_trunk_at(p)?;
+                } else {
+                    edited.remove_near(p)?;
+                }
+            }
+            edited.mesh()
+        }));
+        let mesh = match done {
+            Err(_) => {
+                ui.set_supports_last_run(ctr!(
+                    "DfSupportDialog",
+                    "That edit failed inside the support engine; nothing was changed."
+                ));
+                return;
+            }
+            Ok(Err(err)) => {
+                ui.set_supports_last_run(err.to_string().into());
+                return;
+            }
+            Ok(Ok(Some(mesh))) => mesh,
+            Ok(Ok(None)) => {
                 ui.set_supports_last_run(ctr!(
                     "DfSupportDialog",
                     "That was the last support; use Undo to bring it back."
                 ));
-                return;
-            }
-            Err(err) => {
-                ui.set_supports_last_run(err.to_string().into());
                 return;
             }
         };
@@ -830,6 +1051,7 @@ impl DfSupportRun {
             Ok(_) => {
                 self.document.push_edit(swap);
                 let roots = edited.state().collections.roots.len();
+                let mut sessions = self.sessions.borrow_mut();
                 sessions.truncate(current + 1);
                 sessions.push((edited, self.document.scene_revision()));
                 ui.set_supports_last_run(
@@ -1018,4 +1240,112 @@ fn details_message(outcome: &DfSupportOutcome) -> String {
         ));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod hand_edit_tests {
+    use std::path::PathBuf;
+
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_scene::Scene;
+    use sc_scene::node::LeafPayload;
+
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    /// The click path end to end, through the window callbacks' handler: a
+    /// generated support set, then an Add click and a Remove click under
+    /// the model. A click used to panic (a sessions borrow held across the
+    /// lookup) and close the app.
+    /// With the scene still, the supports are generated ahead; Generate then
+    /// pastes them without running again.
+    #[test]
+    fn supports_generated_ahead_are_pasted_on_generate() {
+        let pasted = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run = DfSupportRun::install(&window, bus, document, ctrl.dialogs(), ctrl.clone());
+            run.last_change.set(Instant::now() - SPECULATE_SETTLE);
+            let waited = Instant::now();
+            while run.ahead.borrow().ready.is_none() && waited.elapsed() < Duration::from_secs(20) {
+                run.generate_ahead(&window, None);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(run.ahead.borrow().ready.is_some(), "generated ahead");
+            run.start();
+            assert!(run.handle.borrow().is_none(), "no second run");
+            run.support_leaf().is_some()
+        });
+        assert!(pasted);
+    }
+
+    #[test]
+    fn hand_clicks_edit_the_supports_without_a_panic() {
+        let (after_add, after_remove, edits) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let cube = sc_mesh_fixtures::unit_cube_mesh();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let before = document.scene_revision();
+
+            window.set_support_tool(1);
+            // The hover preview comes from the worker; the click on the same
+            // point then takes the placement it computed.
+            run.on_tool_hover(Some([20.2, 20.2, 7.5]));
+            let waited = Instant::now();
+            while run.last_preview.borrow().is_none() && waited.elapsed() < Duration::from_secs(10)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+                run.take_hover_answer();
+            }
+            assert!(
+                run.last_preview.borrow().as_ref().is_some_and(|a| a
+                    .preview
+                    .as_ref()
+                    .is_some_and(|p| p.valid)
+                    && a.edited.is_some()),
+                "a green preview with its placement"
+            );
+            run.on_tool_click([20.2, 20.2, 7.5]);
+            let after_add = window.get_supports_last_run().to_string();
+            window.set_support_tool(2);
+            run.on_tool_click([20.2, 20.2, 7.4]);
+            let after_remove = window.get_supports_last_run().to_string();
+            (after_add, after_remove, document.scene_revision() != before)
+        });
+        assert!(after_add.contains("edited by hand"), "{after_add}");
+        assert!(after_remove.contains("edited by hand"), "{after_remove}");
+        assert!(edits);
+    }
 }

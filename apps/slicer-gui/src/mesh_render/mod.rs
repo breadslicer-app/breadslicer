@@ -49,7 +49,7 @@ use gizmo_entries::{
     build_translate_entries,
 };
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
-pub(crate) use overlay::{OverlayMesh, OverlayTint};
+pub(crate) use overlay::{Overlay, OverlayMesh, OverlayTint};
 use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::label::LabelPipeline;

@@ -374,3 +374,87 @@ fn manual_edit_on_real_scenes() {
         );
     }
 }
+
+/// Stress on a real model, not a gate: hover, click and remove on the
+/// downward faces of `SC_STRESS_STL` (lifted 5 mm), catching panics and
+/// timing each step. `SC_STRESS_STL=... cargo test --release -- --ignored
+/// --nocapture hand_edits_on_a_real_model`.
+#[test]
+#[ignore = "needs SC_STRESS_STL"]
+fn hand_edits_on_a_real_model() {
+    let Ok(path) = std::env::var("SC_STRESS_STL") else {
+        return;
+    };
+    let bytes = std::fs::read(&path).unwrap();
+    let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+    let leaf = loaded
+        .roots()
+        .iter()
+        .copied()
+        .find(|id| loaded.leaf_mesh_arc(*id).is_some())
+        .expect("an STL loads as one leaf root");
+    let mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let shift = [
+        60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+        40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+        5.0 - f64::from(lo[2]),
+    ];
+    let points: Vec<[f64; 3]> = mesh
+        .faces()
+        .iter()
+        .filter_map(|f| {
+            let [a, b, c] = f.vertices.map(|v| {
+                mesh.vertices()[u32::from(v) as usize]
+                    .as_array()
+                    .map(f64::from)
+            });
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0],
+            ];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            (len > 1e-12 && n[2] / len < -0.5)
+                .then(|| std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k]))
+        })
+        .collect();
+    println!("{} faces, {} downward", mesh.faces().len(), points.len());
+    let scene = scene_with(vec![(mesh, shift)]);
+    let t = std::time::Instant::now();
+    let mut session = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap()
+        .session;
+    println!("generate {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    let step = (points.len() / 30).max(1);
+    for p in points.iter().step_by(step).take(30) {
+        let t = std::time::Instant::now();
+        let preview =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.preview_add_at(*p)));
+        let preview_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let t = std::time::Instant::now();
+        let mut copy = session.clone();
+        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            copy.add_trunk_at(*p).and_then(|()| copy.mesh())
+        }));
+        let add_ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!(
+            "{p:?}: preview {preview_ms:.0} ms {:?}; click {add_ms:.0} ms {:?}",
+            preview.as_ref().map(|r| r.as_ref().map(|v| v.valid)),
+            added.as_ref().map(|r| r.as_ref().map(|m| m.is_some())),
+        );
+        if let Ok(Ok(Some(_))) = added {
+            session = copy;
+        }
+    }
+}
