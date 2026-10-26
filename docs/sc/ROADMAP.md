@@ -1209,6 +1209,13 @@ Pedido de Damian (2026-10-26):
 
 Va junto con los campos numéricos de SC-26.
 
+**Primera entrega (2026-10-26):**
+- **Chip arriba del viewport,** en cualquier gesto (gizmo o G/R/S modal), con lo que lleva hecho: al mover, el delta por eje o el total en mm; al rotar, los grados (con signo si hay eje fijado); al escalar, el %.
+- **Línea del eje** en G/R/S con eje fijado, del color del eje y a través del objeto, dibujada como `Path` de Slint con el pivote en pantalla y los ejes de cámara del gesto.
+- **Cálculo** una vez por frame junto con la lectura numérica (`gesture_delta_text`, con test).
+
+Falta la línea del eje en los arrastres del gizmo (el gizmo ya muestra su eje) y la prueba de Damian.
+
 **Cierre:** las tres ayudas visibles en gestos de gizmo y modales, legibles sobre cualquier fondo, probadas por Damian.
 
 **Depende de:** SC-84, SC-26. Prioridad: high. Estado snapshot: backlog.
