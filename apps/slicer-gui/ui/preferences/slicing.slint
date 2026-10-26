@@ -17,7 +17,7 @@ export component SlicingPreferences inherits PreferencesPage {
 
     // Whether the DragonFruit support scans run in the background while the
     // scene sits still (`df_support_run.rs`).
-    in-out property <bool> prescan-supports: true;
+    in-out property <bool> prescan-supports: false;
     callback prescan-supports-changed(bool);
 
     property <[string]> aa-options: [
