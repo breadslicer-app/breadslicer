@@ -53,10 +53,21 @@ fn a_typed_lift_raises_the_bottom_and_undo_puts_it_back() {
 
 #[test]
 fn typed_edits_do_nothing_outside_transform() {
-    let ctrl = cube_in(WorkspaceSection::Supports);
+    let ctrl = cube_in(WorkspaceSection::Hollow);
     let (start, _) = bottom_and_size(&ctrl);
     ctrl.on_numeric_edit(2, 5.0);
     assert_eq!(bottom_and_size(&ctrl).0, start);
+}
+
+#[test]
+fn supports_takes_the_lift_but_not_a_rotation() {
+    let ctrl = cube_in(WorkspaceSection::Supports);
+    ctrl.on_numeric_edit(3, 45.0);
+    let (_, size) = bottom_and_size(&ctrl);
+    assert!((size[1] - 1.0).abs() < 1e-6, "no rotation in Supports");
+    ctrl.on_numeric_edit(2, 5.0);
+    let (bottom, _) = bottom_and_size(&ctrl);
+    assert!((bottom - 5.0).abs() < 1e-4, "the lift is a Supports setting");
 }
 
 #[test]

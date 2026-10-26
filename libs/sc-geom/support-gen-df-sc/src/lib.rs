@@ -20,8 +20,8 @@ use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftPa
 use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
 use support_gen_df::perf::PerfFrame;
 use support_gen_df::pipeline::{
-    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage,
-    generate_supports_with, prescan_models,
+    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports_with,
+    prescan_models,
 };
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_gen_df::supports::support_type_registry::get_support_type_descriptor;
@@ -29,6 +29,9 @@ use support_gen_df::supports::types::SupportState;
 use support_gen_df::three::Vec3;
 use support_gen_df::three::buffer_geometry::BufferGeometry;
 
+mod options;
+
+pub use options::{DfSupportOptions, RaftMode};
 pub use support_gen_df::pipeline::ScanCache;
 
 /// The name the generated support mesh carries.
@@ -48,6 +51,9 @@ pub struct DfSupportRequest {
     /// (moved since, other settings) are scanned by the run as usual; the
     /// result is the same either way.
     pub prescanned: Option<Arc<ScanCache>>,
+    /// The settings a person picked (a preset); ignored when `settings` is
+    /// given.
+    pub options: DfSupportOptions,
     /// Everything else DragonFruit reads from its panels and stores.
     pub settings: Option<PipelineSettings>,
 }
@@ -58,6 +64,7 @@ impl Default for DfSupportRequest {
             layer_height_mm: 0.05,
             pixel_pitch_mm: None,
             prescanned: None,
+            options: DfSupportOptions::default(),
             settings: None,
         }
     }
@@ -270,21 +277,24 @@ pub fn start_df_supports(
     ))
 }
 
-/// The pipeline settings a request runs with.
+/// The pipeline settings a request runs with: its explicit `settings`, or
+/// SoulCrafted's defaults with the person's `options` applied.
 fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
-    request
-        .settings
-        .clone()
-        .unwrap_or_else(|| PipelineSettings {
-            // SoulCrafted draws smooth tubes with bicones by default.
-            shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
-            // Walls that slice cleanly on trimmed footprints.
-            robust_raft_geometry: true,
-            tip_penetration_mm: request.pixel_pitch_mm.map_or(0.0, |[x, y]| {
-                default_tip_offset_mm(request.layer_height_mm, x, y)
-            }),
-            ..PipelineSettings::defaults(request.layer_height_mm)
-        })
+    if let Some(settings) = &request.settings {
+        return settings.clone();
+    }
+    let mut settings = PipelineSettings {
+        // SoulCrafted draws smooth tubes with bicones by default.
+        shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
+        // Walls that slice cleanly on trimmed footprints.
+        robust_raft_geometry: true,
+        tip_penetration_mm: request.pixel_pitch_mm.map_or(0.0, |[x, y]| {
+            default_tip_offset_mm(request.layer_height_mm, x, y)
+        }),
+        ..PipelineSettings::defaults(request.layer_height_mm)
+    };
+    request.options.apply(&mut settings);
+    settings
 }
 
 /// What a prescan hands back.
