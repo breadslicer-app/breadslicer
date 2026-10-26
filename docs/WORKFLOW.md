@@ -1,34 +1,34 @@
-# Cómo trabajamos: ideas, issues y microPRs
+# How we work: ideas, issues and micro-PRs
 
-Desde el 2026-10-26 el tracker operativo son los **issues de [breadslicer-app/breadslicer](https://github.com/breadslicer-app/breadslicer/issues)**:
-- [`ROADMAP.md`](ROADMAP.md) tiene las decisiones de rumbo vigentes;
-- los issues se nombran `BS-<número>: título`.
+Since 2026-10-26 the working tracker is the **issues of [breadslicer-app/breadslicer](https://github.com/breadslicer-app/breadslicer/issues)**:
+- [`ROADMAP.md`](ROADMAP.md) holds the current direction decisions;
+- issues are named `BS-<number>: title`.
 
-## Ideas nuevas
+## New ideas
 
-1. Damian deja las ideas en una lista, tal como le salen: en un issue con la etiqueta `idea` o en un archivo.
-2. La lista se ordena:
-   - los duplicados se unen con issues existentes;
-   - las ideas grandes se separan en partes chicas;
-   - cada una lleva su "qué" y su "cuándo está terminado".
-3. Cada una se sube como issue con su área (`area: …`) y estado (`state: backlog`), y se enlazan sus dependencias ("Depende de #n").
-4. Lo que es decisión de Damian (prioridad, diseño, comportamiento visible) se pregunta. No se inventa.
+1. Damian drops ideas into a list, just as they come: in an issue labelled `idea`, or in a file.
+2. The list gets sorted:
+   - duplicates are merged into existing issues;
+   - big ideas are split into small parts;
+   - each one gets its "what" and its "when is it done".
+3. Each one is filed as an issue with its area (`area: …`) and state (`state: backlog`), and its dependencies are linked ("Depends on #n").
+4. Anything that is Damian's call (priority, design, visible behavior) gets asked, never made up.
 
-## microPRs
+## Micro-PRs
 
-- **Tamaño:** un PR resuelve un issue o una parte chica de uno. Mejor diez PRs chicos que uno gigante.
-- **Rama:** `issue/<n>-<slug>` (por ejemplo `issue/3-soporte-sin-prisma`), desde `main`.
-- **Contenido del PR:** qué cambió y por qué; cómo se probó (tests que corrieron; qué falta probar a mano); y `Closes #n`, o `Part of #n` si es una parte.
-- **Merge:** lo hace Damian. Hasta que haya CI propio, el PR dice qué tests corrieron.
-- **Reglas del repo que se mantienen:**
-  - nada se imprime ni se publica sin autorización;
-  - cada build nuevo va en su propia carpeta;
-  - nunca se debilitan las protecciones de datos.
+- **Size:** a PR resolves one issue or one small part of one. Ten small PRs are better than one giant one.
+- **Branch:** `issue/<n>-<slug>` (for example `issue/3-support-without-prism`), from `main`.
+- **PR content:** what changed and why; how it was tested (which tests ran; what still needs testing by hand); and `Closes #n`, or `Part of #n` if it covers one part.
+- **Merge:** Damian does it. Until we have our own CI, the PR states which tests ran.
+- **Repository rules that still apply:**
+  - nothing is printed or published without authorization;
+  - every new build goes in its own folder;
+  - data protections are never weakened.
 
-## Etiquetas
+## Labels
 
-- **`area: …`:** soportes, hollow, slicing, editor, etc.
+- **`area: …`:** supports, hollow, slicing, editor, etc.
 - **`state: …`:** `in progress`, `todo`, `backlog`, `triage`, `paused`.
-- **`roadmap`:** parte del plan general.
-- **`idea`:** ideas sin ordenar todavía.
-- **`microPR`:** chico y listo para tomar.
+- **`roadmap`:** part of the overall plan.
+- **`idea`:** ideas not sorted yet.
+- **`microPR`:** small and ready to pick up.
