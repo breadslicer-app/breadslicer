@@ -30,8 +30,10 @@ use support_gen_df::three::Vec3;
 use support_gen_df::three::buffer_geometry::BufferGeometry;
 
 mod options;
+mod session;
 
 pub use options::{DfSupportOptions, RaftMode};
+pub use session::{DfSupportSession, EditError};
 pub use support_gen_df::pipeline::ScanCache;
 
 /// The name the generated support mesh carries.
@@ -85,6 +87,8 @@ pub struct DfSupportOutcome {
     pub triangles: usize,
     /// Where the run spent its time.
     pub timings: PerfFrame,
+    /// The run's supports, kept for editing by hand.
+    pub session: DfSupportSession,
 }
 
 /// One model per mesh leaf, baked to world space; previous DragonFruit
@@ -421,9 +425,16 @@ fn run_df_supports(
         }
     }
     let mesh = weld_parts(&out.support_soup, &out.support_parts, DF_SUPPORT_MESH_NAME);
+    let session = DfSupportSession::new(
+        models.to_vec(),
+        settings.clone(),
+        out.support.clone(),
+        id_prefix.clone(),
+    );
     Ok(DfSupportOutcome {
         triangles: mesh.as_ref().map_or(0, |m| m.faces().len()),
         mesh,
+        session,
         support: out.support,
         timings: out.timings,
         models: n,

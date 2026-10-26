@@ -186,6 +186,10 @@ export component MainWindow inherits Window {
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
     callback support-option-changed(int, float);
+    // The Supports tab manual tool: 0 none, 1 add a support where the model
+    // is clicked, 2 remove the support clicked.
+    in-out property <int> support-tool: 0;
+    callback support-tool-clicked(float, float, float);
     // The held slice's estimate (the printer file's own figures), or why
     // there is none.
     in property <bool> slice-estimate-valid: false;
@@ -886,6 +890,34 @@ export component MainWindow inherits Window {
                             root.df-support-requested();
                         }
                     }
+                    if root.workspace-section == WorkspaceSection.Supports: Rectangle {
+                        height: 9px;
+                        Rectangle {
+                            width: 28px;
+                            height: 1px;
+                            background: Theme.border;
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                        icon: Icons.add-support;
+                        label: @tr("Inspector" => "Add support (click the model)");
+                        shortcut: "A";
+                        active: root.support-tool == 1;
+                        enabled: root.has-scene && !root.support-gen-in-progress;
+                        clicked => {
+                            root.support-tool = root.support-tool == 1 ? 0 : 1;
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                        icon: Icons.remove-support;
+                        label: @tr("Inspector" => "Remove support (click it)");
+                        shortcut: "X";
+                        active: root.support-tool == 2;
+                        enabled: root.has-scene && !root.support-gen-in-progress;
+                        clicked => {
+                            root.support-tool = root.support-tool == 2 ? 0 : 2;
+                        }
+                    }
                     if root.workspace-section == WorkspaceSection.Slice: ToolButton {
                         icon: Icons.slice;
                         label: @tr("SlicePanel" => "Slice");
@@ -938,6 +970,25 @@ export component MainWindow inherits Window {
                     modal-transform-active: root.modal-transform-active;
                     modal-transform-status: root.modal-transform-status;
                     modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
+                    tab-tool-key(key) => {
+                        if root.workspace-section == WorkspaceSection.Supports && root.has-scene
+                            && !root.support-gen-in-progress {
+                            if key == "a" || key == "A" {
+                                root.support-tool = root.support-tool == 1 ? 0 : 1;
+                                return true;
+                            }
+                            if key == "x" || key == "X" {
+                                root.support-tool = root.support-tool == 2 ? 0 : 2;
+                                return true;
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Slice && root.slice-layer-count > 0
+                            && (key == "l" || key == "L") {
+                            root.slice-split = !root.slice-split;
+                            return true;
+                        }
+                        return false;
+                    }
                     modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
                     modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
                     gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
@@ -1263,6 +1314,8 @@ export component MainWindow inherits Window {
                     text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
                         : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
