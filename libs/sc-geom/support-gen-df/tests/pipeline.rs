@@ -13,7 +13,7 @@ use support_gen_df::native::mesh_minima::scan_islands;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, build_rafts,
-    generate_supports, support_soup, world_soup,
+    generate_supports, generate_supports_with, prescan_models, support_soup, world_soup,
 };
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -312,6 +312,103 @@ fn facade_matches_the_stages_called_one_by_one() {
         expected.push((Stage::BuildRafts, n));
         expected.push((Stage::Tessellate, n));
         assert_eq!(stages, expected, "scene {k}: progress");
+    }
+}
+
+/// Everything a run hands back that a reused scan could change.
+fn run_digest(out: &support_gen_df::pipeline::PipelineOutput) -> Value {
+    let models: Vec<Value> = out
+        .models
+        .iter()
+        .map(|m| {
+            json!({
+                "combined": format!("{:?}", m.combined_scan),
+                "overhang": format!("{:?}", m.overhang_scan),
+                "islands": format!("{:?}", m.islands),
+                "result": m.plan.as_ref().map(|p| serde_json::to_value(&p.result).unwrap()),
+            })
+        })
+        .collect();
+    json!({
+        "models": models,
+        "support": serde_json::to_value(&out.support).unwrap(),
+        "rafts": wire_rafts(&out.rafts),
+        "soup": out.support_soup,
+        "parts": out.support_parts,
+    })
+}
+
+#[test]
+fn a_prescan_gives_the_same_run_and_misses_a_moved_model() {
+    for (k, (models, settings)) in scenes().iter().enumerate() {
+        let run = |prescanned| {
+            let mut new_id = id_gen();
+            generate_supports_with(
+                models,
+                &SupportState::default(),
+                settings,
+                prescanned,
+                &mut new_id,
+                &mut |_| {},
+                &CancelToken::new(),
+            )
+            .unwrap()
+        };
+        let plain = run(None);
+        let cache = prescan_models(models, settings, None, &CancelToken::new()).unwrap();
+        assert_eq!(cache.len(), models.len(), "scene {k}: one entry per model");
+        let reused = run(Some(&cache));
+        assert_eq!(
+            run_digest(&reused),
+            run_digest(&plain),
+            "scene {k}: same run"
+        );
+        assert!(
+            reused
+                .timings
+                .entries
+                .iter()
+                .any(|e| e.label == "scan:prescanned"),
+            "scene {k}: the scans were reused"
+        );
+
+        // Moved models: the cache keys on the world geometry, so nothing in
+        // it applies and the run scans afresh, as if there were no cache.
+        let moved: Vec<ModelInput> = models
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                m.transform.position.x += 3.0;
+                m
+            })
+            .collect();
+        let run_moved = |prescanned| {
+            let mut new_id = id_gen();
+            generate_supports_with(
+                &moved,
+                &SupportState::default(),
+                settings,
+                prescanned,
+                &mut new_id,
+                &mut |_| {},
+                &CancelToken::new(),
+            )
+            .unwrap()
+        };
+        let stale = run_moved(Some(&cache));
+        assert!(
+            !stale
+                .timings
+                .entries
+                .iter()
+                .any(|e| e.label == "scan:prescanned"),
+            "scene {k}: a moved model is not served from the cache"
+        );
+        assert_eq!(
+            run_digest(&stale),
+            run_digest(&run_moved(None)),
+            "scene {k}: moved"
+        );
     }
 }
 

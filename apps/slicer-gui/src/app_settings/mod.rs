@@ -354,6 +354,15 @@ fn is_default_aa_level(level: &AaLevel) -> bool {
     *level == AaLevel::Off
 }
 
+/// Supports are prepared in the background by default.
+fn default_prescan_supports() -> bool {
+    true
+}
+
+fn is_default_prescan_supports(on: &bool) -> bool {
+    *on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -392,6 +401,14 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_aa_level"
     )]
     aa_level: AaLevel,
+    /// Whether the support scans run in the background while the scene sits
+    /// still, so Generate Supports starts from them. Omitted in TOML while on
+    /// (the default).
+    #[serde(
+        default = "default_prescan_supports",
+        skip_serializing_if = "is_default_prescan_supports"
+    )]
+    prescan_supports: bool,
     /// Floating object-list panel state. Omitted in TOML while every field
     /// holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -422,6 +439,7 @@ impl Default for AppSettings {
             favourite_resins: BTreeSet::new(),
             output_format_by_printer: BTreeMap::new(),
             aa_level: default_aa_level(),
+            prescan_supports: default_prescan_supports(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
@@ -523,6 +541,14 @@ impl AppSettings {
 
     pub(crate) fn set_aa_level(&mut self, level: AaLevel) {
         self.aa_level = level;
+    }
+
+    pub(crate) fn prescan_supports(&self) -> bool {
+        self.prescan_supports
+    }
+
+    pub(crate) fn set_prescan_supports(&mut self, on: bool) {
+        self.prescan_supports = on;
     }
 
     pub(crate) fn object_list_visible(&self) -> bool {

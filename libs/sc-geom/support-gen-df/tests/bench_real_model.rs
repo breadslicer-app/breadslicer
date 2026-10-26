@@ -6,12 +6,15 @@
 //!   cargo test --release --test bench_real_model -- --ignored --nocapture
 //! ```
 //!
-//! `SC_BENCH_HEIGHT` scales the model to that height (an STL in other
+//! `SC_BENCH_PRESCAN=1` runs `prescan_models` first (timed) and every run
+//! reuses it. `SC_BENCH_HEIGHT` scales the model to that height (an STL in other
 //! units). Binary STL only. Prints each run's report and a digest of the support
 //! state, so an optimisation can show it left the result unchanged.
 
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_gen_df::pipeline::{CancelToken, ModelInput, PipelineSettings, generate_supports};
+use support_gen_df::pipeline::{
+    CancelToken, ModelInput, PipelineSettings, generate_supports_with, prescan_models,
+};
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_gen_df::supports::types::SupportState;
 use support_gen_df::three::Vec3;
@@ -98,16 +101,31 @@ fn real_model_timings() {
         max[1] - min[1],
         max[2] - min[2]
     );
+    let prescanned = std::env::var("SC_BENCH_PRESCAN")
+        .is_ok_and(|v| v == "1")
+        .then(|| {
+            let t = std::time::Instant::now();
+            let cache = prescan_models(
+                std::slice::from_ref(&model),
+                &settings,
+                None,
+                &CancelToken::new(),
+            )
+            .unwrap();
+            eprintln!("prescan: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+            cache
+        });
     for run in 0..runs {
         let mut n = 0u64;
         let mut id = || {
             n += 1;
             format!("i{n}")
         };
-        let out = generate_supports(
+        let out = generate_supports_with(
             std::slice::from_ref(&model),
             &SupportState::default(),
             &settings,
+            prescanned.as_ref(),
             &mut id,
             &mut |_| {},
             &CancelToken::new(),

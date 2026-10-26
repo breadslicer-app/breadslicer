@@ -50,6 +50,8 @@ pub(crate) struct PreferencesSnapshot {
     pub output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// App-wide anti-aliasing level applied when rasterizing slices.
     pub aa_level: AaLevel,
+    /// Whether the support scans run in the background (`DfSupportRun`).
+    pub prescan_supports: bool,
     /// Whether the floating object-list panel is shown. Persisted so a window
     /// restores the last state on the next launch. Per-window live state: a
     /// change in a window is written to disk and left out of the other open
@@ -129,6 +131,7 @@ impl PreferencesSnapshot {
             favourite_resins: BTreeSet::new(),
             output_format_by_printer: BTreeMap::new(),
             aa_level: AaLevel::Off,
+            prescan_supports: true,
             object_list_visible: true,
             object_list_anchor_right: true,
             object_list_anchor_bottom: false,
@@ -167,6 +170,7 @@ pub(crate) enum PreferencesChange {
     Favourites,
     OutputFormat,
     AaLevel,
+    PrescanSupports,
     ObjectListPanel,
     SliceControlPanel,
     SliceViewPanel,

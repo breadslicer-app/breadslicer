@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { ComboBox } from "std-widgets.slint";
+import { CheckBox, ComboBox } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export component SlicingPreferences inherits PreferencesPage {
@@ -15,6 +15,11 @@ export component SlicingPreferences inherits PreferencesPage {
     in-out property <int> current-aa-index: 0;
     callback aa-level-changed(int);
 
+    // Whether the DragonFruit support scans run in the background while the
+    // scene sits still (`df_support_run.rs`).
+    in-out property <bool> prescan-supports: true;
+    callback prescan-supports-changed(bool);
+
     property <[string]> aa-options: [
         @tr("SlicingPreferences" => "Off"),
         @tr("SlicingPreferences" => "2x"),
@@ -22,26 +27,40 @@ export component SlicingPreferences inherits PreferencesPage {
         @tr("SlicingPreferences" => "8x"),
     ];
 
-    HorizontalLayout {
+    VerticalLayout {
         spacing: 12px;
         alignment: start;
 
-        Text {
-            text: @tr("SlicingPreferences" => "Anti-aliasing");
-            vertical-alignment: center;
-            // Slint has no labelled-by relation; mirror the caption onto
-            // the ComboBox via accessible-label and hide this text from
-            // the a11y tree to avoid a disconnected duplicate.
-            accessible-role: none;
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: @tr("SlicingPreferences" => "Anti-aliasing");
+                vertical-alignment: center;
+                // Slint has no labelled-by relation; mirror the caption onto
+                // the ComboBox via accessible-label and hide this text from
+                // the a11y tree to avoid a disconnected duplicate.
+                accessible-role: none;
+            }
+
+            ComboBox {
+                model: root.aa-options;
+                current-index: root.current-aa-index;
+                accessible-label: @tr("SlicingPreferences" => "Anti-aliasing");
+                selected(_value) => {
+                    root.current-aa-index = self.current-index;
+                    root.aa-level-changed(self.current-index);
+                }
+            }
         }
 
-        ComboBox {
-            model: root.aa-options;
-            current-index: root.current-aa-index;
-            accessible-label: @tr("SlicingPreferences" => "Anti-aliasing");
-            selected(_value) => {
-                root.current-aa-index = self.current-index;
-                root.aa-level-changed(self.current-index);
+        CheckBox {
+            text: @tr("SlicingPreferences" => "Prepare supports in the background");
+            checked: root.prescan-supports;
+            toggled => {
+                root.prescan-supports = self.checked;
+                root.prescan-supports-changed(self.checked);
             }
         }
     }

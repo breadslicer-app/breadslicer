@@ -249,6 +249,16 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_prescan_supports_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.prescan_supports = on;
+                PreferencesChange::PrescanSupports
+            });
+        }
+    });
+
     prefs.on_manufacturer_tab_changed({
         let prefs_weak = prefs_weak.clone();
         let all_cards = all_cards.clone();

@@ -1048,6 +1048,12 @@ Las tres necesitan probar que el digest no cambia.
 
 Lo que queda es estructural: el recorrido en sí (~2,7 µs por consulta) o hacer menos consultas, con las opciones 2 y 3 de arriba.
 
+**Pre-escaneo (2026-10-26):** los escaneos y el BVH salen del tiempo de espera; ver SC-83, primera etapa. Además, los escaneos internos usan `rayon::join` en vez de hilos propios, así que corren en el pool de quien llama, con el mismo resultado.
+
+Hallazgos de paso, ajenos a esta línea:
+- `viewport_click_tests::pointer_down_on_handle_does_not_drag_outside_transform` ya fallaba antes de estos cambios;
+- clippy 1.97 marca 6 avisos en `camera.rs`, `export_print_file.rs` y `viewport/controller.rs`.
+
 **Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-83
@@ -1064,6 +1070,14 @@ Idea de Damian (2026-10-25): una pestaña Supports propia (sin herramientas de t
 - **Salir a Transform cancela el cálculo.** Los soportes **no se borran**: si la pose cambió quedan marcados como desactualizados. Los automáticos se regeneran solos al volver y las ediciones manuales piden confirmación, siempre con undo (protección de datos del usuario).
 - **Prioridad baja** del trabajo en segundo plano, con opción para apagarlo.
 - **Primera medición** (ballena, 2026-10-25, timings de `perf.rs`): ~2,5 s en total, de los cuales la colocación del plan son ~2,1 s. Qué cachear primero lo deciden esos números (SC-82).
+
+**Primera etapa (2026-10-26, sin pestaña nueva): pre-escaneo en segundo plano.**
+- **Core:** `prescan_models` corre lo que depende solo de la geometría (escaneo de islas, de voladizos y BVH) y lo guarda en un `ScanCache`. La clave es el hash de la geometría ya ubicada en mundo más los ajustes de escaneo, así que una pose o un ajuste distintos no coinciden y la corrida escanea como siempre. `generate_supports_with` la reusa; el test confirma que la corrida es idéntica con y sin caché, y que un modelo movido no la usa.
+- **Adaptador:** `start_df_prescan` hornea y escanea en un pool de la mitad de los núcleos, y reusa los modelos de un pre-escaneo anterior que todavía coinciden. `start_df_supports` también hornea en el worker, así que el botón ya no traba la UI.
+- **GUI:** un evento de escena solo guarda la hora del último cambio; es lo único que agrega al camino del transform. Un poll cada 150 ms arranca el pre-escaneo cuando la escena lleva 500 ms quieta, lo cancela si la escena cambia y le pasa el resultado a Generate Supports. Se apaga en Preferencias → Slicing.
+- **Medición (617 a 90 mm):** el pre-escaneo tarda 5,1 s en segundo plano; Generate Supports pasa de ~20–22 s a 15,2 s, con el mismo digest.
+
+Falta que Damian pruebe que los gestos siguen fluidos mientras escanea un modelo grande.
 
 **Cierre:** Damian entra a Supports, aprieta Autosupport sin espera perceptible en sus modelos habituales; cambiar un ajuste no reescanea; ir a Transform y volver sin mover nada no recalcula; mover el modelo marca los soportes y los regenera o pregunta según sean automáticos o editados.
 

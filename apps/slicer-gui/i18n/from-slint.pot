@@ -1106,3 +1106,8 @@ msgstr ""
 msgctxt "MeshViewer"
 msgid "Enter / click: confirm | Esc / right click: cancel"
 msgstr ""
+
+#: ui/preferences/slicing.slint:59
+msgctxt "SlicingPreferences"
+msgid "Prepare supports in the background"
+msgstr ""
