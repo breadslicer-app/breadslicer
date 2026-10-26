@@ -1880,10 +1880,15 @@ impl ViewportController {
         }
 
         if self.render.frame().upload_owed() {
+            crate::breadcrumbs::note("gpu: scene upload");
             let upload = self
                 .session
                 .document()
                 .with_scene(|spatial| renderer.upload_scene(spatial.graph()));
+            crate::breadcrumbs::note(&format!(
+                "gpu: scene upload ok={}",
+                matches!(upload, Some(Ok(())))
+            ));
             match upload {
                 Some(Ok(())) => {
                     self.render.update_frame(FrameState::after_upload_success);

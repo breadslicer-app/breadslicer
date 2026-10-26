@@ -431,8 +431,18 @@ fn run_df_supports(
         out.support.clone(),
         id_prefix.clone(),
     );
-    // Built here, off the UI thread, so the first hover preview is quick.
+    // Built here, off the UI thread, so the first hover preview is quick;
+    // the run's distance fields come along already filled.
     session.warm();
+    if let Ok(mut fields) = out.distance_fields.lock() {
+        session.adopt_sdfs(
+            fields
+                .drain(..)
+                .enumerate()
+                .filter_map(|(i, f)| f.map(|f| (i, f)))
+                .collect(),
+        );
+    }
     Ok(DfSupportOutcome {
         triangles: mesh.as_ref().map_or(0, |m| m.faces().len()),
         mesh,

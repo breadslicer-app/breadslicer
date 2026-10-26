@@ -117,7 +117,8 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 3u) {
         color = vec4<f32>(0.35, 0.60, 1.00, 0.40);
     } else if (in.tint == 4u) {
-        color = vec4<f32>(0.20, 0.90, 1.00, 0.75);
+        // The interface's amber: a drain reads apart from the blue cavity.
+        color = vec4<f32>(1.00, 0.62, 0.18, 0.85);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }

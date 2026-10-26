@@ -228,6 +228,10 @@ pub struct PipelineOutput {
     pub support_parts: Vec<usize>,
     /// Where the run spent its time (stages, plan phases, router, builders).
     pub timings: PerfFrame,
+    /// Per model (in input order), its distance field as the plan's routing
+    /// left it: filled where supports were routed, so later placements on
+    /// the same model (hand edits) start warm. Not part of the result.
+    pub distance_fields: Arc<std::sync::Mutex<Vec<Option<SdfCache>>>>,
 }
 
 /// `Box3.getCenter` of the geometry's bounding box.
@@ -563,6 +567,7 @@ fn run_pipeline(
 
     let mut current = state.clone();
     let mut outputs = Vec::with_capacity(n);
+    let mut distance_fields = Vec::with_capacity(n);
     for (i, model) in models.iter().enumerate() {
         let soup = &soups[i];
         check()?;
@@ -615,6 +620,7 @@ fn run_pipeline(
             &ctx,
         );
         drop(ctx);
+        distance_fields.push(Some(sdf.into_inner()));
         perf::measure("stage:plan");
         if let Some(plan) = &plan {
             current = plan.support.clone();
@@ -649,6 +655,7 @@ fn run_pipeline(
         support_soup: support.floats,
         support_parts: support.parts,
         timings: PerfFrame::default(),
+        distance_fields: Arc::new(std::sync::Mutex::new(distance_fields)),
     })
 }
 

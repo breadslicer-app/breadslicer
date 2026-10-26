@@ -283,6 +283,11 @@ Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edició
   - **Protección:** un panic del motor durante una edición o un preview se convierte en un mensaje, y cualquier panic queda en `logs/crash.log`.
   - **Preview de soportes en segundo plano:** un worker calcula siempre el último punto del hover y descarta los viejos, así la UI no espera. En 617 (1,9 M de triángulos) el preview tarda unos 20 ms, con picos del router de unos 800 ms, que ya no congelan.
   - **Clic sobre el punto del preview:** reusa la colocación ya calculada.
+- **Cuarta entrega (2026-10-26, prueba con Ballena, 1,4 M de caras y 607 raíces):**
+  - **Preview de Agregar:** bajó de ~265 ms a ~40 ms. La causa era un campo de distancias (SDF) nuevo y frío en cada preview. Ahora la sesión guarda el SDF de cada modelo, compartido entre copias e hilos, y arranca con el que dejó la generación (`PipelineOutput::distance_fields`).
+  - **Quitar:** bajó de 15–19 s a 0,1–0,4 s. El chequeo de huérfanos era cuadrático y ahora usa un índice inverso de nombres.
+  - **Hilos:** la GUI pasa la sesión al worker de hover como `Arc`, sin copiarla en cada movimiento, y el worker tiene 16 MB de pila.
+  - **El cierre con Ballena:** no se reproduce sin interfaz, ni con 1 MB de pila. La congelación de 15–19 s al quitar puede haber sido el "cierre". Ahora `logs/session.log` (`breadcrumbs.rs`) deja el rastro de cada paso crítico para la próxima vez.
 - **Pendiente:**
   - mover punta y braces a mano;
   - persistir las entidades al guardar (hoy solo sobrevive la malla);
@@ -380,6 +385,10 @@ Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado e
   - **Normal del drenaje:** sale del triángulo que toca el pick, sin búsqueda sobre la malla.
   - **Overlay por pieza:** el overlay sube cada pieza una sola vez, así que mover el cursor ya no vuelve a subir la cavidad.
   - **Cavidad más ágil:** un cálculo de cavidad en curso termina y se muestra, y el siguiente arranca enseguida. Al arrastrar la pared se actualiza a la velocidad del motor.
+- **Cuarta entrega (2026-10-26):**
+  - **Pared:** botón "Recommended" (1,5 mm + 1 % del lado más largo, entre 1,5 y 4 mm) y −1 / −0,1 / +0,1 / +1 mm.
+  - **Drenajes:** se ven en ámbar, el acento de la UI, para no confundirse con la cavidad azul.
+  - **Cavidad que desaparece al arrastrar el slider:** no se reproduce en la lógica (test `the_cavity_stays_shown_while_the_wall_changes`). Queda el rastro en `session.log` para la próxima prueba.
 - **Falta:**
   - áreas sólidas (SC-45);
   - persistir original y drenajes al guardar (SC-43): hoy sobrevive la malla hueca;
