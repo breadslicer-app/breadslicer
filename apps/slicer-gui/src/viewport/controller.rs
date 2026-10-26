@@ -321,7 +321,10 @@ impl ViewportController {
                 }
                 self.mark_dirty();
             }
-            SceneEvent::SliceChanged => self.mirror_slice_layer_count_to_ui(),
+            SceneEvent::SliceChanged => {
+                self.mirror_slice_layer_count_to_ui();
+                self.mirror_slice_estimate_to_ui();
+            }
             SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
             SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),
         }
@@ -353,6 +356,35 @@ impl ViewportController {
             let count = self.session.document().slice_layer_count().unwrap_or(0);
             ui.set_slice_layer_count(count as i32);
             ui.set_selected_layer_index(count.saturating_sub(1) as f32);
+        }
+    }
+
+    /// Pushes the held slice's print time, resin and weight to the Slice tab,
+    /// or why there is no estimate.
+    fn mirror_slice_estimate_to_ui(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let document = self.session.document();
+        if document.slice_layer_count().is_none() {
+            ui.set_slice_estimate_valid(false);
+            ui.set_slice_estimate_note(slint::SharedString::default());
+            return;
+        }
+        match crate::export_print_file::estimate_held_slice(document) {
+            Ok(e) => {
+                ui.set_slice_estimate_valid(true);
+                ui.set_slice_estimate_time(
+                    crate::export_print_file::format_duration(e.time_sec).into(),
+                );
+                ui.set_slice_estimate_volume(format!("{:.1} ml", e.volume_ml).into());
+                ui.set_slice_estimate_mass(format!("{:.1} g", e.mass_g).into());
+                ui.set_slice_estimate_note(slint::SharedString::default());
+            }
+            Err(reason) => {
+                ui.set_slice_estimate_valid(false);
+                ui.set_slice_estimate_note(reason.into());
+            }
         }
     }
 

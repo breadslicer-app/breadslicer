@@ -41,6 +41,12 @@ impl ExportJob {
         &self.config
     }
 
+    /// Return the machine program the file will carry: the per-layer
+    /// timings and the print time, volume and mass it reports.
+    pub fn program(&self) -> &PrintProgram {
+        &self.program
+    }
+
     /// Write the job to `output` as a printer file of `format`.
     pub fn write(
         &self,

@@ -252,7 +252,7 @@
         },
         {
           "path": "apps/slicer-gui/src/export_print_file.rs",
-          "sha256": "f724e31af64ca386d832bc2ed356a0b178e5a0c037028ec292571ae343899d45"
+          "sha256": "94ebe095a390932a453566639f3e1fd19b0c4e4ba2e31f364d1951a0aac17fbe"
         },
         {
           "path": "apps/slicer-gui/src/export_progress.rs",
@@ -672,7 +672,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "8e6ec484c4b8006f7752331fe5d09547990e275cea419a9f999e43933dc032ba"
+          "sha256": "15b32c472e549ccd1323e68ffdfc8a82e9144935f39ceb57474b296b05153fd2"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -736,7 +736,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/tests_controller_numeric.rs",
-          "sha256": "9f7b0ea438658014ce5e6a2b2d782d8e1550b1f76c951224cd956af947bb19af"
+          "sha256": "fb8de72beb398de98ab7728321c43cda21bb25b187541b3b0a33caeb910c073f"
         },
         {
           "path": "apps/slicer-gui/src/viewport/tests_controller_section_gating.rs",
@@ -1332,7 +1332,7 @@
       "sources": [
         {
           "path": "libs/print-glue/src/export.rs",
-          "sha256": "7e85e0516cf7c916cccf33026236ea051d0d126f37677563edad7f9270d343a7"
+          "sha256": "85a11c70b9a40c0b19c32f638b86796f67fc0fdc406f422a684b1b0642400036"
         },
         {
           "path": "libs/print-glue/src/fallback_report.rs",

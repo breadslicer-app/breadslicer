@@ -11,6 +11,7 @@ import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { Icon, ToolButton, WorkflowTab } from "./kit/controls.slint";
 import { ExportInspector, HollowInspector, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -185,6 +186,15 @@ export component MainWindow inherits Window {
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
     callback support-option-changed(int, float);
+    // The held slice's estimate (the printer file's own figures), or why
+    // there is none.
+    in property <bool> slice-estimate-valid: false;
+    in property <string> slice-estimate-time;
+    in property <string> slice-estimate-volume;
+    in property <string> slice-estimate-mass;
+    in property <string> slice-estimate-note;
+    // The Slice tab shows the layer image beside the 3D view (SC-88).
+    in-out property <bool> slice-split: false;
     callback support-preset-picked(int);
     callback support-preset-save(string);
     callback support-preset-delete();
@@ -886,6 +896,16 @@ export component MainWindow inherits Window {
                             root.slice-requested();
                         }
                     }
+                    if root.workspace-section == WorkspaceSection.Slice: ToolButton {
+                        icon: Icons.layers;
+                        label: @tr("LayerView" => "Layer view");
+                        shortcut: "L";
+                        active: root.slice-split;
+                        enabled: root.slice-layer-count > 0;
+                        clicked => {
+                            root.slice-split = !root.slice-split;
+                        }
+                    }
                     if root.workspace-section == WorkspaceSection.Export: ToolButton {
                         icon: Icons.file;
                         label: @tr("SlicePanel" => "Export for printer");
@@ -1002,6 +1022,16 @@ export component MainWindow inherits Window {
                         root.viewport-right-pointer-up(x, y);
                     }
                 }
+
+                    if root.has-scene && root.workspace-section == WorkspaceSection.Slice
+                        && root.slice-split && root.slice-layer-count > 0: LayerView {
+                        horizontal-stretch: 1;
+                        source: root.slice-view-image;
+                        caption: @tr("LayerView" => "Layer {} of {}", Math.round(root.selected-layer-index) + 1, root.slice-layer-count);
+                        close-requested => {
+                            root.slice-split = false;
+                        }
+                    }
                 }
 
                 if root.axis-guide-visible: Path {
@@ -1170,6 +1200,11 @@ export component MainWindow inherits Window {
                             layer-count: root.slice-layer-count;
                             selected-layer: root.selected-layer-index;
                             layer-image: root.slice-view-image;
+                            estimate-valid: root.slice-estimate-valid;
+                            estimate-time: root.slice-estimate-time;
+                            estimate-volume: root.slice-estimate-volume;
+                            estimate-mass: root.slice-estimate-mass;
+                            estimate-note: root.slice-estimate-note;
                             printer-picked(i) => {
                                 root.slice-printer-picked(i);
                             }

@@ -576,6 +576,11 @@ export component SliceInspector inherits VerticalLayout {
     in property <int> layer-count;
     in property <float> selected-layer;
     in property <image> layer-image;
+    in property <bool> estimate-valid;
+    in property <string> estimate-time;
+    in property <string> estimate-volume;
+    in property <string> estimate-mass;
+    in property <string> estimate-note;
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -659,6 +664,25 @@ export component SliceInspector inherits VerticalLayout {
                 value: Math.round(root.selected-layer) + 1;
                 caption: @tr("Inspector" => "current layer");
             }
+        }
+        if root.layer-count > 0 && root.estimate-valid: HorizontalLayout {
+            spacing: 8px;
+
+            StatTile {
+                value: root.estimate-time;
+                caption: @tr("Inspector" => "print time");
+            }
+            StatTile {
+                value: root.estimate-volume;
+                caption: @tr("Inspector" => "resin");
+            }
+            StatTile {
+                value: root.estimate-mass;
+                caption: @tr("Inspector" => "weight");
+            }
+        }
+        if root.layer-count > 0 && !root.estimate-valid && root.estimate-note != "": Note {
+            text: root.estimate-note;
         }
         if root.layer-count > 0: Rectangle {
             height: 180px;
