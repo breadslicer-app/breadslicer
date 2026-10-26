@@ -190,6 +190,28 @@ export component MainWindow inherits Window {
     // is clicked, 2 remove the support clicked.
     in-out property <int> support-tool: 0;
     callback support-tool-clicked(float, float, float);
+    // The Hollow tab (SC-18): the selected model's hollow job, its options
+    // (HollowRun::on_option) and the drain tool (a click drills a drain).
+    in property <bool> hollow-running: false;
+    in property <string> hollow-phase;
+    in property <float> hollow-progress;
+    in property <string> hollow-last-run;
+    in property <int> hollow-model-state: 0;
+    in property <int> hollow-drain-count: 0;
+    in-out property <bool> hollow-drain-tool: false;
+    in property <float> hollow-wall: 2;
+    in property <float> hollow-voxel: 0.65;
+    in property <int> hollow-fill-index: 0;
+    in property <float> hollow-cell: 6;
+    in property <float> hollow-beam: 0.8;
+    in property <bool> hollow-smooth: true;
+    in property <float> hollow-drain-radius: 1.5;
+    callback hollow-apply();
+    callback hollow-cancel();
+    callback hollow-restore();
+    callback hollow-clear-drains();
+    callback hollow-option-changed(int, float);
+    callback hollow-drain-clicked(float, float, float);
     // The held slice's estimate (the printer file's own figures), or why
     // there is none.
     in property <bool> slice-estimate-valid: false;
@@ -971,6 +993,11 @@ export component MainWindow inherits Window {
                     modal-transform-status: root.modal-transform-status;
                     modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
                     tab-tool-key(key) => {
+                        if root.workspace-section == WorkspaceSection.Hollow && root.hollow-model-state == 1
+                            && !root.hollow-running && (key == "d" || key == "D") {
+                            root.hollow-drain-tool = !root.hollow-drain-tool;
+                            return true;
+                        }
                         if root.workspace-section == WorkspaceSection.Supports && root.has-scene
                             && !root.support-gen-in-progress {
                             if key == "a" || key == "A" {
@@ -1191,7 +1218,43 @@ export component MainWindow inherits Window {
                                 root.numeric-edit(code, value);
                             }
                         }
-                        if root.workspace-section == WorkspaceSection.Hollow: HollowInspector { }
+                        if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
+                            selection-valid: root.selection-valid && !root.loading;
+                            running: root.hollow-running;
+                            phase: root.hollow-phase;
+                            progress: root.hollow-progress;
+                            last-run: root.hollow-last-run;
+                            model-state: root.hollow-model-state;
+                            drain-count: root.hollow-drain-count;
+                            drain-tool-on: root.hollow-drain-tool;
+                            wall: root.hollow-wall;
+                            voxel: root.hollow-voxel;
+                            fill-index: root.hollow-fill-index;
+                            cell: root.hollow-cell;
+                            beam: root.hollow-beam;
+                            smooth: root.hollow-smooth;
+                            drain-radius: root.hollow-drain-radius;
+                            apply-requested => {
+                                root.hollow-drain-tool = false;
+                                root.hollow-apply();
+                            }
+                            cancel-requested => {
+                                root.hollow-cancel();
+                            }
+                            restore-requested => {
+                                root.hollow-drain-tool = false;
+                                root.hollow-restore();
+                            }
+                            clear-drains-requested => {
+                                root.hollow-clear-drains();
+                            }
+                            drain-tool-toggled => {
+                                root.hollow-drain-tool = !root.hollow-drain-tool;
+                            }
+                            option-changed(code, value) => {
+                                root.hollow-option-changed(code, value);
+                            }
+                        }
                         if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
                             has-scene: root.has-scene && !root.loading;
                             running: root.support-gen-in-progress;
@@ -1314,6 +1377,7 @@ export component MainWindow inherits Window {
                     text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
                         : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")

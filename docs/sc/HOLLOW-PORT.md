@@ -171,6 +171,11 @@ volumen con signo negativo como vacío, es decir, sus anillos como agujeros de l
 contiene. Hasta entonces la GUI debería exigir un drenaje (o advertir) antes de rebanar un
 hollow.
 
+**Resuelto (2026-10-26):** `sl1cer` calcula el volumen con signo de cada shell (`FaceShells`).
+Los anillos de una shell vacía restan del polígono sólido más chico que los encierra
+(`subtract_voids` en `api.rs`). El test ignorado vuelve a correr. La GUI igual avisa si la
+cavidad queda sellada, porque es un problema de impresión: resina atrapada y efecto ventosa.
+
 ## Tests
 
 - `hollow-df`: 43 (20 portados de DF, 3 propios del motor, corte de drenajes,

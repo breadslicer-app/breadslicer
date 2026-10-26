@@ -234,7 +234,6 @@ fn bake_mesh_to_world_of(scene: &Scene, leaf: NodeId, mesh: &IndexedMesh) -> Ind
 }
 
 #[test]
-#[ignore = "sl1cer reads a separate inward shell as a second solid (per-shell grouping, SC-81); see docs/sc/HOLLOW-PORT.md"]
 fn an_undrained_hollow_slices_with_a_hole() {
     // The cavity is its own (inward) shell when no drain joins it to the
     // outside. The slicer groups contours per shell (SC-81), so this checks it

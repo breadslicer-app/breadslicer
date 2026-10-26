@@ -24,6 +24,7 @@ use crate::default_envelope::DefaultEnvelope;
 use crate::df_support_run::DfSupportRun;
 use crate::error_dialog::{ErrorTexts, InfoTexts};
 use crate::graphics_status::GraphicsUnavailable;
+use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::language::InstalledTranslations;
 use crate::mesh_loader::{
@@ -223,6 +224,7 @@ struct WindowDrivers {
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
     _df_support_run: Rc<DfSupportRun>,
+    _hollow_run: Rc<HollowRun>,
 }
 
 /// Owns the app-wide state:
@@ -627,7 +629,9 @@ impl AppState {
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let df_support_run =
             DfSupportRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
+        let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs());
         WindowDrivers {
+            _hollow_run: hollow_run,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _repair_run: repair_run,

@@ -287,20 +287,171 @@ export component TransformInspector inherits VerticalLayout {
 }
 
 export component HollowInspector inherits VerticalLayout {
+    in property <bool> selection-valid;
+    in property <bool> running;
+    in property <string> phase;
+    in property <float> progress;
+    in property <string> last-run;
+    // What the selected model is: 0 solid, 1 hollow, 2 the support mesh.
+    in property <int> model-state;
+    in property <int> drain-count;
+    in property <bool> drain-tool-on;
+    // The options (HollowRun::on_option), pushed by Rust after every change.
+    in property <float> wall;
+    in property <float> voxel;
+    in property <int> fill-index;
+    in property <float> cell;
+    in property <float> beam;
+    in property <bool> smooth;
+    in property <float> drain-radius;
+    callback apply-requested();
+    callback cancel-requested();
+    callback restore-requested();
+    callback clear-drains-requested();
+    callback drain-tool-toggled();
+    callback option-changed(int, float);
+
     spacing: 12px;
 
     Card {
         title: @tr("Inspector" => "HOLLOWING");
-        note: @tr("Inspector" => "Coming");
+        note: root.running ? @tr("Inspector" => "Working") : root.model-state == 1 ? @tr("Inspector" => "Hollow") : "";
+        note-color: Theme.accent;
 
-        Note {
-            text: @tr("Inspector" => "Cavity or infill, wall thickness and detail, solid areas and drain holes. The engine is being ported (SC-18); this tab is where it lands.");
+        if !root.selection-valid: Note {
+            text: @tr("Inspector" => "Select a model to hollow it.");
+        }
+        if root.selection-valid && root.model-state == 2: Note {
+            text: @tr("Inspector" => "That is the support mesh; select a model.");
+        }
+        ScButton {
+            text: root.model-state == 1 ? @tr("Inspector" => "Hollow again") : @tr("Inspector" => "Hollow model");
+            icon: Icons.hollow;
+            kind: ButtonKind.primary;
+            button-height: 38px;
+            enabled: root.selection-valid && root.model-state != 2 && !root.running;
+            clicked => {
+                root.apply-requested();
+            }
+        }
+        if root.running: VerticalLayout {
+            spacing: 6px;
+
+            Text {
+                text: root.phase == "" ? @tr("Inspector" => "Starting…") : root.phase;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+            }
+            ProgressIndicator {
+                progress: root.progress;
+            }
+            ScButton {
+                text: @tr("Inspector" => "Cancel");
+                clicked => {
+                    root.cancel-requested();
+                }
+            }
+        }
+        if !root.running && root.last-run != "": Note {
+            text: root.last-run;
+        }
+        if !root.running && root.model-state == 1: ScButton {
+            text: @tr("Inspector" => "Make solid again");
+            clicked => {
+                root.restore-requested();
+            }
         }
     }
+
     Card {
-        title: @tr("Inspector" => "SUPPORTS");
-        Note {
-            text: @tr("Inspector" => "Supports can be generated before or after hollowing; a hollow model may need supports inside the cavity too.");
+        title: @tr("Inspector" => "WALL");
+        collapsible: true;
+
+        NumberField {
+            label: @tr("Inspector" => "Wall thickness");
+            unit: "mm";
+            value: root.wall;
+            committed(v) => {
+                root.option-changed(0, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Detail (voxel)");
+            unit: "mm";
+            value: root.voxel;
+            committed(v) => {
+                root.option-changed(1, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Smooth the inner surface");
+            checked: root.smooth;
+            toggled => {
+                root.option-changed(2, self.checked ? 1 : 0);
+            }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Inside");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Empty"), @tr("Inspector" => "Lattice"), @tr("Inspector" => "Pillars")];
+                current: root.fill-index;
+                picked(i) => {
+                    root.option-changed(3, i);
+                }
+            }
+        }
+        if root.fill-index != 0: NumberField {
+            label: @tr("Inspector" => "Cell size");
+            unit: "mm";
+            value: root.cell;
+            committed(v) => {
+                root.option-changed(4, v);
+            }
+        }
+        if root.fill-index != 0: NumberField {
+            label: @tr("Inspector" => "Beam radius");
+            unit: "mm";
+            value: root.beam;
+            committed(v) => {
+                root.option-changed(5, v);
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "DRAINS");
+        note: root.drain-count > 0 ? "\{root.drain-count}" : "";
+
+        ScButton {
+            text: root.drain-tool-on ? @tr("Inspector" => "Placing drains (D)") : @tr("Inspector" => "Place drains (D)");
+            icon: Icons.hole;
+            kind: root.drain-tool-on ? ButtonKind.primary : ButtonKind.normal;
+            enabled: root.model-state == 1 && !root.running;
+            clicked => {
+                root.drain-tool-toggled();
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Drain radius");
+            unit: "mm";
+            value: root.drain-radius;
+            committed(v) => {
+                root.option-changed(6, v);
+            }
+        }
+        if root.drain-count > 0: ScButton {
+            text: @tr("Inspector" => "Remove all drains");
+            enabled: !root.running;
+            clicked => {
+                root.clear-drains-requested();
+            }
+        }
+        if root.model-state == 1 && root.drain-count == 0: Note {
+            text: @tr("Inspector" => "Sealed cavity: resin stays trapped inside and the walls act as a suction cup. Add at least one drain near the plate.");
+        }
+        if root.model-state != 1: Note {
+            text: @tr("Inspector" => "Hollow the model first; then click its surface to drill a drain. Each drain is one undo.");
         }
     }
 }
