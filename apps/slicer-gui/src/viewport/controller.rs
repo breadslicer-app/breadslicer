@@ -14,7 +14,7 @@
 //! hands them over in its `RenderingSetup` state, and coordinating the session
 //! and the render is the job of this module.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -85,6 +85,17 @@ pub(crate) struct ViewportController {
     /// then: during a gesture the position follows the translation from it
     /// instead of walking the mesh every tick.
     readout_base: Cell<Option<(Readout, [f64; 3])>>,
+    /// Preview pieces drawn over the scene (a support or drain before it is
+    /// placed, a hollow cavity), set by the tab drivers.
+    overlay: RefCell<Option<std::sync::Arc<[crate::mesh_render::OverlayMesh]>>>,
+}
+
+/// A tool of a workspace tab that acts where the model is clicked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabTool {
+    AddSupport,
+    RemoveSupport,
+    Drain,
 }
 
 impl ViewportController {
@@ -115,6 +126,7 @@ impl ViewportController {
             slice_view_key: Cell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
+            overlay: RefCell::new(None),
         }
     }
 
@@ -146,6 +158,7 @@ impl ViewportController {
             slice_view_key: Cell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
+            overlay: RefCell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -580,6 +593,33 @@ impl ViewportController {
 
     fn mark_dirty(&self) {
         self.render.mark_dirty();
+    }
+
+    /// Whether the overlay now shown is `pieces`.
+    pub(crate) fn preview_overlay_is(
+        &self,
+        pieces: &std::sync::Arc<[crate::mesh_render::OverlayMesh]>,
+    ) -> bool {
+        self.overlay
+            .borrow()
+            .as_ref()
+            .is_some_and(|shown| std::sync::Arc::ptr_eq(shown, pieces))
+    }
+
+    /// Shows `pieces` over the scene until replaced (`None` clears them).
+    pub(crate) fn set_preview_overlay(
+        &self,
+        pieces: Option<std::sync::Arc<[crate::mesh_render::OverlayMesh]>>,
+    ) {
+        let changed = match (&*self.overlay.borrow(), &pieces) {
+            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            *self.overlay.borrow_mut() = pieces;
+            self.mark_dirty();
+        }
     }
 
     /// Repaints after the slice height slider moved, so the mesh clip follows
@@ -1195,6 +1235,7 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
+        self.tab_tool_hover(cursor);
         if self.input.modal.get().is_some() {
             self.update_modal(cursor);
             return;
@@ -1226,6 +1267,56 @@ impl ViewportController {
         }
     }
 
+    /// The tab tool armed in the current section, if any.
+    fn tab_tool(&self, ui: &MainWindow) -> Option<TabTool> {
+        match self.session.section() {
+            WorkspaceSection::Hollow if ui.get_hollow_drain_tool() => Some(TabTool::Drain),
+            WorkspaceSection::Supports => match ui.get_support_tool() {
+                1 => Some(TabTool::AddSupport),
+                2 => Some(TabTool::RemoveSupport),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The world point under `cursor` a tab tool works on, and its leaf. The
+    /// add and drain tools look through the support mesh to the model; the
+    /// remove tool sees the support mesh alone, even behind the model.
+    fn tab_tool_hit(
+        &self,
+        tool: TabTool,
+        cursor: ScreenPoint,
+    ) -> Option<(sc_scene::NodeId, glam::Vec3)> {
+        let vp = self.render.viewport()?;
+        let ray = {
+            let camera_slot = self.camera.camera_cell().borrow();
+            picking::ray_from_pixel(
+                camera_slot.as_ref()?,
+                crate::mesh_render::default_fov_y(),
+                vp.width(),
+                vp.height(),
+                cursor.x,
+                cursor.y,
+            )
+        };
+        self.session
+            .document()
+            .with_scene(|spatial| {
+                let is_supports = |id: sc_scene::NodeId| {
+                    spatial.graph().leaf_mesh_arc(id).is_some_and(|m| {
+                        m.meta().as_ref().and_then(|m| m.name.as_deref())
+                            == Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME)
+                    })
+                };
+                let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
+                    is_supports(id) == (tool == TabTool::RemoveSupport)
+                })?;
+                Some((id, ray.origin + ray.direction * t))
+            })
+            .flatten()
+    }
+
     /// A click with a tab tool (the Supports tab's Add or Delete, the Hollow
     /// tab's drain): hands the world point under the cursor to its driver.
     /// The drain tool selects the model it hit first. Returns whether the
@@ -1234,38 +1325,13 @@ impl ViewportController {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
-        let section = self.session.section();
-        let drain = section == WorkspaceSection::Hollow && ui.get_hollow_drain_tool();
-        if !drain && (section != WorkspaceSection::Supports || ui.get_support_tool() == 0) {
+        let Some(tool) = self.tab_tool(&ui) else {
             return false;
-        }
-        let Some(vp) = self.render.viewport() else {
-            return true;
         };
-        let camera_slot = self.camera.camera_cell().borrow();
-        let Some(camera) = camera_slot.as_ref() else {
-            return true;
-        };
-        let ray = picking::ray_from_pixel(
-            camera,
-            crate::mesh_render::default_fov_y(),
-            vp.width(),
-            vp.height(),
-            cursor.x,
-            cursor.y,
-        );
-        drop(camera_slot);
-        let hit = self
-            .session
-            .document()
-            .with_scene(|spatial| {
-                let id = picking::pick_object(&ray, spatial)?;
-                let t = picking::ray_hits_object_query(&ray, &spatial.leaf(id)?)?;
-                Some((id, ray.origin + ray.direction * t))
-            })
-            .flatten();
-        if let Some((id, p)) = hit {
-            if drain {
+        // The preview showed what this click does; the edit replaces it.
+        self.set_preview_overlay(None);
+        if let Some((id, p)) = self.tab_tool_hit(tool, cursor) {
+            if tool == TabTool::Drain {
                 self.session
                     .document()
                     .set_selection(Selection::One(LeafId(id)));
@@ -1278,10 +1344,39 @@ impl ViewportController {
         true
     }
 
+    /// The cursor moved with no button down: an armed tab tool previews what
+    /// a click there would do (its driver draws it, debounced); off the
+    /// model, or with no tool, the preview goes.
+    fn tab_tool_hover(&self, cursor: ScreenPoint) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let Some(tool) = self.tab_tool(&ui) else {
+            return;
+        };
+        let hit = self.tab_tool_hit(tool, cursor);
+        let p = hit.map_or(glam::Vec3::ZERO, |(_, p)| p);
+        if tool == TabTool::Drain {
+            ui.invoke_hollow_drain_hover(p.x, p.y, p.z, hit.is_some());
+        } else {
+            ui.invoke_support_tool_hover(p.x, p.y, p.z, hit.is_some());
+        }
+    }
+
+    /// The armed tab tool changed (or the tab did): a preview of the old tool
+    /// no longer applies.
+    pub(crate) fn on_tab_tools_changed(&self) {
+        self.set_preview_overlay(None);
+    }
+
     /// Clears the dispatcher's cached hover cursor when the cursor leaves the
     /// viewport, so the paste path falls back to the viewport-centre placement.
     pub(crate) fn on_pointer_leave(&self) {
         self.input.on_pointer_leave();
+        self.set_preview_overlay(None);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, false);
+        }
     }
 
     /// Latches a right-button press position. The release path classifies the
@@ -1888,6 +1983,7 @@ impl ViewportController {
         let Some(renderer) = renderer_slot.as_mut() else {
             return;
         };
+        renderer.set_overlay(self.overlay.borrow().as_ref());
 
         let Some(ui) = self.ui.upgrade() else {
             return;

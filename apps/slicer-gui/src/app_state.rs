@@ -627,9 +627,14 @@ impl AppState {
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
-        let df_support_run =
-            DfSupportRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
-        let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs());
+        let df_support_run = DfSupportRun::install(
+            ui,
+            self.prefs.clone(),
+            ctrl.document(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         WindowDrivers {
             _hollow_run: hollow_run,
             _slice_panel: slice_panel,

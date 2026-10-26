@@ -1,23 +1,35 @@
-//! Editing supports after a run (SC-10/SC-12, first milestone): a support is
-//! added where the person clicks the model, routed by DragonFruit's own click
-//! path (`build_trunk_data_routed`, the V3 router), and a support is removed
-//! where they click it, with everything that hangs from it. The session keeps
-//! the run's models, settings and support state, so each edit re-tessellates
-//! the whole forest the way a run does.
+//! Editing supports after a run (SC-10/SC-12): a support is added where the
+//! person clicks the model the way DragonFruit's auto-placer places one
+//! contact (`place_one_candidate`): a fan or a merge onto a nearby support,
+//! its own routed trunk, a grid attachment to a neighbour, the gridless
+//! fallback. A support is removed where they click it, with everything that
+//! hangs from it. Previews of both run on a copy and draw only the pieces
+//! involved: green for a placement that works, red for one that does not
+//! (a straight trunk where the router found no way down), red for what a
+//! removal takes.
+//!
+//! The session keeps the run's models, settings and support state; the
+//! models and their BVHs are shared, so copies for a preview are cheap.
 
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::sync::{Arc, OnceLock};
 
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
 use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
+use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
+use support_gen_df::supports::auto_support::auto_place::place::{PlaceArgs, place_one_candidate};
+use support_gen_df::supports::auto_support::parameter_sizing::SizingBands;
+use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSource};
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_gen_df::supports::placement_logic_v3::smart_placement_v3::RouterStats;
+use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_types::trunk::trunk_builder::{
-    TrunkBuildInput, TrunkRouter, build_trunk_data_routed,
+    TrunkBuildInput, build_trunk_data,
 };
 use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
-use support_gen_df::three_mesh_bvh::MeshBvh;
+use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
 use crate::{DF_SUPPORT_MESH_NAME, weld_parts};
 
@@ -29,11 +41,12 @@ const REMOVE_REACH_MM: f64 = 3.0;
 /// The supports of a run, kept for editing.
 #[derive(Debug, Clone)]
 pub struct DfSupportSession {
-    models: Vec<ModelInput>,
-    settings: PipelineSettings,
+    models: Arc<[ModelInput]>,
+    settings: Arc<PipelineSettings>,
     state: SupportState,
-    /// Per model, its world mesh, built on the first edit.
-    bvhs: Vec<Option<Arc<MeshBvh>>>,
+    /// Per model, its world mesh, built on the first edit and shared by
+    /// every copy of the session.
+    bvhs: Arc<[OnceLock<Arc<MeshBvh>>]>,
     id_prefix: String,
     next_id: u64,
 }
@@ -43,7 +56,7 @@ pub struct DfSupportSession {
 pub enum EditError {
     /// Nothing to act on within reach of the click.
     NothingThere,
-    /// DragonFruit's router found no way down from there.
+    /// DragonFruit's placement found no way to hold that point.
     NoRoute(String),
     /// The tessellation failed (a raft Clipper error).
     Tessellation(String),
@@ -53,10 +66,21 @@ impl std::fmt::Display for EditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EditError::NothingThere => write!(f, "nothing within reach of the click"),
-            EditError::NoRoute(why) => write!(f, "no route to the plate from there ({why})"),
+            EditError::NoRoute(why) => {
+                write!(f, "no way to support that point ({why})")
+            }
             EditError::Tessellation(why) => write!(f, "the supports could not be drawn ({why})"),
         }
     }
+}
+
+/// What an edit would do, drawn on its own.
+#[derive(Debug, Clone)]
+pub struct EditPreview {
+    /// The pieces the edit adds (or, for a removal, takes away).
+    pub mesh: IndexedMesh,
+    /// The edit would go through.
+    pub valid: bool,
 }
 
 fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -100,7 +124,29 @@ fn points_of(value: &Value, out: &mut Vec<[f64; 3]>) {
     }
 }
 
-/// Every entity of the collections as `(id, serialized)`.
+/// Every `"id"` inside a serialized entity: its own and its parts'
+/// (segments, joints), which other entities attach to.
+fn ids_within(value: &Value, out: &mut HashSet<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(id)) = map.get("id") {
+                out.insert(id.clone());
+            }
+            for v in map.values() {
+                ids_within(v, out);
+            }
+        }
+        Value::Array(items) => {
+            for v in items {
+                ids_within(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every entity of the collections as `(id, serialized)`. Knots are listed
+/// too: they carry a member on a host shaft and go with either.
 fn entities(c: &SupportCollections) -> Vec<(String, Value)> {
     fn add<T: serde::Serialize>(
         out: &mut Vec<(String, Value)>,
@@ -121,27 +167,60 @@ fn entities(c: &SupportCollections) -> Vec<(String, Value)> {
     add(&mut out, &c.sticks);
     add(&mut out, &c.braces);
     add(&mut out, &c.stumps);
+    add(&mut out, &c.kickstands);
+    add(&mut out, &c.knots);
     out
 }
 
-fn remove_ids(c: &mut SupportCollections, ids: &std::collections::HashSet<String>) {
-    c.roots.retain(|id, _| !ids.contains(id));
-    c.trunks.retain(|id, _| !ids.contains(id));
-    c.branches.retain(|id, _| !ids.contains(id));
-    c.leaves.retain(|id, _| !ids.contains(id));
-    c.twigs.retain(|id, _| !ids.contains(id));
-    c.sticks.retain(|id, _| !ids.contains(id));
-    c.braces.retain(|id, _| !ids.contains(id));
-    c.stumps.retain(|id, _| !ids.contains(id));
+/// Every entity id of the collections.
+fn all_ids(c: &SupportCollections) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    ids.extend(c.roots.keys().cloned());
+    ids.extend(c.trunks.keys().cloned());
+    ids.extend(c.branches.keys().cloned());
+    ids.extend(c.leaves.keys().cloned());
+    ids.extend(c.twigs.keys().cloned());
+    ids.extend(c.sticks.keys().cloned());
+    ids.extend(c.braces.keys().cloned());
+    ids.extend(c.stumps.keys().cloned());
+    ids.extend(c.kickstands.keys().cloned());
+    ids.extend(c.knots.keys().cloned());
+    ids
+}
+
+/// The collections with only the entities `keep` says.
+fn filtered(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCollections {
+    let mut out = c.clone();
+    out.roots.retain(|id, _| keep(id));
+    out.trunks.retain(|id, _| keep(id));
+    out.branches.retain(|id, _| keep(id));
+    out.leaves.retain(|id, _| keep(id));
+    out.twigs.retain(|id, _| keep(id));
+    out.sticks.retain(|id, _| keep(id));
+    out.braces.retain(|id, _| keep(id));
+    out.stumps.retain(|id, _| keep(id));
+    out.kickstands.retain(|id, _| keep(id));
+    out.knots.retain(|id, _| keep(id));
+    out
 }
 
 /// Whether `value` names one of `ids` anywhere in its strings.
-fn references(value: &Value, ids: &std::collections::HashSet<String>) -> bool {
+fn references(value: &Value, ids: &HashSet<String>) -> bool {
     match value {
         Value::String(s) => ids.contains(s),
         Value::Object(map) => map.values().any(|v| references(v, ids)),
         Value::Array(items) => items.iter().any(|v| references(v, ids)),
         _ => false,
+    }
+}
+
+/// The contact area each sizing tier stands for: DragonFruit sizes an auto
+/// support from its island's area, and a click has no island.
+fn area_for_sizing(sizing: &str) -> f64 {
+    match sizing {
+        "detail" => 0.1,
+        "anchor" => 1.0,
+        _ => 0.3,
     }
 }
 
@@ -152,10 +231,10 @@ impl DfSupportSession {
         state: SupportState,
         id_prefix: String,
     ) -> Self {
-        let bvhs = vec![None; models.len()];
+        let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
         DfSupportSession {
-            models,
-            settings,
+            models: models.into(),
+            settings: Arc::new(settings),
             state,
             bvhs,
             id_prefix,
@@ -168,20 +247,27 @@ impl DfSupportSession {
         &self.state
     }
 
-    fn bvh(&mut self, i: usize) -> Arc<MeshBvh> {
-        if let Some(b) = &self.bvhs[i] {
-            return b.clone();
+    /// Builds every model's BVH now (they are shared by every copy).
+    pub fn warm(&self) {
+        for i in 0..self.models.len() {
+            self.bvh(i);
         }
-        let soup = world_soup(&self.models[i]);
-        let triples: Vec<[f32; 3]> = soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-        let bvh = Arc::new(MeshBvh::new(triples, None));
-        self.bvhs[i] = Some(bvh.clone());
-        bvh
     }
 
-    /// Adds a support whose tip touches the model at `point` (world mm), the
-    /// way a click in DragonFruit's Support Studio does.
-    pub fn add_trunk_at(&mut self, point: [f64; 3]) -> Result<(), EditError> {
+    fn bvh(&self, i: usize) -> Arc<MeshBvh> {
+        self.bvhs[i]
+            .get_or_init(|| {
+                let soup = world_soup(&self.models[i]);
+                let triples: Vec<[f32; 3]> =
+                    soup.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                Arc::new(MeshBvh::new(triples, None))
+            })
+            .clone()
+    }
+
+    /// The model surface point nearest `point` within reach: the model, the
+    /// point and its face normal.
+    fn contact(&self, point: [f64; 3]) -> Option<(usize, Vec3, Vec3)> {
         let p = Vec3::new(point[0], point[1], point[2]);
         let mut best: Option<(usize, f64, Vec3, Vec3)> = None;
         for i in 0..self.models.len() {
@@ -199,55 +285,154 @@ impl DfSupportSession {
             }
             best = Some((i, hit.distance, hit.point, n.normalize()));
         }
-        let Some((i, _, tip, normal)) = best else {
+        best.map(|(i, _, p, n)| (i, p, n))
+    }
+
+    fn id_source(&mut self) -> impl FnMut() -> String + '_ {
+        let prefix = self.id_prefix.clone();
+        let next = &mut self.next_id;
+        move || {
+            *next += 1;
+            format!("{prefix}-m{next}")
+        }
+    }
+
+    /// Places a support whose tip touches the model at `point` (world mm).
+    /// Returns the ids of what it added.
+    fn place(&mut self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
+        let Some((i, tip, normal)) = self.contact(point) else {
             return Err(EditError::NothingThere);
         };
         let bvh = self.bvh(i);
-        let mut sdf = SdfCache::new(bvh, Matrix4::IDENTITY, Some(self.settings.sdf_cell_mm));
-        let mut stats = RouterStats::default();
+        let settings = self.settings.clone();
         let model_id = self.models[i].id.clone();
-        let prefix = self.id_prefix.clone();
-        let mut next = self.next_id;
-        let mut new_id = || {
-            next += 1;
-            format!("{prefix}-m{next}")
-        };
-        let built = build_trunk_data_routed(
-            &TrunkBuildInput {
+        let before = all_ids(&self.state.collections);
+        let sdf = RefCell::new(SdfCache::new(
+            bvh.clone(),
+            Matrix4::IDENTITY,
+            Some(settings.sdf_cell_mm),
+        ));
+        let bands = SizingBands::factory();
+        let mut state = std::mem::take(&mut self.state);
+        let outcome = {
+            let mut new_id = self.id_source();
+            let ctx = PlanCtx::new(
+                &settings.supports,
+                &bands,
+                Some(PlanMesh {
+                    bvh: &bvh,
+                    matrix: Matrix4::IDENTITY,
+                    side: Side::Front,
+                    normals: None,
+                    sdf: &sdf,
+                    blocked: None,
+                }),
+                &mut new_id,
+            );
+            let candidate = CandidatePoint {
+                id: "manual".to_owned(),
                 tip_pos: tip,
                 tip_normal: normal,
-                model_id: &model_id,
-                mesh: None,
-                is_preview: Some(false),
-                overrides: None,
-                is_small_island: None,
-                ignore_grid: None,
-            },
-            &mut TrunkRouter {
-                sdf: &mut sdf,
-                matrix_world: Matrix4::IDENTITY,
-                stats: &mut stats,
-            },
-            &self.settings.supports,
-            &mut new_id,
-        );
-        self.next_id = next;
-        if let Some(error) = built.error {
-            return Err(EditError::NoRoute(format!("{error:?}")));
+                model_id,
+                source: CandidateSource::Overhang,
+                island_area_mm2: area_for_sizing(&settings.supports.auto_support.sizing_preset),
+                z_height: tip.z,
+                priority: 0.0,
+                tip_diameter_mm: None,
+                grid_point: None,
+            };
+            let no_grid_hosts = HashSet::new();
+            place_one_candidate(
+                &candidate,
+                &mut state,
+                &PlaceArgs {
+                    grid_host_ids: Some(&no_grid_hosts),
+                    sizing_ctx: None,
+                },
+                &ctx,
+                false,
+            )
+        };
+        self.state = state;
+        if outcome.kind.is_none() {
+            let why = outcome
+                .rejected_reason
+                .map_or_else(|| "rejected".to_owned(), |r| format!("{r:?}"));
+            return Err(EditError::NoRoute(why));
         }
-        let c = &mut self.state.collections;
-        c.roots.insert(built.root.base.id.clone(), built.root);
-        c.trunks.insert(built.trunk.base.id.clone(), built.trunk);
-        Ok(())
+        Ok(all_ids(&self.state.collections)
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect())
     }
 
-    /// Removes the support nearest `point` (world mm) and everything that
-    /// refers to it (its roots, members hosted on it, braces to it).
-    /// Returns how many entities went.
-    pub fn remove_near(&mut self, point: [f64; 3]) -> Result<usize, EditError> {
+    /// Adds a support whose tip touches the model at `point` (world mm), the
+    /// way DragonFruit places one contact.
+    pub fn add_trunk_at(&mut self, point: [f64; 3]) -> Result<(), EditError> {
+        self.place(point).map(|_| ())
+    }
+
+    /// What adding a support at `point` would add: green when it goes
+    /// through, red (a straight trunk to the plate) when nothing can hold
+    /// that point. `NothingThere` when the point is not on a model.
+    pub fn preview_add_at(&self, point: [f64; 3]) -> Result<EditPreview, EditError> {
+        let mut copy = self.clone();
+        match copy.place(point) {
+            Ok(added) => Ok(EditPreview {
+                mesh: copy.mesh_of(|id| added.contains(id))?,
+                valid: true,
+            }),
+            Err(EditError::NoRoute(_)) => {
+                let (i, tip, normal) = self.contact(point).ok_or(EditError::NothingThere)?;
+                let model_id = self.models[i].id.clone();
+                let mut copy = self.clone();
+                let built = {
+                    let mut new_id = copy.id_source();
+                    build_trunk_data(
+                        &TrunkBuildInput {
+                            tip_pos: tip,
+                            tip_normal: normal,
+                            model_id: &model_id,
+                            mesh: None,
+                            is_preview: Some(true),
+                            overrides: None,
+                            is_small_island: None,
+                            ignore_grid: Some(true),
+                        },
+                        &self.settings.supports,
+                        &mut new_id,
+                    )
+                }
+                .ok_or(EditError::NothingThere)?;
+                let ids: HashSet<String> =
+                    [built.root.base.id.clone(), built.trunk.base.id.clone()].into();
+                copy.state
+                    .collections
+                    .roots
+                    .insert(built.root.base.id.clone(), built.root);
+                copy.state
+                    .collections
+                    .trunks
+                    .insert(built.trunk.base.id.clone(), built.trunk);
+                Ok(EditPreview {
+                    mesh: copy.mesh_of(|id| ids.contains(id))?,
+                    valid: false,
+                })
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// The entities a click at `point` removes: the nearest one within reach
+    /// and everything that hangs from it (members on its shafts and the
+    /// knots carrying them, braces to it, a root left with nothing on it).
+    fn removal(&self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
         let all = entities(&self.state.collections);
         let mut best: Option<(f64, &str)> = None;
         for (id, value) in &all {
+            if self.state.collections.knots.contains_key(id) {
+                continue;
+            }
             let mut pts = Vec::new();
             points_of(value, &mut pts);
             let d = pts
@@ -265,11 +450,19 @@ impl DfSupportSession {
         if d > REMOVE_REACH_MM {
             return Err(EditError::NothingThere);
         }
-        let mut gone: std::collections::HashSet<String> = std::iter::once(id.to_owned()).collect();
+        let mut gone: HashSet<String> = std::iter::once(id.to_owned()).collect();
         loop {
+            // What anything references: a gone entity's own id and the ids
+            // of its parts (a knot names the shaft segment it sits on).
+            let mut named = HashSet::new();
+            for (other, value) in &all {
+                if gone.contains(other) {
+                    ids_within(value, &mut named);
+                }
+            }
             let more: Vec<String> = all
                 .iter()
-                .filter(|(other, value)| !gone.contains(other) && references(value, &gone))
+                .filter(|(other, value)| !gone.contains(other) && references(value, &named))
                 .map(|(other, _)| other.clone())
                 .collect();
             if more.is_empty() {
@@ -277,26 +470,25 @@ impl DfSupportSession {
             }
             gone.extend(more);
         }
-        // Roots are owned the other way round (a trunk names its root): a
-        // root nothing left refers to goes too.
+        // Roots and knots are owned the other way round (a trunk names its
+        // root, a member its knot): one nothing left refers to goes too.
         let remaining: Vec<(&String, &Value)> = all
             .iter()
             .filter(|(other, _)| !gone.contains(other))
             .map(|(id, v)| (id, v))
             .collect();
-        let orphans: Vec<String> = self
-            .state
-            .collections
+        let c = &self.state.collections;
+        let orphans: Vec<String> = c
             .roots
             .keys()
+            .chain(c.knots.keys())
             .filter(|root| !gone.contains(*root))
             .filter(|root| {
-                let single: std::collections::HashSet<String> =
-                    std::iter::once((*root).clone()).collect();
+                let single: HashSet<String> = std::iter::once((*root).clone()).collect();
                 let was_used = all
                     .iter()
                     .any(|(other, v)| gone.contains(other) && references(v, &single));
-                // A root's own record names it: only others count.
+                // Its own record names it: only others count.
                 was_used
                     && !remaining
                         .iter()
@@ -305,8 +497,38 @@ impl DfSupportSession {
             .cloned()
             .collect();
         gone.extend(orphans);
-        remove_ids(&mut self.state.collections, &gone);
+        Ok(gone)
+    }
+
+    /// Removes the support nearest `point` (world mm) and everything that
+    /// hangs from it. Returns how many entities went.
+    pub fn remove_near(&mut self, point: [f64; 3]) -> Result<usize, EditError> {
+        let gone = self.removal(point)?;
+        self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         Ok(gone.len())
+    }
+
+    /// What a removal at `point` would take away, drawn on its own.
+    pub fn preview_remove_at(&self, point: [f64; 3]) -> Result<EditPreview, EditError> {
+        let gone = self.removal(point)?;
+        Ok(EditPreview {
+            mesh: self.mesh_of(|id| gone.contains(id))?,
+            valid: false,
+        })
+    }
+
+    /// The entities `keep` names, tessellated without a raft.
+    fn mesh_of(&self, keep: impl Fn(&String) -> bool) -> Result<IndexedMesh, EditError> {
+        let state = SupportState {
+            collections: filtered(&self.state.collections, keep),
+            ..SupportState::default()
+        };
+        let mut settings = (*self.settings).clone();
+        settings.rafts.global.bottom_mode = RaftBottomMode::Off;
+        settings.rafts.per_model.clear();
+        let sink = support_soup(&state, &self.models, &settings)
+            .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
+        weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).ok_or(EditError::NothingThere)
     }
 
     /// The supports and raft as one welded mesh, as a run hands them back;
@@ -339,5 +561,14 @@ mod session_tests {
         let mut pts = Vec::new();
         points_of(&v, &mut pts);
         assert_eq!(pts.len(), 2);
+    }
+
+    #[test]
+    fn part_ids_are_found_at_any_depth() {
+        let v =
+            serde_json::json!({"id": "t1", "segments": [{"id": "s1", "topJoint": {"id": "j1"}}]});
+        let mut ids = HashSet::new();
+        ids_within(&v, &mut ids);
+        assert_eq!(ids.len(), 3);
     }
 }

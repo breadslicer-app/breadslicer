@@ -154,10 +154,23 @@ pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> 
 /// Leaves are visited in the pre-order of [`SceneSpatial::leaf_id_at_index`];
 /// on equal `t` the first leaf visited wins.
 pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
+    pick_object_where(ray, spatial, |_| true).map(|(node_id, _)| node_id)
+}
+
+/// [`pick_object`] over the leaves `keep` accepts, with the hit's ray
+/// parameter `t`.
+pub(crate) fn pick_object_where(
+    ray: &Ray,
+    spatial: &SceneSpatial,
+    keep: impl Fn(NodeId) -> bool,
+) -> Option<(NodeId, f32)> {
     let mut best: Option<(NodeId, f32)> = None;
     let mut idx = 0usize;
     while let Some(node_id) = spatial.leaf_id_at_index(idx) {
         idx += 1;
+        if !keep(node_id) {
+            continue;
+        }
         let Some(query) = spatial.leaf(node_id) else {
             continue;
         };
@@ -175,7 +188,7 @@ pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
             }
         }
     }
-    best.map(|(node_id, _)| node_id)
+    best
 }
 
 /// Tests the ray against an axis-aligned box with the slab method. A box
