@@ -82,16 +82,16 @@ Three surveys Damian asked for. They are proposals to decide on. Each one has it
 - There are papers on FEA of separation and on topology optimization, but **no published generator combines per-layer force with sizing of the tree**. It is largely uncharted ground.
 
 **Recommended approach**, from cheap to expensive:
-- **(a) Force budget per layer and island:** demand `σ_peel·A + p_suc·A_copa` against capacity `Σ A_punta·σ_punta` with a safety factor. Uses the areas from `sl1cer` and the existing islands; costs a few ms.
+- **(a) Force budget per layer and island:** demand `σ_peel·A + p_suc·A_cup` against capacity `Σ A_tip·σ_tip` with a safety factor. Uses the areas from `sl1cer` and the existing islands; costs a few ms.
 - **(b) Beam model of the tree:** trunks, branches and braces as bars. Solve sparse `K·u=f` (faer or nalgebra-sparse) on the critical layers, with Euler buckling. Distributes the load according to the actual stiffness.
 - **Ruled out for now:** (c) 3D tetrahedral FEA, which is slow and less precise than the material uncertainty, and (d) GPU, which is not needed.
 - **Where it hooks in:** after `compute_load_budget` in `auto_place/plan.rs`. Remediation moves up a tier, adds tips on the under-supported island, or warns about suction. It sits behind an option, off by default until validated.
 
 **Material:**
 - **σ_peel:** depends on the film and the lift profile.
-- **σ_punta:** green strength inside the resin; it is not published and has to be measured.
+- **σ_tip:** green strength inside the resin; it is not published and has to be measured.
 - **Green E.**
-- **Test piece:** a ladder of plates held by n tips gives `σ_punta/σ_peel` directly, without a load cell. It ties in with calibration (BS-78 and BS-62).
+- **Test piece:** a ladder of plates held by n tips gives `σ_tip/σ_peel` directly, without a load cell. It ties in with calibration (BS-78 and BS-62).
 
 **Milestone 1:** (a) complete + (b) on the critical layers, as a report and optional remediation. **Acceptance:**
 - Deterministic and < 5 % of the plan time.

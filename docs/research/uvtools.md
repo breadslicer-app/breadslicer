@@ -25,7 +25,7 @@ Survey from 2026-10-26 (BS-80), based on reading the source code of `UVtools.Cor
 ## 2. What it has and how it works
 
 - **Islands:**
-  - a component in a layer is an island if its pixels supported by the previous layer (brightness ≥ 150) are fewer than `max(1, 0,25 × píxeles)`;
+  - a component in a layer is an island if its pixels supported by the previous layer (brightness ≥ 150) are fewer than `max(1, 0.25 × pixels)`;
   - run-length labelling;
   - v7.1.1 added a union-find across layers.
 - **Overhangs:** subtracts the previous layer, thresholds, and erodes 40 iterations.
@@ -36,12 +36,12 @@ Survey from 2026-10-26 (BS-80), based on reading the source code of `UVtools.Cor
   - area = pixels × pixel area; volume = area × layer height;
   - **it does not compute perimeter**;
   - the time estimate **ignores acceleration**.
-- **Calculators:** light-off delay (including TSMC), mm↔px, and optimal tilt `atan(capa/XYres)`.
+- **Calculators:** light-off delay (including TSMC), mm↔px, and optimal tilt `atan(layer/XYres)`.
 - **Operations:** Dynamic Lifts (height and speed linearly interpolated from the previous layer's area), area-proportional wait-before-cure, Pixel Dimming, Light Bleed Compensation, Raft Relief (detects supports with HoughCircles), Infill, Morph, Arithmetic, etc.
 - **Calibration:**
   - Exposure Finder (by time, brightness or layer height);
   - Elephant Foot (erosion and dimming);
-  - XYZ Accuracy (`escala = real × 100 / observado`, with rounding to the pixel);
+  - XYZ Accuracy (`scale = real × 100 / observed`, with rounding to the pixel);
   - Tolerance, Blooming, Grayscale;
   - Lift Height (measured by hand with a force gauge);
   - Stress Tower.
@@ -58,7 +58,7 @@ Survey from 2026-10-26 (BS-80), based on reading the source code of `UVtools.Cor
 
 **How to do better** (feeds BS-11 / #11):
 
-- **Per-layer force:** `F_i = σ_adh·A_i + k_p·P_i + ΔP_vac·A_copa,i + F_visc(v, h)`, with area, **perimeter** (the peel front advances from the edge), active cups and a Stefan-type viscous term.
+- **Per-layer force:** `F_i = σ_adh·A_i + k_p·P_i + ΔP_vac·A_cup,i + F_visc(v, h)`, with area, **perimeter** (the peel front advances from the edge), active cups and a Stefan-type viscous term.
 - **Coefficients:** calibrated with our test pieces (#79) plus a force-gauge test.
 - **Distribution:** per component and per tributary area of each tip, accumulated toward the base. With that, tension, bending and buckling are checked using the green modulus.
 - **Islands with a margin** instead of "supported yes or no".
