@@ -1,5 +1,7 @@
 # Roadmap propio de SC
 
+> **Desde el 2026-10-26 el tracker operativo son los issues de [breadslicer-app/breadslicer](https://github.com/breadslicer-app/breadslicer/issues).** Este documento queda como contexto, decisiones e historial. La tabla SC → issue está en [`ISSUES.md`](ISSUES.md), y el flujo de trabajo en [`WORKFLOW.md`](WORKFLOW.md).
+
 Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **83 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
