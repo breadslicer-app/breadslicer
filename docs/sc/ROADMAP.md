@@ -1096,6 +1096,12 @@ Pedido de Damian (2026-10-26): antes de seguir optimizando, una UI que valga la 
 
 **Mockup interactivo:** privado.
 
+**Aprobado como base (Damian, 2026-10-26)**, con dos ajustes ya aplicados al mockup:
+- atajos G mover, R rotar y S escalar, como en la app actual;
+- el inspector abre la tarjeta de la herramienta activa y pliega las demás; con Select (Q) se ven todas.
+
+Damian asume que un slicer nunca queda del todo "streamlined"; esto es la base para iterar.
+
 **Relevamiento (2026-10-26):**
 - **SC hoy:**
   - secciones Prepare/Transform/Slice con reglas en `workspace_section.rs`;
