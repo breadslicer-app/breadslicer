@@ -1,114 +1,114 @@
-# Investigaciones del 2026-10-26
+# Research from 2026-10-26
 
-Tres relevamientos que pidió Damian. Son propuestas para decidir. Cada uno tiene su issue: BS-77, BS-78 y BS-11.
+Three surveys Damian asked for. They are proposals to decide on. Each one has its own issue: BS-77, BS-78 and BS-11.
 
-## 1. STL presoportados: separar cuerpos en objetos (BS-77)
+## 1. Pre-supported STLs: splitting bodies into objects (BS-77)
 
-**Hoy:**
-- Un STL se carga como **una sola hoja**. El lector suelda vértices solo por posición exacta (`indexed_mesh_from_soup`).
-- `libs/sl1cer/src/shells.rs` ya separa shells por vértice compartido y calcula el volumen con signo (volumen negativo = cavidad sellada).
-- `scene-edit` no tiene una edición para crear grupos.
+**Today:**
+- An STL loads as **a single leaf**. The reader welds vertices only by exact position (`indexed_mesh_from_soup`).
+- `libs/sl1cer/src/shells.rs` already splits shells by shared vertex and computes the signed volume (negative volume = sealed cavity).
+- `scene-edit` has no edit for creating groups.
 
-**Cómo separar:**
-1. **Conectividad:** union-find por vértice compartido, igual que `FaceShells`. Con la soldadura exacta alcanza para casi todos los exportadores; la soldadura con tolerancia queda como fallback.
-2. **Cavidades:** los shells con volumen negativo se quedan con su contenedor. Nunca se vuelven objetos.
-3. **Fragmentos:** los de menos de ~4 caras o volumen casi nulo se agrupan aparte. Nunca se borran en silencio.
-4. **Unión booleana:** si el archivo se exportó así (un solo shell), no se puede separar. Hay que avisar, no adivinar.
-5. **Dónde vive:** se extrae el algoritmo a `sc_mesh_core::shells::split_shells` y `sl1cer` pasa a usarlo.
+**How to split:**
+1. **Connectivity:** union-find by shared vertex, the same as `FaceShells`. Exact welding is enough for almost every exporter; tolerance-based welding stays as a fallback.
+2. **Cavities:** shells with negative volume stay with their container. They never become objects.
+3. **Fragments:** those with fewer than ~4 faces or near-zero volume are grouped separately. They are never silently deleted.
+4. **Boolean union:** if the file was exported that way (a single shell), it cannot be split. We should warn, not guess.
+5. **Where it lives:** the algorithm is extracted to `sc_mesh_core::shells::split_shells`, and `sl1cer` switches to using it.
 
-**Clasificación** (solo una sugerencia para la UI; nunca borra sola):
-- **Modelo:** el cuerpo de mayor volumen, más los que tengan ≥ 20 % de su volumen.
-- **Raft:** minZ en la placa, bajo y con área XY grande.
-- **Soporte:** cuerpo chico, alto y fino, que toca la placa o el raft y llega al modelo; suelen venir muchos parecidos.
-- **Sin clasificar:** el resto, que decide el usuario.
-- No hay documentación pública de cómo lo hacen Lychee o ChituBox. PrusaSlicer separa por shell sin clasificar.
+**Classification** (only a suggestion for the UI; it never deletes anything on its own):
+- **Model:** the body with the largest volume, plus any with ≥ 20 % of its volume.
+- **Raft:** minZ on the plate, low, and with a large XY area.
+- **Support:** a small, tall and thin body that touches the plate or the raft and reaches the model; there are usually many similar ones.
+- **Unclassified:** everything else, for the user to decide.
+- There is no public documentation of how Lychee or ChituBox do it. PrusaSlicer splits by shell without classifying.
 
 **UX:**
-- Al importar, si hay N > 1 cuerpos: "1 modelo + 312 soportes + raft (estimado). ¿Separar?". También queda el comando "Separar en cuerpos".
-- **Resultado:** un grupo con Modelo, "Soportes importados" y Raft. Los soportes van en **una sola hoja con índice de cuerpo por cara**, porque miles de hojas castigan el picking y la GPU.
-- **Edición realista:** seleccionar cuerpos de soporte (clic, caja o pincel) y borrarlos; "borrar todos los soportes importados"; generar soportes nuevos sin tratar los importados como modelo.
-- **Más adelante:** regenerar soportes solo donde se borró, usando los puntos de contacto como semillas.
+- On import, if there are N > 1 bodies: "1 model + 312 supports + raft (estimated). Split?". There is also a "Split into bodies" command.
+- **Result:** a group with Model, "Imported supports" and Raft. Supports go in **a single leaf with a per-face body index**, because thousands of leaves hurt picking and the GPU.
+- **Realistic editing:** select support bodies (click, box or brush) and delete them; "delete all imported supports"; generate new supports without treating the imported ones as part of the model.
+- **Later:** regenerate supports only where they were deleted, using the contact points as seeds.
 
-**Hito 1 (unos 2–3 días):** el comando "Separar en cuerpos", sin clasificación.
-- Archivos: nuevo `libs/mesh-core/src/shells.rs`, `scene-edit` (separación como `Compound`), `scene_document.rs`, `wiring.rs` y el menú.
-- **Aceptación:**
-  - 2 cubos disjuntos dan 2 hojas;
-  - un cubo con cavidad sigue siendo 1 hoja;
-  - 2 cuerpos que se penetran sin compartir vértices dan 2 hojas;
-  - undo y redo restauran exacto;
-  - el slice es igual antes y después;
-  - 1M de triángulos se separa en < 2 s.
+**Milestone 1 (about 2–3 days):** the "Split into bodies" command, without classification.
+- Files: new `libs/mesh-core/src/shells.rs`, `scene-edit` (split as a `Compound`), `scene_document.rs`, `wiring.rs` and the menu.
+- **Acceptance:**
+  - 2 disjoint cubes give 2 leaves;
+  - a cube with a cavity stays 1 leaf;
+  - 2 interpenetrating bodies that share no vertices give 2 leaves;
+  - undo and redo restore exactly;
+  - the slice is identical before and after;
+  - 1M triangles split in < 2 s.
 
-## 2. El mejor calibrador de resina (BS-78)
+## 2. The best resin calibrator (BS-78)
 
-**Estado del arte:**
+**State of the art:**
 - **UVtools:** Exposure Finder, Blooming, Elephant Foot, XYZ Accuracy, Tolerance.
-- **Otros:** RERF, XP2 Validation Matrix, Cones of Calibration, AmeraLabs Town, la calibración de la Prusa SL1, DrLCD (mapa de uniformidad con un sensor) y la curva de trabajo de Jacobs (Cd = Dp·ln(E/Ec)).
-- **Cómo se lee el resultado:** casi todo es visual ("elegí el mejor bloque"). **Ninguna herramienta lee resultados desde una foto.**
-- **Física de la impresora:** nadie usa la irradiancia para convertir tiempo en dosis.
-- **Dos objetivos distintos:** que la pieza mida lo que debe y que los soportes resistan piden exposiciones distintas.
+- **Others:** RERF, XP2 Validation Matrix, Cones of Calibration, AmeraLabs Town, the Prusa SL1 calibration, DrLCD (uniformity map with a sensor) and the Jacobs working curve (Cd = Dp·ln(E/Ec)).
+- **How results are read:** almost everything is visual ("pick the best block"). **No tool reads results from a photo.**
+- **Printer physics:** nobody uses irradiance to convert time into dose.
+- **Two different goals:** a part that measures what it should and supports that hold up call for different exposures.
 
-**Propuesta: calibrador guiado de ~3 impresiones**, guardado por impresora + resina, con temperatura y lote:
-1. **Curva de trabajo:** una placa con 8–12 ventanas a tiempos ×1,25. El usuario mide el espesor y el slicer ajusta Dp y Ec con R². De ahí sale la exposición recomendada para **cualquier** altura de capa.
-2. **Detalle y resistencia:** postes y agujeros que se cuentan, conos o pilares de resistencia y ranuras, alrededor del tiempo predicho. La entrada es por conteo, no "elegir el más lindo".
-3. **Base y pata de elefante:** variantes de erosión y dimming de base.
-4. **Exactitud dimensional:** cajas en 9 zonas, con pin y agujero. Un ajuste lineal **separa escala de offset de pared**; UVtools solo calcula la escala. La diferencia entre zonas además detecta falta de uniformidad del LCD.
+**Proposal: a guided calibrator of ~3 prints**, stored per printer + resin, with temperature and batch:
+1. **Working curve:** a plate with 8–12 windows at ×1.25 time steps. The user measures the thickness and the slicer fits Dp and Ec with R². That gives the recommended exposure for **any** layer height.
+2. **Detail and strength:** posts and holes to count, strength cones or pillars, and slots, around the predicted time. Input is a count, not "pick the nicest one".
+3. **Base and elephant foot:** erosion and base dimming variants.
+4. **Dimensional accuracy:** boxes in 9 zones, with pin and hole. A linear fit **separates scale from wall offset**; UVtools only computes the scale. The difference between zones also detects LCD non-uniformity.
 
-**Persistencia:** las mediciones crudas y el ajuste se guardan. Se aplica con undo y se avisa cuando la calibración queda obsoleta (otro FEP, ±5 °C, otro lote).
+**Persistence:** raw measurements and the fit are stored. It is applied with undo, and the user is warned when the calibration becomes stale (a different FEP, ±5 °C, a different batch).
 
-**Objetivo ambicioso:** leer los resultados por foto, con marcadores ArUco y detección binaria de postes y conos.
+**Stretch goal:** read results from a photo, with ArUco markers and binary detection of posts and cones.
 
-**Licencias:**
-- UVtools es AGPL: reimplementar desde los conceptos, sin copiar sus clases.
-- AmeraLabs Town, Cones y RERF no tienen licencia indicada: no empaquetarlos.
-- **Todas las geometrías de prueba se generan por código, propias.**
+**Licenses:**
+- UVtools is AGPL: reimplement from the concepts, without copying its classes.
+- AmeraLabs Town, Cones and RERF have no stated license: do not bundle them.
+- **All test geometry is generated by code, and is our own.**
 
-**Hito 1:** placa de curva de trabajo + carga de espesores + ajuste Dp/Ec + recomendación por altura de capa + `CalibrationRecord`.
-- El ajuste recupera datos sintéticos con error < 2 % y rechaza menos de 4 puntos o R² < 0,9.
-- La validación física requiere la autorización de Damian.
+**Milestone 1:** working-curve plate + thickness entry + Dp/Ec fit + per-layer-height recommendation + `CalibrationRecord`.
+- The fit recovers synthetic data with < 2 % error and rejects fewer than 4 points or R² < 0.9.
+- Physical validation requires Damian's authorization.
 
-## 3. Análisis estructural en el auto-support (BS-11)
+## 3. Structural analysis in auto-support (BS-11)
 
-**Fuerzas por capa:**
-- **Peel del film:** es la que manda y es ~lineal con el área.
-  - AmeraLabs con celda de carga: ~12 kPa con ACF y 13–19 kPa con FEP según el espesor. Una capa de 2000 mm² da ~30 N.
-- **Succión** de copas sin drenaje: puede acercarse a ~100 kPa sobre su área. el motor de soportes ya calcula `cup_area_mm2`, pero no lo pasa a fuerza.
-- **Arrastre viscoso:** se trata como multiplicador calibrado.
-- **Gravedad:** sumergida casi no cuenta; afuera es ~1 N cada 100 g, y solo importa por palanca.
+**Per-layer forces:**
+- **Film peel:** the dominant one, and ~linear with area.
+  - AmeraLabs with a load cell: ~12 kPa with ACF and 13–19 kPa with FEP depending on thickness. A 2000 mm² layer gives ~30 N.
+- **Suction** from undrained cups: can approach ~100 kPa over their area. The support engine already computes `cup_area_mm2`, but does not turn it into a force.
+- **Viscous drag:** treated as a calibrated multiplier.
+- **Gravity:** submerged it barely counts; out of the resin it is ~1 N per 100 g, and only matters through leverage.
 
-**Qué hacen los otros:**
-- PrusaSlicer y PreForm dimensionan de forma empírica.
-- Lychee detecta copas de succión.
-- Hay papers con FEA de la separación y optimización topológica, pero **ningún generador publicado combina fuerza por capa con el dimensionado del árbol**. Es terreno poco cubierto.
+**What others do:**
+- PrusaSlicer and PreForm size supports empirically.
+- Lychee detects suction cups.
+- There are papers on FEA of separation and on topology optimization, but **no published generator combines per-layer force with sizing of the tree**. It is largely uncharted ground.
 
-**Enfoque recomendado**, de barato a caro:
-- **(a) Presupuesto de fuerza por capa e isla:** demanda `σ_peel·A + p_suc·A_copa` contra capacidad `Σ A_punta·σ_punta` con factor de seguridad. Usa las áreas de `sl1cer` y las islas existentes; cuesta unos ms.
-- **(b) Modelo de vigas del árbol:** troncos, ramas y riostras como barras. Se resuelve `K·u=f` disperso (faer o nalgebra-sparse) en las capas críticas, con pandeo de Euler. Reparte la carga según la rigidez real.
-- **Descartados por ahora:** (c) FEA 3D con tetraedros, que es lenta y menos precisa que la incertidumbre del material, y (d) GPU, que no hace falta.
-- **Dónde se engancha:** después de `compute_load_budget` en `auto_place/plan.rs`. La remediación sube de tier, agrega puntas en la isla deficitaria o avisa de succión. Va detrás de una opción, apagada por defecto hasta validarla.
+**Recommended approach**, from cheap to expensive:
+- **(a) Force budget per layer and island:** demand `σ_peel·A + p_suc·A_copa` against capacity `Σ A_punta·σ_punta` with a safety factor. Uses the areas from `sl1cer` and the existing islands; costs a few ms.
+- **(b) Beam model of the tree:** trunks, branches and braces as bars. Solve sparse `K·u=f` (faer or nalgebra-sparse) on the critical layers, with Euler buckling. Distributes the load according to the actual stiffness.
+- **Ruled out for now:** (c) 3D tetrahedral FEA, which is slow and less precise than the material uncertainty, and (d) GPU, which is not needed.
+- **Where it hooks in:** after `compute_load_budget` in `auto_place/plan.rs`. Remediation moves up a tier, adds tips on the under-supported island, or warns about suction. It sits behind an option, off by default until validated.
 
 **Material:**
-- **σ_peel:** depende del film y el perfil de subida.
-- **σ_punta:** resistencia en verde dentro de la resina; no está publicada y hay que medirla.
-- **E en verde.**
-- **Probeta:** una escalera de placas sostenidas por n puntas da directo `σ_punta/σ_peel` sin celda de carga. Se conecta con la calibración (BS-78 y BS-62).
+- **σ_peel:** depends on the film and the lift profile.
+- **σ_punta:** green strength inside the resin; it is not published and has to be measured.
+- **Green E.**
+- **Test piece:** a ladder of plates held by n tips gives `σ_punta/σ_peel` directly, without a load cell. It ties in with calibration (BS-78 and BS-62).
 
-**Hito 1:** (a) completo + (b) en las capas críticas, como reporte y remediación opcional. **Aceptación:**
-- Determinista y < 5 % del tiempo del plan.
-- Con la opción apagada, el resultado no cambia.
-- Tests analíticos: viga, pandeo, reparto entre puntas.
-- Sin colisiones ni huérfanos nuevos.
-- El umbral predicho cae a ±1 escalón de la escalera física. Las impresiones requieren la autorización de Damian.
+**Milestone 1:** (a) complete + (b) on the critical layers, as a report and optional remediation. **Acceptance:**
+- Deterministic and < 5 % of the plan time.
+- With the option off, the result does not change.
+- Analytical tests: beam, buckling, distribution between tips.
+- No new collisions or orphans.
+- The predicted threshold falls within ±1 step of the physical ladder. Prints require Damian's authorization.
 
-## Fuentes principales
+## Main sources
 
 - UVtools: https://github.com/sn4k3/UVtools
-- AmeraLabs, peel por film: https://ameralabs.com/?p=45569
+- AmeraLabs, peel by film: https://ameralabs.com/?p=45569
 - Cones of Calibration: https://makers101.com/cones-of-calibration/
-- Fauxhammer, exposición: https://www.fauxhammer.com/?p=35166
+- Fauxhammer, exposure: https://www.fauxhammer.com/?p=35166
 - DrLCD: https://github.com/yaqwsx/DrLCD
-- Curva de trabajo (Liqcreate): https://www.liqcreate.com/?p=15658
-- Yadegari et al., fuerzas de separación: https://journals.aut.ac.ir/article_4162.html
-- Liravi et al. 2014, FEA con zona cohesiva: https://utw10945.utweb.utexas.edu/sites/default/files/2014-113-Liravi.pdf
+- Working curve (Liqcreate): https://www.liqcreate.com/?p=15658
+- Yadegari et al., separation forces: https://journals.aut.ac.ir/article_4162.html
+- Liravi et al. 2014, FEA with a cohesive zone: https://utw10945.utweb.utexas.edu/sites/default/files/2014-113-Liravi.pdf
 - Prusa, Split to objects/parts: https://help.prusa3d.com/article/split-to-objects-parts_1751
 - Lychee 7.6, Suction Cup Detector: https://lychee.co/changelogs/lychee-slicer-7-6-0
