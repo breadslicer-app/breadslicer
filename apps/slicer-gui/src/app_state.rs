@@ -2287,6 +2287,35 @@ mod window_wiring_tests {
     }
 
     #[test]
+    fn support_options_reach_the_tab_clamped_and_presets_apply() {
+        let (density, clamped, preset_index, sizing, names) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let (window, _pending_load, controller) = new_window(&app);
+            let _drivers = app.install_window_drivers(&window, &controller);
+            window.invoke_support_option_changed(1, 20.0);
+            let density = window.get_support_density();
+            window.invoke_support_option_changed(1, 999.0);
+            let clamped = window.get_support_density();
+            // The built-in "Detail" preset is the second one.
+            window.invoke_support_preset_picked(1);
+            (
+                density,
+                clamped,
+                window.get_support_preset_index(),
+                window.get_support_sizing_index(),
+                window.get_support_preset_names().row_count(),
+            )
+        });
+        assert_eq!(density, 20.0);
+        assert_eq!(
+            clamped, 30.0,
+            "DragonFruit caps the area per support at 30 mm2"
+        );
+        assert_eq!((preset_index, sizing), (1, 0));
+        assert!(names >= 3, "the three built-in presets are listed");
+    }
+
+    #[test]
     fn a_dragonfruit_support_press_starts_a_cancelable_run() {
         let (before, after, cancelable) = on_fresh_slint_thread(|| {
             let app = test_app(PreferencesSnapshot::for_tests());

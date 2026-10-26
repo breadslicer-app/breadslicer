@@ -7,10 +7,10 @@
 // shows only what its tab acts on; the window binds them to its own
 // properties and callbacks, which Rust drives.
 
-import { ComboBox, LineEdit, ProgressIndicator } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ProgressIndicator } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, Dot, InfoRow, Note, NumberField, ScButton, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, Dot, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
 
 // A selectable object row.
 component ObjectRow inherits Rectangle {
@@ -312,8 +312,33 @@ export component SupportsInspector inherits VerticalLayout {
     in property <float> progress;
     in property <bool> cancelable;
     in property <string> last-run;
+    // The options (DfSupportOptions), pushed by Rust after every change.
+    in property <[string]> preset-names;
+    in property <int> preset-index: -1;
+    in property <int> sizing-index: 1;
+    in property <float> density;
+    in property <float> angle;
+    in property <float> size-scale;
+    in property <float> min-island;
+    in property <float> coverage;
+    in property <bool> stabilization;
+    in property <bool> bracing;
+    in property <bool> smooth;
+    in property <int> raft-index;
+    in property <float> raft-thickness;
+    in property <bool> raft-wall;
+    // The selected object lift, editable here too.
+    in property <bool> selection-valid;
+    in property <float> lift;
     callback generate-requested();
     callback cancel-requested();
+    // An option change: its code (DfSupportRun::on_option) and value.
+    callback option-changed(int, float);
+    callback preset-picked(int);
+    callback preset-save(string);
+    callback preset-delete();
+    callback lift-edit(float);
+    callback drop-to-plate();
 
     spacing: 12px;
 
@@ -322,6 +347,17 @@ export component SupportsInspector inherits VerticalLayout {
         note: root.running ? @tr("Inspector" => "Working") : "";
         note-color: Theme.accent;
 
+        LabeledRow {
+            label: @tr("Inspector" => "Preset");
+            preset-combo := ComboBox {
+                width: 170px;
+                model: root.preset-names;
+                current-index: root.preset-index;
+                selected => {
+                    root.preset-picked(preset-combo.current-index);
+                }
+            }
+        }
         ScButton {
             text: @tr("Inspector" => "Generate supports");
             icon: Icons.auto;
@@ -355,12 +391,176 @@ export component SupportsInspector inherits VerticalLayout {
         }
     }
 
-    Card {
-        title: @tr("Inspector" => "SETTINGS");
-        note: @tr("Inspector" => "Defaults");
+    if root.selection-valid: Card {
+        title: @tr("Inspector" => "LIFT");
 
+        NumberField {
+            label: @tr("Inspector" => "Height above plate");
+            unit: "mm";
+            value: root.lift;
+            committed(v) => {
+                root.lift-edit(v);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Drop to plate");
+            clicked => {
+                root.drop-to-plate();
+            }
+        }
         Note {
-            text: @tr("Inspector" => "Contacts, shafts and raft use the DragonFruit defaults; tip penetration follows the printer. Editable settings and manual tools come next.");
+            text: @tr("Inspector" => "Room under the model for the supports; moving it again marks them out of date.");
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "PLACEMENT");
+        collapsible: true;
+
+        LabeledRow {
+            label: @tr("Inspector" => "Support size");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Detail"), @tr("Inspector" => "Structure"), @tr("Inspector" => "Anchor")];
+                current: root.sizing-index;
+                picked(i) => {
+                    root.option-changed(0, i);
+                }
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Area per support");
+            unit: "mm²";
+            decimals: 1;
+            value: root.density;
+            committed(v) => {
+                root.option-changed(1, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Overhang angle");
+            unit: "°";
+            decimals: 0;
+            value: root.angle;
+            committed(v) => {
+                root.option-changed(2, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Size scale");
+            unit: "×";
+            value: root.size-scale;
+            committed(v) => {
+                root.option-changed(3, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Smallest island");
+            unit: "mm²";
+            value: root.min-island;
+            committed(v) => {
+                root.option-changed(4, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Coverage");
+            unit: "%";
+            decimals: 0;
+            value: root.coverage;
+            committed(v) => {
+                root.option-changed(5, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Stabilize poses on a point or edge");
+            checked: root.stabilization;
+            toggled => {
+                root.option-changed(6, self.checked ? 1 : 0);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Cross-bracing");
+            checked: root.bracing;
+            toggled => {
+                root.option-changed(7, self.checked ? 1 : 0);
+            }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Shape");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Smooth"), @tr("Inspector" => "Classic")];
+                current: root.smooth ? 0 : 1;
+                picked(i) => {
+                    root.option-changed(8, i == 0 ? 1 : 0);
+                }
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "RAFT");
+        collapsible: true;
+
+        LabeledRow {
+            label: @tr("Inspector" => "Bottom");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Solid"), @tr("Inspector" => "Lines"), @tr("Inspector" => "Off")];
+                current: root.raft-index;
+                picked(i) => {
+                    root.option-changed(9, i);
+                }
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Thickness");
+            unit: "mm";
+            value: root.raft-thickness;
+            enabled: root.raft-index != 2;
+            committed(v) => {
+                root.option-changed(10, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Crenelated wall");
+            checked: root.raft-wall;
+            enabled: root.raft-index == 0;
+            toggled => {
+                root.option-changed(11, self.checked ? 1 : 0);
+            }
+        }
+    }
+
+    Card {
+        title: @tr("Inspector" => "PRESETS");
+        collapsible: true;
+        expanded: false;
+
+        preset-name := LineEdit {
+            placeholder-text: @tr("Inspector" => "Name for a new preset");
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Save as preset");
+                horizontal-stretch: 1;
+                enabled: preset-name.text != "";
+                clicked => {
+                    root.preset-save(preset-name.text);
+                    preset-name.text = "";
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Delete");
+                clicked => {
+                    root.preset-delete();
+                }
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Built-in presets cannot be deleted. Presets are saved as TOML files in the app data folder.");
         }
     }
 }
