@@ -205,3 +205,44 @@ fn a_prescan_can_be_cancelled() {
         Err(other) => panic!("unexpected {other:?}"),
     }
 }
+
+fn bad_edges(mesh: &IndexedMesh) -> usize {
+    let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
+    for f in mesh.faces() {
+        let v = f.vertices.map(u32::from);
+        for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+            *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    edges.values().filter(|&&c| c != 2).count()
+}
+
+#[test]
+fn supports_are_added_and_removed_by_hand() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let outcome = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    let mut session = outcome.session;
+    let roots = session.state().collections.roots.len();
+
+    // A click on the underside of the cube (z = 8), near a corner.
+    session
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a route to the plate");
+    assert_eq!(session.state().collections.roots.len(), roots + 1);
+    let mesh = session.mesh().unwrap().expect("a support mesh");
+    assert_eq!(bad_edges(&mesh), 0, "still edge-manifold");
+
+    // A click on the new support takes it away, with its root.
+    let removed = session
+        .remove_near([1.5, 1.5, 7.5])
+        .expect("a support there");
+    assert!(removed >= 2, "the trunk and its root ({removed})");
+    assert_eq!(session.state().collections.roots.len(), roots);
+
+    // Far from everything, nothing happens.
+    assert!(session.remove_near([500.0, 500.0, 500.0]).is_err());
+    assert!(session.add_trunk_at([500.0, 500.0, 500.0]).is_err());
+}
