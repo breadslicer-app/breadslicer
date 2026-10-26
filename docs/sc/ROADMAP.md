@@ -116,7 +116,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76, SC-82 |
 | [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
 | [SC-79](#sc-79) | todo | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
-| [SC-80](#sc-80) | backlog | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
+| [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 
@@ -973,7 +973,11 @@ Hallado en la fase 0 del porteo (`docs/sc/DF-PORT.md`): Wolverine centrado falla
 
 **Cierre:** Caso de regresión que falla antes y pasa después; Wolverine slicea completo; sin regresiones en los chequeos de slicing existentes (SC-33).
 
-**Depende de:** sin dependencia técnica previa. Prioridad: high. Estado snapshot: backlog.
+**Resultado (2026-10-25):** la causa no estaba en el stitcher sino en los segmentos que recibe. Cuando un triángulo queda entero en el plano (coplanar) y su vecino por una arista sube por encima, la regla de aristas en el plano (`resolve_on_edge_contour_segment`, `libs/sl1cer/src/mesh_slice.rs`) sólo emitía segmento si los dos terceros vértices quedaban estrictamente a lados opuestos; con el tercer vértice del vecino en el plano no emitía nada y los dos vértices de esa arista quedaban con 1 extremo cada uno ("2 dangling endpoints"). En Wolverine, a Z 32.5 mm: cara coplanar 898401, vecino 898395 por encima. Arreglo: el triángulo coplanar cuenta como apenas debajo del plano (desempate simbólico, como si el plano subiera un infinitésimo) y el segmento lo emite la cara no coplanar. Las protecciones no cambian: el stitcher sigue rechazando cualquier vértice o arista con extremos impares. Convención elegida: una cara plana justo en el plano cuenta como sólida por debajo (sólido en [zmin, zmax)); invertirla es cambiar `Below` por `Above` en ese desempate.
+
+**Evidencia:** fixture `coplanar_face_crossing_solid` (`libs/mesh-fixtures`) y prueba `coplanar_face_crossing_solid_at_z_zero_stitches_through_the_coplanar_border` (`libs/sl1cer/src/tests_mesh_slice.rs`): sin el arreglo falla con `dangling_endpoints: 2`, con el arreglo da 1 anillo de área 1. Wolverine centrado (SHA256 `5e4e7573…21eeb77489`, privado en `.local/`): barrido en los 11 505 Z distintos de sus vértices, antes fallaban 233 planos y ahora 0 (28 s, release). `sc-slicer-cli slice --no-auto-place` (Saturn 3 Ultra, capa 0.05, primera capa 0.075, con un plano en cada múltiplo de 0.05, incluido 32.5) antes cortaba en Z 13.8 mm y ahora termina las 700 capas en 6.6 s; con primera capa 0.05 tarda 6.8 s. `cargo test -p sc-sl1cer -p sc-mesh-fixtures -p sc-print-glue -p sc-sla-formats -p sc-project-formats -p sc-slicer-cli` en verde salvo `bundled_profiles` (2 pruebas de round-trip de perfiles que fallan por el CRLF del checkout Windows, ajenas al cambio); clippy sin avisos.
+
+**Depende de:** sin dependencia técnica previa. Prioridad: high. Estado snapshot: done.
 
 ## SC-81
 
