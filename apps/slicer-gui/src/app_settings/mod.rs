@@ -364,6 +364,15 @@ fn is_default_prescan_supports(on: &bool) -> bool {
     !*on
 }
 
+/// Models keep their facets by default; supports always shade smooth.
+fn default_smooth_models() -> bool {
+    false
+}
+
+fn is_default_smooth_models(on: &bool) -> bool {
+    !*on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -410,6 +419,13 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_prescan_supports"
     )]
     prescan_supports: bool,
+    /// Whether models shade smooth in the viewport (supports always do).
+    /// Omitted in TOML while off (the default).
+    #[serde(
+        default = "default_smooth_models",
+        skip_serializing_if = "is_default_smooth_models"
+    )]
+    smooth_models: bool,
     /// Floating object-list panel state. Omitted in TOML while every field
     /// holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -441,6 +457,7 @@ impl Default for AppSettings {
             output_format_by_printer: BTreeMap::new(),
             aa_level: default_aa_level(),
             prescan_supports: default_prescan_supports(),
+            smooth_models: default_smooth_models(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
@@ -550,6 +567,14 @@ impl AppSettings {
 
     pub(crate) fn set_prescan_supports(&mut self, on: bool) {
         self.prescan_supports = on;
+    }
+
+    pub(crate) fn smooth_models(&self) -> bool {
+        self.smooth_models
+    }
+
+    pub(crate) fn set_smooth_models(&mut self, on: bool) {
+        self.smooth_models = on;
     }
 
     pub(crate) fn object_list_visible(&self) -> bool {

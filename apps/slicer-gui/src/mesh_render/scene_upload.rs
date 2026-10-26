@@ -23,9 +23,12 @@ use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;
 
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub(super) struct GpuVertex {
     position: [f32; 3],
+    /// The shading normal (smooth with a crease angle, see `smooth_shading`),
+    /// in the leaf's local frame; zero shades flat from screen derivatives.
+    normal: [f32; 3],
 }
 
 /// Per-object entry in the model uniform buffer. Mirrors the WGSL `ModelEntry`
@@ -54,7 +57,19 @@ impl ModelEntry {
 
 impl GpuVertex {
     pub(super) fn at(position: [f32; 3]) -> Self {
-        GpuVertex { position }
+        GpuVertex {
+            position,
+            normal: [0.0; 3],
+        }
+    }
+
+    pub(super) fn with_normal(position: [f32; 3], normal: [f32; 3]) -> Self {
+        GpuVertex { position, normal }
+    }
+
+    #[cfg(test)]
+    pub(super) fn normal(&self) -> [f32; 3] {
+        self.normal
     }
 }
 
@@ -693,20 +708,25 @@ fn build_gpu_scene_data(
                 return Ok(());
             }
 
-            let vertices: Vec<GpuVertex> = mesh
-                .vertices()
-                .iter()
-                .map(|v| GpuVertex {
-                    position: v.coords(),
-                })
-                .collect();
-
-            let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
-            for face in mesh.faces() {
-                for vidx in face.vertices {
-                    indices.push(u32::from(vidx));
+            // Supports always shade smooth; models only when the preference
+            // asks for it.
+            let (vertices, indices) = if super::smooth_shading::shades_smooth(mesh) {
+                let smooth = super::smooth_shading::smooth_mesh(mesh);
+                (smooth.vertices.clone(), smooth.indices.clone())
+            } else {
+                let vertices: Vec<GpuVertex> = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| GpuVertex::at(v.coords()))
+                    .collect();
+                let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
+                for face in mesh.faces() {
+                    for vidx in face.vertices {
+                        indices.push(u32::from(vidx));
+                    }
                 }
-            }
+                (vertices, indices)
+            };
 
             objects.push(ObjectData {
                 node_id,
@@ -1460,7 +1480,7 @@ mod leaf_buffer_limit_tests {
     const LIMIT: u64 = 1024;
 
     /// Builds a mesh of `vertex_count` vertices and `face_count` faces on the
-    /// first 3 vertices: `12 * vertex_count` vertex bytes and `12 * face_count`
+    /// first 3 vertices: only those 3 are uploaded, and `12 * face_count`
     /// index bytes.
     fn mesh(vertex_count: usize, face_count: usize, name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -1473,6 +1493,21 @@ mod leaf_buffer_limit_tests {
                 .collect(),
             faces: (0..face_count)
                 .map(|_| IndexedTriangle::from_raw_indices([0, 1, 2]))
+                .collect(),
+        }
+    }
+
+    /// A fan of `vertex_count` vertices, every one of them used: `24 *
+    /// vertex_count` vertex bytes (position and normal) and `12 *
+    /// (vertex_count - 2)` index bytes.
+    fn fan(vertex_count: usize) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: (0..vertex_count)
+                .map(|i| Vertex::new([i as f32, 0.0, 0.0]))
+                .collect(),
+            faces: (1..vertex_count as u32 - 1)
+                .map(|k| IndexedTriangle::from_raw_indices([0, k, k + 1]))
                 .collect(),
         }
     }
@@ -1531,14 +1566,14 @@ mod leaf_buffer_limit_tests {
 
     #[test]
     fn a_leaf_with_too_many_vertices_is_refused_by_its_vertex_buffer() {
-        let (graph, ids) = graph_of(vec![(mesh(86, 1, None), None)]);
+        let (graph, ids) = graph_of(vec![(fan(43), None)]);
         assert_eq!(
             check(&graph),
             Err(LeafBufferExceedsDeviceLimit {
                 node_id: ids[0],
                 leaf_name: None,
                 buffer_kind: LeafBufferKind::Vertex,
-                num_elements: 86,
+                num_elements: 43,
                 num_bytes: 1032,
                 max_buffer_size: LIMIT,
             })
@@ -1547,7 +1582,7 @@ mod leaf_buffer_limit_tests {
 
     #[test]
     fn the_vertex_buffer_is_reported_when_both_buffers_are_over() {
-        let (graph, _) = graph_of(vec![(mesh(86, 86, None), None)]);
+        let (graph, _) = graph_of(vec![(fan(90), None)]);
         assert_eq!(
             check(&graph).unwrap_err().buffer_kind,
             LeafBufferKind::Vertex
@@ -1595,19 +1630,19 @@ mod leaf_buffer_limit_tests {
 
     #[test]
     fn a_vertex_refusal_speaks_of_vertices() {
-        let (graph, _) = graph_of(vec![(mesh(86, 1, None), Some("shell"))]);
+        let (graph, _) = graph_of(vec![(fan(43), Some("shell"))]);
         assert_eq!(
             check(&graph).unwrap_err().to_string(),
-            "Object 'shell' has more vertices (86) than this graphics device can hold in one buffer"
+            "Object 'shell' has more vertices (43) than this graphics device can hold in one buffer"
         );
     }
 
     #[test]
     fn an_unnamed_vertex_refusal_speaks_of_an_object() {
-        let (graph, _) = graph_of(vec![(mesh(86, 1, None), None)]);
+        let (graph, _) = graph_of(vec![(fan(43), None)]);
         assert_eq!(
             check(&graph).unwrap_err().to_string(),
-            "An object has more vertices (86) than this graphics device can hold in one buffer"
+            "An object has more vertices (43) than this graphics device can hold in one buffer"
         );
     }
 }

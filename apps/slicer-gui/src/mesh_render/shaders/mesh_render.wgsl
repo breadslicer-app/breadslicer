@@ -42,6 +42,8 @@ struct ModelEntry {
 
 struct VsIn {
     @location(0) position: vec3<f32>,
+    // Smooth shading normal in the leaf frame; zero means shade flat.
+    @location(1) normal: vec3<f32>,
 };
 
 struct VsOut {
@@ -53,6 +55,7 @@ struct VsOut {
     @location(1) @interpolate(flat) selected: u32,
     @location(2) @interpolate(flat) breaches: u32,
     @location(3) @interpolate(flat) tint: u32,
+    @location(4) normal: vec3<f32>,
 };
 
 @vertex
@@ -64,6 +67,9 @@ fn vs_main(in: VsIn) -> VsOut {
     out.selected = model_entry.flags.x;
     out.breaches = model_entry.flags.y;
     out.tint = model_entry.flags.z;
+    // Direction only: the model matrix's linear part. Non-uniform scale
+    // bends it slightly; the shading tolerates that.
+    out.normal = (model_entry.model * vec4<f32>(in.normal, 0.0)).xyz;
     return out;
 }
 
@@ -82,8 +88,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.world_pos.z > u.light_dir.w) {
         discard;
     }
-    // Face normal from screen-space derivatives: no per-vertex normals needed.
-    let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    // The interpolated smooth normal; a vertex without one shades flat from
+    // screen-space derivatives.
+    let flat_n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    let has_normal = dot(in.normal, in.normal) > 1e-12;
+    let n = select(flat_n, normalize(in.normal), has_normal);
     let l = normalize(u.light_dir.xyz);
     // abs() makes lighting orientation-agnostic, safe for any winding.
     let lambert = abs(dot(n, l));
