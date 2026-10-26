@@ -42,17 +42,33 @@ use sc_geom::df_supports::{
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
 use sc_scene::NodeId;
-use sc_scene::node::{LeafPayload, NodeKind};
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
+use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
-use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision, SceneSubscription};
+use crate::scene_document::{
+    SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
+};
 use crate::slice_projection::load_selected_profiles;
+use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
+
+/// An overlay piece of a mesh in world coordinates.
+pub(crate) fn overlay_of(mesh: &sc_mesh_core::IndexedMesh, tint: OverlayTint) -> OverlayMesh {
+    OverlayMesh {
+        positions: mesh.vertices().iter().map(|v| *v.as_array()).collect(),
+        indices: mesh
+            .faces()
+            .iter()
+            .flat_map(|f| f.vertices.map(u32::from))
+            .collect(),
+        tint,
+    }
+}
 
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -100,7 +116,16 @@ pub(crate) struct DfSupportRun {
     /// current scene, so Undo and Redo keep the editor in step; a scene that
     /// moved on otherwise is refused.
     sessions: RefCell<Vec<(DfSupportSession, SceneRevision)>>,
+    /// The viewport, for the hover preview of the hand tools.
+    ctrl: Rc<ViewportController>,
+    /// Where the cursor rests with a hand tool armed; the preview is drawn
+    /// for it once the cursor has stopped for [`HOVER_SETTLE`].
+    hover: Cell<Option<[f32; 3]>>,
+    hover_timer: slint::Timer,
 }
+
+/// How long the cursor rests before the hand tool's preview is drawn.
+const HOVER_SETTLE: Duration = Duration::from_millis(40);
 
 /// A named set of options.
 #[derive(Clone)]
@@ -198,6 +223,7 @@ impl DfSupportRun {
         bus: Rc<PreferencesBus>,
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
+        ctrl: Rc<ViewportController>,
     ) -> Rc<Self> {
         let last_change = Rc::new(Cell::new(Instant::now()));
         let scene_events = document.subscribe({
@@ -229,7 +255,18 @@ impl DfSupportRun {
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
             sessions: RefCell::new(Vec::new()),
+            ctrl,
+            hover: Cell::new(None),
+            hover_timer: slint::Timer::default(),
         });
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tool_hover(move |x, y, z, hit| {
+                if let Some(run) = weak.upgrade() {
+                    run.on_tool_hover(hit.then_some([x, y, z]));
+                }
+            });
+        }
         {
             let run = run.clone();
             ui.on_support_tool_clicked(move |x, y, z| run.on_tool_click([x, y, z]));
@@ -637,14 +674,11 @@ impl DfSupportRun {
             .with_scene(|spatial| {
                 (0..)
                     .map_while(|i| spatial.leaf_id_at_index(i))
-                    .find_map(|id| match &spatial.graph().node(id)?.kind {
-                        NodeKind::Leaf(LeafPayload::Mesh(mesh))
-                            if mesh.meta().as_ref().and_then(|m| m.name.as_deref())
-                                == Some(DF_SUPPORT_MESH_NAME) =>
-                        {
-                            Some((id, mesh.clone()))
-                        }
-                        _ => None,
+                    .find_map(|id| {
+                        let mesh = spatial.graph().leaf_mesh_arc(id)?;
+                        (mesh.meta().as_ref().and_then(|m| m.name.as_deref())
+                            == Some(DF_SUPPORT_MESH_NAME))
+                        .then(|| (id, mesh.clone()))
                     })
             })
             .flatten()
@@ -653,6 +687,70 @@ impl DfSupportRun {
     /// A click in the viewport with the Add (1) or Delete (2) support tool
     /// of the Supports tab, at the world point it hit. The edit redraws the
     /// supports and swaps the support mesh as one undoable edit.
+    /// The editable session for the scene as it stands: the last run or hand
+    /// edit drawn into it (Undo and Redo land on earlier ones).
+    fn current_session(&self) -> Option<usize> {
+        self.sessions
+            .borrow()
+            .iter()
+            .rposition(|(_, drawn_on)| !self.document.slice_geometry_changed(*drawn_on))
+    }
+
+    /// The cursor moved over the model (`Some`) or off it with a hand tool
+    /// armed: the preview follows once the cursor rests.
+    fn on_tool_hover(self: &Rc<Self>, point: Option<[f32; 3]>) {
+        self.hover.set(point);
+        if point.is_none() {
+            self.hover_timer.stop();
+            self.ctrl.set_preview_overlay(None);
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.hover_timer
+            .start(slint::TimerMode::SingleShot, HOVER_SETTLE, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.draw_hover_preview();
+                }
+            });
+    }
+
+    /// Draws what a click where the cursor rests would do: the support it
+    /// adds (green, or red where nothing can hold that point) or what it
+    /// removes (red). Nothing when there is no editable session.
+    fn draw_hover_preview(&self) {
+        let (Some(ui), Some(point)) = (self.ui.upgrade(), self.hover.get()) else {
+            return;
+        };
+        let tool = ui.get_support_tool();
+        if tool == 0 || self.handle.borrow().is_some() {
+            return;
+        }
+        let Some(current) = self.current_session() else {
+            self.ctrl.set_preview_overlay(None);
+            return;
+        };
+        let p = point.map(f64::from);
+        let preview = {
+            let sessions = self.sessions.borrow();
+            let session = &sessions[current].0;
+            if tool == 1 {
+                session.preview_add_at(p)
+            } else {
+                session.preview_remove_at(p)
+            }
+        };
+        let piece = preview.ok().map(|preview| {
+            let tint = if preview.valid {
+                OverlayTint::Valid
+            } else {
+                OverlayTint::Invalid
+            };
+            overlay_of(&preview.mesh, tint)
+        });
+        self.ctrl
+            .set_preview_overlay(piece.map(|piece| Arc::from(vec![piece])));
+    }
+
     fn on_tool_click(&self, point: [f32; 3]) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -680,10 +778,7 @@ impl DfSupportRun {
             );
             return;
         }
-        let Some(current) = sessions
-            .iter()
-            .rposition(|(_, drawn_on)| !self.document.slice_geometry_changed(*drawn_on))
-        else {
+        let Some(current) = self.current_session() else {
             notice(
                 ctr!("DfSupportDialog", "Supports out of date"),
                 ctr!(
@@ -719,21 +814,29 @@ impl DfSupportRun {
                 return;
             }
         };
-        let Some((node_id, before)) = self.support_leaf() else {
+        let swap = self.support_leaf().and_then(|(node_id, _)| {
+            self.document
+                .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), node_id, Arc::new(mesh)))
+                .flatten()
+        });
+        let Some(swap) = swap else {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "The support mesh is not in the scene; generate supports again."
+            ));
             return;
         };
-        let after = Arc::new(mesh);
-        let swap = sc_scene_edit::SceneEdit::ReplaceLeafMesh {
-            node_id,
-            before,
-            after,
-        };
-        if self.document.apply_edit(swap.clone()).is_ok() {
-            self.document.push_edit(swap);
-            let roots = edited.state().collections.roots.len();
-            sessions.truncate(current + 1);
-            sessions.push((edited, self.document.scene_revision()));
-            ui.set_supports_last_run(format!("{roots} support root(s), edited by hand.").into());
+        match self.document.apply_edit(swap.clone()) {
+            Ok(_) => {
+                self.document.push_edit(swap);
+                let roots = edited.state().collections.roots.len();
+                sessions.truncate(current + 1);
+                sessions.push((edited, self.document.scene_revision()));
+                ui.set_supports_last_run(
+                    format!("{roots} support root(s), edited by hand.").into(),
+                );
+            }
+            Err(err) => ui.set_supports_last_run(format!("The edit was refused: {err:?}").into()),
         }
     }
 

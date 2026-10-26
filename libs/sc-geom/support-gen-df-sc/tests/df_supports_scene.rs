@@ -263,24 +263,114 @@ fn supports_are_added_and_removed_by_hand() {
         .join()
         .unwrap();
     let mut session = outcome.session;
-    let roots = session.state().collections.roots.len();
+    let count = |s: &support_gen_df_sc::DfSupportSession| {
+        let c = &s.state().collections;
+        c.roots.len() + c.trunks.len() + c.branches.len() + c.leaves.len() + c.knots.len()
+    };
+    let before = count(&session);
 
-    // A click on the underside of the cube (z = 8), near a corner.
+    // The preview of a click on the underside (z = 8) shows what it adds,
+    // and leaves the session as it was.
+    let preview = session.preview_add_at([1.5, 1.5, 8.0]).expect("a preview");
+    assert!(preview.valid, "the underside can be held");
+    assert!(!preview.mesh.faces().is_empty());
+    assert_eq!(bad_edges(&preview.mesh), 0);
+    assert_eq!(count(&session), before);
+
+    // The click itself adds it (its own trunk, or a member on a neighbour).
     session
         .add_trunk_at([1.5, 1.5, 8.0])
-        .expect("a route to the plate");
-    assert_eq!(session.state().collections.roots.len(), roots + 1);
+        .expect("a way to hold it");
+    assert!(count(&session) > before);
     let mesh = session.mesh().unwrap().expect("a support mesh");
     assert_eq!(bad_edges(&mesh), 0, "still edge-manifold");
 
-    // A click on the new support takes it away, with its root.
-    let removed = session
-        .remove_near([1.5, 1.5, 7.5])
+    // A click at its tip previews, then takes away, what was added.
+    let removal = session
+        .preview_remove_at([1.5, 1.5, 7.9])
         .expect("a support there");
-    assert!(removed >= 2, "the trunk and its root ({removed})");
-    assert_eq!(session.state().collections.roots.len(), roots);
+    assert!(!removal.valid && !removal.mesh.faces().is_empty());
+    session
+        .remove_near([1.5, 1.5, 7.9])
+        .expect("a support there");
+    assert_eq!(count(&session), before, "nothing left behind");
 
     // Far from everything, nothing happens.
     assert!(session.remove_near([500.0, 500.0, 500.0]).is_err());
     assert!(session.add_trunk_at([500.0, 500.0, 500.0]).is_err());
+    assert!(session.preview_add_at([500.0, 500.0, 500.0]).is_err());
+}
+
+/// Measurement, not a gate: on the real fixture scenes, how many clicks on
+/// overhangs a hand edit can hold and how long a preview takes (the hover
+/// budget). `cargo test --release -- --ignored --nocapture manual_edit_on`.
+#[test]
+#[ignore = "measurement"]
+fn manual_edit_on_real_scenes() {
+    let path = format!(
+        "{}/../support-gen-df/tests/fixtures/df_native_islands.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for (name, soup) in fixture["meshes"].as_object().unwrap() {
+        let soup: Vec<f64> = serde_json::from_value(soup.clone()).unwrap();
+        let vertices: Vec<Vertex> = soup
+            .chunks_exact(3)
+            .map(|p| Vertex::new([p[0] as f32, p[1] as f32, p[2] as f32]))
+            .collect();
+        let faces: Vec<IndexedTriangle> = (0..vertices.len() as u32 / 3)
+            .map(|t| IndexedTriangle::from_raw_indices([3 * t, 3 * t + 1, 3 * t + 2]))
+            .collect();
+        // Downward faces above the plate: where a click would want support.
+        let points: Vec<[f64; 3]> = soup
+            .chunks_exact(9)
+            .filter_map(|t| {
+                let a = [t[0], t[1], t[2]];
+                let b = [t[3], t[4], t[5]];
+                let c = [t[6], t[7], t[8]];
+                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let nz = u[0] * v[1] - u[1] * v[0];
+                let len = ((u[1] * v[2] - u[2] * v[1]).powi(2)
+                    + (u[2] * v[0] - u[0] * v[2]).powi(2)
+                    + nz * nz)
+                    .sqrt();
+                let centre = [
+                    (a[0] + b[0] + c[0]) / 3.0,
+                    (a[1] + b[1] + c[1]) / 3.0,
+                    (a[2] + b[2] + c[2]) / 3.0,
+                ];
+                (len > 1e-9 && nz / len < -0.7 && centre[2] > 2.0).then_some(centre)
+            })
+            .collect();
+        if points.is_empty() {
+            continue;
+        }
+        let step = (points.len() / 25).max(1);
+        let scene = scene_with(vec![(
+            IndexedMesh::new(None, vertices, faces),
+            [0.0, 0.0, 0.0],
+        )]);
+        let session = start_df_supports(&scene, DfSupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .session;
+        let (mut tried, mut held, mut slowest) = (0, 0, 0.0f64);
+        let started = std::time::Instant::now();
+        for p in points.iter().step_by(step).take(25) {
+            tried += 1;
+            let t = std::time::Instant::now();
+            if session.preview_add_at(*p).is_ok_and(|v| v.valid) {
+                held += 1;
+            }
+            slowest = slowest.max(t.elapsed().as_secs_f64());
+        }
+        println!(
+            "{name}: {held}/{tried} overhang clicks held; preview mean {:.0} ms, slowest {:.0} ms",
+            started.elapsed().as_secs_f64() * 1000.0 / tried as f64,
+            slowest * 1000.0
+        );
+    }
 }

@@ -35,12 +35,12 @@ export component LayerView inherits Rectangle {
         y: 48px;
         width: parent.width - 24px;
         height: parent.height - 60px;
-        viewport-width: max(self.width, root.shown-width);
-        viewport-height: max(self.height, root.shown-height);
+        content-width: max(self.width, root.shown-width);
+        content-height: max(self.height, root.shown-height);
 
         Image {
-            x: (parent.viewport-width - self.width) / 2;
-            y: (parent.viewport-height - self.height) / 2;
+            x: (parent.content-width - self.width) / 2;
+            y: (parent.content-height - self.height) / 2;
             width: root.shown-width;
             height: root.shown-height;
             source: root.source;

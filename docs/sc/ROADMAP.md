@@ -268,9 +268,14 @@ Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edició
 **Primera entrega (2026-10-26):** agregar y quitar soportes DF con un clic, en la pestaña Supports.
 - **Herramientas:** en el riel, Agregar (A) y Quitar (X). Agregar hace crecer un tronco DF ruteado desde el punto clickeado del modelo, con la normal de esa cara. Quitar borra la entidad más cercana al clic (hasta 3 mm) y todo lo que cuelga de ella, incluida la raíz huérfana.
 - **Edición:** el estado de soportes del último Generate queda en `DfSupportSession` (`libs/sc-geom/support-gen-df-sc/src/session.rs`). Cada clic regenera la malla de soportes y la cambia con un solo `ReplaceLeafMesh`, así que es un undo por clic. Undo y Redo siguen editables, porque hay una sesión por revisión de escena. Si la escena cambió por otro motivo, pide regenerar.
+- **Segunda entrega (2026-10-26, tras la prueba de Damian):**
+  - **Bug del clic:** agregar y quitar no hacían nada porque la malla de soportes pegada vive como `MeshResource` y la búsqueda solo miraba hojas inline. Ahora un helper común (`leaf_mesh_swap`) elige `ReplaceMeshResource` o `ReplaceLeafMesh`.
+  - **Colocación de DF por clic:** el clic usa `place_one_candidate` del auto-colocador. Antes de abrir un tronco nuevo prueba abanico y unión a un soporte vecino; si el tronco choca, se agarra de un vecino en la grilla, y si nada sirve reintenta sin grilla. Antes salía "sin ruta" teniendo un soporte al lado.
+  - **Preview en hover:** el soporte se dibuja en verde si se puede colocar, o como tronco recto en rojo si no. Con Quitar se ve en rojo lo que se va. Es un overlay translúcido nuevo del renderer (`mesh_render/overlay.rs`), y en los fixtures tarda de 1 a 8 ms.
+  - **Borrado completo:** el borrado sigue los knots (ramas colgadas de segmentos) y no deja knots ni raíces huérfanas.
+  - **Pick por herramienta:** Agregar mira a través de los soportes y Quitar solo ve soportes.
 - **Pendiente:**
   - mover punta y braces a mano;
-  - preview del punto antes del clic;
   - persistir las entidades al guardar (hoy solo sobrevive la malla);
   - la regeneración por clic corre en el hilo de UI, así que hay que medirla en escenas grandes;
   - prueba de gestos de Damian.
@@ -356,8 +361,12 @@ Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado e
 - **Drenajes:** con la herramienta Drenaje (D), un clic en la superficie lo perfora con el radio elegido; cada drenaje es un undo. Los drenajes se guardan en el marco local del modelo, así que moverlo no los pierde. Un drenaje nuevo o un cambio de ajustes re-ahueca el original y reutiliza la sesión de vóxeles.
 - **Resumen:** ml ahorrados, pared, vóxel efectivo y drenajes que no llegan a la cavidad.
 - **Avisos:** cavidad sellada sin drenaje (efecto ventosa y resina atrapada). Un job que termina sobre una escena editada se descarta.
+- **Previews (2026-10-26, tras la prueba de Damian):**
+  - **Cavidad:** con un modelo seleccionado, la pestaña dibuja en azul translúcido la cavidad que tallan los ajustes actuales. Usa el preview rápido de DF y reusa la sesión de vóxeles.
+  - **En vivo:** la cavidad se recalcula al cambiar pared o vóxel (hay un slider de pared con debounce de 150 ms), y al mover el modelo solo se re-posa.
+  - **Drenajes:** los existentes se ven en cian, y el que perforaría el clic en verde.
+  - **Opcional:** se apaga con "Show the cavity".
 - **Falta:**
-  - preview de la cavidad antes de aplicar;
   - áreas sólidas (SC-45);
   - persistir original y drenajes al guardar (SC-43): hoy sobrevive la malla hueca;
   - análisis de resina atrapada (SC-46);

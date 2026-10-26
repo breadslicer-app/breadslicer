@@ -26,6 +26,7 @@ mod gizmo_buffers;
 mod gizmo_entries;
 #[cfg(test)]
 pub(crate) mod mock;
+mod overlay;
 mod pipelines;
 mod readback;
 mod render_size;
@@ -48,6 +49,7 @@ use gizmo_entries::{
     build_translate_entries,
 };
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
+pub(crate) use overlay::{OverlayMesh, OverlayTint};
 use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::label::LabelPipeline;
@@ -251,6 +253,7 @@ pub struct Renderer {
     core: RendererCore,
     pipelines: Pipelines,
     scene: Option<InstalledScene>,
+    overlay: overlay::OverlaySlot,
     target_manager: TargetManager,
 }
 
@@ -314,6 +317,7 @@ impl Renderer {
                 plate_buffers: None,
             },
             scene: None,
+            overlay: overlay::OverlaySlot::default(),
             target_manager: TargetManager {
                 msaa: None,
                 targets: None,
@@ -902,6 +906,13 @@ impl Renderer {
 
             if scene_for_draws && let Some(inst) = installed {
                 self.record_mesh_objects(&mut pass, inst, selection);
+            }
+            if contents == FrameContents::Workspace {
+                self.overlay.record(
+                    &mut pass,
+                    &self.pipelines.mesh.overlay_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
             }
 
             if contents == FrameContents::Workspace {

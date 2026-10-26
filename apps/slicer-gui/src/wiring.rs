@@ -212,6 +212,10 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_tab_tools_changed(move || ctrl.on_tab_tools_changed());
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_gizmo_focus_translate_pressed(move || ctrl.on_gizmo_focus_translate());
     }
     {

@@ -7,7 +7,7 @@
 // shows only what its tab acts on; the window binds them to its own
 // properties and callbacks, which Rust drives.
 
-import { CheckBox, ComboBox, LineEdit, ProgressIndicator } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ProgressIndicator, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
 import { ButtonKind, Card, Dot, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
@@ -296,6 +296,8 @@ export component HollowInspector inherits VerticalLayout {
     in property <int> model-state;
     in property <int> drain-count;
     in property <bool> drain-tool-on;
+    in property <bool> show-cavity;
+    callback show-cavity-toggled(bool);
     // The options (HollowRun::on_option), pushed by Rust after every change.
     in property <float> wall;
     in property <float> voxel;
@@ -355,6 +357,13 @@ export component HollowInspector inherits VerticalLayout {
         if !root.running && root.last-run != "": Note {
             text: root.last-run;
         }
+        CheckBox {
+            text: @tr("Inspector" => "Show the cavity (live preview)");
+            checked: root.show-cavity;
+            toggled => {
+                root.show-cavity-toggled(self.checked);
+            }
+        }
         if !root.running && root.model-state == 1: ScButton {
             text: @tr("Inspector" => "Make solid again");
             clicked => {
@@ -373,6 +382,14 @@ export component HollowInspector inherits VerticalLayout {
             value: root.wall;
             committed(v) => {
                 root.option-changed(0, v);
+            }
+        }
+        Slider {
+            minimum: 0.5;
+            maximum: 6;
+            value: root.wall;
+            changed(v) => {
+                root.option-changed(0, Math.round(v * 10) / 10);
             }
         }
         NumberField {

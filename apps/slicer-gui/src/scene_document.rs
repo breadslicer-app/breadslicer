@@ -26,7 +26,6 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
-#[cfg(test)]
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_scene::{MeshResourceId, NodeId, SceneError};
@@ -244,6 +243,33 @@ pub(crate) struct SceneDocument {
     /// Bumped by every project-level change, giving those the same comparable
     /// identity committed edits get from their ids.
     project_state_generation: Cell<u64>,
+}
+
+/// The edit that swaps the mesh a leaf shows for `after`, whichever way the
+/// leaf holds it: inline (an imported model) or through a mesh resource (a
+/// pasted fragment, such as the support mesh). `None` when `leaf` holds no
+/// mesh. A shared resource changes for every leaf that uses it.
+pub(crate) fn leaf_mesh_swap(
+    scene: &Scene,
+    leaf: NodeId,
+    after: Arc<sc_mesh_core::IndexedMesh>,
+) -> Option<SceneEdit> {
+    match &scene.node(leaf)?.kind {
+        NodeKind::Leaf(LeafPayload::Mesh(before)) => Some(SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: before.clone(),
+            after,
+        }),
+        NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
+            let rid = *rid;
+            Some(SceneEdit::ReplaceMeshResource {
+                rid,
+                before: scene.mesh_resource_arc(rid)?.clone(),
+                after,
+            })
+        }
+        _ => None,
+    }
 }
 
 impl SceneDocument {
@@ -2447,5 +2473,36 @@ mod scene_document_tests {
             panic!();
         };
         assert_eq!(*a.translation(), [4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn a_pasted_mesh_is_swapped_through_its_resource_and_undone() {
+        // A pasted fragment (how generated supports enter the scene) holds its
+        // mesh through a resource, not inline.
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let pasted = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+        let fragment = SceneFragment::from_leaf_snapshot(pasted.clone(), Transform3D::Identity);
+        doc.paste_fragment(&fragment, [0.0; 3]).unwrap();
+        let mesh_of = |doc: &SceneDocument| {
+            doc.with_scene(|s| {
+                let leaf = s.leaf_id_at_index(0).unwrap();
+                (leaf, s.graph().leaf_mesh_arc(leaf).unwrap().clone())
+            })
+            .unwrap()
+        };
+        let (leaf, before) = mesh_of(&doc);
+        assert!(Arc::ptr_eq(&before, &pasted));
+        let after = Arc::new(sc_mesh_fixtures::unit_cube_mesh());
+        let swap = doc
+            .with_scene(|s| leaf_mesh_swap(s.graph(), leaf, after.clone()))
+            .flatten()
+            .expect("a resource leaf has a swap");
+        assert!(matches!(swap, SceneEdit::ReplaceMeshResource { .. }));
+        doc.apply_edit(swap.clone()).unwrap();
+        doc.push_edit(swap);
+        assert!(Arc::ptr_eq(&mesh_of(&doc).1, &after));
+        doc.undo().unwrap();
+        assert!(Arc::ptr_eq(&mesh_of(&doc).1, &pasted));
     }
 }

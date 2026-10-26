@@ -76,6 +76,10 @@ pub(crate) trait MeshRenderer {
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError>;
 
+    /// Install the preview overlay pieces drawn over the scene (`None`
+    /// clears them). Re-uploads only when `pieces` is a different `Arc`.
+    fn set_overlay(&mut self, _pieces: Option<&std::sync::Arc<[super::OverlayMesh]>>) {}
+
     /// Draw the models alone and copy the frame off the GPU, for a
     /// picture that is not going on screen, such as the one a printer
     /// file carries. Returns `Ok(None)` for a zero-sized request.
@@ -146,5 +150,9 @@ impl MeshRenderer for Renderer {
         height: u32,
     ) -> Result<Option<FramePixels>, RenderError> {
         Renderer::preview_pixels(self, graph, build_volume, camera, width, height)
+    }
+
+    fn set_overlay(&mut self, pieces: Option<&std::sync::Arc<[super::OverlayMesh]>>) {
+        Renderer::set_overlay(self, pieces);
     }
 }
