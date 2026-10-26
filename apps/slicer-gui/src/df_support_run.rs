@@ -23,7 +23,8 @@
 //! stamps the time; a poll starts the prescan once the scene has been still
 //! for [`PRESCAN_SETTLE`], and cancels it when the scene moves on. Reuse is
 //! safe by construction: the core keys the scans on the baked world geometry,
-//! so a stale scan never matches. Off with the Preferences > Slicing switch.
+//! so a stale scan never matches. Opt-in (Preferences > Slicing) until the
+//! Supports tab (SC-83) decides when to start it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

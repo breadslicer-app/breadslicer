@@ -354,13 +354,14 @@ fn is_default_aa_level(level: &AaLevel) -> bool {
     *level == AaLevel::Off
 }
 
-/// Supports are prepared in the background by default.
+/// The background prescan is off by default: it waits for the Supports tab
+/// (SC-83), which knows when to start it.
 fn default_prescan_supports() -> bool {
-    true
+    false
 }
 
 fn is_default_prescan_supports(on: &bool) -> bool {
-    *on
+    !*on
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -402,7 +403,7 @@ pub(crate) struct AppSettings {
     )]
     aa_level: AaLevel,
     /// Whether the support scans run in the background while the scene sits
-    /// still, so Generate Supports starts from them. Omitted in TOML while on
+    /// still, so Generate Supports starts from them. Omitted in TOML while off
     /// (the default).
     #[serde(
         default = "default_prescan_supports",

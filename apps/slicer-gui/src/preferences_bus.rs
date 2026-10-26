@@ -131,7 +131,7 @@ impl PreferencesSnapshot {
             favourite_resins: BTreeSet::new(),
             output_format_by_printer: BTreeMap::new(),
             aa_level: AaLevel::Off,
-            prescan_supports: true,
+            prescan_supports: false,
             object_list_visible: true,
             object_list_anchor_right: true,
             object_list_anchor_bottom: false,
