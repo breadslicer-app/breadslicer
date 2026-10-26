@@ -342,6 +342,7 @@ fn branch_collides_with_mesh(
     shaft_diameter_mm: f64,
     live: &SupportSettings,
 ) -> bool {
+    let _perf = crate::perf::scope("grid:branch-collision");
     let radius = shaft_diameter_mm / 2.0 + 0.25;
     let nominal_cone_length_mm = live.tip.length_mm;
     let socket_approx = Vec3::new(
@@ -446,6 +447,7 @@ fn select_attachment_decision(
     ctx: &mut AttachContext<'_, '_>,
     occupied_point: bool,
 ) -> Option<GridPlacementDecision> {
+    let _perf = crate::perf::scope("grid:attach-search");
     let host_trunk = host.entity;
     let tip_pos = ctx.tip_pos;
     let shaft_diameter_mm = ctx.settings.shaft.diameter_mm;
@@ -676,6 +678,7 @@ fn trunk_collides_with_mesh(
     settings: &SupportSettings,
     mesh: &dyn CollisionField,
 ) -> bool {
+    let _perf = crate::perf::scope("grid:trunk-collision");
     let trunk = &candidate.trunk;
     // Gate at the trunk's own (tier-sized) shaft, not the global setting.
     let max_seg_diameter = trunk
@@ -725,6 +728,7 @@ pub fn decide_grid_placement(
     live: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> GridPlacementDecision {
+    let _perf = crate::perf::scope("grid:decide");
     let DecideGridPlacementArgs {
         settings,
         snapshot,
