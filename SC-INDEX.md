@@ -29,6 +29,7 @@ se conserva sin reemplazar su autoría ni su documentación.
 - [SC-14: flujo de proyecto, fallo encontrado y corrección y validación nativa](docs/sc/PROJECT-FLOW.md).
 - [Reconstrucción, ramas y retorno](docs/sc/BASELINE.md).
 - [Matriz core → GUI → evidencia → trabajo pendiente](docs/sc/CORE-GUI-MATRIX.md).
+- [Port del hollow de DragonFruit: motor, drenajes, paridad y medición](docs/sc/HOLLOW-PORT.md).
 - [Inventario reproducible de paquetes](docs/sc/INVENTORY.json).
 - [Roadmap e instrucciones de mantenimiento](docs/sc/ROADMAP.md).
 - [Roadmap estructurado](docs/sc/ROADMAP.json).

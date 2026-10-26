@@ -345,6 +345,13 @@ Hito integrador, no duplicar subtareas SC-39…46. Fuente paramétrica persisten
 
 Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado en ml.
 
+**Progreso (2026-10-26, rama `hollow-engine-b6b5b3`):** motor portado y adaptador listos, sin GUI todavía (detalle en [`HOLLOW-PORT.md`](HOLLOW-PORT.md)):
+- `libs/sc-geom/hollow-df`: el motor de DF con los aportes de Damian, **igual bit a bit** a DF en 11 casos y en `617_repaired.stl`; preview de superficie y Apply edge-manifold con la escalera de suavizado de DF; infill lattice/pillar; áreas sólidas por vóxel o en mm; drenajes con corte exacto propio en Rust (DF usa manifold3d) y profundidad automática; vóxel efectivo, volúmenes en ml, cancelación y progreso por etapa.
+- `libs/sc-geom/hollow-df-sc` (`sc_geom::df_hollow::start_hollow`): job cancelable sobre un leaf; pared física con escala no uniforme; la sesión se reutiliza al mover o rotar.
+- Medido en `617_repaired.stl` a 90 mm: sesión 0,9 s, preview 0,25 s, Apply 2,1 s, Apply + drenaje 2,7 s; 71 ml ahorrados.
+- **Pendiente antes de imprimir:** `sl1cer` lee como sólido la cavidad de un hollow sin drenaje (shell invertida aparte, agrupado por shell de SC-81). Con un drenaje que llega a la cavidad rebana bien. Falta el arreglo en `sl1cer` (shell de volumen negativo = vacío) o exigir drenaje en la GUI.
+- Falta: pestaña Hollow (SC-84), persistencia (SC-43), editor de drenajes y áreas sólidas (SC-44, SC-45), análisis de resina atrapada (SC-46).
+
 **Depende de:** SC-41, SC-42, SC-43, SC-44, SC-45, SC-46. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-19
@@ -592,6 +599,8 @@ Comparar soluciones abiertas mantenidas para SDF/offset/isosuperficie/booleanos 
 Implementar motor elegido con calidad/error y memoria acotados; mesh interior con winding correcto, tratamiento de degenerados y worker cancelable.
 
 **Cierre:** Medir espesor/volumen y topología en corpus; fallos explícitos, preview rápido vs final etiquetados; input original intacto.
+
+**Progreso (2026-10-26):** motor elegido (DF, SC-18) portado en `libs/sc-geom/hollow-df` con su adaptador `hollow-df-sc`. Cumple: worker cancelable con progreso, preview (`Session::preview`) y final (`Session::apply`) separados, final edge-manifold o error explícito, cavidad con winding hacia adentro, memoria acotada (`max_cells`, estimado en `GridInfo`), original intacto (el resultado es una malla nueva). Volumen y topología medidos en un modelo real (`docs/sc/HOLLOW-PORT.md`); falta medirlos sobre el corpus SC-24 y la conexión GUI.
 
 **Depende de:** SC-40, SC-37, SC-38. Prioridad: normal. Estado snapshot: backlog.
 
@@ -953,6 +962,9 @@ Lista viva de "esto podría estar mejor" anotada durante el porteo (`docs/sc/DF-
 - **Islas del raft repetidas (bug DF, bloque 9c):** `polygonsFromPolyTree` recorre con `GetFirst`/`GetNext` (que ya visita a todos los descendientes) y además baja por los hijos de cada nodo. Una isla dentro de un agujero sale varias veces, y la base chaflanada dibuja una copia por cada una: caras superpuestas en la malla exportada (3 de los 167 rafts del oráculo de 9c). Arreglo: recorrer solo las raíces (`Childs()` del árbol) y dejar que la recursión baje.
 - **Caché de sombra mundial con clave incompleta (bug DF, bloque 9c):** la clave de `worldShadowCache` (modelo inclinado) omite la posición X/Y. Dos modelos inclinados que compartan geometría, o uno que solo se movió en XY, reciben la holgura del primero en el lugar equivocado. Arreglo: incluir X/Y en la clave, o cachear la sombra en el marco local y transformarla. SC calcula de cero.
 - **Excepción de Clipper aborta todo el export (bloque 9c):** nada la captura en el paso del raft. Arreglo: degradar a raft sin holgura (o sin raft para ese modelo) y avisar.
+- **Hollow: profundidad automática de drenaje medida sobre la cavidad sola (bug DF, `HOLLOW-PORT.md`):** `computeAutoHolePunchDepthMm` mide sobre la geometría de preview, que desde la preview de sólo superficie es la cavidad; el primer y segundo impacto son entonces las dos paredes de la cavidad y no la pared del modelo. SC ya mide sobre el hollow final.
+- **Hollow: pared con escala no uniforme (DF):** DF convierte la pared con el promedio de los ejes de escala. SC usa la descomposición polar del transform y la pared es física en todos los ejes.
+- **Hollow: corte de drenaje con infill:** el corte exacto de SC supone malla sin autointersecciones cerca del agujero; las vigas de infill se embeben en la pared, así que un drenaje que cruce una puede fallar (con error). Arreglo posible: no embeber vigas en un radio alrededor de cada drenaje, o recortarlas antes.
 - **Raft recalculado de más (rendimiento, bloque 9c):** cada modelo recalcula la huella de todos los modelos en la placa (`collectModelPlateFootprint`), aunque la banda sea la misma, y el modo línea vuelve a inflar la holgura que la huella ya infló. Medir antes de optimizar.
 - **El slice ignora los ajustes de raft por modelo (bug DF, bloque 10):** `buildSupportAndRaftWorldTriangles` usa `getRaftSettings()` global, mientras el export (`ExportManager`) usa `getRaftSettingsForModel`. Un modelo con raft propio se exporta con uno y se slicea con otro. Arreglo: resolver los ajustes por modelo también en el slice.
 - **Raft no manifold (DF, SC-81):** la pared de DF se enreda en footprints cóncavos y la base recortada queda con uniones en T (earcut descarta puntos colineales de la tapa). El rasterizador de DF lo tolera; un slicer de contornos no. Ya arreglado detrás de `robust_raft_geometry` (encendido en SC): falta decidir si la pared vertical de Clipper debe recuperar el chaflán de DF arriba, y medir el costo de `split_t_junctions` (O(aristas abiertas × vértices)) en rafts grandes.
