@@ -29,6 +29,7 @@ pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
 pub mod raster;
+mod shells;
 pub mod stitch;
 mod z_bins;
 
