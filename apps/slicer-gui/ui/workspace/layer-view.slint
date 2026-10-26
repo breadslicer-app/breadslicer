@@ -1,0 +1,126 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The Slice tab's layer pane (SC-88): the selected layer's image beside the
+// 3D view, zoomable (Ctrl + wheel or the buttons) and pannable (drag or the
+// wheel), the way DragonFruit's Printing mode shows a layer.
+
+import { Theme } from "../kit/theme.slint";
+import { ScButton } from "../kit/controls.slint";
+
+export component LayerView inherits Rectangle {
+    in property <image> source;
+    in property <string> caption;
+    callback close-requested();
+
+    property <float> zoom: 1;
+    // Image size at zoom 1: the image fitted into the pane.
+    property <float> fit: Math.min(
+        (self.width - 24px) / max(1px, self.source.width * 1px),
+        (self.height - 72px) / max(1px, self.source.height * 1px));
+    property <length> shown-width: self.source.width * 1px * self.fit * self.zoom;
+    property <length> shown-height: self.source.height * 1px * self.fit * self.zoom;
+
+    function zoom-by(factor: float) {
+        root.zoom = clamp(root.zoom * factor, 1, 32);
+    }
+
+    background: #0e0f10;
+    clip: true;
+
+    flick := Flickable {
+        x: 12px;
+        y: 48px;
+        width: parent.width - 24px;
+        height: parent.height - 60px;
+        viewport-width: max(self.width, root.shown-width);
+        viewport-height: max(self.height, root.shown-height);
+
+        Image {
+            x: (parent.viewport-width - self.width) / 2;
+            y: (parent.viewport-height - self.height) / 2;
+            width: root.shown-width;
+            height: root.shown-height;
+            source: root.source;
+            image-rendering: root.zoom >= 4 ? pixelated : smooth;
+        }
+
+        TouchArea {
+            scroll-event(event) => {
+                if event.modifiers.control {
+                    root.zoom-by(event.delta-y > 0 ? 1.25 : 0.8);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+    }
+
+    Rectangle {
+        height: 40px;
+        y: 0;
+        background: Theme.chrome;
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 8px;
+            spacing: 6px;
+
+            Text {
+                text: root.caption;
+                font-family: Theme.mono;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: Math.round(root.zoom * 100) + " %";
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+            ScButton {
+                text: "−";
+                button-height: 28px;
+                y: 6px;
+                clicked => {
+                    root.zoom-by(0.8);
+                }
+            }
+            ScButton {
+                text: @tr("LayerView" => "Fit");
+                button-height: 28px;
+                y: 6px;
+                clicked => {
+                    root.zoom = 1;
+                }
+            }
+            ScButton {
+                text: "+";
+                button-height: 28px;
+                y: 6px;
+                clicked => {
+                    root.zoom-by(1.25);
+                }
+            }
+            ScButton {
+                text: "✕";
+                button-height: 28px;
+                y: 6px;
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
