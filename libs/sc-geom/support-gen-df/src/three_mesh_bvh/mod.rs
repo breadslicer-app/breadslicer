@@ -51,6 +51,9 @@ pub struct MeshBvh {
     index: Vec<u32>,
     /// One tree per geometry group range; DragonFruit's meshes have one.
     roots: Vec<Vec<Node>>,
+    /// Each triangle's bounds `[min xyz, max xyz]`, in BVH order, for the
+    /// closest-point query's per-triangle pre-check.
+    triangle_bounds: Vec<[f32; 6]>,
 }
 
 impl MeshBvh {
@@ -75,10 +78,25 @@ impl MeshBvh {
             index.len()
         );
         let roots = build::build_packed_tree(&positions, &mut index, options);
+        let triangle_bounds = index
+            .chunks_exact(3)
+            .map(|t| {
+                let [a, b, c] = [t[0], t[1], t[2]].map(|i| positions[i as usize]);
+                let mut bounds = [a[0], a[1], a[2], a[0], a[1], a[2]];
+                for v in [b, c] {
+                    for k in 0..3 {
+                        bounds[k] = bounds[k].min(v[k]);
+                        bounds[k + 3] = bounds[k + 3].max(v[k]);
+                    }
+                }
+                bounds
+            })
+            .collect();
         MeshBvh {
             positions,
             index,
             roots,
+            triangle_bounds,
         }
     }
 
