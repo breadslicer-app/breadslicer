@@ -1,6 +1,6 @@
 # Roadmap propio de SC
 
-Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **82 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
+Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **83 tarjetas**; el estado operativo está en [Workboard](https://oc.synrgs.tech/workboard/sc).
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
@@ -119,6 +119,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
+| [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
 
 ## SC-01
 
@@ -998,3 +999,22 @@ Medir por etapa (escaneo de islas, derivación, plan, bracing, raft, slice) sobr
 **Cierre:** Corpus y hardware registrados, perfil por etapa con los cuellos de botella identificados y una lista priorizada de optimizaciones con la ganancia esperada.
 
 **Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-83
+
+**Pestaña Supports con cálculo especulativo y caché por etapas** — Línea de soportes DF / soportes
+
+Idea de Damian (2026-10-25): una pestaña Supports propia (sin herramientas de transformación) que, al abrirse, corre el pipeline en segundo plano y deja el resultado en espera, para que Autosupport sea prácticamente instantáneo.
+
+- **Caché por etapas**, cada una con su clave:
+  - escaneo de islas: geometría y pose;
+  - plan: además, ajustes de soportes y estado de soportes existente;
+  - teselado: además, estilo de malla.
+  - Cambiar un ajuste en Supports rehace solo el plan; volver de Transform sin mover nada no recalcula.
+- **Salir a Transform cancela el cálculo.** Los soportes **no se borran**: si la pose cambió quedan marcados como desactualizados. Los automáticos se regeneran solos al volver y las ediciones manuales piden confirmación, siempre con undo (protección de datos del usuario).
+- **Prioridad baja** del trabajo en segundo plano, con opción para apagarlo.
+- **Primera medición** (ballena, 2026-10-25, timings de `perf.rs`): ~2,5 s en total, de los cuales la colocación del plan son ~2,1 s. Qué cachear primero lo deciden esos números (SC-82).
+
+**Cierre:** Damian entra a Supports, aprieta Autosupport sin espera perceptible en sus modelos habituales; cambiar un ajuste no reescanea; ir a Transform y volver sin mover nada no recalcula; mover el modelo marca los soportes y los regenera o pregunta según sean automáticos o editados.
+
+**Depende de:** SC-79 (soportes en la GUI) y SC-37 (contrato de jobs y resultados obsoletos). Entra con el retrabajo de la UI. Prioridad: normal. Estado snapshot: backlog.
