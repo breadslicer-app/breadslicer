@@ -150,6 +150,8 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-88](#sc-88) | backlog | slicing | Vista de capa con zoom y paneo | SC-84, SC-34 |
 | [SC-89](#sc-89) | backlog | comunidad | Testers: bot de Discord, issues clasificados y arreglos con PR | SC-90, SC-58 |
 | [SC-90](#sc-90) | backlog | calidad | Log de interacción opcional y "Exportar diagnóstico" | SC-64 |
+| [SC-91](#sc-91) | backlog | marca | Rebrand a Breadslicer: nombre visible y migración de datos | SC-59 |
+| [SC-92](#sc-92) | backlog | comunidad | breadslicer.app: DNS, email y página del proyecto | SC-91 |
 
 ## SC-01
 
@@ -1409,3 +1411,41 @@ Ya existe `logs/crash.log` (panics con backtrace).
 **Cierre:** con el log activado, un fallo reproducido a mano queda explicado por el zip exportado (pasos y backtrace). El zip no contiene rutas con el usuario ni geometría si no se pidió.
 
 **Depende de:** SC-64. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-91
+
+**Rebrand a Breadslicer: nombre visible y migración de datos** — Marca
+
+Decisión de Damian (2026-10-26): el producto se llama **Breadslicer** (dominio `breadslicer.app`, comprado en Cloudflare). El logo es el pan en rodajas, naranja tostado sobre fondo oscuro.
+- **Capa 1, lo visible:** nombre del ejecutable, título de ventana, ícono, splash, "Acerca de", instalador, README y textos.
+  - El ícono de app es una versión simplificada del logo, legible a 16 y 32 px; las rodajas pueden insinuar las capas de una impresión.
+  - El logo completo queda para la comunidad.
+- **Capa 2, lo guardado en cada PC:**
+  - carpeta de datos e ID de la app pasan a `breadslicer`, con migración en el primer arranque (preferencias, presets, logs);
+  - el formato de proyecto conserva sus identificadores (`soulcrafted-project.toml`, el esquema), o escribe el nombre nuevo pero lee los dos para siempre.
+- **Capa 3, nombres internos (`sc-*`, `sc_…`): no se tocan.** SoulCrafted es el upstream (`codeberg.org/SoulCrafted/Slicer`), y renombrar unos 1.336 usos haría chocar cada sincronización (SC-63). Los avisos de copyright de upstream se mantienen siempre (AGPL).
+- **Ejecución:** de una vez y en orden, con compilación y tests al final. No hace falta paralelizar.
+
+**Cierre:** la app se presenta como Breadslicer en todas partes visibles. Una instalación previa conserva sus preferencias, presets y logs, y abre sus proyectos guardados. Upstream sigue mergeando sin conflictos de nombres.
+
+**Depende de:** SC-59. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-92
+
+**breadslicer.app: DNS, email y página del proyecto** — Comunidad
+
+Dominio comprado por Damian en Cloudflare (2026-10-26). Hay que confirmar que el auto-renovado esté activo y la privacidad WHOIS, prendida.
+- **Acceso:** un API token de Cloudflare acotado a la zona `breadslicer.app`:
+  - Zone → DNS Edit;
+  - Zone → Email Routing Rules Edit;
+  - Zone → Zone Settings Read;
+  - Account → Email Routing Addresses Edit.
+  - Va sin facturación ni otras zonas, con vencimiento, y guardado como variable de entorno `CLOUDFLARE_API_TOKEN`, nunca pegado en el chat.
+  - Cada cambio de DNS o de reglas se propone y espera el OK de Damian.
+- **Email Routing:** `hola@` y `bugs@breadslicer.app` reenvían al mail de Damian. Enviar desde el dominio requiere otro servicio (Resend o Gmail con "enviar como").
+- **Página:** una landing simple (GitHub Pages o un Worker) con descarga de builds y link a Discord y GitHub. El conector "Cloudflare Developer Platform" sirve si va en Workers.
+- **Nombres reservados (2026-10-26):** repo privado `SynrgStudio/breadslicer`. La organización de GitHub (`breadslicer-app`, libre al 26/10) y el servidor de Discord los crea Damian desde la web.
+
+**Cierre:** el dominio resuelve a la página con HTTPS, los correos llegan al mail de Damian y los nombres de GitHub y Discord están reservados.
+
+**Depende de:** SC-91. Prioridad: normal. Estado snapshot: backlog.
