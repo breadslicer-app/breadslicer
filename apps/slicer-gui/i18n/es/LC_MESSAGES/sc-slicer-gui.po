@@ -2308,3 +2308,8 @@ msgstr "{} (bifurcado)"
 msgctxt "SlicingPreferences"
 msgid "Prepare supports in the background"
 msgstr "Preparar soportes en segundo plano"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Smooth shading on models"
+msgstr "Sombreado suave en los modelos"

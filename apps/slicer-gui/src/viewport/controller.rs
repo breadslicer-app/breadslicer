@@ -433,6 +433,13 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// Builds the GPU scene again from the live graph, for a change in how
+    /// meshes are drawn (smooth shading of models).
+    pub(crate) fn upload_scene_again(&self) {
+        self.render.update_frame(FrameState::with_upload_owed);
+        self.mark_dirty();
+    }
+
     /// Resets the viewport after a fresh scene install: the camera goes back to
     /// `None`, so the framing in `on_scene_load_finished` can set it, and the
     /// UI mirrors the new scene's object list and the cleared selection.
