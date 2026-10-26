@@ -181,6 +181,7 @@ fn find_best_branch_cone_placement(
     tip_profile: SupportTipProfile,
     mesh: Option<&dyn CollisionField>,
 ) -> ConePlacement {
+    let _perf = crate::perf::scope("branch:cone-search");
     let nominal_socket_target =
         build_nominal_branch_socket_target(tip_pos, tip_normal, effective_cone_axis, tip_profile);
     let direct_cone = build_authored_branch_cone(
@@ -377,6 +378,7 @@ pub fn build_branch_data(
     live_settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> BranchBuildResult {
+    let _perf = crate::perf::scope("branch:build");
     let BranchBuildInput {
         tip_pos,
         tip_normal,

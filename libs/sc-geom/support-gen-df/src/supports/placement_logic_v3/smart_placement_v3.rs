@@ -595,6 +595,7 @@ pub fn calculate_smart_placement_v3(
     settings: &SupportSettings,
     context: SmartPlacementV3Context,
 ) -> TrunkPlacementResult {
+    let _perf = crate::perf::scope("router:v3");
     stats.placements += 1;
     let standard = calculate_standard_placement(&input.placement, settings);
     if standard.error.is_some() {

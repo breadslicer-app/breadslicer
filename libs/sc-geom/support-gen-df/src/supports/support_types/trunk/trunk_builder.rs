@@ -280,6 +280,7 @@ pub fn build_trunk_data_routed(
     settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> TrunkBuildResult {
+    let _perf = crate::perf::scope("trunk:build-routed");
     let placement = calculate_smart_placement_v3(
         &SmartPlacementV3Input {
             placement: placement_input(input, settings),

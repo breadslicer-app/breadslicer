@@ -33,6 +33,7 @@ use crate::features::slicing::support_world_triangles::{
 use crate::native::mesh_core::mesh::IndexedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands};
 use crate::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
+use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
 use crate::supports::auto_support::auto_place::plan::{
@@ -216,6 +217,8 @@ pub struct PipelineOutput {
     /// What the slicer rasterises (`buildSupportAndRaftWorldTriangles`): every
     /// support and the global-settings raft, nine floats per triangle.
     pub support_soup: Vec<f32>,
+    /// Where the run spent its time (stages, plan phases, router, builders).
+    pub timings: PerfFrame,
 }
 
 /// `Box3.getCenter` of the geometry's bounding box.
@@ -274,6 +277,20 @@ pub fn generate_supports(
     progress: &mut dyn FnMut(Progress<'_>),
     cancel: &CancelToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    perf::begin_frame();
+    let result = run_pipeline(models, state, settings, new_id, progress, cancel);
+    let timings = perf::end_frame().unwrap_or_default();
+    result.map(|out| PipelineOutput { timings, ..out })
+}
+
+fn run_pipeline(
+    models: &[ModelInput],
+    state: &SupportState,
+    settings: &PipelineSettings,
+    new_id: &mut dyn FnMut() -> String,
+    progress: &mut dyn FnMut(Progress<'_>),
+    cancel: &CancelToken,
+) -> Result<PipelineOutput, PipelineError> {
     let n = models.len();
     let check = || {
         if cancel.is_cancelled() {
@@ -297,6 +314,7 @@ pub fn generate_supports(
     for (i, model) in models.iter().enumerate() {
         check()?;
         step(progress, Stage::WorldGeometry, i);
+        let _perf = perf::scope("stage:world-geometry");
         soups.push(world_soup(model));
     }
     let bvhs: Vec<Arc<MeshBvh>> = soups
@@ -330,8 +348,12 @@ pub fn generate_supports(
         check()?;
         step(progress, Stage::ScanIslands, i);
         let has_raft = settings.rafts.for_model(Some(&model.id)).bottom_mode != RaftBottomMode::Off;
-        let mesh = IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon);
+        let mesh = {
+            let _perf = perf::scope("stage:weld-mesh");
+            IndexedMesh::from_triangle_soup(soup, settings.scan.merge_epsilon)
+        };
         let s = &settings.scan;
+        perf::mark("stage:scan-islands");
         let combined = scan_islands(
             &mesh,
             settings.layer_height_mm,
@@ -342,13 +364,19 @@ pub fn generate_supports(
             Some(angle),
             Some(s.overhang_px_mm),
         );
+        perf::measure("stage:scan-islands");
+        perf::mark("stage:scan-overhangs");
         let (regions, stability) =
             overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft);
+        perf::measure("stage:scan-overhangs");
         let overhang = OverhangScan { regions, stability };
 
         check()?;
         step(progress, Stage::DeriveIslands, i);
-        let islands = derive_islands(&combined, &overhang, &[], &settings.panel);
+        let islands = {
+            let _perf = perf::scope("stage:derive-islands");
+            derive_islands(&combined, &overhang, &[], &settings.panel)
+        };
 
         check()?;
         step(progress, Stage::PlanSupports, i);
@@ -367,6 +395,7 @@ pub fn generate_supports(
             blocked: None,
         };
         let ctx = PlanCtx::new(&settings.supports, &bands, Some(plan_mesh), &mut *new_id);
+        perf::mark("stage:plan");
         let plan = compute_auto_support_plan(
             &PlanInput {
                 islands: &islands.filtered,
@@ -380,6 +409,7 @@ pub fn generate_supports(
             &ctx,
         );
         drop(ctx);
+        perf::measure("stage:plan");
         if let Some(plan) = &plan {
             current = plan.support.clone();
         }
@@ -395,16 +425,23 @@ pub fn generate_supports(
 
     check()?;
     step(progress, Stage::BuildRafts, n);
-    let rafts = build_rafts(&current, models, &settings.rafts)?;
+    let rafts = {
+        let _perf = perf::scope("stage:export-rafts");
+        build_rafts(&current, models, &settings.rafts)?
+    };
     check()?;
     step(progress, Stage::Tessellate, n);
-    let support_soup = support_soup(&current, models, settings)?;
+    let support_soup = {
+        let _perf = perf::scope("stage:tessellate");
+        support_soup(&current, models, settings)?
+    };
     check()?;
     Ok(PipelineOutput {
         models: outputs,
         support: current,
         rafts,
         support_soup,
+        timings: PerfFrame::default(),
     })
 }
 

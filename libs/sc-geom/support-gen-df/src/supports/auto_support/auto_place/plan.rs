@@ -11,6 +11,7 @@
 //! timings and progress are DragonFruit's console and modal and are not
 //! reproduced; nor is the store rollback, since nothing here commits.
 
+use crate::perf;
 use std::collections::HashSet;
 
 use indexmap::IndexMap;
@@ -394,6 +395,7 @@ pub fn compute_auto_support_plan(
 
     let mesh = ctx.mesh.as_ref();
 
+    perf::mark("auto:candidates");
     // ── 1. Candidates ────────────────────────────────────────────────
     let pose_stability: Option<PoseStability> = mesh.map(|m| {
         measure_pose_stability(
@@ -531,6 +533,8 @@ pub fn compute_auto_support_plan(
         return noop_plan(before.clone(), AutoPlaceStatus::NoCandidates);
     }
 
+    perf::measure("auto:candidates");
+    perf::mark("auto:dedup-filter");
     // ── 2. Dedup, then the already-supported filter ─────────────────
     let before_dedup = candidates.len();
     candidates = deduplicate_candidates(&candidates, &auto);
@@ -545,6 +549,8 @@ pub fn compute_auto_support_plan(
         return noop_plan(before.clone(), AutoPlaceStatus::AlreadySupported);
     }
 
+    perf::measure("auto:dedup-filter");
+    perf::mark("auto:placement");
     // ── 3. Placement ─────────────────────────────────────────────────
     let model_ctx: Option<ModelSizingContext> = mesh.map(|m| {
         let bbox = Box3::set_from_points(
@@ -586,6 +592,8 @@ pub fn compute_auto_support_plan(
         run.place(candidate, model_ctx.as_ref(), ctx);
     }
 
+    perf::measure("auto:placement");
+    perf::mark("auto:consolidation");
     // ── Overhang→tree consolidation ─────────────────────────────────
     let con_fan_radius_mm = js_max(auto.leaf_fan_radius_mm, CONSOLIDATION_FAN_RADIUS_MM);
     let con_fan_max_angle_deg = js_min(
@@ -701,6 +709,8 @@ pub fn compute_auto_support_plan(
         }
     }
 
+    perf::measure("auto:consolidation");
+    perf::mark("auto:gap-fill");
     // ── Coverage convergence (gap-fill) ─────────────────────────────
     for _ in 0..MAX_GAP_FILL_PASSES {
         // Reads the committed store, not the draft, as DragonFruit does.
@@ -727,6 +737,8 @@ pub fn compute_auto_support_plan(
         }
     }
 
+    perf::measure("auto:gap-fill");
+    perf::mark("auto:analytics");
     // ── Coverage analytics ───────────────────────────────────────────
     const SUPPORT_COVERAGE_RADIUS_MM: f64 = 4.0;
     let cov_r2 = SUPPORT_COVERAGE_RADIUS_MM * SUPPORT_COVERAGE_RADIUS_MM;
@@ -849,6 +861,8 @@ pub fn compute_auto_support_plan(
         forest_report: None,
     };
 
+    perf::measure("auto:analytics");
+    perf::mark("auto:fanning");
     // ── Post-placement leaf fanning ─────────────────────────────────
     let fan_radius_mm = js_max(MIN_LEAF_FAN_RADIUS_MM, auto.leaf_fan_radius_mm);
     let fan_max_angle_deg = js_min(
@@ -925,6 +939,8 @@ pub fn compute_auto_support_plan(
         pass += 1;
     }
 
+    perf::measure("auto:fanning");
+    perf::mark("auto:surface-coverage");
     // ── Overhang surface coverage (flat voxel islands) ──────────────
     const OVERHANG_AREA_THRESHOLD_MM2: f64 = 1.5;
     const OVERHANG_GRID_SPACING_MM: f64 = 2.5;
@@ -1088,6 +1104,8 @@ pub fn compute_auto_support_plan(
 
     let changed = run.placed.values().any(|&count| count > 0);
 
+    perf::measure("auto:surface-coverage");
+    perf::mark("auto:resize-report");
     // ── 4. Forest resize, rehost, orphan cull, cone sync, report ────
     if changed {
         let resized = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
@@ -1251,6 +1269,8 @@ pub fn compute_auto_support_plan(
         analytics.forest_report = Some(forest_report);
     }
 
+    perf::measure("auto:resize-report");
+    perf::mark("auto:bracing");
     // ── 5. Auto-bracing, folded into the plan ───────────────────────
     if changed && !auto.debug_skip_auto_bracing {
         let (braced, _) = build_auto_braced_snapshot(
@@ -1263,6 +1283,7 @@ pub fn compute_auto_support_plan(
         );
         run.draft = braced;
     }
+    perf::measure("auto:bracing");
 
     let result = AutoPlaceResult {
         placed: run.placed,
