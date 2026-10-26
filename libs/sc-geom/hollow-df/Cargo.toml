@@ -1,0 +1,24 @@
+[package]
+name = "hollow-df"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+authors = [
+    "Open Resin Alliance (DragonFruit)",
+    "SynrgStudio",
+]
+description = "Native Rust port of DragonFruit's voxel hollowing engine (cavity, infill, solid areas, preview and apply) with an exact drain-hole cut, for the SoulCrafted Slicer."
+categories = ["algorithms"]
+keywords = ["geometry", "hollow", "3d-printing", "SLA", "dragonfruit"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+ahash = "0.8.12"
+rayon = "1.12"
+smallvec = "1.16"
+
+[dev-dependencies]
+serde_json = "1.0.150"

@@ -1,0 +1,13 @@
+[package]
+name = "df-hollow-harness"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# DragonFruit's mesh-repair crate, read from the reference checkout and built
+# without its `manifold` feature (the default), so no CMake or network.
+dragonfruit-mesh-repair = { path = "C:/Users/dnaon/.openclaw/workspace/repos/DragonFruit/rust/dragonfruit-mesh-repair", default-features = false }
+serde_json = { version = "1", features = ["float_roundtrip"] }
