@@ -3,7 +3,7 @@
 - This is Damian's project, `breadslicer-app/breadslicer` (private). Work from this
   repository; no external agent workspace, memory service, scheduler or task server
   is required.
-- Tasks are the GitHub issues (`BS-<number>: title`). The pinned "Orden de trabajo"
+- Tasks are the GitHub issues (`BS-<number>: title`). The pinned "Work order"
   issue holds the current order; `docs/ROADMAP.md` holds direction and decisions;
   `docs/WORKFLOW.md` describes ideas → issues → micro-PRs. Keep task states in the
   issues, not in parallel lists. Do not start backlog work automatically.
