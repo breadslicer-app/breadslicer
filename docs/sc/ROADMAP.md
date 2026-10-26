@@ -1039,6 +1039,15 @@ Opciones para el router, de menor a mayor alcance:
 3. una caché concurrente y caminar las direcciones en paralelo.
 Las tres necesitan probar que el digest no cambia.
 
+**Consulta al BVH (2026-10-26).** Cada consulta recorre unos 61 nodos y prueba unos 70 triángulos; en total son ~2 M consultas por corrida y 6,7 s.
+- **Se queda:** un triángulo solo gana si está *estrictamente* más cerca que el mejor, y nunca está más cerca que su caja. Si su caja ya queda más lejos que el mejor, con un margen de 1e-9 mm² (mil veces el error de redondeo), no se lo prueba. Esto bajó las consultas a 5,7 s y el router de 8,3 a ~7,4 s, con el mismo digest en Asmodeus y en el 617.
+- **Medido y descartado, sin ganancia:**
+  - vértices contiguos por triángulo en orden BVH (el costo no es de memoria);
+  - cajas de nodos en `f64`;
+  - arrancar la búsqueda con una cota Lipschitz sacada de las celdas vecinas en caché. Con 6 vecinas ahorra en la consulta lo que cuesta buscarlas; con 26, empeora.
+
+Lo que queda es estructural: el recorrido en sí (~2,7 µs por consulta) o hacer menos consultas, con las opciones 2 y 3 de arriba.
+
 **Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-83

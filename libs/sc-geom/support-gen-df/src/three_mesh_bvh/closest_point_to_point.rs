@@ -5,6 +5,12 @@
 //! squared distance to the clamped point, `intersectsBounds` never answers
 //! `CONTAINED`, and each leaf walks its triangles in order with
 //! `iterateOverTriangles`.
+//!
+//! One SoulCrafted shortcut leaves every answer as it was (SC-82): a
+//! triangle reports only when it is *strictly* closer than the best so far,
+//! and it is never closer than its own box. So a triangle whose box is
+//! already farther than the best (by more than any rounding of the exact
+//! test) cannot report, and its exact test is skipped.
 
 use super::{MeshBvh, Node, NodeKind};
 use crate::three::Vec3;
@@ -17,6 +23,11 @@ pub struct ClosestPointTarget {
     pub distance: f64,
     pub face_index: usize,
 }
+
+/// Slack on the per-triangle box pre-check, in squared millimetres. The exact
+/// test's squared distance is off by at most a few `1e-12` for coordinates
+/// of hundreds of millimetres; this is a thousand times that.
+const SKIP_MARGIN_SQ: f64 = 1e-9;
 
 struct Search {
     point: Vec3,
@@ -82,6 +93,18 @@ impl MeshBvh {
     fn intersects_range(&self, offset: u32, count: u16, search: &mut Search) -> bool {
         let start = offset as usize;
         for tri in start..start + count as usize {
+            // Never closer than its own box: past the best, it cannot report.
+            let b = &self.triangle_bounds[tri];
+            let box_sq = search
+                .point
+                .clamp(
+                    Vec3::new(f64::from(b[0]), f64::from(b[1]), f64::from(b[2])),
+                    Vec3::new(f64::from(b[3]), f64::from(b[4]), f64::from(b[5])),
+                )
+                .distance_to_squared(search.point);
+            if box_sq > search.closest_distance_sq + SKIP_MARGIN_SQ {
+                continue;
+            }
             let temp = self.triangle(tri).closest_point_to_point(search.point);
             let dist_sq = search.point.distance_to_squared(temp);
             if dist_sq < search.closest_distance_sq {
