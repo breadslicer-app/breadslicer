@@ -259,6 +259,16 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_smooth_models_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.smooth_models = on;
+                PreferencesChange::SmoothModels
+            });
+        }
+    });
+
     prefs.on_manufacturer_tab_changed({
         let prefs_weak = prefs_weak.clone();
         let all_cards = all_cards.clone();

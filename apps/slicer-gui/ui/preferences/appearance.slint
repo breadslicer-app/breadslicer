@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { ComboBox } from "std-widgets.slint";
+import { CheckBox, ComboBox } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export enum ThemePreference { System, Light, Dark }
@@ -20,6 +20,11 @@ export component AppearancePreferences inherits PreferencesPage {
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
     callback language-selected(int);
+
+    // Whether models shade smooth in the viewport; supports always do
+    // (`mesh_render/smooth_shading.rs`).
+    in-out property <bool> smooth-models: false;
+    callback smooth-models-changed(bool);
 
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
@@ -83,6 +88,15 @@ export component AppearancePreferences inherits PreferencesPage {
                 root.current-language-index = self.current-index;
                 root.language-selected(self.current-index);
             }
+        }
+    }
+
+    CheckBox {
+        text: @tr("AppearancePreferences" => "Smooth shading on models");
+        checked: root.smooth-models;
+        toggled => {
+            root.smooth-models = self.checked;
+            root.smooth-models-changed(self.checked);
         }
     }
 }
