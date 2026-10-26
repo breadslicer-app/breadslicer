@@ -996,7 +996,13 @@ Llevar las mallas de soportes y raft de la fachada al slice y a los writers: que
 - los tubos suaves se parten en codos de más de 120° (tubo, esfera, tubo), donde el anillo de inglete se cruzaba;
 - con `robust_raft_geometry` (por defecto en SC, apagado para paridad), la pared del raft se arma con Clipper y la base recortada se arma sobre anillos sin puntos colineales, partiendo los triángulos de la tapa que earcut dejó con uniones en T (`robust_wall.rs`).
 
-Falta: slicear por componente conexo (piezas superpuestas en una hoja), la penetración de las puntas (`calculateTipOffset`) y validar capas y archivo.
+**Avance (2026-10-26): slice de punta a punta.**
+- `sl1cer` agrupa contornos exteriores y agujeros por shell (componente conexo) dentro de cada hoja: shells superpuestos ya no se toman por agujeros (`shells.rs`; tests con cubos anidados y cruzados, que fallan sin el arreglo).
+- Penetración de puntas portada para los ajustes AA por defecto de DF (`tip_offset.rs`, 180 casos exactos); la GUI y la CLI la calculan con el pitch y la capa de la impresora y resina en uso (0,25 mm en la Saturn 3 Ultra a 0,05 mm).
+- CLI: `slice --df-supports [--df-lift MM]` genera soportes y raft antes de slicear.
+- Asmodeus (Saturn 3 Ultra, 0,05 mm, resina Elegoo 8K ABS-like): 253 raíces, 1436 capas, `.ctb` de 36 MB. En PNG por capa, base sólida del raft en las capas 0–9, pared almenada y conos en la 12, troncos hasta la base del modelo y ninguna capa vacía.
+
+Falta para cerrar: que Damian abra un `.ctb` en su visor (UVTools/Chitubox) o lo slicee desde la GUI, y decidir si la validación del writer (SC-35) entra acá. La impresión física sigue en SC-66.
 
 **Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: in progress.
 

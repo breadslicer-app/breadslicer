@@ -111,6 +111,8 @@ pub(crate) enum CmdOptions {
         verbose: bool,
         no_auto_place: bool,
         repair: bool,
+        df_supports: bool,
+        df_lift: f64,
     },
     GenSupport {
         source: OsString,
@@ -299,6 +301,19 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         )
         .switch();
 
+    let df_supports = long("df-supports")
+        .help(
+            "Generate supports and a raft with the native DragonFruit support port before slicing, as the GUI's Tools > Generate Supports (DragonFruit) does. The supports are sliced with the scene.",
+        )
+        .switch();
+
+    let df_lift = long("df-lift")
+        .help(
+            "With --df-supports and auto-placement: the height in millimetres the scene is raised off the plate to make room for the supports (default 5).",
+        )
+        .argument::<f64>("MM")
+        .fallback(5.0);
+
     construct!(CmdOptions::Slice {
         source,
         target,
@@ -311,6 +326,8 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         verbose,
         no_auto_place,
         repair,
+        df_supports,
+        df_lift,
     })
 }
 

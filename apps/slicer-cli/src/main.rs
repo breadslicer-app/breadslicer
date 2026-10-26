@@ -95,6 +95,8 @@ fn main() -> Result<()> {
             verbose,
             no_auto_place,
             repair,
+            df_supports,
+            df_lift,
         } => slice(
             SliceArgs {
                 source,
@@ -108,6 +110,8 @@ fn main() -> Result<()> {
                 verbose,
                 no_auto_place,
                 repair,
+                df_supports,
+                df_lift,
             },
             &libraries,
         ),
