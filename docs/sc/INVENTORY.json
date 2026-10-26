@@ -122,6 +122,10 @@
           "sha256": "6454585e349cb1bc5913e4b88c83687999f530c484e8823b4e706ea77825df38"
         },
         {
+          "path": "apps/slicer-cli/src/commands/df_supports.rs",
+          "sha256": "2d445016c640e9cd627f4a44260c59a2788f84f94ac2571606ec052c6db602bd"
+        },
+        {
           "path": "apps/slicer-cli/src/commands/diagnose.rs",
           "sha256": "58fdc6b1981280b93ad279bef5d1185943b90a70cd3e8812743bac04e077627d"
         },
@@ -139,7 +143,7 @@
         },
         {
           "path": "apps/slicer-cli/src/commands/mod.rs",
-          "sha256": "1de110d8a2e049eab99c616fdc5f2fd1bbca3c7d25fc184c58e98c604effb295"
+          "sha256": "a7bbe271a90311ce8ed68fc04849696962769909be3000ebda59efc96a791dae"
         },
         {
           "path": "apps/slicer-cli/src/commands/profiles.rs",
@@ -147,7 +151,7 @@
         },
         {
           "path": "apps/slicer-cli/src/commands/slice.rs",
-          "sha256": "d8bc9d8e1d5eebd9f54499968bb3dcedd95e72718a75071f0aa8d632b7ece2ab"
+          "sha256": "210ee4e3e6a0bc20711468026722e7f52bd3c4dcac71f0175debbc19c428b68b"
         },
         {
           "path": "apps/slicer-cli/src/commands/support_gen.rs",
@@ -159,7 +163,7 @@
         },
         {
           "path": "apps/slicer-cli/src/config/cmd_options.rs",
-          "sha256": "1ae6dddb01a89bf7a948d413d65bc9b7ee3c71ac3bd7899dda89a95ebf9c5e91"
+          "sha256": "b1d7a53fdde35dfc9480087f45a955824e632127fd88dbfacdd8fcc33acbb5d1"
         },
         {
           "path": "apps/slicer-cli/src/config/mod.rs",
@@ -183,7 +187,7 @@
         },
         {
           "path": "apps/slicer-cli/src/main.rs",
-          "sha256": "dc273178a5a01e3786789bea84b35834091c318b78b8b71b7ae6c592de575c49"
+          "sha256": "11aca2d995ef800344fbdbdf662742c0c42bd85c2378bd93fc7195b03b8e5a16"
         }
       ]
     },
@@ -216,7 +220,7 @@
         },
         {
           "path": "apps/slicer-gui/src/app_state.rs",
-          "sha256": "50d2da01bdfe909cd6571d3b5eb595618ef92d150cbe1646df11c97a04c25c69"
+          "sha256": "69ba0e7d14d9a88482954f9e32a3a860ac9adda3b481cb08a1ab336f8f346eec"
         },
         {
           "path": "apps/slicer-gui/src/build_volume.rs",
@@ -240,7 +244,7 @@
         },
         {
           "path": "apps/slicer-gui/src/df_support_run.rs",
-          "sha256": "80cf7bfb03fd708a8da6238d2ec3a38a60a4df336b818881bc777a905517e633"
+          "sha256": "68c45a5de8046cc839a1b05d52aca3d24e408b78f49cc21753c68167924e3dc6"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -2072,7 +2076,7 @@
       "sources": [
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
-          "sha256": "ebbeace86b1afd8acd8e457ffb88ff3eea84d7ea26326cf13bcc9f2931ff6986"
+          "sha256": "7d5e4024f33ce4e00637f64850293d134acba918d255b49c2d6f314a177405ae"
         }
       ]
     },
@@ -2101,7 +2105,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/mod.rs",
-          "sha256": "935c8815b9d5825f73eebf7dfb35f49e2c49926f8492e0dec82de9da7a7df248"
+          "sha256": "56662446e892c120cace7d173ec856eb001cb6fbfc02c01d8f76991382e4cb71"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/smooth_shafts.rs",
@@ -2110,6 +2114,10 @@
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/support_world_triangles.rs",
           "sha256": "84b59e92f0a1394b00bf3536d9566c26b4f0e793996ece5a15da043d243ac584"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/features/slicing/tip_offset.rs",
+          "sha256": "3ab828af10f849d91328e1ee799df22d6c49a96d8177bd57056ceab11b1fd2ec"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/js_math.rs",

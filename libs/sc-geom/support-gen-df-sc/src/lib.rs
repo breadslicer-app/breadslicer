@@ -15,6 +15,7 @@ use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, Scene, SceneError, bake_mesh_to_world};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
 use support_gen_df::perf::PerfFrame;
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
@@ -33,6 +34,11 @@ pub const DF_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
 pub struct DfSupportRequest {
     /// The slicing layer height the island scan bands by.
     pub layer_height_mm: f64,
+    /// The printer's pixel pitch (X, Y) in mm. With it the contact tips sink
+    /// into the model as DragonFruit's slice export sinks them for the
+    /// default material anti-aliasing (`default_tip_offset_mm`); without it
+    /// they stop at the surface.
+    pub pixel_pitch_mm: Option<[f64; 2]>,
     /// Everything else DragonFruit reads from its panels and stores.
     pub settings: Option<PipelineSettings>,
 }
@@ -41,6 +47,7 @@ impl Default for DfSupportRequest {
     fn default() -> Self {
         DfSupportRequest {
             layer_height_mm: 0.05,
+            pixel_pitch_mm: None,
             settings: None,
         }
     }
@@ -264,6 +271,9 @@ fn run_df_supports(
             shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
             // Walls that slice cleanly on trimmed footprints.
             robust_raft_geometry: true,
+            tip_penetration_mm: request.pixel_pitch_mm.map_or(0.0, |[x, y]| {
+                default_tip_offset_mm(request.layer_height_mm, x, y)
+            }),
             ..PipelineSettings::defaults(request.layer_height_mm)
         });
     let n = models.len();

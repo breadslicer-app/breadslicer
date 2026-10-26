@@ -31,6 +31,7 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
+use crate::commands::df_supports::{add_df_supports, lift_scene};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
@@ -56,6 +57,8 @@ pub(crate) struct SliceArgs {
     pub verbose: bool,
     pub no_auto_place: bool,
     pub repair: bool,
+    pub df_supports: bool,
+    pub df_lift: f64,
 }
 
 pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -110,6 +113,9 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             }
             if !args.no_auto_place {
                 place_on_plate(&mut scene, &printer.hardware.build_volume())?;
+                if args.df_supports {
+                    lift_scene(&mut scene, &printer.hardware.build_volume(), args.df_lift)?;
+                }
             }
             scene
         }
@@ -120,6 +126,13 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             scene
         }
     };
+    let mut scene = scene;
+    if args.df_supports {
+        let layer_height_mm = args.layer_height.map_or(0.05, PositiveFiniteMm::value);
+        let pitch = printer.hardware.pixel_size_microns();
+        let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
+        add_df_supports(&mut scene, layer_height_mm, pitch_mm)?;
+    }
     let params = SlicingParams {
         layer_height_request: args.layer_height,
         first_layer_height: args.first_layer_height,

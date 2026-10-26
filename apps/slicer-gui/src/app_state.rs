@@ -623,7 +623,8 @@ impl AppState {
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
-        let df_support_run = DfSupportRun::install(ui, ctrl.document(), ctrl.dialogs());
+        let df_support_run =
+            DfSupportRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         WindowDrivers {
             _slice_panel: slice_panel,
             _slice_run: slice_run,
