@@ -178,6 +178,19 @@ pub(crate) struct HollowRun {
     /// Drains placed on a model not hollowed yet, by its mesh: drilled when
     /// it is hollowed.
     pending: RefCell<Vec<(usize, Vec<LocalDrain>)>>,
+    /// The local bounding box of the last mesh asked about, by identity, for
+    /// the recommended wall (a scan of every vertex once per mesh).
+    bounds: RefCell<Option<MeshBounds>>,
+}
+
+/// A mesh (by identity) and its local bounding box.
+type MeshBounds = (usize, [f32; 3], [f32; 3]);
+
+/// The wall a model of this size wants: 1.5 mm plus 1 % of its longest side,
+/// between 1.5 and 4 mm, to 0.1 mm. A 50 mm miniature gets the usual 2 mm, a
+/// 150 mm figure 3 mm, a large piece up to 4 mm for its own weight.
+fn recommended_wall_mm(longest_side_mm: f32) -> f32 {
+    ((1.5 + 0.01 * longest_side_mm).clamp(1.5, 4.0) * 10.0).round() / 10.0
 }
 
 /// What the cavity preview was computed for.
@@ -263,6 +276,7 @@ impl HollowRun {
                 hover: Cell::new(None),
                 preview_timer: slint::Timer::default(),
                 pending: RefCell::new(Vec::new()),
+                bounds: RefCell::new(None),
             }
         });
         run.push_options(ui);
@@ -375,12 +389,53 @@ impl HollowRun {
         }
     }
 
+    /// The selected model's longest side in the world (its bounding box at
+    /// the current pose).
+    fn longest_side_mm(&self, mesh: &Arc<IndexedMesh>, world: &Transform3D) -> f32 {
+        let ptr = Arc::as_ptr(mesh) as usize;
+        let (lo, hi) = {
+            let mut cached = self.bounds.borrow_mut();
+            match *cached {
+                Some((p, lo, hi)) if p == ptr => (lo, hi),
+                _ => {
+                    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+                    for v in &mesh.vertices {
+                        for k in 0..3 {
+                            lo[k] = lo[k].min(v.as_array()[k]);
+                            hi[k] = hi[k].max(v.as_array()[k]);
+                        }
+                    }
+                    *cached = Some((ptr, lo, hi));
+                    (lo, hi)
+                }
+            }
+        };
+        let corners = (0..8).map(|c| {
+            let p = std::array::from_fn(|k| if c >> k & 1 == 0 { lo[k] } else { hi[k] });
+            world.apply_to_vertex(Vertex::new(p)).coords()
+        });
+        let (mut wlo, mut whi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for p in corners {
+            for k in 0..3 {
+                wlo[k] = wlo[k].min(p[k]);
+                whi[k] = whi[k].max(p[k]);
+            }
+        }
+        (0..3).map(|k| whi[k] - wlo[k]).fold(0.0, f32::max)
+    }
+
     fn refresh_ui(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let (state, drains) = match self.selected() {
-            Some((_, mesh, _)) => (self.model_state(&mesh), self.source_for(&mesh).1.len()),
+            Some((_, mesh, world)) => {
+                let (original, drains) = self.source_for(&mesh);
+                ui.set_hollow_recommended_wall(recommended_wall_mm(
+                    self.longest_side_mm(&original, &world),
+                ));
+                (self.model_state(&mesh), drains.len())
+            }
             None => (2, 0),
         };
         ui.set_hollow_model_state(state);
@@ -590,6 +645,7 @@ impl HollowRun {
     }
 
     fn finish(&self, job: Job, outcome: Result<HollowOutcome, JobError>) {
+        crate::breadcrumbs::note(&format!("hollow: finished ok={}", outcome.is_ok()));
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(JobError::Cancelled) => return,
@@ -837,6 +893,12 @@ impl HollowRun {
                 tint: OverlayTint::Valid,
             }));
         }
+        crate::breadcrumbs::note(&format!(
+            "hollow: preview cavity={} drains={} hover={}",
+            shown_key.cavity.is_some(),
+            shown_key.drains.is_some(),
+            shown_key.hover.is_some()
+        ));
         let overlay: Overlay = pieces.into();
         self.ctrl.set_preview_overlay(Some(overlay.clone()));
         preview.shown = Some((shown_key, overlay));
@@ -988,6 +1050,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_recommended_wall_grows_with_the_model() {
+        assert_eq!(recommended_wall_mm(20.0), 1.7);
+        assert_eq!(recommended_wall_mm(50.0), 2.0);
+        assert_eq!(recommended_wall_mm(150.0), 3.0);
+        assert_eq!(recommended_wall_mm(400.0), 4.0);
+        assert_eq!(recommended_wall_mm(0.0), 1.5);
+    }
+
+    #[test]
     fn a_drain_from_a_hit_points_into_the_model() {
         // Hit on the top face (normal +Z) of a model moved by (10, 0, 0).
         let world = Transform3D::Affine(
@@ -1027,5 +1098,65 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Dragging the wall slider changes the wall many times a second: the
+    /// cavity shown must stay up throughout (the last one until the next is
+    /// computed), never blink out.
+    #[test]
+    fn the_cavity_stays_shown_while_the_wall_changes() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        let shown = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(
+                        sc_mesh_core::transform::AffineTransform3D::from_translation([
+                            50.0, 50.0, 15.0,
+                        ]),
+                    ),
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let run = HollowRun::install(&window, document, ctrl.dialogs(), ctrl.clone());
+            let cavity_shown = |run: &HollowRun| {
+                run.preview
+                    .borrow()
+                    .shown
+                    .as_ref()
+                    .is_some_and(|(_, overlay)| {
+                        ctrl.preview_overlay_is(overlay)
+                            && overlay.iter().any(|p| p.tint == OverlayTint::Cavity)
+                    })
+            };
+            let waited = std::time::Instant::now();
+            while !cavity_shown(&run) && waited.elapsed() < Duration::from_secs(20) {
+                run.tick_preview();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(cavity_shown(&run), "a first cavity");
+            (0..30)
+                .map(|i| {
+                    run.on_option(0, 2.0 + 0.05 * i as f32);
+                    std::thread::sleep(Duration::from_millis(15));
+                    run.tick_preview();
+                    cavity_shown(&run)
+                })
+                .collect::<Vec<_>>()
+        });
+        assert!(shown.iter().all(|&s| s), "{shown:?}");
     }
 }

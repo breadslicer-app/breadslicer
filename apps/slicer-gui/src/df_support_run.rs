@@ -138,7 +138,7 @@ pub(crate) struct DfSupportRun {
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
     /// moved on otherwise is refused.
-    sessions: RefCell<Vec<(DfSupportSession, SceneRevision)>>,
+    sessions: RefCell<Vec<(Arc<DfSupportSession>, SceneRevision)>>,
     /// The viewport, for the hover preview of the hand tools.
     ctrl: Rc<ViewportController>,
     /// Computes hand-tool previews off the UI thread, always the latest.
@@ -156,7 +156,9 @@ const HOVER_POLL: Duration = Duration::from_millis(16);
 /// A preview to compute: the session to edit, where, and with which tool.
 struct HoverAsk {
     generation: u64,
-    base: DfSupportSession,
+    /// Shared, not copied: a copy of a busy model's supports costs ~8 ms,
+    /// paid on the worker instead of on every mouse move.
+    base: Arc<DfSupportSession>,
     /// Which session (its index and the scene it was drawn on) `base` is.
     from: (usize, SceneRevision),
     point: [f32; 3],
@@ -188,6 +190,8 @@ impl HoverWorker {
         let out = answer.clone();
         let _ = std::thread::Builder::new()
             .name("support-hover-preview".into())
+            // DragonFruit's router recurses; room to spare on dense models.
+            .stack_size(16 << 20)
             .spawn(move || {
                 while let Ok(mut ask) = inbox.recv() {
                     while let Ok(newer) = inbox.try_recv() {
@@ -450,6 +454,7 @@ impl DfSupportRun {
 
     /// Starts the run, from the last prescan when it still matches.
     fn launch(self: &Rc<Self>, ui: &MainWindow) {
+        crate::breadcrumbs::note("supports: run started");
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             ui.set_support_gen_in_progress(false);
             ui.set_support_gen_cancelable(false);
@@ -992,6 +997,7 @@ impl DfSupportRun {
             );
             return;
         };
+        crate::breadcrumbs::note(&format!("supports: click tool={tool}"));
         let p = point.map(f64::from);
         // The preview of this very point already placed it: take that.
         let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
@@ -1001,7 +1007,8 @@ impl DfSupportRun {
                 .flatten()
         });
         let reused = previewed.is_some();
-        let mut edited = previewed.unwrap_or_else(|| self.sessions.borrow()[current].0.clone());
+        let mut edited = previewed
+            .unwrap_or_else(|| DfSupportSession::clone(&self.sessions.borrow()[current].0));
         // The port is DragonFruit's code on hand-picked input: a panic in it
         // is an edit that failed, not a reason to lose the person's work.
         let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1035,6 +1042,10 @@ impl DfSupportRun {
                 return;
             }
         };
+        crate::breadcrumbs::note(&format!(
+            "supports: edit drawn ({} triangles, reused preview {reused})",
+            mesh.faces().len()
+        ));
         let swap = self.support_leaf().and_then(|(node_id, _)| {
             self.document
                 .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), node_id, Arc::new(mesh)))
@@ -1049,11 +1060,12 @@ impl DfSupportRun {
         };
         match self.document.apply_edit(swap.clone()) {
             Ok(_) => {
+                crate::breadcrumbs::note("supports: edit applied");
                 self.document.push_edit(swap);
                 let roots = edited.state().collections.roots.len();
                 let mut sessions = self.sessions.borrow_mut();
                 sessions.truncate(current + 1);
-                sessions.push((edited, self.document.scene_revision()));
+                sessions.push((Arc::new(edited), self.document.scene_revision()));
                 ui.set_supports_last_run(
                     format!("{roots} support root(s), edited by hand.").into(),
                 );
@@ -1101,6 +1113,7 @@ impl DfSupportRun {
     }
 
     fn finish(&self, outcome: Result<DfSupportOutcome, JobError>) {
+        crate::breadcrumbs::note(&format!("supports: run finished ok={}", outcome.is_ok()));
         let started_on = self.started_on.borrow_mut().take();
         let outcome = match outcome {
             Ok(outcome) => outcome,
@@ -1150,7 +1163,7 @@ impl DfSupportRun {
         let session = outcome.session;
         let pasted = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]);
         if pasted.is_ok() {
-            *self.sessions.borrow_mut() = vec![(session, self.document.scene_revision())];
+            *self.sessions.borrow_mut() = vec![(Arc::new(session), self.document.scene_revision())];
         }
         if let Err(error) = pasted {
             let details = error.to_string();
@@ -1347,5 +1360,111 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// The GUI click path on a real model, not a gate: `SC_STRESS_STL=...
+    /// cargo test --release -- --ignored --nocapture gui_clicks_on_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn gui_clicks_on_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let log = on_fresh_slint_thread(move || {
+            let mut log = Vec::new();
+            let bytes = std::fs::read(&path).unwrap();
+            let (loaded, _) =
+                sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+            let leaf = loaded
+                .roots()
+                .iter()
+                .copied()
+                .find(|id| loaded.leaf_mesh_arc(*id).is_some())
+                .unwrap();
+            let mesh = loaded.leaf_mesh_arc(leaf).unwrap().clone();
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in mesh.vertices() {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(v.as_array()[k]);
+                    hi[k] = hi[k].max(v.as_array()[k]);
+                }
+            }
+            let shift = [
+                60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+                40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+                5.0 - f64::from(lo[2]),
+            ];
+            let points: Vec<[f32; 3]> = mesh
+                .faces()
+                .iter()
+                .step_by(997)
+                .filter_map(|f| {
+                    let [a, b, c] = f
+                        .vertices
+                        .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+                    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                    let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                    let nz = u[0] * w[1] - u[1] * w[0];
+                    let len = ((u[1] * w[2] - u[2] * w[1]).powi(2)
+                        + (u[2] * w[0] - u[0] * w[2]).powi(2)
+                        + nz * nz)
+                        .sqrt();
+                    (len > 1e-9 && nz / len < -0.5).then(|| {
+                        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k] as f32)
+                    })
+                })
+                .take(12)
+                .collect();
+            let window = MainWindow::new().unwrap();
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(shift)),
+                    LeafPayload::Mesh(mesh),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            log.push(format!("generated: {}", window.get_supports_last_run()));
+            for (i, p) in points.iter().enumerate() {
+                window.set_support_tool(if i % 3 == 2 { 2 } else { 1 });
+                let t = Instant::now();
+                run.on_tool_hover(Some(*p));
+                while run
+                    .last_preview
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|a| a.point != *p)
+                    && t.elapsed() < Duration::from_secs(30)
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                    run.take_hover_answer();
+                }
+                let hover_ms = t.elapsed().as_millis();
+                let t = Instant::now();
+                run.on_tool_click(*p);
+                log.push(format!(
+                    "{p:?} tool {}: hover {hover_ms} ms, click {} ms: {}",
+                    window.get_support_tool(),
+                    t.elapsed().as_millis(),
+                    window.get_supports_last_run()
+                ));
+            }
+            log
+        });
+        for line in log {
+            println!("{line}");
+        }
     }
 }

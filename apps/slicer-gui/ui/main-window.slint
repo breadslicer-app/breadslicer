@@ -221,6 +221,8 @@ export component MainWindow inherits Window {
     // Show the cavity the current settings carve, over the selected model.
     in-out property <bool> hollow-show-cavity: true;
     in property <float> hollow-wall: 2;
+    // The wall the selected model's size calls for (HollowRun).
+    in property <float> hollow-recommended-wall: 2;
     in property <float> hollow-voxel: 0.65;
     in property <int> hollow-fill-index: 0;
     in property <float> hollow-cell: 6;
@@ -1253,6 +1255,7 @@ export component MainWindow inherits Window {
                                 root.hollow-show-cavity = on;
                             }
                             wall: root.hollow-wall;
+                            recommended-wall: root.hollow-recommended-wall;
                             voxel: root.hollow-voxel;
                             fill-index: root.hollow-fill-index;
                             cell: root.hollow-cell;

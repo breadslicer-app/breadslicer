@@ -300,6 +300,7 @@ export component HollowInspector inherits VerticalLayout {
     callback show-cavity-toggled(bool);
     // The options (HollowRun::on_option), pushed by Rust after every change.
     in property <float> wall;
+    in property <float> recommended-wall;
     in property <float> voxel;
     in property <int> fill-index;
     in property <float> cell;
@@ -390,6 +391,45 @@ export component HollowInspector inherits VerticalLayout {
             value: root.wall;
             changed(v) => {
                 root.option-changed(0, Math.round(v * 10) / 10);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Recommended ({} mm)", Math.round(root.recommended-wall * 10) / 10);
+            kind: Math.abs(root.wall - root.recommended-wall) < 0.05 ? ButtonKind.primary : ButtonKind.normal;
+            clicked => {
+                root.option-changed(0, root.recommended-wall);
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+
+            ScButton {
+                text: "−1";
+                horizontal-stretch: 1;
+                clicked => {
+                    root.option-changed(0, Math.round((root.wall - 1) * 10) / 10);
+                }
+            }
+            ScButton {
+                text: "−0.1";
+                horizontal-stretch: 1;
+                clicked => {
+                    root.option-changed(0, Math.round((root.wall - 0.1) * 10) / 10);
+                }
+            }
+            ScButton {
+                text: "+0.1";
+                horizontal-stretch: 1;
+                clicked => {
+                    root.option-changed(0, Math.round((root.wall + 0.1) * 10) / 10);
+                }
+            }
+            ScButton {
+                text: "+1";
+                horizontal-stretch: 1;
+                clicked => {
+                    root.option-changed(0, Math.round((root.wall + 1) * 10) / 10);
+                }
             }
         }
         NumberField {

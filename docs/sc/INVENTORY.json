@@ -223,6 +223,10 @@
           "sha256": "464a72a95a370b366ff9094f033aff5a5519f7de7a7c3f24716f1a5c7345932c"
         },
         {
+          "path": "apps/slicer-gui/src/breadcrumbs.rs",
+          "sha256": "6b54f0646b721c9274d4259b8e997fb7bb67be348c026b08d91d19bd89a7b01e"
+        },
+        {
           "path": "apps/slicer-gui/src/build_volume.rs",
           "sha256": "d70736add5a311fcf3f2814711af575d7f198c2f95ca83ab11603e129469121d"
         },
@@ -244,7 +248,7 @@
         },
         {
           "path": "apps/slicer-gui/src/df_support_run.rs",
-          "sha256": "acfa81b9c42259fd1af63bac395d2b46a5ce2ae92c760aa4ec5cf034e5cc670b"
+          "sha256": "fd7e384cd35dc4e3846b7a2b7e51e7d2e22d8618b5f7d7f3e6309abe224de45d"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -312,7 +316,7 @@
         },
         {
           "path": "apps/slicer-gui/src/hollow_run.rs",
-          "sha256": "1a84b4ad1421569de2fc4fb83098a778b1068861e5381fc80999703f104dd1dd"
+          "sha256": "9ab4743a8e538d15fa60aeea1b307341ffbee22dcadb7e97f3058e132cab1bd5"
         },
         {
           "path": "apps/slicer-gui/src/i18n.rs",
@@ -324,7 +328,7 @@
         },
         {
           "path": "apps/slicer-gui/src/lib.rs",
-          "sha256": "b470b478300639eedf480b70ffae55e37ac75f7426df02770442d5739f4f3ec7"
+          "sha256": "60de6998e641fd7653dbc53a4e4217c0b45a03cd14e13a9bcaa351f8b8b6580a"
         },
         {
           "path": "apps/slicer-gui/src/load_progress.rs",
@@ -388,7 +392,7 @@
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/overlay.rs",
-          "sha256": "3dd3d91f9112ac7e1e3cd3693bec11f32fc1b7507a7d05522653b90f1343ebde"
+          "sha256": "60bcbf450168db489d1e402a8d88b67e1165a4e049a5c8bfa6b2a47d1b63b454"
         },
         {
           "path": "apps/slicer-gui/src/mesh_render/pipelines/cap.rs",
@@ -680,7 +684,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "84b221ed044a2dafd0ae42301526e404a2716b04f8c53a4839531dcb4ec64cc4"
+          "sha256": "9e7c468c3f273754eb272a41c66095bab771a0acb159ac3a9281174450754053"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -2174,7 +2178,7 @@
       "sources": [
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
-          "sha256": "3937b8aa5cf92fd6343a4162bf2bf66c2f35833627de7317dcb4ed33615b822f"
+          "sha256": "f0b5f7d325600883dea23384141f6dd3a4bd46260a23bd01419c553e73e1d4e7"
         },
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/options.rs",
@@ -2182,7 +2186,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/session.rs",
-          "sha256": "9a66e22f42d0f0fb85c9acf2ba1bc77c64b6026b76d760f90b6da76a6f177d69"
+          "sha256": "57f6e2a387811271137e363f70c5c2cceae08224fc8d638a3b5218d5408ad6c2"
         }
       ]
     },
@@ -2295,7 +2299,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/pipeline.rs",
-          "sha256": "290228ddcf89cbf3bea3073a91b39aeb114c490e464a85596ac041078bf54c89"
+          "sha256": "9d62ff997557a3e6d419fcac72add4f5530e0743d82470199d9506bf0e74dd31"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",

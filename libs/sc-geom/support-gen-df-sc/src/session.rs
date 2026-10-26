@@ -47,8 +47,24 @@ pub struct DfSupportSession {
     /// Per model, its world mesh, built on the first edit and shared by
     /// every copy of the session.
     bvhs: Arc<[OnceLock<Arc<MeshBvh>>]>,
+    /// Per model, its distance field. It fills lazily as the router asks,
+    /// so keeping it between edits is what makes the second preview fast
+    /// (a cold field costs ~200 ms per placement on a 1.4M-face model, a warm
+    /// one a few ms, as in a run). Shared by every copy; an edit borrows it
+    /// and puts it back, and one finding it lent out builds its own.
+    sdfs: Arc<[SdfSlot]>,
     id_prefix: String,
     next_id: u64,
+}
+
+/// A model's pooled distance field, while no edit holds it.
+#[derive(Default)]
+struct SdfSlot(std::sync::Mutex<Option<SdfCache>>);
+
+impl std::fmt::Debug for SdfSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SdfSlot")
+    }
 }
 
 /// Why an edit did not happen.
@@ -204,13 +220,15 @@ fn filtered(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCo
     out
 }
 
-/// Whether `value` names one of `ids` anywhere in its strings.
-fn references(value: &Value, ids: &HashSet<String>) -> bool {
+/// Every string inside a serialized entity.
+fn strings_in(value: &Value, out: &mut HashSet<String>) {
     match value {
-        Value::String(s) => ids.contains(s),
-        Value::Object(map) => map.values().any(|v| references(v, ids)),
-        Value::Array(items) => items.iter().any(|v| references(v, ids)),
-        _ => false,
+        Value::String(s) => {
+            out.insert(s.clone());
+        }
+        Value::Object(map) => map.values().for_each(|v| strings_in(v, out)),
+        Value::Array(items) => items.iter().for_each(|v| strings_in(v, out)),
+        _ => {}
     }
 }
 
@@ -232,11 +250,13 @@ impl DfSupportSession {
         id_prefix: String,
     ) -> Self {
         let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
+        let sdfs = (0..models.len()).map(|_| SdfSlot::default()).collect();
         DfSupportSession {
             models: models.into(),
             settings: Arc::new(settings),
             state,
             bvhs,
+            sdfs,
             id_prefix,
             next_id: 1_000_000,
         }
@@ -251,6 +271,18 @@ impl DfSupportSession {
     pub fn warm(&self) {
         for i in 0..self.models.len() {
             self.bvh(i);
+        }
+    }
+
+    /// Hands the run's distance fields to the session, already filled by
+    /// the run's routing, so hand edits start warm.
+    pub(crate) fn adopt_sdfs(&self, fields: Vec<(usize, SdfCache)>) {
+        for (i, field) in fields {
+            if let Some(slot) = self.sdfs.get(i)
+                && let Ok(mut slot) = slot.0.lock()
+            {
+                *slot = Some(field);
+            }
         }
     }
 
@@ -307,11 +339,10 @@ impl DfSupportSession {
         let settings = self.settings.clone();
         let model_id = self.models[i].id.clone();
         let before = all_ids(&self.state.collections);
-        let sdf = RefCell::new(SdfCache::new(
-            bvh.clone(),
-            Matrix4::IDENTITY,
-            Some(settings.sdf_cell_mm),
-        ));
+        let pooled = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
+        let sdf = RefCell::new(pooled.unwrap_or_else(|| {
+            SdfCache::new(bvh.clone(), Matrix4::IDENTITY, Some(settings.sdf_cell_mm))
+        }));
         let bands = SizingBands::factory();
         let mut state = std::mem::take(&mut self.state);
         let outcome = {
@@ -354,6 +385,9 @@ impl DfSupportSession {
             )
         };
         self.state = state;
+        if let Ok(mut slot) = self.sdfs[i].0.lock() {
+            *slot = Some(sdf.into_inner());
+        }
         if outcome.kind.is_none() {
             let why = outcome
                 .rejected_reason
@@ -461,54 +495,75 @@ impl DfSupportSession {
         if d > REMOVE_REACH_MM {
             return Err(EditError::NothingThere);
         }
-        let mut gone: HashSet<String> = std::iter::once(id.to_owned()).collect();
-        loop {
-            // What anything references: a gone entity's own id and the ids
-            // of its parts (a knot names the shaft segment it sits on).
-            let mut named = HashSet::new();
-            for (other, value) in &all {
-                if gone.contains(other) {
-                    ids_within(value, &mut named);
+        // Who names what, once: every string an entity holds, and the ids of
+        // its parts (a knot names the shaft segment it sits on). The cascade
+        // and the orphan check then look names up instead of rescanning every
+        // entity per step (thousands of entities on a busy model).
+        let index_of: std::collections::HashMap<&str, usize> = all
+            .iter()
+            .enumerate()
+            .map(|(k, (id, _))| (id.as_str(), k))
+            .collect();
+        let mut named_by: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (k, (_, value)) in all.iter().enumerate() {
+            let mut names = HashSet::new();
+            strings_in(value, &mut names);
+            for name in names {
+                named_by.entry(name).or_default().push(k);
+            }
+        }
+        let start = index_of[id];
+        let mut gone = vec![false; all.len()];
+        gone[start] = true;
+        let mut queue = vec![start];
+        while let Some(g) = queue.pop() {
+            let mut parts = HashSet::new();
+            ids_within(&all[g].1, &mut parts);
+            parts.insert(all[g].0.clone());
+            for part in parts {
+                for &k in named_by.get(&part).into_iter().flatten() {
+                    if !gone[k] {
+                        gone[k] = true;
+                        queue.push(k);
+                    }
                 }
             }
-            let more: Vec<String> = all
-                .iter()
-                .filter(|(other, value)| !gone.contains(other) && references(value, &named))
-                .map(|(other, _)| other.clone())
-                .collect();
-            if more.is_empty() {
-                break;
-            }
-            gone.extend(more);
         }
         // Roots and knots are owned the other way round (a trunk names its
-        // root, a member its knot): one nothing left refers to goes too.
-        let remaining: Vec<(&String, &Value)> = all
-            .iter()
-            .filter(|(other, _)| !gone.contains(other))
-            .map(|(id, v)| (id, v))
-            .collect();
+        // root, a member its knot): one a removed entity named that nothing
+        // left names goes too.
         let c = &self.state.collections;
-        let orphans: Vec<String> = c
-            .roots
-            .keys()
-            .chain(c.knots.keys())
-            .filter(|root| !gone.contains(*root))
-            .filter(|root| {
-                let single: HashSet<String> = std::iter::once((*root).clone()).collect();
-                let was_used = all
-                    .iter()
-                    .any(|(other, v)| gone.contains(other) && references(v, &single));
+        let mut orphans = Vec::new();
+        for g in (0..all.len()).filter(|&g| gone[g]) {
+            let mut names = HashSet::new();
+            strings_in(&all[g].1, &mut names);
+            for name in names {
+                let Some(&k) = index_of.get(name.as_str()) else {
+                    continue;
+                };
+                let owned = c.roots.contains_key(&name) || c.knots.contains_key(&name);
+                if gone[k] || !owned {
+                    continue;
+                }
                 // Its own record names it: only others count.
-                was_used
-                    && !remaining
-                        .iter()
-                        .any(|(other, v)| *other != *root && references(v, &single))
-            })
-            .cloned()
-            .collect();
-        gone.extend(orphans);
-        Ok(gone)
+                let still_used = named_by
+                    .get(&name)
+                    .into_iter()
+                    .flatten()
+                    .any(|&other| other != k && !gone[other]);
+                if !still_used {
+                    orphans.push(k);
+                }
+            }
+        }
+        for k in orphans {
+            gone[k] = true;
+        }
+        Ok((0..all.len())
+            .filter(|&k| gone[k])
+            .map(|k| all[k].0.clone())
+            .collect())
     }
 
     /// Removes the support nearest `point` (world mm) and everything that
