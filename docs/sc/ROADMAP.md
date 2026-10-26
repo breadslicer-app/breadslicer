@@ -4,6 +4,15 @@ Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **83 tarje
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
+## Decisiones de rumbo (2026-10-26, Damian)
+
+- **Separación total de DragonFruit a nivel código, salvo pedido explícito de Damian.**
+  - El código portado (soportes, hollow) pasa a ser nuestro: se cambia, se reemplaza o se mejora cuando haya una forma mejor.
+  - La paridad bit a bit con DF deja de ser una restricción. Sus tests quedan como referencia histórica mientras sirvan, y se retiran cuando un cambio deliberado los rompa. Si un test se retira, el commit lo dice.
+  - Se mantienen siempre los avisos de licencia y autoría del código portado (MIT de DF, AGPL de upstream).
+- **Objetivo: la mejor experiencia de slicing que exista**, no "otro Lychee". Hay que optimizar todo al máximo. Faltar impresoras o detalles es aceptable; una experiencia mediocre, no.
+- **Las reglas estructurales se razonan desde la física, no desde límites fijos.** Ejemplo: el máximo de miembros por tronco no tiene sentido si el tronco ya está arriostrado y anclado al modelo en capas anteriores. La carga real la decide el análisis estructural (SC-21).
+
 ## Orden actual (2026-10-26, con Damian)
 
 La línea de soportes DF funciona de punta a punta: modelo → soportes y raft → slice → archivo validado en UVTools (SC-79, SC-80, SC-81). La UI nueva está en marcha (SC-84). Ahora toca **terminar el slicer**; la optimización a fondo va después, cuando se sepa qué flujos se usan de verdad. Bloques en orden:
@@ -1487,6 +1496,8 @@ Pedido de Damian (2026-10-26): muchos modelos vienen presoportados con los sopor
 - clasificar de forma heurística modelo, soportes y raft, solo como sugerencia;
 - los soportes importados van en una sola hoja con índice de cuerpo.
 
+**Prioridad confirmada por Damian (2026-10-26).** Quiere poder seleccionar un objeto y "dejar solo ese", y que los soportes se reconozcan automáticamente.
+
 **Cierre (hito 1):** el comando "Separar en cuerpos" cumple los criterios de §1. La clasificación y el aviso al importar quedan para el hito 2.
 
 **Depende de:** SC-29. Prioridad: normal. Estado snapshot: backlog.
@@ -1500,6 +1511,12 @@ Pedido de Damian (2026-10-26): "el mejor calibrador". La investigación está en
 - detalle y resistencia por conteo;
 - base y pata de elefante;
 - exactitud XY con escala y offset por separado.
+
+**Decisión de Damian (2026-10-26): dos niveles.**
+- **"Chequeo rápido" ("¿esto está bien calibrado?"):** una sola placa que confirma o corrige la exposición actual.
+- **"Calibración en serio":** el procedimiento completo de 3–4 placas.
+
+La lectura por foto queda para mucho más adelante, con machine learning.
 
 Se guarda por impresora + resina con historial y aviso de obsolescencia. Las geometrías son propias, generadas por código; nada de UVtools, que es AGPL, ni de tests sin licencia. Como objetivo ambicioso, lectura por foto.
 
