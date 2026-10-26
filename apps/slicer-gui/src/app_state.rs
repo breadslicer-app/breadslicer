@@ -322,6 +322,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_output_format_by_printer(snap.output_format_by_printer.clone());
     settings.set_aa_level(snap.aa_level);
     settings.set_prescan_supports(snap.prescan_supports);
+    settings.set_smooth_models(snap.smooth_models);
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
     settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
@@ -417,6 +418,10 @@ fn subscribe_window_preferences(
         if matches!(change, PreferencesChange::Language) {
             controller.refresh_texts();
         }
+        if matches!(change, PreferencesChange::SmoothModels) {
+            crate::mesh_render::set_smooth_models(snap.smooth_models);
+            controller.upload_scene_again();
+        }
     })
 }
 
@@ -430,6 +435,7 @@ impl AppState {
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
+        crate::mesh_render::set_smooth_models(settings.smooth_models());
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             menu_layout: settings.menu_layout(),
@@ -441,6 +447,7 @@ impl AppState {
             output_format_by_printer: settings.output_format_by_printer(),
             aa_level: settings.aa_level(),
             prescan_supports: settings.prescan_supports(),
+            smooth_models: settings.smooth_models(),
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
             object_list_anchor_bottom: settings.object_list_anchor_bottom(),
@@ -2022,6 +2029,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::OutputFormat,
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,
+            PreferencesChange::SmoothModels,
             PreferencesChange::ObjectListPanel,
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,

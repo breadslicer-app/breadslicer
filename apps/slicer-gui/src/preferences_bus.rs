@@ -52,6 +52,8 @@ pub(crate) struct PreferencesSnapshot {
     pub aa_level: AaLevel,
     /// Whether the support scans run in the background (`DfSupportRun`).
     pub prescan_supports: bool,
+    /// Whether models shade smooth in the viewport; supports always do.
+    pub smooth_models: bool,
     /// Whether the floating object-list panel is shown. Persisted so a window
     /// restores the last state on the next launch. Per-window live state: a
     /// change in a window is written to disk and left out of the other open
@@ -132,6 +134,7 @@ impl PreferencesSnapshot {
             output_format_by_printer: BTreeMap::new(),
             aa_level: AaLevel::Off,
             prescan_supports: false,
+            smooth_models: false,
             object_list_visible: true,
             object_list_anchor_right: true,
             object_list_anchor_bottom: false,
@@ -171,6 +174,7 @@ pub(crate) enum PreferencesChange {
     OutputFormat,
     AaLevel,
     PrescanSupports,
+    SmoothModels,
     ObjectListPanel,
     SliceControlPanel,
     SliceViewPanel,

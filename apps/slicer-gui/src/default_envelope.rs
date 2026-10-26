@@ -177,6 +177,7 @@ mod default_envelope_tests {
             PreferencesChange::OutputFormat,
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,
+            PreferencesChange::SmoothModels,
             PreferencesChange::ObjectListPanel,
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,

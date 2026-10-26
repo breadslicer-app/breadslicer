@@ -27,6 +27,8 @@ mod gizmo_entries;
 #[cfg(test)]
 pub(crate) mod mock;
 mod overlay;
+mod smooth_shading;
+pub(crate) use smooth_shading::set_smooth_models;
 mod pipelines;
 mod readback;
 mod render_size;

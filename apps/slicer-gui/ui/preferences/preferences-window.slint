@@ -29,6 +29,7 @@ export component PreferencesWindow inherits Window {
     in-out property <int> current-language-index: 0;
     in-out property <int> current-aa-index: 0;
     in-out property <bool> prescan-supports: false;
+    in-out property <bool> smooth-models: false;
 
     in property <[PrinterCard]> printer-cards;
     in property <[string]> manufacturer-tabs;
@@ -52,6 +53,7 @@ export component PreferencesWindow inherits Window {
     callback language-changed(int);
     callback aa-level-changed(int);
     callback prescan-supports-changed(bool);
+    callback smooth-models-changed(bool);
     callback manufacturer-tab-changed(int);
     callback printer-search-changed(string);
     callback printer-selected(int);
@@ -100,6 +102,10 @@ export component PreferencesWindow inherits Window {
                 current-theme: root.theme;
                 language-options: root.language-options;
                 current-language-index: root.current-language-index;
+                smooth-models <=> root.smooth-models;
+                smooth-models-changed(on) => {
+                    root.smooth-models-changed(on);
+                }
                 theme-selected(t) => {
                     root.theme = t;
                     root.theme-changed(t);
