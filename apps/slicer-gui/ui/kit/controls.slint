@@ -347,3 +347,92 @@ export component Dot inherits Rectangle {
     border-radius: 4px;
     background: self.tint;
 }
+
+// A labelled number with its unit, editable: it shows `value` live (rounded
+// to `decimals`), and Enter commits what was typed through `committed`; Esc
+// or leaving the field puts the live value back.
+export component NumberField inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> unit;
+    in property <float> value;
+    in property <int> decimals: 2;
+    in property <bool> enabled: true;
+    callback committed(float);
+
+    function shown() -> string {
+        return round(root.value * pow(10, root.decimals)) / pow(10, root.decimals);
+    }
+    changed value => {
+        if !input.has-focus {
+            input.text = root.shown();
+        }
+    }
+
+    spacing: 10px;
+    min-height: 28px;
+
+    Text {
+        text: root.label;
+        font-size: Theme.font;
+        color: root.enabled ? Theme.text-soft : Theme.text-faint;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    Rectangle {
+        width: 112px;
+        height: 28px;
+        background: Theme.well;
+        border-width: 1px;
+        border-color: input.has-focus ? Theme.accent : Theme.border;
+        border-radius: Theme.radius;
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 6px;
+
+            input := TextInput {
+                text: root.shown();
+                enabled: root.enabled;
+                font-family: Theme.mono;
+                font-size: Theme.font-sm;
+                color: Theme.text;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: decimal;
+                accessible-label: root.label;
+                accepted => {
+                    if self.text.is-float() {
+                        root.committed(self.text.to-float());
+                    }
+                    self.text = root.shown();
+                    self.clear-focus();
+                }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        self.text = root.shown();
+                        self.clear-focus();
+                        return accept;
+                    }
+                    return reject;
+                }
+                changed has-focus => {
+                    if !self.has-focus {
+                        self.text = root.shown();
+                    } else {
+                        self.select-all();
+                    }
+                }
+            }
+            Text {
+                text: root.unit;
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

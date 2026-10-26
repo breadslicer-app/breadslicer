@@ -421,6 +421,16 @@ Entrada numérica G/R/S, precisión Shift, planos excluidos, incrementos, world/
 
 **Pedido de Damian (2026-10-26):** al seleccionar un objeto, ver sus medidas reales y mover, rotar y escalar con números, viendo cuánto se movió o rotó; "todos los controles básicos". Va en el inspector de Transform (SC-84), con la tarjeta de la herramienta activa abierta. Prioridad: high.
 
+**Primera entrega (2026-10-26):** tarjetas MOVE, ROTATE y SIZE en el inspector de Transform (`viewport/numeric_transform.rs`, `NumberField`).
+- **Valores:** posición (centro de la huella en X/Y y lift en Z), rotación XYZ en grados, tamaño real del objeto en mm y escala en %.
+- **Edición:** cada valor tipeado es una edición deshacible.
+- **Física:** rotar y escalar giran alrededor del centro de la huella y conservan el lift; el tamaño escala uniforme.
+- **Botones:** "Drop to plate" y "Center".
+- **Rendimiento:** la lectura se calcula como mucho una vez por frame. Durante un gesto solo se leen la matriz y el delta de traslación; la caja ajustada se recalcula al soltar, así el arrastre no recorre la malla en cada tick.
+- **Tests:** controller (lift con undo, gating fuera de Transform, alto uniforme, rotación con lift) y Euler ida y vuelta.
+
+Falta: escala no uniforme por eje, world/local, snapping, entrada numérica dentro del gesto G/R/S y la prueba de Damian.
+
 **Depende de:** SC-14. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-27

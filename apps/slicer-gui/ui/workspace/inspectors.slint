@@ -10,7 +10,7 @@
 import { ComboBox, LineEdit, ProgressIndicator } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, Dot, InfoRow, Note, ScButton, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, Dot, InfoRow, Note, NumberField, ScButton, StatTile } from "../kit/controls.slint";
 
 // A selectable object row.
 component ObjectRow inherits Rectangle {
@@ -77,8 +77,24 @@ export component TransformInspector inherits VerticalLayout {
     in property <bool> needs-repair;
     in property <bool> repair-enabled;
     in property <bool> repairing;
+    // The selected object, in world millimetres and degrees (see
+    // `viewport/numeric_transform.rs`); `selection-valid` is false with no
+    // selection.
+    in property <bool> selection-valid;
+    in property <float> size-x;
+    in property <float> size-y;
+    in property <float> size-z;
+    in property <float> pos-x;
+    in property <float> pos-y;
+    in property <float> pos-z;
+    in property <float> rot-x;
+    in property <float> rot-y;
+    in property <float> rot-z;
+    in property <float> scale;
     callback object-picked(int);
     callback repair-requested();
+    // A typed value: the field code (NumericEdit::from_ui) and the value.
+    callback numeric-edit(int, float);
 
     spacing: 12px;
 
@@ -122,28 +138,133 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    Card {
+    if !root.selection-valid && root.objects.length > 0: Card {
         title: @tr("Inspector" => "TRANSFORM");
-        note: "G · R · S";
+        Note {
+            text: @tr("Inspector" => "Select an object to see its size and to move, rotate or scale it by numbers.");
+        }
+    }
 
-        InfoRow {
-            label: @tr("Inspector" => "Move");
-            value: "G";
+    if root.selection-valid: Card {
+        title: @tr("Inspector" => "MOVE");
+        note: "G";
+
+        NumberField {
+            label: "X";
+            unit: "mm";
+            value: root.pos-x;
+            committed(v) => {
+                root.numeric-edit(0, v);
+            }
         }
-        InfoRow {
-            label: @tr("Inspector" => "Rotate");
-            value: "R";
+        NumberField {
+            label: "Y";
+            unit: "mm";
+            value: root.pos-y;
+            committed(v) => {
+                root.numeric-edit(1, v);
+            }
         }
-        InfoRow {
+        NumberField {
+            label: @tr("Inspector" => "Lift (Z)");
+            unit: "mm";
+            value: root.pos-z;
+            committed(v) => {
+                root.numeric-edit(2, v);
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Drop to plate");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.numeric-edit(10, 0);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Center");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.numeric-edit(11, 0);
+                }
+            }
+        }
+    }
+
+    if root.selection-valid: Card {
+        title: @tr("Inspector" => "ROTATE");
+        note: "R";
+
+        NumberField {
+            label: "X";
+            unit: "°";
+            decimals: 1;
+            value: root.rot-x;
+            committed(v) => {
+                root.numeric-edit(3, v);
+            }
+        }
+        NumberField {
+            label: "Y";
+            unit: "°";
+            decimals: 1;
+            value: root.rot-y;
+            committed(v) => {
+                root.numeric-edit(4, v);
+            }
+        }
+        NumberField {
+            label: "Z";
+            unit: "°";
+            decimals: 1;
+            value: root.rot-z;
+            committed(v) => {
+                root.numeric-edit(5, v);
+            }
+        }
+    }
+
+    if root.selection-valid: Card {
+        title: @tr("Inspector" => "SIZE");
+        note: "S";
+
+        NumberField {
+            label: @tr("Inspector" => "Width (X)");
+            unit: "mm";
+            value: root.size-x;
+            committed(v) => {
+                root.numeric-edit(7, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Depth (Y)");
+            unit: "mm";
+            value: root.size-y;
+            committed(v) => {
+                root.numeric-edit(8, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Height (Z)");
+            unit: "mm";
+            value: root.size-z;
+            committed(v) => {
+                root.numeric-edit(9, v);
+            }
+        }
+        NumberField {
             label: @tr("Inspector" => "Scale");
-            value: "S";
-        }
-        InfoRow {
-            label: @tr("Inspector" => "Lock an axis");
-            value: "X · Y · Z";
+            unit: "%";
+            decimals: 1;
+            value: root.scale;
+            committed(v) => {
+                root.numeric-edit(6, v);
+            }
         }
         Note {
-            text: @tr("Inspector" => "Drag the gizmo, or press a key with the pointer over the model. Enter confirms, Esc cancels. Numeric entry comes next.");
+            text: @tr("Inspector" => "Sizes scale uniformly, keeping proportions.");
         }
     }
 

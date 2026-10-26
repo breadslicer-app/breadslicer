@@ -148,6 +148,21 @@ export component MainWindow inherits Window {
     in property <bool> mesh-needs-repair: false;
     // A one-line summary of the last support run, for the Supports tab.
     in property <string> supports-last-run: "";
+    // The selected object numbers for the Transform inspector, pushed by
+    // Rust at most once per frame (`ViewportController::refresh_readout`).
+    in property <bool> selection-valid: false;
+    in property <float> selection-size-x;
+    in property <float> selection-size-y;
+    in property <float> selection-size-z;
+    in property <float> selection-pos-x;
+    in property <float> selection-pos-y;
+    in property <float> selection-pos-z;
+    in property <float> selection-rot-x;
+    in property <float> selection-rot-y;
+    in property <float> selection-rot-z;
+    in property <float> selection-scale;
+    // A value typed into the Transform inspector: its field code and value.
+    callback numeric-edit(int, float);
     // Slice control panel picker models and selection, driven by Rust.
     // Each list is the union of the global favourites, the global
     // default, and the scene's current choice; `*-current-index` is the
@@ -1021,6 +1036,20 @@ export component MainWindow inherits Window {
                             }
                             repair-requested => {
                                 root.repair-requested();
+                            }
+                            selection-valid: root.selection-valid;
+                            size-x: root.selection-size-x;
+                            size-y: root.selection-size-y;
+                            size-z: root.selection-size-z;
+                            pos-x: root.selection-pos-x;
+                            pos-y: root.selection-pos-y;
+                            pos-z: root.selection-pos-z;
+                            rot-x: root.selection-rot-x;
+                            rot-y: root.selection-rot-y;
+                            rot-z: root.selection-rot-z;
+                            scale: root.selection-scale;
+                            numeric-edit(code, value) => {
+                                root.numeric-edit(code, value);
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Hollow: HollowInspector { }

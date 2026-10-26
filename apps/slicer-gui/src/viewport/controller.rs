@@ -19,7 +19,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-#[cfg(test)]
 use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
@@ -32,6 +31,7 @@ use super::gizmo_frame_composer::GizmoFrameComposer;
 use super::input_dispatch::{InputDispatch, PointerUpOutcome};
 use super::keyboard_drive::KbdFocus;
 use super::modal_transform::{ModalGesture, ModalOp};
+use super::numeric_transform::{NumericEdit, Readout, cheap_readout, readout};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
@@ -75,6 +75,14 @@ pub(crate) struct ViewportController {
     /// an empty image. Shares the cap key space with the 3D cut so the 2 stay
     /// in lockstep.
     slice_view_key: Cell<Option<u64>>,
+    /// Set by every scene event that can move or reselect the object: the
+    /// Transform inspector's numbers are read again on the next frame, at
+    /// most once per frame however many drag ticks landed.
+    readout_owed: Cell<bool>,
+    /// The last full readout of the selected object and its world translation
+    /// then: during a gesture the position follows the translation from it
+    /// instead of walking the mesh every tick.
+    readout_base: Cell<Option<(Readout, [f64; 3])>>,
 }
 
 impl ViewportController {
@@ -103,6 +111,8 @@ impl ViewportController {
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            readout_owed: Cell::new(true),
+            readout_base: Cell::new(None),
         }
     }
 
@@ -132,13 +142,13 @@ impl ViewportController {
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            readout_owed: Cell::new(true),
+            readout_base: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
-        // drag, keyboard drive, delete, paste); default the fixture to
-        // Transform so the section gate does not silence them. Production
-        // starts in Prepare (SessionState::new) and the load pipeline picks the
-        // initial section from mesh health. Section-gating tests set the
-        // section they need explicitly.
+        // drag, keyboard drive, delete, paste); the fixture starts in
+        // Transform, as production does. Section-gating tests set the section
+        // they need explicitly.
         controller.session.set_section(WorkspaceSection::Transform);
         controller
     }
@@ -276,6 +286,9 @@ impl ViewportController {
     /// of the document listener: other code drives the document and lets the
     /// listener react.
     fn handle_scene_event(&self, event: SceneEvent) {
+        if !matches!(event, SceneEvent::SliceChanged | SceneEvent::DirtyChanged) {
+            self.readout_owed.set(true);
+        }
         match event {
             SceneEvent::Installed => self.on_scene_installed(),
             SceneEvent::Cleared => self.on_scene_cleared(),
@@ -1336,6 +1349,117 @@ impl ViewportController {
         }
     }
 
+    /// Whether a gizmo drag or a modal G/R/S gesture is in flight.
+    fn gesture_active(&self) -> bool {
+        self.input.modal.get().is_some()
+            || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
+    }
+
+    /// Pushes the selected object's size, position, rotation and scale to the
+    /// Transform inspector, when a scene event asked for it. During a gesture
+    /// only the matrix is read (rotation, scale) and the position follows the
+    /// translation from the last full readout; the tight world box, a walk
+    /// over the vertices, waits for the gesture to end.
+    fn refresh_readout(&self) {
+        if !self.readout_owed.replace(false) {
+            return;
+        }
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let document = self.session.document();
+        let Some(id) = document.selection_primary_node_id() else {
+            self.readout_base.set(None);
+            ui.set_selection_valid(false);
+            return;
+        };
+        let gesture = self.gesture_active();
+        let base = self.readout_base.get();
+        let translation = |world: Transform3D| match world {
+            Transform3D::Identity => [0.0; 3],
+            Transform3D::Affine(a) => *a.translation(),
+        };
+        let computed = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                let world = query.world_transform();
+                if gesture && let Some((full, t0)) = base {
+                    let t = translation(world);
+                    return Some(Readout {
+                        size: full.size,
+                        position: [0, 1, 2].map(|k| full.position[k] + t[k] - t0[k]),
+                        ..cheap_readout(world)
+                    });
+                }
+                let full = readout(&query)?;
+                self.readout_base.set(Some((full, translation(world))));
+                Some(full)
+            })
+            .flatten();
+        let Some(r) = computed else {
+            ui.set_selection_valid(false);
+            return;
+        };
+        ui.set_selection_valid(true);
+        ui.set_selection_size_x(r.size[0] as f32);
+        ui.set_selection_size_y(r.size[1] as f32);
+        ui.set_selection_size_z(r.size[2] as f32);
+        ui.set_selection_pos_x(r.position[0] as f32);
+        ui.set_selection_pos_y(r.position[1] as f32);
+        ui.set_selection_pos_z(r.position[2] as f32);
+        ui.set_selection_rot_x(r.rotation_deg[0] as f32);
+        ui.set_selection_rot_y(r.rotation_deg[1] as f32);
+        ui.set_selection_rot_z(r.rotation_deg[2] as f32);
+        ui.set_selection_scale(r.scale_pct as f32);
+    }
+
+    /// Applies a value typed into the Transform inspector (see
+    /// [`NumericEdit::from_ui`] for the codes) as one undoable edit. Only in
+    /// the Transform tab, with a selection, and never mid-gesture.
+    pub(crate) fn on_numeric_edit(&self, code: i32, value: f32) {
+        if !self.allows_layout_tools() || self.gesture_active() {
+            return;
+        }
+        let document = self.session.document();
+        let Some(id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let volume = self.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        let centre = [f64::from(lo.x + hi.x) * 0.5, f64::from(lo.y + hi.y) * 0.5];
+        let Some(edit) = NumericEdit::from_ui(code, f64::from(value), centre) else {
+            return;
+        };
+        let change = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                let before = query.local_transform();
+                let after = super::numeric_transform::apply(&query, edit)?;
+                Some((before, after))
+            })
+            .flatten();
+        let Some((before, after)) = change else {
+            self.readout_owed.set(true);
+            return;
+        };
+        let applied = document.apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+            node_id: id,
+            before,
+            after,
+        });
+        match applied {
+            Ok(()) => document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                node_id: id,
+                before,
+                after,
+            }),
+            Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
+            Err(_) => {}
+        }
+        self.readout_owed.set(true);
+        self.mark_dirty();
+    }
+
     pub(crate) fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         // Mint a fresh token for this setup. Both the loader snapshot (consumed
         // by the worker-side `GpuScene::build`) and the renderer (built below)
@@ -1732,6 +1856,7 @@ impl ViewportController {
     }
 
     pub(crate) fn handle_before_rendering(&self) {
+        self.refresh_readout();
         if !self.on_scene_change() {
             return;
         }

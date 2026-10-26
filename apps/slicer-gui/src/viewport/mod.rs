@@ -13,6 +13,7 @@ mod input_dispatch;
 mod input_state;
 mod keyboard_drive;
 mod modal_transform;
+mod numeric_transform;
 mod object_list;
 mod render_host;
 mod render_scheduler;
@@ -21,6 +22,8 @@ mod session_state;
 mod tests_controller_handle_before_rendering;
 #[cfg(test)]
 mod tests_controller_lifecycle;
+#[cfg(test)]
+mod tests_controller_numeric;
 #[cfg(test)]
 mod tests_controller_section_gating;
 mod translation_clamp;
