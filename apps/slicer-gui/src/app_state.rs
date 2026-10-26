@@ -582,7 +582,7 @@ impl AppState {
         // the live window matches the executable resource.
         crate::window_icon::apply(ui.window());
         // Open at a share of the monitor, not the 600 x 400 floor.
-        crate::window_placement::fit_to_screen(ui.window());
+        crate::window_placement::fit_to_screen(&ui);
         self.main_windows.borrow_mut().insert(
             id,
             WiredMainWindow {
