@@ -5,14 +5,15 @@
 
 //! Section-scoped gating predicates.
 //!
-//! The workspace is split into three sections (Prepare, Transform,
-//! Slice). Each tool family carries its own section gate: layout
-//! tools run in Transform only, undo/redo runs everywhere except
-//! Slice, mesh repair runs in Prepare only. Selection and camera
-//! navigation stay live in every section; only the Slice section
-//! clips the mesh for the layer view. The section-derived rules the
-//! gating checks are written against live here so each rule has one
-//! definition.
+//! The workspace follows the workflow tabs (SC-84): Transform, then Hollow
+//! and Supports in either order, then Slice and Export. Layout tools and the
+//! transform gizmo run in Transform only (the pose is settled by the time
+//! the model is hollowed or supported); undo/redo runs wherever the scene
+//! can still be edited, everywhere but Slice and Export, which show a held
+//! result; mesh repair runs in Transform. Selection and camera navigation
+//! stay live in every section; only Slice clips the mesh for the layer
+//! view. The section-derived rules the gating checks are written against
+//! live here so each rule has one definition.
 
 use crate::WorkspaceSection;
 
@@ -24,25 +25,24 @@ pub(crate) fn allows_layout_tools(section: WorkspaceSection) -> bool {
     matches!(section, WorkspaceSection::Transform)
 }
 
-/// Transform handles are available on selection in both editing workspaces.
-/// Slice stays read-only so its held layer result cannot be edited underneath it.
+/// Transform handles are available on selection in Transform only: the later
+/// tabs act on a settled pose, and Slice and Export are read-only so their
+/// held result cannot be edited underneath them.
 pub(crate) fn allows_transform_gizmo(section: WorkspaceSection) -> bool {
-    !matches!(section, WorkspaceSection::Slice)
+    matches!(section, WorkspaceSection::Transform)
 }
 
-/// Whether undo/redo is permitted in `section`: everywhere except
-/// Slice, where the held slice result must not be edited out from
-/// under the layer view. Editing in Prepare (mesh repair) needs its
-/// history reachable there, not only in Transform.
+/// Whether undo/redo is permitted in `section`: wherever the scene can still
+/// be edited (Transform, Hollow, Supports), not in Slice and Export, where
+/// the held slice result must not be edited out from under the layer view.
 pub(crate) fn allows_undo_redo(section: WorkspaceSection) -> bool {
-    !matches!(section, WorkspaceSection::Slice)
+    !matches!(section, WorkspaceSection::Slice | WorkspaceSection::Export)
 }
 
-/// Whether the mesh repair action is permitted in `section`. Prepare
-/// only: repair addresses the mesh problems the Prepare section
-/// surfaces, before layout begins.
+/// Whether the mesh repair action is permitted in `section`: Transform,
+/// where a freshly loaded model is checked before anything is built on it.
 pub(crate) fn allows_repair(section: WorkspaceSection) -> bool {
-    matches!(section, WorkspaceSection::Prepare)
+    matches!(section, WorkspaceSection::Transform)
 }
 
 /// The slice-view clip height for `section`, given the selected layer's
@@ -53,7 +53,10 @@ pub(crate) fn allows_repair(section: WorkspaceSection) -> bool {
 pub(crate) fn clip_z_from(section: WorkspaceSection, layer_top_z: Option<f64>) -> Option<f32> {
     match section {
         WorkspaceSection::Slice => layer_top_z.map(|z| z as f32),
-        WorkspaceSection::Prepare | WorkspaceSection::Transform => None,
+        WorkspaceSection::Transform
+        | WorkspaceSection::Hollow
+        | WorkspaceSection::Supports
+        | WorkspaceSection::Export => None,
     }
 }
 
@@ -61,32 +64,39 @@ pub(crate) fn clip_z_from(section: WorkspaceSection, layer_top_z: Option<f64>) -
 mod workspace_section_tests {
     use super::*;
 
+    const ALL: [WorkspaceSection; 5] = [
+        WorkspaceSection::Transform,
+        WorkspaceSection::Hollow,
+        WorkspaceSection::Supports,
+        WorkspaceSection::Slice,
+        WorkspaceSection::Export,
+    ];
+
     #[test]
-    fn only_transform_allows_layout_tools() {
-        assert!(allows_layout_tools(WorkspaceSection::Transform));
-        assert!(!allows_layout_tools(WorkspaceSection::Prepare));
-        assert!(!allows_layout_tools(WorkspaceSection::Slice));
+    fn only_transform_allows_layout_tools_the_gizmo_and_repair() {
+        for section in ALL {
+            let transform = section == WorkspaceSection::Transform;
+            assert_eq!(allows_layout_tools(section), transform, "{section:?}");
+            assert_eq!(allows_transform_gizmo(section), transform, "{section:?}");
+            assert_eq!(allows_repair(section), transform, "{section:?}");
+        }
     }
 
     #[test]
-    fn undo_redo_is_allowed_everywhere_except_slice() {
-        assert!(allows_undo_redo(WorkspaceSection::Prepare));
+    fn undo_redo_is_allowed_until_the_slice() {
         assert!(allows_undo_redo(WorkspaceSection::Transform));
+        assert!(allows_undo_redo(WorkspaceSection::Hollow));
+        assert!(allows_undo_redo(WorkspaceSection::Supports));
         assert!(!allows_undo_redo(WorkspaceSection::Slice));
-    }
-
-    #[test]
-    fn only_prepare_allows_repair() {
-        assert!(allows_repair(WorkspaceSection::Prepare));
-        assert!(!allows_repair(WorkspaceSection::Transform));
-        assert!(!allows_repair(WorkspaceSection::Slice));
+        assert!(!allows_undo_redo(WorkspaceSection::Export));
     }
 
     #[test]
     fn only_slice_clips_and_only_with_a_layer_top() {
         assert_eq!(clip_z_from(WorkspaceSection::Slice, Some(2.0)), Some(2.0));
         assert_eq!(clip_z_from(WorkspaceSection::Slice, None), None);
-        assert_eq!(clip_z_from(WorkspaceSection::Transform, Some(2.0)), None);
-        assert_eq!(clip_z_from(WorkspaceSection::Prepare, Some(2.0)), None);
+        for section in ALL.into_iter().filter(|s| *s != WorkspaceSection::Slice) {
+            assert_eq!(clip_z_from(section, Some(2.0)), None, "{section:?}");
+        }
     }
 }

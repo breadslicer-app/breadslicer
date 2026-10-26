@@ -39,6 +39,7 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
+use crate::mesh_health::{needs_repair, scene_mesh_health};
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
 use crate::workspace_section::allows_repair;
@@ -156,9 +157,8 @@ impl RepairRun {
     }
 
     /// Drains the deposited result on the UI thread, applies it when it is
-    /// still current, and reports through the info dialog. The section
-    /// deliberately stays Prepare: the user switches via the pill once they
-    /// have read the results.
+    /// still current, and reports through the info dialog. The tab stays
+    /// Transform; its repair card follows the scene's new health.
     fn finish(&self) {
         let taken = self
             .slot
@@ -196,6 +196,14 @@ impl RepairRun {
                 });
             }
             RepairSettlement::NothingApplied | RepairSettlement::Applied => {
+                // The Transform tab's repair card follows the scene's health.
+                if let (Some(ui), Some(health)) = (
+                    self.ui.upgrade(),
+                    self.document
+                        .with_scene(|spatial| scene_mesh_health(spatial.graph())),
+                ) {
+                    ui.set_mesh_needs_repair(needs_repair(health));
+                }
                 let outcomes = completed.outcomes;
                 let names = self
                     .document

@@ -1,0 +1,61 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// SoulCrafted's design tokens (SC-84): one restrained palette, a single
+// amber accent, flat surfaces. Dark is the reference look ("Synrg Neutral",
+// carried over from the owner's DragonFruit theme); light follows the
+// window's color scheme with the same structure.
+
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    out property <bool> dark: Palette.color-scheme != ColorScheme.light;
+
+    // Surfaces, back to front.
+    out property <brush> ground: dark ? #1b1e20 : #eef0f1;
+    out property <brush> chrome: dark ? #202326 : #f7f8f8;
+    out property <brush> panel: dark ? #1e2124 : #f3f4f5;
+    out property <brush> card: dark ? #202326 : #ffffff;
+    out property <brush> well: dark ? #16181a : #e7eaec;
+    out property <brush> raised: dark ? #272b2e : #ffffff;
+    out property <brush> hover: dark ? #303539 : #e2e5e7;
+
+    // Lines.
+    out property <brush> border: dark ? #383e42 : #d3d8db;
+    out property <brush> border-soft: dark ? #2c3135 : #e3e6e8;
+    out property <brush> border-strong: dark ? #545c62 : #aab2b8;
+
+    // Text.
+    out property <brush> text: dark ? #eceeef : #1d2124;
+    out property <brush> text-soft: dark ? #c9ced2 : #3b4246;
+    out property <brush> text-muted: dark ? #8d959b : #5f686e;
+    out property <brush> text-faint: dark ? #6c7479 : #8b9399;
+
+    // Accent and states.
+    out property <brush> accent: #d7a75a;
+    out property <brush> accent-hover: #e3b56b;
+    out property <brush> on-accent: #1b1e20;
+    out property <brush> success: #65bc92;
+    out property <brush> warning: #d7a75a;
+    out property <brush> danger: #ed7777;
+
+    // Shape.
+    out property <length> radius-sm: 4px;
+    out property <length> radius: 6px;
+    out property <length> radius-lg: 8px;
+
+    // Type.
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 12px;
+    out property <length> font: 13px;
+    out property <length> font-lg: 15px;
+    out property <string> mono: "Consolas";
+
+    // Fixed chrome sizes.
+    out property <length> topbar-height: 44px;
+    out property <length> rail-width: 56px;
+    out property <length> inspector-width: 340px;
+    out property <length> statusbar-height: 28px;
+}

@@ -1,0 +1,349 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// SoulCrafted's own controls (SC-84), drawn from the Theme tokens: buttons,
+// the workflow tabs, the tool rail's icon buttons, collapsible cards,
+// segmented choices and stat tiles.
+
+import { Theme } from "theme.slint";
+
+// A 24 x 24 stroke icon from SVG path commands.
+export component Icon inherits Path {
+    in property <brush> color: Theme.text-soft;
+    in property <length> size: 18px;
+    width: self.size;
+    height: self.size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: self.color;
+    stroke-width: 1.7px;
+    fill: transparent;
+}
+
+export enum ButtonKind { normal, primary, ghost }
+
+export component ScButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <ButtonKind> kind: ButtonKind.normal;
+    in property <bool> enabled: true;
+    in property <length> button-height: 32px;
+    callback clicked();
+
+    height: self.button-height;
+    min-width: layout.preferred-width;
+    border-radius: Theme.radius;
+    border-width: self.kind == ButtonKind.ghost ? 0px : 1px;
+    border-color: self.kind == ButtonKind.primary ? Theme.accent : Theme.border-strong.transparentize(0.3);
+    background: !self.enabled ? Theme.raised.transparentize(0.4)
+        : self.kind == ButtonKind.primary ? (touch.has-hover ? Theme.accent-hover : Theme.accent)
+        : self.kind == ButtonKind.ghost ? (touch.has-hover ? Theme.hover : transparent)
+        : (touch.has-hover ? Theme.hover : Theme.raised);
+    opacity: self.enabled ? 1 : 0.55;
+    accessible-role: button;
+    accessible-label: self.text;
+    accessible-action-default => {
+        if self.enabled {
+            self.clicked();
+        }
+    }
+
+    layout := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        alignment: center;
+
+        if root.icon != "": Icon {
+            commands: root.icon;
+            size: 16px;
+            y: (parent.height - self.height) / 2;
+            color: root.kind == ButtonKind.primary ? Theme.on-accent : Theme.text-soft;
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-size: Theme.font;
+            font-weight: root.kind == ButtonKind.primary ? 600 : 400;
+            color: root.kind == ButtonKind.primary ? Theme.on-accent : Theme.text;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// One step of the workflow in the top bar: its number, its name, an
+// optional status dot, and the accent underline when active.
+export component WorkflowTab inherits Rectangle {
+    in property <string> number;
+    in property <string> label;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    // An optional status dot (transparent for none).
+    in property <brush> dot: transparent;
+    callback clicked();
+
+    height: Theme.topbar-height;
+    min-width: tab-layout.preferred-width;
+    accessible-role: tab;
+    accessible-label: self.label;
+    accessible-item-selected: self.active;
+    accessible-action-default => {
+        if self.enabled {
+            self.clicked();
+        }
+    }
+
+    tab-layout := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+        alignment: center;
+
+        Text {
+            text: root.number;
+            font-family: Theme.mono;
+            font-size: Theme.font-xs;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: Theme.font;
+            font-weight: root.active ? 600 : 400;
+            color: !root.enabled ? Theme.text-faint : root.active || touch.has-hover ? Theme.text : Theme.text-soft;
+            vertical-alignment: center;
+        }
+        if root.dot != transparent: Rectangle {
+            width: 6px;
+            height: 6px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            background: root.dot;
+        }
+    }
+
+    Rectangle {
+        y: parent.height - self.height;
+        height: 2px;
+        background: root.active ? Theme.accent : transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A tool of the left rail: an icon, its shortcut in the corner, the
+// accent when it is the active tool.
+export component ToolButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: 44px;
+    height: 44px;
+    border-radius: Theme.radius;
+    background: root.active ? Theme.hover : touch.has-hover && root.enabled ? Theme.raised : transparent;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        if self.enabled {
+            self.clicked();
+        }
+    }
+
+    Icon {
+        commands: root.icon;
+        size: 20px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        color: root.active ? Theme.accent : Theme.text-soft;
+    }
+    if root.shortcut != "": Text {
+        x: parent.width - self.width - 3px;
+        y: parent.height - self.height - 2px;
+        text: root.shortcut;
+        font-family: Theme.mono;
+        font-size: 9px;
+        color: Theme.text-faint;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// An inspector card: a header (title, optional trailing note) over its
+// content. Collapsible when `collapsible` is set; the header then toggles
+// `expanded`.
+export component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> note;
+    in property <brush> note-color: Theme.text-muted;
+    in property <bool> highlighted;
+    in property <bool> collapsible;
+    in-out property <bool> expanded: true;
+
+    background: Theme.card;
+    border-width: 1px;
+    border-color: self.highlighted ? Theme.accent : Theme.border;
+    border-radius: Theme.radius-lg;
+
+    VerticalLayout {
+        Rectangle {
+            height: 36px;
+            accessible-role: button;
+            accessible-label: root.title;
+            accessible-expanded: root.expanded;
+            accessible-action-default => {
+                if root.collapsible {
+                    root.expanded = !root.expanded;
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+
+                Text {
+                    text: root.title;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    color: root.highlighted ? Theme.accent : Theme.text-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.note;
+                    font-size: Theme.font-xs;
+                    color: root.note-color;
+                    vertical-alignment: center;
+                }
+            }
+
+            if root.collapsible: TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.expanded = !root.expanded;
+                }
+            }
+        }
+
+        if root.expanded: Rectangle {
+            height: 1px;
+            background: Theme.border-soft;
+        }
+
+        // Folded by height rather than removed: `@children` cannot sit in a
+        // conditional element.
+        Rectangle {
+            height: root.expanded ? body.preferred-height : 0px;
+            clip: true;
+
+            body := VerticalLayout {
+                y: 0;
+                height: self.preferred-height;
+                padding: 12px;
+                spacing: 10px;
+
+                @children
+            }
+        }
+    }
+}
+
+// A labelled value row: the label on the left, the value (mono) right.
+export component InfoRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <brush> value-color: Theme.text-soft;
+    spacing: 10px;
+    min-height: 24px;
+
+    Text {
+        text: root.label;
+        font-size: Theme.font;
+        color: Theme.text-soft;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    Text {
+        text: root.value;
+        font-family: Theme.mono;
+        font-size: Theme.font-sm;
+        color: root.value-color;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+    }
+}
+
+// A value with a caption under it, on a sunken tile.
+export component StatTile inherits Rectangle {
+    in property <string> value;
+    in property <string> caption;
+
+    background: Theme.well;
+    border-width: 1px;
+    border-color: Theme.border-soft;
+    border-radius: Theme.radius;
+    min-height: tile.preferred-height;
+    horizontal-stretch: 1;
+
+    tile := VerticalLayout {
+        padding: 8px;
+        padding-left: 10px;
+        spacing: 2px;
+
+        Text {
+            text: root.value;
+            font-family: Theme.mono;
+            font-size: Theme.font-lg;
+            color: Theme.text;
+        }
+        Text {
+            text: root.caption;
+            font-size: Theme.font-xs;
+            color: Theme.text-muted;
+        }
+    }
+}
+
+// A short explanatory paragraph.
+export component Note inherits Text {
+    font-size: Theme.font-sm;
+    color: Theme.text-muted;
+    wrap: word-wrap;
+}
+
+// A coloured status dot.
+export component Dot inherits Rectangle {
+    in property <brush> tint: Theme.success;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: self.tint;
+}

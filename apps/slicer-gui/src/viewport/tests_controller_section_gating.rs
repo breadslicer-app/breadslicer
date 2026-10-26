@@ -4,7 +4,8 @@
  */
 
 //! Section gating: layout tools are silenced outside the Transform section,
-//! undo/redo is silenced only in Slice, and selection stays live everywhere.
+//! undo/redo is silenced in Slice and Export, and selection stays live
+//! everywhere.
 //!
 //! These drive the controller with a light single-leaf fixture. The
 //! pointer-drag gate (which needs a camera, a viewport, and gizmo geometry)
@@ -25,8 +26,8 @@ fn controller_in(section: WorkspaceSection) -> ViewportController {
 }
 
 #[test]
-fn delete_is_silenced_in_prepare() {
-    let ctrl = controller_in(WorkspaceSection::Prepare);
+fn delete_is_silenced_in_supports() {
+    let ctrl = controller_in(WorkspaceSection::Supports);
     ctrl.on_delete_requested();
     assert_eq!(
         ctrl.reachable_leaf_count_for_test(),
@@ -82,16 +83,29 @@ fn entering_slice_drops_keyboard_focus() {
 }
 
 #[test]
-fn undo_runs_in_prepare() {
+fn undo_runs_in_hollow() {
     let ctrl = controller_in(WorkspaceSection::Transform);
     ctrl.on_delete_requested();
     assert_eq!(ctrl.reachable_leaf_count_for_test(), 0);
-    ctrl.set_section(WorkspaceSection::Prepare);
+    ctrl.set_section(WorkspaceSection::Hollow);
     ctrl.on_undo_requested();
     assert_eq!(
         ctrl.reachable_leaf_count_for_test(),
         1,
-        "undo in Prepare restores the deleted leaf; history is reachable outside Slice"
+        "undo in Hollow restores the deleted leaf; history is reachable until the slice"
+    );
+}
+
+#[test]
+fn undo_is_silenced_in_export() {
+    let ctrl = controller_in(WorkspaceSection::Transform);
+    ctrl.on_delete_requested();
+    ctrl.set_section(WorkspaceSection::Export);
+    ctrl.on_undo_requested();
+    assert_eq!(
+        ctrl.reachable_leaf_count_for_test(),
+        0,
+        "undo must be a no-op in the Export section"
     );
 }
 
@@ -125,7 +139,7 @@ fn undo_restores_in_transform() {
 #[test]
 fn selection_stays_live_outside_transform() {
     // Selection is not a transform; it must work in every section.
-    let ctrl = controller_in(WorkspaceSection::Prepare);
+    let ctrl = controller_in(WorkspaceSection::Supports);
     assert_eq!(ctrl.selection(), Some(0));
     ctrl.on_clear_selection();
     assert_eq!(
@@ -136,15 +150,15 @@ fn selection_stays_live_outside_transform() {
 }
 
 #[test]
-fn gizmo_keyboard_focus_arms_in_prepare_for_all_operations() {
-    let ctrl = controller_in(WorkspaceSection::Prepare);
-    ctrl.on_gizmo_focus_translate();
-    assert!(matches!(
-        ctrl.keyboard_focus_for_test(),
-        KbdFocus::Translate
-    ));
-    ctrl.on_gizmo_focus_rotate();
-    assert!(matches!(ctrl.keyboard_focus_for_test(), KbdFocus::Rotate));
-    ctrl.on_gizmo_focus_scale();
-    assert!(matches!(ctrl.keyboard_focus_for_test(), KbdFocus::Scale));
+fn gizmo_keyboard_focus_cannot_arm_once_the_pose_is_settled() {
+    for section in [WorkspaceSection::Hollow, WorkspaceSection::Supports] {
+        let ctrl = controller_in(section);
+        ctrl.on_gizmo_focus_translate();
+        ctrl.on_gizmo_focus_rotate();
+        ctrl.on_gizmo_focus_scale();
+        assert!(
+            matches!(ctrl.keyboard_focus_for_test(), KbdFocus::None),
+            "{section:?}: the pose is settled outside Transform"
+        );
+    }
 }

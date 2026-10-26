@@ -69,7 +69,7 @@ impl SessionState {
             dialogs,
             document_subscription: RefCell::new(None),
             build_volume: Cell::new(NO_PRINTER_BUILD_VOLUME),
-            section: Cell::new(WorkspaceSection::Prepare),
+            section: Cell::new(WorkspaceSection::Transform),
         }
     }
 
@@ -176,23 +176,23 @@ mod session_state_tests {
     }
 
     #[test]
-    fn section_starts_in_prepare() {
-        // A no-op set to Prepare reports no change, which pins the initial
+    fn section_starts_in_transform() {
+        // A no-op set to Transform reports no change, which pins the initial
         // value.
         let s = new_session();
-        assert!(!s.set_section(WorkspaceSection::Prepare));
+        assert!(!s.set_section(WorkspaceSection::Transform));
     }
 
     #[test]
     fn set_section_returns_true_on_change() {
         let s = new_session();
-        assert!(s.set_section(WorkspaceSection::Transform));
+        assert!(s.set_section(WorkspaceSection::Supports));
     }
 
     #[test]
     fn set_section_returns_false_on_no_change() {
         let s = new_session();
-        assert!(s.set_section(WorkspaceSection::Transform));
-        assert!(!s.set_section(WorkspaceSection::Transform));
+        assert!(s.set_section(WorkspaceSection::Supports));
+        assert!(!s.set_section(WorkspaceSection::Supports));
     }
 }
