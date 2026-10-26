@@ -115,7 +115,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-76](#sc-76) | backlog | soportes | Mejoras post-porteo DF: lista de hallazgos | SC-75 |
 | [SC-77](#sc-77) | triage | rendimiento | Investigar mover a GPU el pipeline de soportes | SC-76, SC-82 |
 | [SC-78](#sc-78) | done | soportes | Fachada del core de soportes DF portados | — |
-| [SC-79](#sc-79) | todo | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
+| [SC-79](#sc-79) | done | soportes | Rebanada vertical GUI: auto-soportes y raft DF de punta a punta | SC-78 |
 | [SC-80](#sc-80) | done | slicing | Fallo de stitching de `sl1cer` ("dangling endpoints") | — |
 | [SC-81](#sc-81) | backlog | slicing | Soportes y raft DF en el slice y el archivo de salida | SC-79, SC-80 |
 | [SC-82](#sc-82) | backlog | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
@@ -964,7 +964,9 @@ Cargar modelo → auto-soportes → raft → preview en el viewport → slice �
   - las uniones donde una rama sale de un tronco siguen siendo dos tubos que se cruzan (sin unir);
   - el slice de esa malla (soportes superpuestos en una sola malla) es SC-81.
 
-**Depende de:** SC-78. Prioridad: high. Estado snapshot: todo.
+**Cerrado (2026-10-25):** Damian generó soportes y raft sobre modelos reales (cubo rotado, ballena) desde la GUI, los vio en el viewport, deshizo y rehízo con Ctrl+Z/Ctrl+Y y exportó el STL. La revisión del STL exportado en Caliper muestra 1387 componentes, 0 aristas abiertas, 1940 aristas no-manifold y 2002 caras duplicadas: la malla de soportes suelda piezas que se tocan y repite piezas coincidentes. Que eso slicee bien es SC-81.
+
+**Depende de:** SC-78. Prioridad: high. Estado snapshot: done.
 
 ## SC-80
 
