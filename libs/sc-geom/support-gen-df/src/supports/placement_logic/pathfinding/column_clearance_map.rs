@@ -26,6 +26,8 @@
 //!
 //! `buildMs` (wall-clock) is not recorded: it is a report, never read.
 
+use rayon::prelude::*;
+
 use crate::three::math_utils::{js_max, js_min};
 use crate::three::{Matrix4, Vec3};
 
@@ -78,9 +80,15 @@ impl ColumnClearanceMap {
         clearance_mm: f64,
         cell_mm: f64,
     ) -> Option<Self> {
-        let world = |p: &[f32; 3]| {
-            Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])).apply_matrix4(matrix_world)
-        };
+        // World positions once, in parallel: the bounds and every band below
+        // read them.
+        let world: Vec<Vec3> = positions
+            .par_iter()
+            .map(|p| {
+                Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
+                    .apply_matrix4(matrix_world)
+            })
+            .collect();
 
         let (mut min_x, mut min_y, mut max_x, mut max_y) = (
             f64::INFINITY,
@@ -88,8 +96,7 @@ impl ColumnClearanceMap {
             f64::NEG_INFINITY,
             f64::NEG_INFINITY,
         );
-        for p in positions {
-            let v = world(p);
+        for v in &world {
             if v.x < min_x {
                 min_x = v.x;
             }
@@ -117,34 +124,64 @@ impl ColumnClearanceMap {
         let r2 = radius * radius;
         let rc = (radius / cell_mm).ceil() as i64;
 
+        // Vertices bucketed by the row they fall in (a counting sort), so a
+        // band of rows finds the vertices that reach it without a full pass.
+        let row_of = |v: &Vec3| (((v.y - oy) / cell_mm).floor() as i64).clamp(0, h as i64 - 1);
+        let mut row_starts = vec![0usize; h + 1];
+        for v in &world {
+            row_starts[row_of(v) as usize + 1] += 1;
+        }
+        for r in 0..h {
+            row_starts[r + 1] += row_starts[r];
+        }
+        let mut fill = row_starts.clone();
+        let mut by_row = vec![0u32; world.len()];
+        for (i, v) in world.iter().enumerate() {
+            let r = row_of(v) as usize;
+            by_row[fill[r]] = i as u32;
+            fill[r] += 1;
+        }
+
         // Push each vertex's ball into the cells it can reach, keeping the
         // lowest Z. Only the minimum is kept, so the update is a compare and a
-        // store - no lists, no merging, no sorting.
+        // store - no lists, no merging, no sorting. A cell's minimum does not
+        // depend on the order its candidates arrive in, so bands of rows fill
+        // in parallel, each from the vertices within reach of its rows, and
+        // give the sequential result.
+        const BAND_ROWS: usize = 32;
         let mut lo = vec![NO_SOLID; w * h];
-        for p in positions {
-            let v = world(p);
-            let (vx, vy, vz) = (v.x, v.y, v.z);
-            let ix = ((vx - ox) / cell_mm).floor() as i64;
-            let iy = ((vy - oy) / cell_mm).floor() as i64;
-            let ny_end = js_min((h - 1) as f64, (iy + rc) as f64) as i64;
-            let nx_end = js_min((w - 1) as f64, (ix + rc) as f64) as i64;
-            for ny in (0.max(iy - rc))..=ny_end {
-                let dy = oy + ny as f64 * cell_mm - vy;
-                for nx in (0.max(ix - rc))..=nx_end {
-                    let dx = ox + nx as f64 * cell_mm - vx;
-                    let lat2 = dx * dx + dy * dy;
-                    if lat2 >= r2 {
-                        continue;
-                    }
-                    let candidate = vz - (r2 - lat2).sqrt();
-                    let at = ny as usize * w + nx as usize;
-                    // The store is a Float32Array; the compare reads the stored value.
-                    if candidate < f64::from(lo[at]) {
-                        lo[at] = candidate as f32;
+        lo.par_chunks_mut(BAND_ROWS * w)
+            .enumerate()
+            .for_each(|(band, cells)| {
+                let r0 = (band * BAND_ROWS) as i64;
+                let r1 = r0 + (cells.len() / w) as i64; // exclusive
+                let first = (r0 - rc).max(0) as usize;
+                let last = ((r1 - 1 + rc).min(h as i64 - 1)) as usize;
+                for &i in &by_row[row_starts[first]..row_starts[last + 1]] {
+                    let v = world[i as usize];
+                    let (vx, vy, vz) = (v.x, v.y, v.z);
+                    let ix = ((vx - ox) / cell_mm).floor() as i64;
+                    let iy = ((vy - oy) / cell_mm).floor() as i64;
+                    let ny_end = js_min((h - 1) as f64, (iy + rc) as f64) as i64;
+                    let nx_end = js_min((w - 1) as f64, (ix + rc) as f64) as i64;
+                    for ny in (0.max(iy - rc)).max(r0)..=ny_end.min(r1 - 1) {
+                        let dy = oy + ny as f64 * cell_mm - vy;
+                        for nx in (0.max(ix - rc))..=nx_end {
+                            let dx = ox + nx as f64 * cell_mm - vx;
+                            let lat2 = dx * dx + dy * dy;
+                            if lat2 >= r2 {
+                                continue;
+                            }
+                            let candidate = vz - (r2 - lat2).sqrt();
+                            let at = (ny - r0) as usize * w + nx as usize;
+                            // The store is a Float32Array; the compare reads the stored value.
+                            if candidate < f64::from(cells[at]) {
+                                cells[at] = candidate as f32;
+                            }
+                        }
                     }
                 }
-            }
-        }
+            });
 
         Some(ColumnClearanceMap {
             stats: ColumnClearanceMapStats {

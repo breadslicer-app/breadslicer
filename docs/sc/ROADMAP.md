@@ -1024,6 +1024,21 @@ Primer ajuste sin cambio de resultados:
 
 Siguientes candidatos: el router (por llamada, ~4 ms) y la clasificación de voladizos de la sopa.
 
+**Segunda medición (2026-10-26).** Banco reproducible: `tests/bench_real_model.rs`, ignorado; recibe `SC_BENCH_STL`, `SC_BENCH_HEIGHT`, `SC_BENCH_ROT` y `SC_BENCH_RUNS`. Imprime el reporte y un digest del estado de soportes, que tiene que quedar igual tras cada optimización. Escena: el modelo 617 de Damian (1,9 M triángulos) escalado a 90 mm, con 849 raíces. Pasó de 25,8 s a 22,5 s con el mismo digest:
+- **Voladizos, de 6,4 s a 2,0 s.** El mapa arista → triángulos era un `HashMap` por hilo con merge (1,9 s a escala real); ahora es un orden paralelo de pares en CSR (`EdgeTris`, 0,12 s). Además, el escaneo reusa la malla soldada del pipeline (`overhang_and_stability`, mismo épsilon), y la soldadura ya no se hace dos veces.
+- **Mapa de columnas del router, en paralelo.** `ColumnClearanceMap::build` llena franjas de filas en paralelo con los vértices agrupados por fila. El mínimo por celda no depende del orden, así que el resultado es idéntico.
+
+Dónde está el tiempo ahora (617 a 90 mm):
+- **Router, 8,3 s en 1950 llamadas:** la búsqueda de juntas (`find_escape_joint`) da 5,8 M pasos diagonales cortos. El costo real son 1,16 M de celdas SDF nuevas, cada una una consulta `closest_point_to_point` al BVH (~4,5 µs). Las columnas ya son O(1) por el mapa.
+- **Escaneo de islas, 4,4 s.** Ahora define el tiempo de los escaneos.
+- **Resto de la colocación, ~6 s; consolidación, 1,5 s.**
+
+Opciones para el router, de menor a mayor alcance:
+1. acelerar la consulta al BVH sin cambiar qué triángulo gana en empates (el signo sale de su normal);
+2. precargar en paralelo las celdas que va a pedir una caminata;
+3. una caché concurrente y caminar las direcciones en paralelo.
+Las tres necesitan probar que el digest no cambia.
+
 **Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-83
