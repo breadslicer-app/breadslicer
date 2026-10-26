@@ -148,6 +148,8 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-86](#sc-86) | backlog | soportes | Panel completo de soportes, lift y presets de Damian | SC-84, SC-83 |
 | [SC-87](#sc-87) | backlog | geometria | Repair: mejorar con DF y Caliper como extra | SC-29 |
 | [SC-88](#sc-88) | backlog | slicing | Vista de capa con zoom y paneo | SC-84, SC-34 |
+| [SC-89](#sc-89) | backlog | comunidad | Testers: bot de Discord, issues clasificados y arreglos con PR | SC-90, SC-58 |
+| [SC-90](#sc-90) | backlog | calidad | Log de interacción opcional y "Exportar diagnóstico" | SC-64 |
 
 ## SC-01
 
@@ -1380,3 +1382,30 @@ Pedido de Damian (2026-10-26): la imagen de la capa en Slice le encanta; quiere 
 **Cierre:** zoom con rueda y paneo con arrastre sobre la capa, a resolución real, sin trabar el slider; probado por Damian.
 
 **Depende de:** SC-84, SC-34. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-89
+
+**Testers: bot de Discord, issues clasificados y arreglos con PR** — Comunidad
+
+Pedido de Damian (2026-10-26). La propuesta completa está en las notas privadas de Damian:
+- **Discord:** `/reporte` responde con el formato y el link al formulario.
+- **Formularios de GitHub** con diagnóstico obligatorio.
+- **Clasificación:** un clasificador automático lee cada issue nuevo sin permisos y da un veredicto; un script aparte aplica etiquetas o borra los sospechosos.
+- **Arreglos:** Damian aprueba con una etiqueta; después el bug se reproduce, se arregla y se manda como PR.
+- **Merge:** humano, y auto-merge solo por categorías más adelante.
+
+**Cierre:** las decisiones de la propuesta tomadas por Damian, el repo público con formularios y etiquetas, el clasificador en modo "solo etiquetar" funcionando con issues de prueba, y el bot respondiendo `/reporte`. Nada se activa ni se publica sin su OK explícito.
+
+**Depende de:** SC-90, SC-58. Prioridad: normal. Estado snapshot: backlog.
+
+## SC-90
+
+**Log de interacción opcional y "Exportar diagnóstico"** — Calidad
+
+Ya existe `logs/crash.log` (panics con backtrace).
+- **Log de interacción:** se activa en Preferencias → Privacidad, apagado por defecto. Registra eventos y tiempos, sin geometría ni rutas, en un archivo rotativo.
+- **"Exportar diagnóstico"** (menú Ayuda): un `.zip` con los logs, versión y commit, sistema operativo, GPU y driver, DPI, preferencias limpias y estadísticas de la escena. Los modelos van solo si se marcan, y las rutas de usuario se limpian. Detalle en las notas privadas de Damian.
+
+**Cierre:** con el log activado, un fallo reproducido a mano queda explicado por el zip exportado (pasos y backtrace). El zip no contiene rutas con el usuario ni geometría si no se pidió.
+
+**Depende de:** SC-64. Prioridad: normal. Estado snapshot: backlog.
