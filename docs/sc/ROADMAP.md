@@ -4,7 +4,30 @@ Snapshot de planificación 2026-10-22, posterior al inventario SC-09. **83 tarje
 
 No es una promesa de implementar todo. Las ideas son exploratorias, y las tarjetas de hitos agrupan trabajo sin duplicar sus entregables. SC-08/09/14 y SC-24 están completadas en sus alcances; las demás se organizan y no se iniciaron por cerrar el corpus. No hay despacho automático.
 
-## Orden inmediato recomendado
+## Orden actual (2026-10-26, con Damian)
+
+La línea de soportes DF funciona de punta a punta: modelo → soportes y raft → slice → archivo validado en UVTools (SC-79, SC-80, SC-81). La UI nueva está en marcha (SC-84). Ahora toca **terminar el slicer**; la optimización a fondo va después, cuando se sepa qué flujos se usan de verdad. Bloques en orden:
+
+1. **Transform completo** (SC-26, SC-27, SC-85):
+   - medidas reales del objeto seleccionado;
+   - mover, rotar y escalar con números y viendo cuánto se movió o rotó;
+   - lift, apoyar en cara y centrar;
+   - ayudas visuales del gizmo (grados al rotar, línea del eje como Blender).
+2. **Soportes completos** (SC-86, SC-83):
+   - todas las opciones en un panel, más el lift del objeto;
+   - presets, empezando por los de Damian ("MIni - 35mm - Tall" y "Figure - 75mm +", SC-07);
+   - cambiar un ajuste re-planifica sin re-escanear.
+3. **Hollow** (SC-18, SC-39…46): portar el motor de DragonFruit con las mejoras de Damian, más drenajes y áreas sólidas, en la pestaña Hollow.
+4. **Soportes manuales** (SC-10, SC-11, SC-12): agregar, borrar, mover punta y brace en el viewport.
+5. **Repair** (SC-87): decidir cómo usar Caliper.
+6. **Slice y salida:**
+   - estimaciones de tiempo, resina y costo, y chequeos;
+   - zoom y paneo de la vista de capa (SC-88, SC-34);
+   - writer Anycubic (SC-19, SC-36).
+7. **Optimización** (SC-82 en pausa, SC-77): router, escaneo de islas y GPU.
+8. **Primera impresión física** (SC-66), cuando Damian la autorice. Conviene no dejarla para el final: valida todo lo anterior.
+
+## Orden inmediato recomendado (2026-10-22, histórico)
 
 1. SC-24: corpus representativo **completado** (25 casos / 28 assets).
 2. SC-14: flujo guardar/abrir/historial **completado**, con corrección de protección dirty.
@@ -121,6 +144,10 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-82](#sc-82) | paused | rendimiento | Benchmarks del pipeline de soportes en escenas reales | SC-79 |
 | [SC-83](#sc-83) | backlog | soportes | Pestaña Supports con cálculo especulativo y caché por etapas | SC-79, SC-37 |
 | [SC-84](#sc-84) | in progress | editor | Rediseño de la UI: Transform → Hollow / Supports → Slice → Export | SC-83, SC-18 |
+| [SC-85](#sc-85) | backlog | editor | Ayudas visuales del gizmo: grados, distancias y línea del eje | SC-84, SC-26 |
+| [SC-86](#sc-86) | backlog | soportes | Panel completo de soportes, lift y presets de Damian | SC-84, SC-83 |
+| [SC-87](#sc-87) | triage | geometria | Repair: evaluar integrar Caliper | SC-29 |
+| [SC-88](#sc-88) | backlog | slicing | Vista de capa con zoom y paneo | SC-84, SC-34 |
 
 ## SC-01
 
@@ -302,6 +329,12 @@ Hito integrador, no duplicar subtareas SC-39…46. Fuente paramétrica persisten
 
 **Cierre:** Flujo no destructivo completo y comprobable, espesor físico y fallos explícitos, sin volúmenes atrapados no advertidos; guardado/reapertura e historial.
 
+**Base acordada (2026-10-26):** portar el hollow de DragonFruit, la versión que Damian ajustó. Detalle del motor y de sus aportes en SC-84, sección Relevamiento:
+- motor: vóxeles con distancia chamfer, cavidad suavizada, estabilización manifold, infill lattice/pillars, áreas sólidas, drenajes con profundidad automática;
+- aportes de Damian: grilla local al modelo, preview separada del Apply, voxelizado paralelo ~5×.
+
+Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado en ml.
+
 **Depende de:** SC-41, SC-42, SC-43, SC-44, SC-45, SC-46. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-19
@@ -386,6 +419,8 @@ Entrada numérica G/R/S, precisión Shift, planos excluidos, incrementos, world/
 
 **Cierre:** Unidades mm/grados/factor claras; valores no válidos no mutan escena; cancel restaura exactamente; testeos focales y Damian prueba gestos.
 
+**Pedido de Damian (2026-10-26):** al seleccionar un objeto, ver sus medidas reales y mover, rotar y escalar con números, viendo cuánto se movió o rotó; "todos los controles básicos". Va en el inspector de Transform (SC-84), con la tarjeta de la herramienta activa abierta. Prioridad: high.
+
 **Depende de:** SC-14. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-27
@@ -395,6 +430,8 @@ Entrada numérica G/R/S, precisión Shift, planos excluidos, incrementos, world/
 Reutilizar print-glue placement y mínimo de vértices. Centrar, drop-to-bed, elevación intencional, alineación y avisos fuera de volumen; aclarar política ante escalas invertidas.
 
 **Cierre:** Dimensiones/posición correctas y un undo; no corregir silenciosamente Z intencional; avisos coinciden con exportación.
+
+**Pedido de Damian (2026-10-26):** lift del objeto (también en Supports, SC-86), apoyar en cara y centrar, en el riel de Transform. Prioridad: high.
 
 **Depende de:** SC-14. Prioridad: normal. Estado snapshot: backlog.
 
@@ -1151,3 +1188,59 @@ Damian asume que un slicer nunca queda del todo "streamlined"; esto es la base p
 - y Damian prueba los gestos y el flujo completo.
 
 **Depende de:** SC-83 (Supports) y SC-18 (motor hollow) para el contenido real de esas pestañas. Prioridad: high. Estado snapshot: in progress.
+
+## SC-85
+
+**Ayudas visuales del gizmo: grados, distancias y línea del eje** — Editor / UI
+
+Pedido de Damian (2026-10-26):
+- mientras se rota, mostrar cuántos grados se lleva; mientras se mueve, cuánto se movió;
+- con G, R o S y un eje fijado (X/Y/Z), una línea del color del eje que atraviesa el origen del objeto, como en Blender (Z = línea azul vertical).
+
+Va junto con los campos numéricos de SC-26.
+
+**Cierre:** las tres ayudas visibles en gestos de gizmo y modales, legibles sobre cualquier fondo, probadas por Damian.
+
+**Depende de:** SC-84, SC-26. Prioridad: high. Estado snapshot: backlog.
+
+## SC-86
+
+**Panel completo de soportes, lift y presets de Damian** — Soportes / UI
+
+La pestaña Supports necesita todas las opciones de `PipelineSettings` (contactos, puntas, troncos, ramas, bracing, raft, densidad, escaneo) y el **lift del objeto** (hoy solo existe en la CLI, `--df-lift`), agrupadas como el mockup.
+
+Presets:
+- **Primeros presets:** los packs que Damian usa y modificó, "MIni - 35mm - Tall" y "Figure - 75mm +", sobre sus geometrías J3D (contactos de 0,18, 0,24, 0,30 y 0,40 mm; punta Ø 1,1 × 2,3 mm; pie Ø 5 × 0,25 mm). Fuente: SC-07, `docs/sc/evidence/lychee-support-review-20261022.md`; datos crudos en `.local/research/lychee-static-20261022.zip`.
+- Las equivalencias con los parámetros de DF se documentan campo por campo, y sin intuición donde el informe avisa trampas (`densityValue` es separación, `tip.angle` no es inclinación).
+- Hay que guardar, importar y exportar presets.
+
+Cambiar un ajuste re-planifica sin re-escanear (caché por etapas, SC-83).
+
+**Cierre:** cada opción del pipeline es editable y persiste con el proyecto; lift aplicado; los dos presets de Damian disponibles; Damian genera soportes con ellos en sus minis y los aprueba.
+
+**Depende de:** SC-84, SC-83. Prioridad: high. Estado snapshot: backlog.
+
+## SC-87
+
+**Repair: evaluar integrar Caliper** — Geometría / reparación
+
+Caliper (`C:/Users/dnaon/Downloads/CaliperDevelop`) es la herramienta de análisis y reparación de mallas de Damian (SynrgStudio): C++ con aritmética exacta, cavidades certificadas y repair validado sobre sus modelos (0.8.5). Su código es cerrado y la fuente privada es suya. Damian quiere aprovecharlo en el slicer, en vez del repair actual o del de DragonFruit (`rust/dragonfruit-mesh-repair`), que considera correcto pero no brillante.
+
+- **Licencia, a resolver primero:** SC es AGPL-3.0 e incluye código de terceros (MyMiniFactory, CTRLback) que Damian no puede relicenciar, así que **no se puede enlazar** un motor cerrado dentro del binario de SC para distribuirlo.
+- **Ruta compatible:** Caliper como **programa aparte** (CLI o servicio local) que SC invoca con un archivo y del que lee el resultado. Eso exige que Caliper tenga o gane un modo sin interfaz.
+- **Alternativa:** que Damian publique bajo una licencia compatible la parte que quiera integrar. La decisión es suya.
+- **Comparación primero:** Caliper, el repair actual de SC y el de DF sobre el corpus (SC-24) y la ballena.
+
+**Cierre:** forma de integración elegida por Damian, con la licencia revisada, y comparación medida; si sigue adelante, Repair en Transform puede usar Caliper cuando está instalado.
+
+**Depende de:** SC-29. Prioridad: normal. Estado snapshot: triage.
+
+## SC-88
+
+**Vista de capa con zoom y paneo** — Slicing / UI
+
+Pedido de Damian (2026-10-26): la imagen de la capa en Slice le encanta; quiere poder hacer zoom y moverse por ella. La vista se puede ampliar a un panel grande o a pantalla dividida, como el modo Printing de DragonFruit, con 3D a la izquierda y capa a la derecha. Debe mostrar la capa en píxeles reales de la impresora, con antialiasing incluido.
+
+**Cierre:** zoom con rueda y paneo con arrastre sobre la capa, a resolución real, sin trabar el slider; probado por Damian.
+
+**Depende de:** SC-84, SC-34. Prioridad: normal. Estado snapshot: backlog.
