@@ -9,8 +9,10 @@
   experiment branches and `sc-editor-verified-20261022`. Never reset user work.
 - `github` is the private backup; `origin` is read-only upstream. Never push to
   upstream or publish contributions without Damian's explicit request.
-- Damian requested ONE task list: `docs/sc/ROADMAP.md`, using only `T-xxx`.
-  Keep task states there, not in parallel catalogs, waves, queues or boards.
+- Since 2026-10-26 the ONE operational task list is the GitHub issues of
+  `breadslicer-app/breadslicer` (see `docs/sc/WORKFLOW.md`, `docs/sc/ISSUES.md`);
+  `docs/sc/ROADMAP.md` keeps context, decisions and history (SC-n ids).
+  Keep task states in the issues, not in parallel catalogs, waves, queues or boards.
   `SC-HANDOFF.md` is a short session summary, not another task tracker.
   Preserve old IDs/criteria/evidence in archived documents and the archived
   numbering lookup only; do not revive them as operational numbering.
