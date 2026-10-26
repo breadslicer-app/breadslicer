@@ -145,7 +145,7 @@ pub(crate) fn slice_profile_for_selection(
 ///    must sit above it ([`UnsliceableScene::TopAtOrBelowPlate`]).
 /// 3. An absent first-layer height falls back to the layer height.
 /// 4. The layer count is the smallest count whose slab layout covers the
-///    scene's top (see [`total_layers_for_height`]).
+///    scene's top, its highest vertex (see [`total_layers_for_height`]).
 ///
 /// The layer height is taken as given; resolving it against the printer and
 /// material profiles is the caller's responsibility.
@@ -157,8 +157,10 @@ pub(crate) fn slice_profile_for_scene(
     aa_level: AaLevel,
     packing_mode: PackingMode,
 ) -> Result<SliceProfile, UnsliceableScene> {
+    // Tight, not the transformed-box bound: a rotated model's box can stand
+    // tens of millimetres above its top, all of it empty layers.
     let aabb = scene
-        .aabb()
+        .tight_aabb()
         .map_err(UnsliceableScene::Aabb)?
         .ok_or(UnsliceableScene::NoGeometry)?;
     let z_max = f64::from(aabb.max().coords()[2]);

@@ -1002,7 +1002,9 @@ Llevar las mallas de soportes y raft de la fachada al slice y a los writers: que
 - CLI: `slice --df-supports [--df-lift MM]` genera soportes y raft antes de slicear.
 - Asmodeus (Saturn 3 Ultra, 0,05 mm, resina Elegoo 8K ABS-like): 253 raíces, 1436 capas, `.ctb` de 36 MB. En PNG por capa, base sólida del raft en las capas 0–9, pared almenada y conos en la 12, troncos hasta la base del modelo y ninguna capa vacía.
 
-Falta para cerrar: que Damian abra un `.ctb` en su visor (UVTools/Chitubox) o lo slicee desde la GUI, y decidir si la validación del writer (SC-35) entra acá. La impresión física sigue en SC-66.
+**Prueba de Damian (2026-10-26, GUI → `.ctb` de Elegoo → UVTools):** el archivo abre bien y el slice se ve correcto; UVTools marca dos tramos de "high peel force", que dependen del modelo. Sobraban 306 capas vacías al final (contenido hasta 92,5 mm, archivo hasta 123,1 mm). El schedule de capas tomaba la altura de `Scene::aabb()`, que para una malla rotada es la caja local transformada (Arvo), una cota holgada. Ahora `slice_profile_for_scene` usa `Scene::tight_aabb()`, los vértices ya ubicados con la misma cuenta que el bake; hay tests en scene y print-glue, y el de print-glue falla sin el arreglo. La Anycubic M7 Pro no exporta (`azf` sin writer): es SC-19/SC-36.
+
+Falta para cerrar: un `.ctb` nuevo sin capas vacías revisado en UVTools. La impresión física sigue en SC-66.
 
 **Depende de:** SC-79, SC-80. Prioridad: high. Estado snapshot: in progress.
 

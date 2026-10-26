@@ -28,10 +28,23 @@ impl Scene {
     /// Returns `None` for a scene whose roots contribute no geometry, and
     /// propagates dangling-id errors.
     pub fn aabb(&self) -> Result<Option<Aabb>, SceneError> {
+        self.world_aabb(false)
+    }
+
+    /// Like [`Self::aabb`], but tight: every leaf contributes the box of its
+    /// vertices placed in world space, with the same math the bake uses. A
+    /// rotated leaf's transformed local box (the [`Self::aabb`] bound) can
+    /// stand well past the mesh; this is the scene's real extent, at the
+    /// cost of a pass over every vertex.
+    pub fn tight_aabb(&self) -> Result<Option<Aabb>, SceneError> {
+        self.world_aabb(true)
+    }
+
+    fn world_aabb(&self, tight: bool) -> Result<Option<Aabb>, SceneError> {
         let mut accum = Aabb::empty();
         let mut has_any = false;
         for &root in self.roots() {
-            self.fold_world_aabb(root, Transform3D::Identity, &mut accum, &mut has_any)?;
+            self.fold_world_aabb(root, Transform3D::Identity, tight, &mut accum, &mut has_any)?;
         }
         Ok(has_any.then_some(accum))
     }
@@ -89,6 +102,7 @@ impl Scene {
         &self,
         node_id: NodeId,
         parent_world: Transform3D,
+        tight: bool,
         accum: &mut Aabb,
         has_any: &mut bool,
     ) -> Result<(), SceneError> {
@@ -99,7 +113,7 @@ impl Scene {
         match &node.kind {
             NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
                 for &c in children {
-                    self.fold_world_aabb(c, world_from_self, accum, has_any)?;
+                    self.fold_world_aabb(c, world_from_self, tight, accum, has_any)?;
                 }
             }
             NodeKind::Leaf(payload) => {
@@ -114,6 +128,13 @@ impl Scene {
                 };
                 let world_aabb = match &world_from_self {
                     Transform3D::Identity => local,
+                    Transform3D::Affine(a) if tight => {
+                        let mut placed = Aabb::empty();
+                        for &v in &mesh.vertices {
+                            placed.extend(a.apply_to_vertex(v));
+                        }
+                        placed
+                    }
                     Transform3D::Affine(a) => local.transformed_arvo(a),
                 };
                 accum.union(&world_aabb);
@@ -123,7 +144,7 @@ impl Scene {
                 let root = self
                     .subtree_resource_root(*resource)
                     .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
-                self.fold_world_aabb(root, world_from_self, accum, has_any)?;
+                self.fold_world_aabb(root, world_from_self, tight, accum, has_any)?;
             }
         }
         Ok(())
@@ -475,5 +496,41 @@ mod scene_aabb_tests {
         assert!(g.drop_at([0.0, 0.0], 0.0).unwrap());
         let world = g.aabb().unwrap().unwrap();
         assert_aabb_approx(world, ([-0.5, -0.5, 0.0], [0.5, 0.5, 1.0]), 1e-4);
+    }
+
+    /// An octahedron (vertices on the axes at distance 1) turned 45 degrees
+    /// about X: its top vertex sits at sin 45, while its transformed local
+    /// box reaches sqrt 2.
+    #[test]
+    fn tight_aabb_follows_the_vertices_of_a_rotated_leaf() {
+        use sc_mesh_core::Vertex;
+        let v = |p: [f32; 3]| Vertex::new(p);
+        let octahedron = IndexedMesh::new(
+            None,
+            vec![
+                v([1.0, 0.0, 0.0]),
+                v([-1.0, 0.0, 0.0]),
+                v([0.0, 1.0, 0.0]),
+                v([0.0, -1.0, 0.0]),
+                v([0.0, 0.0, 1.0]),
+                v([0.0, 0.0, -1.0]),
+            ],
+            vec![],
+        );
+        let mut g = Scene::new();
+        let turn = AffineTransform3D::from_rotation_x(std::f64::consts::FRAC_PI_4);
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Affine(turn),
+                LeafPayload::Mesh(Arc::new(octahedron)),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        let tight = g.tight_aabb().unwrap().unwrap();
+        assert_aabb_approx(tight, ([-1.0, -s, -s], [1.0, s, s]), 1e-6);
+        let loose = g.aabb().unwrap().unwrap();
+        assert!(loose.max().coords()[2] > 1.4, "{loose:?}");
     }
 }
