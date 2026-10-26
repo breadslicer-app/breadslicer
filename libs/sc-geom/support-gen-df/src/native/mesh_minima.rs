@@ -297,6 +297,52 @@ pub fn scan_islands(
     overhang_self_support_angle_deg: Option<f32>,
     overhang_px_mm: Option<f32>,
 ) -> CombinedIslandScanResult {
+    scan_islands_inner(
+        mesh,
+        layer_height_mm,
+        px_mm,
+        support_buffer_mm,
+        connectivity,
+        k,
+        Some((overhang_self_support_angle_deg, overhang_px_mm)),
+    )
+}
+
+/// [`scan_islands`] without its overhang classification
+/// (`overhang_islands` comes back empty). SoulCrafted's pipeline classifies
+/// overhangs on the world soup instead (`overhang_and_stability_from_soup`,
+/// as DragonFruit's frontend does), so the scan's own copy is never read;
+/// skipping it leaves the voxel and minima results untouched and stops it
+/// competing for cores with them.
+pub fn scan_islands_without_overhangs(
+    mesh: &IndexedMesh,
+    layer_height_mm: f64,
+    px_mm: f64,
+    support_buffer_mm: f64,
+    connectivity: u8,
+    k: Option<usize>,
+) -> CombinedIslandScanResult {
+    scan_islands_inner(
+        mesh,
+        layer_height_mm,
+        px_mm,
+        support_buffer_mm,
+        connectivity,
+        k,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_islands_inner(
+    mesh: &IndexedMesh,
+    layer_height_mm: f64,
+    px_mm: f64,
+    support_buffer_mm: f64,
+    connectivity: u8,
+    k: Option<usize>,
+    overhangs: Option<(Option<f32>, Option<f32>)>,
+) -> CombinedIslandScanResult {
     let tri_count = mesh.triangle_count();
     let bbox = mesh.bbox();
     let soup = mesh.to_triangle_soup();
@@ -340,6 +386,8 @@ pub fn scan_islands(
 
     // ── 2. Run voxel rasterization + scan, minima scan, AND overhang
     //       classification CONCURRENTLY (all share the loaded mesh) ──
+    let classify = overhangs.is_some();
+    let (overhang_self_support_angle_deg, overhang_px_mm) = overhangs.unwrap_or((None, None));
     let angle_deg = overhang_self_support_angle_deg.unwrap_or(45.0);
     let oh_px_mm = overhang_px_mm.unwrap_or(0.25);
     let (scan_result, minima_islands, overhang_islands) = std::thread::scope(|s| {
@@ -370,6 +418,9 @@ pub fn scan_islands(
         // the voxel/minima paths use, so the TS side never round-trips
         // geometry for it.
         let overhang_handle = s.spawn(|| {
+            if !classify {
+                return Vec::new();
+            }
             let regions = overhang::classify_overhangs(&mesh, angle_deg, oh_px_mm);
             regions
         });

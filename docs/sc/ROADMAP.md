@@ -998,6 +998,14 @@ Medir por etapa (escaneo de islas, derivación, plan, bracing, raft, slice) sobr
 
 **Cierre:** Corpus y hardware registrados, perfil por etapa con los cuellos de botella identificados y una lista priorizada de optimizaciones con la ganancia esperada.
 
+**Primera medición (2026-10-25, ballena de Damian, timings de `perf.rs`; log en `%LOCALAPPDATA%\soulcrafted\slicer\data\logs\df-supports-timings.log`):** 9,0 s en total. Escaneo de islas 2,7 s, escaneo de voladizos de la sopa 2,9 s, plan 2,8 s (colocación 2,2 s, de la que el router V3 son 1,6 s en 365 llamadas) y el resto ~0,6 s.
+
+Primer ajuste sin cambio de resultados:
+- el escaneo combinado ya no clasifica voladizos, cuyo resultado nadie leía (`scan_islands_without_overhangs`; test de igualdad sobre las 13 mallas de 8a);
+- los dos escaneos corren en paralelo, así que el tiempo pasa a ser el del más lento.
+
+Siguientes candidatos: el router (por llamada, ~4 ms) y la clasificación de voladizos de la sopa.
+
 **Depende de:** SC-79. Prioridad: normal. Estado snapshot: backlog.
 
 ## SC-83
