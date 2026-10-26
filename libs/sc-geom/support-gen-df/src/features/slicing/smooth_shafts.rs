@@ -12,7 +12,11 @@
 //!
 //! Tubes are closed (flat caps at both ends) and outward-wound.
 
+use super::support_world_triangles::{TriangleSink, append_geometry_triangles};
 use crate::supports::types::Vec3;
+use crate::three::Matrix4;
+use crate::three::math_utils::js_max;
+use crate::three::primitive_geometry::sphere_geometry;
 
 /// The bicone's proportions.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,13 +131,13 @@ fn project_onto_plane(ring: &[Vec3], d: Vec3, origin: Vec3, m: Vec3, max_shift: 
 
 /// Bends sharper than this (the angle between the two directions) are not
 /// mitred: the mitre ring would stretch past twice the radius, and towards a
-/// U-turn without bound. The tube closes on a ring square to the incoming
-/// edge and leaves on one square to the outgoing edge instead.
+/// U-turn without bound. The tube is split there instead (see
+/// [`append_smooth_chain`]).
 const MAX_MITRE_BEND_DEG: f64 = 120.0;
 
-fn push_tri(sink: &mut Vec<f32>, a: Vec3, b: Vec3, c: Vec3) {
+fn push_tri(sink: &mut TriangleSink, a: Vec3, b: Vec3, c: Vec3) {
     for p in [a, b, c] {
-        sink.extend([p.x as f32, p.y as f32, p.z as f32]);
+        sink.floats.extend([p.x as f32, p.y as f32, p.z as f32]);
     }
 }
 
@@ -157,7 +161,7 @@ fn radius_at(r: (f64, f64), len: f64, along: f64) -> f64 {
 /// ([`SmoothShaftParams::min_bend_deg`]), the ring is a wider waist reached
 /// over conical collars on either side.
 pub fn append_smooth_chain(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     points: &[ChainPoint],
     radii: &[(f64, f64)],
     radial_segments: u32,
@@ -182,6 +186,37 @@ pub fn append_smooth_chain(
     }
     if pts.len() < 2 {
         return;
+    }
+    // A bend sharper than MAX_MITRE_BEND_DEG splits the tube: one closed
+    // tube up to the joint, a sphere of the joint's waist, and one closed tube
+    // on from it. Three pieces that overlap but share no vertex, where a
+    // single tube would need two rings crossing at the joint.
+    let sharp_cos = MAX_MITRE_BEND_DEG.to_radians().cos();
+    for j in 1..pts.len() - 1 {
+        let d_in = normalize(pts[j].pos.sub(pts[j - 1].pos)).unwrap();
+        let d_out = normalize(pts[j + 1].pos.sub(pts[j].pos)).unwrap();
+        if d_in.dot(d_out) < sharp_cos {
+            let (r_in, r_out) = (rad[j - 1].1, rad[j].0);
+            let waist = if pts[j].bulge {
+                params.bulge_ratio * r_in.max(r_out)
+            } else {
+                r_in.max(r_out)
+            };
+            append_smooth_chain(sink, &pts[..=j], &rad[..j], radial_segments, params);
+            let mut sphere = sphere_geometry(
+                waist,
+                radial_segments.max(3) as f64,
+                js_max(3.0, (radial_segments as f64 * 0.75).floor()),
+            );
+            sphere.apply_matrix4(&Matrix4::make_translation(
+                pts[j].pos.x,
+                pts[j].pos.y,
+                pts[j].pos.z,
+            ));
+            append_geometry_triangles(sink, &sphere);
+            append_smooth_chain(sink, &pts[j..], &rad[j..], radial_segments, params);
+            return;
+        }
     }
     let n = radial_segments.max(3) as usize;
     let dirs: Vec<Vec3> = pts
@@ -216,20 +251,15 @@ pub fn append_smooth_chain(
                 rings.push(circle(joint.sub(d_in.multiply_scalar(l_in)), d_in, r, u, n));
             }
         }
-        if d_in.dot(d_out) >= MAX_MITRE_BEND_DEG.to_radians().cos() {
-            rings.push(project_onto_plane(
-                &circle(joint, d_in, waist, u, n),
-                d_in,
-                joint,
-                mitre,
-                2.0 * waist,
-            ));
-            u = transport(u, d_in, d_out);
-        } else {
-            rings.push(circle(joint, d_in, waist, u, n));
-            u = transport(u, d_in, d_out);
-            rings.push(circle(joint, d_out, waist, u, n));
-        }
+        // Bends past MAX_MITRE_BEND_DEG were split off above.
+        rings.push(project_onto_plane(
+            &circle(joint, d_in, waist, u, n),
+            d_in,
+            joint,
+            mitre,
+            2.0 * waist,
+        ));
+        u = transport(u, d_in, d_out);
         if waist > r_out + 1e-9 {
             let l_out = collar.min(params.max_collar_fraction * lens[j]);
             if l_out > 1e-6 {
@@ -263,4 +293,5 @@ pub fn append_smooth_chain(
         push_tri(sink, pts[0].pos, first[k], first[i]);
         push_tri(sink, pts[last].pos, end[i], end[k]);
     }
+    sink.end_part();
 }

@@ -22,15 +22,20 @@ use crate::supports::rafts::crenelated::geometry::build_line_raft_edge_pairs::{
     BuildLineRaftEdgePairsOptions, build_line_raft_edge_pairs,
 };
 use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
-    inflate_model_plate_clearance, raft_band_top_mm,
+    inflate_model_plate_clearance, raft_band_top_mm, raft_wall_base_height_mm,
 };
 use crate::supports::rafts::crenelated::geometry::generate_chamfered_beam::generate_chamfered_beam;
-use crate::supports::rafts::crenelated::geometry::generate_raft_from_footprint::build_raft_footprint_meshes;
+use crate::supports::rafts::crenelated::geometry::generate_raft_from_footprint::{
+    build_raft_footprint_meshes, is_untrimmed_footprint,
+};
 use crate::supports::rafts::crenelated::geometry::generate_unioned_line_raft_mesh::{
     filter_line_raft_edges, generate_unioned_line_raft_mesh,
 };
 use crate::supports::rafts::crenelated::geometry::model_plate_footprint::{
     PlateFootprintSource, collect_model_plate_footprint,
+};
+use crate::supports::rafts::crenelated::geometry::robust_wall::{
+    robust_chamfered_base, robust_wall_from_polygons,
 };
 use crate::supports::rafts::crenelated::raft_types::{
     RaftBottomMode, RaftSettings, SupportBaseCircle,
@@ -112,21 +117,52 @@ pub fn resolve_support_slice_tessellation(state: &SupportCollections) -> Support
     }
 }
 
+/// A triangle soup (nine floats per triangle) and where each piece of it
+/// ends. A piece is one closed primitive (a frustum, a sphere, a smooth tube,
+/// a raft part): pieces may overlap in space but never share a vertex, which
+/// is what keeps a mesh welded piece by piece edge-manifold.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TriangleSink {
+    pub floats: Vec<f32>,
+    /// `floats.len()` at the end of each piece, ascending.
+    pub parts: Vec<usize>,
+}
+
+impl TriangleSink {
+    /// Closes the current piece (no-op when it is empty).
+    pub fn end_part(&mut self) {
+        if self.parts.last().copied().unwrap_or(0) < self.floats.len() {
+            self.parts.push(self.floats.len());
+        }
+    }
+
+    /// The pieces, as float ranges.
+    pub fn part_ranges(&self) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+        let mut start = 0;
+        self.parts.iter().map(move |&end| {
+            let range = start..end;
+            start = end;
+            range
+        })
+    }
+}
+
 /// `appendGeometryTriangles(sink, geometry)` without a matrix: each indexed
 /// (or consecutive) triple of stored positions.
-pub fn append_geometry_triangles(sink: &mut Vec<f32>, geometry: &BufferGeometry) {
+pub fn append_geometry_triangles(sink: &mut TriangleSink, geometry: &BufferGeometry) {
     let Some(position) = geometry.position.as_deref() else {
         return;
     };
     let mut tri = |a: usize, b: usize, c: usize| {
         for v in [a, b, c] {
-            sink.extend_from_slice(&position[v * 3..v * 3 + 3]);
+            sink.floats.extend_from_slice(&position[v * 3..v * 3 + 3]);
         }
     };
     if let Some(index) = &geometry.index {
         for t in index.chunks_exact(3) {
             tri(t[0] as usize, t[1] as usize, t[2] as usize);
         }
+        sink.end_part();
         return;
     }
     let count = position.len() / 3;
@@ -135,6 +171,7 @@ pub fn append_geometry_triangles(sink: &mut Vec<f32>, geometry: &BufferGeometry)
         tri(i, i + 1, i + 2);
         i += 3;
     }
+    sink.end_part();
 }
 
 /// `createFrustumGeometryBetween`: a capped cylinder from `start` to `end`.
@@ -163,14 +200,21 @@ fn create_frustum_geometry_between(
     Some(geom)
 }
 
-fn append_frustum(sink: &mut Vec<f32>, start: Vec3, end: Vec3, r0: f64, r1: f64, segments: u32) {
+fn append_frustum(
+    sink: &mut TriangleSink,
+    start: Vec3,
+    end: Vec3,
+    r0: f64,
+    r1: f64,
+    segments: u32,
+) {
     if let Some(g) = create_frustum_geometry_between(start, end, r0, r1, segments) {
         append_geometry_triangles(sink, &g);
     }
 }
 
 /// `appendJointSphere`.
-fn append_joint_sphere(sink: &mut Vec<f32>, pos: Vec3, diameter: f64, radial_segments: u32) {
+fn append_joint_sphere(sink: &mut TriangleSink, pos: Vec3, diameter: f64, radial_segments: u32) {
     let radius = js_max(0.001, diameter * 0.5);
     let height_segments = js_max(3.0, (radial_segments as f64 * 0.75).floor());
     let mut geom = sphere_geometry(radius, radial_segments as f64, height_segments);
@@ -181,7 +225,7 @@ fn append_joint_sphere(sink: &mut Vec<f32>, pos: Vec3, diameter: f64, radial_seg
 /// `appendSegmentPrimitive`: a straight frustum, or a Bezier as `bezierSteps`
 /// short ones.
 fn append_segment_primitive(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     start: Vec3,
     end: Vec3,
     diameter: f64,
@@ -215,7 +259,7 @@ fn segment_bezier(segment: &Segment) -> Option<&BezierCurve> {
 
 /// `appendContactConePrimitive`: penetration point to socket.
 pub fn append_contact_cone_primitive(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     cone: &ContactCone,
     radial_segments: u32,
     penetration_mm: f64,
@@ -240,7 +284,7 @@ pub fn append_contact_cone_primitive(
 
 /// `appendContactDiskPrimitive`: a cylinder through the disk plus a sphere.
 pub fn append_contact_disk_primitive(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     disk: &ContactDisk,
     radial_segments: u32,
     penetration_mm: f64,
@@ -292,6 +336,10 @@ pub struct SupportSliceInput<'a> {
     /// How shafts and joints are drawn (SoulCrafted's option; the default is
     /// DragonFruit's).
     pub shaft_style: ShaftStyle,
+    /// SoulCrafted's option: raft walls built with Clipper and trimmed bases
+    /// built on rings without collinear points (`robust_wall`), so the raft
+    /// is closed and manifold. `false` is DragonFruit's output.
+    pub robust_raft_geometry: bool,
 }
 
 /// The entity fields the generic walk needs, read per type.
@@ -423,8 +471,16 @@ fn entities_of(state: &SupportCollections, key: SupportCollectionKey) -> Vec<Ent
 pub fn build_support_and_raft_world_triangles(
     input: &SupportSliceInput<'_>,
 ) -> Result<Vec<f32>, ClipperError> {
+    build_support_and_raft_world_parts(input).map(|sink| sink.floats)
+}
+
+/// [`build_support_and_raft_world_triangles`] with the soup split into its
+/// closed pieces (SoulCrafted's: the slicer needs each piece welded apart).
+pub fn build_support_and_raft_world_parts(
+    input: &SupportSliceInput<'_>,
+) -> Result<TriangleSink, ClipperError> {
     let visible = input.visible_model_ids;
-    let mut sink: Vec<f32> = Vec::new();
+    let mut sink = TriangleSink::default();
     if visible.is_empty() {
         return Ok(sink);
     }
@@ -503,7 +559,7 @@ pub fn build_support_and_raft_world_triangles(
         );
     }
 
-    let mut emit_joint = |sink: &mut Vec<f32>, joint: Option<&Joint>| {
+    let mut emit_joint = |sink: &mut TriangleSink, joint: Option<&Joint>| {
         let Some(joint) = joint else { return };
         if !seen_joint_ids.insert(joint.id.clone()) {
             return;
@@ -681,7 +737,7 @@ pub fn build_support_and_raft_world_triangles(
 /// The raft half of `buildSupportAndRaftWorldTriangles`: one raft per model
 /// key, with the global settings, the line raft only when there is no base.
 fn append_slice_rafts(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     input: &SupportSliceInput<'_>,
     visible_root_ids: &HashSet<&str>,
     root_model_key: &HashMap<&str, &str>,
@@ -726,7 +782,10 @@ fn append_slice_rafts(
         if parts.base_mesh.is_none() && parts.footprint.is_empty() {
             continue;
         }
-        if let Some(base) = &parts.base_mesh {
+        let trimmed = !is_untrimmed_footprint(&parts.footprint);
+        let robust_base = (input.robust_raft_geometry && trimmed && parts.base_mesh.is_some())
+            .then(|| robust_chamfered_base(&parts.footprint, raft));
+        if let Some(base) = robust_base.as_ref().or(parts.base_mesh.as_ref()) {
             append_geometry_triangles(sink, base);
         } else if raft.bottom_mode == RaftBottomMode::Line {
             let nodes: Vec<Vector2> = circles.iter().map(|c| Vector2::new(c.x, c.y)).collect();
@@ -767,7 +826,12 @@ fn append_slice_rafts(
                 }
             }
         }
-        if let Some(wall) = &parts.wall_mesh {
+        if input.robust_raft_geometry && raft.wall_enabled {
+            let base_z = raft_wall_base_height_mm(raft);
+            if let Some(wall) = robust_wall_from_polygons(&parts.footprint, raft, base_z)? {
+                append_geometry_triangles(sink, &wall);
+            }
+        } else if let Some(wall) = &parts.wall_mesh {
             append_geometry_triangles(sink, wall);
         }
     }
@@ -784,7 +848,7 @@ type Chain = (Vec<ChainPoint>, Vec<(f64, f64)>);
 /// and last chains to their tips, so the bend into a contact is part of the
 /// tube. Returns whether a tube was drawn (and so the cones with it).
 fn append_smooth_shaft(
-    sink: &mut Vec<f32>,
+    sink: &mut TriangleSink,
     resolved: &[(
         &Segment,
         crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,

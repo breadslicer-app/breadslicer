@@ -17,3 +17,6 @@ sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version
 sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
 sc-scene = { path = "../../scene", version = "0.2.0" }
 support-gen-df = { path = "../support-gen-df", version = "0.0.1" }
+
+[dev-dependencies]
+serde_json = "1.0.150"

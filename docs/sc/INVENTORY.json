@@ -240,7 +240,7 @@
         },
         {
           "path": "apps/slicer-gui/src/df_support_run.rs",
-          "sha256": "748dfe16620472bd2e16995d84678156b6c2af78cbd9e626b8ed15731725e7f6"
+          "sha256": "80cf7bfb03fd708a8da6238d2ec3a38a60a4df336b818881bc777a905517e633"
         },
         {
           "path": "apps/slicer-gui/src/error_dialog.rs",
@@ -2072,7 +2072,7 @@
       "sources": [
         {
           "path": "libs/sc-geom/support-gen-df-sc/src/lib.rs",
-          "sha256": "614cc9597c80d923d5a3787d0f7403b21cd24e18fb836a43ad34857a8594df14"
+          "sha256": "ebbeace86b1afd8acd8e457ffb88ff3eea84d7ea26326cf13bcc9f2931ff6986"
         }
       ]
     },
@@ -2105,11 +2105,11 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/smooth_shafts.rs",
-          "sha256": "df1870c3a1895e8cb0457cba0d4ef17dbf67e1ed72590060c445a4ef28044109"
+          "sha256": "3d7c3a06c0d701c09bfdcff51baf021aa2d63b6868ef0e1ac9b550315feaf4ad"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/support_world_triangles.rs",
-          "sha256": "092bedbce2b4aeba724791b4e8eaa06a3b9930d7817cd88624aaf2e6f459ff78"
+          "sha256": "84b59e92f0a1394b00bf3536d9566c26b4f0e793996ece5a15da043d243ac584"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/js_math.rs",
@@ -2165,7 +2165,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/native/mesh_minima.rs",
-          "sha256": "22625a33fe6d9a3ac980950059c59c018e6741b7e2170e4335f5bf0a18e659c3"
+          "sha256": "44df34260117c61a63fe91fff0904ce042ce34e86583a57b35e20b883debba3c"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/native/mod.rs",
@@ -2176,8 +2176,12 @@
           "sha256": "5b1ffa1a73b026fe2d5159064b61e88aa4a3ab53079e4c6ae4232747cecbdaa6"
         },
         {
+          "path": "libs/sc-geom/support-gen-df/src/perf.rs",
+          "sha256": "c6ba0d3796dfd3223a8a03196c6f6b359fe121f642b6b753db68f2f849c28285"
+        },
+        {
           "path": "libs/sc-geom/support-gen-df/src/pipeline.rs",
-          "sha256": "332a4f683479008b208e6c17a5912d144567c5f13c8a0a39c4379143a866ac1a"
+          "sha256": "4b45e07606d66b93629a0a78668044ea763d38274b0c99533bd5d6bce0f3e7f4"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/auto_bracing/auto_brace.rs",
@@ -2441,7 +2445,7 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/rafts/crenelated/geometry/mod.rs",
-          "sha256": "f456b659103504ecd43bb25b867bf45e67413f03ff23b1db38c587a62614c765"
+          "sha256": "bd700a51e1b2e165fb11ea61e6b7cbd6c59e17354a9f8c0d4e2f142bd9f49948"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/rafts/crenelated/geometry/model_plate_footprint.rs",
@@ -2454,6 +2458,10 @@
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/rafts/crenelated/geometry/polygon_set_2d.rs",
           "sha256": "c931213b3e2dbcf6f9de1b8c8296268ef8fe4c2a60cbc2d283e34bf425c99901"
+        },
+        {
+          "path": "libs/sc-geom/support-gen-df/src/supports/rafts/crenelated/geometry/robust_wall.rs",
+          "sha256": "b4e03666e42c336f0ebed9fb9b8aa9f7aa3d77e6871f164fa2c1be909696c9e4"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/supports/rafts/crenelated/geometry/small.rs",
