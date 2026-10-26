@@ -35,6 +35,8 @@ use crate::{DF_SUPPORT_MESH_NAME, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
 const ADD_REACH_MM: f64 = 2.0;
+/// How far a hand-placed support reaches for a support to hang from.
+const MANUAL_ATTACH_REACH_MM: f64 = 15.0;
 /// How far from a support a click may land and still remove it.
 const REMOVE_REACH_MM: f64 = 3.0;
 
@@ -47,6 +49,10 @@ pub struct DfSupportSession {
     /// Per model, its world mesh, built on the first edit and shared by
     /// every copy of the session.
     bvhs: Arc<[OnceLock<Arc<MeshBvh>>]>,
+    /// Who names what among the supports, for removals: built on the first
+    /// removal or its preview and kept while the state stands (a hover over
+    /// the supports asks for it on every move). An edit drops it.
+    removal_index: Arc<OnceLock<Arc<RemovalIndex>>>,
     /// Per model, its distance field. It fills lazily as the router asks,
     /// so keeping it between edits is what makes the second preview fast
     /// (a cold field costs ~200 ms per placement on a 1.4M-face model, a warm
@@ -55,6 +61,46 @@ pub struct DfSupportSession {
     sdfs: Arc<[SdfSlot]>,
     id_prefix: String,
     next_id: u64,
+}
+
+/// The supports as a removal reads them: each entity's id, the points it
+/// passes through, the ids of its parts, and who names whom.
+#[derive(Debug, Default)]
+struct RemovalIndex {
+    ids: Vec<String>,
+    /// Per entity, its points in document order (tips, joints, bases).
+    points: Vec<Vec<[f64; 3]>>,
+    /// Per entity, its own id and its parts' (segments, joints).
+    parts: Vec<HashSet<String>>,
+    /// Per entity, every string it holds (the ids it names).
+    names: Vec<HashSet<String>>,
+    /// Who names each string.
+    named_by: std::collections::HashMap<String, Vec<usize>>,
+    index_of: std::collections::HashMap<String, usize>,
+}
+
+impl RemovalIndex {
+    fn of(c: &SupportCollections) -> Self {
+        let mut index = RemovalIndex::default();
+        for (k, (id, value)) in entities(c).into_iter().enumerate() {
+            let mut points = Vec::new();
+            points_of(&value, &mut points);
+            let mut parts = HashSet::new();
+            ids_within(&value, &mut parts);
+            parts.insert(id.clone());
+            let mut names = HashSet::new();
+            strings_in(&value, &mut names);
+            for name in &names {
+                index.named_by.entry(name.clone()).or_default().push(k);
+            }
+            index.index_of.insert(id.clone(), k);
+            index.ids.push(id);
+            index.points.push(points);
+            index.parts.push(parts);
+            index.names.push(names);
+        }
+        index
+    }
 }
 
 /// A model's pooled distance field, while no edit holds it.
@@ -252,6 +298,7 @@ impl DfSupportSession {
         let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
         let sdfs = (0..models.len()).map(|_| SdfSlot::default()).collect();
         DfSupportSession {
+            removal_index: Arc::default(),
             models: models.into(),
             settings: Arc::new(settings),
             state,
@@ -336,7 +383,15 @@ impl DfSupportSession {
             return Err(EditError::NothingThere);
         };
         let bvh = self.bvh(i);
-        let settings = self.settings.clone();
+        // A hand-placed support hangs from a support up to
+        // MANUAL_ATTACH_REACH_MM away rather than standing on its own: the
+        // auto-placer's fan reach (8 mm) is tuned for a whole run, where a
+        // lone trunk is cheap; by hand, attaching is what the person wants.
+        // DragonFruit's angle, collision and per-host limits still apply.
+        let mut settings = (*self.settings).clone();
+        let fan = &mut settings.supports.auto_support.leaf_fan_radius_mm;
+        *fan = fan.max(MANUAL_ATTACH_REACH_MM);
+        let settings = Arc::new(settings);
         let model_id = self.models[i].id.clone();
         let before = all_ids(&self.state.collections);
         let pooled = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
@@ -385,6 +440,7 @@ impl DfSupportSession {
             )
         };
         self.state = state;
+        self.removal_index = Arc::default();
         if let Ok(mut slot) = self.sdfs[i].0.lock() {
             *slot = Some(sdf.into_inner());
         }
@@ -472,57 +528,40 @@ impl DfSupportSession {
     /// and everything that hangs from it (members on its shafts and the
     /// knots carrying them, braces to it, a root left with nothing on it).
     fn removal(&self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
-        let all = entities(&self.state.collections);
-        let mut best: Option<(f64, &str)> = None;
-        for (id, value) in &all {
-            if self.state.collections.knots.contains_key(id) {
+        let index = self
+            .removal_index
+            .get_or_init(|| Arc::new(RemovalIndex::of(&self.state.collections)))
+            .clone();
+        let c = &self.state.collections;
+        let mut best: Option<(f64, usize)> = None;
+        for (k, pts) in index.points.iter().enumerate() {
+            if c.knots.contains_key(&index.ids[k]) {
                 continue;
             }
-            let mut pts = Vec::new();
-            points_of(value, &mut pts);
             let d = pts
                 .windows(2)
                 .map(|w| segment_dist(point, w[0], w[1]))
                 .chain(pts.iter().map(|q| dist(point, *q)))
                 .fold(f64::INFINITY, f64::min);
             if d < best.map_or(f64::INFINITY, |b| b.0) {
-                best = Some((d, id));
+                best = Some((d, k));
             }
         }
-        let Some((d, id)) = best else {
+        let Some((d, start)) = best else {
             return Err(EditError::NothingThere);
         };
         if d > REMOVE_REACH_MM {
             return Err(EditError::NothingThere);
         }
-        // Who names what, once: every string an entity holds, and the ids of
-        // its parts (a knot names the shaft segment it sits on). The cascade
-        // and the orphan check then look names up instead of rescanning every
-        // entity per step (thousands of entities on a busy model).
-        let index_of: std::collections::HashMap<&str, usize> = all
-            .iter()
-            .enumerate()
-            .map(|(k, (id, _))| (id.as_str(), k))
-            .collect();
-        let mut named_by: std::collections::HashMap<String, Vec<usize>> =
-            std::collections::HashMap::new();
-        for (k, (_, value)) in all.iter().enumerate() {
-            let mut names = HashSet::new();
-            strings_in(value, &mut names);
-            for name in names {
-                named_by.entry(name).or_default().push(k);
-            }
-        }
-        let start = index_of[id];
-        let mut gone = vec![false; all.len()];
+        // The cascade: what names the removed entity or any of its parts (a
+        // knot names the shaft segment it sits on) goes with it.
+        let n = index.ids.len();
+        let mut gone = vec![false; n];
         gone[start] = true;
         let mut queue = vec![start];
         while let Some(g) = queue.pop() {
-            let mut parts = HashSet::new();
-            ids_within(&all[g].1, &mut parts);
-            parts.insert(all[g].0.clone());
-            for part in parts {
-                for &k in named_by.get(&part).into_iter().flatten() {
+            for part in &index.parts[g] {
+                for &k in index.named_by.get(part).into_iter().flatten() {
                     if !gone[k] {
                         gone[k] = true;
                         queue.push(k);
@@ -533,22 +572,20 @@ impl DfSupportSession {
         // Roots and knots are owned the other way round (a trunk names its
         // root, a member its knot): one a removed entity named that nothing
         // left names goes too.
-        let c = &self.state.collections;
         let mut orphans = Vec::new();
-        for g in (0..all.len()).filter(|&g| gone[g]) {
-            let mut names = HashSet::new();
-            strings_in(&all[g].1, &mut names);
-            for name in names {
-                let Some(&k) = index_of.get(name.as_str()) else {
+        for g in (0..n).filter(|&g| gone[g]) {
+            for name in &index.names[g] {
+                let Some(&k) = index.index_of.get(name) else {
                     continue;
                 };
-                let owned = c.roots.contains_key(&name) || c.knots.contains_key(&name);
+                let owned = c.roots.contains_key(name) || c.knots.contains_key(name);
                 if gone[k] || !owned {
                     continue;
                 }
                 // Its own record names it: only others count.
-                let still_used = named_by
-                    .get(&name)
+                let still_used = index
+                    .named_by
+                    .get(name)
                     .into_iter()
                     .flatten()
                     .any(|&other| other != k && !gone[other]);
@@ -560,10 +597,17 @@ impl DfSupportSession {
         for k in orphans {
             gone[k] = true;
         }
-        Ok((0..all.len())
+        Ok((0..n)
             .filter(|&k| gone[k])
-            .map(|k| all[k].0.clone())
+            .map(|k| index.ids[k].clone())
             .collect())
+    }
+
+    /// Builds the removal index now (a worker does it right after an edit,
+    /// so the first removal preview on the new state is quick).
+    pub fn warm_removal(&self) {
+        self.removal_index
+            .get_or_init(|| Arc::new(RemovalIndex::of(&self.state.collections)));
     }
 
     /// Removes the support nearest `point` (world mm) and everything that
@@ -571,6 +615,7 @@ impl DfSupportSession {
     pub fn remove_near(&mut self, point: [f64; 3]) -> Result<usize, EditError> {
         let gone = self.removal(point)?;
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
+        self.removal_index = Arc::default();
         Ok(gone.len())
     }
 
