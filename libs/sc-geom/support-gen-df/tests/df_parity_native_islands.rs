@@ -154,3 +154,29 @@ fn native_island_scans_match_dragonfruit() {
         assert_same(&soup_scan, &run["soupScan"], &format!("{path}.soupScan"));
     }
 }
+
+/// SoulCrafted's pipeline skips the scan's own overhang classification; the
+/// voxel islands and minima must not change for it.
+#[test]
+fn skipping_the_scans_overhangs_leaves_islands_and_minima_untouched() {
+    use support_gen_df::native::mesh_minima::scan_islands_without_overhangs;
+    let fixture = fixture();
+    for (name, s) in fixture["meshes"].as_object().unwrap() {
+        let soup: Vec<f64> = serde_json::from_value(s.clone()).unwrap();
+        let soup: Vec<f32> = soup.into_iter().map(|v| v as f32).collect();
+        let mesh = IndexedMesh::from_triangle_soup(&soup, 1e-5);
+        let full = scan_islands(&mesh, 0.05, 0.1, 0.25, 4, Some(2), Some(45.0), Some(0.25));
+        let lean = scan_islands_without_overhangs(&mesh, 0.05, 0.1, 0.25, 4, Some(2));
+        assert_eq!(
+            ipc(&full.voxel_islands),
+            ipc(&lean.voxel_islands),
+            "{name}: voxel islands"
+        );
+        assert_eq!(
+            ipc(&full.minima_islands),
+            ipc(&lean.minima_islands),
+            "{name}: minima"
+        );
+        assert!(lean.overhang_islands.is_empty());
+    }
+}
