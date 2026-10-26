@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Per-window driver for Tools > "Generate Supports (DragonFruit)" (SC-79):
+//! Per-window driver for Tools > "Generate Supports (DragonFruit)":
 //! runs `sc_geom::df_supports` (the native port of DragonFruit's
 //! auto-support: island scan, placement, bracing, raft) on the scene.
 //!
@@ -15,7 +15,7 @@
 //! `SceneDocument::paste_fragment`: one undoable object, saved and exported
 //! like any other. A later run leaves that object out of its models.
 //!
-//! **Prescan (SC-82/83/84).** The island and overhang scans depend only on
+//! **Prescan (BS-66, BS-67, BS-68).** The island and overhang scans depend only on
 //! the geometry, its pose and the scan settings, so a second, lower-key job
 //! runs them ahead of time (`start_df_prescan`, in a pool of half the cores)
 //! and the next run starts from them. It starts when the Hollow or Supports

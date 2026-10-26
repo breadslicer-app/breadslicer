@@ -1,11 +1,11 @@
 # Informe: UVtools (sn4k3/UVtools v7.1.1) y qué le sirve a Breadslicer
 
-Relevamiento del 2026-10-26 (SC-96 / issue #80), basado en el código fuente de `UVtools.Core` y `UVtools.UI`. No reemplaza asesoramiento legal.
+Relevamiento del 2026-10-26 (BS-80), basado en el código fuente de `UVtools.Core` y `UVtools.UI`. No reemplaza asesoramiento legal.
 
 ## 1. Licencia
 
 - **UVtools es AGPL-3.0**, Copyright (C) 2020–2026 PTRTECH (Tiago Conceição). En los headers no aparece "or later", así que se trata como v3.
-- **Portar o traducir C# a Rust está permitido**: es una obra derivada, y Breadslicer ya es AGPL-3.0.
+- **Portar o traducir C# a Rust está permitido**: es una obra derivada, y Breadslicer es AGPL-3.0.
 - **Al portar hay que:**
   - mantener el copyright de PTRTECH en cada archivo portado ("Portions translated from UVtools…");
   - agregar una entrada en NOTICE o CREDITS;
@@ -56,7 +56,7 @@ Relevamiento del 2026-10-26 (SC-96 / issue #80), basado en el código fuente de 
   - short lift: más del 45 % con altura < 2,5 mm.
 - No usa perímetro, ni vacío de copas, ni reparto de la fuerza entre los soportes.
 
-**Cómo superarlo** (alimenta SC-21 / #11):
+**Cómo superarlo** (alimenta BS-11 / #11):
 
 - **Fuerza por capa:** `F_i = σ_adh·A_i + k_p·P_i + ΔP_vac·A_copa,i + F_visc(v, h)`, con área, **perímetro** (el frente de peel avanza desde el borde), copas activas y un término viscoso tipo Stefan.
 - **Coeficientes:** se calibran con nuestras probetas (#79) más una prueba con dinamómetro.

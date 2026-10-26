@@ -1,16 +1,16 @@
 # sc-sla-formats
 
 Writes the per-layer geometry produced by
-[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/)
+[`sc-sl1cer`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sl1cer/)
 out to disk, either in a format a resin printer accepts or in one meant to be
 looked at.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md).
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
 This crate only writes. Reading printer files back is not a goal, and mesh
 formats belong to
-[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/).
+[`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/).
 
 ## Formats
 

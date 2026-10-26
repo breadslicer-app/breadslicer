@@ -1,7 +1,7 @@
 /* SPDX-FileCopyrightText: 2026 SynrgStudio */
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
-//! The Transform inspector's numbers (SC-26/27): the selected object's real
+//! The Transform inspector's numbers (BS-14, BS-15): the selected object's real
 //! size, where it sits, its rotation and scale, and the edits typed into
 //! them.
 //!
@@ -229,7 +229,7 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
     Some(inverse_parent.compose(&Transform3D::Affine(moved)))
 }
 
-/// What a gesture has done so far, for the viewport chip (SC-85): the
+/// What a gesture has done so far, for the viewport chip (BS-69): the
 /// world translation, the rotation angle (signed about `axis` when the
 /// gesture is locked to one) and the scale ratio between `before` and `now`.
 pub(crate) fn gesture_delta_text(

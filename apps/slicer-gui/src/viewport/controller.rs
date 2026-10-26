@@ -1598,7 +1598,7 @@ impl ViewportController {
         ui.set_selection_scale(r.scale_pct as f32);
     }
 
-    /// The viewport aids of a gesture in flight (SC-85): what it has done so
+    /// The viewport aids of a gesture in flight (BS-69): what it has done so
     /// far (distance, degrees, scale) in the chip, and, for a modal G/R/S
     /// locked to an axis, a line along that axis through the object in the
     /// axis colour, as Blender draws it. Cleared when no gesture runs.

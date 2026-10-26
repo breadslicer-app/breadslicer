@@ -1,5 +1,5 @@
 //! Runs the DragonFruit support port (`support_gen_df::pipeline`) on a
-//! SoulCrafted scene as a cancellable background job (SC-79).
+//! SoulCrafted scene as a cancellable background job.
 //!
 //! Every mesh leaf of the scene (CSG refused, as the slicer refuses it) is one
 //! model, baked to world space. A mesh this crate produced earlier carries

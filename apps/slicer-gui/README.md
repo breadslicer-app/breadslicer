@@ -1,8 +1,8 @@
-# SoulCrafted Slicer
+# Breadslicer
 
 > ⚠️ Work in progress
 
-The desktop version of the [SoulCrafted Slicer](../../README.md): loads
+The desktop version of the [Breadslicer](../../README.md): loads
 meshes, arranges them on the build plate, and slices them for a resin
 printer.
 
