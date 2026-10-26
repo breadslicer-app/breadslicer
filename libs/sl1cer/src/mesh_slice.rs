@@ -39,8 +39,9 @@ use crate::profile::LayerSchedule;
 /// higher-indexed of the two triangles.
 ///
 /// [`TriangleSlice::Coplanar`] (an entire triangle lies in the plane)
-/// is currently dropped; consumers can revisit this when a mesh in
-/// the wild demands it.
+/// emits nothing itself; it counts as lying just below the plane, so
+/// the contour runs along the edges it shares with triangles that
+/// rise above the plane (see [`resolve_on_edge_contour_segment`]).
 pub fn segments_at_z(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
@@ -132,6 +133,17 @@ fn collect_segments_at_z(
 /// 4. To avoid the two on-edge triangles each emitting a copy of
 ///    the same segment, only the higher-indexed face actually
 ///    emits.
+///
+/// The current face has exactly 2 on-plane vertices, so its third
+/// vertex is strictly above or below. The neighbour's third vertex
+/// can be on the plane too: the neighbour is then coplanar, and it
+/// counts as lying just below the plane (as if the plane were
+/// nudged an infinitesimal step up). Without that tie-break the
+/// contour would vanish along every edge between a coplanar triangle
+/// and a triangle that rises above the plane, and the on-plane
+/// vertices at the ends of the edge would be left with an odd number
+/// of contour endpoints. A coplanar face never resolves on-edges, so
+/// the current face emits the segment whatever the face indices.
 fn resolve_on_edge_contour_segment(
     edge_id: EdgeId,
     segment: Segment,
@@ -168,12 +180,19 @@ fn resolve_on_edge_contour_segment(
         Z_CLASSIFY_EPS_MM,
     );
 
+    let other_is_coplanar = other_class == VertexClass::On;
+    let other_side = if other_is_coplanar {
+        VertexClass::Below
+    } else {
+        other_class
+    };
+
     let contour_relevant = matches!(
-        (our_class, other_class),
+        (our_class, other_side),
         (VertexClass::Above, VertexClass::Below) | (VertexClass::Below, VertexClass::Above)
     );
 
-    if contour_relevant && face_idx > other_face_idx {
+    if contour_relevant && (other_is_coplanar || face_idx > other_face_idx) {
         Some(segment)
     } else {
         None
