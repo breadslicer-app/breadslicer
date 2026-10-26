@@ -85,6 +85,7 @@ mod tests_slice_result;
 mod ui_language;
 mod viewport;
 mod window_icon;
+mod window_placement;
 mod window_prefs;
 mod wiring;
 mod workspace_section;

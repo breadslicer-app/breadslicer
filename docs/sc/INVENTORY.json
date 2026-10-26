@@ -216,7 +216,7 @@
         },
         {
           "path": "apps/slicer-gui/src/app_state.rs",
-          "sha256": "080ff6960088b6d59862d38711b3bb73afc604ea8cf66ec3d451d3b2138d0cb4"
+          "sha256": "f9e9054c11e914cd948f606b8749c5fb28973c4cd02f9538e5742eae08179ef8"
         },
         {
           "path": "apps/slicer-gui/src/build_volume.rs",
@@ -316,7 +316,7 @@
         },
         {
           "path": "apps/slicer-gui/src/lib.rs",
-          "sha256": "7c941b987eeda681ad9e83e6dc915ac91988b4e1089ed719d78ae3f42d0944d2"
+          "sha256": "0fb160f5bf3adfc1aa72b7424f034638382cafbd8b9998e59cfe8d01dc79bcf2"
         },
         {
           "path": "apps/slicer-gui/src/load_progress.rs",
@@ -2101,11 +2101,11 @@
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/smooth_shafts.rs",
-          "sha256": "193727bab9c3dda3744eb6c8221c8b06cec6d0eb6ce9d0283f8272871b422860"
+          "sha256": "df1870c3a1895e8cb0457cba0d4ef17dbf67e1ed72590060c445a4ef28044109"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/features/slicing/support_world_triangles.rs",
-          "sha256": "d2647f92ad298d880eabc71f5f904b070ec31651612ad1c191a1c195d39dfc46"
+          "sha256": "092bedbce2b4aeba724791b4e8eaa06a3b9930d7817cd88624aaf2e6f459ff78"
         },
         {
           "path": "libs/sc-geom/support-gen-df/src/js_math.rs",
