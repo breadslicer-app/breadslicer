@@ -96,6 +96,10 @@ impl Renderer {
             return;
         }
         self.overlay.source = pieces.cloned();
+        crate::breadcrumbs::note(&format!(
+            "gpu: overlay {} piece(s)",
+            pieces.map_or(0, |p| p.len())
+        ));
         let mut kept = std::mem::take(&mut self.overlay.pieces);
         let Some(pieces) = pieces else {
             return;

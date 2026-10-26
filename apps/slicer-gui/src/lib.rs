@@ -15,6 +15,7 @@ mod aa_level;
 mod about_window;
 mod app_settings;
 mod app_state;
+mod breadcrumbs;
 pub mod build_volume;
 pub mod camera;
 mod clipboard;
@@ -143,6 +144,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // start threads.
     let startup_token = startup_token::take_from_env();
     install_crash_log();
+    breadcrumbs::start();
 
     // Build the wgpu Instance/Adapter/Device/Queue once up front and hand them
     // to Slint via `WGPUConfiguration::Manual` so every top-level Window shares
