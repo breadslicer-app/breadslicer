@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ProgressIndicator, Slider } from "std-widgets.slint";
+import { Button, Palette, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
-import { ObjectListPanel } from "./object-list-panel.slint";
-import { SliceControlPanel } from "./slice-control-panel.slint";
-import { SliceViewPanel } from "./slice-view-panel.slint";
+import { Theme } from "./kit/theme.slint";
+import { Icons } from "./kit/icons.slint";
+import { Icon, ToolButton, WorkflowTab } from "./kit/controls.slint";
+import { ExportInspector, HollowInspector, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -46,46 +47,12 @@ export enum SavePhase { Flattening, Serializing, Compressing, Writing }
 // top-of-screen menu bar. Persisted app-wide.
 export enum MenuLayout { Bar, Compact }
 
-// Workspace section shown by the floating pill switcher. `Prepare` is
-// a placeholder for future mesh repair/validation tooling; `Transform`
-// hosts the scene-editing tools (move/rotate/scale, delete, paste);
-// `Slice` hosts the slicing flow. Per-window live state, not persisted;
-// Rust picks the initial value from the loaded mesh's health.
-export enum WorkspaceSection { Prepare, Transform, Slice }
-
-// One segment of the section pill. Highlights when it is the active
-// section and reports clicks; the parent maps the click to a section
-// change request routed through Rust.
-component SectionTab inherits Rectangle {
-    in property <string> label;
-    in property <bool> active;
-    callback clicked();
-
-    border-radius: 12px;
-    background: self.active ? Palette.accent-background : transparent;
-
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        padding-top: 6px;
-        padding-bottom: 6px;
-
-        Text {
-            text: root.label;
-            color: root.active ? Palette.accent-foreground : Palette.foreground;
-            font-weight: root.active ? 700 : 400;
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
-    }
-
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
+// The workflow tabs (SC-84): Transform hosts the scene-editing tools and
+// the mesh repair; Hollow and Supports are taken in either order once the
+// pose is set; Slice holds the slicing flow and the layer view; Export
+// writes the printer file. Per-window live state, not persisted; a freshly
+// loaded scene opens in Transform.
+export enum WorkspaceSection { Transform, Hollow, Supports, Slice, Export }
 
 export component MainWindow inherits Window {
     // Window title. Once a file is open it shows the file's name (with a
@@ -97,10 +64,11 @@ export component MainWindow inherits Window {
     icon: @image-url("../assets/images/soulcrafted.svg");
     default-font-family: "Noto Sans";
 
-    min-height: 400px;
-    min-width: 600px;
-    preferred-width: 600px;
-    preferred-height: 400px;
+    min-height: 560px;
+    min-width: 960px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: Theme.ground;
 
     in property <image> mesh-rendering;
     in property <bool> loading: false;
@@ -169,7 +137,17 @@ export component MainWindow inherits Window {
     // `section-change-requested` rather than writing it directly, so
     // Rust stays the single source of truth (it also sets the initial
     // section from mesh health at load time).
-    in property <WorkspaceSection> workspace-section: WorkspaceSection.Prepare;
+    in property <WorkspaceSection> workspace-section: WorkspaceSection.Transform;
+    // Whether undo and redo apply in the active tab: everywhere a scene can
+    // still be edited, not in Slice and Export, which show a held result.
+    out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice
+        && root.workspace-section != WorkspaceSection.Export;
+    // True when a mesh of the scene is not watertight: the Transform
+    // inspector then leads with the repair card. Pushed by Rust on load and
+    // after a repair.
+    in property <bool> mesh-needs-repair: false;
+    // A one-line summary of the last support run, for the Supports tab.
+    in property <string> supports-last-run: "";
     // Slice control panel picker models and selection, driven by Rust.
     // Each list is the union of the global favourites, the global
     // default, and the scene's current choice; `*-current-index` is the
@@ -466,7 +444,7 @@ export component MainWindow inherits Window {
                 shortcut: @keys(Control + Z);
                 enabled: root.has-scene && !root.loading && root.can-undo
                     && !root.repairing-in-progress
-                    && root.workspace-section != WorkspaceSection.Slice;
+                    && root.history-allowed;
                 activated => {
                     root.undo-requested();
                 }
@@ -477,7 +455,7 @@ export component MainWindow inherits Window {
                 shortcut: @keys(Control + Shift + Z);
                 enabled: root.has-scene && !root.loading && root.can-redo
                     && !root.repairing-in-progress
-                    && root.workspace-section != WorkspaceSection.Slice;
+                    && root.history-allowed;
                 activated => {
                     root.redo-requested();
                 }
@@ -528,28 +506,6 @@ export component MainWindow inherits Window {
         Menu {
             title: @tr("MenuBar" => "View");
 
-            MenuItem {
-                title: root.show-object-list
-                    ? @tr("MenuBar" => "Hide Object List")
-                    : @tr("MenuBar" => "Show Object List");
-                shortcut: @keys(Control + L);
-                enabled: root.has-scene;
-                activated => {
-                    root.show-object-list = !root.show-object-list;
-                    root.object-list-visibility-changed(root.show-object-list);
-                }
-            }
-
-            MenuItem {
-                title: root.show-slice-view
-                    ? @tr("MenuBar" => "Hide Slice View")
-                    : @tr("MenuBar" => "Show Slice View");
-                enabled: root.has-scene;
-                activated => {
-                    root.show-slice-view = !root.show-slice-view;
-                    root.slice-view-visibility-changed(root.show-slice-view);
-                }
-            }
 
             // Switches between the top menu bar and the compact corner
             // menu button. Title flips like the object-list toggle above.
@@ -626,356 +582,546 @@ export component MainWindow inherits Window {
         }
     }
 
-    HorizontalLayout {
+    // The workspace (SC-84): the top bar with the workflow tabs, the tool
+    // rail, the viewport, the inspector of the active tab and the status
+    // bar. Rust stays the source of truth for the active tab: a tab click
+    // only requests the change.
+    VerticalLayout {
         spacing: 0px;
 
-        mv := MeshViewer {
-            horizontal-stretch: 1;
-            rendering: root.mesh-rendering;
-            placeholder-text: @tr("Open a 3D model to visualize it here");
-            modal-transform-active: root.modal-transform-active;
-            modal-transform-status: root.modal-transform-status;
-            modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
-            modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
-            modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
-            gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
-            // Tab cycles selection while a scene is loaded; without a
-            // scene there's nothing to cycle, so Tab returns to its
-            // native role of moving focus through the GUI's
-            // interactive elements.
-            can-cycle-selection: root.has-scene;
-            viewport-resized(w, h) => {
-                root.viewport-resized(w, h);
-            }
-            rotate-drag(dx, dy) => {
-                root.rotate-drag(dx, dy);
-            }
-            pan-drag(dx, dy) => {
-                root.pan-drag(dx, dy);
-            }
-            zoom-at(dy, x, y) => {
-                root.zoom-at(dy, x, y);
-            }
-            orthographic-view: root.orthographic-view;
-            toggle-projection-requested() => { root.toggle-projection-requested(); }
-            frame-selected-requested() => { root.frame-selected-requested(); }
-            frame-view-requested() => {
-                root.frame-view-requested();
-            }
-            axis-view-requested(view) => {
-                root.axis-view-requested(view);
-            }
-            viewport-pointer-down(x, y, modifiers) => {
-                root.viewport-pointer-down(x, y, modifiers);
-            }
-            viewport-pointer-move(x, y, modifiers) => {
-                root.viewport-pointer-move(x, y, modifiers);
-            }
-            viewport-pointer-up(x, y, modifiers) => {
-                root.viewport-pointer-up(x, y, modifiers);
-            }
-            selection-cleared() => {
-                root.selection-cleared();
-            }
-            gizmo-focus-translate-pressed() => {
-                root.gizmo-focus-translate-pressed();
-            }
-            gizmo-focus-rotate-pressed() => {
-                root.gizmo-focus-rotate-pressed();
-            }
-            gizmo-focus-scale-pressed() => {
-                root.gizmo-focus-scale-pressed();
-            }
-            gizmo-arrow-pressed(code) => {
-                root.gizmo-arrow-pressed(code);
-            }
-            gizmo-arrow-released(code) => {
-                root.gizmo-arrow-released(code);
-            }
-            selection-cycle(delta) => {
-                root.selection-cycle(delta);
-            }
-            copy-pressed() => {
-                root.copy-pressed();
-            }
-            paste-pressed() => {
-                root.paste-pressed();
-            }
-            viewport-pointer-leave() => {
-                root.viewport-pointer-leave();
-            }
-            context-copy-pressed() => {
-                root.context-copy-pressed();
-            }
-            context-paste-pressed(x, y) => {
-                root.context-paste-pressed(x, y);
-            }
-            delete-requested() => {
-                root.delete-requested();
-            }
-            viewport-right-pointer-down(x, y) => {
-                root.viewport-right-pointer-down(x, y);
-            }
-            viewport-right-pointer-up(x, y) => {
-                root.viewport-right-pointer-up(x, y);
-            }
-        }
+        // Top bar.
+        Rectangle {
+            height: Theme.topbar-height;
+            background: Theme.chrome;
 
-    }
+            HorizontalLayout {
+                // Room for the compact menu button in its corner.
+                padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
+                padding-right: 8px;
+                spacing: 16px;
 
-    // Floating object-list panel. Overlaps the viewport at the top
-    // right by default and can be dragged, resized, minimized, or
-    // closed. Only present once a scene with at least one object is
-    // loaded and the View menu keeps it enabled.
-    if (root.has-scene && root.show-object-list && root.object-list.length > 0): ObjectListPanel {
-        available-width: root.width;
-        available-height: root.height;
-        anchor-right <=> root.object-list-anchor-right;
-        anchor-bottom <=> root.object-list-anchor-bottom;
-        offset-x <=> root.object-list-offset-x;
-        offset-y <=> root.object-list-offset-y;
-        panel-width <=> root.object-list-width;
-        panel-height <=> root.object-list-height;
-        minimized <=> root.object-list-minimized;
-        model: root.object-list;
-        selected-index <=> root.selected-object-index;
-        selection-changed(idx) => {
-            root.object-list-selection-changed(idx);
-            mv.focus-viewport();
-        }
-        geometry-committed => {
-            root.object-list-geometry-changed(
-                root.object-list-anchor-right,
-                root.object-list-anchor-bottom,
-                root.object-list-offset-x,
-                root.object-list-offset-y,
-                root.object-list-width,
-                root.object-list-height,
-                root.object-list-minimized);
-        }
-        close-requested => {
-            root.show-object-list = false;
-            root.object-list-visibility-changed(false);
-            // Reset geometry to defaults so reopening within the same
-            // session starts fresh. This does not persist; only drag,
-            // resize, and minimize gestures do.
-            root.object-list-anchor-right = true;
-            root.object-list-anchor-bottom = false;
-            root.object-list-offset-x = 12px;
-            root.object-list-offset-y = 12px;
-            root.object-list-width = 220px;
-            root.object-list-height = 0px;
-            root.object-list-minimized = false;
-        }
-    }
+                HorizontalLayout {
+                    min-width: 240px;
+                    spacing: 10px;
+                    alignment: start;
 
-    // Floating Slice control panel: the scene's printer and resin
-    // pickers. Present only while the Slice section is active; not
-    // closable (it is the primary slicing control). Overlaps the
-    // viewport at the top left by default.
-    if (root.has-scene && root.workspace-section == WorkspaceSection.Slice): SliceControlPanel {
-        available-width: root.width;
-        available-height: root.height;
-        anchor-right <=> root.slice-panel-anchor-right;
-        anchor-bottom <=> root.slice-panel-anchor-bottom;
-        offset-x <=> root.slice-panel-offset-x;
-        offset-y <=> root.slice-panel-offset-y;
-        panel-width <=> root.slice-panel-width;
-        panel-height <=> root.slice-panel-height;
-        printer-options: root.slice-printer-options;
-        printer-current-index <=> root.slice-printer-current-index;
-        resin-options: root.slice-resin-options;
-        resin-current-index <=> root.slice-resin-current-index;
-        print-format-options: root.slice-print-format-options;
-        print-format-current-index <=> root.slice-print-format-current-index;
-        print-format-note: root.slice-print-format-note;
-        export-enabled: root.slice-export-enabled;
-        export-in-progress: root.saving-in-progress;
-        first-layer-height-text <=> root.slice-first-layer-height-text;
-        slicing-in-progress: root.slicing-in-progress;
-        slice-up-to-date: root.slice-up-to-date;
-        printer-picked(i) => {
-            root.slice-printer-picked(i);
-        }
-        resin-picked(i) => {
-            root.slice-resin-picked(i);
-        }
-        print-format-picked(i) => {
-            root.slice-print-format-picked(i);
-        }
-        first-layer-height-edited(t) => {
-            root.slice-first-layer-height-edited(t);
-        }
-        slice-requested => {
-            root.slice-requested();
-        }
-        export-requested => {
-            root.slice-export-requested();
-        }
-        geometry-committed => {
-            root.slice-panel-geometry-changed(
-                root.slice-panel-anchor-right,
-                root.slice-panel-anchor-bottom,
-                root.slice-panel-offset-x,
-                root.slice-panel-offset-y,
-                root.slice-panel-width,
-                root.slice-panel-height);
-        }
-    }
+                    Icon {
+                        commands: Icons.logo;
+                        color: Theme.accent;
+                        size: 20px;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        text: "SoulCrafted";
+                        font-weight: 600;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                    }
+                    if root.document-name != "": Text {
+                        text: "/";
+                        color: Theme.border-strong;
+                        vertical-alignment: center;
+                    }
+                    if root.document-name != "": Text {
+                        text: root.document-name;
+                        color: Theme.text-soft;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        max-width: 260px;
+                    }
+                    if root.scene-dirty: Rectangle {
+                        width: 6px;
+                        height: 6px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                }
 
-    // Floating slice-view panel: the selected layer's 2D cross-section.
-    // Present only in the Slice section, with the View toggle on and a
-    // held slice; draggable, resizable, minimizable, and closable.
-    if (root.has-scene && root.show-slice-view
-        && root.workspace-section == WorkspaceSection.Slice
-        && root.slice-layer-count > 0): SliceViewPanel {
-        available-width: root.width;
-        available-height: root.height;
-        anchor-right <=> root.slice-view-anchor-right;
-        anchor-bottom <=> root.slice-view-anchor-bottom;
-        offset-x <=> root.slice-view-offset-x;
-        offset-y <=> root.slice-view-offset-y;
-        panel-width <=> root.slice-view-width;
-        panel-height <=> root.slice-view-height;
-        minimized <=> root.slice-view-minimized;
-        content: root.slice-view-image;
-        geometry-committed => {
-            root.slice-view-geometry-changed(
-                root.slice-view-anchor-right,
-                root.slice-view-anchor-bottom,
-                root.slice-view-offset-x,
-                root.slice-view-offset-y,
-                root.slice-view-width,
-                root.slice-view-height,
-                root.slice-view-minimized);
-        }
-        close-requested => {
-            root.show-slice-view = false;
-            root.slice-view-visibility-changed(false);
-            // Reset geometry to defaults so reopening within the same
-            // session starts fresh. This does not persist; only drag,
-            // resize, and minimize gestures do.
-            root.slice-view-anchor-right = false;
-            root.slice-view-anchor-bottom = true;
-            root.slice-view-offset-x = 12px;
-            root.slice-view-offset-y = 12px;
-            root.slice-view-width = 240px;
-            root.slice-view-height = 0px;
-            root.slice-view-minimized = false;
-        }
-    }
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
 
-    // Floating workspace-section switcher (Prepare | Transform | Slice).
-    // Fixed top-center, not draggable, not persisted. The content-area
-    // origin already sits below the menu bar when the bar is shown and
-    // near the window top in Compact layout, so a small top offset keeps
-    // the pill clear of the menu in either layout. Present only once a
-    // scene is loaded: the sections act on a model.
-    if root.has-scene: Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: 8px;
-        width: pill-layout.preferred-width;
-        height: pill-layout.preferred-height;
-        background: Palette.background;
-        border-color: Palette.border;
-        border-width: 1px;
-        border-radius: self.height / 2;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #00000040;
+                    WorkflowTab {
+                        number: "1";
+                        label: @tr("Workspace" => "Transform");
+                        active: root.workspace-section == WorkspaceSection.Transform;
+                        enabled: root.has-scene;
+                        dot: root.mesh-needs-repair ? Theme.warning : transparent;
+                        clicked => {
+                            root.section-change-requested(WorkspaceSection.Transform);
+                        }
+                    }
+                    Rectangle {
+                        width: 1px;
+                        height: 20px;
+                        y: (parent.height - self.height) / 2;
+                        background: Theme.border;
+                    }
+                    WorkflowTab {
+                        number: "2";
+                        label: @tr("Workspace" => "Hollow");
+                        active: root.workspace-section == WorkspaceSection.Hollow;
+                        enabled: root.has-scene;
+                        clicked => {
+                            root.section-change-requested(WorkspaceSection.Hollow);
+                        }
+                    }
+                    Text {
+                        text: "/";
+                        color: Theme.border-strong;
+                        vertical-alignment: center;
+                    }
+                    WorkflowTab {
+                        number: "2";
+                        label: @tr("Workspace" => "Supports");
+                        active: root.workspace-section == WorkspaceSection.Supports;
+                        enabled: root.has-scene;
+                        clicked => {
+                            root.section-change-requested(WorkspaceSection.Supports);
+                        }
+                    }
+                    Rectangle {
+                        width: 1px;
+                        height: 20px;
+                        y: (parent.height - self.height) / 2;
+                        background: Theme.border;
+                    }
+                    WorkflowTab {
+                        number: "3";
+                        label: @tr("Workspace" => "Slice");
+                        active: root.workspace-section == WorkspaceSection.Slice;
+                        enabled: root.has-scene;
+                        dot: root.slice-layer-count > 0 ? Theme.success : transparent;
+                        clicked => {
+                            root.section-change-requested(WorkspaceSection.Slice);
+                        }
+                    }
+                    WorkflowTab {
+                        number: "4";
+                        label: @tr("Workspace" => "Export");
+                        active: root.workspace-section == WorkspaceSection.Export;
+                        enabled: root.has-scene;
+                        clicked => {
+                            root.section-change-requested(WorkspaceSection.Export);
+                        }
+                    }
+                }
 
-        pill-layout := HorizontalLayout {
-            padding: 4px;
-            spacing: 2px;
+                HorizontalLayout {
+                    min-width: 240px;
+                    spacing: 4px;
+                    alignment: end;
 
-            SectionTab {
-                label: @tr("Workspace" => "Prepare");
-                active: root.workspace-section == WorkspaceSection.Prepare;
-                clicked => {
-                    root.section-change-requested(WorkspaceSection.Prepare);
+                    Text {
+                        text: root.slice-printer-current-index >= 0
+                            ? root.slice-printer-options[root.slice-printer-current-index]
+                            : @tr("Workspace" => "No printer");
+                        color: Theme.text-muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        max-width: 200px;
+                    }
+                    ToolButton {
+                        icon: Icons.undo;
+                        label: @tr("MenuBar" => "Undo");
+                        enabled: root.has-scene && !root.loading && root.can-undo
+                            && !root.repairing-in-progress && root.history-allowed;
+                        clicked => {
+                            root.undo-requested();
+                        }
+                    }
+                    ToolButton {
+                        icon: Icons.redo;
+                        label: @tr("MenuBar" => "Redo");
+                        enabled: root.has-scene && !root.loading && root.can-redo
+                            && !root.repairing-in-progress && root.history-allowed;
+                        clicked => {
+                            root.redo-requested();
+                        }
+                    }
                 }
             }
 
             Rectangle {
-                width: 1px;
-                background: Palette.border;
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
             }
+        }
 
-            SectionTab {
-                label: @tr("Workspace" => "Transform");
-                active: root.workspace-section == WorkspaceSection.Transform;
-                clicked => {
-                    root.section-change-requested(WorkspaceSection.Transform);
+        HorizontalLayout {
+            spacing: 0px;
+            vertical-stretch: 1;
+
+            // Tool rail: the active tab's tools.
+            Rectangle {
+                width: Theme.rail-width;
+                background: Theme.chrome;
+
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    alignment: start;
+
+                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                        icon: Icons.move;
+                        label: @tr("Inspector" => "Move");
+                        shortcut: "G";
+                        enabled: root.has-scene && root.selected-object-index >= 0;
+                        clicked => {
+                            root.gizmo-focus-translate-pressed();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                        icon: Icons.rotate;
+                        label: @tr("Inspector" => "Rotate");
+                        shortcut: "R";
+                        enabled: root.has-scene && root.selected-object-index >= 0;
+                        clicked => {
+                            root.gizmo-focus-rotate-pressed();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                        icon: Icons.scale;
+                        label: @tr("Inspector" => "Scale");
+                        shortcut: "S";
+                        enabled: root.has-scene && root.selected-object-index >= 0;
+                        clicked => {
+                            root.gizmo-focus-scale-pressed();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Transform: Rectangle {
+                        height: 9px;
+                        Rectangle {
+                            width: 28px;
+                            height: 1px;
+                            background: Theme.border;
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                        icon: Icons.repair;
+                        label: @tr("Inspector" => "Repair meshes");
+                        active: root.mesh-needs-repair;
+                        enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                            && !root.repairing-in-progress;
+                        clicked => {
+                            root.repair-requested();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
+                        icon: Icons.hollow;
+                        label: @tr("Workspace" => "Hollow");
+                        shortcut: "H";
+                        active: true;
+                        enabled: false;
+                    }
+                    if root.workspace-section == WorkspaceSection.Hollow: ToolButton {
+                        icon: Icons.hole;
+                        label: @tr("Inspector" => "Drain holes");
+                        shortcut: "D";
+                        enabled: false;
+                    }
+                    if root.workspace-section == WorkspaceSection.Supports: ToolButton {
+                        icon: Icons.auto;
+                        label: @tr("Inspector" => "Generate supports");
+                        shortcut: "U";
+                        active: true;
+                        enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                        clicked => {
+                            root.df-support-requested();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Slice: ToolButton {
+                        icon: Icons.slice;
+                        label: @tr("SlicePanel" => "Slice");
+                        active: true;
+                        enabled: root.slice-printer-current-index >= 0
+                            && root.slice-resin-current-index >= 0 && !root.slicing-in-progress;
+                        clicked => {
+                            root.slice-requested();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Export: ToolButton {
+                        icon: Icons.file;
+                        label: @tr("SlicePanel" => "Export for printer");
+                        active: true;
+                        enabled: root.slice-export-enabled && !root.slicing-in-progress
+                            && !root.saving-in-progress;
+                        clicked => {
+                            root.slice-export-requested();
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Theme.border;
                 }
             }
+
+            // Viewport.
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.ground;
+
+                HorizontalLayout {
+                mv := MeshViewer {
+                    horizontal-stretch: 1;
+                    rendering: root.mesh-rendering;
+                    placeholder-text: @tr("Open a 3D model to visualize it here");
+                    modal-transform-active: root.modal-transform-active;
+                    modal-transform-status: root.modal-transform-status;
+                    modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
+                    modal-transform-axis(axis,x,y) => { root.modal-transform-axis(axis,x,y); }
+                    modal-transform-finish(confirm) => { root.modal-transform-finish(confirm); }
+                    gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
+                    // Tab cycles selection while a scene is loaded; without a
+                    // scene there's nothing to cycle, so Tab returns to its
+                    // native role of moving focus through the GUI's
+                    // interactive elements.
+                    can-cycle-selection: root.has-scene;
+                    viewport-resized(w, h) => {
+                        root.viewport-resized(w, h);
+                    }
+                    rotate-drag(dx, dy) => {
+                        root.rotate-drag(dx, dy);
+                    }
+                    pan-drag(dx, dy) => {
+                        root.pan-drag(dx, dy);
+                    }
+                    zoom-at(dy, x, y) => {
+                        root.zoom-at(dy, x, y);
+                    }
+                    orthographic-view: root.orthographic-view;
+                    toggle-projection-requested() => { root.toggle-projection-requested(); }
+                    frame-selected-requested() => { root.frame-selected-requested(); }
+                    frame-view-requested() => {
+                        root.frame-view-requested();
+                    }
+                    axis-view-requested(view) => {
+                        root.axis-view-requested(view);
+                    }
+                    viewport-pointer-down(x, y, modifiers) => {
+                        root.viewport-pointer-down(x, y, modifiers);
+                    }
+                    viewport-pointer-move(x, y, modifiers) => {
+                        root.viewport-pointer-move(x, y, modifiers);
+                    }
+                    viewport-pointer-up(x, y, modifiers) => {
+                        root.viewport-pointer-up(x, y, modifiers);
+                    }
+                    selection-cleared() => {
+                        root.selection-cleared();
+                    }
+                    gizmo-focus-translate-pressed() => {
+                        root.gizmo-focus-translate-pressed();
+                    }
+                    gizmo-focus-rotate-pressed() => {
+                        root.gizmo-focus-rotate-pressed();
+                    }
+                    gizmo-focus-scale-pressed() => {
+                        root.gizmo-focus-scale-pressed();
+                    }
+                    gizmo-arrow-pressed(code) => {
+                        root.gizmo-arrow-pressed(code);
+                    }
+                    gizmo-arrow-released(code) => {
+                        root.gizmo-arrow-released(code);
+                    }
+                    selection-cycle(delta) => {
+                        root.selection-cycle(delta);
+                    }
+                    copy-pressed() => {
+                        root.copy-pressed();
+                    }
+                    paste-pressed() => {
+                        root.paste-pressed();
+                    }
+                    viewport-pointer-leave() => {
+                        root.viewport-pointer-leave();
+                    }
+                    context-copy-pressed() => {
+                        root.context-copy-pressed();
+                    }
+                    context-paste-pressed(x, y) => {
+                        root.context-paste-pressed(x, y);
+                    }
+                    delete-requested() => {
+                        root.delete-requested();
+                    }
+                    viewport-right-pointer-down(x, y) => {
+                        root.viewport-right-pointer-down(x, y);
+                    }
+                    viewport-right-pointer-up(x, y) => {
+                        root.viewport-right-pointer-up(x, y);
+                    }
+                }
+                }
+
+                // Per-layer height slider on the viewport's right edge, in
+                // the Slice tab; disabled until a slice exists. Its value is
+                // the selected layer index, the top layer at the top.
+                if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
+                    x: parent.width - self.width - 12px;
+                    y: 48px;
+                    width: 32px;
+                    height: parent.height - 96px;
+
+                    Slider {
+                        width: parent.width;
+                        height: parent.height;
+                        orientation: Orientation.vertical;
+                        enabled: root.slice-layer-count > 0;
+                        minimum: 0;
+                        maximum: Math.max(0, root.slice-layer-count - 1);
+                        step: 1;
+                        value <=> root.selected-layer-index;
+                        changed(v) => {
+                            root.selected-layer-changed();
+                        }
+                    }
+                }
+            }
+
+            // Inspector.
+            Rectangle {
+                width: Theme.inspector-width;
+                background: Theme.panel;
+
+                Rectangle {
+                    x: 0;
+                    width: 1px;
+                    background: Theme.border;
+                }
+
+                ScrollView {
+                    x: 1px;
+                    width: parent.width - 1px;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 12px;
+                        alignment: start;
+
+                        if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
+                            objects: root.object-list;
+                            selected-index: root.selected-object-index;
+                            needs-repair: root.mesh-needs-repair;
+                            repairing: root.repairing-in-progress;
+                            repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                && !root.repairing-in-progress;
+                            object-picked(i) => {
+                                root.selected-object-index = i;
+                                root.object-list-selection-changed(i);
+                                mv.focus-viewport();
+                            }
+                            repair-requested => {
+                                root.repair-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Hollow: HollowInspector { }
+                        if root.workspace-section == WorkspaceSection.Supports: SupportsInspector {
+                            has-scene: root.has-scene && !root.loading;
+                            running: root.support-gen-in-progress;
+                            phase: root.support-gen-phase;
+                            progress: root.support-gen-progress;
+                            cancelable: root.support-gen-cancelable;
+                            last-run: root.supports-last-run;
+                            generate-requested => {
+                                root.df-support-requested();
+                            }
+                            cancel-requested => {
+                                root.support-gen-cancel-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Slice: SliceInspector {
+                            printer-options: root.slice-printer-options;
+                            printer-current-index <=> root.slice-printer-current-index;
+                            resin-options: root.slice-resin-options;
+                            resin-current-index <=> root.slice-resin-current-index;
+                            first-layer-height-text <=> root.slice-first-layer-height-text;
+                            slicing: root.slicing-in-progress;
+                            up-to-date: root.slice-up-to-date;
+                            layer-count: root.slice-layer-count;
+                            selected-layer: root.selected-layer-index;
+                            layer-image: root.slice-view-image;
+                            printer-picked(i) => {
+                                root.slice-printer-picked(i);
+                            }
+                            resin-picked(i) => {
+                                root.slice-resin-picked(i);
+                            }
+                            first-layer-height-edited(t) => {
+                                root.slice-first-layer-height-edited(t);
+                            }
+                            slice-requested => {
+                                root.slice-requested();
+                            }
+                        }
+                        if root.workspace-section == WorkspaceSection.Export: ExportInspector {
+                            format-options: root.slice-print-format-options;
+                            format-current-index <=> root.slice-print-format-current-index;
+                            format-note: root.slice-print-format-note;
+                            export-enabled: root.slice-export-enabled;
+                            busy: root.slicing-in-progress || root.saving-in-progress || root.loading;
+                            has-scene: root.has-scene;
+                            format-picked(i) => {
+                                root.slice-print-format-picked(i);
+                            }
+                            export-printer-file => {
+                                root.slice-export-requested();
+                            }
+                            save-project => {
+                                root.save-requested();
+                            }
+                            export-mesh => {
+                                root.export-as-requested();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status bar.
+        Rectangle {
+            height: Theme.statusbar-height;
+            background: Theme.chrome;
 
             Rectangle {
-                width: 1px;
-                background: Palette.border;
+                y: 0;
+                height: 1px;
+                background: Theme.border;
             }
 
-            SectionTab {
-                label: @tr("Workspace" => "Slice");
-                active: root.workspace-section == WorkspaceSection.Slice;
-                clicked => {
-                    root.section-change-requested(WorkspaceSection.Slice);
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 18px;
+
+                Text {
+                    text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
+                        : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
+                        : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
+                        : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
+                        : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
+                        : @tr("Workspace" => "The printer file uses the printer and resin in force.");
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
                 }
-            }
-        }
-    }
-
-    // Prepare-section tool surface: the mesh repair action. Fixed
-    // below the section pill, sharing its visual language; not
-    // draggable, not persisted. The button stays enabled on a healthy
-    // scene: pressing it then reports "no problems found" through the
-    // results dialog, which beats a mysteriously disabled button.
-    if root.has-scene && root.workspace-section == WorkspaceSection.Prepare: Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: 56px;
-        width: repair-layout.preferred-width;
-        height: repair-layout.preferred-height;
-        background: Palette.background;
-        border-color: Palette.border;
-        border-width: 1px;
-        border-radius: 8px;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #00000040;
-
-        repair-layout := HorizontalLayout {
-            padding: 8px;
-
-            Button {
-                text: @tr("Prepare" => "Repair meshes");
-                enabled: !root.loading && !root.slicing-in-progress
-                    && !root.repairing-in-progress;
-                clicked => {
-                    root.repair-requested();
+                if root.has-scene: Text {
+                    text: @tr("Workspace" => "{} object(s)", root.object-list.length);
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
                 }
-            }
-        }
-    }
-
-    // Per-layer height slider on the viewport's right edge. Present
-    // whenever the Slice section is active, so the strip it occupies is
-    // visible before slicing too; disabled until a slice exists
-    // (`slice-layer-count > 0`). Its value is the selected layer index,
-    // with the top layer (the maximum) at the top of the track.
-    if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
-        x: parent.width - self.width - 12px;
-        y: 64px;
-        width: 32px;
-        height: parent.height - 128px;
-
-        Slider {
-            width: parent.width;
-            height: parent.height;
-            orientation: Orientation.vertical;
-            enabled: root.slice-layer-count > 0;
-            minimum: 0;
-            maximum: Math.max(0, root.slice-layer-count - 1);
-            step: 1;
-            value <=> root.selected-layer-index;
-            changed(v) => {
-                root.selected-layer-changed();
             }
         }
     }
@@ -1058,7 +1204,7 @@ export component MainWindow inherits Window {
                     title: @tr("MenuBar" => "Undo");
                     enabled: root.has-scene && !root.loading && root.can-undo
                     && !root.repairing-in-progress
-                    && root.workspace-section != WorkspaceSection.Slice;
+                    && root.history-allowed;
                     activated => {
                         root.undo-requested();
                     }
@@ -1068,7 +1214,7 @@ export component MainWindow inherits Window {
                     title: @tr("MenuBar" => "Redo");
                     enabled: root.has-scene && !root.loading && root.can-redo
                     && !root.repairing-in-progress
-                    && root.workspace-section != WorkspaceSection.Slice;
+                    && root.history-allowed;
                     activated => {
                         root.redo-requested();
                     }
@@ -1118,27 +1264,6 @@ export component MainWindow inherits Window {
             Menu {
                 title: @tr("MenuBar" => "View");
 
-                MenuItem {
-                    title: root.show-object-list
-                        ? @tr("MenuBar" => "Hide Object List")
-                        : @tr("MenuBar" => "Show Object List");
-                    enabled: root.has-scene;
-                    activated => {
-                        root.show-object-list = !root.show-object-list;
-                        root.object-list-visibility-changed(root.show-object-list);
-                    }
-                }
-
-                MenuItem {
-                    title: root.show-slice-view
-                        ? @tr("MenuBar" => "Hide Slice View")
-                        : @tr("MenuBar" => "Show Slice View");
-                    enabled: root.has-scene;
-                    activated => {
-                        root.show-slice-view = !root.show-slice-view;
-                        root.slice-view-visibility-changed(root.show-slice-view);
-                    }
-                }
 
                 MenuItem {
                     title: root.menu-layout == MenuLayout.Compact
@@ -1256,7 +1381,7 @@ export component MainWindow inherits Window {
         width: Math.max(240px, Math.min(parent.width * 50%, 420px));
         height: progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - 16px;
+        y: parent.height - self.height - Theme.statusbar-height - 16px;
         background: Palette.background;
         border-color: Palette.border;
         border-width: 1px;
@@ -1285,11 +1410,12 @@ export component MainWindow inherits Window {
     // load panel. `support-gen-phase` is passed straight through from
     // the Rust-side `JobProgress.phase` string rather than mapped
     // through an enum, since it is purely informational here.
-    if root.support-gen-in-progress: Rectangle {
+    // The Supports tab shows the run in its inspector instead.
+    if root.support-gen-in-progress && root.workspace-section != WorkspaceSection.Supports: Rectangle {
         width: Math.max(240px, Math.min(parent.width * 50%, 420px));
         height: support-gen-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - 16px;
+        y: parent.height - self.height - Theme.statusbar-height - 16px;
         background: Palette.background;
         border-color: Palette.border;
         border-width: 1px;
@@ -1327,7 +1453,7 @@ export component MainWindow inherits Window {
         width: Math.max(240px, Math.min(parent.width * 50%, 420px));
         height: save-progress-panel-layout.preferred-height;
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - 16px;
+        y: parent.height - self.height - Theme.statusbar-height - 16px;
         background: Palette.background;
         border-color: Palette.border;
         border-width: 1px;

@@ -107,8 +107,8 @@ pub(crate) struct PreparedScene {
     /// surface the source in window titles, etc.
     pub source_path: PathBuf,
     /// Mesh-health verdict computed on the worker (faces + manifold per leaf).
-    /// Consumed by the load-finished handler to pick the initial workspace
-    /// section: Transform when problem-free, else Prepare.
+    /// Consumed by the load-finished handler: anything but problem-free leads
+    /// the Transform tab with the repair card.
     pub mesh_health: MeshHealth,
 }
 

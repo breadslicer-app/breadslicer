@@ -1119,6 +1119,29 @@ Damian asume que un slicer nunca queda del todo "streamlined"; esto es la base p
   - no hay progreso ni cancelación;
   - no hay tooltips ni resultado (ml ahorrados).
 
+**Primera entrega en Slint (2026-10-26):**
+- **Kit propio** en `ui/kit/`: paleta `Theme` (oscura de referencia, clara siguiendo el esquema), íconos de trazo, `ScButton`, `WorkflowTab`, `ToolButton`, `Card` plegable, `InfoRow`, `StatTile`, `Note`.
+- **Ventana:** barra superior con nombre de archivo y pestañas, riel de herramientas por pestaña, viewport, inspector fijo (`ui/workspace/inspectors.slint`) y barra de estado. Se fueron los paneles flotantes (objetos, slice, vista de capa), la píldora de secciones y la sección Prepare.
+- **Secciones** `Transform | Hollow | Supports | Slice | Export`:
+  - gizmo y herramientas de layout solo en Transform; undo/redo hasta Supports; repair en Transform;
+  - si la malla tiene problemas, Transform abre con la tarjeta de repair adelante, y se apaga sola tras reparar.
+  - El test `pointer_down_on_handle_does_not_drag_outside_transform`, que ya fallaba, pasa ahora: Prepare permitía el gizmo.
+- **Supports:**
+  - al entrar a Hollow o Supports arranca el pre-escaneo;
+  - Generate con un pre-escaneo en curso de la misma escena lo espera en vez de cancelarlo;
+  - el inspector muestra progreso, Cancel y el resumen de la última corrida.
+- **Slice:** impresora, resina, primera capa y botón; el resultado muestra capas y la imagen de la capa en el inspector; el slider queda en el viewport.
+- **Export:** formato, nota, exportar para la impresora, guardar proyecto y exportar malla.
+
+**Pendiente:**
+- campos numéricos de transformación y herramientas por modo (hoy Move/Rotate/Scale del riel arman el foco de teclado);
+- panel de ajustes de soportes;
+- motor de hollow (SC-18);
+- estimaciones y chequeos en Slice;
+- traducir los textos nuevos;
+- limpiar del lado Rust las propiedades de geometría de los paneles flotantes, que quedan sin uso;
+- prueba de Damian.
+
 **Cierre:** Damian aprueba el mockup. Después la app tiene:
 - las pestañas del recorrido, con reglas por etapa;
 - la paleta y los componentes propios (campo numérico con unidad, segmentados, tarjetas, riel, barra de estado);
