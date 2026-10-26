@@ -1,9 +1,9 @@
-# SoulCrafted Slicer (Command Line Interface)
+# Breadslicer (Command Line Interface)
 
 > ⚠️ Work in progress
 
 `sc-slicer-cli` is the command line face of the
-[SoulCrafted Slicer](../../README.md). It slices meshes for resin printers,
+[Breadslicer](../../README.md). It slices meshes for resin printers,
 converts between mesh file formats, diagnoses and repairs meshes, and manages
 the profile library, all without opening a window.
 

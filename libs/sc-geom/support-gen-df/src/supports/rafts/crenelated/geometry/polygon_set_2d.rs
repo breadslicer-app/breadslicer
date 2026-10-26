@@ -158,7 +158,7 @@ pub fn offset_polygon_set(
 /// walk already reaches every descendant, so a node below the top level is
 /// visited once per ancestor plus once itself: an island inside a hole comes
 /// out several times (a later union folds the copies together; the raft caps
-/// draw each copy). See SC-76.
+/// draw each copy). See BS-64.
 pub fn polygons_from_poly_tree(tree: &PolyTree) -> Vec<PolygonWithHoles> {
     let mut result: Vec<PolygonWithHoles> = Vec::new();
     fn visit(

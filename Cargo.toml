@@ -30,7 +30,7 @@ exclude = ["libs/sc-geom"]
 
 [workspace.package]
 edition      = "2024"
-repository = "https://codeberg.org/SoulCrafted/Slicer"
+repository = "https://github.com/breadslicer-app/breadslicer"
 rust-version = "1.98.1"
 
 [profile.dev]

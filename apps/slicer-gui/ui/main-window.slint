@@ -48,7 +48,7 @@ export enum SavePhase { Flattening, Serializing, Compressing, Writing }
 // top-of-screen menu bar. Persisted app-wide.
 export enum MenuLayout { Bar, Compact }
 
-// The workflow tabs (SC-84): Transform hosts the scene-editing tools and
+// The workflow tabs (BS-68): Transform hosts the scene-editing tools and
 // the mesh repair; Hollow and Supports are taken in either order once the
 // pose is set; Slice holds the slicing flow and the layer view; Export
 // writes the printer file. Per-window live state, not persisted; a freshly
@@ -164,7 +164,7 @@ export component MainWindow inherits Window {
     in property <float> selection-scale;
     // A value typed into the Transform inspector: its field code and value.
     callback numeric-edit(int, float);
-    // Gesture aids (SC-85): what the gesture in flight has done so far, and
+    // Gesture aids (BS-69): what the gesture in flight has done so far, and
     // for a modal G/R/S locked to an axis, a line along it in the axis
     // colour (SVG path commands in viewport pixels).
     in property <string> gesture-readout: "";
@@ -206,7 +206,7 @@ export component MainWindow inherits Window {
     changed workspace-section => {
         root.tab-tools-changed();
     }
-    // The Hollow tab (SC-18): the selected model's hollow job, its options
+    // The Hollow tab (BS-8): the selected model's hollow job, its options
     // (HollowRun::on_option) and the drain tool (a click drills a drain).
     in property <bool> hollow-running: false;
     // The Hollow tab is computing (a hollow or its preview): work done ahead
@@ -242,7 +242,7 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
-    // The Slice tab shows the layer image beside the 3D view (SC-88).
+    // The Slice tab shows the layer image beside the 3D view (BS-72).
     in-out property <bool> slice-split: false;
     callback support-preset-picked(int);
     callback support-preset-save(string);
@@ -683,7 +683,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // The workspace (SC-84): the top bar with the workflow tabs, the tool
+    // The workspace (BS-68): the top bar with the workflow tabs, the tool
     // rail, the viewport, the inspector of the active tab and the status
     // bar. Rust stays the source of truth for the active tab: a tab click
     // only requests the change.

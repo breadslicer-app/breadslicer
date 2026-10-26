@@ -1,12 +1,12 @@
 # sc-project-formats
 
 Reads and writes slicer project files: a
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+[`sc-mesh-core`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-core/)
 scene together with the printer and resin it is meant for, optional copies of
 those profile documents, and optionally the slice result.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md).
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
 A project file is an ordinary
 [3MF](https://github.com/3MFConsortium/spec_core) package with extra parts

@@ -1,5 +1,4 @@
 # Corpus hashes identify exact file bytes on every checkout (including STL ASCII/OBJ).
-fixtures/sc-corpus/v1/* -text
 
 # Archived SC-14 evidence is byte-identified; preserve it on every platform.
 docs/sc/evidence/sc14/** -text

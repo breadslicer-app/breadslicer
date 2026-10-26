@@ -1,93 +1,46 @@
-# SoulCrafted Slicer
+# Breadslicer
 
-> Nuestra versión de desarrollo: [índice SC, baseline, inventario y roadmap](SC-INDEX.md).
-> La documentación y atribución del proyecto original se conservan debajo.
+A native resin (MSLA) slicer: Rust, Slint and its own wgpu viewport. Fast, light, and built around a
+workflow that reads left to right: **Transform → Hollow / Supports → Slice → Export**.
 
-## Introduction
+> Early development. Not released yet. [breadslicer.app](https://breadslicer.app)
 
-The SoulCrafted Slicer is a community-oriented open source slicer for resin 3d
-printers, backed by
-[crowdfunding](https://www.myminifactory.com/frontier/soulcrafted-slicer-5006)
-and brought to life by [MyMiniFactory](https://www.myminifactory.com/), with
-the collaboration of [CTRLback](https://ctrlback.coop).
+## What it does today
 
-## The Software
+- **Transform:** Blender-style G/R/S gestures with live distance and angle readouts and axis guides; a
+  numeric inspector for position, lift, rotation and size.
+- **Supports:** automatic supports (trunks, branches, leaves, braces, rafts) with presets and a full
+  options panel, computed ahead in the background while you work. Hand editing with live previews:
+  add (A) and remove (X), one undo per click.
+- **Hollow:** voxel hollowing with a live cavity preview, a recommended wall and fine wall controls,
+  and drain holes placed before or after hollowing. Sealed cavities slice correctly.
+- **Slice:** print time, resin and weight estimates; a zoomable layer view down to the printer's pixels.
 
-Our applications:
-- [SoulCrafted Slicer (GUI version)](./apps/slicer-gui/README.md) - The main
-  version of our slicer (with graphical user interface).
-- [SoulCrafted Slicer (CLI version)](./apps/slicer-cli/README.md) - The command
-  line version of our slicer.
+## Build
 
-The software libraries behind our applications:
-- [`sc-3mf`](./libs/3mf/README.md) - 3MF vocabulary: the OPC package
-  container and a typed 3D model document.
-- [`sc-app-paths`](./libs/app-paths/) - Application identity and on-disk path
-  resolution.
-- [`sc-mesh-core`](./libs/mesh-core/README.md) - Core 3D mesh types, plus mesh
-  validation and repair.
-- [`sc-mesh-formats`](./libs/mesh-formats/README.md) - Reading and writing 3D
-  mesh files (STL, OBJ, 3MF).
-- [`sc-mesh-spatial`](./libs/mesh-spatial/README.md) - Spatial-query
-  acceleration over the core mesh types.
-- [`sc-print-glue`](./libs/print-glue/) - Application services joining crates
-  that do not know each other, such as the print profiles and the slicing
-  engine, or the scene and the build volume.
-- [`sc-print-primitives`](./libs/print-primitives/README.md) - Shared
-  primitives for the resin pipeline: build volume, pixel resolution, validated
-  millimetre lengths.
-- [`sc-print-profiles`](./libs/print-profiles/README.md) - Printer and material
-  profile types, loading, and resolution.
-- [`sc-project-formats`](./libs/project-formats/README.md) - Reading and
-  writing slicer project files.
-- [`sc-scene`](./libs/scene/README.md) - Hierarchical scene graph over the
-  core mesh types: groups, leaves, shared resources, traversal and baking.
-- [`sc-scene-edit`](./libs/scene-edit/README.md) - Typed mutation vocabulary
-  for scene graphs: invertible edits and clipboard-style fragments.
-- [`sc-sl1cer`](./libs/sl1cer/README.md) - The slicing engine: validated meshes
-  in, per-layer geometry out.
-- [`sc-sla-formats`](./libs/sla-formats/README.md) - Writers for SLA-printer
-  file formats and debug per-layer outputs.
+Requires a recent stable Rust toolchain (see `rust-version` in `Cargo.toml`).
 
-## Community
+```sh
+cargo build --release -p sc-slicer-gui   # the app
+cargo build --release -p sc-slicer-cli   # the command-line slicer
+cargo test  --release -p sc-slicer-gui --lib
+```
 
-The SoulCrafted initiative seeks to protect and empower creators by introducing
-the concept of a digital label: a declaration that content originates from
-human creativity and spirit, not machines.
+## Project
 
-The vision is to create a positive system that allows creators to differentiate
-their work, resonate with audiences, and potentially capture higher value to
-support their livelihood with sustainability.
+- **Plan and tasks:** [GitHub issues](https://github.com/breadslicer-app/breadslicer/issues), with
+  the pinned "Orden de trabajo" issue holding the current order.
+- **How we work:** [`docs/WORKFLOW.md`](docs/WORKFLOW.md): ideas → issues → micro-PRs.
+- **Direction and decisions:** [`docs/ROADMAP.md`](docs/ROADMAP.md).
+- **Research:** [`docs/research/`](docs/research/).
 
-Feel free to visit the online [SoulCrafted community](https://www.soulcrafted.it/)
-to learn more about it.
+## License
 
-You can also participate in the "real-time" discussions on our
-[Discord server](https://discord.gg/Z68pDczNv6).
+[AGPL-3.0](LICENSE.md).
 
-### Open Technical Discussions
+---
 
-We are having some
-[open conversations](https://codeberg.org/SoulCrafted/Slicer/issues?q=&type=all&state=open&labels=1147840)
-about some important decisions for the future of the project. Feel free to chime
-in.
-
-## Live Roadmap
-
-You can have a high level vision of what's being done and what we plan for the
-future by visiting the
-["live Roadmap"](https://codeberg.org/SoulCrafted/Slicer/projects/37716).
-
-## Daily Work - Kanban
-
-You can keep track of the tasks that are being worked on at a more fine-grained
-level by checking out our
-[Kanban](https://codeberg.org/SoulCrafted/Slicer/projects/37750).
-
-## Development
-
-If you want to contribute to the Slicer development, you can do it in many ways:
-with code, documentation, translations, reporting problems, or even helping
-other developers to reproduce elusive bugs.
-
-We recommend reading the [Contributing Guidelines](CONTRIBUTING.md) to learn more.
+<sub>**Acknowledgements.** Breadslicer is based on [SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer)
+(MyMiniFactory, CTRLback; AGPL-3.0). Parts of its support and hollowing engines derive from
+[DragonFruit](https://github.com/Open-Resin-Alliance/DragonFruit) (Open Resin Alliance; MIT).
+Thanks to both projects. Their notices are kept in the source as their licenses require.</sub>

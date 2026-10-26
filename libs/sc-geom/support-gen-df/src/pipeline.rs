@@ -1,4 +1,4 @@
-//! SoulCrafted's entry point over the port (SC-78; not a DragonFruit file):
+//! SoulCrafted's entry point over the port (not a DragonFruit file):
 //! one call from the scene's models to their supports and rafts, chaining the
 //! stages DragonFruit spreads over its panels and exporter.
 //!
