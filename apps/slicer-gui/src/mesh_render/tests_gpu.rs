@@ -2018,7 +2018,7 @@ fn a_preview_overlay_is_drawn_in_its_tint() {
     };
     let before = frame(&mut renderer);
     // A big quad through the orbit centre, facing every way (no culling).
-    let quad: Arc<[OverlayMesh]> = vec![OverlayMesh {
+    let quad: Overlay = vec![Arc::new(OverlayMesh {
         positions: vec![
             [-30.0, -30.0, 5.0],
             [30.0, -30.0, 5.0],
@@ -2027,7 +2027,7 @@ fn a_preview_overlay_is_drawn_in_its_tint() {
         ],
         indices: vec![0, 1, 2, 0, 2, 3],
         tint: OverlayTint::Invalid,
-    }]
+    })]
     .into();
     renderer.set_overlay(Some(&quad));
     let with = frame(&mut renderer);

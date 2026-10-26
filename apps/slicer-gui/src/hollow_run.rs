@@ -22,7 +22,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sc_geom::df_hollow::hollow_df::{GridRequest, HollowFill, HollowSettings, InfillMode};
 use sc_geom::df_hollow::{
@@ -38,7 +38,7 @@ use slint::ComponentHandle;
 
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
-use crate::mesh_render::{OverlayMesh, OverlayTint};
+use crate::mesh_render::{Overlay, OverlayMesh, OverlayTint};
 use crate::scene_document::{
     SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
@@ -47,9 +47,7 @@ use crate::{MainWindow, WorkspaceSection};
 
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How often the previews look at the tab, the selection and the settings.
-const PREVIEW_TICK: Duration = Duration::from_millis(100);
-/// How long the settings rest before the cavity is computed again.
-const PREVIEW_SETTLE: Duration = Duration::from_millis(150);
+const PREVIEW_TICK: Duration = Duration::from_millis(40);
 /// Sides of a drawn drain.
 const DRAIN_SIDES: u32 = 24;
 
@@ -114,6 +112,20 @@ struct LocalDrain {
 }
 
 impl LocalDrain {
+    /// The drain a click drills: at the world `point` hit, into the model
+    /// against the surface `normal` there, in the leaf's local frame.
+    fn at(point: [f32; 3], normal: [f32; 3], radius_mm: f32, world: &Transform3D) -> Option<Self> {
+        let inverse = world.inverse().ok()?;
+        let local = |p: [f32; 3]| inverse.apply_to_vertex(Vertex::new(p)).coords();
+        let center = local(point);
+        let inside = local(std::array::from_fn(|i| point[i] - normal[i]));
+        Some(LocalDrain {
+            center,
+            direction: normalized(std::array::from_fn(|i| inside[i] - center[i])),
+            radius_mm,
+        })
+    }
+
     fn to_world(self, world: &Transform3D) -> WorldDrain {
         let at = |p: [f32; 3]| world.apply_to_vertex(Vertex::new(p)).coords();
         let center = at(self.center);
@@ -159,11 +171,13 @@ pub(crate) struct HollowRun {
     _scene_events: SceneSubscription,
     ctrl: Rc<ViewportController>,
     preview: RefCell<CavityPreview>,
-    /// When an option last changed: the cavity waits for them to rest.
-    options_changed: Cell<Instant>,
-    /// Where the cursor rests on the model with the drain tool armed.
-    hover: Cell<Option<[f32; 3]>>,
+    /// Where the cursor rests on the model with the drain tool armed, and
+    /// the surface normal there (world).
+    hover: Cell<Option<([f32; 3], [f32; 3])>>,
     preview_timer: slint::Timer,
+    /// Drains placed on a model not hollowed yet, by its mesh: drilled when
+    /// it is hollowed.
+    pending: RefCell<Vec<(usize, Vec<LocalDrain>)>>,
 }
 
 /// What the cavity preview was computed for.
@@ -176,22 +190,31 @@ struct PreviewKey {
 }
 
 /// The cavity preview: the job computing one, the last one computed (in the
-/// leaf's local frame) and the overlay last shown from it.
+/// leaf's local frame), the overlay pieces drawn from them (kept while their
+/// inputs hold, so the cursor moving uploads only the drain under it) and the
+/// overlay last shown.
 #[derive(Default)]
 struct CavityPreview {
     job: Option<(JobHandle<HollowOutcome>, PreviewKey)>,
     ready: Option<(PreviewKey, Arc<IndexedMesh>)>,
+    cavity_piece: Option<(CavityPieceKey, Arc<OverlayMesh>)>,
+    drains_piece: Option<(DrainsPieceKey, Arc<OverlayMesh>)>,
     /// What the shown overlay was drawn from, and the overlay.
-    shown: Option<(ShownKey, Arc<[OverlayMesh]>)>,
+    shown: Option<(ShownKey, Overlay)>,
 }
+
+/// A drawn cavity: which cavity mesh, at which pose.
+type CavityPieceKey = (usize, [[f64; 4]; 4]);
+/// Drawn drains: which, at which pose, how deep (bits of the depth).
+type DrainsPieceKey = (Vec<LocalDrain>, [[f64; 4]; 4], u32);
 
 /// Everything the overlay is drawn from.
 #[derive(Debug, Clone, PartialEq)]
 struct ShownKey {
     cavity: Option<usize>,
+    drains: Option<usize>,
+    hover: Option<([f32; 3], [f32; 3])>,
     world: [[f64; 4]; 4],
-    drains: Vec<LocalDrain>,
-    hover: Option<[f32; 3]>,
     radius: f32,
     wall: f32,
 }
@@ -237,9 +260,9 @@ impl HollowRun {
                 _scene_events: scene_events,
                 ctrl,
                 preview: RefCell::new(CavityPreview::default()),
-                options_changed: Cell::new(Instant::now()),
                 hover: Cell::new(None),
                 preview_timer: slint::Timer::default(),
+                pending: RefCell::new(Vec::new()),
             }
         });
         run.push_options(ui);
@@ -254,9 +277,9 @@ impl HollowRun {
         }
         {
             let weak = Rc::downgrade(&run);
-            ui.on_hollow_drain_hover(move |x, y, z, hit| {
+            ui.on_hollow_drain_hover(move |x, y, z, nx, ny, nz, hit| {
                 if let Some(run) = weak.upgrade() {
-                    run.hover.set(hit.then_some([x, y, z]));
+                    run.hover.set(hit.then_some(([x, y, z], [nx, ny, nz])));
                     run.tick_preview();
                 }
             });
@@ -287,7 +310,9 @@ impl HollowRun {
         }
         {
             let run = run.clone();
-            ui.on_hollow_drain_clicked(move |x, y, z| run.on_drain_click([x, y, z]));
+            ui.on_hollow_drain_clicked(move |x, y, z, nx, ny, nz| {
+                run.on_drain_click([x, y, z], [nx, ny, nz]);
+            });
         }
         run
     }
@@ -325,20 +350,42 @@ impl HollowRun {
             .map(|h| (h.original.clone(), h.drains.clone()))
     }
 
+    /// What a model is hollowed from and its drains: a hollow's original and
+    /// drilled drains, or a solid model and the drains placed on it so far.
+    fn source_for(&self, mesh: &Arc<IndexedMesh>) -> (Arc<IndexedMesh>, Vec<LocalDrain>) {
+        self.entry_for(mesh).unwrap_or_else(|| {
+            let ptr = Arc::as_ptr(mesh) as usize;
+            let drains = self
+                .pending
+                .borrow()
+                .iter()
+                .find(|(m, _)| *m == ptr)
+                .map(|(_, d)| d.clone())
+                .unwrap_or_default();
+            (mesh.clone(), drains)
+        })
+    }
+
+    fn set_pending(&self, mesh: &Arc<IndexedMesh>, drains: Vec<LocalDrain>) {
+        let ptr = Arc::as_ptr(mesh) as usize;
+        let mut pending = self.pending.borrow_mut();
+        pending.retain(|(m, _)| *m != ptr);
+        if !drains.is_empty() {
+            pending.push((ptr, drains));
+        }
+    }
+
     fn refresh_ui(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let (state, drains) = match self.selected() {
-            Some((_, mesh, _)) => (
-                self.model_state(&mesh),
-                self.entry_for(&mesh).map_or(0, |(_, d)| d.len()),
-            ),
-            None => (0, 0),
+            Some((_, mesh, _)) => (self.model_state(&mesh), self.source_for(&mesh).1.len()),
+            None => (2, 0),
         };
         ui.set_hollow_model_state(state);
         ui.set_hollow_drain_count(drains as i32);
-        if state != 1 {
+        if state == 2 {
             ui.set_hollow_drain_tool(false);
         }
     }
@@ -371,10 +418,10 @@ impl HollowRun {
                 _ => return,
             }
         }
-        self.options_changed.set(Instant::now());
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
         }
+        self.tick_preview();
     }
 
     fn on_apply(self: &Rc<Self>) {
@@ -384,10 +431,9 @@ impl HollowRun {
         if self.model_state(&mesh) == 2 {
             return;
         }
-        // Hollowing a hollow again starts from its original, keeping drains.
-        let (original, drains) = self
-            .entry_for(&mesh)
-            .unwrap_or_else(|| (mesh.clone(), Vec::new()));
+        // Hollowing a hollow again starts from its original, keeping drains;
+        // a solid model takes the drains placed on it.
+        let (original, drains) = self.source_for(&mesh);
         self.launch(leaf, mesh, original, drains, &world);
     }
 
@@ -412,6 +458,8 @@ impl HollowRun {
             return;
         };
         let Some((original, drains)) = self.entry_for(&mesh) else {
+            self.set_pending(&mesh, Vec::new());
+            self.refresh_ui();
             return;
         };
         if !drains.is_empty() {
@@ -419,39 +467,34 @@ impl HollowRun {
         }
     }
 
-    /// A click with the drain tool at a world point on the selected model
-    /// (the viewport selects the model it hit first).
-    fn on_drain_click(self: &Rc<Self>, point: [f32; 3]) {
+    /// A click with the drain tool at a world point and surface normal on
+    /// the selected model (the viewport selects the model it hit first). A
+    /// hollow is hollowed again with the new drain; a solid model keeps it
+    /// for when it is hollowed.
+    fn on_drain_click(self: &Rc<Self>, point: [f32; 3], normal: [f32; 3]) {
         if self.job.borrow().is_some() {
             return;
         }
         let Some((leaf, mesh, world)) = self.selected() else {
             return;
         };
-        let Some((original, mut drains)) = self.entry_for(&mesh) else {
-            self.dialogs.show_info(|| InfoTexts {
-                heading: ctr!("HollowRun", "Hollow the model first"),
-                message: ctr!(
-                    "HollowRun",
-                    "Drains are drilled into a hollow model; hollow this one, then click where the drain goes."
-                ),
-                details: Default::default(),
-            });
+        if self.model_state(&mesh) == 2 {
+            return;
+        }
+        let Some(drain) =
+            LocalDrain::at(point, normal, self.options.borrow().drain_radius_mm, &world)
+        else {
             return;
         };
-        let Ok(inverse) = world.inverse() else {
-            return;
-        };
-        let local = inverse.apply_to_vertex(Vertex::new(point)).coords();
-        let Some((center, normal)) = closest_surface_point(&original, local) else {
-            return;
-        };
-        drains.push(LocalDrain {
-            center,
-            direction: normal.map(|c| -c),
-            radius_mm: self.options.borrow().drain_radius_mm,
-        });
-        self.launch(leaf, mesh, original, drains, &world);
+        let (original, mut drains) = self.source_for(&mesh);
+        drains.push(drain);
+        if self.entry_for(&mesh).is_some() {
+            self.launch(leaf, mesh, original, drains, &world);
+        } else {
+            self.set_pending(&mesh, drains);
+            self.refresh_ui();
+            self.tick_preview();
+        }
     }
 
     fn launch(
@@ -613,6 +656,11 @@ impl HollowRun {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(summary.into());
         }
+        // The drains placed before are drilled now: they live on the hollow.
+        let original_ptr = Arc::as_ptr(&job.original) as usize;
+        self.pending
+            .borrow_mut()
+            .retain(|(m, _)| *m != original_ptr);
         self.hollowed.borrow_mut().push(Hollowed {
             hollow,
             original: job.original,
@@ -673,12 +721,19 @@ impl HollowRun {
     }
 
     /// Brings the previews in line with the tab: the selected model's cavity
-    /// for the current settings (computing it when they have rested), its
-    /// drains, and the drain under the cursor.
+    /// for the current settings (computing it when they have rested; the last
+    /// one stays up meanwhile), its drains, and the drain under the cursor.
     fn tick_preview(&self) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        ui.set_hollow_busy(
+            self.job.borrow().is_some()
+                || self
+                    .preview
+                    .try_borrow()
+                    .is_ok_and(|preview| preview.job.is_some()),
+        );
         if ui.get_workspace_section() != WorkspaceSection::Hollow || ui.get_loading() {
             self.hide_preview();
             return;
@@ -691,97 +746,106 @@ impl HollowRun {
             self.hide_preview();
             return;
         }
-        let (original, drains) = self
-            .entry_for(&mesh)
-            .unwrap_or_else(|| (mesh.clone(), Vec::new()));
+        let (original, drains) = self.source_for(&mesh);
         let options = *self.options.borrow();
         let key = PreviewKey {
             leaf,
             mesh: Arc::as_ptr(&original) as usize,
-            options,
+            // The drain radius does not change the cavity.
+            options: HollowOptions {
+                drain_radius_mm: 0.0,
+                ..options
+            },
         };
         let show_cavity = ui.get_hollow_show_cavity();
         if show_cavity {
             self.advance_cavity_job(key, &original, &world);
         }
+        let matrix = matrix_of(&world);
+        let depth = options.wall_mm + 1.0;
+        let hover = self.hover.get().filter(|_| ui.get_hollow_drain_tool());
 
-        let cavity = {
-            let preview = self.preview.borrow();
-            preview
-                .ready
-                .as_ref()
-                .filter(|(k, _)| show_cavity && *k == key)
-                .map(|(_, cavity)| cavity.clone())
-        };
-        let hover = self
-            .hover
-            .get()
-            .filter(|_| ui.get_hollow_drain_tool() && self.model_state(&mesh) == 1);
+        let mut preview = self.preview.borrow_mut();
+        // The cavity of this model, current or the last one while the next
+        // is computed.
+        let cavity = preview
+            .ready
+            .as_ref()
+            .filter(|(k, _)| show_cavity && k.leaf == key.leaf && k.mesh == key.mesh)
+            .map(|(_, cavity)| cavity.clone());
+        let cavity_piece = cavity.map(|cavity| {
+            let id = (Arc::as_ptr(&cavity) as usize, matrix);
+            match &preview.cavity_piece {
+                Some((k, piece)) if *k == id => piece.clone(),
+                _ => {
+                    let mut piece = crate::df_support_run::overlay_of(&cavity, OverlayTint::Cavity);
+                    for p in &mut piece.positions {
+                        *p = world.apply_to_vertex(Vertex::new(*p)).coords();
+                    }
+                    let piece = Arc::new(piece);
+                    preview.cavity_piece = Some((id, piece.clone()));
+                    piece
+                }
+            }
+        });
+        let drains_piece = (!drains.is_empty()).then(|| {
+            let id = (drains.clone(), matrix, depth.to_bits());
+            match &preview.drains_piece {
+                Some((k, piece)) if *k == id => piece.clone(),
+                _ => {
+                    let mut mesh = (Vec::new(), Vec::new());
+                    for drain in &drains {
+                        let w = drain.to_world(&world);
+                        cylinder(w.center, w.direction, w.radius_mm, depth, &mut mesh);
+                    }
+                    let piece = Arc::new(OverlayMesh {
+                        positions: mesh.0,
+                        indices: mesh.1,
+                        tint: OverlayTint::Drain,
+                    });
+                    preview.drains_piece = Some((id, piece.clone()));
+                    piece
+                }
+            }
+        });
         let shown_key = ShownKey {
-            cavity: cavity.as_ref().map(|c| Arc::as_ptr(c) as usize),
-            world: matrix_of(&world),
-            drains: drains.clone(),
+            cavity: cavity_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
+            drains: drains_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
             hover,
+            world: matrix,
             radius: options.drain_radius_mm,
             wall: options.wall_mm,
         };
+        if let Some((k, shown)) = &preview.shown
+            && *k == shown_key
+            && self.ctrl.preview_overlay_is(shown)
         {
-            let preview = self.preview.borrow();
-            if let Some((k, shown)) = &preview.shown
-                && *k == shown_key
-                && self.ctrl.preview_overlay_is(shown)
-            {
-                return;
-            }
+            return;
         }
-        let mut pieces = Vec::new();
-        if let Some(cavity) = &cavity {
-            let mut piece = crate::df_support_run::overlay_of(cavity, OverlayTint::Cavity);
-            for p in &mut piece.positions {
-                *p = world.apply_to_vertex(Vertex::new(*p)).coords();
-            }
-            pieces.push(piece);
+        let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
+        pieces.extend(cavity_piece);
+        pieces.extend(drains_piece);
+        if let Some((point, normal)) = hover {
+            // Straight from the surface under the cursor, where the click
+            // would drill: no search, the viewport's hit says it.
+            let direction = normal.map(|c| -c);
+            let mut next = (Vec::new(), Vec::new());
+            cylinder(point, direction, options.drain_radius_mm, depth, &mut next);
+            pieces.push(Arc::new(OverlayMesh {
+                positions: next.0,
+                indices: next.1,
+                tint: OverlayTint::Valid,
+            }));
         }
-        let depth = options.wall_mm + 1.0;
-        let mut existing = (Vec::new(), Vec::new());
-        for drain in &drains {
-            let w = drain.to_world(&world);
-            cylinder(w.center, w.direction, w.radius_mm, depth, &mut existing);
-        }
-        if !existing.1.is_empty() {
-            pieces.push(OverlayMesh {
-                positions: existing.0,
-                indices: existing.1,
-                tint: OverlayTint::Drain,
-            });
-        }
-        if let Some(point) = hover
-            && let Ok(inverse) = world.inverse()
-        {
-            let local = inverse.apply_to_vertex(Vertex::new(point)).coords();
-            if let Some((center, normal)) = closest_surface_point(&original, local) {
-                let w = LocalDrain {
-                    center,
-                    direction: normal.map(|c| -c),
-                    radius_mm: options.drain_radius_mm,
-                }
-                .to_world(&world);
-                let mut next = (Vec::new(), Vec::new());
-                cylinder(w.center, w.direction, w.radius_mm, depth, &mut next);
-                pieces.push(OverlayMesh {
-                    positions: next.0,
-                    indices: next.1,
-                    tint: OverlayTint::Valid,
-                });
-            }
-        }
-        let overlay: Arc<[OverlayMesh]> = pieces.into();
+        let overlay: Overlay = pieces.into();
         self.ctrl.set_preview_overlay(Some(overlay.clone()));
-        self.preview.borrow_mut().shown = Some((shown_key, overlay));
+        preview.shown = Some((shown_key, overlay));
     }
 
-    /// Polls the cavity job, and starts one for `key` once the settings have
-    /// rested and nothing else is hollowing.
+    /// Polls the cavity job, and starts one for `key` when none runs. A job
+    /// for older settings of the same model is let finish (its cavity shows
+    /// meanwhile), so dragging the wall updates the preview continuously at
+    /// the engine's pace; one for another model is cancelled.
     fn advance_cavity_job(
         &self,
         key: PreviewKey,
@@ -790,11 +854,12 @@ impl HollowRun {
     ) {
         let mut preview = self.preview.borrow_mut();
         if let Some((handle, job_key)) = &preview.job {
-            if *job_key != key {
+            let same_model = job_key.leaf == key.leaf && job_key.mesh == key.mesh;
+            if !same_model {
                 handle.cancel();
             }
             match handle.try_poll() {
-                None if *job_key == key => return,
+                None if same_model => return,
                 None => {}
                 Some(Ok(outcome)) => {
                     let job_key = *job_key;
@@ -812,10 +877,7 @@ impl HollowRun {
             preview.job = None;
         }
         let ready = preview.ready.as_ref().is_some_and(|(k, _)| *k == key);
-        if ready
-            || self.job.borrow().is_some()
-            || self.options_changed.get().elapsed() < PREVIEW_SETTLE
-        {
+        if ready || self.job.borrow().is_some() {
             return;
         }
         let request = HollowRequest {
@@ -913,30 +975,6 @@ fn normalized(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// The point of `mesh` closest to `p` and the outward normal of its face.
-fn closest_surface_point(mesh: &IndexedMesh, p: [f32; 3]) -> Option<([f32; 3], [f32; 3])> {
-    let vs = &mesh.vertices;
-    let mut best: Option<(f32, [f32; 3], [f32; 3])> = None;
-    for f in &mesh.faces {
-        let [a, b, c] = f.vertices.map(|i| vs[i.get() as usize].coords());
-        let q = closest_on_triangle(p, a, b, c);
-        let d = sub(q, p);
-        let dist = dot(d, d);
-        if best.is_none_or(|(bd, _, _)| dist < bd) {
-            best = Some((dist, q, cross(sub(b, a), sub(c, a))));
-        }
-    }
-    best.map(|(_, q, n)| (q, normalized(n)))
-}
-
-fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -945,66 +983,19 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Closest point on triangle `abc` to `p` (Ericson, Real-Time Collision
-/// Detection, 5.1.5).
-fn closest_on_triangle(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
-    let at = |s: f32, u: [f32; 3], t: f32, w: [f32; 3]| {
-        std::array::from_fn(|i| a[i] + s * u[i] + t * w[i])
-    };
-    let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
-    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = sub(p, b);
-    let (d3, d4) = (dot(ab, bp), dot(ac, bp));
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let v = d1 / (d1 - d3);
-        return at(v, ab, 0.0, ac);
-    }
-    let cp = sub(p, c);
-    let (d5, d6) = (dot(ab, cp), dot(ac, cp));
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let w = d2 / (d2 - d6);
-        return at(0.0, ab, w, ac);
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return std::array::from_fn(|i| b[i] + w * (c[i] - b[i]));
-    }
-    let denom = 1.0 / (va + vb + vc);
-    at(vb * denom, ab, vc * denom, ac)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_closest_point_is_on_the_face_or_its_edges() {
-        let (a, b, c) = ([0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]);
-        assert_eq!(
-            closest_on_triangle([0.5, 0.5, 3.0], a, b, c),
-            [0.5, 0.5, 0.0]
+    fn a_drain_from_a_hit_points_into_the_model() {
+        // Hit on the top face (normal +Z) of a model moved by (10, 0, 0).
+        let world = Transform3D::Affine(
+            sc_mesh_core::transform::AffineTransform3D::from_translation([10.0, 0.0, 0.0]),
         );
-        assert_eq!(closest_on_triangle([-1.0, -1.0, 0.0], a, b, c), a);
-        assert_eq!(
-            closest_on_triangle([1.0, -2.0, 0.0], a, b, c),
-            [1.0, 0.0, 0.0]
-        );
-        assert_eq!(
-            closest_on_triangle([3.0, 3.0, 0.0], a, b, c),
-            [1.0, 1.0, 0.0]
-        );
+        let drain = LocalDrain::at([10.0, 0.0, 5.0], [0.0, 0.0, 1.0], 1.5, &world).unwrap();
+        assert_eq!(drain.center, [0.0, 0.0, 5.0]);
+        assert_eq!(drain.direction, [0.0, 0.0, -1.0]);
     }
 
     #[test]

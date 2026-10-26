@@ -32,6 +32,10 @@ pub(crate) enum OverlayTint {
     Drain = 4,
 }
 
+/// The overlay as a whole: its pieces, each shared so a piece that did not
+/// change (a cavity while the cursor moves) is not uploaded again.
+pub(crate) type Overlay = Arc<[Arc<OverlayMesh>]>;
+
 /// One overlay piece: a triangle list in world millimetres.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OverlayMesh {
@@ -41,6 +45,7 @@ pub(crate) struct OverlayMesh {
 }
 
 struct UploadedPiece {
+    source: Arc<OverlayMesh>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -51,7 +56,7 @@ struct UploadedPiece {
 /// The installed overlay and the pieces it was built from.
 #[derive(Default)]
 pub(super) struct OverlaySlot {
-    source: Option<Arc<[OverlayMesh]>>,
+    source: Option<Overlay>,
     pieces: Vec<UploadedPiece>,
 }
 
@@ -77,10 +82,11 @@ impl OverlaySlot {
 }
 
 impl Renderer {
-    /// Installs the overlay pieces (`None` clears them). Re-uploads only when
-    /// `pieces` is a different `Arc` from the one installed. A piece the
+    /// Installs the overlay pieces (`None` clears them). Nothing happens when
+    /// `pieces` is the `Arc` installed; otherwise a piece already uploaded
+    /// (the same `Arc`) is kept and only new ones are uploaded. A piece the
     /// device refuses is left out.
-    pub(crate) fn set_overlay(&mut self, pieces: Option<&Arc<[OverlayMesh]>>) {
+    pub(crate) fn set_overlay(&mut self, pieces: Option<&Overlay>) {
         let same = match (&self.overlay.source, pieces) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
@@ -90,13 +96,17 @@ impl Renderer {
             return;
         }
         self.overlay.source = pieces.cloned();
-        self.overlay.pieces.clear();
+        let mut kept = std::mem::take(&mut self.overlay.pieces);
         let Some(pieces) = pieces else {
             return;
         };
         let device = &self.core.device;
         let queue = &self.core.queue;
         for piece in pieces.iter() {
+            if let Some(i) = kept.iter().position(|u| Arc::ptr_eq(&u.source, piece)) {
+                self.overlay.pieces.push(kept.swap_remove(i));
+                continue;
+            }
             if piece.indices.is_empty() || piece.positions.is_empty() {
                 continue;
             }
@@ -143,6 +153,7 @@ impl Renderer {
                 }],
             });
             self.overlay.pieces.push(UploadedPiece {
+                source: piece.clone(),
                 vertices,
                 indices,
                 index_count: piece.indices.len() as u32,

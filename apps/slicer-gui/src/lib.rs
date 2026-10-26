@@ -105,6 +105,35 @@ use crate::app_state::AppState;
 use crate::i18n::ctr;
 use crate::mesh_loader::is_supported_mesh_extension;
 
+/// A release build has no console: a panic would close the window without a
+/// trace. Every panic is appended to `logs/crash.log` in the app's data
+/// folder (message, place, backtrace) before the default handling runs.
+fn install_crash_log() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        if let Some(dir) = sc_app_paths::project_dirs().map(|d| d.data_local_dir().join("logs"))
+            && std::fs::create_dir_all(&dir).is_ok()
+            && let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("crash.log"))
+        {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let _ = writeln!(
+                file,
+                "=== panic at unix {stamp} (v{}): {info}
+{}",
+                env!("CARGO_PKG_VERSION"),
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+        previous(info);
+    }));
+}
+
 /// Starts the GUI for the binary wrapper: builds the shared wgpu stack, wires
 /// it into Slint, spawns 1 window per accepted CLI path (or 1 empty window if
 /// none were supplied) and runs the event loop.
@@ -113,6 +142,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // environment, which is only safe before wgpu and the drivers below it
     // start threads.
     let startup_token = startup_token::take_from_env();
+    install_crash_log();
 
     // Build the wgpu Instance/Adapter/Device/Queue once up front and hand them
     // to Slint via `WGPUConfiguration::Manual` so every top-level Window shares

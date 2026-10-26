@@ -444,7 +444,7 @@ export component HollowInspector inherits VerticalLayout {
             text: root.drain-tool-on ? @tr("Inspector" => "Placing drains (D)") : @tr("Inspector" => "Place drains (D)");
             icon: Icons.hole;
             kind: root.drain-tool-on ? ButtonKind.primary : ButtonKind.normal;
-            enabled: root.model-state == 1 && !root.running;
+            enabled: root.selection-valid && root.model-state != 2 && !root.running;
             clicked => {
                 root.drain-tool-toggled();
             }
@@ -467,8 +467,14 @@ export component HollowInspector inherits VerticalLayout {
         if root.model-state == 1 && root.drain-count == 0: Note {
             text: @tr("Inspector" => "Sealed cavity: resin stays trapped inside and the walls act as a suction cup. Add at least one drain near the plate.");
         }
-        if root.model-state != 1: Note {
-            text: @tr("Inspector" => "Hollow the model first; then click its surface to drill a drain. Each drain is one undo.");
+        if root.model-state == 0 && root.drain-count == 0: Note {
+            text: @tr("Inspector" => "Place drains now or after hollowing: click the model's surface with the drain tool. They are drilled when the model is hollowed.");
+        }
+        if root.model-state == 0 && root.drain-count > 0: Note {
+            text: @tr("Inspector" => "These drains are drilled when you hollow the model.");
+        }
+        if root.model-state == 1: Note {
+            text: @tr("Inspector" => "Each new drain hollows the model again with it: one undo per drain.");
         }
     }
 }

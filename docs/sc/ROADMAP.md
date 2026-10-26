@@ -274,6 +274,11 @@ Picking de superficie/normal, preview, colocar/seleccionar/mover/borrar, edició
   - **Preview en hover:** el soporte se dibuja en verde si se puede colocar, o como tronco recto en rojo si no. Con Quitar se ve en rojo lo que se va. Es un overlay translúcido nuevo del renderer (`mesh_render/overlay.rs`), y en los fixtures tarda de 1 a 8 ms.
   - **Borrado completo:** el borrado sigue los knots (ramas colgadas de segmentos) y no deja knots ni raíces huérfanas.
   - **Pick por herramienta:** Agregar mira a través de los soportes y Quitar solo ve soportes.
+- **Tercera entrega (2026-10-26, tras la segunda prueba):**
+  - **Cierre al hacer clic:** la app se cerraba en cada clic con soportes generados. `on_tool_click` tomaba `sessions.borrow_mut()` y volvía a pedir `borrow()` adentro (`RefCell already mutably borrowed`). Lo arreglé y lo cubre un test headless del clic real, que falla con el código anterior.
+  - **Protección:** un panic del motor durante una edición o un preview se convierte en un mensaje, y cualquier panic queda en `logs/crash.log`.
+  - **Preview de soportes en segundo plano:** un worker calcula siempre el último punto del hover y descarta los viejos, así la UI no espera. En 617 (1,9 M de triángulos) el preview tarda unos 20 ms, con picos del router de unos 800 ms, que ya no congelan.
+  - **Clic sobre el punto del preview:** reusa la colocación ya calculada.
 - **Pendiente:**
   - mover punta y braces a mano;
   - persistir las entidades al guardar (hoy solo sobrevive la malla);
@@ -366,6 +371,11 @@ Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado e
   - **En vivo:** la cavidad se recalcula al cambiar pared o vóxel (hay un slider de pared con debounce de 150 ms), y al mover el modelo solo se re-posa.
   - **Drenajes:** los existentes se ven en cian, y el que perforaría el clic en verde.
   - **Opcional:** se apaga con "Show the cavity".
+- **Tercera entrega (2026-10-26):**
+  - **Drenajes antes de ahuecar:** se pueden poner sobre un modelo sólido; quedan pendientes y se perforan al ahuecar. La UI lo explica.
+  - **Normal del drenaje:** sale del triángulo que toca el pick, sin búsqueda sobre la malla.
+  - **Overlay por pieza:** el overlay sube cada pieza una sola vez, así que mover el cursor ya no vuelve a subir la cavidad.
+  - **Cavidad más ágil:** un cálculo de cavidad en curso termina y se muestra, y el siguiente arranca enseguida. Al arrastrar la pared se actualiza a la velocidad del motor.
 - **Falta:**
   - áreas sólidas (SC-45);
   - persistir original y drenajes al guardar (SC-43): hoy sobrevive la malla hueca;
@@ -1200,6 +1210,12 @@ Idea de Damian (2026-10-25): una pestaña Supports propia (sin herramientas de t
 - **Medición (617 a 90 mm):** el pre-escaneo tarda 5,1 s en segundo plano; Generate Supports pasa de ~20–22 s a 15,2 s, con el mismo digest.
 
 **Prueba de Damian (2026-10-26):** el pre-escaneo no se usó. Apretó Generate Supports mientras todavía corría; el botón lo canceló y el escaneo cancelado siguió compitiendo por CPU hasta terminar su modelo. Decisión de Damian: no depender de "que el usuario espere X segundos". El cálculo lo dispara la pestaña Supports al entrar. El pre-escaneo queda **apagado por defecto** (opción en Preferencias → Slicing), con la caché por geometría lista para esa pestaña.
+
+**Segunda etapa (2026-10-26, pedido de Damian: "si hay tiempo debería usarse"): generación anticipada.**
+- **Cuándo arranca:** con el pre-escaneo listo, en Hollow o Supports, la escena quieta 1,5 s, el hollow sin calcular y sin soportes ya en la escena, corre la generación completa en segundo plano (`generate_ahead` en `df_support_run.rs`).
+- **Clave:** el resultado queda guardado con la revisión de la escena y la clave del pedido (altura de capa, pitch, opciones).
+- **Cuándo se cancela:** si la escena cambia, si el hollow empieza a calcular (`hollow-busy`, sus previews tienen prioridad) o si arranca un slice.
+- **Generate:** pega el resultado al instante si coincide, o adopta la corrida en curso con su progreso (`take_ahead`). Lo cubre el test headless `supports_generated_ahead_are_pasted_on_generate`.
 
 **Cierre:** Damian entra a Supports, aprieta Autosupport sin espera perceptible en sus modelos habituales; cambiar un ajuste no reescanea; ir a Transform y volver sin mover nada no recalcula; mover el modelo marca los soportes y los regenera o pregunta según sean automáticos o editados.
 
