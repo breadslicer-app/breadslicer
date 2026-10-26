@@ -41,6 +41,23 @@ pub(super) struct ModelEntry {
 
 pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;
 
+impl ModelEntry {
+    /// A preview overlay piece: world coordinates already, so the identity
+    /// transform, and its tint in `flags.z`.
+    pub(super) fn overlay(tint: u32) -> Self {
+        ModelEntry {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            flags: [0, 0, tint, 0],
+        }
+    }
+}
+
+impl GpuVertex {
+    pub(super) fn at(position: [f32; 3]) -> Self {
+        GpuVertex { position }
+    }
+}
+
 /// Rounds `size` up to the next multiple of `alignment`, which must be a power
 /// of 2 for the mask form. Used to space successive `ModelEntry` slots in the
 /// per-scene uniform buffer at the device's

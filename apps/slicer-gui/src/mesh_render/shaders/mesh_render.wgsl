@@ -25,6 +25,9 @@ struct ModelEntry {
     //             falls outside the build envelope; drives the mild
     //             interior wash so the object reads as "offending"
     //             even on fragments that are still inside)
+    //   flags.z = overlay tint (0 = a scene object; 1 valid preview,
+    //             2 invalid preview, 3 hollow cavity, 4 drain), read by
+    //             `fs_overlay` only
     // Remaining lanes are free for later phases (hover, gizmo focus, ...).
     flags: vec4<u32>,
 };
@@ -49,6 +52,7 @@ struct VsOut {
     // switch instead of crossing a smooth gradient between objects.
     @location(1) @interpolate(flat) selected: u32,
     @location(2) @interpolate(flat) breaches: u32,
+    @location(3) @interpolate(flat) tint: u32,
 };
 
 @vertex
@@ -59,6 +63,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.world_pos = world.xyz;
     out.selected = model_entry.flags.x;
     out.breaches = model_entry.flags.y;
+    out.tint = model_entry.flags.z;
     return out;
 }
 
@@ -96,4 +101,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let outside = any(p < lo) || any(p > hi);
     let final_color = select(washed, WARNING_RED, outside);
     return vec4<f32>(final_color * intensity, 1.0);
+}
+
+// Preview overlays (a support before it is placed, a hollow cavity, a drain):
+// drawn over the scene without depth, translucent, so what lies inside or
+// behind the model still shows. Lit like the models so its shape reads.
+@fragment
+fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
+    let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    let lambert = abs(dot(n, normalize(u.light_dir.xyz)));
+    let intensity = 0.35 + 0.65 * lambert;
+    var color = vec4<f32>(0.35, 0.85, 0.55, 0.70);
+    if (in.tint == 2u) {
+        color = vec4<f32>(1.00, 0.25, 0.25, 0.70);
+    } else if (in.tint == 3u) {
+        color = vec4<f32>(0.35, 0.60, 1.00, 0.40);
+    } else if (in.tint == 4u) {
+        color = vec4<f32>(0.20, 0.90, 1.00, 0.75);
+    }
+    return vec4<f32>(color.rgb * intensity, color.a);
 }

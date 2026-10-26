@@ -33,7 +33,7 @@ mod options;
 mod session;
 
 pub use options::{DfSupportOptions, RaftMode};
-pub use session::{DfSupportSession, EditError};
+pub use session::{DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
 
 /// The name the generated support mesh carries.
@@ -431,6 +431,8 @@ fn run_df_supports(
         out.support.clone(),
         id_prefix.clone(),
     );
+    // Built here, off the UI thread, so the first hover preview is quick.
+    session.warm();
     Ok(DfSupportOutcome {
         triangles: mesh.as_ref().map_or(0, |m| m.faces().len()),
         mesh,

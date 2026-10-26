@@ -39,6 +39,9 @@ impl MeshBindGroup {
 
 pub(in crate::mesh_render) struct MeshPipeline {
     pub(in crate::mesh_render) pipeline: wgpu::RenderPipeline,
+    /// Preview overlays: the mesh shader's `fs_overlay`, no culling, depth
+    /// neither tested nor written, stencil untouched, alpha-blended.
+    pub(in crate::mesh_render) overlay_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniform_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     /// Layout of the per-draw-call dynamic-offset models bind group.
@@ -178,6 +181,59 @@ impl MeshPipeline {
             cache: None,
         });
 
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer overlay pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState::IGNORE,
+                    back: wgpu::StencilFaceState::IGNORE,
+                    read_mask: 0,
+                    write_mask: 0,
+                },
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_overlay"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer uniforms"),
             size: size_of::<Uniforms>() as u64,
@@ -196,6 +252,7 @@ impl MeshPipeline {
 
         Self {
             pipeline,
+            overlay_pipeline,
             uniform_buffer,
             uniforms_bind_group,
             models_bind_group_layout,

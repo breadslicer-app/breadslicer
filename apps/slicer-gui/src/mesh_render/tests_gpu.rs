@@ -1978,3 +1978,60 @@ fn a_zero_sized_preview_produces_no_pixels() {
 
     assert!(frame.is_none());
 }
+
+/// A preview overlay is drawn over the scene in its tint: a red (invalid)
+/// quad in front of the camera turns pixels red that are not red without it.
+#[test]
+fn a_preview_overlay_is_drawn_in_its_tint() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    let graph =
+        triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+    renderer.upload_scene(&graph).expect("upload_scene");
+    let camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 5.0), 20.0);
+    let frame = |renderer: &mut Renderer| {
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: None,
+                    gizmo: None,
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render is not refused")
+            .expect("a texture");
+        count_warning_pixels(&read_target_back(&device, &queue, &texture, 64, 64))
+    };
+    let before = frame(&mut renderer);
+    // A big quad through the orbit centre, facing every way (no culling).
+    let quad: Arc<[OverlayMesh]> = vec![OverlayMesh {
+        positions: vec![
+            [-30.0, -30.0, 5.0],
+            [30.0, -30.0, 5.0],
+            [30.0, 30.0, 5.0],
+            [-30.0, 30.0, 5.0],
+        ],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        tint: OverlayTint::Invalid,
+    }]
+    .into();
+    renderer.set_overlay(Some(&quad));
+    let with = frame(&mut renderer);
+    assert!(with > before + 500, "red pixels {before} -> {with}");
+    renderer.set_overlay(None);
+    assert_eq!(frame(&mut renderer), before, "cleared");
+}
