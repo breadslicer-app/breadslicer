@@ -244,3 +244,147 @@ fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
         .fold(0.0_f64, f64::max);
     assert!((at_tip - tip).abs() < 1e-3, "tip radius {at_tip}");
 }
+
+/// Every vertex within `reach` of the chain's centre line.
+fn stays_near(soup: &[f32], points: &[ChainPoint], reach: f64) -> bool {
+    soup.chunks_exact(3).all(|p| {
+        let q = Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+        points.windows(2).any(|w| {
+            let (a, b) = (w[0].pos, w[1].pos);
+            let ab = b.sub(a);
+            let t = (q.sub(a).dot(ab) / ab.dot(ab).max(1e-12)).clamp(0.0, 1.0);
+            q.distance_to(a.add(ab.multiply_scalar(t))) <= reach
+        })
+    })
+}
+
+#[test]
+fn hairpins_and_sharp_bends_stay_on_their_path() {
+    let params = SmoothShaftParams::default();
+    let r = 0.5;
+    let waist = params.bulge_ratio * r;
+    let cases: Vec<Vec<ChainPoint>> = vec![
+        // A U-turn: up, then straight back down beside itself.
+        vec![
+            point(0.0, 0.0, 0.0, false),
+            point(0.0, 0.0, 10.0, true),
+            point(0.01, 0.0, 0.0, false),
+        ],
+        // Almost a U-turn into a cone.
+        vec![
+            point(0.0, 0.0, 0.0, false),
+            point(0.0, 0.0, 10.0, true),
+            point(0.5, 0.0, 7.0, false),
+        ],
+        // A zig-zag of 150-degree bends.
+        vec![
+            point(0.0, 0.0, 0.0, false),
+            point(0.0, 0.0, 6.0, true),
+            point(1.5, 0.0, 0.5, true),
+            point(3.0, 0.0, 6.0, true),
+            point(4.5, 0.0, 0.5, false),
+        ],
+    ];
+    for (k, points) in cases.iter().enumerate() {
+        let mut soup = Vec::new();
+        let radii = vec![(r, r); points.len() - 1];
+        append_smooth_chain(&mut soup, points, &radii, 12, &params);
+        assert!(soup.iter().all(|v| v.is_finite()), "case {k}: finite");
+        assert!(
+            stays_near(&soup, points, 2.0 * waist + 1e-6),
+            "case {k}: no vertex flies off the path"
+        );
+    }
+}
+
+#[test]
+fn on_dragonfruit_states_no_vertex_flies_off() {
+    // Every vertex of the smooth soup lies within the bounds of the
+    // DragonFruit soup grown by a few millimetres.
+    let fixture = load("df_islands_c.json");
+    let native = load("df_native_islands.json");
+    let autobrace = load("df_autobrace.json");
+    let raft = RaftSettings {
+        bottom_mode: RaftBottomMode::Off,
+        ..DEFAULT_RAFT_SETTINGS
+    };
+    let states = fixture["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| {
+            let scene = native["runs"][r["run"].as_u64().unwrap() as usize]["scene"]
+                .as_str()
+                .unwrap();
+            r["result"]
+                .get("support")
+                .map(|s| (scene.to_owned(), s.clone()))
+        })
+        .chain(
+            autobrace["runs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|r| {
+                    r["result"]
+                        .get("support")
+                        .map(|s| (r["scene"].as_str().unwrap().to_owned(), s.clone()))
+                }),
+        );
+    let bounds = |soup: &[f32]| {
+        soup.chunks_exact(3).fold(
+            [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ],
+            |b, p| {
+                [
+                    b[0].min(p[0]),
+                    b[1].min(p[1]),
+                    b[2].min(p[2]),
+                    b[3].max(p[0]),
+                    b[4].max(p[1]),
+                    b[5].max(p[2]),
+                ]
+            },
+        )
+    };
+    let mut checked = 0;
+    for (scene, support) in states {
+        let state: SupportCollections = serde_json::from_value(support).unwrap();
+        let visible: HashSet<String> = [scene].into();
+        let soup_of = |shaft_style| {
+            build_support_and_raft_world_triangles(&SupportSliceInput {
+                state: &state,
+                visible_model_ids: &visible,
+                raft: &raft,
+                plate_clearance_models: &[],
+                support_tip_shrink_percent: 0.0,
+                tip_penetration_mm: 0.0,
+                shaft_style,
+            })
+            .unwrap()
+        };
+        let (df, smooth) = (
+            soup_of(ShaftStyle::DragonFruit),
+            soup_of(ShaftStyle::Smooth(SmoothShaftParams::default())),
+        );
+        if df.is_empty() {
+            continue;
+        }
+        let (d, s) = (bounds(&df), bounds(&smooth));
+        let margin = 3.0;
+        for k in 0..3 {
+            assert!(
+                s[k] >= d[k] - margin && s[k + 3] <= d[k + 3] + margin,
+                "axis {k}: smooth {s:?} vs dragonfruit {d:?}"
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 100, "{checked} states");
+}
