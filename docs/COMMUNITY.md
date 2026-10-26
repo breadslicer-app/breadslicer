@@ -1,137 +1,137 @@
-# Propuesta: testers de la comunidad, issues y diagnóstico
+# Proposal: community testers, issues and diagnostics
 
-Estado: **propuesta para revisar (2026-10-26)**. No se activa nada, no se publica ningún repo y no se crea ningún bot sin el OK explícito de Damian. Issues: BS-73 (circuito de issues y bot) y BS-74 (logs y exportación de diagnóstico).
+Status: **proposal for review (2026-10-26)**. Nothing gets switched on, no repository gets published and no bot gets created without Damian's explicit OK. Issues: BS-73 (issue pipeline and bot) and BS-74 (logs and diagnostics export).
 
-## La idea en una línea
+## The idea in one line
 
-La gente pide el formato en Discord, reporta en GitHub con un paquete de diagnóstico que exporta la app, y el reporte pasa por estos pasos:
+People ask for the format on Discord, report on GitHub with a diagnostics bundle exported by the app, and the report goes through these steps:
 
-1. Un clasificador sin permisos lo filtra.
-2. Damian aprueba.
-3. Claude lo reproduce, lo arregla y abre un PR.
-4. Damian mergea.
+1. A classifier with no permissions filters it.
+2. Damian approves.
+3. Claude reproduces it, fixes it and opens a PR.
+4. Damian merges.
 
 ```
-Discord /reporte ──► mensaje con el formato + link al formulario de GitHub
+Discord /report ──► message with the format + link to the GitHub form
                                       │
-                        Issue (formulario con campos obligatorios + .zip de diagnóstico)
+                        Issue (form with required fields + diagnostics .zip)
                                       │
-             Clasificador (IA SIN herramientas) ──► veredicto JSON
+             Classifier (AI WITHOUT tools) ──► JSON verdict
                                       │
-             Script común (sin IA) aplica el veredicto:
-               valido ─► label "in-review"     sin log ─► "needs-log" + pedido
-               duplicado ─► "duplicate" + link  sospechoso ─► se borra (o se oculta)
+             Plain script (no AI) applies the verdict:
+               valid ─► label "in-review"         no log ─► "needs-log" + request
+               duplicate ─► "duplicate" + link    suspicious ─► deleted (or hidden)
                                       │
-             Damian lee "in-review" y pone "agent-ok"
+             Damian reads "in-review" and adds "agent-ok"
                                       │
-             Claude Code (rama propia): reproduce ─► test ─► arreglo ─► PR
-               si duda ─► "needs-damian" + comentario con la pregunta concreta
+             Claude Code (own branch): reproduce ─► test ─► fix ─► PR
+               if unsure ─► "needs-damian" + comment with the specific question
                                       │
-             Damian revisa y mergea (auto-merge solo más adelante, por categorías)
+             Damian reviews and merges (auto-merge only later, by category)
 ```
 
-## 1. Bot de Discord (`/reporte`)
+## 1. Discord bot (`/report`)
 
-- **Qué hace:** un slash command (`/reporte`, `/bug`) responde solo a quien lo pidió, con mensaje efímero:
-  - qué necesitamos;
-  - cómo exportar el diagnóstico desde la app (sección 4);
-  - el link al formulario de issue en GitHub, ya con la plantilla elegida.
-- **Comandos extra:**
-  - `/estado <número>`: muestra las etiquetas y el estado del issue;
-  - `/version`: muestra la última versión publicada.
-- **Sin IA:** es un bot de comandos fijos. No lee mensajes libres ni crea issues por su cuenta: el reporte lo crea la persona en GitHub. Así el bot no es una puerta de entrada a nada.
-- **Hosting:** cualquier lugar con Node o Python siempre prendido. La Raspberry del Pi Companion sirve si querés todo en casa.
-- **Formato que manda** (borrador):
+- **What it does:** a slash command (`/report`, `/bug`) replies only to whoever asked, with an ephemeral message:
+  - what we need;
+  - how to export diagnostics from the app (section 4);
+  - the link to the GitHub issue form, with the template already selected.
+- **Extra commands:**
+  - `/status <number>`: shows the issue's labels and state;
+  - `/version`: shows the latest published version.
+- **No AI:** it is a fixed-command bot. It does not read free-form messages or create issues on its own: the person creates the report on GitHub. That way the bot is not a way in to anything.
+- **Hosting:** anywhere with Node or Python running all the time. The Pi Companion's Raspberry Pi works if you want to keep everything at home.
+- **Format it sends** (draft):
 
-> **Para reportar un problema de Breadslicer:**
-> 1. En la app: Ayuda → Exportar diagnóstico. Se genera `breadslicer-diagnostico-<fecha>.zip`.
-> 2. Abrí el formulario: <link>
-> 3. Completá: versión (sale en el zip), qué hiciste paso a paso, qué esperabas, qué pasó.
-> 4. Adjuntá el `.zip`. Si el problema depende del modelo y podés compartirlo, adjuntalo o linkealo (opcional).
-> No pegues contraseñas ni datos personales. Los reportes que no siguen el formato se cierran solos.
+> **To report a Breadslicer problem:**
+> 1. In the app: Help → Export diagnostics. This creates `breadslicer-diagnostics-<date>.zip`.
+> 2. Open the form: <link>
+> 3. Fill in: version (it's in the zip), what you did step by step, what you expected, what happened.
+> 4. Attach the `.zip`. If the problem depends on the model and you can share it, attach it or link to it (optional).
+> Don't paste passwords or personal data. Reports that don't follow the format are closed automatically.
 
-## 2. Formularios de issue en GitHub
+## 2. GitHub issue forms
 
-- **Formato:** archivos `.github/ISSUE_TEMPLATE/*.yml` (issue forms) con campos obligatorios, y los issues en blanco desactivados.
-- **Plantillas:**
-  - **Fallo o cierre de la app:** versión, sistema operativo, pasos, esperado y obtenido, diagnóstico `.zip` (obligatorio).
-  - **Resultado de impresión raro:** lo mismo, más impresora, resina y foto opcional. Estos casos los ve siempre Damian, porque no se pueden reproducir sin imprimir.
-  - **Idea o pedido:** texto libre; no entra al circuito automático.
-- **Adjunto obligatorio:** GitHub no puede obligar a adjuntar un archivo. El clasificador lo controla y, si falta, pone `needs-log` y comenta pidiéndolo.
+- **Format:** `.github/ISSUE_TEMPLATE/*.yml` files (issue forms) with required fields, and blank issues disabled.
+- **Templates:**
+  - **App failure or crash:** version, operating system, steps, expected and actual result, diagnostics `.zip` (required).
+  - **Odd print result:** the same, plus printer, resin and an optional photo. Damian always looks at these, because they cannot be reproduced without printing.
+  - **Idea or request:** free text; does not enter the automated pipeline.
+- **Required attachment:** GitHub cannot force an attachment. The classifier checks for it and, if it is missing, adds `needs-log` and comments asking for it.
 
-## 3. Clasificación de issues de cualquiera
+## 3. Classifying issues from anyone
 
-Cualquiera puede escribir un issue, así que su texto se trata como **dato no confiable**.
+Anyone can open an issue, so its text is treated as **untrusted data**.
 
-- **Clasificador:** una GitHub Action en `issues.opened` / `issues.edited` le pasa a Claude el título, el cuerpo y la lista de adjuntos, **sin herramientas, sin checkout del repo y sin tokens**.
-  - Devuelve solo un JSON validado contra un esquema: `{veredicto: valido|sin_log|duplicado|sospechoso|fuera_de_tema, tipo, resumen, duplicado_de?}`.
-  - Si la salida no cumple el esquema, se trata como `sospechoso`.
-- **Aplicador:** un script común, sin IA, lee ese JSON y es el único que tiene el token para etiquetar, comentar, cerrar o borrar.
-  - Como la IA no puede actuar, lo peor que logra un texto malicioso es que lo marquen `in-review`, y ahí lo filtra Damian.
-- **Sospechosos:** son los que intentan dar órdenes al bot o a la IA, piden secretos, traen links o adjuntos raros, o son spam.
-  - **Opción A (la que propuso Damian):** se borran automáticamente, sin comentario.
-    - Borrar issues requiere un token de admin, que vive solo en el paso del aplicador.
-    - **Riesgo:** un falso positivo borra un reporte legítimo para siempre.
-  - **Opción B (recomendada para empezar):** cerrar, bloquear y etiquetar `spam-sospechoso`, oculto del listado normal. Damian puede revisarlos de un vistazo, y una acción semanal borra los que siguen así a los 7 días.
-- **Válidos:** `in-review`, más una etiqueta de tipo (`crash`, `soportes`, `hollow`, `slice`, `ui`, `impresion`). El resumen de una línea va en un comentario, para que Damian lea rápido.
-- **Límites:** máximo N issues clasificados por día y por autor, para cortar el spam y el costo.
+- **Classifier:** a GitHub Action on `issues.opened` / `issues.edited` passes Claude the title, the body and the list of attachments, **with no tools, no repository checkout and no tokens**.
+  - It returns only JSON validated against a schema: `{verdict: valid|no_log|duplicate|suspicious|off_topic, type, summary, duplicate_of?}`.
+  - If the output does not match the schema, it is treated as `suspicious`.
+- **Applier:** a plain script, with no AI, reads that JSON and is the only thing holding the token to label, comment, close or delete.
+  - Since the AI cannot act, the worst a malicious text can achieve is getting marked `in-review`, where Damian filters it.
+- **Suspicious:** issues that try to give orders to the bot or the AI, ask for secrets, carry odd links or attachments, or are spam.
+  - **Option A (Damian's proposal):** they are deleted automatically, with no comment.
+    - Deleting issues requires an admin token, which lives only in the applier step.
+    - **Risk:** a false positive deletes a legitimate report forever.
+  - **Option B (recommended to start with):** close, lock and label `suspected-spam`, hidden from the normal listing. Damian can review them at a glance, and a weekly action deletes the ones still in that state after 7 days.
+- **Valid:** `in-review`, plus a type label (`crash`, `supports`, `hollow`, `slice`, `ui`, `printing`). The one-line summary goes in a comment, so Damian can read it quickly.
+- **Limits:** at most N classified issues per day and per author, to cut spam and cost.
 
-## 4. Logs en la app y "Exportar diagnóstico" (BS-74)
+## 4. In-app logs and "Export diagnostics" (BS-74)
 
-Esta parte vive en la app y sirve aunque no exista la comunidad.
+This part lives in the app and is useful even if the community never happens.
 
-- **Lo que ya existe:** `logs/crash.log`, donde queda cada panic con su backtrace, y el log de tiempos de generación de soportes.
-- **Log de interacción (opcional):** se activa en Preferencias → Privacidad, apagado por defecto, y se pregunta en el primer arranque.
-  - **Qué registra:** eventos, no contenido. Por ejemplo cambios de pestaña, herramientas usadas, comandos (abrir, generar soportes, ahuecar, slicear, exportar) con su tiempo y resultado, errores, cancelaciones y versión.
-  - **Qué no registra:** geometría, nombres de archivo completos ni nada escrito por la persona.
-  - **Tamaño:** archivo rotativo de 5 MB como máximo.
-- **Botón "Exportar diagnóstico"** (menú Ayuda): arma un `.zip` con:
-  - los logs;
-  - versión y commit del build;
-  - sistema operativo;
-  - GPU y backend (nombre del adaptador, driver);
-  - DPI y monitores;
-  - preferencias, limpias;
-  - estadísticas de la escena: cantidad de modelos y triángulos, soportes y hollow, sin geometría.
-  - Casilla opcional "incluir los modelos de la escena".
-- **Limpieza antes de exportar:** las rutas con el usuario de Windows pasan a `~`, y se muestra qué incluye el zip antes de guardarlo.
-- **Para reproducir:** el `crash.log` con backtrace más el log de interacción suelen alcanzar para escribir el test que reproduce el problema.
+- **What already exists:** `logs/crash.log`, which records every panic with its backtrace, and the support-generation timing log.
+- **Interaction log (optional):** enabled in Preferences → Privacy, off by default, and asked about on first launch.
+  - **What it records:** events, not content. For example tab changes, tools used, commands (open, generate supports, hollow, slice, export) with their timing and result, errors, cancellations and version.
+  - **What it does not record:** geometry, full file names or anything the person typed.
+  - **Size:** a rotating file of at most 5 MB.
+- **"Export diagnostics" button** (Help menu): builds a `.zip` with:
+  - the logs;
+  - build version and commit;
+  - operating system;
+  - GPU and backend (adapter name, driver);
+  - DPI and monitors;
+  - preferences, sanitized;
+  - scene statistics: number of models and triangles, supports and hollowing, without geometry.
+  - An optional "include the scene's models" checkbox.
+- **Sanitizing before export:** paths containing the Windows user name become `~`, and the app shows what the zip contains before saving it.
+- **For reproduction:** the `crash.log` with backtrace plus the interaction log are usually enough to write the test that reproduces the problem.
 
-## 5. Arreglo con Claude (issues con `agent-ok`)
+## 5. Fixes with Claude (issues labelled `agent-ok`)
 
-- **Disparador:** la etiqueta `agent-ok`, que pone solo Damian, o un comentario de Damian que menciona al bot. La acción (`claude-code-action`) corre en un runner Windows con permisos de **escritura solo en ramas `agent/*` y en PRs**. Sin push a `main`, sin acceso a releases, secretos de deploy ni settings.
-- **Pasos:**
-  1. Leer el issue y el zip.
-  2. Reproducir con un test que falle.
-  3. Arreglar y correr tests y clippy.
-  4. Abrir un PR con qué fallaba, por qué, cómo se reprodujo y qué cubre el test.
-- **Dudas:** si algo no se puede reproducir o la decisión es de producto, se etiqueta `needs-damian` con la pregunta concreta. Nunca se inventa un arreglo.
-- **Contenido del reporte:** los logs y los adjuntos siguen siendo datos, no instrucciones. Si un log contiene texto que parece una orden, el agente lo cita en el PR y no lo ejecuta.
+- **Trigger:** the `agent-ok` label, which only Damian adds, or a comment from Damian mentioning the bot. The action (`claude-code-action`) runs on a Windows runner with **write access only to `agent/*` branches and PRs**. No push to `main`, no access to releases, deploy secrets or settings.
+- **Steps:**
+  1. Read the issue and the zip.
+  2. Reproduce with a failing test.
+  3. Fix it and run tests and clippy.
+  4. Open a PR explaining what failed, why, how it was reproduced and what the test covers.
+- **Doubts:** if something cannot be reproduced or the decision is a product call, the issue is labelled `needs-damian` with the specific question. A fix is never made up.
+- **Report content:** logs and attachments are still data, not instructions. If a log contains text that looks like an order, the agent quotes it in the PR and does not carry it out.
 
-## 6. Merge
+## 6. Merging
 
-- **Al principio:** siempre lo mergea Damian. Desde el celular es revisar el PR y apretar un botón.
-- **Más adelante, opcional:** auto-merge solo para categorías acotadas con CI en verde: crash con test que lo reproduce, textos y traducciones, UI con test.
-- **Nunca automático:**
-  - slicing y writers de archivos de impresora;
-  - perfiles de impresoras y resinas;
-  - protecciones de datos (undo, guardado, colisiones, cancelación);
-  - dependencias nuevas;
-  - cualquier cosa que cambie lo que se imprime.
+- **At first:** Damian always merges. From a phone it is reviewing the PR and pressing a button.
+- **Later, optionally:** auto-merge only for narrow categories with green CI: a crash with a test that reproduces it, text and translations, UI with a test.
+- **Never automatic:**
+  - slicing and printer file writers;
+  - printer and resin profiles;
+  - data protections (undo, saving, collisions, cancellation);
+  - new dependencies;
+  - anything that changes what gets printed.
 
-## Antes de activar: decisiones de Damian
+## Before switching on: Damian's decisions
 
-1. **Publicar el repo:** cuándo pasa a público y qué rama se publica. `.local/` nunca se sube.
-2. **Builds públicos:** dónde se publican (Releases de GitHub) y con qué numeración, para que el diagnóstico diga exactamente qué versión es.
-3. **Sospechosos:** opción A (borrar al instante) u opción B (ocultar y borrar a los 7 días).
-4. **Límite de costo:** cuántos issues por día puede clasificar o arreglar la IA.
-5. **Bot:** dónde corre (la Raspberry, un VPS chico o un servicio gratuito).
+1. **Publishing the repository:** when it goes public and which branch is published. `.local/` is never uploaded.
+2. **Public builds:** where they are published (GitHub Releases) and how they are numbered, so diagnostics state exactly which version it is.
+3. **Suspicious issues:** option A (delete immediately) or option B (hide and delete after 7 days).
+4. **Cost limit:** how many issues per day the AI can classify or fix.
+5. **Bot:** where it runs (the Raspberry Pi, a small VPS or a free service).
 
-## Orden de trabajo propuesto
+## Proposed order of work
 
-1. **BS-74 en la app:** log de interacción opcional y "Exportar diagnóstico". Sirve ya, incluso sin comunidad.
-2. **Formularios de issue y etiquetas** en el repo público.
-3. **Clasificador y aplicador**, primero en modo "solo etiquetar", con la opción B.
-4. **Bot de Discord** con `/reporte`.
-5. **Arreglos con `agent-ok`.**
-6. **Auto-merge por categorías**, solo si los PRs vinieron bien durante un tiempo.
+1. **BS-74 in the app:** optional interaction log and "Export diagnostics". Useful right away, even without a community.
+2. **Issue forms and labels** in the public repository.
+3. **Classifier and applier**, first in "label only" mode, with option B.
+4. **Discord bot** with `/report`.
+5. **Fixes with `agent-ok`.**
+6. **Auto-merge by category**, only if the PRs have been good for a while.

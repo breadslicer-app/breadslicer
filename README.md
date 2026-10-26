@@ -29,7 +29,7 @@ cargo test  --release -p sc-slicer-gui --lib
 ## Project
 
 - **Plan and tasks:** [GitHub issues](https://github.com/breadslicer-app/breadslicer/issues), with
-  the pinned "Orden de trabajo" issue holding the current order.
+  the pinned "Work order" issue holding the current order.
 - **How we work:** [`docs/WORKFLOW.md`](docs/WORKFLOW.md): ideas → issues → micro-PRs.
 - **Direction and decisions:** [`docs/ROADMAP.md`](docs/ROADMAP.md).
 - **Research:** [`docs/research/`](docs/research/).
