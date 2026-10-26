@@ -77,7 +77,7 @@ El porteo de soportes de DF a Rust nativo terminó (bloques 1–9 en `docs/sc/DF
 | [SC-15](#sc-15) | backlog | soportes | Recorridos y colisiones volumétricas de soportes | SC-11, SC-12, SC-38 |
 | [SC-16](#sc-16) | backlog | soportes | Minis, parenting y refuerzos editables | SC-15, SC-13 |
 | [SC-17](#sc-17) | backlog | soportes | Pipeline de islas y autosupport con resultados editables | SC-48, SC-49, SC-50 |
-| [SC-18](#sc-18) | backlog | hollow | Hito hollow 3D y drenajes propios | SC-41, SC-42, SC-43, SC-44, SC-45, SC-46 |
+| [SC-18](#sc-18) | in progress | hollow | Hito hollow 3D y drenajes propios | SC-41, SC-42, SC-43, SC-44, SC-45, SC-46 |
 | [SC-19](#sc-19) | backlog | impresion | Salida verificable para la impresora Anycubic elegida | SC-32, SC-35, SC-36, SC-66 |
 | [SC-20](#sc-20) | backlog | ui | Hito de pulido integral del editor | SC-25, SC-26, SC-27, SC-28, SC-61 |
 | [SC-21](#sc-21) | triage | idea | Explorar FEA aproximada de soportes | SC-53, SC-74 |
@@ -349,10 +349,21 @@ Corregir lo flojo: vóxel efectivo visible, progreso y cancelación, resultado e
 - `libs/sc-geom/hollow-df`: el motor de DF con los aportes de Damian, **igual bit a bit** a DF en 11 casos y en `617_repaired.stl`; preview de superficie y Apply edge-manifold con la escalera de suavizado de DF; infill lattice/pillar; áreas sólidas por vóxel o en mm; drenajes con corte exacto propio en Rust (DF usa manifold3d) y profundidad automática; vóxel efectivo, volúmenes en ml, cancelación y progreso por etapa.
 - `libs/sc-geom/hollow-df-sc` (`sc_geom::df_hollow::start_hollow`): job cancelable sobre un leaf; pared física con escala no uniforme; la sesión se reutiliza al mover o rotar.
 - Medido en `617_repaired.stl` a 90 mm: sesión 0,9 s, preview 0,25 s, Apply 2,1 s, Apply + drenaje 2,7 s; 71 ml ahorrados.
-- **Pendiente antes de imprimir:** `sl1cer` lee como sólido la cavidad de un hollow sin drenaje (shell invertida aparte, agrupado por shell de SC-81). Con un drenaje que llega a la cavidad rebana bien. Falta el arreglo en `sl1cer` (shell de volumen negativo = vacío) o exigir drenaje en la GUI.
-- Falta: pestaña Hollow (SC-84), persistencia (SC-43), editor de drenajes y áreas sólidas (SC-44, SC-45), análisis de resina atrapada (SC-46).
+- ~~`sl1cer` lee como sólido la cavidad de un hollow sin drenaje~~: arreglado en la integración del 2026-10-26. En `sl1cer`, una shell de volumen negativo es un vacío: sus contornos son agujeros del sólido que la encierra, y los sólidos que contiene siguen siendo sólidos. Lo cubren dos tests de `sl1cer` y el test `an_undrained_hollow_slices_with_a_hole`, ahora activo.
 
-**Depende de:** SC-41, SC-42, SC-43, SC-44, SC-45, SC-46. Prioridad: normal. Estado snapshot: backlog.
+**Pestaña Hollow (2026-10-26, rama `sc/night-integration`):** `apps/slicer-gui/src/hollow_run.rs`.
+- **Ahuecar:** "Hollow model" ahueca el modelo seleccionado con pared, vóxel, suavizado y relleno (vacío, lattice o pillars). El resultado reemplaza la malla con un solo undo; "Make solid again" vuelve al original, también con undo.
+- **Drenajes:** con la herramienta Drenaje (D), un clic en la superficie lo perfora con el radio elegido; cada drenaje es un undo. Los drenajes se guardan en el marco local del modelo, así que moverlo no los pierde. Un drenaje nuevo o un cambio de ajustes re-ahueca el original y reutiliza la sesión de vóxeles.
+- **Resumen:** ml ahorrados, pared, vóxel efectivo y drenajes que no llegan a la cavidad.
+- **Avisos:** cavidad sellada sin drenaje (efecto ventosa y resina atrapada). Un job que termina sobre una escena editada se descarta.
+- **Falta:**
+  - preview de la cavidad antes de aplicar;
+  - áreas sólidas (SC-45);
+  - persistir original y drenajes al guardar (SC-43): hoy sobrevive la malla hueca;
+  - análisis de resina atrapada (SC-46);
+  - prueba de Damian.
+
+**Depende de:** SC-41, SC-42, SC-43, SC-44, SC-45, SC-46. Prioridad: normal. Estado snapshot: in progress.
 
 ## SC-19
 

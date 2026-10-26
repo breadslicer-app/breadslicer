@@ -220,7 +220,7 @@
         },
         {
           "path": "apps/slicer-gui/src/app_state.rs",
-          "sha256": "0b3f6eb6706c78fbc5b92897340d1e1963e83df632965b98628742b63c422470"
+          "sha256": "f4f6b033e8a2cf46bbc6e9c7af38c9949d4cad1fe5403b81c540a9822d706afe"
         },
         {
           "path": "apps/slicer-gui/src/build_volume.rs",
@@ -311,6 +311,10 @@
           "sha256": "46a788ebfd454f9b111aa9a21b8b28758b00187dc8401dd3d06cb1ee9cdd1e30"
         },
         {
+          "path": "apps/slicer-gui/src/hollow_run.rs",
+          "sha256": "e9aa73681cfe8feb60d994a8d814147309bab90dd2722df0bc4ce0aec69bfd31"
+        },
+        {
           "path": "apps/slicer-gui/src/i18n.rs",
           "sha256": "34a8ec62b9628deb7589a95adccb86433e9f794e598f195193a20c933cda716f"
         },
@@ -320,7 +324,7 @@
         },
         {
           "path": "apps/slicer-gui/src/lib.rs",
-          "sha256": "0fb160f5bf3adfc1aa72b7424f034638382cafbd8b9998e59cfe8d01dc79bcf2"
+          "sha256": "7295a37af210c3ff445ae02ad8186ceb5458dcc1a78c7721dca6c56f07aec23e"
         },
         {
           "path": "apps/slicer-gui/src/load_progress.rs",
@@ -672,7 +676,7 @@
         },
         {
           "path": "apps/slicer-gui/src/viewport/controller.rs",
-          "sha256": "a3b4c64b1937681c8332a7cffd7200e4ca5daa3799eca2d222368a185b5373ea"
+          "sha256": "c50c5d4bfe7834f460148698a4d17d9d971742501db094e44b79d8bab1bfad67"
         },
         {
           "path": "apps/slicer-gui/src/viewport/gizmo_drag.rs",
@@ -2026,11 +2030,11 @@
       "sources": [
         {
           "path": "libs/sc-geom/hollow-df-sc/src/lib.rs",
-          "sha256": "1bb078e98c9d4ab93b810b7f799c48067c628788733533cd1618a307d3e1bd26"
+          "sha256": "f9957f21a1d9d6b4d6198d2b45b218930e49e1804a15df0060ee9030589604ef"
         },
         {
           "path": "libs/sc-geom/hollow-df-sc/src/tests.rs",
-          "sha256": "78f4f0c4663ea3126204177f297a54df06b27141a39c9441fa814084ad8d0006"
+          "sha256": "412cb217565686becbe9f347256acdf169e52e956b2f6a4050fe31e33218a2e5"
         }
       ]
     },
@@ -3129,7 +3133,7 @@
       "sources": [
         {
           "path": "libs/sl1cer/src/api.rs",
-          "sha256": "6934ab228a18aaa8f0403e4d0151a06423301180c8f973c69b8496a1e3eba323"
+          "sha256": "9b5979889c8e739158e43e239dff61e37acadb7d2742f82254ae727e2811c90a"
         },
         {
           "path": "libs/sl1cer/src/contour.rs",
@@ -3181,7 +3185,7 @@
         },
         {
           "path": "libs/sl1cer/src/shells.rs",
-          "sha256": "2e90a1525969b2f2d4fa8915fa5d53ef735a518947a3bbe6c420b685f0d02a9b"
+          "sha256": "17b17d6a2e959387e6a75be34f24690ab44d01dcfaf0c578cf8e4209bf2809e3"
         },
         {
           "path": "libs/sl1cer/src/stitch.rs",
@@ -3193,7 +3197,7 @@
         },
         {
           "path": "libs/sl1cer/src/tests_slice_scene.rs",
-          "sha256": "013861b44e0d34b5eeaa9862cc46b0a5062722a3b82b9e597faf007ff1caab0c"
+          "sha256": "3a4a92c3b8c1aa5521027afa274b6510cbd5bb0b0c601cc4deaf6d9710e463eb"
         },
         {
           "path": "libs/sl1cer/src/z_bins.rs",

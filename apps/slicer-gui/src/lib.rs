@@ -30,6 +30,7 @@ mod gizmo;
 mod gizmo_geometry;
 pub mod graphics_adapter;
 mod graphics_status;
+mod hollow_run;
 mod i18n;
 mod language;
 mod load_progress;

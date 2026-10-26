@@ -793,4 +793,60 @@ mod overlapping_shell_tests {
     fn crossing_shells_stay_outers() {
         assert_one_outer_per_cube(cubes(&[([0.0, 0.0], 1.0), ([0.4, 0.3], 1.0)]), 2);
     }
+
+    /// `mesh` with the faces of cube `index` (in `cubes` order) turned
+    /// inward, as a sealed cavity's shell is.
+    fn turned_inward(mut mesh: IndexedMesh, index: usize) -> IndexedMesh {
+        let per_cube = unit_cube_mesh().faces.len();
+        for f in &mut mesh.faces[index * per_cube..(index + 1) * per_cube] {
+            let [a, b, c] = f.vertices.map(|i| i.get());
+            *f = IndexedTriangle::from_raw_indices([a, c, b]);
+        }
+        mesh
+    }
+
+    fn slice_layers(mesh: IndexedMesh) -> crate::contour::ContourStack {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "shells", mesh);
+        slice_leaf(&scene, leaf, &four_layer_profile()).expect("cubes slice")
+    }
+
+    #[test]
+    fn a_sealed_cavity_is_a_hole_of_its_solid() {
+        let stack = slice_layers(turned_inward(
+            cubes(&[([0.0, 0.0], 2.0), ([0.0, 0.0], 1.0)]),
+            1,
+        ));
+        for layer in stack.layers() {
+            assert_eq!(layer.polygons().len(), 1, "at z {}", layer.z_mm());
+            let polygon = &layer.polygons()[0];
+            assert_eq!(polygon.holes().len(), 1, "at z {}", layer.z_mm());
+            assert!(polygon.outer().signed_area() > 0.0);
+            assert!(polygon.holes()[0].signed_area() < 0.0);
+        }
+    }
+
+    #[test]
+    fn an_inverted_part_on_its_own_stays_solid() {
+        // Two separate cubes, one with inverted faces (a bad export): nothing
+        // encloses it, so it is a part, not a cavity.
+        assert_one_outer_per_cube(
+            turned_inward(cubes(&[([0.0, 0.0], 1.0), ([3.0, 0.0], 1.0)]), 1),
+            2,
+        );
+    }
+
+    #[test]
+    fn a_solid_inside_a_sealed_cavity_stays_solid() {
+        let stack = slice_layers(turned_inward(
+            cubes(&[([0.0, 0.0], 3.0), ([0.0, 0.0], 2.0), ([0.0, 0.0], 0.5)]),
+            1,
+        ));
+        for layer in stack.layers() {
+            let polygons = layer.polygons();
+            assert_eq!(polygons.len(), 2, "at z {}", layer.z_mm());
+            assert_eq!(polygons[0].holes().len(), 1);
+            assert!(polygons[1].holes().is_empty());
+        }
+    }
 }
