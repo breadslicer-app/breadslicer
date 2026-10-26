@@ -23,9 +23,13 @@
 //! as they do there. Queries take `&self`: the cache, the face-normal memo and
 //! the counters live behind `RefCell`/`Cell`, as one placement thread owns one cache.
 
+use ahash::AHashMap as HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use rayon::prelude::*;
 
 use super::column_clearance_map::{ColumnClearanceMap, ColumnVerdict};
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
@@ -167,17 +171,13 @@ pub struct SdfCache {
     column_map_cache: Vec<(f64, ColumnClearanceMap)>,
     column_map_cache_bytes: usize,
     face_normal_cache: RefCell<HashMap<usize, Vec3>>,
+    /// Closest-point answers a prefetch computed ahead of the real queries;
+    /// see [`CollisionField::prefetch`].
+    prefetched: RefCell<HashMap<QueryKey, f64>>,
     /// Last seen matrixWorld — used to detect stale cache.
     last_matrix: Matrix4,
     cell_reads: Cell<u64>,
     bvh_queries: Cell<u64>,
-}
-
-/// One closest-point answer in local space.
-struct LocalHit {
-    point: Vec3,
-    face_index: usize,
-    distance: f64,
 }
 
 impl SdfCache {
@@ -196,6 +196,7 @@ impl SdfCache {
             column_map_cache: Vec::new(),
             column_map_cache_bytes: 0,
             face_normal_cache: RefCell::new(HashMap::new()),
+            prefetched: RefCell::new(HashMap::new()),
             last_matrix: matrix_world,
             cell_reads: Cell::new(0),
             bvh_queries: Cell::new(0),
@@ -227,31 +228,7 @@ impl SdfCache {
     /// A cached distance **at or beyond the bound means "at least that much"**,
     /// not an exact value; `distance_at` re-queries when it needs the exact value.
     pub fn bounded_distance_at(&self, wx: f64, wy: f64, wz: f64, bound_mm: f64) -> f64 {
-        let cs = self.cell_size;
-        let qx = quantize_to_cell(wx, cs);
-        let qy = quantize_to_cell(wy, cs);
-        let qz = quantize_to_cell(wz, cs);
-        if let Some(cached) = self.read_cell(qx, qy, qz) {
-            return cached;
-        }
-        let dist = self.compute_signed_distance_at_quantized_cell(qx, qy, qz, bound_mm);
-        let capped = if dist == f64::INFINITY {
-            bound_mm
-        } else {
-            js_min(dist, bound_mm)
-        };
-        self.write_cell(qx, qy, qz, capped);
-        capped
-    }
-
-    /// Cached distance for a cell, or `None` when it has not been computed.
-    fn read_cell(&self, qx: f64, qy: f64, qz: f64) -> Option<f64> {
-        self.cell_reads.set(self.cell_reads.get() + 1);
-        self.cells.borrow().read(cell_key(qx, qy, qz))
-    }
-
-    fn write_cell(&self, qx: f64, qy: f64, qz: f64, value: f64) {
-        self.cells.borrow_mut().write(cell_key(qx, qy, qz), value);
+        march_bounded_distance_at(self, wx, wy, wz, bound_mm)
     }
 
     fn snapshot_matrix(&mut self, matrix_world: Matrix4) {
@@ -281,6 +258,7 @@ impl SdfCache {
     pub fn refresh_matrix(&mut self, matrix_world: Matrix4) -> bool {
         if !matrix_world.equals(&self.last_matrix) {
             self.cells.borrow_mut().clear();
+            self.prefetched.borrow_mut().clear();
             self.snapshot_matrix(matrix_world);
             return true;
         }
@@ -527,32 +505,6 @@ impl SdfCache {
             && z <= b.max.z + margin
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn segment_intersects_expanded_world_bounds(
-        &self,
-        ax: f64,
-        ay: f64,
-        az: f64,
-        bx: f64,
-        by: f64,
-        bz: f64,
-        margin: f64,
-    ) -> bool {
-        let b = &self.world_bounds;
-        if b.is_empty() {
-            return true;
-        }
-        let (min_x, max_x) = (js_min(ax, bx), js_max(ax, bx));
-        let (min_y, max_y) = (js_min(ay, by), js_max(ay, by));
-        let (min_z, max_z) = (js_min(az, bz), js_max(az, bz));
-        max_x >= b.min.x - margin
-            && min_x <= b.max.x + margin
-            && max_y >= b.min.y - margin
-            && min_y <= b.max.y + margin
-            && max_z >= b.min.z - margin
-            && min_z <= b.max.z + margin
-    }
-
     /// Signed distance at the EXACT world-space point — no cell quantization,
     /// no caching (callers memoize their own outcomes). One BVH query per call.
     ///
@@ -573,92 +525,7 @@ impl SdfCache {
         qz: f64,
         max_distance: f64,
     ) -> f64 {
-        let cs = self.cell_size;
-        // Compute via BVH (local space)
-        let local = Vec3::new(qx * cs, qy * cs, qz * cs).apply_matrix4(&self.inverse_matrix);
-        self.signed_distance_at_local_point(local, max_distance)
-    }
-
-    fn closest_local(&self, local: Vec3, max_distance: f64) -> Option<LocalHit> {
-        self.bvh_queries.set(self.bvh_queries.get() + 1);
-        let local_max_distance = if max_distance == f64::INFINITY {
-            f64::INFINITY
-        } else {
-            max_distance / js_max(0.000001, self.world_scale)
-        };
-        let result = self
-            .bvh
-            .closest_point_to_point(local, 0.0, local_max_distance)?;
-        Some(LocalHit {
-            point: result.point,
-            face_index: result.face_index,
-            distance: result.distance,
-        })
-    }
-
-    /// Signed distance for a local-space point.
-    fn signed_distance_at_local_point(&self, local: Vec3, max_distance: f64) -> f64 {
-        match self.closest_local(local, max_distance) {
-            None => f64::INFINITY,
-            Some(hit) => self.sign(local, &hit),
-        }
-    }
-
-    /// Sign the distance using the face normal of the nearest triangle.
-    ///
-    /// Without signing, a point 3mm INSIDE the mesh reports dist=3 (the
-    /// unsigned distance to the nearest surface). isBlocked(x,y,z, 0.75)
-    /// checks dist < 0.75 → false → "not blocked" → support placed through
-    /// geometry. With signing, that same point reports dist=-3 → always < clearance
-    /// → correctly blocked.
-    fn sign(&self, local: Vec3, hit: &LocalHit) -> f64 {
-        let mut dist = hit.distance * self.world_scale;
-        if dist > 1e-6 && self.is_query_inside_surface(local, hit) {
-            dist = -dist;
-        }
-        dist
-    }
-
-    // ---- Inside/outside determination ----
-
-    /// Returns true if `local` (the query point, in local space) is on the
-    /// interior side of the triangle at `hit.face_index`.
-    ///
-    /// Uses the geometric face normal (cross product of triangle edges)
-    /// rather than vertex normals, which may be smoothed and unreliable
-    /// for inside/outside determination.
-    fn is_query_inside_surface(&self, local: Vec3, hit: &LocalHit) -> bool {
-        let fn_ = *self
-            .face_normal_cache
-            .borrow_mut()
-            .entry(hit.face_index)
-            .or_insert_with(|| {
-                // Look up vertex indices for this triangle
-                let [i0, i1, i2] = self.bvh.face(hit.face_index);
-                let (v0, v1, v2) = (
-                    self.bvh.vertex(i0),
-                    self.bvh.vertex(i1),
-                    self.bvh.vertex(i2),
-                );
-
-                let (e1x, e1y, e1z) = (v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
-                let (e2x, e2y, e2z) = (v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
-
-                Vec3::new(
-                    e1y * e2z - e1z * e2y,
-                    e1z * e2x - e1x * e2z,
-                    e1x * e2y - e1y * e2x,
-                )
-            });
-
-        // Direction from closest surface point → query point (local space)
-        let rp = hit.point;
-        let dx = local.x - rp.x;
-        let dy = local.y - rp.y;
-        let dz = local.z - rp.z;
-
-        // Negative dot → query point faces into the mesh interior
-        (dx * fn_.x + dy * fn_.y + dz * fn_.z) < 0.0
+        quantized_signed_distance(self, qx, qy, qz, max_distance)
     }
 
     /// Returns true if the cell at `(wx,wy,wz)` is closer to the mesh
@@ -669,21 +536,6 @@ impl SdfCache {
     /// A* neighbor expansion and must remain cheap.
     pub fn is_blocked(&self, wx: f64, wy: f64, wz: f64, clearance: f64) -> bool {
         self.distance_at(wx, wy, wz) < clearance
-    }
-
-    /// Exact signed distance at a world-space point, bounded.
-    ///
-    /// Used by the march where the cached value is too coarse to decide: the
-    /// cache answers for the nearest lattice point, so its value bounds the
-    /// sample's distance but cannot resolve it.
-    fn exact_bounded_distance_at(&self, wx: f64, wy: f64, wz: f64, bound_mm: f64) -> f64 {
-        let local = Vec3::new(wx, wy, wz).apply_matrix4(&self.inverse_matrix);
-        let dist = self.signed_distance_at_local_point(local, bound_mm);
-        if dist == f64::INFINITY {
-            bound_mm
-        } else {
-            js_min(dist, bound_mm)
-        }
     }
 
     /// Turn on the exact column fast path for one clearance.
@@ -763,45 +615,6 @@ impl SdfCache {
         }
     }
 
-    /// How far a sample's true distance can be below the cached value: the cache
-    /// answers for the nearest lattice point (`quantizeToCell` rounds), so this
-    /// is the sample's distance to it.
-    fn lattice_gap(&self, px: f64, py: f64, pz: f64) -> f64 {
-        let cs = self.cell_size;
-        let lx = js_round(px / cs) * cs - px;
-        let ly = js_round(py / cs) * cs - py;
-        let lz = js_round(pz / cs) * cs - pz;
-        (lx * lx + ly * ly + lz * lz).sqrt()
-    }
-
-    /// One march sample, as the distance it can safely advance.
-    ///
-    /// Returns -1 when the sample is inside `clearance`. The cached value bounds
-    /// the sample's true distance to `[base - gap, base + gap]`, so above the
-    /// band it settles `clear` without another query, below it settles `blocked`,
-    /// and only the band itself is asked exactly.
-    fn march_sample(&self, px: f64, py: f64, pz: f64, clearance: f64) -> f64 {
-        let d = self.bounded_distance_at(px, py, pz, MARCH_DISTANCE_BOUND_MM);
-        let base = if d == f64::INFINITY {
-            MARCH_DISTANCE_BOUND_MM
-        } else {
-            d
-        };
-        let gap = self.lattice_gap(px, py, pz);
-        if base + gap < clearance {
-            return -1.0;
-        }
-        if base - gap >= clearance {
-            return base - gap - clearance;
-        }
-        let exact = self.exact_bounded_distance_at(px, py, pz, clearance + 0.001);
-        if exact < clearance {
-            -1.0
-        } else {
-            exact - clearance
-        }
-    }
-
     /// Checks an entire line segment (A→B) for clearance using **adaptive
     /// sphere tracing** driven by the signed distance field.
     ///
@@ -821,63 +634,19 @@ impl SdfCache {
         bz: f64,
         clearance: f64,
     ) -> bool {
-        // Exact fast path, vertical segments only: it answers `blocked` only
-        // when a mesh vertex is provably within `clearance` of the segment, so
-        // it can only settle what the march below would have settled anyway.
-        if let Some(map) = &self.column_map
-            && ax == bx
-            && ay == by
-            && (clearance - self.column_map_clearance).abs() < 1e-9
-            && map.column_verdict(ax, ay, az, bz) == ColumnVerdict::Blocked
-        {
-            return true;
-        }
+        march_segment_blocked(self, ax, ay, az, bx, by, bz, clearance)
+    }
 
-        let dx = bx - ax;
-        let dy = by - ay;
-        let dz = bz - az;
-        let len = (dx * dx + dy * dy + dz * dz).sqrt();
-        if len < 0.01 {
-            return self.march_sample(ax, ay, az, clearance) < 0.0;
+    fn geom(&self) -> Geom<'_> {
+        Geom {
+            cell_size: self.cell_size,
+            bvh: &self.bvh,
+            inverse_matrix: &self.inverse_matrix,
+            world_bounds: &self.world_bounds,
+            world_scale: self.world_scale,
+            column_map: self.column_map.as_ref(),
+            column_map_clearance: self.column_map_clearance,
         }
-        if !self.segment_intersects_expanded_world_bounds(ax, ay, az, bx, by, bz, clearance) {
-            return false;
-        }
-
-        let inv_len = 1.0 / len;
-        let ux = dx * inv_len;
-        let uy = dy * inv_len;
-        let uz = dz * inv_len;
-
-        let cs = self.cell_size;
-        // Floor step: matches the fidelity of the old fixed-cellSize sampler so
-        // geometry thinner than ~cellSize is still caught. Skipping below this
-        // would give up accuracy; we never want that.
-        let min_step = cs * 0.9;
-
-        let mut t = 0.0;
-        // Limit iterations defensively in case a pathological SDF oscillation
-        // prevents progress — shouldn't happen with the minStep floor but cheap.
-        let max_iter = js_max(8.0, (len / min_step).ceil() + 2.0);
-        let mut iter = 0.0;
-        while iter < max_iter {
-            let advance = self.march_sample(ax + ux * t, ay + uy * t, az + uz * t, clearance);
-            if advance < 0.0 {
-                return true;
-            }
-            t += if advance > min_step {
-                advance
-            } else {
-                min_step
-            };
-            if t >= len {
-                break;
-            }
-            iter += 1.0;
-        }
-        // Always check the exact endpoint — the adaptive loop may exit with
-        // t > len before sampling the terminal cell.
-        self.march_sample(bx, by, bz, clearance) < 0.0
     }
 
     /// Number of cached cells (for diagnostics).
@@ -924,4 +693,479 @@ impl CollisionField for SdfCache {
     fn exact_signed_distance_at(&self, point: Vec3) -> f64 {
         SdfCache::exact_signed_distance_at(self, point.x, point.y, point.z)
     }
+
+    fn prefetch(&self, jobs: usize, job: &(dyn Fn(usize, &dyn CollisionField) + Sync)) {
+        let cells = self.cells.borrow();
+        let base: &Cells = &cells;
+        let geom = self.geom();
+        // Workers take the jobs in index order, which is the caller's order of
+        // preference; a split range would hand the last jobs out first.
+        let next = AtomicUsize::new(0);
+        let workers = rayon::current_num_threads().min(jobs);
+        let memo = SharedMemo::new();
+        (0..workers).into_par_iter().for_each(|_| {
+            let view = SpeculativeField {
+                geom,
+                base,
+                memo: &memo,
+                overlay: RefCell::new(HashMap::new()),
+            };
+            loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= jobs {
+                    break;
+                }
+                job(i, &view);
+            }
+        });
+        drop(cells);
+        let mut prefetched = self.prefetched.borrow_mut();
+        for shard in memo.shards {
+            prefetched.extend(shard.into_inner().unwrap_or_else(|e| e.into_inner()));
+        }
+    }
+
+    fn clear_prefetch(&self) {
+        self.prefetched.borrow_mut().clear();
+    }
+}
+
+// ---- The march, shared by the cache and its prefetch views ----
+
+/// What a march reads besides the cell store. Everything here is fixed while
+/// a query runs, so a prefetch can hand it to other threads.
+#[derive(Clone, Copy)]
+struct Geom<'a> {
+    cell_size: f64,
+    bvh: &'a MeshBvh,
+    inverse_matrix: &'a Matrix4,
+    world_bounds: &'a Box3,
+    world_scale: f64,
+    column_map: Option<&'a ColumnClearanceMap>,
+    column_map_clearance: f64,
+}
+
+/// A closest-point question, by the exact bits of the local point and the
+/// world-space bound. Its signed answer is a pure function of these, the BVH
+/// and the matrix, and a prefetch never outlives either of the last two.
+type QueryKey = [u64; 4];
+
+fn query_key(local: Vec3, max_distance: f64) -> QueryKey {
+    [
+        local.x.to_bits(),
+        local.y.to_bits(),
+        local.z.to_bits(),
+        max_distance.to_bits(),
+    ]
+}
+
+/// The cell store and the closest-point query a march runs on: the cache
+/// itself, or one walk of a prefetch ([`SpeculativeField`]).
+trait MarchField {
+    fn geom(&self) -> Geom<'_>;
+    /// Cached distance for a cell, or `None` when it has not been computed.
+    fn read_cell(&self, qx: f64, qy: f64, qz: f64) -> Option<f64>;
+    fn write_cell(&self, qx: f64, qy: f64, qz: f64, value: f64);
+    /// Signed distance for a local-space point.
+    fn signed_distance_at_local_point(&self, local: Vec3, max_distance: f64) -> f64;
+}
+
+impl MarchField for SdfCache {
+    fn geom(&self) -> Geom<'_> {
+        SdfCache::geom(self)
+    }
+
+    fn read_cell(&self, qx: f64, qy: f64, qz: f64) -> Option<f64> {
+        self.cell_reads.set(self.cell_reads.get() + 1);
+        self.cells.borrow().read(cell_key(qx, qy, qz))
+    }
+
+    fn write_cell(&self, qx: f64, qy: f64, qz: f64, value: f64) {
+        self.cells.borrow_mut().write(cell_key(qx, qy, qz), value);
+    }
+
+    fn signed_distance_at_local_point(&self, local: Vec3, max_distance: f64) -> f64 {
+        self.bvh_queries.set(self.bvh_queries.get() + 1);
+        {
+            let prefetched = self.prefetched.borrow();
+            if !prefetched.is_empty()
+                && let Some(&dist) = prefetched.get(&query_key(local, max_distance))
+            {
+                return dist;
+            }
+        }
+        signed_distance(&self.geom(), local, max_distance, |face| {
+            *self
+                .face_normal_cache
+                .borrow_mut()
+                .entry(face)
+                .or_insert_with(|| face_normal(&self.bvh, face))
+        })
+    }
+}
+
+/// One walk of a prefetch: reads the cache as it stood when the prefetch
+/// began, keeps its own writes to itself, and records every closest-point
+/// answer it computed. Its march can drift from the real one, which also sees
+/// the other walks' writes; that only costs an answer it did not prefetch.
+struct SpeculativeField<'a> {
+    geom: Geom<'a>,
+    base: &'a Cells,
+    memo: &'a SharedMemo,
+    overlay: RefCell<HashMap<u64, f64>>,
+}
+
+/// The answers a prefetch computed, shared by its workers so that no two
+/// compute the same one; sharded so that they rarely wait on each other.
+struct SharedMemo {
+    shards: Vec<Mutex<HashMap<QueryKey, f64>>>,
+}
+
+const MEMO_SHARDS: usize = 64;
+
+impl SharedMemo {
+    fn new() -> Self {
+        SharedMemo {
+            shards: (0..MEMO_SHARDS)
+                .map(|_| Mutex::new(HashMap::new()))
+                .collect(),
+        }
+    }
+
+    fn shard(&self, key: &QueryKey) -> &Mutex<HashMap<QueryKey, f64>> {
+        let mixed = (key[0] ^ key[1].rotate_left(21) ^ key[2].rotate_left(42))
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        &self.shards[(mixed >> 58) as usize % MEMO_SHARDS]
+    }
+
+    fn get(&self, key: &QueryKey) -> Option<f64> {
+        let shard = self.shard(key).lock().unwrap_or_else(|e| e.into_inner());
+        shard.get(key).copied()
+    }
+
+    fn insert(&self, key: QueryKey, value: f64) {
+        self.shard(&key)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, value);
+    }
+}
+
+impl MarchField for SpeculativeField<'_> {
+    fn geom(&self) -> Geom<'_> {
+        self.geom
+    }
+
+    fn read_cell(&self, qx: f64, qy: f64, qz: f64) -> Option<f64> {
+        let key = cell_key(qx, qy, qz);
+        if let Some(&v) = self.overlay.borrow().get(&key) {
+            return Some(v);
+        }
+        self.base.read(key)
+    }
+
+    fn write_cell(&self, qx: f64, qy: f64, qz: f64, value: f64) {
+        // Rounded as the table stores it. A cell past the table's capacity
+        // keeps full precision in the cache, which at worst costs a miss.
+        self.overlay
+            .borrow_mut()
+            .insert(cell_key(qx, qy, qz), f64::from(value as f32));
+    }
+
+    fn signed_distance_at_local_point(&self, local: Vec3, max_distance: f64) -> f64 {
+        let key = query_key(local, max_distance);
+        if let Some(dist) = self.memo.get(&key) {
+            return dist;
+        }
+        let dist = signed_distance(&self.geom, local, max_distance, |face| {
+            face_normal(self.geom.bvh, face)
+        });
+        self.memo.insert(key, dist);
+        dist
+    }
+}
+
+impl CollisionField for SpeculativeField<'_> {
+    fn cell_size(&self) -> f64 {
+        self.geom.cell_size
+    }
+
+    fn segment_blocked(&self, start: Vec3, end: Vec3, radius: f64) -> bool {
+        march_segment_blocked(self, start.x, start.y, start.z, end.x, end.y, end.z, radius)
+    }
+
+    fn exact_signed_distance_at(&self, point: Vec3) -> f64 {
+        let local = point.apply_matrix4(self.geom.inverse_matrix);
+        self.signed_distance_at_local_point(local, f64::INFINITY)
+    }
+}
+
+/// The geometric face normal (cross product of triangle edges) rather than
+/// vertex normals, which may be smoothed and unreliable for inside/outside
+/// determination.
+fn face_normal(bvh: &MeshBvh, face: usize) -> Vec3 {
+    // Look up vertex indices for this triangle
+    let [i0, i1, i2] = bvh.face(face);
+    let (v0, v1, v2) = (bvh.vertex(i0), bvh.vertex(i1), bvh.vertex(i2));
+
+    let (e1x, e1y, e1z) = (v1.x - v0.x, v1.y - v0.y, v1.z - v0.z);
+    let (e2x, e2y, e2z) = (v2.x - v0.x, v2.y - v0.y, v2.z - v0.z);
+
+    Vec3::new(
+        e1y * e2z - e1z * e2y,
+        e1z * e2x - e1x * e2z,
+        e1x * e2y - e1y * e2x,
+    )
+}
+
+/// Signed distance for a local-space point, signed with the face normal of the
+/// nearest triangle.
+///
+/// Without signing, a point 3mm INSIDE the mesh reports dist=3 (the
+/// unsigned distance to the nearest surface). isBlocked(x,y,z, 0.75)
+/// checks dist < 0.75 → false → "not blocked" → support placed through
+/// geometry. With signing, that same point reports dist=-3 → always < clearance
+/// → correctly blocked.
+fn signed_distance(
+    geom: &Geom<'_>,
+    local: Vec3,
+    max_distance: f64,
+    face_normal: impl FnOnce(usize) -> Vec3,
+) -> f64 {
+    let local_max_distance = if max_distance == f64::INFINITY {
+        f64::INFINITY
+    } else {
+        max_distance / js_max(0.000001, geom.world_scale)
+    };
+    let Some(hit) = geom
+        .bvh
+        .closest_point_to_point(local, 0.0, local_max_distance)
+    else {
+        return f64::INFINITY;
+    };
+    let mut dist = hit.distance * geom.world_scale;
+    if dist > 1e-6 {
+        // Inside/outside: `local` is on the interior side of the nearest
+        // triangle when the direction from the closest surface point to it
+        // faces against the triangle's normal.
+        let fn_ = face_normal(hit.face_index);
+        let rp = hit.point;
+        let dx = local.x - rp.x;
+        let dy = local.y - rp.y;
+        let dz = local.z - rp.z;
+        if (dx * fn_.x + dy * fn_.y + dz * fn_.z) < 0.0 {
+            dist = -dist;
+        }
+    }
+    dist
+}
+
+fn quantized_signed_distance<F: MarchField + ?Sized>(
+    field: &F,
+    qx: f64,
+    qy: f64,
+    qz: f64,
+    max_distance: f64,
+) -> f64 {
+    let geom = field.geom();
+    let cs = geom.cell_size;
+    // Compute via BVH (local space)
+    let local = Vec3::new(qx * cs, qy * cs, qz * cs).apply_matrix4(geom.inverse_matrix);
+    field.signed_distance_at_local_point(local, max_distance)
+}
+
+/// See [`SdfCache::bounded_distance_at`].
+fn march_bounded_distance_at<F: MarchField + ?Sized>(
+    field: &F,
+    wx: f64,
+    wy: f64,
+    wz: f64,
+    bound_mm: f64,
+) -> f64 {
+    let cs = field.geom().cell_size;
+    let qx = quantize_to_cell(wx, cs);
+    let qy = quantize_to_cell(wy, cs);
+    let qz = quantize_to_cell(wz, cs);
+    if let Some(cached) = field.read_cell(qx, qy, qz) {
+        return cached;
+    }
+    let dist = quantized_signed_distance(field, qx, qy, qz, bound_mm);
+    let capped = if dist == f64::INFINITY {
+        bound_mm
+    } else {
+        js_min(dist, bound_mm)
+    };
+    field.write_cell(qx, qy, qz, capped);
+    capped
+}
+
+/// Exact signed distance at a world-space point, bounded.
+///
+/// Used by the march where the cached value is too coarse to decide: the
+/// cache answers for the nearest lattice point, so its value bounds the
+/// sample's distance but cannot resolve it.
+fn exact_bounded_distance_at<F: MarchField + ?Sized>(
+    field: &F,
+    wx: f64,
+    wy: f64,
+    wz: f64,
+    bound_mm: f64,
+) -> f64 {
+    let local = Vec3::new(wx, wy, wz).apply_matrix4(field.geom().inverse_matrix);
+    let dist = field.signed_distance_at_local_point(local, bound_mm);
+    if dist == f64::INFINITY {
+        bound_mm
+    } else {
+        js_min(dist, bound_mm)
+    }
+}
+
+/// How far a sample's true distance can be below the cached value: the cache
+/// answers for the nearest lattice point (`quantizeToCell` rounds), so this
+/// is the sample's distance to it.
+fn lattice_gap(cs: f64, px: f64, py: f64, pz: f64) -> f64 {
+    let lx = js_round(px / cs) * cs - px;
+    let ly = js_round(py / cs) * cs - py;
+    let lz = js_round(pz / cs) * cs - pz;
+    (lx * lx + ly * ly + lz * lz).sqrt()
+}
+
+/// One march sample, as the distance it can safely advance.
+///
+/// Returns -1 when the sample is inside `clearance`. The cached value bounds
+/// the sample's true distance to `[base - gap, base + gap]`, so above the
+/// band it settles `clear` without another query, below it settles `blocked`,
+/// and only the band itself is asked exactly.
+fn march_sample<F: MarchField + ?Sized>(
+    field: &F,
+    px: f64,
+    py: f64,
+    pz: f64,
+    clearance: f64,
+) -> f64 {
+    let d = march_bounded_distance_at(field, px, py, pz, MARCH_DISTANCE_BOUND_MM);
+    let base = if d == f64::INFINITY {
+        MARCH_DISTANCE_BOUND_MM
+    } else {
+        d
+    };
+    let gap = lattice_gap(field.geom().cell_size, px, py, pz);
+    if base + gap < clearance {
+        return -1.0;
+    }
+    if base - gap >= clearance {
+        return base - gap - clearance;
+    }
+    let exact = exact_bounded_distance_at(field, px, py, pz, clearance + 0.001);
+    if exact < clearance {
+        -1.0
+    } else {
+        exact - clearance
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn segment_intersects_expanded_world_bounds(
+    b: &Box3,
+    ax: f64,
+    ay: f64,
+    az: f64,
+    bx: f64,
+    by: f64,
+    bz: f64,
+    margin: f64,
+) -> bool {
+    if b.is_empty() {
+        return true;
+    }
+    let (min_x, max_x) = (js_min(ax, bx), js_max(ax, bx));
+    let (min_y, max_y) = (js_min(ay, by), js_max(ay, by));
+    let (min_z, max_z) = (js_min(az, bz), js_max(az, bz));
+    max_x >= b.min.x - margin
+        && min_x <= b.max.x + margin
+        && max_y >= b.min.y - margin
+        && min_y <= b.max.y + margin
+        && max_z >= b.min.z - margin
+        && min_z <= b.max.z + margin
+}
+
+/// See [`SdfCache::segment_blocked_xyz`].
+#[allow(clippy::too_many_arguments)]
+fn march_segment_blocked<F: MarchField + ?Sized>(
+    field: &F,
+    ax: f64,
+    ay: f64,
+    az: f64,
+    bx: f64,
+    by: f64,
+    bz: f64,
+    clearance: f64,
+) -> bool {
+    let geom = field.geom();
+    // Exact fast path, vertical segments only: it answers `blocked` only
+    // when a mesh vertex is provably within `clearance` of the segment, so
+    // it can only settle what the march below would have settled anyway.
+    if let Some(map) = geom.column_map
+        && ax == bx
+        && ay == by
+        && (clearance - geom.column_map_clearance).abs() < 1e-9
+        && map.column_verdict(ax, ay, az, bz) == ColumnVerdict::Blocked
+    {
+        return true;
+    }
+
+    let dx = bx - ax;
+    let dy = by - ay;
+    let dz = bz - az;
+    let len = (dx * dx + dy * dy + dz * dz).sqrt();
+    if len < 0.01 {
+        return march_sample(field, ax, ay, az, clearance) < 0.0;
+    }
+    if !segment_intersects_expanded_world_bounds(
+        geom.world_bounds,
+        ax,
+        ay,
+        az,
+        bx,
+        by,
+        bz,
+        clearance,
+    ) {
+        return false;
+    }
+
+    let inv_len = 1.0 / len;
+    let ux = dx * inv_len;
+    let uy = dy * inv_len;
+    let uz = dz * inv_len;
+
+    let cs = geom.cell_size;
+    // Floor step: matches the fidelity of the old fixed-cellSize sampler so
+    // geometry thinner than ~cellSize is still caught. Skipping below this
+    // would give up accuracy; we never want that.
+    let min_step = cs * 0.9;
+
+    let mut t = 0.0;
+    // Limit iterations defensively in case a pathological SDF oscillation
+    // prevents progress — shouldn't happen with the minStep floor but cheap.
+    let max_iter = js_max(8.0, (len / min_step).ceil() + 2.0);
+    let mut iter = 0.0;
+    while iter < max_iter {
+        let advance = march_sample(field, ax + ux * t, ay + uy * t, az + uz * t, clearance);
+        if advance < 0.0 {
+            return true;
+        }
+        t += if advance > min_step {
+            advance
+        } else {
+            min_step
+        };
+        if t >= len {
+            break;
+        }
+        iter += 1.0;
+    }
+    // Always check the exact endpoint — the adaptive loop may exit with
+    // t > len before sampling the terminal cell.
+    march_sample(field, bx, by, bz, clearance) < 0.0
 }

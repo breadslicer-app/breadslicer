@@ -36,6 +36,7 @@
 //! `SDFCache`); only `segmentBlocked` is asked.
 
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -136,9 +137,6 @@ pub fn find_escape_joint(
     root_top_z: f64,
     opts: EscapeJointSearchOptions<'_>,
 ) -> EscapeJointSearchResult {
-    let mut probes = 0u32;
-    let clearance = opts.clearance_mm;
-
     let max_lateral_mm = js_min(
         opts.max_lateral_mm,
         socket_pos.z - root_top_z - opts.min_vertical_leg_mm,
@@ -146,10 +144,133 @@ pub fn find_escape_joint(
     if max_lateral_mm <= 0.0 || opts.directions.is_empty() {
         return EscapeJointSearchResult {
             joint: None,
-            probes,
+            probes: 0,
             outcome: EscapeOutcome::NoDirection,
         };
     }
+
+    prefetch_walks(sdf, socket_pos, root_top_z, max_lateral_mm, &opts);
+    let result = walk_directions(sdf, socket_pos, root_top_z, max_lateral_mm, opts);
+    sdf.clear_prefetch();
+    result
+}
+
+/// Steps of one walk a prefetch job runs. A walk is cut into runs of this many
+/// steps, so one long walk spreads over several threads instead of being the
+/// whole prefetch's critical path.
+const PREFETCH_RUN_STEPS: usize = 6;
+
+/// Runs the walks ahead, in parallel, so that the real walks
+/// ([`walk_directions`]), which stay sequential and decide everything, find
+/// most of their distance queries already answered (`CollisionField::prefetch`).
+///
+/// Every step's points depend only on the search's inputs, so each run of
+/// steps can start on its own. A run stops where the real walk is expected to:
+/// where its walk has already ended (a blocked diagonal, a clear column, the
+/// floor), once it passes a joint an earlier direction found, or once the
+/// earlier directions and its own steps add up to the probe budget. Guessing
+/// wrong only costs work; it does not ask `base_fits_at`, which belongs to the
+/// real walk.
+fn prefetch_walks(
+    sdf: &dyn CollisionField,
+    socket_pos: Vec3,
+    root_top_z: f64,
+    max_lateral_mm: f64,
+    opts: &EscapeJointSearchOptions<'_>,
+) {
+    let directions = &opts.directions;
+    let (clearance, step_mm) = (opts.clearance_mm, opts.step_mm);
+    let floor_z = root_top_z + opts.min_vertical_leg_mm;
+    let sin_lean = js_sin(opts.lean_from_vertical_deg * DEG);
+    let cos_lean = js_cos(opts.lean_from_vertical_deg * DEG);
+    let max_travel_mm = max_lateral_mm / sin_lean;
+    // Distance travelled at each step, accumulated as the real walk does.
+    let mut travel = Vec::new();
+    let mut travelled_mm = step_mm;
+    while travelled_mm <= max_travel_mm && travel.len() < MAX_PROBES as usize / 2 {
+        travel.push(travelled_mm);
+        travelled_mm += step_mm;
+    }
+    if travel.is_empty() {
+        return;
+    }
+    let point_at = |dir: Xy, k: usize| {
+        let lateral_mm = travel[k] * sin_lean;
+        Vec3::new(
+            socket_pos.x + lateral_mm * dir.x,
+            socket_pos.y + lateral_mm * dir.y,
+            socket_pos.z - travel[k] * cos_lean,
+        )
+    };
+
+    let n = directions.len();
+    // Per walk: the step it ended at, and the lateral offset of the joint it
+    // found (positive `f64` bits order as the values do).
+    let ended: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(usize::MAX)).collect();
+    // Per walk, how many steps have been walked past without ending it.
+    let reached: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(0)).collect();
+    let found: Vec<AtomicU64> = (0..n)
+        .map(|_| AtomicU64::new(f64::INFINITY.to_bits()))
+        .collect();
+    let runs = travel.len().div_ceil(PREFETCH_RUN_STEPS);
+    // Nearest steps first, every direction at a time: the order the real
+    // search is most likely to need them in.
+    sdf.prefetch(runs * n, &|job, field| {
+        let (run, i) = (job / n, job % n);
+        let dir = directions[i];
+        let first = run * PREFETCH_RUN_STEPS;
+        let last = (first + PREFETCH_RUN_STEPS).min(travel.len());
+        for (k, travelled_mm) in travel.iter().enumerate().take(last).skip(first) {
+            if k > ended[i].load(Ordering::Relaxed) {
+                return;
+            }
+            let lateral_mm = travelled_mm * sin_lean;
+            let mut earlier_probes = 2 * k;
+            for j in 0..i {
+                if lateral_mm >= f64::from_bits(found[j].load(Ordering::Relaxed)) {
+                    return;
+                }
+                let end = ended[j].load(Ordering::Relaxed);
+                earlier_probes += 2 * if end == usize::MAX {
+                    reached[j].load(Ordering::Relaxed)
+                } else {
+                    end + 1
+                };
+            }
+            if earlier_probes >= MAX_PROBES as usize {
+                return;
+            }
+            let point = point_at(dir, k);
+            let previous = if k == 0 {
+                socket_pos
+            } else {
+                point_at(dir, k - 1)
+            };
+            if point.z <= floor_z || field.segment_blocked(previous, point, clearance) {
+                ended[i].fetch_min(k, Ordering::Relaxed);
+                return;
+            }
+            if !field.segment_blocked(point, Vec3::new(point.x, point.y, root_top_z), clearance) {
+                ended[i].fetch_min(k, Ordering::Relaxed);
+                found[i].fetch_min(lateral_mm.to_bits(), Ordering::Relaxed);
+                return;
+            }
+            reached[i].fetch_max(k + 1, Ordering::Relaxed);
+        }
+    });
+}
+
+/// The search itself: every direction in order, each walk bounded by the best
+/// joint so far.
+fn walk_directions(
+    sdf: &dyn CollisionField,
+    socket_pos: Vec3,
+    root_top_z: f64,
+    max_lateral_mm: f64,
+    opts: EscapeJointSearchOptions<'_>,
+) -> EscapeJointSearchResult {
+    let mut probes = 0u32;
+    let clearance = opts.clearance_mm;
 
     // The objective is the lateral offset: everything below the joint is
     // vertical, so the closer the joint sits to the socket's own column, the
