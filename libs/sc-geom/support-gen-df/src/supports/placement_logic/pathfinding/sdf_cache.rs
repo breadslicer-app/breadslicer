@@ -695,6 +695,12 @@ impl CollisionField for SdfCache {
     }
 
     fn prefetch(&self, jobs: usize, job: &(dyn Fn(usize, &dyn CollisionField) + Sync)) {
+        // The jobs guess ahead and do more work than the real queries need, so
+        // they only pay with threads to spare: measured on the 617 scene, the
+        // joint search took 16.6 s on one thread against 5.8 s without them.
+        if rayon::current_num_threads() < PREFETCH_MIN_THREADS {
+            return;
+        }
         let cells = self.cells.borrow();
         let base: &Cells = &cells;
         let geom = self.geom();
@@ -822,6 +828,9 @@ struct SharedMemo {
 }
 
 const MEMO_SHARDS: usize = 64;
+
+/// Fewest pool threads a prefetch runs with; below this it runs nothing.
+const PREFETCH_MIN_THREADS: usize = 4;
 
 impl SharedMemo {
     fn new() -> Self {
