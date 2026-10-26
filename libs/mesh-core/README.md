@@ -4,7 +4,7 @@ Triangle meshes for Rust: indexed mesh storage, affine transforms,
 bounding boxes, mesh validation, and mesh repair.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers, but it depends on nothing else in that
 project and stands on its own.
 
@@ -17,11 +17,11 @@ project and stands on its own.
   inconsistent winding, with repairs for some of those.
 
 The hierarchical scene graph lives in
-[`sc-scene`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene/),
+[`sc-scene`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/scene/),
 reading and writing mesh files (STL, OBJ, 3MF) lives in
-[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
+[`sc-mesh-formats`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/mesh-formats/),
 and slicing lives in
-[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/).
+[`sc-sl1cer`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/sl1cer/).
 This crate carries no rendering or GPU types.
 
 ## Conventions

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! The Hollow tab (SC-18): hollows the selected model with the DragonFruit
+//! The Hollow tab (BS-8): hollows the selected model with the DragonFruit
 //! engine port (`sc_geom::df_hollow`) and drills drains where the model is
 //! clicked.
 //!

@@ -6,7 +6,7 @@ chosen resin, and any per-print adjustments into one set of values to print
 with.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md).
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
 
 ## Features
 

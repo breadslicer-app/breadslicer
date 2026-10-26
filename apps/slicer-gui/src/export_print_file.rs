@@ -126,7 +126,7 @@ pub(crate) fn export_button_enabled(
 }
 
 /// What the held slice will print as: the print time, resin and weight the
-/// printer file will report, from the same program (SC-84 Slice tab).
+/// printer file will report, from the same program (BS-68 Slice tab).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PrintEstimate {
     pub time_sec: f64,

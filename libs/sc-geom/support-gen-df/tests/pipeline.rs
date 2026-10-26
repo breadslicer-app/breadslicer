@@ -1,4 +1,4 @@
-//! SC-78: the `pipeline` facade. Over scenes built from the block-8a meshes it
+//! the `pipeline` facade. Over scenes built from the block-8a meshes it
 //! must give exactly what the stage-by-stage calls the parity tests use give
 //! (scan, derivation, plan with bracing, export rafts), report its stages in
 //! order, and stop with `Cancelled` and no output at every stage boundary.

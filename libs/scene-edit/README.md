@@ -1,12 +1,12 @@
 # sc-scene-edit
 
 Typed mutation vocabulary for
-[`sc-scene`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene/)
+[`sc-scene`](https://github.com/breadslicer-app/breadslicer/blob/main/libs/scene/)
 graphs: invertible edits for undo / redo stacks, and self-contained
 scene fragments for clipboard-style transfer between scenes.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers.
 
 ## Features

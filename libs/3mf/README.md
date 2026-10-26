@@ -5,7 +5,7 @@ Manufacturing Format published by the 3MF Consortium: the package container
 and a typed model document.
 
 Written for the
-[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+[Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),
 a slicer for resin 3D printers, but it carries no application types and can be
 used on its own.
 
