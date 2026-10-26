@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use support_gen_df::features::slicing::support_world_triangles::{
-    SupportSliceInput, append_contact_cone_primitive, append_contact_disk_primitive,
+    SupportSliceInput, TriangleSink, append_contact_cone_primitive, append_contact_disk_primitive,
     build_support_and_raft_world_triangles,
 };
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::{
@@ -105,6 +105,7 @@ fn support_triangles_match_dragonfruit() {
             support_tip_shrink_percent: case["shrink"].as_f64().unwrap(),
             tip_penetration_mm: 0.0,
             shaft_style: Default::default(),
+            robust_raft_geometry: false,
         })
         .unwrap();
         let expected = &case["triangles"];
@@ -139,7 +140,7 @@ fn contact_primitives_with_tip_penetration_match_dragonfruit() {
         if penetration > 0.0 {
             penetrating += 1;
         }
-        let mut soup = Vec::new();
+        let mut soup = TriangleSink::default();
         if case["disk"].as_bool().unwrap() {
             let disk: ContactDisk = serde_json::from_value(case["contact"].clone()).unwrap();
             append_contact_disk_primitive(&mut soup, &disk, segments, penetration, scale);
@@ -147,6 +148,7 @@ fn contact_primitives_with_tip_penetration_match_dragonfruit() {
             let cone: ContactCone = serde_json::from_value(case["contact"].clone()).unwrap();
             append_contact_cone_primitive(&mut soup, &cone, segments, penetration, scale);
         }
+        let soup = soup.floats;
         let expected = &case["triangles"];
         let head: Vec<f64> = serde_json::from_value(expected["head"].clone()).unwrap();
         let got: Vec<f64> = soup.iter().take(90).map(|&v| v as f64).collect();

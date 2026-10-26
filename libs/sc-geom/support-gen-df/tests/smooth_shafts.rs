@@ -13,7 +13,7 @@ use support_gen_df::features::slicing::smooth_shafts::{
     ChainPoint, ShaftStyle, SmoothShaftParams, append_smooth_chain,
 };
 use support_gen_df::features::slicing::support_world_triangles::{
-    SupportSliceInput, build_support_and_raft_world_triangles,
+    SupportSliceInput, TriangleSink, build_support_and_raft_world_triangles,
 };
 use support_gen_df::supports::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
@@ -62,8 +62,9 @@ fn a_bent_chain_is_one_closed_outward_tube_with_a_bicone() {
         point(4.0, 3.0, 22.0, true),
         point(4.0, 3.0, 30.0, false),
     ];
-    let mut soup = Vec::new();
+    let mut soup = TriangleSink::default();
     append_smooth_chain(&mut soup, &points, &[(r, r); 4], 12, &params);
+    let soup = soup.floats;
 
     let (edges, volume) = topology(&soup);
     assert!(
@@ -109,7 +110,7 @@ fn a_bent_chain_is_one_closed_outward_tube_with_a_bicone() {
 
 #[test]
 fn a_straight_chain_without_bulges_is_a_capped_cylinder() {
-    let mut soup = Vec::new();
+    let mut soup = TriangleSink::default();
     let points = [
         point(0.0, 0.0, 0.0, false),
         point(0.0, 0.0, 5.0, false),
@@ -122,6 +123,7 @@ fn a_straight_chain_without_bulges_is_a_capped_cylinder() {
         16,
         &SmoothShaftParams::default(),
     );
+    let soup = soup.floats;
     let (edges, volume) = topology(&soup);
     assert!(edges.values().all(|&c| c == 2));
     // A 16-gon prism of circumradius 1 and height 9.
@@ -162,6 +164,7 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
                 support_tip_shrink_percent: 0.0,
                 tip_penetration_mm: 0.0,
                 shaft_style,
+                robust_raft_geometry: false,
             })
             .unwrap()
         };
@@ -187,7 +190,7 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
 
 #[test]
 fn a_joint_the_shaft_runs_straight_through_does_not_bulge() {
-    let mut soup = Vec::new();
+    let mut soup = TriangleSink::default();
     // Flagged as a joint, but collinear: no bicone.
     let points = [
         point(0.0, 0.0, 0.0, false),
@@ -201,6 +204,7 @@ fn a_joint_the_shaft_runs_straight_through_does_not_bulge() {
         16,
         &SmoothShaftParams::default(),
     );
+    let soup = soup.floats;
     let widest = soup
         .chunks_exact(3)
         .map(|p| (p[0] as f64).hypot(p[1] as f64))
@@ -220,7 +224,7 @@ fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
         point(2.0, 0.0, 12.4, false),
     ];
     let (shaft, body, tip) = (0.5, 0.45, 0.15);
-    let mut soup = Vec::new();
+    let mut soup = TriangleSink::default();
     append_smooth_chain(
         &mut soup,
         &points,
@@ -228,6 +232,7 @@ fn a_shaft_bends_into_its_contact_cone_without_a_gap() {
         12,
         &SmoothShaftParams::default(),
     );
+    let soup = soup.floats;
     let (edges, volume) = topology(&soup);
     assert!(
         edges.values().all(|&c| c == 2),
@@ -286,9 +291,10 @@ fn hairpins_and_sharp_bends_stay_on_their_path() {
         ],
     ];
     for (k, points) in cases.iter().enumerate() {
-        let mut soup = Vec::new();
+        let mut soup = TriangleSink::default();
         let radii = vec![(r, r); points.len() - 1];
         append_smooth_chain(&mut soup, points, &radii, 12, &params);
+        let soup = soup.floats;
         assert!(soup.iter().all(|v| v.is_finite()), "case {k}: finite");
         assert!(
             stays_near(&soup, points, 2.0 * waist + 1e-6),
@@ -366,6 +372,7 @@ fn on_dragonfruit_states_no_vertex_flies_off() {
                 support_tip_shrink_percent: 0.0,
                 tip_penetration_mm: 0.0,
                 shaft_style,
+                robust_raft_geometry: false,
             })
             .unwrap()
         };
