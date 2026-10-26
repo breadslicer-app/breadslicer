@@ -24,18 +24,23 @@ use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{DfSupportOutcome, DfSupportRequest, start_df_supports};
 use sc_mesh_core::transform::Transform3D;
+use sc_print_profiles::resolve_layer_height;
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
 use crate::i18n::ctr;
+use crate::preferences_bus::PreferencesBus;
+use crate::print_selection::PrintDefaults;
 use crate::scene_document::{SceneDocument, SceneRevision};
+use crate::slice_projection::load_selected_profiles;
 
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) struct DfSupportRun {
     ui: slint::Weak<MainWindow>,
+    bus: Rc<PreferencesBus>,
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     handle: RefCell<Option<JobHandle<DfSupportOutcome>>>,
@@ -50,11 +55,13 @@ impl DfSupportRun {
     /// the driver alive for the window's lifetime.
     pub(crate) fn install(
         ui: &MainWindow,
+        bus: Rc<PreferencesBus>,
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             ui: ui.as_weak(),
+            bus,
             document,
             dialogs,
             handle: RefCell::new(None),
@@ -86,7 +93,7 @@ impl DfSupportRun {
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             return;
         };
-        match start_df_supports(&scene, DfSupportRequest::default()) {
+        match start_df_supports(&scene, self.request_for_selection()) {
             Ok(handle) => {
                 ui.set_support_gen_in_progress(true);
                 ui.set_support_gen_cancelable(true);
@@ -105,6 +112,36 @@ impl DfSupportRun {
                     details: Default::default(),
                 });
             }
+        }
+    }
+
+    /// The request for the printer and resin in force: the layer height the
+    /// slice will use, and the printer's pixel pitch, which sets how far the
+    /// contact tips sink into the model. The defaults (0.05 mm, tips at the
+    /// surface) when no printer or resin is in force or a profile fails to
+    /// load.
+    fn request_for_selection(&self) -> DfSupportRequest {
+        let snapshot = self.bus.snapshot();
+        let selection = self
+            .document
+            .print_selection()
+            .in_force(&PrintDefaults::from(&snapshot));
+        let (Some(printer), Some(resin)) =
+            (selection.printer().in_force(), selection.resin().in_force())
+        else {
+            return DfSupportRequest::default();
+        };
+        let Ok((printer, resin)) = load_selected_profiles(printer, resin) else {
+            return DfSupportRequest::default();
+        };
+        let defaults = DfSupportRequest::default();
+        let layer_height_mm = resolve_layer_height(&printer, &resin, None)
+            .map_or(defaults.layer_height_mm, |h| h.value());
+        let pitch = printer.hardware.pixel_size_microns();
+        DfSupportRequest {
+            layer_height_mm,
+            pixel_pitch_mm: Some([pitch.x.value() / 1000.0, pitch.y.value() / 1000.0]),
+            ..defaults
         }
     }
 

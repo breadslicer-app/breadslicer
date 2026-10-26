@@ -657,7 +657,8 @@ Los datos de soportes no son una malla: DF los tesela al slicear (`buildSupportA
 
 | Origen | Rust SC | Estado |
 |---|---|---|
-| `rasterLayerZipExport.ts`: `buildSupportAndRaftWorldTriangles`, `resolveSupportSliceTessellation`, `createFrustumGeometryBetween`, `appendJointSphere`, `appendSegmentPrimitive`, `appendContactConePrimitive`, `appendContactDiskPrimitive`, `appendGeometryTriangles` | `features/slicing/support_world_triangles.rs` | Completo para soportes y raft. La penetración de las puntas (`calculateTipOffset`, de los ajustes AA del material) entra como parámetro; su cálculo va con SC-81 |
+| `rasterLayerZipExport.ts`: `buildSupportAndRaftWorldTriangles`, `resolveSupportSliceTessellation`, `createFrustumGeometryBetween`, `appendJointSphere`, `appendSegmentPrimitive`, `appendContactConePrimitive`, `appendContactDiskPrimitive`, `appendGeometryTriangles` | `features/slicing/support_world_triangles.rs` | Completo para soportes y raft. La penetración de las puntas entra como parámetro |
+| `supports/rendering/calculateTipOffset.ts` con `DEFAULT_MATERIAL_ANTI_ALIASING_SETTINGS` (`resolveEffectiveAaSettings`, la parte de `autoAaPhysics.ts` que lee) | `features/slicing/tip_offset.rs` (`default_tip_offset_mm`) | Solo los ajustes AA por defecto (preset `balanced`, sin override): las ramas de override leen campos del material de DF que los perfiles de SC no tienen. Oráculo `golden_tip_offset.ts` → `df_tip_offset.json`, 180 casos exactos |
 | three `CylinderGeometry`, `SphereGeometry`, `Matrix4.multiply`/`makeTranslation` | `three/primitive_geometry.rs`, `three/matrix4.rs` | Posiciones e índice (sin normales ni UVs, que el teselado no lee) |
 | `Rafts/Crenelated/RaftState.ts` | `rafts/crenelated/raft_state.rs` | La resolución del store: margen del borde acotado a 0,05 mm y sin pared si la base no es sólida (recuerda la última elección sólida). Sin listeners |
 
