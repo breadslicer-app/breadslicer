@@ -57,6 +57,27 @@ use crate::slice_projection::load_selected_profiles;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
+/// The instant marker: a small octahedral dot (0.8 mm) at `p`.
+fn marker_at(p: [f32; 3], tint: OverlayTint) -> OverlayMesh {
+    const R: f32 = 0.8;
+    let positions = vec![
+        [p[0] + R, p[1], p[2]],
+        [p[0] - R, p[1], p[2]],
+        [p[0], p[1] + R, p[2]],
+        [p[0], p[1] - R, p[2]],
+        [p[0], p[1], p[2] + R],
+        [p[0], p[1], p[2] - R],
+    ];
+    let indices = vec![
+        0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5,
+    ];
+    OverlayMesh {
+        positions,
+        indices,
+        tint,
+    }
+}
+
 /// An overlay piece of a mesh in world coordinates.
 pub(crate) fn overlay_of(mesh: &sc_mesh_core::IndexedMesh, tint: OverlayTint) -> OverlayMesh {
     OverlayMesh {
@@ -143,11 +164,19 @@ pub(crate) struct DfSupportRun {
     ctrl: Rc<ViewportController>,
     /// Computes hand-tool previews off the UI thread, always the latest.
     hover_worker: HoverWorker,
-    /// The latest hover asked for; older answers are dropped.
+    /// The latest hover asked for.
     hover_generation: Cell<u64>,
+    /// The newest answer drawn (or the hover cleared at): an answer older
+    /// than it is stale.
+    hover_shown: Cell<u64>,
     hover_poll: slint::Timer,
     /// The last preview drawn, for a click on the same point to reuse.
     last_preview: RefCell<Option<HoverAnswer>>,
+    /// The worker's last ghost, kept on screen while the next is computed.
+    last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
+    /// The instant marker at the cursor: drawn on the UI thread on every
+    /// move, so the tool answers at once while the worker computes the rest.
+    marker: RefCell<Option<Arc<OverlayMesh>>>,
 }
 
 /// How often the UI looks for a finished preview.
@@ -196,6 +225,12 @@ impl HoverWorker {
                 while let Ok(mut ask) = inbox.recv() {
                     while let Ok(newer) = inbox.try_recv() {
                         ask = newer;
+                    }
+                    if ask.tool == 0 {
+                        // Warm-up after an edit: no answer to draw.
+                        let base = ask.base.clone();
+                        let _ = std::panic::catch_unwind(move || base.warm_removal());
+                        continue;
                     }
                     let p = ask.point.map(f64::from);
                     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -357,8 +392,11 @@ impl DfSupportRun {
             ctrl,
             hover_worker: HoverWorker::spawn(),
             hover_generation: Cell::new(0),
+            hover_shown: Cell::new(0),
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
+            last_ghost: RefCell::new(None),
+            marker: RefCell::new(None),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -913,9 +951,21 @@ impl DfSupportRun {
         });
         let Some(ask) = ask else {
             self.hover_poll.stop();
+            self.hover_shown.set(generation);
+            *self.last_ghost.borrow_mut() = None;
+            *self.marker.borrow_mut() = None;
             self.ctrl.set_preview_overlay(None);
             return;
         };
+        // At once, before the worker answers: a dot where the tool acts, in
+        // the colour of what it does (green adds, red removes).
+        let tint = if ask.tool == 1 {
+            OverlayTint::Valid
+        } else {
+            OverlayTint::Invalid
+        };
+        *self.marker.borrow_mut() = Some(Arc::new(marker_at(ask.point, tint)));
+        self.show_hover_overlay();
         if self.hover_worker.asks.send(ask).is_err() {
             return;
         }
@@ -928,34 +978,69 @@ impl DfSupportRun {
             });
     }
 
-    /// Draws the worker's answer for the newest hover, once it is there: the
-    /// support a click adds (green, or red where nothing can hold that point)
-    /// or what it removes (red).
+    /// Draws the worker's newest answer: the support a click adds (green, or
+    /// red where nothing can hold that point) or what it removes (red). While
+    /// the cursor moves the answer is for a point it has already left, and is
+    /// drawn all the same: the preview follows the cursor a step behind
+    /// instead of waiting for it to stop.
     fn take_hover_answer(&self) {
         let answer = {
             let Ok(mut slot) = self.hover_worker.answer.lock() else {
                 return;
             };
             match slot.as_ref() {
-                Some(a) if a.generation == self.hover_generation.get() => slot.take(),
+                Some(a) if a.generation > self.hover_shown.get() => slot.take(),
                 _ => return,
             }
         };
-        self.hover_poll.stop();
         let Some(answer) = answer else {
             return;
         };
+        self.hover_shown.set(answer.generation);
+        if answer.generation == self.hover_generation.get() {
+            self.hover_poll.stop();
+        }
         let piece = answer.preview.as_ref().map(|preview| {
             let tint = if preview.valid {
                 OverlayTint::Valid
             } else {
                 OverlayTint::Invalid
             };
-            overlay_of(&preview.mesh, tint)
+            Arc::new(overlay_of(&preview.mesh, tint))
         });
-        self.ctrl
-            .set_preview_overlay(piece.map(|piece| Arc::from(vec![Arc::new(piece)])));
+        *self.last_ghost.borrow_mut() = piece;
+        self.show_hover_overlay();
         *self.last_preview.borrow_mut() = Some(answer);
+    }
+
+    /// The worker's last ghost and the marker at the cursor, together.
+    fn show_hover_overlay(&self) {
+        let pieces: Vec<Arc<OverlayMesh>> = self
+            .last_ghost
+            .borrow()
+            .iter()
+            .chain(self.marker.borrow().iter())
+            .cloned()
+            .collect();
+        self.ctrl
+            .set_preview_overlay((!pieces.is_empty()).then(|| pieces.into()));
+    }
+
+    /// Has the worker build the removal index of the session now in force,
+    /// so the first removal hover on it answers quickly.
+    fn warm_worker(&self) {
+        let Some(current) = self.current_session() else {
+            return;
+        };
+        let sessions = self.sessions.borrow();
+        let (base, drawn_on) = &sessions[current];
+        let _ = self.hover_worker.asks.send(HoverAsk {
+            generation: 0,
+            base: base.clone(),
+            from: (current, *drawn_on),
+            point: [0.0; 3],
+            tool: 0,
+        });
     }
 
     fn on_tool_click(&self, point: [f32; 3]) {
@@ -1069,6 +1154,8 @@ impl DfSupportRun {
                 ui.set_supports_last_run(
                     format!("{roots} support root(s), edited by hand.").into(),
                 );
+                drop(sessions);
+                self.warm_worker();
             }
             Err(err) => ui.set_supports_last_run(format!("The edit was refused: {err:?}").into()),
         }
@@ -1164,6 +1251,7 @@ impl DfSupportRun {
         let pasted = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]);
         if pasted.is_ok() {
             *self.sessions.borrow_mut() = vec![(Arc::new(session), self.document.scene_revision())];
+            self.warm_worker();
         }
         if let Err(error) = pasted {
             let details = error.to_string();
