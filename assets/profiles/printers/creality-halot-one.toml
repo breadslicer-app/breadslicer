@@ -29,11 +29,11 @@ has_camera = false
 
 [[capabilities.output_formats]]
 format = "cxdlp"
-version = "v3"
+version = "v2"
 
 [[capabilities.output_formats]]
 format = "cxdlp"
-version = "v2"
+version = "v3"
 
 [constraints]
 
