@@ -50,8 +50,24 @@ fn titles(rows: &[ReviewRow]) -> Vec<&str> {
 }
 
 #[test]
+fn a_hollow_with_no_drain_holes_says_so_and_offers_the_drain_tool() {
+    let hollows = [None, None, None, Some(0), None];
+    let rows = review_rows(&findings(), &hollows, &BTreeSet::new(), true);
+    let trap = rows.iter().find(|r| r.id == 3).expect("the trap row");
+    assert_eq!(trap.title.as_str(), "Hollow without drain holes");
+    assert!(trap.detail.contains("no drain holes"), "{}", trap.detail);
+    assert_eq!(trap.fix, FixKind::AddDrain as i32);
+
+    // A hollow that has drain holes keeps the finding's own words.
+    let drained = [None, None, None, Some(2), None];
+    let rows = review_rows(&findings(), &drained, &BTreeSet::new(), true);
+    let trap = rows.iter().find(|r| r.id == 3).expect("the trap row");
+    assert_eq!(trap.title.as_str(), "Trap");
+}
+
+#[test]
 fn rows_are_grouped_by_severity_in_listing_order() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true);
     assert_eq!(titles(&rows), ["Island", "Trap", "Cup", "Thin", "Empty"]);
     let ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, [1, 3, 0, 4, 2]);
@@ -61,14 +77,14 @@ fn rows_are_grouped_by_severity_in_listing_order() {
 
 #[test]
 fn the_first_row_of_each_group_carries_its_heading() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true);
     let headers: Vec<&str> = rows.iter().map(|r| r.header.as_str()).collect();
     assert_eq!(headers, ["Errors", "", "Warnings", "", "Notes"]);
 }
 
 #[test]
 fn rows_name_their_layers_from_one() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true);
     let layers: Vec<&str> = rows.iter().map(|r| r.layers.as_str()).collect();
     assert_eq!(
         layers,
@@ -86,11 +102,11 @@ fn rows_name_their_layers_from_one() {
 #[test]
 fn a_drain_is_offered_only_where_it_can_be_drilled() {
     let support = FixKind::AddSupport as i32;
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     assert_eq!(fixes, [support, FixKind::DrainNeedsHollow as i32, 0, 0, 0]);
 
-    let drainable = [false, false, false, true, false];
+    let drainable = [None, None, None, Some(1), None];
     let rows = review_rows(&findings(), &drainable, &BTreeSet::new(), true);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     assert_eq!(fixes, [support, FixKind::AddDrain as i32, 0, 0, 0]);
@@ -98,7 +114,7 @@ fn a_drain_is_offered_only_where_it_can_be_drilled() {
 
 #[test]
 fn an_applied_fix_marks_its_row() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::from([1]), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::from([1]), true);
     let fixed: Vec<bool> = rows.iter().map(|r| r.fixed).collect();
     assert_eq!(fixed, [true, false, false, false, false]);
 }
@@ -137,7 +153,7 @@ fn plate_points_are_world_points() {
 
 #[test]
 fn rows_offer_no_fix_once_the_models_moved_but_keep_their_marks() {
-    let drainable = [false, false, false, true, false];
+    let drainable = [None, None, None, Some(1), None];
     let rows = review_rows(&findings(), &drainable, &BTreeSet::from([1]), false);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     // The applied support keeps its kind for its mark; the drain is withdrawn.
@@ -162,7 +178,7 @@ fn tiered() -> Vec<Finding> {
 
 fn marked(findings: &[Finding], marks: &RowMarks) -> Vec<ReviewRow> {
     mark_rows(
-        review_rows(findings, &[true; 5], &BTreeSet::new(), marks.fixable),
+        review_rows(findings, &[Some(1); 5], &BTreeSet::new(), marks.fixable),
         findings,
         marks,
     )
@@ -182,7 +198,7 @@ fn a_fixed_finding_leaves_the_list_and_the_summary_counts_it() {
     let marks = open_marks();
     // The large trap's drain was applied since the slice.
     let rows = mark_rows(
-        review_rows(&findings, &[true; 5], &BTreeSet::from([3]), true),
+        review_rows(&findings, &[Some(1); 5], &BTreeSet::from([3]), true),
         &findings,
         &marks,
     );
@@ -289,17 +305,17 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     .with_fix(SuggestedFix::ClearRaft { lift_to_mm: 5.0 });
     let rows = review_rows(
         std::slice::from_ref(&raft),
-        &[false],
+        &[None],
         &BTreeSet::new(),
         true,
     );
     assert_eq!(rows[0].fix, FixKind::ClearRaft as i32);
     assert_eq!(rows[0].lift_label.as_str(), "Lift to 5 mm");
     // Other rows carry no lift label.
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true);
     assert!(rows.iter().all(|r| r.lift_label.is_empty()));
     // Once the models moved, the raft fixes are withdrawn too.
-    let rows = review_rows(&[raft], &[false], &BTreeSet::new(), false);
+    let rows = review_rows(&[raft], &[None], &BTreeSet::new(), false);
     assert_eq!(rows[0].fix, FixKind::None as i32);
 }
 

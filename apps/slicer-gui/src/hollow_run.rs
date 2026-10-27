@@ -19,9 +19,8 @@
 //! as the wall or detail change and re-posed as the model moves), its drains,
 //! and with the drain tool the drain a click would drill.
 //!
-//! The Review card (#90) drills the drain it suggests for a resin trap
-//! through the same path: on a hollow made here, straight up through the
-//! cavity's floor ([`HollowRun::add_drain_at`]).
+//! The Review card (#90) asks which hollow made here holds a resin trap
+//! ([`HollowRun::hollow_at`]) and opens the drain tool on that model (#158).
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -103,18 +102,6 @@ impl HollowOptions {
             ..HollowSettings::default()
         }
     }
-}
-
-/// What [`HollowRun::add_drain_at`] did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DrainRequest {
-    /// The model is being hollowed again with the drain.
-    Started,
-    /// A hollowing job is running (or the window is loading); nothing
-    /// started.
-    Busy,
-    /// No hollow made here has that floor; nothing started.
-    NoHollow,
 }
 
 /// Where a vertical line down from `at` (world mm) first leaves the solid of
@@ -658,31 +645,12 @@ impl HollowRun {
             })
     }
 
-    /// Whether [`Self::add_drain_at`] has a hollow to drill for a cavity
-    /// whose floor is at `at` (world mm).
-    pub(crate) fn can_drain_at(&self, at: [f32; 3]) -> bool {
-        self.drain_target(at).is_some()
-    }
-
-    /// Hollows again, with one more drain, the hollow made here under the
-    /// cavity floor at `at` (world mm): the drain goes straight up through
-    /// that floor. The new hollow replaces the old as one undoable edit when
-    /// the job lands, like a drain drilled with the drain tool.
-    pub(crate) fn add_drain_at(self: &Rc<Self>, at: [f32; 3]) -> DrainRequest {
-        if self.job.borrow().is_some() {
-            return DrainRequest::Busy;
-        }
-        let Some((leaf, mesh, world, drain)) = self.drain_target(at) else {
-            return DrainRequest::NoHollow;
-        };
-        let (original, mut drains) = self.source_for(&mesh);
-        drains.push(drain);
-        self.launch(leaf, mesh, original, drains, &world);
-        if self.job.borrow().is_some() {
-            DrainRequest::Started
-        } else {
-            DrainRequest::Busy
-        }
+    /// The model hollowed here whose hollow holds the cavity at `at` (world
+    /// mm), and how many drain holes that hollow has; `None` when no model
+    /// hollowed here holds it.
+    pub(crate) fn hollow_at(&self, at: [f32; 3]) -> Option<(NodeId, usize)> {
+        let (leaf, mesh, _, _) = self.drain_target(at)?;
+        Some((leaf, self.source_for(&mesh).1.len()))
     }
 
     fn launch(

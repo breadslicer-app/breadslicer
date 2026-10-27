@@ -178,7 +178,7 @@ component FindingRow inherits VerticalLayout {
             }
         }
         if root.finding.fix == 2 && !root.finding.fixed: ScButton {
-            text: @tr("Review" => "Add drain here");
+            text: @tr("Review" => "Add drain holes…");
             icon: Icons.hole;
             clicked => {
                 root.fix();
