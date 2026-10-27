@@ -5063,6 +5063,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-sla-formats-uvtools"
+version = "0.1.0"
+dependencies = [
+ "png 0.18.1",
+ "proptest",
+ "sc-print-primitives",
+ "sc-sl1cer",
+ "sc-sla-formats",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
 name = "sc-slicer-cli"
 version = "0.3.1"
 dependencies = [
@@ -5084,6 +5099,7 @@ dependencies = [
  "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
+ "sc-sla-formats-uvtools",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -5122,6 +5138,7 @@ dependencies = [
  "sc-scene-fixtures",
  "sc-sl1cer",
  "sc-sla-formats",
+ "sc-sla-formats-uvtools",
  "serde",
  "slint",
  "slint-build",

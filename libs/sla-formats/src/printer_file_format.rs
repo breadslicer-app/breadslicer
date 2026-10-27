@@ -10,6 +10,11 @@
 //! revision. `.goo` at `v5.1` shares an extension with `.goo` at `V3.0` and
 //! nothing else, and `ctb` at `v5enc` differs from `ctb` at `v5` in whether the
 //! settings block is encrypted.
+//!
+//! Some formats are named here but written by a writer crate installed at run
+//! time (see [`crate::external`]): this crate stays free of their code, and
+//! [`PrinterFileFormat::has_writer`] reports them writable once one is
+//! installed.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -18,6 +23,7 @@ use std::path::Path;
 use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings};
 
 use crate::ctb::PREVIEW_SIZES as CTB_PREVIEW_SIZES;
+use crate::external;
 use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
 use crate::preview::PreviewSizes;
 
@@ -26,6 +32,41 @@ use crate::preview::PreviewSizes;
 pub enum PrinterFileFormat {
     Goo(GooVersion),
     Ctb(CtbVariant),
+    /// Creality's CXDLP container.
+    Cxdlp(CxdlpVersion),
+    /// Anycubic's ZIP container.
+    AnycubicZip(AnycubicZipVariant),
+}
+
+/// A revision of Creality's CXDLP container. A later revision compares greater.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CxdlpVersion {
+    V2 = 0,
+    V3 = 1,
+}
+
+/// A variant of Anycubic's ZIP container. The variants are one layout written
+/// for different machines under different extensions, not revisions of each
+/// other, so 2 different variants are incomparable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnycubicZipVariant {
+    /// `.pwsz`, the Photon Mono M7 Pro.
+    Pwsz,
+    /// `.pm7`, the Photon Mono M7.
+    Pm7,
+    /// `.pm7m`, the Photon Mono M7 Max.
+    Pm7m,
+}
+
+impl AnycubicZipVariant {
+    /// Reports the extension, which is also the binding's version string.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Pwsz => "pwsz",
+            Self::Pm7 => "pm7",
+            Self::Pm7m => "pm7m",
+        }
+    }
 }
 
 /// A revision of the Elegoo GOO container. A later revision compares greater.
@@ -50,7 +91,11 @@ impl PartialOrd for PrinterFileFormat {
         match (self, other) {
             (Self::Goo(revision), Self::Goo(other)) => Some(revision.cmp(other)),
             (Self::Ctb(revision), Self::Ctb(other)) => Some(revision.cmp(other)),
-            (Self::Goo(_), Self::Ctb(_)) | (Self::Ctb(_), Self::Goo(_)) => None,
+            (Self::Cxdlp(revision), Self::Cxdlp(other)) => Some(revision.cmp(other)),
+            (Self::AnycubicZip(variant), Self::AnycubicZip(other)) => {
+                (variant == other).then_some(Ordering::Equal)
+            }
+            _ => None,
         }
     }
 }
@@ -72,13 +117,18 @@ impl fmt::Display for UnresolvedBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let family = self.binding.format.as_canonical();
         match (&self.binding.format, &self.binding.version) {
-            (FormatKind::Goo | FormatKind::Ctb, Some(version)) => {
+            (
+                FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf,
+                Some(version),
+            ) => {
                 write!(f, "unknown version \"{version}\" for format \"{family}\"",)
             }
-            (FormatKind::Goo | FormatKind::Ctb, None) => write!(
-                f,
-                "format \"{family}\" needs a version to name a revision, and the binding carries none",
-            ),
+            (FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf, None) => {
+                write!(
+                    f,
+                    "format \"{family}\" needs a version to name a revision, and the binding carries none",
+                )
+            }
             _ => write!(f, "unknown format \"{family}\""),
         }
     }
@@ -148,6 +198,11 @@ impl PrinterFileFormat {
             (FormatKind::Goo, Some("v5.1")) => Ok(Self::Goo(GooVersion::V5_1)),
             (FormatKind::Ctb, Some("v5")) => Ok(Self::Ctb(CtbVariant::PlainV5)),
             (FormatKind::Ctb, Some("v5enc")) => Ok(Self::Ctb(CtbVariant::EncryptedV5)),
+            (FormatKind::Cxdlp, Some("v2")) => Ok(Self::Cxdlp(CxdlpVersion::V2)),
+            (FormatKind::Cxdlp, Some("v3")) => Ok(Self::Cxdlp(CxdlpVersion::V3)),
+            (FormatKind::Azf, Some("pwsz")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pwsz)),
+            (FormatKind::Azf, Some("pm7")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pm7)),
+            (FormatKind::Azf, Some("pm7m")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pm7m)),
             _ => Err(UnresolvedBinding {
                 binding: binding.clone(),
             }),
@@ -162,6 +217,9 @@ impl PrinterFileFormat {
             Self::Goo(GooVersion::V5_1) => (FormatKind::Goo, "v5.1"),
             Self::Ctb(CtbVariant::PlainV5) => (FormatKind::Ctb, "v5"),
             Self::Ctb(CtbVariant::EncryptedV5) => (FormatKind::Ctb, "v5enc"),
+            Self::Cxdlp(CxdlpVersion::V2) => (FormatKind::Cxdlp, "v2"),
+            Self::Cxdlp(CxdlpVersion::V3) => (FormatKind::Cxdlp, "v3"),
+            Self::AnycubicZip(variant) => (FormatKind::Azf, variant.extension()),
         };
         OutputFormatBinding {
             format,
@@ -181,7 +239,8 @@ impl PrinterFileFormat {
 
     /// Picks the format a family name means for a printer: the highest revision
     /// of `family` that `declared` lists and this build writes. Any order of
-    /// `declared` gives the same format.
+    /// `declared` gives the same format, except among incomparable variants
+    /// (Anycubic ZIP), where the first one listed wins.
     pub fn highest_writable(
         family: &FormatKind,
         declared: &OutputFormatBindings,
@@ -209,7 +268,16 @@ impl PrinterFileFormat {
     /// declare a format this crate names but cannot yet write, and callers that
     /// offer a choice need to tell the 2 apart before
     /// [`write_printer_file`](crate::write_printer_file) refuses.
+    ///
+    /// A format this crate does not encode itself is writable once a writer
+    /// for it is installed with
+    /// [`install_printer_file_writer`](crate::install_printer_file_writer).
     pub fn has_writer(self) -> bool {
+        self.has_builtin_writer() || external::writer_for(self).is_some()
+    }
+
+    /// Reports whether this crate's own code encodes the format.
+    pub(crate) fn has_builtin_writer(self) -> bool {
         matches!(
             self,
             Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
@@ -228,7 +296,9 @@ impl PrinterFileFormat {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
             Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
-            Self::Goo(GooVersion::V5_1) => None,
+            Self::Goo(GooVersion::V5_1) | Self::Cxdlp(_) | Self::AnycubicZip(_) => {
+                external::writer_for(self).and_then(|writer| writer.preview_sizes(self))
+            }
         }
     }
 
@@ -241,6 +311,8 @@ impl PrinterFileFormat {
         match self {
             Self::Goo(_) => "goo",
             Self::Ctb(_) => "ctb",
+            Self::Cxdlp(_) => "cxdlp",
+            Self::AnycubicZip(variant) => variant.extension(),
         }
     }
 }
@@ -250,12 +322,15 @@ impl PrinterFileFormat {
 /// An extension never names a revision: `.goo` is shared by V3.0 and V5.1, and
 /// `.ctb` by the plain and the encrypted variant. The revision comes from a
 /// binding's version string, which a printer declares and a file name does not
-/// carry.
+/// carry. Anycubic's ZIP container gives each variant its own extension, and
+/// every one of them names the family.
 pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "goo" => Some(FormatKind::Goo),
         "ctb" => Some(FormatKind::Ctb),
+        "cxdlp" => Some(FormatKind::Cxdlp),
+        "pwsz" | "pm7" | "pm7m" => Some(FormatKind::Azf),
         _ => None,
     }
 }
@@ -392,6 +467,8 @@ mod printer_file_format_tests {
             PrinterFileFormat::Goo(GooVersion::V5_1),
             PrinterFileFormat::Ctb(CtbVariant::PlainV5),
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V2),
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V3),
         ] {
             let binding = format.binding();
 
@@ -631,6 +708,59 @@ mod printer_file_format_tests {
                 )],
             }),
         );
+    }
+
+    #[test]
+    fn every_anycubic_zip_variant_resolves_back_and_is_its_own_extension() {
+        for variant in [
+            AnycubicZipVariant::Pwsz,
+            AnycubicZipVariant::Pm7,
+            AnycubicZipVariant::Pm7m,
+        ] {
+            let format = PrinterFileFormat::AnycubicZip(variant);
+            let binding = format.binding();
+
+            assert_eq!(binding.format, FormatKind::Azf);
+            assert_eq!(
+                binding.version.as_ref().unwrap().as_str(),
+                format.extension()
+            );
+            assert_eq!(PrinterFileFormat::from_binding(&binding), Ok(format));
+            let path = format!("plate.{}", format.extension());
+            assert_eq!(
+                printer_file_family_from_path(Path::new(&path)),
+                Some(FormatKind::Azf),
+            );
+        }
+    }
+
+    #[test]
+    fn cxdlp_names_both_revisions_and_v3_is_the_later_one() {
+        assert_eq!(
+            resolve(FormatKind::Cxdlp, Some("V3")),
+            Ok(PrinterFileFormat::Cxdlp(CxdlpVersion::V3)),
+        );
+        assert!(
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V3) > PrinterFileFormat::Cxdlp(CxdlpVersion::V2)
+        );
+        assert_eq!(
+            printer_file_family_from_path(Path::new("plate.cxdlp")),
+            Some(FormatKind::Cxdlp),
+        );
+        assert!(
+            resolve(FormatKind::Cxdlp, None)
+                .unwrap_err()
+                .contains("needs a version")
+        );
+    }
+
+    #[test]
+    fn different_anycubic_zip_variants_are_incomparable() {
+        let pwsz = PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz);
+        let pm7 = PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pm7);
+
+        assert_eq!(pwsz.partial_cmp(&pm7), None);
+        assert_eq!(pwsz.partial_cmp(&pwsz), Some(Ordering::Equal));
     }
 
     #[test]

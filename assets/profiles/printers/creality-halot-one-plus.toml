@@ -1,0 +1,42 @@
+[identity]
+id = "creality-halot-one-plus"
+manufacturer = "Creality"
+family = "Halot"
+name = "Halot One Plus"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 172.8
+y_mm = 102.4
+z_mm = 160.0
+
+[hardware.pixel_resolution]
+x = 4320
+y = 2560
+
+[hardware.pixel_size_microns]
+x = 40.0
+y = 40.0
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "cxdlp"
+version = "v3"
+
+[[capabilities.output_formats]]
+format = "cxdlp"
+version = "v2"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]
