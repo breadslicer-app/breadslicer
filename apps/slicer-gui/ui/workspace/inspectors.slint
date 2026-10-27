@@ -7,7 +7,7 @@
 // shows only what its tab acts on; the window binds them to its own
 // properties and callbacks, which Rust drives.
 
-import { CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ProgressIndicator, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
 import { ButtonKind, Card, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
@@ -31,6 +31,11 @@ export struct ReviewRow {
     fix: int,
     // The fix was applied since the slice.
     fixed: bool,
+    // A cavity that can be cured on the next slice (#132): 0 no fill, 1
+    // offered, 2 marked to fill.
+    fill: int,
+    // A tiny cavity that can be left alone (hidden until the scene changes).
+    leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
 }
@@ -95,6 +100,8 @@ component FindingRow inherits VerticalLayout {
     in property <bool> selected;
     callback clicked();
     callback fix();
+    callback fill-toggled();
+    callback leave();
     // The second fix of fix 4: turn the raft off.
     callback fix-alt();
 
@@ -202,6 +209,29 @@ component FindingRow inherits VerticalLayout {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
                 : root.finding.fix == 4 ? @tr("Review" => "Done. Generate the supports again, then slice.")
                 : @tr("Review" => "Drain requested.");
+            color: Theme.success;
+        }
+        if root.finding.fill > 0: HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+
+            ScButton {
+                text: root.finding.fill == 2 ? @tr("Review" => "Do not fill") : @tr("Review" => "Fill on the next slice");
+                icon: root.finding.fill == 2 ? "" : Icons.check;
+                clicked => {
+                    root.fill-toggled();
+                }
+            }
+            if root.finding.leave && root.finding.fill == 1: ScButton {
+                text: @tr("Review" => "Leave it");
+                kind: ButtonKind.ghost;
+                clicked => {
+                    root.leave();
+                }
+            }
+        }
+        if root.finding.fill == 2: Note {
+            text: @tr("Review" => "Marked: the next slice cures this cavity solid.");
             color: Theme.success;
         }
     }
@@ -998,12 +1028,26 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> review-stale;
     in property <string> review-message;
     in-out property <int> review-selected: -1;
+    // The notes (information) shown or folded, and how many there are.
+    in property <int> review-notes;
+    in property <bool> review-notes-open;
+    // Resin traps that offer a fill and are not marked yet (#132).
+    in property <int> review-fill-small;
+    // The fills marked or cured, as one line, and whether they can be
+    // cleared.
+    in property <string> review-fills-note;
+    in property <bool> review-fills-clearable;
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
     callback slice-requested();
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
+    callback review-fill-toggled(int);
+    callback review-leave-requested(int);
+    callback review-fill-small-requested();
+    callback review-fills-cleared();
+    callback review-notes-toggled();
     callback review-raft-off-requested(int);
 
     // The LineEdit's text binding breaks the first time the user types, so
@@ -1157,12 +1201,8 @@ export component SliceInspector inherits VerticalLayout {
             text: root.review-message;
             color: root.review-state == 2 ? Theme.danger : Theme.text-soft;
         }
-        if root.review-state == 1 && root.review-rows.length > 0: Rectangle {
-            // Long reviews scroll inside the card.
-            height: Math.min(findings.preferred-height, 360px);
-
-            ScrollView {
-                findings := VerticalLayout {
+        // The list takes the room it needs: the inspector panel scrolls.
+        if root.review-state == 1 && root.review-rows.length > 0: VerticalLayout {
                     spacing: 2px;
 
                     for row in root.review-rows: FindingRow {
@@ -1175,10 +1215,43 @@ export component SliceInspector inherits VerticalLayout {
                         fix => {
                             root.review-fix-requested(row.id);
                         }
+                        fill-toggled => {
+                            root.review-fill-toggled(row.id);
+                        }
+                        leave => {
+                            root.review-leave-requested(row.id);
+                        }
                         fix-alt => {
                             root.review-raft-off-requested(row.id);
                         }
                     }
+        }
+        if root.review-state == 1 && root.review-notes > 0: ScButton {
+            text: root.review-notes-open ? @tr("Review" => "Hide the notes") : @tr("Review" => "Show {n} note" | "Show {n} notes" % root.review-notes);
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.review-notes-toggled();
+            }
+        }
+        if root.review-state == 1 && root.review-fill-small > 0: ScButton {
+            text: @tr("Review" => "Fill all small traps ({})", root.review-fill-small);
+            icon: Icons.check;
+            clicked => {
+                root.review-fill-small-requested();
+            }
+        }
+        if root.review-fills-note != "": HorizontalLayout {
+            spacing: 8px;
+
+            Note {
+                text: root.review-fills-note;
+                horizontal-stretch: 1;
+            }
+            if root.review-fills-clearable: ScButton {
+                text: @tr("Review" => "Clear fills");
+                kind: ButtonKind.ghost;
+                clicked => {
+                    root.review-fills-cleared();
                 }
             }
         }

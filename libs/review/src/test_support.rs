@@ -351,6 +351,24 @@ impl Fixture {
             .expect("fixture stacks follow their schedule")
     }
 
+    /// The plate as review input, with `extra` as one more leaf: a fill
+    /// cut on [`Fixture::schedule`], say.
+    ///
+    /// # Panics
+    ///
+    /// When `extra` does not follow the schedule.
+    pub fn input_with<'a>(&'a self, extra: ReviewLeaf<'a>) -> ReviewInput<'a> {
+        let mut leaves = self.input().leaves().to_vec();
+        leaves.push(extra);
+        ReviewInput::new(leaves, &self.schedule, self.pixel_map, self.max_z)
+            .expect("the extra leaf follows the schedule")
+    }
+
+    /// The layer schedule the plate is cut on.
+    pub fn schedule(&self) -> &LayerSchedule {
+        &self.schedule
+    }
+
     /// The plate's regions.
     pub fn regions(&self) -> PlateRegions {
         PlateRegions::compute(&self.input())

@@ -67,6 +67,21 @@ fn review_writes_json_on_request() {
 }
 
 #[test]
+fn review_fills_on_request() {
+    // The cube has no cavity: nothing to fill, and the review says so.
+    let output = review_cube(&["--json", "--fill"])
+        .success()
+        .get_output()
+        .clone();
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    assert!(document["filled"].is_null());
+    review_cube(&["--fill"])
+        .success()
+        .stdout(predicate::str::contains("Filled ").not());
+}
+
+#[test]
 fn review_writes_no_file() {
     let dir = tempfile::tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")

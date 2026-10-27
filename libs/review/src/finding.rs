@@ -192,6 +192,14 @@ pub enum SuggestedFix {
         /// Where the hole goes.
         at: PlatePoint,
     },
+    /// Cure the cavity solid on the next slice (#132): its pixels are
+    /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`.
+    Fill {
+        /// The floor of the cavity, where the camera looks.
+        at: PlatePoint,
+        /// The cavity's index among the review's fills.
+        cavity: usize,
+    },
     /// Clear the model of the raft (#131): lift it so its lowest point
     /// stands `lift_to_mm` above the plate, the support lift that leaves the
     /// supports room under it, or turn the raft off. Either needs the
@@ -207,14 +215,21 @@ impl SuggestedFix {
         match *self {
             Self::AddSupport { at } => (0, at),
             Self::AddDrain { at } => (1, at),
-            Self::ClearRaft { lift_to_mm } => (2, PlatePoint::new(0.0, 0.0, lift_to_mm)),
+            Self::Fill { at, .. } => (2, at),
+            Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
         }
     }
 
     fn total_cmp(&self, other: &Self) -> Ordering {
         let (a_rank, a_at) = self.rank();
         let (b_rank, b_at) = other.rank();
-        a_rank.cmp(&b_rank).then_with(|| a_at.total_cmp(&b_at))
+        a_rank
+            .cmp(&b_rank)
+            .then_with(|| a_at.total_cmp(&b_at))
+            .then_with(|| match (self, other) {
+                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. }) => a.cmp(b),
+                _ => Ordering::Equal,
+            })
     }
 }
 
