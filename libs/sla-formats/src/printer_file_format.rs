@@ -38,8 +38,11 @@ pub enum PrinterFileFormat {
     AnycubicZip(AnycubicZipVariant),
 }
 
-/// A revision of Creality's CXDLP container. A later revision compares greater.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// A revision of Creality's CXDLP container. The machine's firmware decides
+/// which revision it reads (the Halot One's prints from v2 files, the dialect
+/// Lychee writes for it), so 2 different revisions are incomparable and a
+/// printer's first listed one is its default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CxdlpVersion {
     V2 = 0,
     V3 = 1,
@@ -91,7 +94,9 @@ impl PartialOrd for PrinterFileFormat {
         match (self, other) {
             (Self::Goo(revision), Self::Goo(other)) => Some(revision.cmp(other)),
             (Self::Ctb(revision), Self::Ctb(other)) => Some(revision.cmp(other)),
-            (Self::Cxdlp(revision), Self::Cxdlp(other)) => Some(revision.cmp(other)),
+            (Self::Cxdlp(revision), Self::Cxdlp(other)) => {
+                (revision == other).then_some(Ordering::Equal)
+            }
             (Self::AnycubicZip(variant), Self::AnycubicZip(other)) => {
                 (variant == other).then_some(Ordering::Equal)
             }
@@ -240,7 +245,7 @@ impl PrinterFileFormat {
     /// Picks the format a family name means for a printer: the highest revision
     /// of `family` that `declared` lists and this build writes. Any order of
     /// `declared` gives the same format, except among incomparable variants
-    /// (Anycubic ZIP), where the first one listed wins.
+    /// (CXDLP, Anycubic ZIP), where the first one listed wins.
     pub fn highest_writable(
         family: &FormatKind,
         declared: &OutputFormatBindings,
@@ -735,14 +740,17 @@ mod printer_file_format_tests {
     }
 
     #[test]
-    fn cxdlp_names_both_revisions_and_v3_is_the_later_one() {
+    fn cxdlp_names_both_revisions_and_the_first_listed_one_wins() {
         assert_eq!(
             resolve(FormatKind::Cxdlp, Some("V3")),
             Ok(PrinterFileFormat::Cxdlp(CxdlpVersion::V3)),
         );
-        assert!(
-            PrinterFileFormat::Cxdlp(CxdlpVersion::V3) > PrinterFileFormat::Cxdlp(CxdlpVersion::V2)
+        let (v2, v3) = (
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V2),
+            PrinterFileFormat::Cxdlp(CxdlpVersion::V3),
         );
+        assert_eq!(v2.partial_cmp(&v3), None);
+        assert_eq!(v2.partial_cmp(&v2), Some(Ordering::Equal));
         assert_eq!(
             printer_file_family_from_path(Path::new("plate.cxdlp")),
             Some(FormatKind::Cxdlp),

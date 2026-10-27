@@ -30,7 +30,9 @@ The Creality Halot One, One Pro and One Plus are not in that dataset.
 Their panel, plate and height come from the printer data bundled with
 UVtools (its `Printer/Machine.cs` and PrusaSlicer printer profiles,
 AGPL-3.0), which also names CXDLP as their file format. No photo of them
-can be shipped, so their profiles name no image.
+can be shipped, so their profiles name no image. They write CXDLP v2
+first, the dialect of the Lychee files the Halot One prints from, with v3
+as the alternative.
 
 The Photon Mono M7, M7 Pro and M7 Max differ from that dataset on 2
 counts, both following UVtools' printer data, which its Anycubic writers
@@ -38,7 +40,11 @@ are validated against, and Anycubic's published specifications: the M7
 and M7 Pro panels are 16.8 x 24.8 µm, so 126.976 mm deep, and the M7 Max
 is 46 µm square, so 298.08 x 165.6 mm; and all 3 mirror in X (the
 dataset says so for the M7 Pro and M7 Max in its current revision, and
-leaves the M7 unverified).
+leaves the M7 unverified). For the M7 Pro both were checked against files
+that print on it: Lychee rasterises it at 24.8 µm in Y (its header says
+126.48 mm all the same), and Photon Workshop's files match ours with no
+mirror only when X is mirrored. The M7 Pro also runs the 2 stage move and
+6 transition layers, as those Lychee files do.
 
 `generic-machine` is ours. It describes no product: it is what a resin
 is calibrated against when the calibration is not tied to a machine.
@@ -77,5 +83,16 @@ Some exceptions:
 
 `standard-405` and `abs-like-405` are generic profiles, not associated
 to any real resin.
+
+`anycubic-standard-resin-grey-50um` carries the settings its owner prints
+Anycubic Standard Grey with on a Photon Mono M7 Pro, the same ones the
+Lychee files that print correctly on it hold (UVtools reads them back
+identically from both). The 6 transition layers belong to the M7 Pro's
+profile, and the resin's price is not a profile field.
+
+`creality-halot-one-printer-profile-50um` is not a resin calibration: the
+Halot One exposes with the profile stored on the printer, not the file's
+values, so this profile only writes what known-good Lychee files for it
+carry (6 bottom layers at 30 s, 0.3 s, 1 s wait, 7 mm lifts at 60 mm/min).
 
 Product names are trademarks of their respective owners.

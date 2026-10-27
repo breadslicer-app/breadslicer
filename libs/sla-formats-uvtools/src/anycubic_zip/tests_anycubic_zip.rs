@@ -66,7 +66,7 @@ fn the_machine_block_names_the_panel_and_the_variant() {
     ] {
         let file = read_anycubic_zip(Cursor::new(written(variant, AaLevel::X4))).unwrap();
         let machine = &file.settings["machine_type"];
-        assert_eq!(machine["name"], "Photon Mono M7 Pro");
+        assert_eq!(machine["name"], "Anycubic Photon Mono M7 Pro");
         assert_eq!(machine["key_suffix"], variant.extension());
         assert_eq!(machine["res_x"], PIXELS_X);
         assert_eq!(machine["res_y"], PIXELS_Y);
@@ -76,7 +76,7 @@ fn the_machine_block_names_the_panel_and_the_variant() {
         assert_eq!(machine["raster_antialiasing"], 4);
         assert_eq!(
             file.settings["machine_extern"]["picture"],
-            "PhotonMonoM7Pro.png"
+            "AnycubicPhotonMonoM7Pro.png"
         );
     }
 }

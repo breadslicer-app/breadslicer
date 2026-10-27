@@ -1,0 +1,32 @@
+[identity]
+id = "anycubic-standard-resin-grey-50um"
+brand = "Anycubic"
+family = "standard"
+name = "Standard Resin (Grey, 50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[physical]
+
+# NOTE: Tested on a Photon Mono M7 Pro: the settings of the Lychee files that print correctly on it
+[per_printer.anycubic-photon-mono-m7-pro]
+normal_exposure_sec = 2.2
+bottom_exposure_sec = 30.0
+bottom_layer_count = 4
+wait_before_cure_sec = 1.0
+bottom_wait_before_cure_sec = 0.0
+lift_distance_mm = 3.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 2.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 60.0
+second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 360.0 }
+bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
