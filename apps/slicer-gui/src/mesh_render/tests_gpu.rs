@@ -527,7 +527,7 @@ fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    let tab = FrontTab::around_label(4.0);
+    let tab = FrontTab::around_label(4.0, 1.0);
     let err = PlateBuffers::create(&device, &queue, TEST_BV, Some(tab))
         .err()
         .expect("the tiny-buffer device refuses the plate geometry");
@@ -1191,7 +1191,7 @@ fn render_with_a_front_label_under_default_limits() {
     let (centre, radius) = TEST_BV.framing(None);
     let camera = OrbitCamera::new(centre, radius);
 
-    let mut build = || crate::front_label::rasterise_label("FRONT");
+    let mut build = || crate::front_label::rasterise_label("FRONT", Some("Photon Mono M7 Pro"));
     renderer
         .update_front_label(1, &mut build)
         .expect("the label is not refused");
@@ -1216,7 +1216,7 @@ fn a_label_with_no_ink_leaves_the_plate_without_a_tab() {
     let (centre, radius) = TEST_BV.framing(None);
     let camera = OrbitCamera::new(centre, radius);
 
-    let mut build = || crate::front_label::rasterise_label("   ");
+    let mut build = || crate::front_label::rasterise_label("   ", None);
     renderer
         .update_front_label(1, &mut build)
         .expect("an inkless label is not an error");
@@ -1401,19 +1401,19 @@ fn x_pos_breaching_graph() -> Scene {
 }
 
 /// Counts pixels whose RGB signature matches the wall warning stripe. The
-/// shader emits `WALL_WARNING_COLOUR = (1.00, 0.15, 0.15)` with
-/// `WALL_STRIPE_ALPHA = 0.55`, so on a typical background the visible pixel is
-/// red-dominant with green and blue both well below red. The thresholds are
-/// loose enough to match the stripe over any plausible background (white plate,
-/// grey mesh, dark cage) but tight enough that no untinted surface in the scene
-/// clears the bar.
+/// shader emits the theme's amber `WALL_WARNING_COLOUR = (0.843, 0.655,
+/// 0.353)` with `WALL_STRIPE_ALPHA = 0.55`, so on a typical background the
+/// visible pixel is warm: red at least green, both well above blue. The
+/// thresholds are loose enough to match the stripe over any plausible
+/// background (plate, grey mesh, cage) but tight enough that no untinted
+/// surface in the scene, all neutral or cool, clears the bar.
 fn count_warning_pixels(rgba: &[u8]) -> usize {
     rgba.as_chunks::<4>()
         .0
         .iter()
         .filter(|p| {
             let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
-            r > 128 && (r - g) > 40 && (r - b) > 40
+            r > 100 && r >= g && (r - b) > 40
         })
         .count()
 }
@@ -1490,8 +1490,8 @@ fn read_target_back(
 /// Checks the +X envelope warning stripe end to end: renders the same camera
 /// frame twice, once with a mesh that stays inside the envelope and once with a
 /// mesh that pokes past +X, reads back both framebuffers, and asserts that the
-/// breach render carries visible stripe pixels (red-dominant, green / blue
-/// subordinate) and the safe render does not. The check is a property,
+/// breach render carries visible stripe pixels (warm: red and green over
+/// blue) and the safe render does not. The check is a property,
 /// independent of the exact stripe geometry, driver-specific blending rounding,
 /// and viewport jitter.
 #[test]
