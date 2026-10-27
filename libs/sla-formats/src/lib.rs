@@ -24,6 +24,7 @@ pub mod debug;
 pub mod error;
 pub mod format;
 pub mod goo;
+pub(crate) mod layer_images;
 pub(crate) mod layer_values;
 pub mod options;
 pub mod preview;

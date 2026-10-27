@@ -11,16 +11,14 @@
 use std::io::Write;
 
 use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::raster::pixel_map::PixelMap;
-use sc_sl1cer::raster::rasterize_layer;
 
 use super::header::{FILE_MAGIC, SizedPreviews, write_header};
 use super::payload::encode_payload;
 use super::record::write_layer;
 use crate::error::WriteFailure;
+use crate::layer_images::write_layer_images;
 use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
-use crate::row_order::reverse_rows;
 
 /// Precedes the magic that closes the file.
 const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
@@ -57,26 +55,22 @@ pub fn write_file(
     }
     let previews = previews.map(SizedPreviews::check).transpose()?;
 
-    let raster = &program.raster;
-    let plate = raster.build_volume();
-    let pixel_map = PixelMap::new(
-        plate.x(),
-        plate.y(),
-        *raster.pixel_resolution(),
-        raster.mirror(),
-    );
-    let park_z_mm = plate.z_mm() as f32;
+    let park_z_mm = program.raster.build_volume().z_mm() as f32;
 
     write_header(program, previews, out)?;
-    let mut image = Vec::new();
-    let mut rows = Vec::new();
-    for (layer, contours) in program.layers.iter().zip(stack.layers()) {
-        let pixels = rasterize_layer(contours, &pixel_map, raster.aa(), raster.min_alpha_pct());
-        reverse_rows(pixels.runs(), raster.pixel_resolution().x(), &mut rows);
-        image.clear();
-        encode_payload(&rows, &mut image);
-        write_layer(layer, park_z_mm, &image, out)?;
-    }
+    write_layer_images(
+        stack,
+        &program.raster,
+        |_, rows| {
+            let mut image = Vec::new();
+            encode_payload(rows, &mut image);
+            image
+        },
+        |index, image| -> Result<(), WriteFailure> {
+            write_layer(&program.layers[index], park_z_mm, &image, out)?;
+            Ok(())
+        },
+    )?;
     out.write_all(&FOOTER_PADDING)?;
     out.write_all(&FILE_MAGIC)?;
     Ok(())
