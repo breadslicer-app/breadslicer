@@ -7,6 +7,7 @@ members = [
     "apps/slicer-gui",
     "libs/3mf",
     "libs/app-paths",
+    "libs/bread-format",
     "libs/mesh-core",
     "libs/mesh-fixtures",
     "libs/mesh-formats",
@@ -56,6 +57,7 @@ sc-message-catalog = { path = "libs/message-catalog", version = "0.1.0" }
 sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
+sc-bread-format = { path = "libs/bread-format", version = "0.1.0" }
 sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
 sc-review = { path = "libs/review", version = "0.1.0" }
 sc-scene = { path = "libs/scene", version = "0.2.0" }

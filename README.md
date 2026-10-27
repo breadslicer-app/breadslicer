@@ -46,4 +46,7 @@ cargo test  --release -p sc-slicer-gui --lib
 `.cxdlp` and Anycubic `.pwsz` / `.pm7` / `.pm7m` printer-file writers are ported from
 [UVtools](https://github.com/sn4k3/UVtools) (Tiago Conceição / sn4k3 and UVtools contributors; AGPL-3.0).
 Thanks to all three projects. Their notices are kept in the source as their licenses require; see
-[`NOTICE`](NOTICE).</sub>
+[`NOTICE`](NOTICE).
+The `.bread` project format uses [meshoptimizer](https://github.com/zeux/meshoptimizer)
+(Arseny Kapoulkine; MIT) and [Zstandard](https://github.com/facebook/zstd) (Meta; BSD); see
+[`libs/bread-format/NOTICE`](libs/bread-format/NOTICE).</sub>
