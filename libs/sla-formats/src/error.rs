@@ -35,6 +35,9 @@ pub enum WriteFailure {
     },
     /// A supplied preview is not the size the container fixes.
     PreviewSize(PreviewSizeMismatch),
+    /// The container cannot hold what the print asks for, such as a panel
+    /// wider than its coordinates reach.
+    Unencodable(String),
     Io(io::Error),
 }
 
@@ -49,6 +52,7 @@ impl fmt::Display for WriteFailure {
                 "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
             ),
             Self::PreviewSize(err) => err.fmt(f),
+            Self::Unencodable(reason) => write!(f, "the format cannot hold this print: {reason}"),
             Self::Io(err) => write!(f, "writing the file failed: {err}"),
         }
     }
@@ -59,7 +63,7 @@ impl std::error::Error for WriteFailure {
         match self {
             Self::Io(err) => Some(err),
             Self::PreviewSize(err) => Some(err),
-            Self::LayerCountMismatch { .. } => None,
+            Self::LayerCountMismatch { .. } | Self::Unencodable(_) => None,
         }
     }
 }
@@ -83,6 +87,8 @@ pub enum WriterError {
     NotImplemented { format: Format },
     /// The printer format's writer has not yet landed.
     PrinterFormatNotImplemented { format: PrinterFileFormat },
+    /// The printer format cannot hold what the print asks for.
+    PrinterFileUnencodable { reason: String },
     /// The print program and the contour stack handed to
     /// [`write_printer_file`](crate::write_printer_file) describe different
     /// numbers of layers.
@@ -153,6 +159,9 @@ impl fmt::Display for WriterError {
                 f,
                 "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
             ),
+            Self::PrinterFileUnencodable { reason } => {
+                write!(f, "the printer format cannot hold this print: {reason}")
+            }
             Self::PreviewSizeMismatch(err) => err.fmt(f),
             Self::Io(err) => write!(f, "filesystem operation failed: {err}"),
             Self::OutputPathInvalid { reason } => {
@@ -215,6 +224,7 @@ impl std::error::Error for WriterError {
             Self::MalformedPartName { source, .. } => Some(source),
             Self::NotImplemented { .. }
             | Self::PrinterFormatNotImplemented { .. }
+            | Self::PrinterFileUnencodable { .. }
             | Self::ProgramLayerCountMismatch { .. }
             | Self::OutputPathInvalid { .. }
             | Self::OutputPathExistsAndIsNotADirectory { .. }
@@ -244,6 +254,7 @@ impl From<WriteFailure> for WriterError {
                 stack_layers,
             },
             WriteFailure::PreviewSize(err) => Self::PreviewSizeMismatch(err),
+            WriteFailure::Unencodable(reason) => Self::PrinterFileUnencodable { reason },
             WriteFailure::Io(err) => Self::Io(err),
         }
     }

@@ -19,11 +19,14 @@ sc-print-glue.workspace = true
 sc-print-primitives.workspace = true
 sc-print-profiles.workspace = true
 sc-project-formats.workspace = true
+sc-review = { workspace = true, features = ["serde"] }
 sc-scene.workspace = true
 sc-sl1cer.workspace = true
 sc-sla-formats.workspace = true
+sc-sla-formats-uvtools.workspace = true
 
 anyhow.workspace = true
+serde_json.workspace = true
 
 bpaf = "0.9.24"
 

@@ -18,12 +18,14 @@ use std::str::FromStr;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
-use sc_sla_formats::{Format, PrinterFileFormat, UnwritableFamily, printer_file_family_from_path};
+use sc_sla_formats::{
+    AnycubicZipVariant, Format, PrinterFileFormat, UnwritableFamily, printer_file_family_from_path,
+};
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
 pub(crate) const ACCEPTED_TARGET_FORMATS: &str =
-    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb";
+    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf";
 
 /// A `--target-format` flag value: a slice output, a printer file, or the
 /// family of one whose revision the printer still has to name.
@@ -38,8 +40,12 @@ impl TargetFormat {
     /// Names the target format an output path's extension asks for.
     ///
     /// A printer file's extension names only its family, since 1 extension
-    /// covers every revision of a container.
+    /// covers every revision of a container, except in Anycubic's ZIP family,
+    /// where each variant has its own extension and the extension names it.
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
+        if let Some(variant) = anycubic_zip_variant_from_path(path) {
+            return Some(Self::PrinterFile(PrinterFileFormat::AnycubicZip(variant)));
+        }
         format_from_path(path)
             .map(Self::Slices)
             .or_else(|| printer_file_family_from_path(path).map(Self::PrinterFamily))
@@ -52,6 +58,18 @@ impl TargetFormat {
             Self::PrinterFile(_) | Self::PrinterFamily(_) => false,
         }
     }
+}
+
+/// Names the Anycubic ZIP variant an output path's extension is.
+fn anycubic_zip_variant_from_path(path: &Path) -> Option<AnycubicZipVariant> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    [
+        AnycubicZipVariant::Pwsz,
+        AnycubicZipVariant::Pm7,
+        AnycubicZipVariant::Pm7m,
+    ]
+    .into_iter()
+    .find(|variant| variant.extension() == extension)
 }
 
 impl fmt::Display for TargetFormat {
@@ -181,7 +199,11 @@ impl FromStr for TargetFormat {
             Some(_) => PrinterFileFormat::from_binding(&binding)
                 .map(Self::PrinterFile)
                 .map_err(|_| unknown()),
-            None if matches!(binding.format, FormatKind::Goo | FormatKind::Ctb) => {
+            None if matches!(
+                binding.format,
+                FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf
+            ) =>
+            {
                 Ok(Self::PrinterFamily(binding.format))
             }
             None => Err(unknown()),
@@ -244,11 +266,54 @@ mod target_format_tests {
             TargetFormat::from_str("ctb"),
             Ok(TargetFormat::PrinterFamily(FormatKind::Ctb)),
         );
+        assert_eq!(
+            TargetFormat::from_str("cxdlp"),
+            Ok(TargetFormat::PrinterFamily(FormatKind::Cxdlp)),
+        );
+        assert_eq!(
+            TargetFormat::from_str("azf"),
+            Ok(TargetFormat::PrinterFamily(FormatKind::Azf)),
+        );
+    }
+
+    #[test]
+    fn the_formats_ported_from_uvtools_settle_once_installed() {
+        sc_sla_formats_uvtools::install();
+        // The first revision a printer lists is its default: the Halot One
+        // lists v2, the dialect of the files it prints from.
+        for (listed, first) in [
+            (["v2", "v3"], sc_sla_formats::CxdlpVersion::V2),
+            (["v3", "v2"], sc_sla_formats::CxdlpVersion::V3),
+        ] {
+            let halot = declared(&listed.map(|version| binding("cxdlp", Some(version))));
+            assert_eq!(
+                settle_for_printer(TargetFormat::from_str("cxdlp").unwrap(), &halot),
+                Ok(SettledTarget::PrinterFile(PrinterFileFormat::Cxdlp(first))),
+                "{listed:?}",
+            );
+        }
+        let m7_pro = declared(&[binding("azf", Some("pwsz"))]);
+        assert_eq!(
+            settle_for_printer(TargetFormat::from_str("azf").unwrap(), &m7_pro),
+            Ok(SettledTarget::PrinterFile(PrinterFileFormat::AnycubicZip(
+                AnycubicZipVariant::Pwsz
+            ))),
+        );
     }
 
     #[test]
     fn a_family_spelled_with_its_revision_names_the_format_outright() {
-        for spelling in ["goo@v3.0", "goo@v5.1", "ctb@v5", "ctb@v5enc"] {
+        for spelling in [
+            "goo@v3.0",
+            "goo@v5.1",
+            "ctb@v5",
+            "ctb@v5enc",
+            "cxdlp@v2",
+            "cxdlp@v3",
+            "azf@pwsz",
+            "azf@pm7",
+            "azf@pm7m",
+        ] {
             assert!(
                 matches!(
                     TargetFormat::from_str(spelling),
@@ -415,6 +480,26 @@ mod target_format_tests {
         assert_eq!(
             TargetFormat::from_path(&PathBuf::from("plate.ctb")),
             Some(TargetFormat::PrinterFamily(FormatKind::Ctb)),
+        );
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.cxdlp")),
+            Some(TargetFormat::PrinterFamily(FormatKind::Cxdlp)),
+        );
+    }
+
+    #[test]
+    fn an_anycubic_zip_extension_names_its_variant() {
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.pwsz")),
+            Some(TargetFormat::PrinterFile(PrinterFileFormat::AnycubicZip(
+                AnycubicZipVariant::Pwsz
+            ))),
+        );
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.PM7M")),
+            Some(TargetFormat::PrinterFile(PrinterFileFormat::AnycubicZip(
+                AnycubicZipVariant::Pm7m
+            ))),
         );
     }
 
