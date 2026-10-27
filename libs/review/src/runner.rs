@@ -79,6 +79,14 @@ pub struct ReviewReport {
     /// The pixels of every cavity offered a fill, by the index its
     /// [`SuggestedFix::Fill`](crate::SuggestedFix::Fill) names.
     pub fills: Vec<CavityFill>,
+    /// The pixels that erase every floating speck, by the index its
+    /// [`SuggestedFix::Erase`](crate::SuggestedFix::Erase) names: erased
+    /// with [`erase_stack`](crate::erase_stack).
+    pub erasures: Vec<CavityFill>,
+    /// The pixels that thicken every thin model feature, by the index its
+    /// [`SuggestedFix::Thicken`](crate::SuggestedFix::Thicken) names: cured
+    /// with [`fill_stack`](crate::fill_stack), as fills are.
+    pub thickenings: Vec<CavityFill>,
     /// Where the time went.
     pub timings: ReviewTimings,
 }
@@ -102,7 +110,7 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
     let started = Instant::now();
     let (
         ((islands, islands_time), ((traps, fills), traps_time)),
-        ((thin, thin_time), (output, output_time)),
+        (((thin, thickenings), thin_time), ((output, erasures), output_time)),
     ) = rayon::join(
         || {
             rayon::join(
@@ -112,8 +120,8 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
         },
         || {
             rayon::join(
-                || timed(|| thin::run(ctx, &options.thin)),
-                || timed(|| output::run(ctx, &options.output)),
+                || timed(|| thin::run_with_thickenings(ctx, &options.thin)),
+                || timed(|| output::run_with_erasures(ctx, &options.output)),
             )
         },
     );
@@ -141,6 +149,8 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
     ReviewReport {
         findings,
         fills,
+        erasures,
+        thickenings,
         timings,
     }
 }
