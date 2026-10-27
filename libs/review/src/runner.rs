@@ -145,7 +145,7 @@ mod runner_tests {
         let fixture = FixtureBuilder::new(6)
             .model(0..6, Shape::rect(20.0, 20.0, 60.0, 50.0))
             .model(3..6, Shape::rect(120.0, 20.0, 140.0, 40.0))
-            .support(0..3, Shape::circle(130.0, 30.0, 6.0))
+            .support(0..3, Shape::circle(130.0, 30.0, 4.0))
             .build();
         let input = fixture.input();
         let report = review_with(&input, &ReviewOptions::default());
