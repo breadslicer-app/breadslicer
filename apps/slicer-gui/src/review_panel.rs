@@ -496,7 +496,7 @@ fn review_rows(
             Some(SuggestedFix::ClearRaft { .. }) => FixKind::ClearRaft,
         };
         let lift_label = match finding.fix {
-            Some(SuggestedFix::ClearRaft { layers, .. }) => raft_lift_label(layers),
+            Some(SuggestedFix::ClearRaft { lift_to_mm }) => raft_lift_label(lift_to_mm),
             _ => SharedString::default(),
         };
         rows.push(ReviewRow {

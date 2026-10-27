@@ -154,10 +154,7 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
         16,
         "Model inside the raft",
     )
-    .with_fix(SuggestedFix::ClearRaft {
-        layers: 17,
-        lift_to_mm: 0.85,
-    });
+    .with_fix(SuggestedFix::ClearRaft { lift_to_mm: 5.0 });
     let rows = review_rows(
         std::slice::from_ref(&raft),
         &[false],
@@ -165,7 +162,7 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
         true,
     );
     assert_eq!(rows[0].fix, FixKind::ClearRaft as i32);
-    assert_eq!(rows[0].lift_label.as_str(), "Lift 17 layers");
+    assert_eq!(rows[0].lift_label.as_str(), "Lift to 5 mm");
     // Other rows carry no lift label.
     let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
     assert!(rows.iter().all(|r| r.lift_label.is_empty()));
