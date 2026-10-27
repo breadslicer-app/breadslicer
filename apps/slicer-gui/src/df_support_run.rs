@@ -157,6 +157,9 @@ pub(crate) struct DfSupportRun {
     /// The raft warning (#131) is shown from a Generate press until a new
     /// scene is installed or closed; the scene subscription lowers it.
     raft_armed: Rc<Cell<bool>>,
+    /// Set for one Generate press by the warning's "Generate anyway": that
+    /// press runs although the raft would take the models' first layers.
+    raft_ignored: Cell<bool>,
     /// The layer height of the last Generate press, which counts the raft's
     /// layers.
     raft_layer_height_mm: Cell<f64>,
@@ -401,6 +404,7 @@ impl DfSupportRun {
             last_preview: RefCell::new(None),
             last_ghost: RefCell::new(None),
             raft_armed,
+            raft_ignored: Cell::new(false),
             raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
@@ -463,7 +467,15 @@ impl DfSupportRun {
             let weak = Rc::downgrade(&run);
             ui.on_support_raft_off_requested(move || {
                 if let Some(run) = weak.upgrade() {
-                    run.turn_raft_off();
+                    run.raft_off_for_warning();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_raft_ignore_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.generate_ignoring_raft();
                 }
             });
         }
@@ -490,6 +502,12 @@ impl DfSupportRun {
             .set(self.request_for_printer().layer_height_mm);
         self.raft_armed.set(true);
         self.refresh_raft_warning();
+        // A run started now would be thrown away by the warning's own lift
+        // (the scene changes under it): wait for the user's answer, which
+        // starts the run.
+        if !self.raft_ignored.get() && self.raft_clash().is_some() {
+            return;
+        }
         if self.take_ahead(&ui) {
             return;
         }
@@ -881,11 +899,29 @@ impl DfSupportRun {
         ui.set_support_raft_lift_label(label);
     }
 
-    /// The warning's lift button: the models in the raft rise clear of it.
-    fn lift_for_warning(&self) {
-        if let Some(clash) = self.raft_clash() {
-            self.lift_models(clash.raft_top_mm, clash.lift_to_mm);
+    /// The warning's lift button: the models in the raft rise clear of it,
+    /// then the Generate press it held back runs.
+    fn lift_for_warning(self: &Rc<Self>) {
+        if let Some(clash) = self.raft_clash()
+            && self.lift_models(clash.raft_top_mm, clash.lift_to_mm)
+        {
+            self.start();
         }
+    }
+
+    /// The warning's "No raft" button: the raft goes off, then the Generate
+    /// press it held back runs.
+    fn raft_off_for_warning(self: &Rc<Self>) {
+        self.turn_raft_off();
+        self.start();
+    }
+
+    /// The warning's "Generate anyway" button: runs the held-back press with
+    /// the raft as it is.
+    fn generate_ignoring_raft(self: &Rc<Self>) {
+        self.raft_ignored.set(true);
+        self.start();
+        self.raft_ignored.set(false);
     }
 
     /// Lifts every model in the raft of the scene's supports (or, without
@@ -1652,12 +1688,19 @@ mod hand_edit_tests {
                     "not before Generate"
                 );
                 run.start();
-                if let Some(handle) = run.handle.borrow_mut().take() {
-                    handle.cancel();
-                }
+                // The press waits for the warning's answer: a run started now
+                // would be discarded by the lift.
+                assert!(run.handle.borrow().is_none(), "Generate held back");
                 let on_generate = window.get_support_raft_clash_message().to_string();
                 let label = window.get_support_raft_lift_label().to_string();
                 run.lift_for_warning();
+                // The lift answers it: the run starts on the lifted scene.
+                let started = run.handle.borrow_mut().take();
+                assert!(started.is_some(), "the lift starts the held-back run");
+                if let Some(handle) = started {
+                    handle.cancel();
+                }
+                window.set_support_gen_in_progress(false);
                 let after_lift = window.get_support_raft_clash_message().to_string();
                 document.undo().expect("the lift undoes");
                 run.refresh_raft_warning();
