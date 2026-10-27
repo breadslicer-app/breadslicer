@@ -145,6 +145,7 @@ pub(crate) fn build_preferences_window(
     );
 
     let prefs_weak = prefs.as_weak();
+    PREFERENCES_WINDOW.with(|w| *w.borrow_mut() = prefs_weak.clone());
 
     // Thumbnails decode on a worker thread and land in the gallery once ready;
     // this timer polls for the finished batch. Kept alive by the returned
@@ -267,6 +268,11 @@ pub(crate) fn build_preferences_window(
                 PreferencesChange::DiagnosticLog
             });
         }
+    });
+
+    prefs.on_show_all_messages_again({
+        let bus = bus.clone();
+        move || crate::error_dialog::show_all_messages_again(&bus)
     });
 
     prefs.on_open_logs_folder(|| {
@@ -457,10 +463,23 @@ pub(crate) fn build_preferences_window(
     prefs.on_import_requested({
         let catalog_handle = catalog_handle.clone();
         let refresh_view = refresh_view.clone();
-        move || spawn_import(catalog_handle.clone(), refresh_view.clone())
+        let prefs_weak = prefs_weak.clone();
+        move || {
+            spawn_import(
+                prefs_weak.clone(),
+                catalog_handle.clone(),
+                refresh_view.clone(),
+            )
+        }
     });
-    prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
-    prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
+    prefs.on_export_printers_requested({
+        let prefs_weak = prefs_weak.clone();
+        move || spawn_export(prefs_weak.clone(), ExportScope::Printers)
+    });
+    prefs.on_export_materials_requested({
+        let prefs_weak = prefs_weak.clone();
+        move || spawn_export(prefs_weak.clone(), ExportScope::Materials)
+    });
 
     // Holds the profile viewer or editor while one is open so it is not dropped
     // (and closed) the moment its opener returns. Opening another profile
@@ -497,8 +516,10 @@ pub(crate) fn build_preferences_window(
         let bus = bus.clone();
         let catalog_handle = catalog_handle.clone();
         let refresh_view = refresh_view.clone();
+        let prefs_weak = prefs_weak.clone();
         move |index, is_extension| {
             spawn_delete_flow(
+                prefs_weak.clone(),
                 bus.clone(),
                 catalog_handle.clone(),
                 refresh_view.clone(),
@@ -574,16 +595,48 @@ fn string_model(values: &[String]) -> ModelRc<SharedString> {
     ))
 }
 
+thread_local! {
+    /// The app's Preferences window (there is 1), over which its dialogs open.
+    static PREFERENCES_WINDOW: RefCell<slint::Weak<PreferencesWindow>> =
+        RefCell::new(slint::Weak::default());
+}
+
+/// Centres a freshly shown dialog of the Preferences window over it (#133).
+fn centre_over_preferences(dialog: &(impl ComponentHandle + 'static)) {
+    if let Some(prefs) = PREFERENCES_WINDOW.with(|w| w.borrow().upgrade()) {
+        crate::window_placement::centre_over(dialog, &prefs);
+    }
+}
+
+/// A native file dialog over the Preferences window, so the platform centres it
+/// over that window.
+fn file_dialog_of(owner: &slint::Weak<PreferencesWindow>) -> rfd::AsyncFileDialog {
+    owner.upgrade().map_or_else(rfd::AsyncFileDialog::new, |w| {
+        crate::error_dialog::file_dialog_over(w.window())
+    })
+}
+
+/// A native message box over the Preferences window, like [`file_dialog_of`].
+/// The confirmations it asks (overwrite, delete) must be answered: the
+/// platform box is modal to the window.
+fn message_dialog_of(owner: &slint::Weak<PreferencesWindow>) -> rfd::AsyncMessageDialog {
+    owner
+        .upgrade()
+        .map_or_else(rfd::AsyncMessageDialog::new, |w| {
+            crate::error_dialog::message_dialog_over(w.window())
+        })
+}
+
 /// Runs the export flow for `scope`: pick a `.zip` destination, then package
 /// the matching profiles from the user library. Failures are reported on
 /// stderr; the library is read-only here.
-fn spawn_export(scope: ExportScope) {
+fn spawn_export(owner: slint::Weak<PreferencesWindow>, scope: ExportScope) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
             eprintln!("cannot resolve the user profile library directory");
             return;
         };
-        let Some(handle) = rfd::AsyncFileDialog::new()
+        let Some(handle) = file_dialog_of(&owner)
             .set_file_name(scope.default_file_name())
             .add_filter(ctr!("FileDialog", "Profile package").to_string(), &["zip"])
             .save_file()
@@ -602,13 +655,17 @@ fn spawn_export(scope: ExportScope) {
 /// Runs the import flow: pick a `.zip`, install it into the user library, and
 /// on a collision offer to overwrite. On success the catalog is rebuilt and the
 /// window's views refreshed so imported profiles appear immediately.
-fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: Rc<dyn Fn()>) {
+fn spawn_import(
+    owner: slint::Weak<PreferencesWindow>,
+    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh_view: Rc<dyn Fn()>,
+) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
             eprintln!("cannot resolve the user profile library directory");
             return;
         };
-        let Some(handle) = rfd::AsyncFileDialog::new()
+        let Some(handle) = file_dialog_of(&owner)
             .add_filter(ctr!("FileDialog", "Profile package").to_string(), &["zip"])
             .pick_file()
             .await
@@ -631,7 +688,7 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
             }
             ImportOutcome::Collisions(report) => {
                 let overwrite = ctr!("PreferencesPage", "Overwrite").to_string();
-                let result = rfd::AsyncMessageDialog::new()
+                let result = message_dialog_of(&owner)
                     .set_title(ctr!("PreferencesPage", "Overwrite existing profiles?").to_string())
                     .set_description(format_collision_report(&report))
                     .set_buttons(rfd::MessageButtons::OkCancelCustom(
@@ -672,6 +729,7 @@ fn default_resin_orphaned(
 /// When the deleted id was the default resin and nothing else resolves it any
 /// more, the default is unset.
 fn spawn_delete_flow(
+    owner: slint::Weak<PreferencesWindow>,
     bus: Rc<PreferencesBus>,
     catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
     refresh_view: Rc<dyn Fn()>,
@@ -706,7 +764,7 @@ fn spawn_delete_flow(
             .to_string()
         };
         let delete_label = ctr!("PreferencesPage", "Delete").to_string();
-        let result = rfd::AsyncMessageDialog::new()
+        let result = message_dialog_of(&owner)
             .set_title(ctr!("PreferencesPage", "Delete profile?").to_string())
             .set_description(description)
             .set_buttons(rfd::MessageButtons::OkCancelCustom(
@@ -1549,7 +1607,7 @@ profile_version = \"1.0.0\"
 mod language_change_tests {
     use super::*;
     use crate::language::InstalledTranslations;
-    use crate::slint_ui::ErrorDialog;
+    use crate::slint_ui::AboutWindow;
     use crate::test_support::catalog_entries::printer_entry;
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
@@ -1559,7 +1617,7 @@ mod language_change_tests {
     /// and no resin, built after the UI language follows `bus`, as in the app.
     fn following_window(bus: &Rc<PreferencesBus>) -> (UiLanguage, WiredPreferencesWindow) {
         // In the app, the 1st main window is the 1st component of the thread.
-        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let first = AboutWindow::new().expect("the headless platform creates components");
         let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
         let printer = PrinterId::new("listed-printer").expect("valid printer id");
         let catalog = ProfileCatalog::from_entries(
@@ -1648,5 +1706,35 @@ mod language_change_tests {
             wired.window.get_resin_rows().row_count()
         });
         assert_eq!(rows, 0);
+    }
+}
+
+#[cfg(test)]
+mod silenced_messages_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    #[test]
+    fn show_all_messages_again_clears_the_silenced_messages_and_the_count() {
+        let (before, after, left) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                silenced_messages: ["repair.summary".to_owned(), "supports.generated".to_owned()]
+                    .into_iter()
+                    .collect(),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = ProfileCatalog::from_entries(Vec::new(), Vec::new());
+            let wired = build_preferences_window(&bus, Rc::new(RefCell::new(Rc::new(catalog))))
+                .expect("the headless platform creates the window");
+            let before = wired.window.get_silenced_message_count();
+            wired.window.invoke_show_all_messages_again();
+            (
+                before,
+                wired.window.get_silenced_message_count(),
+                bus.snapshot().silenced_messages.len(),
+            )
+        });
+        assert_eq!((before, after, left), (2, 0, 0));
     }
 }

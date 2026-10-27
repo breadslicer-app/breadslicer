@@ -1,20 +1,34 @@
 /*
- * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL, 2026 SynrgStudio
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+//! The app's messages (#133): errors, notices and the questions that must be
+//! answered, drawn inside the main window by `ui/message-layer.slint`, centred
+//! on a dimmed layer over the window they are about.
+//!
+//! [`DialogManager`] keeps the window's messages in a queue and shows the 1st;
+//! answering it shows the next. Each message has a [`MessageClass`]:
+//! - a [`MessageClass::Notice`] says something and asks nothing: a click
+//!   outside it closes it, and it may offer "Don't show again" (a
+//!   [`MessageKey`] stored in the settings, reset from Preferences);
+//! - a [`MessageClass::MustAnswer`] (errors, unsaved changes, re-slice) is
+//!   modal: only its own buttons, Escape or Enter close it, and a click
+//!   outside does nothing. It is never silenced.
+//!
+//! Native file dialogs stay the platform's own, parented to the window (see
+//! [`file_dialog_over`]) so the platform centres them over it.
+
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
+use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, SharedString};
 
 use crate::i18n::ctr;
-use crate::preferences_bus::{
-    PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
-};
-use crate::slint_ui::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
-use crate::window_prefs::WindowPreferences;
+use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::slint_ui::{AppMessage, MainWindow, MessageAnswer, MessageKind};
 
 /// User's exit from the "replace current scene?" dialog. 4 outcomes; the caller
 /// decides what each means in context (typically "close current and load new" /
@@ -58,19 +72,6 @@ impl KeepChangesOffer {
     }
 }
 
-/// One-shot callback that delivers the user's `ReplaceSceneChoice`. Wrapped in
-/// `Rc<Cell<Option<...>>>` because Slint dispatches each of the dialog's 4
-/// button callbacks independently and we want to honour whichever fires first;
-/// the others find an empty slot and no-op. Type alias to satisfy
-/// `clippy::type_complexity`.
-type ReplaceChoiceSink = Rc<Cell<Option<Box<dyn FnOnce(ReplaceSceneChoice)>>>>;
-
-/// One-shot callback fired when the user confirms the slice-overwrite dialog.
-/// Wrapped like [`ReplaceChoiceSink`] so whichever of the dialog's buttons
-/// fires first is honoured and the rest no-op; a cancel drops it uncalled. Type
-/// alias to satisfy `clippy::type_complexity`.
-type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
-
 /// The texts of an error dialog, in the language in force when they are built.
 pub(crate) struct ErrorTexts {
     pub(crate) heading: SharedString,
@@ -89,217 +90,340 @@ pub(crate) struct InfoTexts {
     pub(crate) details: SharedString,
 }
 
-/// An open dialog window and the function that builds its texts.
-struct OpenDialog<W, T> {
-    window: W,
-    build_texts: Box<dyn Fn() -> T>,
+/// How a message behaves (#133).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MessageClass {
+    /// Says something and asks nothing: a click outside closes it, and it may
+    /// offer "Don't show again".
+    Notice,
+    /// Must be answered or acknowledged: modal, closed only by its own buttons
+    /// (or Escape / Enter, which give the safe answer), never silenced.
+    MustAnswer,
 }
 
-impl OpenDialog<ErrorDialog, ErrorTexts> {
-    fn push_texts(&self) {
-        push_error_texts(&self.window, (self.build_texts)());
+/// The notices that offer "Don't show again". Each id is stored in the
+/// settings file: never rename one, only add new ones.
+///
+/// A notice that tells the person their action did nothing (a stale result
+/// discarded, a save that replaced no file) has no key: silencing it would let
+/// them believe the action worked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MessageKey {
+    /// Supports tab: a click with an edit tool before any supports exist.
+    SupportsEditNeedsSupports,
+    /// Supports tab: the summary of a support generation.
+    SupportsGenerated,
+    /// Supports tab: the generation found nothing to support.
+    SupportsNotNeeded,
+    /// Tools menu: the summary of the support-structure generator.
+    SupportStructuresGenerated,
+    /// Transform tab: the summary of a mesh repair.
+    MeshRepairSummary,
+}
+
+impl MessageKey {
+    /// The id stored in the settings.
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::SupportsEditNeedsSupports => "supports.edit-needs-supports",
+            Self::SupportsGenerated => "supports.generated",
+            Self::SupportsNotNeeded => "supports.not-needed",
+            Self::SupportStructuresGenerated => "support-structures.generated",
+            Self::MeshRepairSummary => "repair.summary",
+        }
     }
 }
 
-impl OpenDialog<InfoDialog, InfoTexts> {
-    fn push_texts(&self) {
-        push_info_texts(&self.window, (self.build_texts)());
+/// Clears every "Don't show again" (Preferences > "Show all messages again").
+pub(crate) fn show_all_messages_again(bus: &PreferencesBus) {
+    bus.update(|snap| {
+        snap.silenced_messages.clear();
+        PreferencesChange::SilencedMessages
+    });
+}
+
+/// One message waiting in the queue, or on show.
+enum Entry {
+    Error(Box<dyn Fn() -> ErrorTexts>),
+    Info {
+        build_texts: Box<dyn Fn() -> InfoTexts>,
+        key: Option<MessageKey>,
+    },
+    SceneChange {
+        source_name: SharedString,
+        offer: KeepChangesOffer,
+        closing: bool,
+        on_choice: Box<dyn FnOnce(ReplaceSceneChoice)>,
+    },
+    SliceOverwrite {
+        on_confirm: Box<dyn FnOnce()>,
+    },
+}
+
+impl Entry {
+    fn class(&self) -> MessageClass {
+        match self {
+            Self::Info { .. } => MessageClass::Notice,
+            Self::Error(_) | Self::SceneChange { .. } | Self::SliceOverwrite { .. } => {
+                MessageClass::MustAnswer
+            }
+        }
+    }
+
+    fn key(&self) -> Option<MessageKey> {
+        match self {
+            Self::Info { key, .. } => *key,
+            _ => None,
+        }
+    }
+
+    /// The message for the layer, with the texts built in the language in
+    /// force.
+    fn message(&self) -> AppMessage {
+        let mut message = AppMessage {
+            kind: MessageKind::Info,
+            heading: SharedString::new(),
+            context: SharedString::new(),
+            text: SharedString::new(),
+            details: SharedString::new(),
+            can_silence: self.key().is_some(),
+            closing: false,
+            source_name: SharedString::new(),
+            has_unsaved_changes: false,
+            save_as_mode: false,
+        };
+        match self {
+            Self::Error(build_texts) => {
+                let texts = build_texts();
+                message.kind = MessageKind::Error;
+                message.heading = texts.heading;
+                message.context = texts.context.unwrap_or_default();
+                message.text = texts.message;
+                message.details = texts.details;
+            }
+            Self::Info { build_texts, .. } => {
+                let texts = build_texts();
+                message.heading = texts.heading;
+                message.text = texts.message;
+                message.details = texts.details;
+            }
+            Self::SceneChange {
+                source_name,
+                offer,
+                closing,
+                ..
+            } => {
+                message.kind = MessageKind::SceneChange;
+                message.closing = *closing;
+                message.source_name = source_name.clone();
+                message.has_unsaved_changes = offer.has_unsaved_changes();
+                message.save_as_mode = offer.save_as_mode();
+            }
+            Self::SliceOverwrite { .. } => message.kind = MessageKind::SliceOverwrite,
+        }
+        message
+    }
+
+    /// Carries out `answer`: the caller's callback of a question; nothing for
+    /// a notice or an error.
+    fn settle(self, answer: MessageAnswer) {
+        match self {
+            Self::Error(_) | Self::Info { .. } => {}
+            Self::SceneChange { on_choice, .. } => on_choice(match answer {
+                MessageAnswer::Discard => ReplaceSceneChoice::Discard,
+                MessageAnswer::Save => ReplaceSceneChoice::Save,
+                MessageAnswer::Export => ReplaceSceneChoice::Export,
+                // Anything else keeps the scene: never discard it without an
+                // explicit Discard.
+                _ => ReplaceSceneChoice::Cancel,
+            }),
+            Self::SliceOverwrite { on_confirm } => {
+                // Only an explicit Re-slice replaces the held slice.
+                if answer == MessageAnswer::Confirm {
+                    on_confirm();
+                }
+            }
+        }
     }
 }
 
-fn push_error_texts(dialog: &ErrorDialog, texts: ErrorTexts) {
-    dialog.set_heading(texts.heading);
-    dialog.set_context(texts.context.unwrap_or_default());
-    dialog.set_message(texts.message);
-    dialog.set_details(texts.details);
-}
-
-fn push_info_texts(dialog: &InfoDialog, texts: InfoTexts) {
-    dialog.set_heading(texts.heading);
-    dialog.set_message(texts.message);
-    dialog.set_details(texts.details);
-}
-
-/// Owns every currently-visible dialog window (`ErrorDialog`, `InfoDialog`,
-/// `ReplaceSceneDialog` and `SliceOverwriteDialog`) so they stay alive for as
-/// long as the user hasn't dismissed them. Held as `Rc<DialogManager>` by the
-/// controller; close callbacks carry a `Weak<DialogManager>` back in so the map
-/// entry can be cleared without creating an ownership cycle. A single `next_id`
-/// counter feeds every map so ids never collide across dialog kinds.
+/// The messages of 1 main window: a queue whose 1st entry is on show in the
+/// window's message layer. Held as `Rc<DialogManager>` by the controller; the
+/// layer's callbacks carry a `Weak` back in, so there is no ownership cycle.
+/// Without a window attached (tests) the queue still fills and answers.
 pub(crate) struct DialogManager {
-    dialogs: RefCell<HashMap<u64, OpenDialog<ErrorDialog, ErrorTexts>>>,
-    info_dialogs: RefCell<HashMap<u64, OpenDialog<InfoDialog, InfoTexts>>>,
-    replace_dialogs: RefCell<HashMap<u64, ReplaceSceneDialog>>,
-    slice_overwrite_dialogs: RefCell<HashMap<u64, SliceOverwriteDialog>>,
-    next_id: Cell<u64>,
-    /// Gives each dialog the preferences in force when it opens.
+    queue: RefCell<VecDeque<Entry>>,
+    /// Counts the messages put on show, so the layer knows a new one came.
+    serial: Cell<i32>,
+    host: RefCell<slint::Weak<MainWindow>>,
+    /// Where "Don't show again" is stored.
     bus: Rc<PreferencesBus>,
     _preferences_follow: Subscription,
 }
 
 impl DialogManager {
-    /// Creates the manager of a window's dialogs, which keeps its open dialogs
-    /// in step with the preferences of `bus`: the theme of each, and the texts
-    /// of the error and info dialogs in the language in force. `UiLanguage`
-    /// must subscribe to `bus` first, so that the texts are built in the new
+    /// Creates the manager of a window's messages, which builds the texts of
+    /// the message on show again in each new language. `UiLanguage` must
+    /// subscribe to `bus` first, so that the texts are built in the new
     /// language.
     pub(crate) fn new(bus: &Rc<PreferencesBus>) -> Rc<Self> {
         Rc::new_cyclic(|manager: &std::rc::Weak<Self>| {
             let manager = manager.clone();
             Self {
-                dialogs: RefCell::new(HashMap::new()),
-                info_dialogs: RefCell::new(HashMap::new()),
-                replace_dialogs: RefCell::new(HashMap::new()),
-                slice_overwrite_dialogs: RefCell::new(HashMap::new()),
-                next_id: Cell::new(0),
+                queue: RefCell::new(VecDeque::new()),
+                serial: Cell::new(0),
+                host: RefCell::new(slint::Weak::default()),
                 bus: bus.clone(),
-                _preferences_follow: bus.subscribe(move |snap, change| {
-                    let Some(manager) = manager.upgrade() else {
-                        return;
-                    };
-                    manager.apply_preferences(snap);
-                    if matches!(change, PreferencesChange::Language) {
-                        manager.push_texts_again();
+                _preferences_follow: bus.subscribe(move |_snap, change| {
+                    if matches!(change, PreferencesChange::Language)
+                        && let Some(manager) = manager.upgrade()
+                    {
+                        manager.present(false);
                     }
                 }),
             }
         })
     }
 
-    /// Applies `prefs` to every open dialog.
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        for open in self.dialogs.borrow().values() {
-            open.window.apply_preferences(prefs);
-        }
-        for open in self.info_dialogs.borrow().values() {
-            open.window.apply_preferences(prefs);
-        }
-        for dialog in self.replace_dialogs.borrow().values() {
-            dialog.apply_preferences(prefs);
-        }
-        for dialog in self.slice_overwrite_dialogs.borrow().values() {
-            dialog.apply_preferences(prefs);
+    /// Shows the messages in `ui`, which reports back what the person does.
+    pub(crate) fn attach(self: &Rc<Self>, ui: &MainWindow) {
+        *self.host.borrow_mut() = ui.as_weak();
+        let manager = Rc::downgrade(self);
+        ui.on_message_answered(move |answer| {
+            if let Some(manager) = manager.upgrade() {
+                let silence = manager
+                    .host
+                    .borrow()
+                    .upgrade()
+                    .is_some_and(|ui| ui.get_message_silence());
+                manager.answer(answer, silence);
+            }
+        });
+        let manager = Rc::downgrade(self);
+        ui.on_message_outside_clicked(move || {
+            if let Some(manager) = manager.upgrade() {
+                let silence = manager
+                    .host
+                    .borrow()
+                    .upgrade()
+                    .is_some_and(|ui| ui.get_message_silence());
+                manager.click_outside(silence);
+            }
+        });
+        self.present(true);
+    }
+
+    /// Puts the 1st message of the queue on show, or closes the layer when
+    /// there is none. `new` is a message not shown before: it starts with
+    /// "Don't show again" unticked and takes the keyboard.
+    fn present(&self, new: bool) {
+        let Some(ui) = self.host.borrow().upgrade() else {
+            return;
+        };
+        let message = self.queue.borrow().front().map(Entry::message);
+        match message {
+            None => ui.set_message_open(false),
+            Some(message) => {
+                ui.set_message(message);
+                if new {
+                    self.serial.set(self.serial.get().wrapping_add(1));
+                    ui.set_message_silence(false);
+                    ui.set_message_serial(self.serial.get());
+                }
+                ui.set_message_open(true);
+            }
         }
     }
 
-    /// Pushes the texts of every open error and info dialog again.
-    fn push_texts_again(&self) {
-        for open in self.dialogs.borrow().values() {
-            open.push_texts();
-        }
-        for open in self.info_dialogs.borrow().values() {
-            open.push_texts();
+    fn enqueue(&self, entry: Entry) {
+        let first = {
+            let mut queue = self.queue.borrow_mut();
+            queue.push_back(entry);
+            queue.len() == 1
+        };
+        if first {
+            self.present(true);
         }
     }
 
-    /// Returns the headings of the open error dialogs, sorted.
-    #[cfg(test)]
-    pub(crate) fn error_headings_for_test(&self) -> Vec<String> {
-        let mut headings: Vec<String> = self
-            .dialogs
-            .borrow()
-            .values()
-            .map(|open| open.window.get_heading().to_string())
-            .collect();
-        headings.sort();
-        headings
+    /// Closes the message on show with `answer`, then carries it out. With
+    /// `silence` ("Don't show again" ticked), a notice that offers it is not
+    /// shown again.
+    pub(crate) fn answer(&self, answer: MessageAnswer, silence: bool) {
+        let Some(entry) = self.queue.borrow_mut().pop_front() else {
+            return;
+        };
+        // The next message (or none) goes on show before the answer runs: a
+        // callback that queues a message then finds the queue settled.
+        self.present(true);
+        if silence && let Some(key) = entry.key() {
+            self.bus.update(move |snap| {
+                snap.silenced_messages.insert(key.id().to_owned());
+                PreferencesChange::SilencedMessages
+            });
+        }
+        entry.settle(answer);
     }
 
-    /// Shows an error dialog immediately, with the texts that `build_texts`
-    /// gives in the language in force, now and after each language change. Must
-    /// run on the Slint UI thread.
+    /// A click on the window around the message: closes a notice, and does
+    /// nothing to a message that must be answered.
+    pub(crate) fn click_outside(&self, silence: bool) {
+        let class = self.queue.borrow().front().map(Entry::class);
+        if class == Some(MessageClass::Notice) {
+            self.answer(MessageAnswer::Close, silence);
+        }
+    }
+
+    /// Shows an error immediately (or after the messages before it), with the
+    /// texts that `build_texts` gives in the language in force, now and after
+    /// each language change. Must run on the Slint UI thread.
     pub(crate) fn show_error(self: &Rc<Self>, build_texts: impl Fn() -> ErrorTexts + 'static) {
         let texts = build_texts();
         eprintln!(
             "[error] {}: {}\n{}",
             texts.heading, texts.message, texts.details
         );
-        let dialog = match ErrorDialog::new() {
-            Ok(d) => d,
-            Err(err) => {
-                eprintln!("Failed to create error dialog: {err}");
-                return;
-            }
-        };
-        push_error_texts(&dialog, texts);
-        dialog.apply_preferences(&self.bus.snapshot());
-
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-
-        let dialog_weak = dialog.as_weak();
-        let mgr_weak = Rc::downgrade(self);
-        dialog.on_close_requested(move || {
-            if let Some(d) = dialog_weak.upgrade() {
-                let _ = d.hide();
-            }
-            if let Some(mgr) = mgr_weak.upgrade() {
-                mgr.dialogs.borrow_mut().remove(&id);
-            }
-        });
-
-        if let Err(err) = dialog.show() {
-            eprintln!("Failed to show error dialog: {err}");
-            return;
-        }
-        self.dialogs.borrow_mut().insert(
-            id,
-            OpenDialog {
-                window: dialog,
-                build_texts: Box::new(build_texts),
-            },
-        );
+        self.enqueue(Entry::Error(Box::new(build_texts)));
     }
 
-    /// Shows a neutral information dialog immediately. Same window lifecycle
-    /// and texts as [`Self::show_error`] (owned by the manager until
-    /// dismissed), without the error styling or the stderr log line. Must run
-    /// on the Slint UI thread.
+    /// Shows a neutral notice that a click outside closes and that offers no
+    /// "Don't show again": for a notice that says an action did nothing. Must
+    /// run on the Slint UI thread.
     pub(crate) fn show_info(self: &Rc<Self>, build_texts: impl Fn() -> InfoTexts + 'static) {
-        let dialog = match InfoDialog::new() {
-            Ok(d) => d,
-            Err(err) => {
-                eprintln!("Failed to create info dialog: {err}");
-                return;
-            }
-        };
-        push_info_texts(&dialog, build_texts());
-        dialog.apply_preferences(&self.bus.snapshot());
-
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-
-        let dialog_weak = dialog.as_weak();
-        let mgr_weak = Rc::downgrade(self);
-        dialog.on_close_requested(move || {
-            if let Some(d) = dialog_weak.upgrade() {
-                let _ = d.hide();
-            }
-            if let Some(mgr) = mgr_weak.upgrade() {
-                mgr.info_dialogs.borrow_mut().remove(&id);
-            }
+        self.enqueue(Entry::Info {
+            build_texts: Box::new(build_texts),
+            key: None,
         });
+    }
 
-        if let Err(err) = dialog.show() {
-            eprintln!("Failed to show info dialog: {err}");
+    /// Shows a neutral notice that offers "Don't show again" as `key`; nothing
+    /// is shown while `key` is silenced. Must run on the Slint UI thread.
+    pub(crate) fn show_notice(
+        self: &Rc<Self>,
+        key: MessageKey,
+        build_texts: impl Fn() -> InfoTexts + 'static,
+    ) {
+        if self.bus.snapshot().silenced_messages.contains(key.id()) {
             return;
         }
-        self.info_dialogs.borrow_mut().insert(
-            id,
-            OpenDialog {
-                window: dialog,
-                build_texts: Box::new(build_texts),
-            },
-        );
+        let queued = self.queue.borrow().iter().any(|e| e.key() == Some(key));
+        if queued {
+            // The same notice is already waiting; its texts are as good.
+            return;
+        }
+        self.enqueue(Entry::Info {
+            build_texts: Box::new(build_texts),
+            key: Some(key),
+        });
     }
 
     /// Queues `show_error` on the next iteration of the Slint event loop.
     ///
-    /// Use this when the caller runs inside a Slint hook where spawning a new
-    /// window synchronously would reenter the event loop (e.g. inside a
-    /// rendering notifier callback). `Timer::single_shot` (rather than
-    /// `invoke_from_event_loop`) is used so the callback stays on the UI thread
-    /// and `Rc<DialogManager>` can be captured without `Send`.
+    /// Use this when the caller runs inside a Slint hook where changing the
+    /// window synchronously would reenter it (e.g. inside a rendering notifier
+    /// callback). `Timer::single_shot` (rather than `invoke_from_event_loop`)
+    /// is used so the callback stays on the UI thread and `Rc<DialogManager>`
+    /// can be captured without `Send`.
     pub(crate) fn show_error_deferred(
         self: &Rc<Self>,
         build_texts: impl Fn() -> ErrorTexts + 'static,
@@ -310,13 +434,11 @@ impl DialogManager {
         });
     }
 
-    /// Shows the "replace current scene?" confirmation. Calls `on_choice` once
-    /// with the user's choice, then hides the dialog and drops it from the
-    /// manager. `source_name` (e.g. a file basename) is shown as context; pass
+    /// Asks "replace current scene?". Calls `on_choice` once with the user's
+    /// choice. `source_name` (e.g. a file basename) is shown as context; pass
     /// an empty string to omit it. `offer` controls which "keep your work"
     /// buttons (Save / Export) are shown and whether the Save button uses "Save
-    /// As" wording. Must run on the Slint UI thread. Logs and bails silently if
-    /// the dialog can't be constructed or shown.
+    /// As" wording. Must run on the Slint UI thread.
     pub(crate) fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,
@@ -341,160 +463,90 @@ impl DialogManager {
         closing: bool,
         on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
     ) {
-        let dialog = match ReplaceSceneDialog::new() {
-            Ok(d) => d,
-            Err(err) => {
-                eprintln!("Failed to create replace-scene dialog: {err}");
-                // The caller asked for a choice but we can't surface the
-                // dialog; treat that as Cancel so we never silently discard the
-                // user's scene.
-                on_choice(ReplaceSceneChoice::Cancel);
-                return;
-            }
-        };
-        dialog.set_closing(closing);
-        dialog.set_source_name(source_name.into());
-        dialog.set_has_unsaved_changes(offer.has_unsaved_changes());
-        dialog.set_save_as_mode(offer.save_as_mode());
-        dialog.apply_preferences(&self.bus.snapshot());
-
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-
-        let sink: ReplaceChoiceSink = Rc::new(Cell::new(Some(Box::new(on_choice))));
-
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_discard_requested(move || {
-                fire_replace_choice(&sink, ReplaceSceneChoice::Discard, &dialog_w, &mgr_w, id);
-            });
-        }
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_save_requested(move || {
-                fire_replace_choice(&sink, ReplaceSceneChoice::Save, &dialog_w, &mgr_w, id);
-            });
-        }
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_export_requested(move || {
-                fire_replace_choice(&sink, ReplaceSceneChoice::Export, &dialog_w, &mgr_w, id);
-            });
-        }
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_cancel_requested(move || {
-                fire_replace_choice(&sink, ReplaceSceneChoice::Cancel, &dialog_w, &mgr_w, id);
-            });
-        }
-
-        if let Err(err) = dialog.show() {
-            eprintln!("Failed to show replace-scene dialog: {err}");
-            // If show() failed, none of the callbacks will fire; deliver a
-            // Cancel so the caller isn't left waiting forever.
-            if let Some(cb) = sink.take() {
-                cb(ReplaceSceneChoice::Cancel);
-            }
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::SceneChange { .. }));
+        if asking {
+            // The scene is already in question: this 2nd request keeps it.
+            on_choice(ReplaceSceneChoice::Cancel);
             return;
         }
-        self.replace_dialogs.borrow_mut().insert(id, dialog);
+        self.enqueue(Entry::SceneChange {
+            source_name: source_name.into(),
+            offer,
+            closing,
+            on_choice: Box::new(on_choice),
+        });
     }
 
-    /// Shows the "re-slice?" confirmation for a scene that already holds a
-    /// slice result. Runs `on_confirm` once if the user confirms the overwrite,
-    /// and does nothing on cancel (the safe default: never discard the held
-    /// slice without an explicit yes). Must run on the Slint UI thread. Logs
-    /// and bails silently if the dialog cannot be constructed or shown; a
-    /// failure to show is treated as cancel.
+    /// Asks "re-slice?" for a scene that already holds a slice result. Runs
+    /// `on_confirm` once if the user confirms the overwrite, and does nothing
+    /// on cancel (the safe default: never discard the held slice without an
+    /// explicit yes). Must run on the Slint UI thread.
     pub(crate) fn show_slice_overwrite_confirm(
         self: &Rc<Self>,
         on_confirm: impl FnOnce() + 'static,
     ) {
-        let dialog = match SliceOverwriteDialog::new() {
-            Ok(d) => d,
-            Err(err) => {
-                eprintln!("Failed to create slice-overwrite dialog: {err}");
-                return;
-            }
-        };
-        dialog.apply_preferences(&self.bus.snapshot());
-
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-
-        let sink: ConfirmSink = Rc::new(Cell::new(Some(Box::new(on_confirm))));
-
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_confirm_requested(move || {
-                if let Some(cb) = sink.take() {
-                    cb();
-                }
-                close_slice_overwrite(&dialog_w, &mgr_w, id);
-            });
-        }
-        {
-            let sink = sink.clone();
-            let dialog_w = dialog.as_weak();
-            let mgr_w = Rc::downgrade(self);
-            dialog.on_cancel_requested(move || {
-                sink.take();
-                close_slice_overwrite(&dialog_w, &mgr_w, id);
-            });
-        }
-
-        if let Err(err) = dialog.show() {
-            eprintln!("Failed to show slice-overwrite dialog: {err}");
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::SliceOverwrite { .. }));
+        if asking {
             return;
         }
-        self.slice_overwrite_dialogs.borrow_mut().insert(id, dialog);
+        self.enqueue(Entry::SliceOverwrite {
+            on_confirm: Box::new(on_confirm),
+        });
+    }
+
+    /// A native file dialog over this manager's window (see
+    /// [`file_dialog_over`]).
+    pub(crate) fn file_dialog(&self) -> rfd::AsyncFileDialog {
+        match self.host.borrow().upgrade() {
+            Some(ui) => file_dialog_over(ui.window()),
+            None => rfd::AsyncFileDialog::new(),
+        }
+    }
+
+    /// The headings of the queued error messages, in order.
+    #[cfg(test)]
+    pub(crate) fn error_headings_for_test(&self) -> Vec<String> {
+        self.queue
+            .borrow()
+            .iter()
+            .filter(|e| matches!(e, Entry::Error(_)))
+            .map(|e| e.message().heading.to_string())
+            .collect()
+    }
+
+    /// The kind and the class of each queued message, in order.
+    #[cfg(test)]
+    fn queued_for_test(&self) -> Vec<(MessageKind, MessageClass)> {
+        self.queue
+            .borrow()
+            .iter()
+            .map(|e| (e.message().kind, e.class()))
+            .collect()
     }
 }
 
-/// Hides the slice-overwrite dialog and drops its entry from the manager. Free
-/// function so the confirm and cancel closures stay small.
-fn close_slice_overwrite(
-    dialog_weak: &slint::Weak<SliceOverwriteDialog>,
-    mgr_weak: &std::rc::Weak<DialogManager>,
-    id: u64,
-) {
-    if let Some(d) = dialog_weak.upgrade() {
-        let _ = d.hide();
-    }
-    if let Some(mgr) = mgr_weak.upgrade() {
-        mgr.slice_overwrite_dialogs.borrow_mut().remove(&id);
-    }
+/// A native file dialog parented to `window`, so the platform centres it over
+/// that window and keeps it in front of it. A window not shown yet gives an
+/// unparented dialog.
+pub(crate) fn file_dialog_over(window: &slint::Window) -> rfd::AsyncFileDialog {
+    window
+        .with_winit_window(|w| rfd::AsyncFileDialog::new().set_parent(w))
+        .unwrap_or_default()
 }
 
-/// Body shared by the 4 replace-scene callbacks. Drains the sink (no-op if
-/// another button already fired), hides the dialog, and removes its entry from
-/// the manager. Free function so each callback closure stays small.
-fn fire_replace_choice(
-    sink: &ReplaceChoiceSink,
-    choice: ReplaceSceneChoice,
-    dialog_weak: &slint::Weak<ReplaceSceneDialog>,
-    mgr_weak: &std::rc::Weak<DialogManager>,
-    id: u64,
-) {
-    if let Some(cb) = sink.take() {
-        cb(choice);
-    }
-    if let Some(d) = dialog_weak.upgrade() {
-        let _ = d.hide();
-    }
-    if let Some(mgr) = mgr_weak.upgrade() {
-        mgr.replace_dialogs.borrow_mut().remove(&id);
-    }
+/// A native message box parented to `window`, like [`file_dialog_over`].
+pub(crate) fn message_dialog_over(window: &slint::Window) -> rfd::AsyncMessageDialog {
+    window
+        .with_winit_window(|w| rfd::AsyncMessageDialog::new().set_parent(w))
+        .unwrap_or_default()
 }
 
 /// Renders the `caused by:` tail of an anyhow error chain as a multi-line
@@ -592,23 +644,248 @@ mod format_anyhow_chain_tests {
 }
 
 #[cfg(test)]
-mod language_change_tests {
+mod message_policy_tests {
     use super::*;
-    use crate::i18n::ctr;
+    use crate::preferences_bus::PreferencesSnapshot;
+
+    fn manager() -> (Rc<PreferencesBus>, Rc<DialogManager>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let manager = DialogManager::new(&bus);
+        (bus, manager)
+    }
+
+    fn error() -> ErrorTexts {
+        ErrorTexts {
+            heading: "Edit failed".into(),
+            context: None,
+            message: Default::default(),
+            details: Default::default(),
+        }
+    }
+
+    fn info() -> InfoTexts {
+        InfoTexts {
+            heading: "Mesh repair".into(),
+            message: "No problems found.".into(),
+            details: Default::default(),
+        }
+    }
+
+    fn silenced(bus: &PreferencesBus) -> Vec<String> {
+        bus.snapshot().silenced_messages.into_iter().collect()
+    }
+
+    #[test]
+    fn notices_close_on_a_click_outside_and_questions_and_errors_must_be_answered() {
+        let (_bus, manager) = manager();
+        manager.show_error(error);
+        manager.show_info(info);
+        manager.show_notice(MessageKey::MeshRepairSummary, info);
+        manager.show_replace_scene_confirm(String::new(), KeepChangesOffer::SaveExisting, |_| {});
+        manager.show_slice_overwrite_confirm(|| {});
+        assert_eq!(
+            manager.queued_for_test(),
+            [
+                (MessageKind::Error, MessageClass::MustAnswer),
+                (MessageKind::Info, MessageClass::Notice),
+                (MessageKind::Info, MessageClass::Notice),
+                (MessageKind::SceneChange, MessageClass::MustAnswer),
+                (MessageKind::SliceOverwrite, MessageClass::MustAnswer),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_notice_with_a_key_offers_dont_show_again() {
+        let (_bus, manager) = manager();
+        manager.show_error(error);
+        manager.show_info(info);
+        manager.show_notice(MessageKey::MeshRepairSummary, info);
+        manager.show_replace_scene_confirm(String::new(), KeepChangesOffer::SaveExisting, |_| {});
+        manager.show_slice_overwrite_confirm(|| {});
+        let offers: Vec<bool> = manager
+            .queue
+            .borrow()
+            .iter()
+            .map(|e| e.message().can_silence)
+            .collect();
+        assert_eq!(offers, [false, false, true, false, false]);
+    }
+
+    #[test]
+    fn a_click_outside_closes_a_notice() {
+        let (_bus, manager) = manager();
+        manager.show_info(info);
+        manager.click_outside(false);
+        assert!(manager.queued_for_test().is_empty());
+    }
+
+    #[test]
+    fn a_click_outside_leaves_an_error_open() {
+        let (_bus, manager) = manager();
+        manager.show_error(error);
+        manager.click_outside(false);
+        assert_eq!(manager.error_headings_for_test(), ["Edit failed"]);
+    }
+
+    #[test]
+    fn a_click_outside_neither_answers_nor_closes_the_unsaved_changes_question() {
+        let (_bus, manager) = manager();
+        let choice = Rc::new(Cell::new(None));
+        let sink = choice.clone();
+        manager.show_close_scene_confirm(KeepChangesOffer::SaveExisting, move |c| {
+            sink.set(Some(c));
+        });
+        manager.click_outside(true);
+        assert_eq!(choice.get(), None);
+        assert_eq!(manager.queued_for_test().len(), 1);
+    }
+
+    #[test]
+    fn each_scene_change_answer_reaches_the_caller_and_escape_keeps_the_scene() {
+        let answers = [
+            (MessageAnswer::Discard, ReplaceSceneChoice::Discard),
+            (MessageAnswer::Save, ReplaceSceneChoice::Save),
+            (MessageAnswer::Export, ReplaceSceneChoice::Export),
+            (MessageAnswer::Cancel, ReplaceSceneChoice::Cancel),
+            (MessageAnswer::Close, ReplaceSceneChoice::Cancel),
+        ];
+        for (answer, expected) in answers {
+            let (_bus, manager) = manager();
+            let choice = Rc::new(Cell::new(None));
+            let sink = choice.clone();
+            manager.show_replace_scene_confirm(
+                "part.stl".to_owned(),
+                KeepChangesOffer::SaveAsNew,
+                move |c| sink.set(Some(c)),
+            );
+            manager.answer(answer, false);
+            assert_eq!(choice.get(), Some(expected), "{answer:?}");
+            assert!(manager.queued_for_test().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_2nd_scene_change_question_keeps_the_scene_at_once() {
+        let (_bus, manager) = manager();
+        manager.show_replace_scene_confirm(String::new(), KeepChangesOffer::SaveExisting, |_| {});
+        let choice = Rc::new(Cell::new(None));
+        let sink = choice.clone();
+        manager.show_close_scene_confirm(KeepChangesOffer::SaveExisting, move |c| {
+            sink.set(Some(c));
+        });
+        assert_eq!(choice.get(), Some(ReplaceSceneChoice::Cancel));
+        assert_eq!(manager.queued_for_test().len(), 1);
+    }
+
+    #[test]
+    fn only_an_explicit_reslice_replaces_the_slice() {
+        for (answer, confirmed) in [
+            (MessageAnswer::Confirm, true),
+            (MessageAnswer::Cancel, false),
+            (MessageAnswer::Close, false),
+        ] {
+            let (_bus, manager) = manager();
+            let done = Rc::new(Cell::new(false));
+            let sink = done.clone();
+            manager.show_slice_overwrite_confirm(move || sink.set(true));
+            manager.answer(answer, false);
+            assert_eq!(done.get(), confirmed, "{answer:?}");
+        }
+    }
+
+    #[test]
+    fn messages_show_one_after_another_in_order() {
+        let (_bus, manager) = manager();
+        manager.show_error(error);
+        manager.show_info(info);
+        manager.answer(MessageAnswer::Close, false);
+        assert_eq!(
+            manager.queued_for_test(),
+            [(MessageKind::Info, MessageClass::Notice)]
+        );
+    }
+
+    #[test]
+    fn dont_show_again_silences_the_notice_until_messages_are_shown_again() {
+        let (bus, manager) = manager();
+        manager.show_notice(MessageKey::MeshRepairSummary, info);
+        manager.answer(MessageAnswer::Close, true);
+        assert_eq!(silenced(&bus), ["repair.summary"]);
+
+        manager.show_notice(MessageKey::MeshRepairSummary, info);
+        assert!(manager.queued_for_test().is_empty(), "silenced");
+
+        show_all_messages_again(&bus);
+        assert!(silenced(&bus).is_empty());
+        manager.show_notice(MessageKey::MeshRepairSummary, info);
+        assert_eq!(manager.queued_for_test().len(), 1);
+    }
+
+    #[test]
+    fn dont_show_again_ticked_then_a_click_outside_also_silences() {
+        let (bus, manager) = manager();
+        manager.show_notice(MessageKey::SupportsGenerated, info);
+        manager.click_outside(true);
+        assert_eq!(silenced(&bus), ["supports.generated"]);
+    }
+
+    #[test]
+    fn closing_without_the_tick_silences_nothing() {
+        let (bus, manager) = manager();
+        manager.show_notice(MessageKey::SupportsGenerated, info);
+        manager.click_outside(false);
+        assert!(silenced(&bus).is_empty());
+    }
+
+    #[test]
+    fn a_notice_without_a_key_is_never_silenced() {
+        let (bus, manager) = manager();
+        manager.show_info(info);
+        manager.answer(MessageAnswer::Close, true);
+        assert!(silenced(&bus).is_empty());
+    }
+
+    #[test]
+    fn a_notice_already_waiting_is_not_queued_twice() {
+        let (_bus, manager) = manager();
+        manager.show_error(error);
+        manager.show_notice(MessageKey::SupportsEditNeedsSupports, info);
+        manager.show_notice(MessageKey::SupportsEditNeedsSupports, info);
+        assert_eq!(manager.queued_for_test().len(), 2);
+    }
+
+    #[test]
+    fn message_keys_are_unique() {
+        let keys = [
+            MessageKey::SupportsEditNeedsSupports,
+            MessageKey::SupportsGenerated,
+            MessageKey::SupportsNotNeeded,
+            MessageKey::SupportStructuresGenerated,
+            MessageKey::MeshRepairSummary,
+        ];
+        let ids: std::collections::BTreeSet<&str> = keys.iter().map(|k| k.id()).collect();
+        assert_eq!(ids.len(), keys.len());
+    }
+}
+
+#[cfg(test)]
+mod message_layer_tests {
+    use super::*;
     use crate::language::InstalledTranslations;
     use crate::preferences_bus::PreferencesSnapshot;
-    use crate::slint_ui::ThemePreference;
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
     use crate::ui_language::UiLanguage;
 
-    /// A manager of `bus`, created after the UI language follows `bus`, as in
-    /// the app.
-    fn following_manager(bus: &Rc<PreferencesBus>) -> (UiLanguage, Rc<DialogManager>) {
-        // In the app, the 1st main window is the 1st component of the thread.
-        let first = ErrorDialog::new().expect("the headless platform creates components");
-        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
-        (ui_language, DialogManager::new(bus))
+    /// A window, and a manager of `bus` attached to it, created after the UI
+    /// language follows `bus`, as in the app.
+    fn attached(bus: &Rc<PreferencesBus>) -> (UiLanguage, MainWindow, Rc<DialogManager>) {
+        let ui = MainWindow::new().expect("the headless platform creates components");
+        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&ui), bus);
+        let manager = DialogManager::new(bus);
+        manager.attach(&ui);
+        (ui_language, ui, manager)
     }
 
     /// The texts of a failed load of `part.stl`. The bundled languages
@@ -622,64 +899,86 @@ mod language_change_tests {
         }
     }
 
-    /// `load_failure`, counting each build in `builds`.
-    fn counted_load_failure(builds: &Rc<Cell<usize>>) -> impl Fn() -> ErrorTexts + 'static {
-        let builds = builds.clone();
-        move || {
-            builds.set(builds.get() + 1);
-            load_failure()
-        }
-    }
-
-    fn the_open_error_dialog(manager: &DialogManager) -> ErrorDialog {
-        let dialogs = manager.dialogs.borrow();
-        let open = dialogs.values().next().expect("an error dialog is open");
-        open.window.clone_strong()
-    }
-
-    fn the_open_info_dialog(manager: &DialogManager) -> InfoDialog {
-        let dialogs = manager.info_dialogs.borrow();
-        let open = dialogs.values().next().expect("an info dialog is open");
-        open.window.clone_strong()
-    }
-
-    fn write_error_sentinels(dialog: &ErrorDialog) {
-        dialog.set_heading("sentinel".into());
-        dialog.set_context("sentinel".into());
-        dialog.set_message("sentinel".into());
-        dialog.set_details("sentinel".into());
-    }
-
-    fn error_texts_shown(dialog: &ErrorDialog) -> [String; 4] {
-        [
-            dialog.get_heading(),
-            dialog.get_context(),
-            dialog.get_message(),
-            dialog.get_details(),
-        ]
-        .map(|text| text.to_string())
-    }
-
-    fn error_texts_of(texts: ErrorTexts) -> [String; 4] {
-        [
-            texts.heading,
-            texts.context.unwrap_or_default(),
-            texts.message,
-            texts.details,
-        ]
-        .map(|text| text.to_string())
+    fn shown(ui: &MainWindow) -> [String; 4] {
+        let m = ui.get_message();
+        [m.heading, m.context, m.text, m.details].map(|t| t.to_string())
     }
 
     #[test]
-    fn a_language_change_pushes_the_error_texts_again() {
+    fn a_message_opens_in_the_window_and_its_answer_closes_it() {
+        let (open, closed) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            manager.show_error(load_failure);
+            let open = (ui.get_message_open(), ui.get_message().kind);
+            ui.invoke_message_answered(MessageAnswer::Close);
+            (open, ui.get_message_open())
+        });
+        assert_eq!(open, (true, MessageKind::Error));
+        assert!(!closed);
+    }
+
+    #[test]
+    fn the_layer_reports_a_click_outside_and_the_tick() {
+        let (silenced, open) = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            manager.show_notice(MessageKey::MeshRepairSummary, || InfoTexts {
+                heading: "Mesh repair".into(),
+                message: Default::default(),
+                details: Default::default(),
+            });
+            ui.set_message_silence(true);
+            ui.invoke_message_outside_clicked();
+            (
+                bus.snapshot().silenced_messages.len(),
+                ui.get_message_open(),
+            )
+        });
+        assert_eq!((silenced, open), (1, false));
+    }
+
+    #[test]
+    fn a_new_message_starts_unticked() {
+        let ticked = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            let texts = || InfoTexts {
+                heading: "Supports generated".into(),
+                message: Default::default(),
+                details: Default::default(),
+            };
+            manager.show_notice(MessageKey::SupportsGenerated, texts);
+            manager.show_notice(MessageKey::MeshRepairSummary, texts);
+            ui.set_message_silence(true);
+            ui.invoke_message_answered(MessageAnswer::Close);
+            ui.get_message_silence()
+        });
+        assert!(!ticked);
+    }
+
+    #[test]
+    fn a_language_change_pushes_the_message_texts_again() {
         let (shown, expected) = on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
+            let (_l, ui, manager) = attached(&bus);
             manager.show_error(load_failure);
-            let dialog = the_open_error_dialog(&manager);
-            write_error_sentinels(&dialog);
+            let mut sentinel = ui.get_message();
+            sentinel.heading = "sentinel".into();
+            sentinel.context = "sentinel".into();
+            ui.set_message(sentinel);
             pick_language(&bus, "es");
-            (error_texts_shown(&dialog), error_texts_of(load_failure()))
+            let l = load_failure();
+            (
+                shown(&ui),
+                [
+                    l.heading,
+                    l.context.unwrap_or_default(),
+                    l.message,
+                    l.details,
+                ]
+                .map(|t| t.to_string()),
+            )
         });
         assert_eq!(shown, expected);
         assert_ne!(shown[0], "Failed to open 3D model");
@@ -690,176 +989,31 @@ mod language_change_tests {
     fn a_language_change_pushes_the_texts_of_a_deferred_error_again() {
         let (shown, expected) = on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
+            let (_l, ui, manager) = attached(&bus);
             manager.show_error_deferred(load_failure);
             slint::platform::update_timers_and_animations();
-            let dialog = the_open_error_dialog(&manager);
-            write_error_sentinels(&dialog);
             pick_language(&bus, "es");
-            (error_texts_shown(&dialog), error_texts_of(load_failure()))
+            (shown(&ui)[0].clone(), load_failure().heading.to_string())
         });
         assert_eq!(shown, expected);
-    }
-
-    #[test]
-    fn a_language_change_pushes_the_info_texts_again() {
-        let shown = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
-            manager.show_info(|| InfoTexts {
-                heading: "Mesh repair".into(),
-                message: "No problems found.".into(),
-                details: "Cube: reoriented 2 faces".into(),
-            });
-            let dialog = the_open_info_dialog(&manager);
-            dialog.set_heading("sentinel".into());
-            dialog.set_message("sentinel".into());
-            dialog.set_details("sentinel".into());
-            pick_language(&bus, "es");
-            [
-                dialog.get_heading(),
-                dialog.get_message(),
-                dialog.get_details(),
-            ]
-            .map(|text| text.to_string())
-        });
-        assert_eq!(
-            shown,
-            [
-                "Mesh repair",
-                "No problems found.",
-                "Cube: reoriented 2 faces"
-            ]
-        );
-    }
-
-    #[test]
-    fn another_change_builds_no_texts() {
-        let builds = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
-            let builds = Rc::new(Cell::new(0));
-            manager.show_error(counted_load_failure(&builds));
-            bus.update(|snap| {
-                snap.theme = ThemePreference::Dark;
-                PreferencesChange::Theme
-            });
-            builds.get()
-        });
-        assert_eq!(builds, 1);
-    }
-
-    #[test]
-    fn a_closed_dialog_builds_no_texts() {
-        let (builds, open) = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
-            let builds = Rc::new(Cell::new(0));
-            manager.show_error(counted_load_failure(&builds));
-            the_open_error_dialog(&manager).invoke_close_requested();
-            pick_language(&bus, "es");
-            (builds.get(), manager.dialogs.borrow().len())
-        });
-        assert_eq!((builds, open), (1, 0));
     }
 
     #[test]
     fn a_language_change_after_the_manager_is_gone_builds_no_texts() {
         let builds = on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, manager) = following_manager(&bus);
+            let (_l, _ui, manager) = attached(&bus);
             let builds = Rc::new(Cell::new(0));
-            manager.show_error(counted_load_failure(&builds));
+            let counted = builds.clone();
+            manager.show_error(move || {
+                counted.set(counted.get() + 1);
+                load_failure()
+            });
+            let before = builds.get();
             drop(manager);
             pick_language(&bus, "es");
-            builds.get()
+            builds.get() - before
         });
-        assert_eq!(builds, 1);
-    }
-}
-
-#[cfg(test)]
-mod theme_tests {
-    use super::*;
-    use crate::preferences_bus::PreferencesSnapshot;
-    use crate::slint_ui::ThemePreference;
-    use crate::test_support::slint_thread::on_fresh_slint_thread;
-    use crate::test_support::theme_pick::pick_theme;
-
-    /// Opens 1 dialog of each of the 4 kinds.
-    fn open_each_kind(manager: &Rc<DialogManager>) {
-        manager.show_error(|| ErrorTexts {
-            heading: "Edit failed".into(),
-            context: None,
-            message: Default::default(),
-            details: Default::default(),
-        });
-        manager.show_info(|| InfoTexts {
-            heading: "Mesh repair".into(),
-            message: Default::default(),
-            details: Default::default(),
-        });
-        manager.show_replace_scene_confirm(
-            "part.stl".to_string(),
-            KeepChangesOffer::NothingToKeep,
-            |_| {},
-        );
-        manager.show_slice_overwrite_confirm(|| {});
-    }
-
-    /// The theme of the open error, info, replace-scene and slice-overwrite
-    /// dialogs, in that order.
-    fn themes(manager: &DialogManager) -> [ThemePreference; 4] {
-        let error = manager.dialogs.borrow();
-        let info = manager.info_dialogs.borrow();
-        let replace = manager.replace_dialogs.borrow();
-        let slice_overwrite = manager.slice_overwrite_dialogs.borrow();
-        [
-            error
-                .values()
-                .next()
-                .expect("an error dialog")
-                .window
-                .get_theme(),
-            info.values()
-                .next()
-                .expect("an info dialog")
-                .window
-                .get_theme(),
-            replace
-                .values()
-                .next()
-                .expect("a replace-scene dialog")
-                .get_theme(),
-            slice_overwrite
-                .values()
-                .next()
-                .expect("a slice-overwrite dialog")
-                .get_theme(),
-        ]
-    }
-
-    #[test]
-    fn each_dialog_opens_with_the_theme_in_force() {
-        let themes = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            pick_theme(&bus, ThemePreference::Dark);
-            let manager = DialogManager::new(&bus);
-            open_each_kind(&manager);
-            themes(&manager)
-        });
-        assert_eq!(themes, [ThemePreference::Dark; 4]);
-    }
-
-    #[test]
-    fn a_theme_change_reaches_each_open_dialog() {
-        let themes = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let manager = DialogManager::new(&bus);
-            open_each_kind(&manager);
-            pick_theme(&bus, ThemePreference::Light);
-            themes(&manager)
-        });
-        assert_eq!(themes, [ThemePreference::Light; 4]);
+        assert_eq!(builds, 0);
     }
 }
