@@ -121,6 +121,22 @@ fn a_document_for_other_models_is_refused() {
 }
 
 #[test]
+fn a_session_fits_its_models_however_the_scene_holds_them() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    let mesh = session.mesh().unwrap().expect("a support mesh");
+    assert!(session.fits_models_of(&scene));
+    // The support leaf is not a model, and node ids do not matter.
+    let with_supports = scene_with(vec![
+        (mesh, [0.0, 0.0, 0.0]),
+        (cube(), [0.0, 0.0, 8.0]),
+    ]);
+    assert!(session.fits_models_of(&with_supports));
+    assert!(!session.fits_models_of(&scene_with(vec![(cube(), [5.0, 0.0, 8.0])])));
+    assert!(!session.fits_models_of(&Scene::new()));
+}
+
+#[test]
 fn a_newer_or_damaged_document_is_refused() {
     let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
     let document = run_on(&scene).to_document().unwrap();

@@ -121,6 +121,22 @@ impl fmt::Display for RestoreError {
 impl std::error::Error for RestoreError {}
 
 impl DfSupportSession {
+    /// Whether `scene`'s models (its support meshes left out) are still the
+    /// ones this session was made on: the check a reopened document has to
+    /// pass, so a session that fits can be saved as data even after edits
+    /// that left the models alone.
+    pub fn fits_models_of(&self, scene: &Scene) -> bool {
+        let Ok(models) = scene_models(scene) else {
+            return false;
+        };
+        let (saved, ..) = self.parts();
+        models.len() == saved.len()
+            && models
+                .iter()
+                .zip(saved)
+                .all(|(model, saved)| ModelPrint::of(model).matches(&ModelPrint::of(saved)))
+    }
+
     /// The session as a document of [`DF_SUPPORT_DOCUMENT_VERSION`], or
     /// `None` when it cannot be kept as data: its run was given its settings
     /// outright, so there is no recipe to make them again.

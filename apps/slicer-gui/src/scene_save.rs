@@ -29,13 +29,14 @@ use sc_project_formats::{
 };
 use sc_scene::Scene;
 
+use crate::error_dialog::InfoTexts;
 use crate::i18n::ctr;
 use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
 use crate::scene_document::{SaveStamp, SceneDocument};
 use crate::slice_projection::resolve_current_schedule;
-use crate::support_persist::support_documents;
+use crate::support_persist::{SupportsAsMesh, support_documents};
 
 /// The format a project is saved in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,6 +197,8 @@ pub(crate) struct SaveBundle {
     slice_fingerprint: Option<String>,
     /// `.bread` only: the supports kept as data.
     supports: Vec<SupportDocument>,
+    /// `.bread` only: set when the scene's supports go in as a mesh.
+    supports_as_mesh: Option<SupportsAsMesh>,
     target: PathBuf,
 }
 
@@ -213,7 +216,8 @@ pub(crate) fn prepare_save(
     let format = ProjectFormat::of_path(&target);
     doc.with_scene(|spatial| {
         let scene = spatial.graph().clone();
-        let (mut slices, mut slice_fingerprint, mut supports) = (None, None, Vec::new());
+        let (mut slices, mut slice_fingerprint) = (None, None);
+        let (mut supports, mut supports_as_mesh) = (Vec::new(), None);
         match format {
             ProjectFormat::ThreeMf => {
                 if let Some((plate, token)) = persist_slices(doc, &payload, spatial.graph()) {
@@ -221,7 +225,11 @@ pub(crate) fn prepare_save(
                     slice_fingerprint = Some(token);
                 }
             }
-            ProjectFormat::Bread => supports = support_documents(doc, spatial),
+            ProjectFormat::Bread => {
+                let kept = support_documents(doc, spatial);
+                supports = kept.documents;
+                supports_as_mesh = kept.as_mesh;
+            }
         }
         SaveBundle {
             format,
@@ -230,9 +238,41 @@ pub(crate) fn prepare_save(
             slices,
             slice_fingerprint,
             supports,
+            supports_as_mesh,
             target,
         }
     })
+}
+
+impl SaveBundle {
+    /// Why the scene's supports go into a `.bread` as a mesh, or `None` when
+    /// they are kept as data or there are none.
+    pub(crate) fn supports_as_mesh(&self) -> Option<SupportsAsMesh> {
+        self.supports_as_mesh
+    }
+}
+
+/// The notice for a save whose supports went in as a mesh.
+pub(crate) fn supports_as_mesh_texts(why: SupportsAsMesh) -> InfoTexts {
+    let message = match why {
+        SupportsAsMesh::SeveralSets => ctr!(
+            "DfSupportDialog",
+            "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
+        ),
+        SupportsAsMesh::NoSession => ctr!(
+            "DfSupportDialog",
+            "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
+        ),
+        SupportsAsMesh::NoRecipe => ctr!(
+            "DfSupportDialog",
+            "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
+        ),
+    };
+    InfoTexts {
+        heading: ctr!("DfSupportDialog", "Supports saved as a mesh"),
+        message,
+        details: Default::default(),
+    }
 }
 
 /// Writes a prepared bundle to its target in its format, atomically,
