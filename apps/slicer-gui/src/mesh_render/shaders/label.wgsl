@@ -38,12 +38,17 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-// Ink colour: the cage's tone, so the word reads as a marking on the
-// machine rather than as something printed on the plate.
-const LABEL_COLOUR: vec3<f32> = vec3<f32>(0.55, 0.40, 0.25);
+// Ink colours, from Breadslicer's theme tokens: the word in
+// `text-muted` #8d959b, so it reads as a marking on the machine, and
+// the printer's name below it in the highlight, `accent` #d7a75a.
+const WORD_COLOUR: vec3<f32> = vec3<f32>(0.553, 0.584, 0.608);
+const NAME_COLOUR: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let coverage = textureSample(label_tex, label_samp, in.uv).r;
-    return vec4<f32>(LABEL_COLOUR, coverage);
+    // The word's coverage is in red, the name's in green; the two
+    // lines never share a texel.
+    let coverage = textureSample(label_tex, label_samp, in.uv).rg;
+    let colour = select(WORD_COLOUR, NAME_COLOUR, coverage.g > coverage.r);
+    return vec4<f32>(colour, max(coverage.r, coverage.g));
 }

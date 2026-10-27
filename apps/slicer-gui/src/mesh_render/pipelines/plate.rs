@@ -93,8 +93,9 @@ const FRONT_TAB_CORNER_SEGMENTS: u32 = 6;
 
 /// How far the front tab reaches out from the plate's edge, mm.
 const FRONT_TAB_DEPTH_MM: f32 = 4.0;
-/// Cap height the label is drawn at, mm.
-const FRONT_TAB_TEXT_HEIGHT_MM: f32 = 3.75;
+/// Height the word's ink is drawn at, mm. The printer's name below it
+/// is drawn at the same scale, in its smaller type.
+const FRONT_TAB_TEXT_HEIGHT_MM: f32 = 3.2;
 /// Clearance between the label's ink and the tab's slanted ends, mm.
 const FRONT_TAB_SIDE_MARGIN_MM: f32 = 3.75;
 
@@ -121,12 +122,11 @@ impl FrontTab {
         }
     }
 
-    /// Sizes a tab around a label of the given width over height.
-    pub(in crate::mesh_render) fn around_label(aspect: f32) -> Self {
-        Self::new(
-            0.5 * FRONT_TAB_TEXT_HEIGHT_MM * aspect,
-            FRONT_TAB_TEXT_HEIGHT_MM,
-        )
+    /// Sizes a tab around a label of the given width over height,
+    /// whose whole height is `height_over_word` times the word's.
+    pub(in crate::mesh_render) fn around_label(aspect: f32, height_over_word: f32) -> Self {
+        let height = FRONT_TAB_TEXT_HEIGHT_MM * height_over_word;
+        Self::new(0.5 * height * aspect, height)
     }
 
     /// Returns the half width of the edge the tab hangs from. The
@@ -1646,8 +1646,8 @@ mod plate_geometry_tests {
 
     #[test]
     fn a_longer_word_widens_the_tab_without_deepening_it() {
-        let short = FrontTab::around_label(2.0);
-        let long = FrontTab::around_label(9.0);
+        let short = FrontTab::around_label(2.0, 1.0);
+        let long = FrontTab::around_label(9.0, 1.0);
 
         assert!(long.half_width_mm() > short.half_width_mm());
         assert_approx_eq!(f32, long.depth_mm(), short.depth_mm());
@@ -1659,7 +1659,7 @@ mod plate_geometry_tests {
         let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
 
         for aspect in [1.0, 4.7, 9.0, 20.0] {
-            let tab = FrontTab::around_label(aspect);
+            let tab = FrontTab::around_label(aspect, 1.0);
             let [_, min_y, max_x, max_y] = tab.text_box(front_y, span);
 
             // Within the border, and no wider than the tab.
@@ -1674,7 +1674,7 @@ mod plate_geometry_tests {
 
     #[test]
     fn the_word_keeps_its_shape_when_the_tab_is_cut_to_fit() {
-        let tab = FrontTab::around_label(6.0);
+        let tab = FrontTab::around_label(6.0, 1.0);
         let front_y = -68.0;
         let roomy = tab.text_box(front_y, 1_000.0);
         let cramped = tab.text_box(front_y, 0.5 * tab.half_width_mm());
@@ -1686,7 +1686,7 @@ mod plate_geometry_tests {
 
     #[test]
     fn the_word_sits_across_the_middle_of_the_plates_border() {
-        let tab = FrontTab::around_label(4.0);
+        let tab = FrontTab::around_label(4.0, 1.0);
         let front_y = -68.0;
         let [min_x, min_y, max_x, max_y] = tab.text_box(front_y, 1_000.0);
 
@@ -1698,7 +1698,25 @@ mod plate_geometry_tests {
             0.5 * (min_y + max_y),
             front_y + 0.5 * (PLATE_OVERHANG_MM - tab.depth_mm())
         );
-        assert_approx_eq!(f32, max_y - min_y, FRONT_TAB_TEXT_HEIGHT_MM);
+        assert_approx_eq!(f32, max_y - min_y, FRONT_TAB_TEXT_HEIGHT_MM, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn a_printer_name_under_the_word_still_fits_the_border() {
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
+        // The word over a name a little more than its own height again.
+        let tab = FrontTab::around_label(5.0, 2.2);
+        let [_, min_y, _, max_y] = tab.text_box(front_y, span);
+
+        assert_approx_eq!(
+            f32,
+            max_y - min_y,
+            2.2 * FRONT_TAB_TEXT_HEIGHT_MM,
+            epsilon = 1e-4
+        );
+        assert!(min_y > front_y - tab.depth_mm());
+        assert!(max_y < front_y + PLATE_OVERHANG_MM);
     }
 
     #[test]
