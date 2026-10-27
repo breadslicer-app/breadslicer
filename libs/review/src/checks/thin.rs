@@ -41,19 +41,24 @@
 //! - **Measured again.** A piece whose coarse width is too close to the
 //!   limit to tell is measured again at 8 of its sub-pixels, on rows and on
 //!   columns a sixteenth of a pixel apart around each. That thickness is
-//!   exact across X or Y, and within a sixteenth of a pixel for a round pin.
+//!   exact across X or Y; for a round pin, whose disc centres are held to
+//!   those lines, it can read up to about a tenth of a pixel short.
 //!   A piece whose median reaches the limit was not thin after all: it is
 //!   dropped, and backs its neighbours like any thick part. A layer with
 //!   more than 64 such pieces (a lattice near the limit has thousands) opens
 //!   them again on columns instead, exact across Y as the rows are across X,
 //!   and drops those mostly covered: one pass, however many there are.
 //! - **The reported width.** Every feature about to be reported is measured
-//!   the same way at up to 16 of its unbacked sub-pixels. Its width is their
-//!   median, or for a neck their narrowest, reported in pixels and in
-//!   millimetres across its narrow axis.
+//!   the same way at up to 16 of its unbacked sub-pixels, however many
+//!   features there are: the samples of all of them are measured together,
+//!   layer by layer, so each layer is cut once more at most. No feature keeps
+//!   its coarse width. Its width is their median, or for a neck their
+//!   narrowest, reported in pixels and in millimetres across its narrow
+//!   axis.
 //!
-//! So the limits and the widths hold to a few hundredths of a pixel wherever
-//! a feature falls on the pixel grid.
+//! The tests hold walls across X, across Y and at 45 degrees to 0.05 px of
+//! their width at any sub-pixel phase, round pins to 0.1 px, and 400 pins on
+//! one plate each to 0.1 px at the right severity.
 //!
 //! # What is reported
 //!
@@ -90,10 +95,18 @@
 //!   is one finding.
 //! - **Large enough to matter.** A feature is reported when it measures
 //!   [`min_size`](ThinFeatureOptions::min_size) of its own widths: each
-//!   unbacked piece counts its length over its width, and at least 1. So a
+//!   unbacked piece counts its length over its width, at least 1, times the
+//!   share of its sub-pixels that is unbacked (so a partly backed piece
+//!   counts less than 1). So a
 //!   pin needs 3 unbacked layers, however thin, and a flat strand 3 times
 //!   longer than wide is enough on a single layer. The sharp tip of a cone,
 //!   thin over a layer or two, is not worth a finding.
+//! - **Named by shape**, from its piece with the most unbacked sub-pixels: a
+//!   *support*; a *neck* when it touches thick solid in two places and is
+//!   not long; an *edge* when it touches thick solid in one place and
+//!   tapers (its widths are uneven); a *wall* when its area is at least 3
+//!   times its width squared; otherwise a *pin*, free-standing or not: an
+//!   evenly wide stub sticking out of a block is a pin too.
 //!
 //! # Known limits
 //!
@@ -109,9 +122,6 @@
 //! - On a layer with more than 64 pieces near the limit, a round pin up to a
 //!   quarter pixel over the limit may be kept as thin: the pass on columns
 //!   is exact for walls, not for a pin centred between rows and columns.
-//! - The width of a reported feature is measured at up to 16 points, and at
-//!   most 4096 per role and plate; past that, a feature keeps its coarse
-//!   width.
 //! - A feature too small to cover the centre of a sub-pixel (under about a
 //!   third of a pixel across, by default) is not seen.
 
@@ -196,10 +206,6 @@ const SAMPLES: u64 = 4;
 
 /// How many sub-pixels of a reported feature are measured again.
 const FEATURE_PROBES: usize = 16;
-
-/// At most this many sub-pixels are measured again at report time per role;
-/// the features after them keep their coarse width.
-const REPORT_PROBES: usize = 4096;
 
 /// Finds the features thinner than the printer resolves.
 pub fn run(ctx: &ReviewContext<'_>, options: &ThinFeatureOptions) -> Vec<Finding> {
@@ -920,7 +926,9 @@ fn link_pieces(lower: &RoleLayer, upper: &RoleLayer, reach: i64) -> Vec<(u32, u3
 }
 
 /// Joins the pieces of a pass across layers and turns every feature large
-/// enough into a finding.
+/// enough into a finding. Every feature is measured again before it is
+/// reported, however many there are: the samples of all of them are
+/// measured together, layer by layer, so each layer is cut once.
 fn report(
     input: &ReviewInput<'_>,
     grid: &FineGrid,
@@ -945,10 +953,10 @@ fn report(
         }
     }
     let groups = Groups::from_union_find(offsets, &mut sets);
-    let mut budget = REPORT_PROBES;
-    let mut findings = Vec::new();
+    let piece = |m: &RegionRef| &layers[m.layer].pieces[m.index as usize];
+    let mut pending: Vec<Pending<'_>> = Vec::new();
+    let mut requests: Vec<Request> = Vec::new();
     for members in groups.iter() {
-        let piece = |m: &RegionRef| &layers[m.layer].pieces[m.index as usize];
         let unbacked: Vec<&RegionRef> = members.iter().filter(|m| piece(m).unbacked > 0).collect();
         if unbacked.is_empty() {
             continue;
@@ -963,15 +971,29 @@ fn report(
             })
             .expect("a feature with unbacked pixels");
         let neck = piece(focus).neck();
-        let measured = measure_feature(input, grid, pass, layers, &unbacked, neck, &mut budget);
-        let width = if measured.is_empty() {
-            // Over the budget: the coarse widths.
-            let coarse: Vec<(f64, f64)> = unbacked
-                .iter()
-                .map(|m| (piece(m).width(), piece(m).unbacked as f64))
-                .collect();
-            weighted_median(&coarse)
-        } else if neck {
+        let feature = pending.len();
+        let measured = feature_samples(layers, &unbacked, neck, feature, &mut requests);
+        pending.push(Pending {
+            members,
+            unbacked,
+            focus,
+            neck,
+            measured,
+        });
+    }
+    for (feature, t, share) in measure_requests(input, grid, pass, requests) {
+        pending[feature].measured.push((t, share));
+    }
+    let mut findings = Vec::new();
+    for Pending {
+        members,
+        unbacked,
+        focus,
+        neck,
+        measured,
+    } in pending
+    {
+        let width = if neck {
             // A neck breaks where it is narrowest.
             measured
                 .iter()
@@ -982,11 +1004,12 @@ fn report(
         };
         let width_px = hundredths(width / grid.scale());
         // Measured to the limit: as reported, it would not be under it.
-        if width_px.is_nan() || width_px >= pass.width_px {
+        if !width_px.is_finite() || width_px >= pass.width_px {
             continue;
         }
-        // Each unbacked piece counts its length in widths, at least 1: a pin
-        // counts its layers, a strand its length.
+        // Each unbacked piece counts its length in widths, at least 1,
+        // scaled by its unbacked share: a pin counts its layers, a strand
+        // its length.
         let size: f64 = unbacked
             .iter()
             .map(|m| {
@@ -1016,20 +1039,33 @@ fn report(
     findings
 }
 
+/// A feature waiting for its samples to be measured.
+struct Pending<'a> {
+    members: &'a [RegionRef],
+    unbacked: Vec<&'a RegionRef>,
+    focus: &'a RegionRef,
+    neck: bool,
+    /// Its thicknesses in sub-pixels, each with the share of its unbacked
+    /// sub-pixels it stands for.
+    measured: Vec<(f64, f64)>,
+}
+
+/// A sub-pixel to measure for a feature: `(feature, layer, sub-pixel,
+/// share)`.
+type Request = (usize, usize, [u32; 2], f64);
+
 /// The thickness of a feature at up to [`FEATURE_PROBES`] of the sub-pixels
 /// of its `unbacked` pieces, each with the share of their unbacked
-/// sub-pixels it stands for: those of pieces measured again already, and
-/// samples of the others measured now, while `budget` lasts. For a neck,
-/// the samples are its pieces' narrowest sub-pixels. Empty when nothing
-/// could be measured.
-fn measure_feature(
-    input: &ReviewInput<'_>,
-    grid: &FineGrid,
-    pass: &Pass,
+/// sub-pixels it stands for. Those of pieces measured again already are
+/// returned; the samples of the others are added to `requests`, to be
+/// measured with every other feature's. For a neck, the samples are its
+/// pieces' narrowest sub-pixels.
+fn feature_samples(
     layers: &[LayerPieces],
     unbacked: &[&RegionRef],
     neck: bool,
-    budget: &mut usize,
+    feature: usize,
+    requests: &mut Vec<Request>,
 ) -> Vec<(f64, f64)> {
     let piece = |m: &RegionRef| &layers[m.layer].pieces[m.index as usize];
     let mut out: Vec<(f64, f64)> = Vec::new();
@@ -1038,7 +1074,7 @@ fn measure_feature(
     for m in unbacked {
         let p = piece(m);
         if p.probes.is_empty() {
-            let cells = if neck {
+            let cells = if neck || p.samples.is_empty() {
                 vec![p.narrowest]
             } else {
                 p.samples.clone()
@@ -1050,46 +1086,50 @@ fn measure_feature(
             out.extend(p.probes.iter().map(|&t| (t, share)));
         }
     }
-    let wanted = FEATURE_PROBES
-        .saturating_sub(out.len())
-        .min(samples.len())
-        .min(*budget);
+    let wanted = FEATURE_PROBES.saturating_sub(out.len()).min(samples.len());
     if wanted == 0 {
-        if out.is_empty() || samples.is_empty() {
-            return out;
-        }
-        // The samples left unmeasured stand with the probes taken.
-        let total: f64 =
-            samples.iter().map(|s| s.2).sum::<f64>() + out.iter().map(|o| o.1).sum::<f64>();
-        let taken: f64 = out.iter().map(|o| o.1).sum();
-        for o in &mut out {
-            o.1 *= total / taken;
+        if !out.is_empty() && !samples.is_empty() {
+            // The samples left unmeasured stand with the probes taken.
+            let taken: f64 = out.iter().map(|o| o.1).sum();
+            let total = taken + samples.iter().map(|s| s.2).sum::<f64>();
+            for o in &mut out {
+                o.1 *= total / taken;
+            }
         }
         return out;
     }
-    *budget -= wanted;
     // The samples measured stand for all of them.
     let stand = samples.len() as f64 / wanted as f64;
-    let mut cuts: Vec<(usize, Edges, Edges)> = Vec::new();
     for j in 0..wanted {
         let (layer, cell, share) = samples[(2 * j + 1) * samples.len() / (2 * wanted)];
-        let at = match cuts.iter().position(|c| c.0 == layer) {
-            Some(at) => at,
-            None => {
-                let contours = role_contours(input, layer, pass.role);
-                cuts.push((
-                    layer,
-                    grid.edges(input, &contours, Axis::Rows),
-                    grid.edges(input, &contours, Axis::Columns),
-                ));
-                cuts.len() - 1
-            }
-        };
-        let (_, rows, columns) = &cuts[at];
-        let t = Measure::new(grid, pass, rows, columns).at(cell);
-        out.push((t, share * stand));
+        requests.push((feature, layer, cell, share * stand));
     }
     out
+}
+
+/// Measures every request, cutting each layer once (the layers in
+/// parallel), and returns `(feature, thickness, share)` for each.
+fn measure_requests(
+    input: &ReviewInput<'_>,
+    grid: &FineGrid,
+    pass: &Pass,
+    mut requests: Vec<Request>,
+) -> Vec<(usize, f64, f64)> {
+    requests.sort_by_key(|r| r.1);
+    let by_layer: Vec<&[Request]> = requests.chunk_by(|a, b| a.1 == b.1).collect();
+    by_layer
+        .into_par_iter()
+        .flat_map_iter(|batch| {
+            let contours = role_contours(input, batch[0].1, pass.role);
+            let rows = grid.edges(input, &contours, Axis::Rows);
+            let columns = grid.edges(input, &contours, Axis::Columns);
+            let measure = Measure::new(grid, pass, &rows, &columns);
+            batch
+                .iter()
+                .map(|&(feature, _, cell, share)| (feature, measure.at(cell), share))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// One feature, ready to report.
