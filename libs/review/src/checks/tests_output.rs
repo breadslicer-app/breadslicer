@@ -399,6 +399,104 @@ fn an_unrelated_edge_contact_does_not_split_a_part_off_the_plate() {
 }
 
 #[test]
+fn slivers_of_a_part_across_the_edge_belong_to_it() {
+    // Mesh slivers beside a support cut by the left edge, on layers 2 and
+    // 4: too thin to light a pixel even on the grid past the screen, they
+    // join the polygon whose box they meet.
+    let fixture = FixtureBuilder::new(6)
+        .support(.., Shape::rect(-20.0, 10.0, 10.0, 20.0))
+        .support(2..3, Shape::rect(-20.1, 12.0, -20.0, 12.1))
+        .support(4..5, Shape::rect(-15.0, 20.0, -14.9, 20.1))
+        .build();
+    let findings = output(&fixture);
+    assert_eq!(
+        summary(&findings),
+        vec![(CheckKind::PlateEdge, Severity::Error, 0, 5)]
+    );
+    assert_eq!(findings[0].title, CUT);
+}
+
+#[test]
+fn a_supported_part_across_the_edge_is_reported_once() {
+    // A model cut by the left edge, and a support that stands on its part
+    // past the plate (layers 2 to 4) and leans back onto the screen
+    // (layers 5 to 7). The support and the model meet only past the plate,
+    // where they are different leaves: one part all the same. On the
+    // screen the support starts in mid-air, but what holds it lies beyond
+    // the screen, which the cut finding already says.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(-50.0, 20.0, 30.0, 40.0))
+        .support(2..5, Shape::rect(-30.0, 35.0, -10.0, 50.0))
+        .support(5..8, Shape::rect(-15.0, 42.0, 5.0, 55.0))
+        .build();
+    let findings = output(&fixture);
+    assert_eq!(
+        summary(&findings),
+        vec![(CheckKind::PlateEdge, Severity::Error, 0, 7)]
+    );
+    assert_eq!(findings[0].title, CUT);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+    assert!(
+        findings[0]
+            .detail
+            .contains("5.00 mm past the edge of the plate on 8 layers"),
+        "{}",
+        findings[0].detail
+    );
+}
+
+#[test]
+fn a_supported_part_off_the_plate_is_one_finding() {
+    // 'Figure' lies wholly left of the plate on layers 3 to 7; its support
+    // stands on the plate's left edge line 1 mm farther out, and reaches it
+    // only past the plate. One part: one finding over both leaves.
+    let fixture = FixtureBuilder::new(8)
+        .support(0..4, Shape::rect(-60.0, 40.0, -50.0, 50.0))
+        .shape(
+            "Figure",
+            Role::Model,
+            3..8,
+            Shape::rect(-80.0, 30.0, -30.0, 80.0),
+        )
+        .build();
+    let findings = output(&fixture);
+    assert_eq!(
+        summary(&findings),
+        vec![(CheckKind::PlateEdge, Severity::Error, 0, 7)]
+    );
+    let finding = &findings[0];
+    assert_eq!(finding.title, OUTSIDE);
+    assert_eq!(finding.scope, RoleScope::Both);
+    assert!(
+        finding.detail.starts_with(
+            "'Figure' and 'Supports' reach up to 8.00 mm past the edge of the plate on 8 layers"
+        ),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn separate_supports_off_the_plate_are_separate_findings() {
+    // Two pillars of the same support leaf, both left of the plate and
+    // apart from each other: two parts.
+    let fixture = FixtureBuilder::new(4)
+        .model(.., Shape::rect(40.0, 30.0, 80.0, 60.0))
+        .support(.., Shape::rect(-50.0, 10.0, -40.0, 20.0))
+        .support(.., Shape::rect(-50.0, 80.0, -40.0, 90.0))
+        .build();
+    let findings = output(&fixture);
+    assert_eq!(
+        summary(&findings),
+        vec![
+            (CheckKind::PlateEdge, Severity::Error, 0, 3),
+            (CheckKind::PlateEdge, Severity::Error, 0, 3),
+        ]
+    );
+    assert!(findings.iter().all(|f| f.title == OUTSIDE));
+}
+
+#[test]
 fn a_part_across_a_corner_is_reported_once() {
     // On the plate the triangle touches column 0 only; off the plate it
     // reaches 3 mm past both the left and the bottom edges.
@@ -810,6 +908,41 @@ fn a_part_with_nothing_below_it_floats() {
     assert_eq!(
         finding.fix,
         Some(SuggestedFix::AddSupport { at: finding.focus })
+    );
+}
+
+#[test]
+fn a_part_starting_on_the_second_layer_rests_on_the_plate() {
+    // Layers 0 and 1 count as the plate (the raft and bottom layers absorb
+    // a part that starts one layer up), as in the island check.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(1..8, Shape::rect(120.0, 20.0, 140.0, 40.0))
+        .build();
+    let findings = output(&fixture);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_part_starting_on_the_third_layer_floats() {
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(2..8, Shape::rect(120.0, 20.0, 140.0, 40.0))
+        .build();
+    assert_eq!(
+        summary(&output(&fixture)),
+        vec![(CheckKind::FloatingPart, Severity::Error, 2, 7)]
+    );
+}
+
+#[test]
+fn an_empty_first_layer_is_reported_under_a_part_on_the_second() {
+    let fixture = FixtureBuilder::new(8)
+        .model(1..8, Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .build();
+    assert_eq!(
+        summary(&output(&fixture)),
+        vec![(CheckKind::EmptyLayer, Severity::Error, 0, 0)]
     );
 }
 

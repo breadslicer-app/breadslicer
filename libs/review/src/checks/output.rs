@@ -14,10 +14,14 @@
 //! - **Plate edge**, one finding per part. A part is a printed body (the
 //!   solid regions joined through every overlap between layers) with its
 //!   polygons that reach past the plate: those that light pixels of the
-//!   body, and those of the same leaf straight above or below them on the
-//!   printer's pixel grid extended past the screen (the link bodies are
-//!   joined by, so a part that leaves the screen further up or down stays
-//!   one part). Bodies such polygons join are one part.
+//!   body, and those that share a pixel of the printer's grid extended past
+//!   the screen with them, on the same layer or straight above or below,
+//!   whatever their leaf (the links bodies are joined by, so a part that
+//!   leaves the screen further up or down, or whose supports meet it only
+//!   past the plate, stays one part). A polygon too thin to light a pixel
+//!   even there joins the polygons whose bounding box meets its own on its
+//!   layer and the next ones: mesh slivers stay with their part. Bodies
+//!   such polygons join are one part.
 //!   - *Cut by the plate edge* (error): some polygon of the part reaches past
 //!     the plate, so what lies beyond the screen is not printed.
 //!   - *Touches the screen edge* (warning): the part lights the screen's
@@ -25,8 +29,9 @@
 //!     Nothing is lost, but it has no margin left.
 //!   - *Outside the printable area* (error): polygons past the plate that
 //!     light no pixel and join no body (a part wholly off the plate, or a
-//!     sliver too thin to light a pixel). Reported per leaf and run of
-//!     consecutive layers.
+//!     sliver too thin to light a pixel). The same links join them into
+//!     parts, each reported once, over its whole layer range and naming its
+//!     leaves.
 //!
 //!   A part's finding runs from the first to the last layer it touches the
 //!   edge or reaches past it, focused on its edge pixel nearest to its
@@ -45,11 +50,16 @@
 //!   cut at) and is not reported: no change to the plate removes it.
 //! - **Nothing to print** (error). Contours on the plate, yet no layer has
 //!   a single lit pixel: the printer file would print nothing.
-//! - **Floating part** (error). A printed body whose lowest region is above
-//!   layer 0: nothing below it in any earlier layer ever reaches the plate.
+//! - **Floating part** (error). A printed body whose lowest region is on
+//!   layer [`PLATE_LAYERS`] (counting from 0) or higher: nothing below it in
+//!   any earlier layer ever reaches the plate. A body that starts on one of
+//!   the first [`PLATE_LAYERS`] layers rests on the plate, as in the island
+//!   check: the raft and bottom layers absorb a body that starts a layer up.
 //!   A body that starts right above an empty layer is left to the
-//!   empty-layer finding, which explains it. It suggests a support under the
-//!   body's largest bottom region when that region has model in it. A body
+//!   empty-layer finding, and one whose part is cut by the plate edge on
+//!   the layer right below it to the plate-edge finding: each explains it.
+//!   It suggests a support under the body's largest bottom region when that
+//!   region has model in it. A body
 //!   smaller than [`OutputOptions::speck_volume_mm3`] is a *floating speck*
 //!   (warning, no fix): too small for a support to hold.
 //!
@@ -74,6 +84,12 @@ use crate::regions::{LayerPixels, PlateRegions, Region};
 use crate::runner::ReviewContext;
 use crate::runs::{Run, for_each_overlap};
 use crate::union_find::{Groups, RegionRef, UnionFind};
+
+/// The layers, counted from 0, on which a printed body rests on the plate:
+/// one whose lowest layer is below this does not float. It must match the
+/// island check's `PLATE_LAYERS`, so that both checks agree on what stands
+/// on the plate.
+pub const PLATE_LAYERS: usize = 2;
 
 /// Settings of the output checks.
 #[derive(Clone, Debug, PartialEq)]
@@ -107,14 +123,15 @@ impl Default for OutputOptions {
 pub fn run(ctx: &ReviewContext<'_>, options: &OutputOptions) -> Vec<Finding> {
     let contours = scan_contours(ctx.input, options.edge_tolerance_mm);
     let bodies = ctx.regions.group_solid(|_, _| true);
-    let mut findings = plate_edge(ctx, &bodies, &contours);
+    let edge = plate_edge(ctx, &bodies, &contours);
+    let mut findings = edge.findings;
     let Some(extent) = SolidExtent::of(ctx.regions) else {
         findings.extend(nothing_to_print(ctx.input, &contours));
         return findings;
     };
     findings.extend(too_tall(ctx, extent, options));
     findings.extend(empty_layers(ctx, extent, &contours));
-    findings.extend(floating_parts(ctx, &bodies, options));
+    findings.extend(floating_parts(ctx, &bodies, &edge.held_past, options));
     findings
 }
 
@@ -496,8 +513,14 @@ fn layer_hits(
             0..i64::from(height_px),
         );
         let runs = screen_runs(&spans, width_px, height_px);
-        for_each_overlap(&runs, &pixels.solid, |_, j, _| {
-            let index = pixels.solid_labels[j];
+        let (Some(top), Some(bottom)) = (runs.first(), runs.last()) else {
+            continue;
+        };
+        // Only the layer's runs in the rows the polygon lights.
+        let start = pixels.solid.partition_point(|run| run.row < top.row);
+        let end = pixels.solid.partition_point(|run| run.row <= bottom.row);
+        for_each_overlap(&runs, &pixels.solid[start..end], |_, j, _| {
+            let index = pixels.solid_labels[start + j];
             let body = bodies.group_of(RegionRef { layer, index });
             if !lit.contains(&body) {
                 lit.push(body);
@@ -516,54 +539,87 @@ fn layer_hits(
     hits
 }
 
-/// The overhangs of one leaf on consecutive layers that lie straight above
-/// one another on the pixel grid extended past the screen, as
-/// `(lower layer, index on it, index on the layer above)`. The grid is
-/// extended by one screen height above and below the screen, which bounds
-/// the work for absurdly large contours; overhangs that meet only farther
-/// out stay apart, and each is still reported.
-fn chained_overhangs(
-    input: &ReviewInput<'_>,
-    contours: &[LayerContours],
-) -> Vec<(usize, usize, usize)> {
+/// Two overhangs joined into one part, each as `(layer, index on it)`.
+type OverhangLink = ((usize, usize), (usize, usize));
+
+/// The overhangs of the same or consecutive layers, of any leaf, that share
+/// a pixel of the pixel grid extended past the screen, or whose bounding
+/// boxes meet when one of them lights no pixel of that grid (a sliver).
+/// Solid joins across leaves on the screen, so it does past it too. The
+/// grid is extended by one screen height above and below the screen, which
+/// bounds the work for absurdly large contours; polygons that lie only
+/// farther out light nothing there and are joined by their boxes. Only
+/// overhangs whose boxes meet are rasterised and compared, each once per
+/// layer pair.
+fn linked_overhangs(input: &ReviewInput<'_>, contours: &[LayerContours]) -> Vec<OverhangLink> {
     let height = i64::from(input.height_px());
     let rows = -height..2 * height;
-    (1..contours.len())
+    (0..contours.len())
         .into_par_iter()
-        .flat_map_iter(|upper_layer| {
-            let lower_layer = upper_layer - 1;
-            let lower = &contours[lower_layer].overhangs;
-            let upper = &contours[upper_layer].overhangs;
-            let mut lower_spans: Vec<Option<Vec<Span>>> = vec![None; lower.len()];
-            let mut upper_spans: Vec<Option<Vec<Span>>> = vec![None; upper.len()];
+        .flat_map_iter(|layer| {
+            let below: &[Overhang] = match layer.checked_sub(1) {
+                Some(lower) => &contours[lower].overhangs,
+                None => &[],
+            };
+            // The overhangs of the layer below, then those of this one.
+            let items: Vec<(usize, usize, &Overhang)> = below
+                .iter()
+                .enumerate()
+                .map(|(k, overhang)| (layer - 1, k, overhang))
+                .chain(
+                    contours[layer]
+                        .overhangs
+                        .iter()
+                        .enumerate()
+                        .map(|(k, overhang)| (layer, k, overhang)),
+                )
+                .collect();
+            let boxes: Vec<[f64; 4]> = items.iter().map(|item| item.2.bounds).collect();
+            let mut spans: Vec<Option<Vec<Span>>> = vec![None; items.len()];
             let mut links = Vec::new();
-            for (i, a) in lower.iter().enumerate() {
-                for (j, b) in upper.iter().enumerate() {
-                    if a.leaf != b.leaf || !bounds_meet(a.bounds, b.bounds) {
-                        continue;
-                    }
-                    let a_spans = lower_spans[i].get_or_insert_with(|| {
-                        polygon_spans(
-                            a.polygon(input, lower_layer),
+            for (p, q) in meeting_boxes(&boxes, below.len()) {
+                for k in [p, q] {
+                    if spans[k].is_none() {
+                        let (on, _, overhang) = items[k];
+                        spans[k] = Some(polygon_spans(
+                            overhang.polygon(input, on),
                             input.pixel_map(),
                             rows.clone(),
-                        )
-                    });
-                    let b_spans = upper_spans[j].get_or_insert_with(|| {
-                        polygon_spans(
-                            b.polygon(input, upper_layer),
-                            input.pixel_map(),
-                            rows.clone(),
-                        )
-                    });
-                    if spans_overlap(a_spans, b_spans) {
-                        links.push((lower_layer, i, j));
+                        ));
                     }
+                }
+                let a = spans[p].as_deref().unwrap_or_default();
+                let b = spans[q].as_deref().unwrap_or_default();
+                if a.is_empty() || b.is_empty() || spans_overlap(a, b) {
+                    links.push(((items[p].0, items[p].1), (items[q].0, items[q].1)));
                 }
             }
             links
         })
         .collect()
+}
+
+/// The pairs `(p, q)`, `p < q`, of `boxes` (`[min x, min y, max x, max y]`)
+/// that meet, with `q` at or after `split`: the boxes before `split` are
+/// only paired with those from it on. A sweep along x, so boxes far apart
+/// are never compared.
+fn meeting_boxes(boxes: &[[f64; 4]], split: usize) -> Vec<(usize, usize)> {
+    let mut order: Vec<usize> = (0..boxes.len()).collect();
+    order.sort_by(|&a, &b| boxes[a][0].total_cmp(&boxes[b][0]));
+    let mut active: Vec<usize> = Vec::new();
+    let mut pairs = Vec::new();
+    for k in order {
+        let b = boxes[k];
+        active.retain(|&a| boxes[a][2] >= b[0]);
+        for &a in &active {
+            let (p, q) = (a.min(k), a.max(k));
+            if q >= split && boxes[a][1] <= b[3] && b[1] <= boxes[a][3] {
+                pairs.push((p, q));
+            }
+        }
+        active.push(k);
+    }
+    pairs
 }
 
 /// One part at the edge of the plate: the bodies and overhangs joined into
@@ -577,9 +633,8 @@ struct EdgePart {
     contacts: Vec<(usize, usize)>,
     /// Layers on which it touches the edge.
     touch_layers: usize,
-    /// Layers on which it reaches past the plate.
-    past_layers: usize,
-    last_past_layer: Option<usize>,
+    /// Layers on which it reaches past the plate, ascending.
+    past_layers: Vec<usize>,
     /// The farthest past the plate on any layer.
     past_mm: f64,
     /// Its farthest vertex past the plate on the lowest layer it reaches
@@ -608,9 +663,8 @@ impl EdgePart {
     /// Adds an overhang of layer `layer`. Overhangs come in layer order.
     fn add_overhang(&mut self, layer: usize, overhang: &Overhang, role: Role) {
         self.widen(layer, layer);
-        if self.last_past_layer != Some(layer) {
-            self.past_layers += 1;
-            self.last_past_layer = Some(layer);
+        if self.past_layers.last() != Some(&layer) {
+            self.past_layers.push(layer);
         }
         self.past_mm = self.past_mm.max(overhang.past_mm);
         match self.lowest_past {
@@ -638,7 +692,7 @@ impl EdgePart {
             })
             .expect("a part touches the edge or reaches past it on its first layer");
         let scope = RoleScope::from_counts(u64::from(self.model), u64::from(self.support));
-        if self.past_layers > 0 {
+        if !self.past_layers.is_empty() {
             Finding::new(
                 CheckKind::PlateEdge,
                 Severity::Error,
@@ -650,7 +704,7 @@ impl EdgePart {
                 format!(
                     "It reaches up to {:.2} mm past the edge of the plate on {}, and nothing beyond the screen is printed.",
                     self.past_mm,
-                    plural(self.past_layers, "layer", "layers")
+                    plural(self.past_layers.len(), "layer", "layers")
                 ),
             )
         } else {
@@ -671,13 +725,18 @@ impl EdgePart {
     }
 }
 
-/// One finding per part at the edge of the plate, and per leaf and run of
-/// consecutive layers for contours past the plate that belong to no part.
-fn plate_edge(
-    ctx: &ReviewContext<'_>,
-    bodies: &Groups,
-    contours: &[LayerContours],
-) -> Vec<Finding> {
+/// What the plate-edge check found.
+struct PlateEdge {
+    findings: Vec<Finding>,
+    /// For each body, whether its part reaches past the plate on the layer
+    /// right below the body's lowest layer: what holds it lies beyond the
+    /// screen.
+    held_past: Vec<bool>,
+}
+
+/// One finding per part at the edge of the plate, and per part of contours
+/// past the plate that joins no body.
+fn plate_edge(ctx: &ReviewContext<'_>, bodies: &Groups, contours: &[LayerContours]) -> PlateEdge {
     let (input, regions) = (ctx.input, ctx.regions);
     let contacts: Vec<Option<EdgeContact>> = bodies
         .iter()
@@ -702,7 +761,7 @@ fn plate_edge(
             )
         })
         .collect();
-    let links = chained_overhangs(input, contours);
+    let links = linked_overhangs(input, contours);
 
     // Bodies are elements 0..bodies.len(); the overhangs of layer `k`
     // follow from `offsets[k]`.
@@ -720,8 +779,8 @@ fn plate_edge(
             }
         }
     }
-    for &(layer, i, j) in &links {
-        sets.union(offsets[layer] + i, offsets[layer + 1] + j);
+    for &((a_layer, a), (b_layer, b)) in &links {
+        sets.union(offsets[a_layer] + a, offsets[b_layer] + b);
     }
     let mut has_body = vec![false; total];
     for body in 0..bodies.len() {
@@ -743,7 +802,7 @@ fn plate_edge(
                 .add_contact(body, contact);
         }
     }
-    let mut lost: Vec<Vec<(usize, Overhang)>> = vec![Vec::new(); input.leaves().len()];
+    let mut lost: Vec<(usize, usize, Overhang)> = Vec::new();
     for (layer, layer_contours) in contours.iter().enumerate() {
         for (k, overhang) in layer_contours.overhangs.iter().enumerate() {
             let root = sets.find(offsets[layer] + k);
@@ -754,16 +813,31 @@ fn plate_edge(
                     .or_default()
                     .add_overhang(layer, overhang, role);
             } else {
-                lost[overhang.leaf].push((layer, *overhang));
+                lost.push((root, layer, *overhang));
             }
         }
     }
+    let held_past = bodies
+        .iter()
+        .enumerate()
+        .map(|(body, members)| {
+            let Some(below) = members[0].layer.checked_sub(1) else {
+                return false;
+            };
+            parts
+                .get(&sets.find(body))
+                .is_some_and(|part| part.past_layers.binary_search(&below).is_ok())
+        })
+        .collect();
     let mut findings: Vec<Finding> = parts
         .values()
         .map(|part| part.finding(input, &edge_pixels))
         .collect();
     findings.extend(outside_plate(input, &lost));
-    findings
+    PlateEdge {
+        findings,
+        held_past,
+    }
 }
 
 /// For each solid region of `wanted` (its index in the layer and its
@@ -815,10 +889,14 @@ fn edge_pixels(
     best.into_iter().map(|(_, pixel)| pixel).collect()
 }
 
-/// Consecutive layers on which one leaf reaches past the plate.
-struct OutsideRun {
+/// Polygons past the plate joined into one part that joins no body.
+struct OutsidePart {
+    /// Its leaves, as indices in [`ReviewInput::leaves`], ascending.
+    leaves: Vec<usize>,
     first: usize,
     last: usize,
+    /// Layers it has a polygon on.
+    layers: usize,
     /// The farthest past the plate on any of its layers.
     past_mm: f64,
     /// The farthest past the plate on its first layer, and where.
@@ -826,64 +904,95 @@ struct OutsideRun {
     focus: PlatePoint,
 }
 
-/// One finding per leaf and run of consecutive layers of `lost`, each
-/// leaf's overhangs that belong to no part, in layer order.
-fn outside_plate(input: &ReviewInput<'_>, lost: &[Vec<(usize, Overhang)>]) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    for (leaf, overhangs) in input.leaves().iter().zip(lost) {
-        let mut runs: Vec<OutsideRun> = Vec::new();
-        for (layer, overhang) in overhangs {
-            let layer = *layer;
-            let focus = PlatePoint::new(
-                overhang.vertex.x,
-                overhang.vertex.y,
-                input.layers()[layer].sample_mm,
-            );
-            match runs.last_mut() {
-                Some(run) if run.last + 1 >= layer => {
-                    run.last = layer;
-                    run.past_mm = run.past_mm.max(overhang.past_mm);
-                    if run.first == layer && overhang.past_mm > run.first_past_mm {
-                        run.first_past_mm = overhang.past_mm;
-                        run.focus = focus;
-                    }
-                }
-                _ => runs.push(OutsideRun {
-                    first: layer,
-                    last: layer,
-                    past_mm: overhang.past_mm,
-                    first_past_mm: overhang.past_mm,
-                    focus,
-                }),
-            }
+/// How a leaf is named in a finding: its name in quotes, or what it is.
+fn leaf_name(name: Option<&str>, role: Role) -> String {
+    match (name, role) {
+        (Some(name), _) => format!("'{name}'"),
+        (None, Role::Model) => "a model".to_string(),
+        (None, Role::Support) => "a support".to_string(),
+    }
+}
+
+/// One finding per part of `lost`, the overhangs that join no body, each
+/// as `(its part, its layer, the overhang)` in layer order.
+fn outside_plate(input: &ReviewInput<'_>, lost: &[(usize, usize, Overhang)]) -> Vec<Finding> {
+    let mut parts: Vec<OutsidePart> = Vec::new();
+    let mut index_of: BTreeMap<usize, usize> = BTreeMap::new();
+    for &(root, layer, overhang) in lost {
+        let focus = PlatePoint::new(
+            overhang.vertex.x,
+            overhang.vertex.y,
+            input.layers()[layer].sample_mm,
+        );
+        let Some(&index) = index_of.get(&root) else {
+            index_of.insert(root, parts.len());
+            parts.push(OutsidePart {
+                leaves: vec![overhang.leaf],
+                first: layer,
+                last: layer,
+                layers: 1,
+                past_mm: overhang.past_mm,
+                first_past_mm: overhang.past_mm,
+                focus,
+            });
+            continue;
+        };
+        let part = &mut parts[index];
+        if let Err(at) = part.leaves.binary_search(&overhang.leaf) {
+            part.leaves.insert(at, overhang.leaf);
         }
-        let who = match (leaf.name, leaf.role) {
-            (Some(name), _) => format!("'{name}'"),
-            (None, Role::Model) => "A model".to_string(),
-            (None, Role::Support) => "A support".to_string(),
-        };
-        let scope = match leaf.role {
-            Role::Model => RoleScope::Model,
-            Role::Support => RoleScope::Support,
-        };
-        for run in runs {
-            findings.push(Finding::new(
-                CheckKind::PlateEdge,
-                Severity::Error,
-                run.first,
-                run.last,
-                run.focus,
-                scope,
-                "Part outside the printable area",
-                format!(
-                    "{who} reaches up to {:.2} mm past the edge of the plate on {}, and nothing beyond the screen is printed.",
-                    run.past_mm,
-                    plural(run.last - run.first + 1, "layer", "layers")
-                ),
-            ));
+        if layer != part.last {
+            part.layers += 1;
+            part.last = layer;
+        }
+        part.past_mm = part.past_mm.max(overhang.past_mm);
+        if part.first == layer && overhang.past_mm > part.first_past_mm {
+            part.first_past_mm = overhang.past_mm;
+            part.focus = focus;
         }
     }
-    findings
+    let leaves = input.leaves();
+    parts
+        .into_iter()
+        .map(|part| {
+            let has = |role: Role| part.leaves.iter().any(|&leaf| leaves[leaf].role == role);
+            // Models first, then supports, each in leaf order.
+            let mut names: Vec<String> = [Role::Model, Role::Support]
+                .into_iter()
+                .flat_map(|role| {
+                    part.leaves
+                        .iter()
+                        .filter(move |&&leaf| leaves[leaf].role == role)
+                        .map(move |&leaf| leaf_name(leaves[leaf].name, role))
+                })
+                .collect();
+            let verb = if names.len() == 1 { "reaches" } else { "reach" };
+            let last_name = names.pop().expect("a part has a leaf");
+            let mut who = if names.is_empty() {
+                last_name
+            } else {
+                format!("{} and {last_name}", names.join(", "))
+            };
+            // Unnamed leaves start lower case; the sentence does not.
+            if let Some(initial) = who.get(..1).map(str::to_uppercase) {
+                who.replace_range(..1, &initial);
+            }
+            Finding::new(
+                CheckKind::PlateEdge,
+                Severity::Error,
+                part.first,
+                part.last,
+                part.focus,
+                RoleScope::from_counts(u64::from(has(Role::Model)), u64::from(has(Role::Support))),
+                "Part outside the printable area",
+                format!(
+                    "{who} {verb} up to {:.2} mm past the edge of the plate on {}, and nothing beyond the screen is printed.",
+                    part.past_mm,
+                    plural(part.layers, "layer", "layers")
+                ),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,19 +1166,21 @@ fn nothing_to_print(input: &ReviewInput<'_>, contours: &[LayerContours]) -> Opti
 
 /// One finding per printed body that never reaches the plate, unless it
 /// starts right above an empty layer, which the empty-layer finding
-/// explains.
+/// explains, or right above where its part is cut by the plate edge
+/// (`held_past`), which the plate-edge finding explains.
 fn floating_parts(
     ctx: &ReviewContext<'_>,
     bodies: &Groups,
+    held_past: &[bool],
     options: &OutputOptions,
 ) -> Vec<Finding> {
     let (input, regions) = (ctx.input, ctx.regions);
     let layers = input.layers();
     let pixel_mm2 = input.pixel_area_mm2();
     let mut findings = Vec::new();
-    for members in bodies.iter() {
+    for (members, &held_past) in bodies.iter().zip(held_past) {
         let bottom = members[0].layer;
-        if bottom == 0 || regions.layer(bottom - 1).is_empty() {
+        if bottom < PLATE_LAYERS || regions.layer(bottom - 1).is_empty() || held_past {
             continue;
         }
         let (mut model_px, mut support_px, mut volume_mm3) = (0, 0, 0.0);
