@@ -130,6 +130,12 @@ fn install_crash_log() {
                 env!("CARGO_PKG_VERSION"),
                 std::backtrace::Backtrace::force_capture()
             );
+            // What the app was doing just before, kept in memory even with the
+            // diagnostic log off.
+            let _ = writeln!(file, "--- last events");
+            for line in breadcrumbs::recent() {
+                let _ = writeln!(file, "{line}");
+            }
         }
         previous(info);
     }));

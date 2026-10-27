@@ -2318,3 +2318,13 @@ msgstr "Sombreado suave en los modelos"
 msgctxt "AboutWindow"
 msgid "About Breadslicer"
 msgstr "Acerca de Breadslicer"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Diagnostic log (for bug reports)"
+msgstr "Registro de diagnóstico (para reportar errores)"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Open logs folder"
+msgstr "Abrir carpeta de registros"

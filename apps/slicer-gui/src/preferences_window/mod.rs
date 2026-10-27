@@ -259,6 +259,30 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_diagnostic_log_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.diagnostic_log = on;
+                PreferencesChange::DiagnosticLog
+            });
+        }
+    });
+
+    prefs.on_open_logs_folder(|| {
+        if let Some(dir) = crate::breadcrumbs::logs_dir() {
+            // The platform's file manager, detached: a failure leaves nothing to report.
+            let opener = if cfg!(windows) {
+                "explorer"
+            } else if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let _ = std::process::Command::new(opener).arg(dir).spawn();
+        }
+    });
+
     prefs.on_smooth_models_changed({
         let bus = bus.clone();
         move |on| {

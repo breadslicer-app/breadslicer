@@ -373,6 +373,16 @@ fn is_default_smooth_models(on: &bool) -> bool {
     !*on
 }
 
+/// The diagnostic log is off by default: people turn it on to report a
+/// problem.
+fn default_diagnostic_log() -> bool {
+    false
+}
+
+fn is_default_diagnostic_log(on: &bool) -> bool {
+    !*on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -426,6 +436,13 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_smooth_models"
     )]
     smooth_models: bool,
+    /// Whether the diagnostic log writes the session's events to disk.
+    /// Omitted in TOML while off (the default).
+    #[serde(
+        default = "default_diagnostic_log",
+        skip_serializing_if = "is_default_diagnostic_log"
+    )]
+    diagnostic_log: bool,
     /// Floating object-list panel state. Omitted in TOML while every field
     /// holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -458,6 +475,7 @@ impl Default for AppSettings {
             aa_level: default_aa_level(),
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
+            diagnostic_log: default_diagnostic_log(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
@@ -575,6 +593,14 @@ impl AppSettings {
 
     pub(crate) fn set_smooth_models(&mut self, on: bool) {
         self.smooth_models = on;
+    }
+
+    pub(crate) fn diagnostic_log(&self) -> bool {
+        self.diagnostic_log
+    }
+
+    pub(crate) fn set_diagnostic_log(&mut self, on: bool) {
+        self.diagnostic_log = on;
     }
 
     pub(crate) fn object_list_visible(&self) -> bool {

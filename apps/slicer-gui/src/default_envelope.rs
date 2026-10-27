@@ -178,6 +178,7 @@ mod default_envelope_tests {
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
+            PreferencesChange::DiagnosticLog,
             PreferencesChange::ObjectListPanel,
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,
