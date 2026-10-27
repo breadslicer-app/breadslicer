@@ -57,7 +57,7 @@ fn run_build() {
 /// Relative path (from the crate root) to the multi-resolution icon embedded
 /// into the GUI executable on Windows.
 #[cfg(windows)]
-const WINDOWS_ICON: &str = "assets/icons/it.soulcrafted.slicer.ico";
+const WINDOWS_ICON: &str = "assets/icons/breadslicer.ico";
 
 /// Embeds the application icon (plus the version metadata `winresource` derives
 /// from the `CARGO_PKG_*` variables) into the executable so Explorer, the

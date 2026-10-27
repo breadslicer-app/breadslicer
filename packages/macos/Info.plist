@@ -8,7 +8,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>sc-slicer-gui</string>
+	<string>breadslicer</string>
 	<!-- Named in full, suffix included. CoreFoundation appends `.icns` only
 	     when the value carries no extension, and this name has dots: drop the
 	     suffix and it goes looking for a file called `it.soulcrafted.slicer`,
@@ -21,7 +21,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>SoulCrafted Slicer</string>
+	<string>Breadslicer</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleDocumentTypes</key>

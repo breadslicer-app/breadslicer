@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=SoulCrafted Slicer
+Name=Breadslicer
 GenericName=Resin 3D Printer Slicer
 Comment=Open Source Community-Driven Slicer for Resin 3D Printers
-Exec=sc-slicer-gui %F
+Exec=breadslicer %F
 Icon=it.soulcrafted.slicer
 Terminal=false
 Categories=Graphics;3DGraphics;

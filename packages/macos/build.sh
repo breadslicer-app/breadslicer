@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Build the SoulCrafted Slicer macOS application bundle and its disk image.
+# Build the Breadslicer macOS application bundle and its disk image.
 #
 # Stages a .app carrying both binaries, the icon and the bundled profiles,
 # signs it, then wraps it in a DMG next to a symlink to /Applications so the
@@ -25,9 +25,9 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CACHE="$SCRIPT_DIR/.cache"
 TARGET=aarch64-apple-darwin
 RELEASE_DIR="$REPO_ROOT/target/$TARGET/release"
-APP_NAME="SoulCrafted Slicer"
+APP_NAME="Breadslicer"
 BUNDLE_ID=it.soulcrafted.slicer
-GUI_BIN=sc-slicer-gui
+GUI_BIN=breadslicer
 CLI_BIN=sc-slicer-cli
 ICNS_NAME="$BUNDLE_ID.icns"
 SVG_RELPATH="packages/shared/$BUNDLE_ID.svg"
@@ -158,7 +158,7 @@ VERSION=$(cargo pkgid -p sc-slicer-gui | sed 's/.*[#@]//')
 assert_icon_current
 assert_deployment_target
 
-echo "Building SoulCrafted Slicer $VERSION for $TARGET ..."
+echo "Building Breadslicer $VERSION for $TARGET ..."
 
 # Keeps the builder's home directory out of the panic locations.
 [ -n "$HOME" ] || fail "HOME is not set, so the build paths cannot be remapped"

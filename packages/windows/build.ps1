@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Build the SoulCrafted Slicer Windows installer.
+    Build the Breadslicer Windows installer.
 
 .DESCRIPTION
     Builds both release binaries for the x64 MSVC target, stages them
@@ -250,7 +250,7 @@ function Assert-InstallerComplete {
 
 $Version = Read-AppVersion
 Assert-IconCurrent
-Write-Host "Building SoulCrafted Slicer $Version for $Target ..."
+Write-Host "Building Breadslicer $Version for $Target ..."
 
 # Keeps the builder's profile directory out of the panic locations.
 if (-not $env:USERPROFILE) {
@@ -280,7 +280,7 @@ New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 $VsInstall = Find-VsInstall
 $CrtDir = Find-CrtDir $VsInstall
 
-$GuiExe = Join-Path $ReleaseDir 'sc-slicer-gui.exe'
+$GuiExe = Join-Path $ReleaseDir 'breadslicer.exe'
 $CliExe = Join-Path $ReleaseDir 'sc-slicer-cli.exe'
 foreach ($exe in @($GuiExe, $CliExe)) {
     if (-not (Test-Path $exe)) {
