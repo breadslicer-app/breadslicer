@@ -2361,3 +2361,28 @@ msgid ""
 msgstr ""
 "El proyecto se abrió, pero sus soportes no se pudieron reconstruir y se "
 "dejaron afuera. Volvé a generarlos."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "Supports saved as a mesh"
+msgstr "Soportes guardados como malla"
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
+msgstr "La escena tiene más de un juego de soportes, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Dejá un solo juego y guardá de nuevo para que sigan siendo editables."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
+msgstr "Estos soportes ya no coinciden con los modelos (o se abrieron como malla), así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Generalos de nuevo y guardá para que sigan siendo editables."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
+msgstr "Estos soportes no se pueden guardar como datos, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
+msgstr "Estos soportes se abrieron como malla, así que no se pueden editar a mano. Generá soportes de nuevo para editarlos."

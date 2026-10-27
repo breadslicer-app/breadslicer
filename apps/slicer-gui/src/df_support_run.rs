@@ -1021,13 +1021,22 @@ impl DfSupportRun {
         // No borrow of the sessions is held across the edit: the scene events
         // it fires, and the hover preview, read them.
         if self.sessions.borrow().is_empty() {
-            notice(
-                ctr!("DfSupportDialog", "No supports to edit"),
+            // Supports in the scene with no session came in as a mesh: from
+            // a 3MF, or a project that could not keep them as data.
+            let message = if self.support_leaf().is_some() {
+                ctr!(
+                    "DfSupportDialog",
+                    "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
+                )
+            } else {
                 ctr!(
                     "DfSupportDialog",
                     "Generate supports first; then add or remove them by hand."
                 )
-                .to_string(),
+            };
+            notice(
+                ctr!("DfSupportDialog", "No supports to edit"),
+                message.to_string(),
             );
             return;
         }
@@ -1521,6 +1530,62 @@ mod hand_edit_tests {
     /// Supports saved in a `.bread` reopen as data (#145): the models come
     /// back where they were, the support mesh is redrawn from the saved
     /// session, and the supports still edit by hand, with Undo.
+    #[test]
+    fn supports_stay_data_through_edits_that_leave_the_models_alone() {
+        use crate::support_persist::{SupportsAsMesh, support_documents};
+        let (put_back, moved) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let at = Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0]));
+            let model = graph
+                .add_leaf(
+                    None,
+                    at,
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(model).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let away = Transform3D::Affine(AffineTransform3D::from_translation([25.0, 20.0, 8.0]));
+            let move_model = |before, after| {
+                let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+                    node_id: model,
+                    before,
+                    after,
+                };
+                document.apply_edit(edit.clone()).unwrap();
+                document.push_edit(edit);
+            };
+            let kept = |document: &SceneDocument| {
+                document
+                    .with_scene(|spatial| {
+                        let kept = support_documents(document, spatial);
+                        (kept.documents.len(), kept.as_mesh)
+                    })
+                    .unwrap()
+            };
+            // Moved away and back: no session is in force, but the last one
+            // still fits the models and drew the supports shown.
+            move_model(at, away);
+            move_model(away, at);
+            let put_back = kept(&document);
+            move_model(at, away);
+            (put_back, kept(&document))
+        });
+        assert_eq!(put_back, (1, None));
+        assert_eq!(moved, (0, Some(SupportsAsMesh::NoSession)));
+    }
+
     #[test]
     fn supports_saved_as_bread_reopen_editable() {
         let (saved_triangles, reopened, after_add, after_undo, after_remove) =

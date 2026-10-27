@@ -576,6 +576,7 @@ async fn save_to_target(
         return SaveOutcome::NotSaved;
     };
 
+    let supports_as_mesh = bundle.supports_as_mesh();
     save_progress.begin();
     let sink = save_progress.sink();
     let (tx, rx) = oneshot::channel();
@@ -595,11 +596,16 @@ async fn save_to_target(
     let outcome = rx.await;
     save_progress.end();
     match outcome {
-        Ok(Ok(())) => SaveOutcome::from_recorded(doc.record_project_save_for(
-            payload,
-            target.to_path_buf(),
-            stamp,
-        )),
+        Ok(Ok(())) => {
+            if let Some(why) = supports_as_mesh {
+                dialogs.show_info(move || scene_save::supports_as_mesh_texts(why));
+            }
+            SaveOutcome::from_recorded(doc.record_project_save_for(
+                payload,
+                target.to_path_buf(),
+                stamp,
+            ))
+        }
         Ok(Err(err)) => {
             show_save_error(dialogs, target, err);
             SaveOutcome::NotSaved
