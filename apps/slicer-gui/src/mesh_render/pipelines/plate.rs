@@ -39,7 +39,7 @@ use super::super::device_ops::{scoped, upload_static_buffer};
 use super::super::error::{RenderAllocation, RenderError};
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
-use super::label::{LabelVertex, label_quad};
+use super::label::{LabelVertex, label_quad, underside_label_quad};
 use super::mesh::MeshPipeline;
 use crate::build_volume::BuildVolume;
 
@@ -540,9 +540,9 @@ pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
     pub(in crate::mesh_render) wall_indices: Vec<u32>,
-    /// The quad the front label draws on, alongside the tab that
-    /// carries it.
-    pub(in crate::mesh_render) label_quad: Option<[LabelVertex; 6]>,
+    /// The quads the front label draws on, alongside the tab that
+    /// carries it: 6 vertices on top, then 6 on the underside.
+    pub(in crate::mesh_render) label_quad: Option<[LabelVertex; 12]>,
 }
 
 /// Build the per-`BuildVolume` static geometry for the 3D plate slab
@@ -875,7 +875,10 @@ pub(in crate::mesh_render) fn plate_geometry(
         top_indices.extend(front.top_indices);
         solid_indices.extend(front.solid_indices);
         bottom_indices.extend(front.bottom_indices);
-        label_quad(tab.text_box(-outer_d, outer_w - radius))
+        let text_box = tab.text_box(-outer_d, outer_w - radius);
+        let top = label_quad(text_box);
+        let underside = underside_label_quad(text_box, z_bot);
+        std::array::from_fn(|i| if i < 6 { top[i] } else { underside[i - 6] })
     });
 
     PlateGeometry {
