@@ -26,9 +26,15 @@
 //!    [`ReviewContext`] and returns findings; the runner sorts them by
 //!    layer, then check.
 //!
+//! A cavity too small to drain is offered a fill instead (#132): the
+//! report carries its pixels as a [`CavityFill`], and [`fill_stack`] turns
+//! the fills kept from one review into a contour stack that cures them solid
+//! on the next slice of the same scene.
+//!
 //! The crate does no I/O and depends only on the slicing engine's types.
 
 pub mod checks;
+pub mod fill;
 pub mod finding;
 pub mod input;
 pub mod regions;
@@ -38,6 +44,7 @@ pub mod runs;
 pub mod test_support;
 pub mod union_find;
 
+pub use fill::{CavityFill, FillSlab, PlateRect, fill_stack};
 pub use finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf, Role};
 pub use regions::{

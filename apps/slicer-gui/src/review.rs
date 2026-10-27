@@ -7,6 +7,11 @@
 //! after the engine finishes and before the per-leaf stacks are merged:
 //! `sc_review` reads every leaf's contours with its role, model or support.
 //!
+//! Cavities the user marked to fill (#132) arrive as one more stack, cut on
+//! the slice's schedule ([`sc_review::fill_stack`]): it is reviewed as model
+//! solid here, and merged with the plate's stacks for the preview and the
+//! printer file, so all three see the same cured pixels.
+//!
 //! A review never fails the slice. An input the review refuses, or a panic
 //! inside a check, becomes [`ReviewOutcome::Failed`], and the slice lands as
 //! usual.
@@ -15,8 +20,9 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use sc_geom::df_supports::is_support_mesh_name;
-use sc_review::{Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, review_with};
+use sc_review::{CavityFill, Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, review_with};
 use sc_sl1cer::LeafSlices;
+use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::SliceProfile;
 
 use crate::mesh_loader::panic_message;
@@ -28,6 +34,9 @@ pub(crate) enum ReviewOutcome {
     Reviewed {
         /// Every finding, in listing order (layer, then check).
         findings: Vec<Finding>,
+        /// The pixels of the cavities offered a fill, by the index their
+        /// fix names.
+        fills: Vec<CavityFill>,
         /// How long the review took, layer regions included.
         took: Duration,
     },
@@ -54,18 +63,30 @@ pub(crate) fn review_leaves(leaves: &[LeafSlices]) -> Vec<ReviewLeaf<'_>> {
 }
 
 /// Reviews the leaves of one slicing run, cut with `profile`: its layer
-/// schedule, its screen and its maximum height.
-pub(crate) fn review_slices(leaves: &[LeafSlices], profile: &SliceProfile) -> ReviewOutcome {
+/// schedule, its screen and its maximum height. `filled` is the stack of the
+/// cavities filled on this slice, reviewed as model.
+pub(crate) fn review_slices(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    profile: &SliceProfile,
+) -> ReviewOutcome {
     guarded(|| {
-        let input = ReviewInput::from_profile(review_leaves(leaves), profile)
-            .map_err(|err| err.to_string())?;
+        let mut leaves = review_leaves(leaves);
+        if let Some(stack) = filled {
+            leaves.push(ReviewLeaf::new(Some(FILLED_LEAF), Role::Model, stack));
+        }
+        let input = ReviewInput::from_profile(leaves, profile).map_err(|err| err.to_string())?;
         let report = review_with(&input, &ReviewOptions::default());
         Ok(ReviewOutcome::Reviewed {
             findings: report.findings,
+            fills: report.fills,
             took: report.timings.total,
         })
     })
 }
+
+/// The name of the filled cavities' leaf in the review.
+const FILLED_LEAF: &str = "Filled cavities";
 
 /// Runs `review`, turning its error or its panic into
 /// [`ReviewOutcome::Failed`].
@@ -85,9 +106,12 @@ mod review_tests {
     use sc_mesh_fixtures::unit_cube_mesh;
     use sc_review::CheckKind;
     use sc_scene::{LeafPayload, Scene, SceneMetadata};
+    use sc_sl1cer::contour::merge_stacks;
     use sc_sl1cer::profile::{
         AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution,
     };
+    use sc_sl1cer::raster::pixel_map::PixelMap;
+    use sc_sl1cer::raster::scanline::rasterize_layer_binary;
     use sc_sl1cer::slice_scene;
 
     use super::*;
@@ -165,7 +189,7 @@ mod review_tests {
     #[test]
     fn a_plate_standing_on_the_build_plate_reviews_clean() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        match review_slices(&leaves, &profile(4)) {
+        match review_slices(&leaves, None, &profile(4)) {
             ReviewOutcome::Reviewed { findings, .. } => {
                 assert!(findings.is_empty(), "two cubes on the plate: {findings:?}")
             }
@@ -179,7 +203,8 @@ mod review_tests {
         add_cube(&mut scene, "Wolf", [0.0, 0.0, 0.0]);
         add_cube(&mut scene, "Floating", [4.0, 0.0, 2.0]);
         let leaves = slice_scene(&scene, &profile(12)).expect("the scene slices");
-        let ReviewOutcome::Reviewed { findings, .. } = review_slices(&leaves, &profile(12)) else {
+        let ReviewOutcome::Reviewed { findings, .. } = review_slices(&leaves, None, &profile(12))
+        else {
             panic!("the review failed");
         };
         assert!(
@@ -193,11 +218,138 @@ mod review_tests {
     #[test]
     fn stacks_that_do_not_fit_the_profile_fail_the_review_only() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        let outcome = review_slices(&leaves, &profile(8));
+        let outcome = review_slices(&leaves, None, &profile(8));
         let ReviewOutcome::Failed(why) = outcome else {
             panic!("a 4-layer slice reviewed on 8 layers: {outcome:?}");
         };
         assert!(why.contains("8"), "{why}");
+    }
+
+    /// A closed `outer` mm cube standing on the plate, hollowed by a sealed
+    /// `inner` mm cubic cavity at its centre: two shells of one mesh, the
+    /// inner one turned inside out.
+    fn hollow_cube(outer: f64, inner: f64) -> Scene {
+        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
+        // The faces of `unit_cube_mesh`, outward.
+        const FACES: [[u32; 3]; 12] = [
+            [0, 3, 2],
+            [0, 2, 1],
+            [4, 5, 6],
+            [4, 6, 7],
+            [3, 7, 6],
+            [3, 6, 2],
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 6],
+            [1, 6, 5],
+            [0, 4, 7],
+            [0, 7, 3],
+        ];
+        let cube = unit_cube_mesh();
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut faces: Vec<IndexedTriangle> = Vec::new();
+        for (scale, flip) in [(outer, false), (inner, true)] {
+            let base = vertices.len() as u32;
+            vertices.extend(
+                cube.vertices
+                    .iter()
+                    .map(|v| Vertex::new(v.coords().map(|c| c * scale as f32))),
+            );
+            faces.extend(FACES.iter().map(|&[a, b, c]| {
+                let [a, b, c] = [a + base, b + base, c + base];
+                IndexedTriangle::from_raw_indices(if flip { [a, c, b] } else { [a, b, c] })
+            }));
+        }
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        };
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                named("Hollow"),
+                Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, outer / 2.0])),
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("fresh leaf becomes a root");
+        scene
+    }
+
+    /// The lit pixels of layer `layer` of `stack`, on the profile's screen.
+    fn lit_pixels(stack: &ContourStack, layer: usize, profile: &SliceProfile) -> u64 {
+        let volume = profile.build_volume();
+        let map = PixelMap::new(
+            volume.x(),
+            volume.y(),
+            *profile.pixel_resolution(),
+            profile.mirror(),
+        );
+        rasterize_layer_binary(&stack.layers()[layer], &map)
+            .runs()
+            .iter()
+            .filter(|run| run.value != 0)
+            .map(|run| u64::from(run.length))
+            .sum()
+    }
+
+    #[test]
+    fn a_filled_cavity_is_cured_in_the_plate_and_gone_from_the_review() {
+        // A 6 mm cube around a 2 mm cavity (8 mm³, a medium trap): layers
+        // 8-15 of 24 hold it.
+        let profile = profile(24);
+        let leaves = slice_scene(&hollow_cube(6.0, 2.0), &profile).expect("the scene slices");
+        let ReviewOutcome::Reviewed {
+            findings, fills, ..
+        } = review_slices(&leaves, None, &profile)
+        else {
+            panic!("the review failed");
+        };
+        let trap = findings
+            .iter()
+            .find(|f| f.check == CheckKind::ResinTrap)
+            .unwrap_or_else(|| panic!("no trap in {findings:?}"));
+        assert_eq!(trap.severity, sc_review::Severity::Warning);
+        assert_eq!((trap.first_layer, trap.last_layer), (8, 15));
+        let Some(sc_review::SuggestedFix::Fill { cavity, .. }) = trap.fix else {
+            panic!("a medium trap is filled, got {:?}", trap.fix);
+        };
+        let filled = sc_review::fill_stack([&fills[cavity]], profile.layer_schedule())
+            .expect("the cavity has pixels");
+
+        // Reviewed with the fill, the trap is gone.
+        let ReviewOutcome::Reviewed { findings, .. } =
+            review_slices(&leaves, Some(&filled), &profile)
+        else {
+            panic!("the review failed");
+        };
+        assert!(
+            findings.iter().all(|f| f.check != CheckKind::ResinTrap),
+            "{findings:?}"
+        );
+
+        // Merged as the slice run merges it, the cavity's layers are solid:
+        // the 60 x 60 pixel square, without its 20 x 20 pixel hole.
+        let plain = merge_stacks(leaves.iter().map(|l| l.stack().clone()).collect()).unwrap();
+        let merged = merge_stacks(
+            leaves
+                .iter()
+                .map(|l| l.stack().clone())
+                .chain([filled])
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(lit_pixels(&plain, 12, &profile), 3600 - 400);
+        assert_eq!(lit_pixels(&merged, 12, &profile), 3600);
+        assert_eq!(lit_pixels(&merged, 20, &profile), 3600);
+        for layer in 0..24 {
+            assert_eq!(
+                lit_pixels(&merged, layer, &profile),
+                3600,
+                "layer {layer} is not solid"
+            );
+        }
     }
 
     #[test]

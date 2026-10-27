@@ -22,6 +22,12 @@
 //! (`crate::review`, #90) before merging them, and the findings travel to
 //! the Review card with the slice. A review that fails leaves the slice as
 //! it is.
+//!
+//! The cavities marked to fill in the Review card (#132) travel with the run:
+//! the worker cuts them on the run's schedule, reviews them as model and
+//! merges them into the plate, so the preview, the printer file and its
+//! estimates all cure them. A Slice press with fills to change re-slices
+//! even when nothing else changed.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -31,6 +37,7 @@ use std::time::Duration;
 
 use sc_print_glue::{PlateContours, SlicingParams, slice_input_fingerprint, slice_plate};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+use sc_review::{CavityFill, fill_stack};
 use sc_scene::Scene;
 use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
@@ -98,6 +105,9 @@ pub(crate) struct SliceRun {
     // can record them alongside the produced contours. `None` when no slice is
     // in flight.
     pending_params: RefCell<Option<SliceParams>>,
+    // The ids of the Review card's fills the in-flight run cures, for the
+    // card once it lands.
+    pending_fills: RefCell<Vec<u64>>,
     // Poll timer driving the modal's progress readout. Behind an `Rc` so its
     // own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
@@ -127,6 +137,7 @@ impl SliceRun {
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
             pending_params: RefCell::new(None),
+            pending_fills: RefCell::new(Vec::new()),
             poll_timer: Rc::new(slint::Timer::default()),
             tooltip_timer: Rc::new(slint::Timer::default()),
         });
@@ -178,6 +189,8 @@ impl SliceRun {
             .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
         match decide_re_slice(held.as_ref(), &current, geometry_changed) {
             ReSliceDecision::FirstSlice => self.launch(current),
+            // Fills to add or drop: the scene is the same, the slice is not.
+            ReSliceDecision::Unchanged if self.review.fills_pending() => self.launch(current),
             ReSliceDecision::Unchanged => {
                 // The held slice already matches the inputs; nothing to
                 // recompute. Surface the transient "up to date" hint.
@@ -220,14 +233,19 @@ impl SliceRun {
         let cancel = CancelToken::new();
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
+        let (fill_ids, fills) = self.review.fills_for_slice();
+        *self.pending_fills.borrow_mut() = fill_ids;
 
         self.start_poll();
         self.spawn(
             scene,
-            current.printer,
-            current.resin,
-            current.first_layer_height,
-            current.aa_level,
+            SliceInputs {
+                printer: current.printer,
+                resin: current.resin,
+                first_layer_height: current.first_layer_height,
+                aa_level: current.aa_level,
+                fills,
+            },
             cancel,
         );
     }
@@ -235,30 +253,14 @@ impl SliceRun {
     /// Spawns the worker: run the projection + slicing, then deposit the result
     /// and wake the UI thread. `catch_unwind` converts a panic into a deposited
     /// error so the modal always closes.
-    fn spawn(
-        &self,
-        scene: Scene,
-        printer: PrinterId,
-        resin: MaterialId,
-        first_layer_height: Option<PositiveFiniteMm>,
-        aa_level: AaLevel,
-        cancel: CancelToken,
-    ) {
+    fn spawn(&self, scene: Scene, inputs: SliceInputs, cancel: CancelToken) {
         let slot = self.slot.clone();
         let progress = self.progress.clone();
         let ui = self.ui.clone();
         crate::breadcrumbs::note("slice: started");
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_slice(
-                    &scene,
-                    &printer,
-                    &resin,
-                    first_layer_height,
-                    aa_level,
-                    &cancel,
-                    &progress,
-                )
+                run_slice(&scene, &inputs, &cancel, &progress)
             }))
             .unwrap_or_else(|payload| Err(SliceFailure::Panicked(panic_message(&payload))));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
@@ -351,6 +353,7 @@ impl SliceRun {
             .take();
         *self.cancel.borrow_mut() = None;
         let pending = self.pending_params.borrow_mut().take();
+        let fill_ids = std::mem::take(&mut *self.pending_fills.borrow_mut());
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slicing_in_progress(false);
         }
@@ -374,7 +377,8 @@ impl SliceRun {
                         ui.set_selected_layer_index(layer_count.saturating_sub(1) as f32);
                     }
                     // After the slice is stored: the panel ties the findings
-                    // to the slice now held.
+                    // to the slice now held, which cured these fills.
+                    self.review.fills_landed(fill_ids);
                     self.review.show(completed.review);
                 }
             }
@@ -411,24 +415,31 @@ fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
     }
 }
 
-/// Loads the profiles and runs the shared slicing service, publishing progress
-/// into `progress` as layers complete, then reviews the per-leaf stacks
-/// before merging them. A cancel that arrives during the review still
-/// cancels the run.
-fn run_slice(
-    scene: &Scene,
-    printer: &PrinterId,
-    resin: &MaterialId,
+/// What a run slices with, besides the scene.
+struct SliceInputs {
+    printer: PrinterId,
+    resin: MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
     aa_level: AaLevel,
+    /// The cavities to fill (#132).
+    fills: Vec<Arc<CavityFill>>,
+}
+
+/// Loads the profiles and runs the shared slicing service, publishing progress
+/// into `progress` as layers complete, then cuts the fills on the run's
+/// schedule and reviews the per-leaf stacks with them before merging them
+/// all. A cancel that arrives during the review still cancels the run.
+fn run_slice(
+    scene: &Scene,
+    inputs: &SliceInputs,
     cancel: &CancelToken,
     progress: &SliceProgressCell,
 ) -> Result<SliceRunOutcome, SliceFailure> {
-    let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
+    let (printer_profile, resin_profile) = load_selected_profiles(&inputs.printer, &inputs.resin)?;
     let params = SlicingParams {
         layer_height_request: None,
-        first_layer_height,
-        aa_level,
+        first_layer_height: inputs.first_layer_height,
+        aa_level: inputs.aa_level,
     };
     let run = slice_plate(
         scene,
@@ -448,7 +459,8 @@ fn run_slice(
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
             progress.reviewing.store(true, Ordering::Relaxed);
-            let review = review_slices(plate.leaves(), plate.profile());
+            let filled = fill_stack(inputs.fills.iter().map(|fill| &**fill), plate.schedule());
+            let review = review_slices(plate.leaves(), filled.as_ref(), plate.profile());
             crate::breadcrumbs::note(&format!(
                 "slice: reviewed ok={}",
                 matches!(review, ReviewOutcome::Reviewed { .. })
@@ -456,7 +468,9 @@ fn run_slice(
             if cancel.is_cancelled() {
                 return Ok(SliceRunOutcome::Cancelled);
             }
-            let contours = plate.merge().map_err(|_| SliceFailure::SliceMerge)?;
+            let contours = plate
+                .merge_with(filled)
+                .map_err(|_| SliceFailure::SliceMerge)?;
             capture(scene, contours, review).map(SliceRunOutcome::Completed)
         }
     }
@@ -517,6 +531,7 @@ mod capture_tests {
     fn clean_review() -> ReviewOutcome {
         ReviewOutcome::Reviewed {
             findings: Vec::new(),
+            fills: Vec::new(),
             took: Duration::ZERO,
         }
     }
