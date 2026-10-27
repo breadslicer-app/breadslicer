@@ -2569,3 +2569,57 @@ msgid "One cavity is filled in this slice."
 msgid_plural "{n} cavities are filled in this slice."
 msgstr[0] "Una cavidad está rellena en este laminado."
 msgstr[1] "{n} cavidades están rellenas en este laminado."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "RAFT"
+msgstr "BALSA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Interferes with the model"
+msgstr "Interfiere con el modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No raft"
+msgstr "Sin balsa"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgid_plural "The raft takes {n} layers and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgstr[0] "La balsa ocupa {n} capa e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
+msgstr[1] "La balsa ocupa {n} capas e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Lift to {} mm"
+msgstr "Elevar a {} mm"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "No raft"
+msgstr "Sin balsa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Done. Generate the supports again, then slice."
+msgstr "Listo. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Model lifted clear of the raft. Generate the supports again, then slice."
+msgstr "Modelo elevado por encima de la balsa. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The model already stands clear of the raft."
+msgstr "El modelo ya está por encima de la balsa."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Raft turned off. Generate the supports again, then slice."
+msgstr "Balsa desactivada. Generá los soportes de nuevo y después laminá."

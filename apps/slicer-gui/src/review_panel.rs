@@ -45,7 +45,7 @@ use sc_review::{CavityFill, CheckKind, Finding, Severity, SuggestedFix};
 use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::df_support_run::{DfSupportRun, HandEdit};
+use crate::df_support_run::{DfSupportRun, HandEdit, raft_lift_label};
 use crate::hollow_run::{DrainRequest, HollowRun};
 use crate::i18n::ctr;
 use crate::review::ReviewOutcome;
@@ -82,6 +82,8 @@ enum FixKind {
     /// A drain would help, but no model hollowed in this window holds the
     /// cavity: the row says so instead of offering a button.
     DrainNeedsHollow = 3,
+    /// A model inside the raft (#131): lift it clear, or turn the raft off.
+    ClearRaft = 4,
 }
 
 /// Where one model (a leaf that is not generated supports) stood, and which
@@ -198,6 +200,14 @@ impl ReviewPanel {
             });
         }
         panel.install_marks(ui);
+        {
+            let weak = Rc::downgrade(&panel);
+            ui.on_review_raft_off_requested(move |id| {
+                if let Some(panel) = weak.upgrade() {
+                    panel.turn_raft_off(id);
+                }
+            });
+        }
         panel.push(None);
         panel
     }
@@ -613,9 +623,46 @@ impl ReviewPanel {
                     "This cavity is not in a model hollowed here, so the drain cannot be drilled."
                 )),
             },
+            Some(SuggestedFix::ClearRaft { lift_to_mm, .. }) => {
+                if self.supports.lift_clear_of_raft(lift_to_mm) {
+                    self.mark_fixed(index);
+                    Some(ctr!(
+                        "Review",
+                        "Model lifted clear of the raft. Generate the supports again, then slice."
+                    ))
+                } else {
+                    Some(ctr!(
+                        "Review",
+                        "The model already stands clear of the raft."
+                    ))
+                }
+            }
             None => return,
         };
         self.push(message);
+    }
+
+    /// The second fix of a model inside the raft (#131): turns the raft off
+    /// in the support options.
+    fn turn_raft_off(&self, id: i32) {
+        let Some(finding) = self.finding(id) else {
+            return;
+        };
+        if !matches!(finding.fix, Some(SuggestedFix::ClearRaft { .. })) {
+            return;
+        }
+        self.supports.turn_raft_off();
+        self.mark_fixed(id as usize);
+        self.push(Some(ctr!(
+            "Review",
+            "Raft turned off. Generate the supports again, then slice."
+        )));
+    }
+
+    /// The top of the raft the scene's supports stand on, for the review of
+    /// the next slice (#131).
+    pub(crate) fn raft_top_mm(&self) -> Option<f64> {
+        self.supports.raft_top_mm()
     }
 
     fn mark_fixed(&self, index: usize) {
@@ -684,6 +731,11 @@ fn review_rows(
             Some(SuggestedFix::AddDrain { .. }) => FixKind::DrainNeedsHollow,
             // Offered through the row's fill, see `mark_rows`.
             Some(SuggestedFix::Fill { .. }) => FixKind::None,
+            Some(SuggestedFix::ClearRaft { .. }) => FixKind::ClearRaft,
+        };
+        let lift_label = match finding.fix {
+            Some(SuggestedFix::ClearRaft { lift_to_mm }) => raft_lift_label(lift_to_mm),
+            _ => SharedString::default(),
         };
         rows.push(ReviewRow {
             id: i as i32,
@@ -696,6 +748,7 @@ fn review_rows(
             fixed: fixed.contains(&i),
             fill: 0,
             leave: false,
+            lift_label,
         });
     }
     rows

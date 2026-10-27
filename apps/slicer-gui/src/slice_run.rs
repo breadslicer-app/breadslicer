@@ -237,6 +237,8 @@ impl SliceRun {
         *self.pending_fills.borrow_mut() = fill_ids;
 
         self.start_poll();
+        // The raft the scene's supports stand on, for the review (#131).
+        let raft_top_mm = self.review.raft_top_mm();
         self.spawn(
             scene,
             SliceInputs {
@@ -244,6 +246,7 @@ impl SliceRun {
                 resin: current.resin,
                 first_layer_height: current.first_layer_height,
                 aa_level: current.aa_level,
+                raft_top_mm,
                 fills,
             },
             cancel,
@@ -421,6 +424,9 @@ struct SliceInputs {
     resin: MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
     aa_level: AaLevel,
+    /// The top of the raft the scene's supports stand on, for the review
+    /// (#131).
+    raft_top_mm: Option<f64>,
     /// The cavities to fill (#132).
     fills: Vec<Arc<CavityFill>>,
 }
@@ -460,7 +466,12 @@ fn run_slice(
         sc_print_glue::SliceRun::Completed(plate) => {
             progress.reviewing.store(true, Ordering::Relaxed);
             let filled = fill_stack(inputs.fills.iter().map(|fill| &**fill), plate.schedule());
-            let review = review_slices(plate.leaves(), filled.as_ref(), plate.profile());
+            let review = review_slices(
+                plate.leaves(),
+                filled.as_ref(),
+                plate.profile(),
+                inputs.raft_top_mm,
+            );
             crate::breadcrumbs::note(&format!(
                 "slice: reviewed ok={}",
                 matches!(review, ReviewOutcome::Reviewed { .. })

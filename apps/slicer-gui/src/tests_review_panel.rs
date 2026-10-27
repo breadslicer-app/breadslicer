@@ -257,6 +257,32 @@ fn the_fills_line_tells_what_the_next_slice_does() {
     );
 }
 
+#[test]
+fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
+    let raft = finding(
+        CheckKind::ModelInRaft,
+        Severity::Error,
+        0,
+        16,
+        "Model inside the raft",
+    )
+    .with_fix(SuggestedFix::ClearRaft { lift_to_mm: 5.0 });
+    let rows = review_rows(
+        std::slice::from_ref(&raft),
+        &[false],
+        &BTreeSet::new(),
+        true,
+    );
+    assert_eq!(rows[0].fix, FixKind::ClearRaft as i32);
+    assert_eq!(rows[0].lift_label.as_str(), "Lift to 5 mm");
+    // Other rows carry no lift label.
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    assert!(rows.iter().all(|r| r.lift_label.is_empty()));
+    // Once the models moved, the raft fixes are withdrawn too.
+    let rows = review_rows(&[raft], &[false], &BTreeSet::new(), false);
+    assert_eq!(rows[0].fix, FixKind::None as i32);
+}
+
 mod model_poses {
     use std::sync::Arc;
 

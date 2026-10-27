@@ -50,6 +50,7 @@ use crate::i18n::ctr;
 use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
+use crate::raft_clash::{RaftClash, lift_edit, lowest_model_mm, raft_clash};
 use crate::scene_document::{
     SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
@@ -153,6 +154,17 @@ pub(crate) struct DfSupportRun {
     last_preview: RefCell<Option<HoverAnswer>>,
     /// The worker's last ghost, kept on screen while the next is computed.
     last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
+    /// The raft warning (#131) is shown from a Generate press until a new
+    /// scene is installed or closed; the scene subscription lowers it.
+    raft_armed: Rc<Cell<bool>>,
+    /// The layer height of the last Generate press, which counts the raft's
+    /// layers.
+    raft_layer_height_mm: Cell<f64>,
+    /// When the raft warning was last brought up to date with the scene.
+    raft_checked_at: Cell<Instant>,
+    /// The raft top of the supports this driver pasted last, `Some(None)`
+    /// for supports without a raft.
+    generated_raft_top: Cell<Option<Option<f64>>>,
 }
 
 /// How often the UI looks for a finished preview.
@@ -346,9 +358,14 @@ impl DfSupportRun {
         ctrl: Rc<ViewportController>,
     ) -> Rc<Self> {
         let last_change = Rc::new(Cell::new(Instant::now()));
+        let raft_armed = Rc::new(Cell::new(false));
         let scene_events = document.subscribe({
             let last_change = last_change.clone();
+            let raft_armed = raft_armed.clone();
             move |event| {
+                if matches!(event, SceneEvent::Installed | SceneEvent::Cleared) {
+                    raft_armed.set(false);
+                }
                 if matches!(
                     event,
                     SceneEvent::Installed
@@ -383,6 +400,10 @@ impl DfSupportRun {
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
             last_ghost: RefCell::new(None),
+            raft_armed,
+            raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
+            raft_checked_at: Cell::new(Instant::now()),
+            generated_raft_top: Cell::new(None),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -431,6 +452,22 @@ impl DfSupportRun {
             ui.on_df_support_requested(move || run.start());
         }
         {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_raft_lift_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.lift_for_warning();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_raft_off_requested(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.turn_raft_off();
+                }
+            });
+        }
+        {
             let run = run.clone();
             ui.on_support_gen_cancel_requested(move || {
                 if let Some(handle) = run.handle.borrow().as_ref() {
@@ -449,6 +486,10 @@ impl DfSupportRun {
         if ui.get_loading() || ui.get_support_gen_in_progress() || self.handle.borrow().is_some() {
             return;
         }
+        self.raft_layer_height_mm
+            .set(self.request_for_printer().layer_height_mm);
+        self.raft_armed.set(true);
+        self.refresh_raft_warning();
         if self.take_ahead(&ui) {
             return;
         }
@@ -546,6 +587,9 @@ impl DfSupportRun {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        if self.last_change.get() > self.raft_checked_at.get() {
+            self.refresh_raft_warning();
+        }
         let mut prescan = self.prescan.borrow_mut();
         if let Some((job, revision, _)) = &prescan.running
             && let Some(finished) = job.try_poll()
@@ -798,6 +842,99 @@ impl DfSupportRun {
         if let Some(ui) = self.ui.upgrade() {
             self.push_options(&ui);
         }
+        self.refresh_raft_warning();
+    }
+
+    /// Whether the raft of the options in force would take the models'
+    /// first layers, and by how much, for the layer height of the last
+    /// Generate press.
+    fn raft_clash(&self) -> Option<RaftClash> {
+        let lowest = self.document.with_scene(lowest_model_mm).flatten();
+        raft_clash(
+            &self.options.borrow(),
+            self.raft_layer_height_mm.get(),
+            lowest,
+        )
+    }
+
+    /// Shows or clears the Supports tab's raft warning (#131), raised by a
+    /// Generate press and kept up to date with the scene and the options
+    /// until a new scene comes in.
+    fn refresh_raft_warning(&self) {
+        self.raft_checked_at.set(Instant::now());
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let clash = if self.raft_armed.get() {
+            self.raft_clash()
+        } else {
+            None
+        };
+        let (message, label) = match clash {
+            Some(clash) => (
+                raft_clash_message(clash.layers, clash.lift_to_mm),
+                raft_lift_label(clash.lift_to_mm),
+            ),
+            None => Default::default(),
+        };
+        ui.set_support_raft_clash_message(message);
+        ui.set_support_raft_lift_label(label);
+    }
+
+    /// The warning's lift button: the models in the raft rise clear of it.
+    fn lift_for_warning(&self) {
+        if let Some(clash) = self.raft_clash() {
+            self.lift_models(clash.raft_top_mm, clash.lift_to_mm);
+        }
+    }
+
+    /// Lifts every model in the raft of the scene's supports (or, without
+    /// them, of the options in force) so its lowest point stands at
+    /// `lift_to_mm`, as one undoable edit. Returns whether a model moved.
+    pub(crate) fn lift_clear_of_raft(&self, lift_to_mm: f64) -> bool {
+        let raft_top = self
+            .raft_top_mm()
+            .or_else(|| self.options.borrow().raft_top_mm())
+            .unwrap_or(lift_to_mm);
+        self.lift_models(raft_top, lift_to_mm)
+    }
+
+    /// Lifts every model lower than `below_mm` so its lowest point stands at
+    /// `lift_to_mm`, as one undoable edit. Returns whether a model moved.
+    fn lift_models(&self, below_mm: f64, lift_to_mm: f64) -> bool {
+        let Some(edit) = self
+            .document
+            .with_scene(|spatial| lift_edit(spatial, below_mm, lift_to_mm))
+            .flatten()
+        else {
+            return false;
+        };
+        let moved = match self.document.apply_edit(edit.clone()) {
+            Ok(()) => {
+                self.document.push_edit(edit);
+                true
+            }
+            Err(_) => false,
+        };
+        self.refresh_raft_warning();
+        moved
+    }
+
+    /// Turns the raft off in the support options, as the Supports tab's
+    /// Bottom setting does.
+    pub(crate) fn turn_raft_off(&self) {
+        self.on_option(9, 2.0);
+    }
+
+    /// The top of the raft the supports in the scene stand on, for the
+    /// review (#131): the options of the run that made them, or the options
+    /// in force for supports this window did not make. `None` without
+    /// supports or without a raft.
+    pub(crate) fn raft_top_mm(&self) -> Option<f64> {
+        self.support_leaf()?;
+        self.generated_raft_top
+            .get()
+            .unwrap_or_else(|| self.options.borrow().raft_top_mm())
     }
 
     /// An option edited in the Supports tab (codes in the order of its
@@ -1253,6 +1390,8 @@ impl DfSupportRun {
         let pasted = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]);
         if pasted.is_ok() {
             *self.sessions.borrow_mut() = vec![(Arc::new(session), self.document.scene_revision())];
+            self.generated_raft_top
+                .set(Some(self.options.borrow().raft_top_mm()));
             self.warm_worker();
         }
         if let Err(error) = pasted {
@@ -1274,6 +1413,30 @@ impl DfSupportRun {
             details: details.as_str().into(),
         });
     }
+}
+
+/// The Supports tab's raft warning for a raft of `layers` layers, the
+/// models to be lifted to `lift_to_mm`.
+fn raft_clash_message(layers: usize, lift_to_mm: f64) -> slint::SharedString {
+    ctr!(
+        "Inspector",
+        "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off.",
+        "The raft takes {n} layers and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off.",
+        layers,
+        mm_text(lift_to_mm)
+    )
+}
+
+/// The label of a button that lifts the models to `lift_to_mm`.
+pub(crate) fn raft_lift_label(lift_to_mm: f64) -> slint::SharedString {
+    ctr!("Inspector", "Lift to {} mm", mm_text(lift_to_mm))
+}
+
+/// Millimetres to two decimals at most, without trailing zeros ("5",
+/// "0.85").
+fn mm_text(mm: f64) -> String {
+    let text = format!("{mm:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// One line: models, islands, roots and triangles.
@@ -1452,6 +1615,69 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// Generate with the model on the plate raises the raft warning (#131);
+    /// its lift raises the model clear of the raft in one undoable edit, and
+    /// the warning clears. Turning the raft off clears it too.
+    #[test]
+    fn generate_warns_of_a_model_in_the_raft_until_it_is_lifted() {
+        let (on_generate, label, after_lift, undone, after_off, raft) =
+            on_fresh_slint_thread(|| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let document = ctrl.document();
+                let mut graph = Scene::new();
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 0.5])),
+                        LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+                document.install_graph(graph, PathBuf::from("cube.stl"));
+                let run = DfSupportRun::install(
+                    &window,
+                    bus,
+                    document.clone(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                run.set_options(DfSupportOptions::default());
+                assert!(
+                    window.get_support_raft_clash_message().is_empty(),
+                    "not before Generate"
+                );
+                run.start();
+                if let Some(handle) = run.handle.borrow_mut().take() {
+                    handle.cancel();
+                }
+                let on_generate = window.get_support_raft_clash_message().to_string();
+                let label = window.get_support_raft_lift_label().to_string();
+                run.lift_for_warning();
+                let after_lift = window.get_support_raft_clash_message().to_string();
+                document.undo().expect("the lift undoes");
+                run.refresh_raft_warning();
+                let undone = window.get_support_raft_clash_message().to_string();
+                run.turn_raft_off();
+                let after_off = window.get_support_raft_clash_message().to_string();
+                let raft = run.options.borrow().raft;
+                (on_generate, label, after_lift, undone, after_off, raft)
+            });
+        assert!(
+            on_generate.contains("17 layers")
+                && on_generate.contains("to 5 mm")
+                && on_generate.contains("turn the raft off"),
+            "{on_generate}"
+        );
+        assert_eq!(label, "Lift to 5 mm");
+        assert!(after_lift.is_empty(), "{after_lift}");
+        assert_eq!(undone, on_generate, "Undo puts the model back in the raft");
+        assert!(after_off.is_empty(), "{after_off}");
+        assert_eq!(raft, RaftMode::Off);
     }
 
     /// The GUI click path on a real model, not a gate: `SC_STRESS_STL=...
