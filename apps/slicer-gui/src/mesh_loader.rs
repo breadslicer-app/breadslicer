@@ -129,6 +129,7 @@ pub(crate) fn start_load_with_ticket(
     loader: &SceneLoader,
     build_volume: BuildVolume,
 ) {
+    crate::breadcrumbs::note("load: started");
     if let Err(err) = check_file_size(&path) {
         ticket.deposit(path, Err(err));
         return;
