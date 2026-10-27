@@ -32,10 +32,81 @@ const APPLICATION: &str = "slicer";
 /// to the launcher entry by the desktop shell.
 pub const APP_ID: &str = "it.soulcrafted.slicer";
 
+// The per-user directories carry the product name, Breadslicer. The constants
+// above still name the install layout and the desktop identity, which packages
+// depend on.
+const USER_QUALIFIER: &str = "app";
+const USER_ORGANIZATION: &str = "breadslicer";
+const USER_APPLICATION: &str = "breadslicer";
+
 /// The per-user platform directories for this application, or `None` when no
 /// home directory can be resolved.
 pub fn project_dirs() -> Option<ProjectDirs> {
+    ProjectDirs::from(USER_QUALIFIER, USER_ORGANIZATION, USER_APPLICATION)
+}
+
+/// The per-user directories of builds from before the rename, read once by
+/// [`migrate_legacy_user_dirs`].
+fn legacy_project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+}
+
+/// Copies the user's preferences, profiles and logs from the pre-rename
+/// directories into the Breadslicer ones, the first time Breadslicer starts.
+/// Copies, never moves: the old folders stay as a backup. Skips any directory
+/// whose new location already exists, so it runs at most once per directory
+/// and never overwrites newer data. Returns the directories it copied.
+pub fn migrate_legacy_user_dirs() -> Vec<PathBuf> {
+    let (Some(old), Some(new)) = (legacy_project_dirs(), project_dirs()) else {
+        return Vec::new();
+    };
+    let pairs = [
+        (old.config_dir(), new.config_dir()),
+        (old.data_dir(), new.data_dir()),
+        (old.data_local_dir(), new.data_local_dir()),
+    ];
+    let mut copied = Vec::new();
+    for (from, to) in pairs {
+        if from == to || copied.iter().any(|c: &PathBuf| c == to) {
+            continue;
+        }
+        if migrate_dir(from, to) {
+            copied.push(to.to_path_buf());
+        }
+    }
+    copied
+}
+
+/// Copies `from` into `to` when `from` exists and `to` does not. Returns
+/// whether it copied.
+fn migrate_dir(from: &Path, to: &Path) -> bool {
+    if !from.is_dir() || to.exists() {
+        return false;
+    }
+    // Copy into a sibling and rename, so an interrupted copy is retried on the
+    // next start instead of leaving a half-filled directory behind.
+    let staging = to.with_extension("migrating");
+    let _ = std::fs::remove_dir_all(&staging);
+    let done = copy_tree(from, &staging).and_then(|()| std::fs::rename(&staging, to));
+    if done.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return false;
+    }
+    true
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// The current user's home directory, or `None` when it cannot be resolved.

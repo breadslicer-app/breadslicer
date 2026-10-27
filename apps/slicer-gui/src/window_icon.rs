@@ -20,7 +20,7 @@ use slint::winit_030::{WinitWindowAccessor, winit::window::Icon};
 /// The multi-resolution icon, embedded into the binary. Shares the file
 /// the executable resource is built from, so the live window and the
 /// file as Explorer shows it never drift apart.
-const ICON_BYTES: &[u8] = include_bytes!("../assets/icons/it.soulcrafted.slicer.ico");
+const ICON_BYTES: &[u8] = include_bytes!("../assets/icons/breadslicer.ico");
 
 /// Applies the application icon to a Slint window so it shows in the
 /// taskbar and the window switcher. A best-effort step: if the window
