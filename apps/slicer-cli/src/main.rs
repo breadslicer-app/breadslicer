@@ -24,6 +24,7 @@ use crate::commands::fix::fix;
 use crate::commands::profiles::{
     export as profiles_export, import as profiles_import, list as profiles_list,
 };
+use crate::commands::review::{ReviewArgs, review};
 use crate::commands::slice::{SliceArgs, slice};
 use crate::commands::support_gen::{GenSupportArgs, support_gen};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
@@ -83,35 +84,29 @@ fn main() -> Result<()> {
         } => profiles_export(output, printers, materials, ids, &libraries),
         CmdOptions::ProfilesImport { input, force } => profiles_import(input, force, &libraries),
         CmdOptions::ProfilesList { kind } => profiles_list(kind, &libraries),
+        CmdOptions::Review {
+            source,
+            plate,
+            json,
+        } => review(
+            ReviewArgs {
+                source,
+                plate,
+                json,
+            },
+            &libraries,
+        ),
         CmdOptions::Slice {
             source,
             target,
             target_format,
-            printer_profile,
-            material_profile,
-            layer_height,
-            first_layer_height,
-            aa,
-            verbose,
-            no_auto_place,
-            repair,
-            df_supports,
-            df_lift,
+            plate,
         } => slice(
             SliceArgs {
                 source,
                 target,
                 target_format,
-                printer_profile,
-                material_profile,
-                layer_height,
-                first_layer_height,
-                aa,
-                verbose,
-                no_auto_place,
-                repair,
-                df_supports,
-                df_lift,
+                plate,
             },
             &libraries,
         ),
