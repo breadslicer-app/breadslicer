@@ -186,6 +186,13 @@ export component MainWindow inherits Window {
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
     callback support-option-changed(int, float);
+    // The raft would take the models' first layers (#131): the warning and
+    // the label of its lift button, both empty when it does not.
+    in property <string> support-raft-clash-message;
+    in property <string> support-raft-lift-label;
+    callback support-raft-lift-requested();
+    callback support-raft-off-requested();
+    callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
     // is clicked, 2 remove the support clicked.
     in-out property <int> support-tool: 0;
@@ -253,6 +260,8 @@ export component MainWindow inherits Window {
     in-out property <int> review-selected: -1;
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
+    // The second fix of a model inside the raft: turn the raft off (#131).
+    callback review-raft-off-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
     in-out property <bool> slice-split: false;
     callback support-preset-picked(int);
@@ -1323,6 +1332,17 @@ export component MainWindow inherits Window {
                             raft-index: root.support-raft-index;
                             raft-thickness: root.support-raft-thickness;
                             raft-wall: root.support-raft-wall;
+                            raft-clash-message: root.support-raft-clash-message;
+                            raft-lift-label: root.support-raft-lift-label;
+                            raft-lift => {
+                                root.support-raft-lift-requested();
+                            }
+                            raft-off => {
+                                root.support-raft-off-requested();
+                            }
+                            raft-ignore => {
+                                root.support-raft-ignore-requested();
+                            }
                             selection-valid: root.selection-valid;
                             lift: root.selection-pos-z;
                             option-changed(code, value) => {
@@ -1372,6 +1392,9 @@ export component MainWindow inherits Window {
                             }
                             review-fix-requested(id) => {
                                 root.review-fix-requested(id);
+                            }
+                            review-raft-off-requested(id) => {
+                                root.review-raft-off-requested(id);
                             }
                             printer-picked(i) => {
                                 root.slice-printer-picked(i);

@@ -55,6 +55,7 @@ mod profile_forking;
 mod profile_transfer;
 mod profile_view;
 mod project_profiles;
+mod raft_clash;
 mod reloaded_slices;
 mod repair_run;
 mod review;
