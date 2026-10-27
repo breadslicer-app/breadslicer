@@ -701,6 +701,24 @@ impl ViewportController {
         }
     }
 
+    /// Centres the camera on `point` (world mm), keeping the view direction;
+    /// a far camera comes in to frame about `radius` around it. For the
+    /// Review card's jump to a finding.
+    pub(crate) fn centre_camera_on(&self, point: glam::Vec3, radius: f32) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+            cam.centre_on(
+                point,
+                radius,
+                crate::mesh_render::default_fov_y(),
+                vp.width() / vp.height().max(1.0),
+            );
+            self.mark_dirty();
+        }
+    }
+
     pub(crate) fn on_frame_view(&self) {
         if self.camera.on_frame_view() {
             self.mark_dirty();

@@ -40,6 +40,7 @@ use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window
 use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::ProfileCatalog;
 use crate::repair_run::RepairRun;
+use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
@@ -217,6 +218,9 @@ struct WindowDrivers {
     /// The Slice action driver. Held so its Slint callbacks and progress timer
     /// live as long as the window.
     _slice_run: Rc<SliceRun>,
+    /// The Slice tab's Review card. Held so its callbacks and document
+    /// subscription live as long as the window.
+    _review_panel: Rc<ReviewPanel>,
     /// The Repair action driver. Held so its Slint callbacks live as long as
     /// the window.
     _repair_run: Rc<RepairRun>,
@@ -638,7 +642,6 @@ impl AppState {
             ctrl.document(),
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
-        let slice_run = SliceRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
@@ -650,10 +653,27 @@ impl AppState {
             ctrl.clone(),
         );
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        // The Review card applies its fixes through the support and hollow
+        // drivers, and the Slice driver hands it each slice's findings.
+        let review_panel = ReviewPanel::install(
+            ui,
+            ctrl.document(),
+            ctrl.clone(),
+            df_support_run.clone(),
+            hollow_run.clone(),
+        );
+        let slice_run = SliceRun::install(
+            ui,
+            self.prefs.clone(),
+            ctrl.document(),
+            ctrl.dialogs(),
+            review_panel.clone(),
+        );
         WindowDrivers {
             _hollow_run: hollow_run,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
+            _review_panel: review_panel,
             _repair_run: repair_run,
             _support_gen_run: support_gen_run,
             _df_support_run: df_support_run,
@@ -2363,19 +2383,27 @@ mod window_wiring_tests {
 
     #[test]
     fn a_dragonfruit_support_press_starts_a_cancelable_run() {
-        let (before, after, cancelable) = on_fresh_slint_thread(|| {
+        let (before, held, warned, after, cancelable) = on_fresh_slint_thread(|| {
             let app = test_app(PreferencesSnapshot::for_tests());
             let (window, _pending_load, controller) = new_window(&app);
             let _drivers = app.install_window_drivers(&window, &controller);
             load_cube(&controller);
             let before = window.get_support_gen_in_progress();
+            // The cube rests on the plate, in the raft: the press waits for
+            // the raft warning's answer (#131).
             window.invoke_df_support_requested();
+            let held = window.get_support_gen_in_progress();
+            let warned = !window.get_support_raft_clash_message().is_empty();
+            window.invoke_support_raft_ignore_requested();
             let after = window.get_support_gen_in_progress();
             let cancelable = window.get_support_gen_cancelable();
             window.invoke_support_gen_cancel_requested();
-            (before, after, cancelable)
+            (before, held, warned, after, cancelable)
         });
-        assert_eq!((before, after, cancelable), (false, true, true));
+        assert_eq!(
+            (before, held, warned, after, cancelable),
+            (false, false, true, true, true)
+        );
     }
 
     #[test]

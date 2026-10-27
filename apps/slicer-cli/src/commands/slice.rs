@@ -8,7 +8,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
@@ -17,7 +17,7 @@ use sc_print_glue::{
     PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene,
     UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export, slice_plate,
 };
-use sc_print_primitives::{AaLevel, PositiveFiniteMm};
+use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
@@ -34,6 +34,7 @@ use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 use crate::commands::df_supports::{add_df_supports, lift_scene};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
+use crate::config::cmd_options::PlateOptions;
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::config::target_format::{
     ACCEPTED_TARGET_FORMATS, SettledTarget, TargetFormat, settle_for_printer,
@@ -49,16 +50,15 @@ pub(crate) struct SliceArgs {
     pub source: OsString,
     pub target: OsString,
     pub target_format: Option<TargetFormat>,
-    pub printer_profile: PrinterProfileRef,
-    pub material_profile: MaterialProfileRef,
-    pub layer_height: Option<PositiveFiniteMm>,
-    pub first_layer_height: Option<PositiveFiniteMm>,
-    pub aa: AaLevel,
-    pub verbose: bool,
-    pub no_auto_place: bool,
-    pub repair: bool,
-    pub df_supports: bool,
-    pub df_lift: f64,
+    pub plate: PlateOptions,
+}
+
+/// A model loaded, prepared and sliced by [`load_and_slice`].
+pub(crate) struct SlicedScene {
+    /// The scene as it was sliced: placed, repaired and with its supports.
+    pub scene: Scene,
+    /// The per-leaf contour stacks and the engine profile they were cut with.
+    pub plate: SlicedPlate,
 }
 
 pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -88,75 +88,16 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         target_path
     };
 
-    let printer = load_printer_profile(&args.printer_profile, libraries)?;
+    let options = &args.plate;
+    let printer = load_printer_profile(&options.printer_profile, libraries)?;
     let target_format = settle_for_printer(target_format, &printer.capabilities.output_formats)
         .map_err(|err| anyhow!("cannot write \"{}\": {err}", target_path.display()))?;
-    let (material, issues) = load_material_profile(&args.material_profile, libraries)?;
+    let (material, issues) = load_material_profile(&options.material_profile, libraries)?;
     for issue in &issues {
         eprintln!("warning: {issue}");
     }
 
-    let LoadedScene {
-        content,
-        mesh_warnings,
-        project_warnings,
-    } = load_scene(&source_path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})?;
-    display_warnings(&mesh_warnings, &mut std::io::stderr());
-    display_project_warnings(&project_warnings, &mut std::io::stderr());
-
-    // A project's placement is part of its saved content, so only a mesh is
-    // placed on the plate.
-    let scene = match content {
-        LoadedContent::Mesh(mut scene) => {
-            if args.repair {
-                repair_scene(&mut scene, &mut std::io::stderr());
-            }
-            if !args.no_auto_place {
-                place_on_plate(&mut scene, &printer.hardware.build_volume())?;
-                if args.df_supports {
-                    lift_scene(&mut scene, &printer.hardware.build_volume(), args.df_lift)?;
-                }
-            }
-            scene
-        }
-        LoadedContent::Project(ProjectContent { mut scene, .. }) => {
-            if args.repair {
-                repair_scene(&mut scene, &mut std::io::stderr());
-            }
-            scene
-        }
-    };
-    let mut scene = scene;
-    if args.df_supports {
-        let layer_height_mm = args.layer_height.map_or(0.05, PositiveFiniteMm::value);
-        let pitch = printer.hardware.pixel_size_microns();
-        let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
-        add_df_supports(&mut scene, layer_height_mm, pitch_mm)?;
-    }
-    let params = SlicingParams {
-        layer_height_request: args.layer_height,
-        first_layer_height: args.first_layer_height,
-        aa_level: args.aa,
-    };
-    let plate = match slice_plate(
-        &scene,
-        &printer,
-        &material,
-        &params,
-        &CancelToken::new(),
-        |_| {},
-    ) {
-        Ok(SliceRun::Completed(plate)) => plate,
-        // Unreachable with the fresh, never-cancelled token above.
-        Ok(SliceRun::Cancelled) => return Err(anyhow!("slicing was cancelled")),
-        Err(SlicePlateError::Prepare(err)) => return Err(describe_unsliceable(err)),
-        Err(SlicePlateError::Engine(err @ SliceSceneError::LeavesValidationFailed(_))) => {
-            report_validation_failure(&err, args.verbose, &mut std::io::stderr());
-            return Err(anyhow!("mesh validation failed; slicing aborted"));
-        }
-        Err(SlicePlateError::Engine(other)) => return Err(other.into()),
-    };
-
+    let SlicedScene { scene, plate } = load_and_slice(&source_path, &printer, &material, options)?;
     let model_count = plate.leaves().len();
     // Every stack shares the schedule's layer grid, and merging only
     // concatenates polygons per layer, so the totals are the same whichever
@@ -172,20 +113,20 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         .map(|layer| layer.polygons().len())
         .sum();
 
-    let options = WriterOptions::from_profile(plate.profile(), VERSION);
+    let writer_options = WriterOptions::from_profile(plate.profile(), VERSION);
     match target_format {
         SettledTarget::Slices(Format::ThreeMf) => {
-            write_scene_slices(&scene, plate.leaves(), &target_path, &options)?;
+            write_scene_slices(&scene, plate.leaves(), &target_path, &writer_options)?;
         }
         SettledTarget::Slices(
             format @ (Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer),
         ) => {
             let contours = merge_plate(plate)?;
-            write_slice(contours.stack(), &target_path, format, &options)?;
+            write_slice(contours.stack(), &target_path, format, &writer_options)?;
         }
         SettledTarget::PrinterFile(format) => {
             let overrides = SceneOverrides {
-                layer_height_mm: args.layer_height,
+                layer_height_mm: options.layer_height,
                 ..Default::default()
             };
             let job = prepare_export(
@@ -194,7 +135,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
                 &printer,
                 &material,
                 &overrides,
-                args.aa,
+                options.aa,
                 VERSION,
             )
             // The message already ends with its cause, which `?` would print
@@ -211,6 +152,83 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         target_path.display(),
     );
     Ok(())
+}
+
+/// Loads the model or project at `source_path`, prepares it as `options` ask
+/// (repair, placement on the plate, generated supports) and slices it for
+/// `printer` and `material`. Load warnings and repair reports go to stderr.
+pub(crate) fn load_and_slice(
+    source_path: &Path,
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    options: &PlateOptions,
+) -> Result<SlicedScene> {
+    let LoadedScene {
+        content,
+        mesh_warnings,
+        project_warnings,
+    } = load_scene(source_path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})?;
+    display_warnings(&mesh_warnings, &mut std::io::stderr());
+    display_project_warnings(&project_warnings, &mut std::io::stderr());
+
+    // A project's placement is part of its saved content, so only a mesh is
+    // placed on the plate.
+    let scene = match content {
+        LoadedContent::Mesh(mut scene) => {
+            if options.repair {
+                repair_scene(&mut scene, &mut std::io::stderr());
+            }
+            if !options.no_auto_place {
+                place_on_plate(&mut scene, &printer.hardware.build_volume())?;
+                if options.df_supports {
+                    lift_scene(
+                        &mut scene,
+                        &printer.hardware.build_volume(),
+                        options.df_lift,
+                    )?;
+                }
+            }
+            scene
+        }
+        LoadedContent::Project(ProjectContent { mut scene, .. }) => {
+            if options.repair {
+                repair_scene(&mut scene, &mut std::io::stderr());
+            }
+            scene
+        }
+    };
+    let mut scene = scene;
+    if options.df_supports {
+        let layer_height_mm = options.layer_height.map_or(0.05, PositiveFiniteMm::value);
+        let pitch = printer.hardware.pixel_size_microns();
+        let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
+        add_df_supports(&mut scene, layer_height_mm, pitch_mm)?;
+    }
+    let params = SlicingParams {
+        layer_height_request: options.layer_height,
+        first_layer_height: options.first_layer_height,
+        aa_level: options.aa,
+    };
+    let plate = match slice_plate(
+        &scene,
+        printer,
+        material,
+        &params,
+        &CancelToken::new(),
+        |_| {},
+    ) {
+        Ok(SliceRun::Completed(plate)) => plate,
+        // Unreachable with the fresh, never-cancelled token above.
+        Ok(SliceRun::Cancelled) => return Err(anyhow!("slicing was cancelled")),
+        Err(SlicePlateError::Prepare(err)) => return Err(describe_unsliceable(err)),
+        Err(SlicePlateError::Engine(err @ SliceSceneError::LeavesValidationFailed(_))) => {
+            report_validation_failure(&err, options.verbose, &mut std::io::stderr());
+            return Err(anyhow!("mesh validation failed; slicing aborted"));
+        }
+        Err(SlicePlateError::Engine(other)) => return Err(other.into()),
+    };
+
+    Ok(SlicedScene { scene, plate })
 }
 
 /// Merges the plate's per-leaf stacks into the contours a file target is
@@ -233,7 +251,7 @@ fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
 
 /// Loads the effective printer for `profile_ref`. It reads directly from a
 /// path, or looks it up by id across the configured libraries.
-fn load_printer_profile(
+pub(crate) fn load_printer_profile(
     profile_ref: &PrinterProfileRef,
     libraries: &ProfileLibraries,
 ) -> Result<PrinterProfile> {
@@ -249,7 +267,7 @@ fn load_printer_profile(
 /// Loads the effective material for `profile_ref`. The ref picks the base
 /// document only; the user library's same-id extension composes over it whether
 /// the ref is a path or an id.
-fn load_material_profile(
+pub(crate) fn load_material_profile(
     profile_ref: &MaterialProfileRef,
     libraries: &ProfileLibraries,
 ) -> Result<(EffectiveMaterial, Vec<MaterialExtensionIssue>)> {
