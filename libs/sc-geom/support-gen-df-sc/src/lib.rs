@@ -37,7 +37,24 @@ pub use session::{DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
 
 /// The name the generated support mesh carries.
-pub const DF_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
+pub const DF_SUPPORT_MESH_NAME: &str = "Supports";
+
+/// The name support meshes carried before, still found in saved projects.
+const LEGACY_SUPPORT_MESH_NAME: &str = "Supports (DragonFruit)";
+
+/// Whether a mesh named `name` is generated supports, under the current name
+/// or the one projects saved earlier carry.
+pub fn is_support_mesh_name(name: &str) -> bool {
+    name == DF_SUPPORT_MESH_NAME || name == LEGACY_SUPPORT_MESH_NAME
+}
+
+/// Whether `mesh` is generated supports.
+pub fn is_support_mesh(mesh: &IndexedMesh) -> bool {
+    mesh.meta()
+        .as_ref()
+        .and_then(|m| m.name.as_deref())
+        .is_some_and(is_support_mesh_name)
+}
 
 /// What the run is asked for.
 #[derive(Debug, Clone)]
@@ -100,7 +117,7 @@ pub fn scene_models(scene: &Scene) -> Result<Vec<ModelInput>, SceneError> {
             .meta()
             .as_ref()
             .and_then(|m| m.name.as_deref())
-            .is_some_and(|n| n == DF_SUPPORT_MESH_NAME);
+            .is_some_and(is_support_mesh_name);
         if is_ours || mesh.faces().is_empty() {
             return Ok::<(), SceneError>(());
         }

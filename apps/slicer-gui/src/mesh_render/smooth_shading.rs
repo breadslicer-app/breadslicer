@@ -21,8 +21,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sc_geom::df_supports::DF_SUPPORT_MESH_NAME;
-
 use sc_mesh_core::IndexedMesh;
 
 use super::scene_upload::GpuVertex;
@@ -52,7 +50,7 @@ pub(crate) fn set_smooth_models(on: bool) {
 }
 
 fn is_support(mesh: &IndexedMesh) -> bool {
-    mesh.meta().as_ref().and_then(|m| m.name.as_deref()) == Some(DF_SUPPORT_MESH_NAME)
+    sc_geom::df_supports::is_support_mesh(mesh)
 }
 
 /// Whether `mesh` is drawn smooth: supports always, models by preference.
@@ -256,7 +254,7 @@ mod tests {
         let model = sc_mesh_fixtures::unit_cube_mesh();
         let support = IndexedMesh::new(
             Some(sc_mesh_core::MeshMetadata {
-                name: Some(DF_SUPPORT_MESH_NAME.to_owned()),
+                name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
                 ..Default::default()
             }),
             model.vertices().to_vec(),

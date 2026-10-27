@@ -231,6 +231,7 @@ impl SliceRun {
         let slot = self.slot.clone();
         let progress = self.progress.clone();
         let ui = self.ui.clone();
+        crate::breadcrumbs::note("slice: started");
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_slice(
@@ -339,6 +340,7 @@ impl SliceRun {
         let Some(result) = taken else {
             return;
         };
+        crate::breadcrumbs::note(&format!("slice: finished ok={}", result.is_ok()));
         match result {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
