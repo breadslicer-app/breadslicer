@@ -50,7 +50,7 @@ use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, ErrorTexts, format_anyhow_chain};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, format_anyhow_chain};
 use crate::failure_gate::FailureGate;
 use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
 use crate::i18n::ctr;
@@ -62,6 +62,7 @@ use crate::mesh_render::{
     AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
 };
 use crate::reloaded_slices::ReloadedSlices;
+use crate::support_persist::RestoredSupports;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -110,6 +111,10 @@ pub(crate) struct PreparedScene {
     /// Consumed by the load-finished handler: anything but problem-free leads
     /// the Transform tab with the repair card.
     pub mesh_health: MeshHealth,
+    /// The supports a `.bread` kept as data, rebuilt on the worker: the
+    /// editable session, whose mesh is already in the scene, and why any
+    /// could not be rebuilt.
+    pub restored_supports: RestoredSupports,
 }
 
 type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedScene>)>>>;
@@ -555,6 +560,18 @@ impl SceneLoader {
             Ok(prepared) => {
                 log_load_warnings(&path, &prepared);
                 self.upload_failures.reset();
+                let failures = &prepared.restored_supports.failures;
+                if !failures.is_empty() {
+                    let details = failures.join("\n");
+                    self.dialogs.show_info(move || InfoTexts {
+                        heading: ctr!("DfSupportDialog", "Supports not restored"),
+                        message: ctr!(
+                            "DfSupportDialog",
+                            "The project opened, but its supports could not be rebuilt and were left out. Generate them again."
+                        ),
+                        details: details.as_str().into(),
+                    });
+                }
                 Some(prepared)
             }
             Err(err) => {

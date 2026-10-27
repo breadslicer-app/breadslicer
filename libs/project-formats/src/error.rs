@@ -21,12 +21,14 @@ use crate::threemf::slice_mapping::SliceMappingError;
 #[derive(Debug)]
 pub enum WriteProjectError {
     ThreeMf(WriteThreeMfProjectError),
+    Bread(WriteBreadProjectError),
 }
 
 impl fmt::Display for WriteProjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ThreeMf(e) => write!(f, "{e}"),
+            Self::Bread(e) => write!(f, "{e}"),
         }
     }
 }
@@ -35,6 +37,7 @@ impl std::error::Error for WriteProjectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ThreeMf(e) => Some(e),
+            Self::Bread(e) => Some(e),
         }
     }
 }
@@ -43,12 +46,14 @@ impl std::error::Error for WriteProjectError {
 #[derive(Debug)]
 pub enum ReadProjectError {
     ThreeMf(ReadThreeMfProjectError),
+    Bread(ReadBreadProjectError),
 }
 
 impl fmt::Display for ReadProjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ThreeMf(e) => write!(f, "{e}"),
+            Self::Bread(e) => write!(f, "{e}"),
         }
     }
 }
@@ -57,6 +62,7 @@ impl std::error::Error for ReadProjectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ThreeMf(e) => Some(e),
+            Self::Bread(e) => Some(e),
         }
     }
 }
@@ -204,5 +210,84 @@ impl From<PackageReadError> for ReadThreeMfProjectError {
 impl From<LoadThreeMfError> for ReadThreeMfProjectError {
     fn from(e: LoadThreeMfError) -> Self {
         Self::Scene(e)
+    }
+}
+
+/// Failure modes of writing a `.bread` project.
+#[derive(Debug)]
+pub enum WriteBreadProjectError {
+    /// The settings document could not be serialized to TOML.
+    Settings(toml_edit::ser::Error),
+    /// An embedded profile document is not UTF-8 text, so the settings
+    /// document cannot carry it.
+    ProfileNotUtf8 { id: String },
+    /// The container could not be written.
+    Container(sc_bread_format::WriteBreadError),
+}
+
+impl fmt::Display for WriteBreadProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Settings(e) => write!(
+                f,
+                ".bread project writer: failed to serialize the project settings: {e}",
+            ),
+            Self::ProfileNotUtf8 { id } => write!(
+                f,
+                ".bread project writer: the embedded profile \"{id}\" is not UTF-8 text",
+            ),
+            Self::Container(e) => write!(f, ".bread project writer: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for WriteBreadProjectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Settings(e) => Some(e),
+            Self::ProfileNotUtf8 { .. } => None,
+            Self::Container(e) => Some(e),
+        }
+    }
+}
+
+/// Failure modes of reading a `.bread` project.
+#[derive(Debug)]
+pub enum ReadBreadProjectError {
+    /// The file could not be measured.
+    Io(std::io::Error),
+    /// The container or one of the chunks this build needs could not be read.
+    Container(sc_bread_format::ReadProjectError),
+    /// The settings document is not UTF-8 encoded.
+    SettingsNotUtf8(std::str::Utf8Error),
+    /// The settings document is not valid TOML of the shape this build reads.
+    SettingsParse(toml_edit::de::Error),
+}
+
+impl fmt::Display for ReadBreadProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, ".bread project reader I/O error: {e}"),
+            Self::Container(e) => write!(f, ".bread project reader: {e}"),
+            Self::SettingsNotUtf8(e) => write!(
+                f,
+                ".bread project reader: the project settings are not UTF-8: {e}",
+            ),
+            Self::SettingsParse(e) => write!(
+                f,
+                ".bread project reader: failed to parse the project settings: {e}",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReadBreadProjectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Container(e) => Some(e),
+            Self::SettingsNotUtf8(e) => Some(e),
+            Self::SettingsParse(e) => Some(e),
+        }
     }
 }

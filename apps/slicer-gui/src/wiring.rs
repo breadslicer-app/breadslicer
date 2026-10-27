@@ -24,7 +24,7 @@ use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SaveRecorded, SceneDocument};
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
-use crate::scene_save::{self, SaveDispatch, SaveTargetDispatch};
+use crate::scene_save::{self, ProjectFormat, SaveDispatch, SaveTargetDispatch};
 use crate::viewport::{RESIZE_SETTLE, ScreenDelta, ScreenPoint, ViewportController};
 
 mod export_flow_dispatch {
@@ -82,7 +82,8 @@ pub(crate) fn wire_main_window(
     install_rendering_notifier(ui, ctrl.clone())?;
     wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open);
     wire_save(ui, ctrl.clone(), prefs.clone());
-    wire_save_as(ui, ctrl.clone(), prefs);
+    wire_save_as(ui, ctrl.clone(), prefs.clone());
+    wire_save_as_3mf(ui, ctrl.clone(), prefs);
     wire_export_as(ui, ctrl.clone());
     wire_edit_menu(ui, ctrl.clone());
     wire_workspace_section(ui, ctrl.clone());
@@ -444,6 +445,10 @@ async fn pick_mesh_file(start_dir: Option<PathBuf>) -> Option<PathBuf> {
             ctr!("FileDialog", "All supported files").to_string(),
             mesh_loader::SUPPORTED_MESH_EXTENSIONS,
         )
+        .add_filter(
+            ctr!("FileDialog", "Breadslicer projects").to_string(),
+            &["bread"],
+        )
         .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"])
         .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
         .add_filter(
@@ -532,7 +537,15 @@ pub(crate) async fn run_save_flow(
         }
         SaveDispatch::NeedsSaveAs => {
             let default_stem = scene_export::default_export_stem(&doc);
-            run_save_as_flow(doc, dialogs, save_progress, default_stem, defaults).await
+            run_save_as_flow(
+                doc,
+                dialogs,
+                save_progress,
+                default_stem,
+                defaults,
+                ProjectFormat::Bread,
+            )
+            .await
         }
     }
 }
@@ -600,11 +613,31 @@ async fn save_to_target(
 fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_as_requested(move || {
         ctrl.on_modal_transform_finish(false);
-        spawn_save_as_flow(ctrl.clone(), PrintDefaults::from(&prefs.snapshot()));
+        spawn_save_as_flow(
+            ctrl.clone(),
+            PrintDefaults::from(&prefs.snapshot()),
+            ProjectFormat::Bread,
+        );
     });
 }
 
-fn spawn_save_as_flow(ctrl: Rc<ViewportController>, defaults: PrintDefaults) {
+/// "Save As 3MF": the same flow as "Save As", for a 3MF project.
+fn wire_save_as_3mf(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
+    ui.on_save_as_3mf_requested(move || {
+        ctrl.on_modal_transform_finish(false);
+        spawn_save_as_flow(
+            ctrl.clone(),
+            PrintDefaults::from(&prefs.snapshot()),
+            ProjectFormat::ThreeMf,
+        );
+    });
+}
+
+fn spawn_save_as_flow(
+    ctrl: Rc<ViewportController>,
+    defaults: PrintDefaults,
+    format: ProjectFormat,
+) {
     let default_stem = scene_export::default_export_stem(&ctrl.document());
     if let Err(err) = slint::spawn_local(async move {
         let _ = run_save_as_flow(
@@ -613,6 +646,7 @@ fn spawn_save_as_flow(ctrl: Rc<ViewportController>, defaults: PrintDefaults) {
             ctrl.save_progress(),
             default_stem,
             defaults,
+            format,
         )
         .await;
         // "Save As" relocates the document even when the write completed
@@ -625,9 +659,9 @@ fn spawn_save_as_flow(ctrl: Rc<ViewportController>, defaults: PrintDefaults) {
 }
 
 /// Orchestrates 1 "Save As" command: show the file-save dialog (seeded with the
-/// source stem and the `.3mf` extension), validate the picked name, and write
-/// the project. A cancelled dialog, a wrong extension and a failed write report
-/// nothing written; the last 2 show an error dialog.
+/// source stem and the extension of `format`), validate the picked name, and
+/// write the project. A cancelled dialog, a wrong extension and a failed write
+/// report nothing written; the last 2 show an error dialog.
 ///
 /// `defaults` holds the app-wide defaults from when the command fired, so a
 /// default changed while the Save As dialog is open does not reach the file.
@@ -637,12 +671,14 @@ async fn run_save_as_flow(
     save_progress: Rc<SaveProgressPanel>,
     default_stem: Option<String>,
     defaults: PrintDefaults,
+    format: ProjectFormat,
 ) -> SaveOutcome {
-    let dispatch = scene_save::decide_save_target(pick_save_target(default_stem).await);
+    let dispatch =
+        scene_save::decide_save_target(pick_save_target(default_stem, format).await, format);
     match dispatch {
         SaveTargetDispatch::Cancelled => SaveOutcome::NotSaved,
         SaveTargetDispatch::WrongExtension(target) => {
-            let err = anyhow::Error::new(scene_save::WrongProjectExtension);
+            let err = anyhow::Error::new(scene_save::WrongProjectExtension(format));
             show_save_error(&dialogs, &target, err);
             SaveOutcome::NotSaved
         }
@@ -652,11 +688,15 @@ async fn run_save_as_flow(
     }
 }
 
-async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"]);
+async fn pick_save_target(default_stem: Option<String>, format: ProjectFormat) -> Option<PathBuf> {
+    let name = match format {
+        ProjectFormat::Bread => ctr!("FileDialog", "Breadslicer projects"),
+        ProjectFormat::ThreeMf => ctr!("FileDialog", "3MF files"),
+    };
+    let extension = format.extension();
+    let mut dialog = rfd::AsyncFileDialog::new().add_filter(name.to_string(), &[extension]);
     if let Some(stem) = default_stem {
-        dialog = dialog.set_file_name(format!("{stem}.3mf"));
+        dialog = dialog.set_file_name(format!("{stem}.{extension}"));
     }
     dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
@@ -998,13 +1038,23 @@ mod dialog_text_tests {
     use super::*;
 
     #[test]
-    fn a_save_under_another_extension_says_projects_are_3mf_packages() {
-        let err = anyhow::Error::new(scene_save::WrongProjectExtension);
+    fn a_save_under_another_extension_says_projects_are_bread_files() {
+        let err = anyhow::Error::new(scene_save::WrongProjectExtension(ProjectFormat::Bread));
         let texts = save_error_texts(Path::new("/tmp/plate.stl"), &err);
         assert_eq!(texts.heading, "Failed to save");
         assert_eq!(texts.context.as_deref(), Some("File: /tmp/plate.stl"));
-        assert_eq!(texts.message, "Project files are saved as .3mf packages.");
+        assert_eq!(
+            texts.message,
+            "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+        );
         assert_eq!(texts.details, "");
+    }
+
+    #[test]
+    fn a_3mf_save_under_another_extension_says_projects_are_3mf_packages() {
+        let err = anyhow::Error::new(scene_save::WrongProjectExtension(ProjectFormat::ThreeMf));
+        let texts = save_error_texts(Path::new("/tmp/plate.bread"), &err);
+        assert_eq!(texts.message, "Project files are saved as .3mf packages.");
     }
 
     #[test]
