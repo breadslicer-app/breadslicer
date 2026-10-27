@@ -177,6 +177,26 @@ fn open_marks() -> RowMarks {
 }
 
 #[test]
+fn a_fixed_finding_leaves_the_list_and_the_summary_counts_it() {
+    let findings = tiered();
+    let marks = open_marks();
+    // The large trap's drain was applied since the slice.
+    let rows = mark_rows(
+        review_rows(&findings, &[true; 5], &BTreeSet::from([3]), true),
+        &findings,
+        &marks,
+    );
+    assert_eq!(titles(&rows), ["Cup", "Medium", "Tiny", "Empty"]);
+    // The warnings now lead, with their heading.
+    assert!(!rows[0].header.is_empty());
+    assert_eq!(summary_with_fixed("1 warning".into(), 0), "1 warning");
+    assert_eq!(
+        summary_with_fixed("1 warning".into(), 2),
+        "1 warning · 2 fixed"
+    );
+}
+
+#[test]
 fn small_cavities_offer_a_fill_and_tiny_ones_can_be_left() {
     let rows = marked(&tiered(), &open_marks());
     assert_eq!(titles(&rows), ["Large", "Cup", "Medium", "Tiny", "Empty"]);

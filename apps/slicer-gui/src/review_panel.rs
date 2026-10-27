@@ -489,10 +489,12 @@ impl ReviewPanel {
                 ReviewOutcome::Reviewed { findings, .. } => {
                     let fixable = self.fixes_apply(held);
                     let row_marks = RowMarks::of(findings, &marks, fixable, self.notes_open.get());
+                    // A finding fixed since the slice leaves the list (the
+                    // next slice shows it again if the fix did not hold).
                     let visible: Vec<Finding> = findings
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| !row_marks.left.contains(i))
+                        .filter(|(i, _)| !row_marks.left.contains(i) && !held.fixed.contains(i))
                         .map(|(_, finding)| finding.clone())
                         .collect();
                     notes = visible
@@ -515,7 +517,10 @@ impl ReviewPanel {
                             findings,
                             &row_marks,
                         ),
-                        summary_with_left(review_summary(&visible), row_marks.left.len()),
+                        summary_with_fixed(
+                            summary_with_left(review_summary(&visible), row_marks.left.len()),
+                            held.fixed.len(),
+                        ),
                         worst_severity(&visible),
                         None,
                     )
@@ -802,7 +807,9 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
     rows.into_iter()
         .filter(|row| {
             let i = row.id as usize;
-            !marks.left.contains(&i) && (marks.notes_open || findings[i].severity != Severity::Info)
+            !row.fixed
+                && !marks.left.contains(&i)
+                && (marks.notes_open || findings[i].severity != Severity::Info)
         })
         .map(|mut row| {
             let i = row.id as usize;
@@ -847,6 +854,18 @@ fn summary_with_left(summary: String, left: usize) -> String {
     format!(
         "{summary} · {}",
         ctr!("Review", "{n} left alone", "{n} left alone", left)
+    )
+}
+
+/// The summary, plus how many findings were fixed since the slice (they
+/// left the list).
+fn summary_with_fixed(summary: String, fixed: usize) -> String {
+    if fixed == 0 {
+        return summary;
+    }
+    format!(
+        "{summary} · {}",
+        ctr!("Review", "{n} fixed", "{n} fixed", fixed)
     )
 }
 
