@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { CheckBox, ComboBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export enum ThemePreference { System, Light, Dark }
@@ -25,6 +25,12 @@ export component AppearancePreferences inherits PreferencesPage {
     // (`mesh_render/smooth_shading.rs`).
     in-out property <bool> smooth-models: false;
     callback smooth-models-changed(bool);
+
+    // Diagnostic log (off by default): writes the session's events to the
+    // logs folder so a person can send them with a bug report.
+    in-out property <bool> diagnostic-log: false;
+    callback diagnostic-log-changed(bool);
+    callback open-logs-folder();
 
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
@@ -87,6 +93,27 @@ export component AppearancePreferences inherits PreferencesPage {
             selected(_value) => {
                 root.current-language-index = self.current-index;
                 root.language-selected(self.current-index);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        CheckBox {
+            text: @tr("AppearancePreferences" => "Diagnostic log (for bug reports)");
+            checked: root.diagnostic-log;
+            toggled => {
+                root.diagnostic-log = self.checked;
+                root.diagnostic-log-changed(self.checked);
+            }
+        }
+
+        Button {
+            text: @tr("AppearancePreferences" => "Open logs folder");
+            clicked => {
+                root.open-logs-folder();
             }
         }
     }
