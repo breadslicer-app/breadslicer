@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! First placement of a main window: a share of the monitor it opens on,
-//! centred. The window's Slint `preferred-width` / `preferred-height` (600 ×
-//! 400 logical pixels) is a floor for small screens, not a size to open at: on
-//! a large 4K monitor it is a postage stamp. Nothing is remembered between
-//! runs; each new window is fitted to its monitor.
+//! Window placement: the first placement of a main window (a share of the
+//! monitor it opens on, centred), and the app's other windows centred over the
+//! window they belong to (#133).
+//!
+//! A main window's Slint `preferred-width` / `preferred-height` (600 × 400
+//! logical pixels) is a floor for small screens, not a size to open at: on a
+//! large 4K monitor it is a postage stamp. Nothing is remembered between runs;
+//! each new window is fitted to its monitor.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -65,6 +68,56 @@ fn monitor_of(window: &slint::Window) -> Option<ScreenRect> {
         .filter(|m| m.width > 0 && m.height > 0)
 }
 
+/// Where a window `child` big sits centred over `parent`.
+pub(crate) fn centred_over(parent: ScreenRect, child: (u32, u32)) -> (i32, i32) {
+    let half = |outer: u32, inner: u32| ((i64::from(outer) - i64::from(inner)) / 2) as i32;
+    (
+        parent.x + half(parent.width, child.0),
+        parent.y + half(parent.height, child.1),
+    )
+}
+
+/// The outer rectangle of `window`, frame included, once its native window
+/// exists.
+fn outer_rect(window: &slint::Window) -> Option<ScreenRect> {
+    window
+        .with_winit_window(|w| {
+            let pos = w.outer_position().ok()?;
+            let size = w.outer_size();
+            Some(ScreenRect {
+                x: pos.x,
+                y: pos.y,
+                width: size.width,
+                height: size.height,
+            })
+        })
+        .flatten()
+        .filter(|r| r.width > 0 && r.height > 0)
+}
+
+/// Centres a freshly shown `child` over `parent`, retried like
+/// [`fit_to_screen`] until both native windows exist.
+pub(crate) fn centre_over<C, P>(child: &C, parent: &P)
+where
+    C: ComponentHandle + 'static,
+    P: ComponentHandle + 'static,
+{
+    let child = child.as_weak();
+    let parent = parent.as_weak();
+    retry_until(move || {
+        let (Some(child), Some(parent)) = (child.upgrade(), parent.upgrade()) else {
+            return true;
+        };
+        let (Some(over), Some(own)) = (outer_rect(parent.window()), outer_rect(child.window()))
+        else {
+            return false;
+        };
+        let (x, y) = centred_over(over, (own.width, own.height));
+        child.window().set_position(PhysicalPosition::new(x, y));
+        true
+    });
+}
+
 fn fit(window: &slint::Window, monitor: ScreenRect) {
     let current = window.size();
     let target = placement(monitor, (current.width, current.height));
@@ -84,28 +137,33 @@ const RETRIES: u32 = 60;
 /// and its monitor exist, for up to 3 s. A platform that never reports a
 /// monitor (headless tests) keeps the window's own size.
 pub(crate) fn fit_to_screen(ui: &MainWindow) {
-    if let Some(monitor) = monitor_of(ui.window()) {
-        fit(ui.window(), monitor);
+    let weak = ui.as_weak();
+    retry_until(move || match weak.upgrade() {
+        None => true,
+        Some(ui) => match monitor_of(ui.window()) {
+            Some(monitor) => {
+                fit(ui.window(), monitor);
+                true
+            }
+            None => false,
+        },
+    });
+}
+
+/// Runs `attempt` now and, until it reports done, again every
+/// [`RETRY_INTERVAL`] for up to [`RETRIES`] times.
+fn retry_until(mut attempt: impl FnMut() -> bool + 'static) {
+    if attempt() {
         return;
     }
-    let weak = ui.as_weak();
     let timer = Rc::new(slint::Timer::default());
     let timer_weak = Rc::downgrade(&timer);
     let tries = Cell::new(0u32);
     let keep_alive = RefCell::new(Some(timer.clone()));
     timer.start(slint::TimerMode::Repeated, RETRY_INTERVAL, move || {
-        let done = match weak.upgrade() {
-            None => true,
-            Some(ui) => match monitor_of(ui.window()) {
-                Some(monitor) => {
-                    fit(ui.window(), monitor);
-                    true
-                }
-                None => {
-                    tries.set(tries.get() + 1);
-                    tries.get() >= RETRIES
-                }
-            },
+        let done = attempt() || {
+            tries.set(tries.get() + 1);
+            tries.get() >= RETRIES
         };
         if done {
             if let Some(t) = timer_weak.upgrade() {
@@ -164,6 +222,28 @@ mod window_placement_tests {
         let p = placement(monitor, (600, 400));
         assert_eq!((p.width, p.height), (600, 400));
         assert_eq!((p.x, p.y), (50, 25));
+    }
+
+    #[test]
+    fn a_child_window_is_centred_over_its_parent() {
+        let parent = ScreenRect {
+            x: 100,
+            y: 50,
+            width: 1600,
+            height: 900,
+        };
+        assert_eq!(centred_over(parent, (520, 300)), (100 + 540, 50 + 300));
+    }
+
+    #[test]
+    fn a_child_bigger_than_its_parent_overhangs_it_evenly() {
+        let parent = ScreenRect {
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 300,
+        };
+        assert_eq!(centred_over(parent, (600, 500)), (-100, -100));
     }
 
     #[test]

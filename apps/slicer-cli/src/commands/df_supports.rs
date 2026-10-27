@@ -34,6 +34,12 @@ pub(crate) fn lift_scene(
     Ok(())
 }
 
+/// The height above the plate of the top of the raft [`add_df_supports`]
+/// builds (its plate and wall), or `None` when it builds none.
+pub(crate) fn df_raft_top_mm() -> Option<f64> {
+    DfSupportRequest::default().options.raft_top_mm()
+}
+
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Generates supports for every model of `scene`, the island scan banded by

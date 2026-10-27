@@ -149,13 +149,13 @@ mod language_tests {
     use slint::Model;
 
     use super::*;
-    use crate::slint_ui::ErrorDialog;
+    use crate::slint_ui::AboutWindow;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
     #[test]
     fn the_system_entry_follows_the_language() {
         let system = on_fresh_slint_thread(|| {
-            let dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let dialog = AboutWindow::new().expect("the headless platform creates components");
             let es = BundledLanguage::from_code("es").expect("`es` must be bundled");
             LanguagePreference::Bundled(es).apply(InstalledTranslations::proven_by(&dialog));
             let options = LanguagePreference::display_options();

@@ -91,11 +91,11 @@ mod i18n_tests {
     use slint::{SelectBundledTranslationError, select_bundled_translation};
 
     use super::*;
-    use crate::slint_ui::ErrorDialog;
+    use crate::slint_ui::AboutWindow;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
-    fn new_dialog() -> ErrorDialog {
-        ErrorDialog::new().expect("the headless platform creates components")
+    fn new_dialog() -> AboutWindow {
+        AboutWindow::new().expect("the headless platform creates components")
     }
 
     /// The texts of 2 calls that the `.po` files translate.

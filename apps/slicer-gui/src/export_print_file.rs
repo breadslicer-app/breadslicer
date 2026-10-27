@@ -264,7 +264,8 @@ async fn run_export_flow(
     for line in fallback_report_lines(job.config()) {
         eprintln!("{line}");
     }
-    let Some(target) = pick_printer_file_target(default_stem, format).await else {
+    let Some(target) = pick_printer_file_target(dialogs.file_dialog(), default_stem, format).await
+    else {
         return;
     };
     let previews = previews_for(format);
@@ -324,11 +325,12 @@ fn export_failure_texts(target: Option<&Path>, failure: &ExportFailure) -> Error
 
 /// Asks for the file to write, seeded with the format's own extension.
 async fn pick_printer_file_target(
+    dialog: rfd::AsyncFileDialog,
     default_stem: Option<String>,
     format: PrinterFileFormat,
 ) -> Option<PathBuf> {
     let extension = format.extension();
-    let mut dialog = rfd::AsyncFileDialog::new().add_filter(
+    let mut dialog = dialog.add_filter(
         ctr!("FileDialog", "Printer files").to_string(),
         &[extension],
     );

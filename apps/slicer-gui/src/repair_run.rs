@@ -37,7 +37,7 @@ use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::mesh_health::{needs_repair, scene_mesh_health};
 use crate::mesh_loader::panic_message;
@@ -209,11 +209,12 @@ impl RepairRun {
                     .document
                     .with_scene(|spatial| target_names(&outcomes, spatial.graph()))
                     .unwrap_or_default();
-                self.dialogs.show_info(move || InfoTexts {
-                    heading: ctr!("RepairDialog", "Mesh repair"),
-                    message: summary_message(&outcomes).into(),
-                    details: dialog_lines(&outcomes, &names).join("\n").into(),
-                });
+                self.dialogs
+                    .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
+                        heading: ctr!("RepairDialog", "Mesh repair"),
+                        message: summary_message(&outcomes).into(),
+                        details: dialog_lines(&outcomes, &names).join("\n").into(),
+                    });
             }
             RepairSettlement::Rejected(error) => {
                 self.dialogs.show_error(move || ErrorTexts {

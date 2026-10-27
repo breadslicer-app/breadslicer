@@ -31,6 +31,7 @@ export component PreferencesWindow inherits Window {
     in-out property <bool> prescan-supports: false;
     in-out property <bool> smooth-models: false;
     in-out property <bool> diagnostic-log: false;
+    in property <int> silenced-message-count: 0;
 
     in property <[PrinterCard]> printer-cards;
     in property <[string]> manufacturer-tabs;
@@ -57,6 +58,7 @@ export component PreferencesWindow inherits Window {
     callback smooth-models-changed(bool);
     callback diagnostic-log-changed(bool);
     callback open-logs-folder();
+    callback show-all-messages-again();
     callback manufacturer-tab-changed(int);
     callback printer-search-changed(string);
     callback printer-selected(int);
@@ -112,6 +114,10 @@ export component PreferencesWindow inherits Window {
                 }
                 open-logs-folder => {
                     root.open-logs-folder();
+                }
+                silenced-message-count: root.silenced-message-count;
+                show-all-messages-again => {
+                    root.show-all-messages-again();
                 }
                 smooth-models-changed(on) => {
                     root.smooth-models-changed(on);

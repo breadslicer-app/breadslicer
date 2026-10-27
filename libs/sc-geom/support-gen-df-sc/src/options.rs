@@ -10,7 +10,25 @@ use serde::{Deserialize, Serialize};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_gen_df::pipeline::PipelineSettings;
 use support_gen_df::supports::auto_support::settings::{SizingPreset, auto_support_constraints};
+use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
+
+/// How high a model is lifted off the plate to leave room for its supports
+/// under it, in millimetres: the usual automatic lift of resin slicers, and
+/// what the command line's `--df-lift` defaults to. A model lifted only
+/// above the raft leaves the supports no room to grow under its lowest
+/// overhangs (#131).
+pub const DEFAULT_SUPPORT_LIFT_MM: f64 = 5.0;
+
+/// The lift to recommend for a model that stands in the raft: the default
+/// support lift, or the lift a person configured when it is higher.
+pub fn recommended_lift_mm(configured_mm: Option<f64>) -> f64 {
+    configured_mm
+        .filter(|mm| mm.is_finite())
+        .map_or(DEFAULT_SUPPORT_LIFT_MM, |mm| {
+            mm.max(DEFAULT_SUPPORT_LIFT_MM)
+        })
+}
 
 /// How the raft's bottom is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -149,6 +167,34 @@ impl DfSupportOptions {
     }
 }
 
+impl DfSupportOptions {
+    /// The height of the raft's top above the plate, in millimetres: its
+    /// plate (or line beams) plus the crenelated wall, the material a model
+    /// must stand above to clear it (#131). `None` with the raft off.
+    pub fn raft_top_mm(&self) -> Option<f64> {
+        if self.clamped().raft == RaftMode::Off {
+            return None;
+        }
+        let mut settings = PipelineSettings::defaults(0.05);
+        self.apply(&mut settings);
+        let top = raft_band_top_mm(&settings.rafts.global);
+        (top.is_finite() && top > 0.0).then_some(top)
+    }
+
+    /// The layers of `layer_height_mm` the raft takes from the plate up
+    /// ([`Self::raft_top_mm`] rounded up to whole layers); 0 with the raft
+    /// off or a layer height that is not positive.
+    pub fn raft_layers(&self, layer_height_mm: f64) -> usize {
+        match self.raft_top_mm() {
+            Some(top) if layer_height_mm.is_finite() && layer_height_mm > 0.0 => {
+                // A hair under a whole layer counts as that layer.
+                (top / layer_height_mm - 1e-6).ceil().max(0.0) as usize
+            }
+            _ => 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod options_tests {
     use super::*;
@@ -188,5 +234,35 @@ mod options_tests {
         };
         let text = serde_json::to_string(&o).unwrap();
         assert_eq!(serde_json::from_str::<DfSupportOptions>(&text).unwrap(), o);
+    }
+
+    #[test]
+    fn the_raft_top_is_its_plate_and_its_wall() {
+        let solid = DfSupportOptions::default();
+        let top = solid.raft_top_mm().expect("a solid raft");
+        assert!((top - 0.85).abs() < 1e-9, "{top}");
+        assert_eq!(solid.raft_layers(0.05), 17);
+        assert_eq!(solid.raft_layers(0.1), 9);
+        let no_wall = DfSupportOptions {
+            raft_wall: false,
+            ..Default::default()
+        };
+        assert!((no_wall.raft_top_mm().unwrap() - 0.5).abs() < 1e-9);
+        assert_eq!(no_wall.raft_layers(0.05), 10);
+        let off = DfSupportOptions {
+            raft: RaftMode::Off,
+            ..Default::default()
+        };
+        assert_eq!(off.raft_top_mm(), None);
+        assert_eq!(off.raft_layers(0.05), 0);
+        assert_eq!(solid.raft_layers(0.0), 0);
+    }
+
+    #[test]
+    fn the_recommended_lift_is_the_default_or_a_higher_configured_one() {
+        assert_eq!(recommended_lift_mm(None), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(0.0)), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(f64::NAN)), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(8.0)), 8.0);
     }
 }

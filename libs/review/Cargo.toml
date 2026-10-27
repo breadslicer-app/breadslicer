@@ -1,0 +1,27 @@
+[package]
+name = "sc-review"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["SynrgStudio"]
+description = "Pre-flight review of a sliced resin plate: per-layer solid and air regions, their links across layers, and the checks that turn them into findings."
+categories = ["algorithms"]
+keywords = ["3d", "slicer", "resin", "sla", "review"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Derives `serde::Serialize` on the findings, for frontends that print or
+# store them as JSON.
+serde = ["dep:serde"]
+# Exposes `test_support`, the synthetic-plate builder, to other crates' tests.
+test-support = []
+
+[dependencies]
+sc-print-primitives.workspace = true
+sc-sl1cer.workspace = true
+
+rayon.workspace = true
+serde = { workspace = true, optional = true }
