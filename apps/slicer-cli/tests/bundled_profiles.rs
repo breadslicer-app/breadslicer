@@ -319,6 +319,15 @@ fn every_elegoo_printer_mirrors_x_and_not_y() {
     }
 }
 
+/// The printers no photo can be shipped for: the image sources the
+/// library vendors (see `images/README.md`) have none of them, so their
+/// profiles name no image, as the generic machine does.
+const PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO: [&str; 3] = [
+    "creality-halot-one",
+    "creality-halot-one-plus",
+    "creality-halot-one-pro",
+];
+
 #[test]
 fn every_bundled_printer_declares_an_image_we_ship() {
     let root = bundled_profiles_dir();
@@ -326,6 +335,13 @@ fn every_bundled_printer_declares_an_image_we_ship() {
         let id = printer.identity.id.as_str().to_owned();
         // Our own stand-in, so there is no machine to photograph.
         if id == "generic-machine" {
+            continue;
+        }
+        if PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO.contains(&id.as_str()) {
+            assert!(
+                printer.identity.image_asset_path.is_none(),
+                "{id}: a photo nobody may ship must not be named",
+            );
             continue;
         }
         let image = printer
@@ -357,5 +373,31 @@ fn every_bundled_printer_id_is_the_machine_it_names() {
             ),
             "a printer id must be the machine it names and nothing else",
         );
+    }
+}
+
+/// The Photon Mono M7 family's plate in millimetres and its X mirror,
+/// as UVtools' printer data states them and its Anycubic writers are
+/// validated against.
+///
+/// Pinned here because the catalogue the converter reads stated a
+/// 126.48 mm deep M7 / M7 Pro plate (its own 24.8 µm pixel says
+/// 126.976), a 297.5 x 164 mm M7 Max and no mirror for the M7 as of
+/// 2026-10-27, and a mirrored or misscaled part is a failure nothing
+/// in the chain reports.
+const M7_FAMILY_PLATES: [(&str, f64, f64); 3] = [
+    ("anycubic-photon-mono-m7", 223.642, 126.976),
+    ("anycubic-photon-mono-m7-pro", 223.642, 126.976),
+    ("anycubic-photon-mono-m7-max", 298.08, 165.6),
+];
+
+#[test]
+fn the_m7_family_keeps_uvtools_plate_and_mirrors_x() {
+    for (id, x_mm, y_mm) in M7_FAMILY_PLATES {
+        let hardware = bundled_printer(id).hardware;
+        let plate = hardware.build_volume();
+        assert_eq!((plate.x_mm(), plate.y_mm()), (x_mm, y_mm), "{id}");
+        let mirror = hardware.mirror();
+        assert!(mirror.x && !mirror.y, "{id} mirrors in X only");
     }
 }
