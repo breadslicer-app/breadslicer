@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_bread_format::SupportDocument;
 use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 
@@ -27,4 +28,8 @@ pub struct LoadedProject {
     /// Opaque validity token for the file's persisted slices, returned
     /// verbatim. `None` when the file carried no such token.
     pub slice_fingerprint: Option<String>,
+    /// Supports stored as data, each naming the leaf that shows it; that leaf
+    /// arrives with an empty mesh for the application to rebuild. Only a
+    /// `.bread` file carries them.
+    pub supports: Vec<SupportDocument>,
 }

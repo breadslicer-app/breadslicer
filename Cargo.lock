@@ -5011,6 +5011,7 @@ name = "sc-project-formats"
 version = "0.2.0"
 dependencies = [
  "sc-3mf",
+ "sc-bread-format",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",

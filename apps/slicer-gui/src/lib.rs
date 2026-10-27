@@ -76,6 +76,7 @@ mod slice_run;
 mod slice_selection;
 mod startup_token;
 mod support_gen_run;
+mod support_persist;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

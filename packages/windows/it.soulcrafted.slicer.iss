@@ -30,6 +30,7 @@
 #define ProgIdStl "SoulCrafted.Slicer.stl"
 #define ProgIdObj "SoulCrafted.Slicer.obj"
 #define ProgId3mf "SoulCrafted.Slicer.3mf"
+#define ProgIdBread "SoulCrafted.Slicer.bread"
 
 [Setup]
 AppId=it.soulcrafted.slicer
@@ -101,6 +102,13 @@ es.FileAssociations=Abrir estos archivos con {#AppName}:
 pt.FileAssociations=Abrir estes ficheiros com o {#AppName}:
 uk.FileAssociations=Відкривати ці файли за допомогою {#AppName}:
 
+en.AssocBread=Breadslicer projects (.bread)
+ca.AssocBread=Projectes de Breadslicer (.bread)
+de.AssocBread=Breadslicer-Projekte (.bread)
+es.AssocBread=Proyectos de Breadslicer (.bread)
+pt.AssocBread=Projetos do Breadslicer (.bread)
+uk.AssocBread=Проєкти Breadslicer (.bread)
+
 en.AssocStl=STL models (.stl, .stla, .stlb)
 ca.AssocStl=Models STL (.stl, .stla, .stlb)
 de.AssocStl=STL-Modelle (.stl, .stla, .stlb)
@@ -125,6 +133,13 @@ uk.AssocObj=Моделі Wavefront OBJ (.obj)
 ; Shown in Explorer's Type column. Written once, in the language the
 ; installer ran in, which is the same trade-off every installer makes for
 ; a registry-resident string.
+en.TypeBread=Breadslicer Project
+ca.TypeBread=Projecte de Breadslicer
+de.TypeBread=Breadslicer-Projekt
+es.TypeBread=Proyecto de Breadslicer
+pt.TypeBread=Projeto do Breadslicer
+uk.TypeBread=Проєкт Breadslicer
+
 en.TypeStl=STL 3D Model
 ca.TypeStl=Model 3D STL
 de.TypeStl=STL-3D-Modell
@@ -153,6 +168,8 @@ Name: "addtopath"; Description: "{cm:AddCliToPath}"
 ; OBJ is a general-purpose format more likely to already belong to another
 ; application, so claiming it is opt-in. None of these overwrite an
 ; existing association: see ExtensionIsUnclaimed below.
+; .bread is Breadslicer's own project format, so it is checked by default.
+Name: "assocbread"; Description: "{cm:AssocBread}"; GroupDescription: "{cm:FileAssociations}"
 Name: "assocstl"; Description: "{cm:AssocStl}"; GroupDescription: "{cm:FileAssociations}"
 Name: "assoc3mf"; Description: "{cm:Assoc3mf}"; GroupDescription: "{cm:FileAssociations}"
 Name: "assocobj"; Description: "{cm:AssocObj}"; GroupDescription: "{cm:FileAssociations}"; Flags: unchecked
@@ -186,6 +203,13 @@ Root: HKCU; Subkey: "Environment"; \
 ; OpenWithProgids entry adds the application to Explorer's "Open with"
 ; list, which is additive: it makes the application available without
 ; taking the format away from whatever already handles it.
+Root: HKA; Subkey: "Software\Classes\{#ProgIdBread}"; ValueType: string; ValueName: ""; \
+    ValueData: "{cm:TypeBread}"; Flags: uninsdeletekey; Tasks: assocbread
+Root: HKA; Subkey: "Software\Classes\{#ProgIdBread}\DefaultIcon"; ValueType: string; ValueName: ""; \
+    ValueData: "{app}\{#GuiExe},0"; Tasks: assocbread
+Root: HKA; Subkey: "Software\Classes\{#ProgIdBread}\shell\open\command"; ValueType: string; ValueName: ""; \
+    ValueData: """{app}\{#GuiExe}"" ""%1"""; Tasks: assocbread
+
 Root: HKA; Subkey: "Software\Classes\{#ProgIdStl}"; ValueType: string; ValueName: ""; \
     ValueData: "{cm:TypeStl}"; Flags: uninsdeletekey; Tasks: assocstl
 Root: HKA; Subkey: "Software\Classes\{#ProgIdStl}\DefaultIcon"; ValueType: string; ValueName: ""; \
@@ -210,6 +234,8 @@ Root: HKA; Subkey: "Software\Classes\{#ProgIdObj}\shell\open\command"; ValueType
 ; Offer the application for each extension. The .stla and .stlb variants
 ; are the ASCII/binary-specific names the loader accepts, and ride along
 ; with the STL checkbox rather than getting boxes of their own.
+Root: HKA; Subkey: "Software\Classes\.bread\OpenWithProgids"; ValueType: string; \
+    ValueName: "{#ProgIdBread}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocbread
 Root: HKA; Subkey: "Software\Classes\.stl\OpenWithProgids"; ValueType: string; \
     ValueName: "{#ProgIdStl}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocstl
 Root: HKA; Subkey: "Software\Classes\.stla\OpenWithProgids"; ValueType: string; \
@@ -227,6 +253,8 @@ Root: HKA; Subkey: "Software\Classes\.obj\OpenWithProgids"; ValueType: string; \
 ; taking over a format the user already assigned elsewhere is not the
 ; installer's call to make. The uninstaller reverses this only where the
 ; entry still points at us.
+Root: HKA; Subkey: "Software\Classes\.bread"; ValueType: string; ValueName: ""; \
+    ValueData: "{#ProgIdBread}"; Tasks: assocbread; Check: ExtensionIsUnclaimed('.bread')
 Root: HKA; Subkey: "Software\Classes\.stl"; ValueType: string; ValueName: ""; \
     ValueData: "{#ProgIdStl}"; Tasks: assocstl; Check: ExtensionIsUnclaimed('.stl')
 Root: HKA; Subkey: "Software\Classes\.stla"; ValueType: string; ValueName: ""; \
@@ -356,6 +384,7 @@ begin
     { The ProgID keys and the OpenWithProgids entries are removed by the
       uninsdeletekey / uninsdeletevalue flags. Only the default-handler
       values set conditionally at install time need deciding at run time. }
+    UnclaimExtension('.bread', '{#ProgIdBread}');
     UnclaimExtension('.stl', '{#ProgIdStl}');
     UnclaimExtension('.stla', '{#ProgIdStl}');
     UnclaimExtension('.stlb', '{#ProgIdStl}');

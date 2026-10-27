@@ -376,6 +376,7 @@ export component MainWindow inherits Window {
     callback close-current-scene();
     callback save-requested();
     callback save-as-requested();
+    callback save-as-3mf-requested();
     callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
@@ -563,6 +564,14 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.save-as-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Save As 3MF…");
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.save-as-3mf-requested();
                 }
             }
 
@@ -1571,6 +1580,14 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.save-as-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Save As 3MF…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.save-as-3mf-requested();
                     }
                 }
 
