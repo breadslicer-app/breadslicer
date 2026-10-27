@@ -2416,6 +2416,10 @@ msgctxt "Review"
 msgid "This cavity is not in a model hollowed here, so the drain cannot be drilled."
 msgstr "Esta cavidad no está en un modelo ahuecado acá, así que no se puede perforar el drenaje."
 
+msgctxt "Review"
+msgid "The models changed since this slice. Slice again before applying a fix."
+msgstr "Los modelos cambiaron desde este laminado. Laminá de nuevo antes de aplicar una corrección."
+
 #: src/review_panel.rs
 msgctxt "Review"
 msgid "Errors"
