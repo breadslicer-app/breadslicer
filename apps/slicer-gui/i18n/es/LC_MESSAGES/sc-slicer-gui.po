@@ -2351,8 +2351,8 @@ msgstr "Agregar soporte acá"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"
-msgid "Add drain here"
-msgstr "Agregar drenaje acá"
+msgid "Add drain holes…"
+msgstr "Agregar agujeros de drenaje…"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"
@@ -2708,3 +2708,13 @@ msgstr "Estos soportes no se pueden guardar como datos, así que se guardaron co
 msgctxt "DfSupportDialog"
 msgid "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
 msgstr "Estos soportes se abrieron como malla, así que no se pueden editar a mano. Generá soportes de nuevo para editarlos."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Hollow without drain holes"
+msgstr "Hueco sin agujeros de drenaje"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "This model is hollow, but its hollow has no drain holes, so its liquid resin stays inside. Add drain holes in the Hollow tab."
+msgstr "Este modelo está ahuecado, pero el hueco no tiene agujeros de drenaje, así que la resina líquida queda adentro. Agregá agujeros de drenaje en la pestaña Ahuecar."

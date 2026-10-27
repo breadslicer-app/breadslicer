@@ -10,9 +10,10 @@
 //! and centres the camera on its focus point. A finding with a suggested fix
 //! offers it where the app's own tools apply it as one undoable edit:
 //! "Add support here" through the Supports tab's hand tool
-//! ([`DfSupportRun::add_support_at`]), "Add drain here" through the Hollow
-//! tab's drains, on a model hollowed in this window
-//! ([`HollowRun::add_drain_at`]).
+//! ([`DfSupportRun::add_support_at`]). A cavity in a model hollowed in this
+//! window offers "Add drain holes…", which opens the Hollow tab's drain tool
+//! on that model, so the person picks where the holes go (#158); a hollow
+//! with no drain holes at all is reported as just that.
 //!
 //! The findings belong to the slice they were computed for: a new slice, a
 //! project's reloaded slices, a new scene or a closed one drop them. When the
@@ -46,13 +47,14 @@ use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::df_support_run::{DfSupportRun, HandEdit, raft_lift_label};
-use crate::hollow_run::{DrainRequest, HollowRun};
+use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::review::ReviewOutcome;
 use crate::review_marks::{FindingKey, ReviewMarks};
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
+use crate::selection::{LeafId, Selection};
 use crate::viewport::ViewportController;
-use crate::{MainWindow, ReviewRow};
+use crate::{MainWindow, ReviewRow, WorkspaceSection};
 
 /// How much of the plate a jump to a finding frames, in millimetres around
 /// its focus point.
@@ -132,8 +134,9 @@ struct HeldReview {
     /// while the scene's models still match.
     models: Option<Vec<ModelPose>>,
     outcome: ReviewOutcome,
-    /// Whether each finding's drain can be drilled here, by index.
-    drainable: Vec<bool>,
+    /// For each finding's drain, by index: the drain holes of the hollow made
+    /// here that holds its cavity, or `None` when no hollow made here does.
+    hollows: Vec<Option<usize>>,
     /// Findings whose fix was applied since the slice.
     fixed: BTreeSet<usize>,
 }
@@ -388,14 +391,26 @@ impl ReviewPanel {
         self.push(None);
     }
 
+    /// Opens the Hollow tab with its drain tool on, the hollowed model
+    /// `leaf` selected, for the person to place the drain holes.
+    fn open_drain_tool(&self, leaf: NodeId) {
+        self.document.set_selection(Selection::One(LeafId(leaf)));
+        self.ctrl.set_section(WorkspaceSection::Hollow);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_hollow_drain_tool(true);
+        }
+    }
+
     /// Shows the review of the slice the document has just stored.
     pub(crate) fn show(&self, outcome: ReviewOutcome) {
-        let drainable = match &outcome {
+        let hollows = match &outcome {
             ReviewOutcome::Reviewed { findings, .. } => findings
                 .iter()
                 .map(|finding| match finding.fix {
-                    Some(SuggestedFix::AddDrain { at }) => self.hollow.can_drain_at(world(at)),
-                    _ => false,
+                    Some(SuggestedFix::AddDrain { at }) => {
+                        self.hollow.hollow_at(world(at)).map(|(_, drains)| drains)
+                    }
+                    _ => None,
                 })
                 .collect(),
             ReviewOutcome::Failed(_) => Vec::new(),
@@ -409,7 +424,7 @@ impl ReviewPanel {
             generation: self.document.slice_generation(),
             models,
             outcome,
-            drainable,
+            hollows,
             fixed: BTreeSet::new(),
         });
         if let Some(ui) = self.ui.upgrade() {
@@ -513,7 +528,7 @@ impl ReviewPanel {
                     (
                         CardState::Reviewed,
                         mark_rows(
-                            review_rows(findings, &held.drainable, &held.fixed, fixable),
+                            review_rows(findings, &held.hollows, &held.fixed, fixable),
                             findings,
                             &row_marks,
                         ),
@@ -611,19 +626,14 @@ impl ReviewPanel {
                 self.toggle_fill(id);
                 return;
             }
-            Some(SuggestedFix::AddDrain { at }) => match self.hollow.add_drain_at(world(at)) {
-                DrainRequest::Started => {
-                    self.mark_fixed(index);
-                    Some(ctr!(
-                        "Review",
-                        "Hollowing the model again with the drain. Slice again when it is done."
-                    ))
+            // The person picks where the holes go: a drain drilled right at
+            // the finding is rarely where it looks good (#158).
+            Some(SuggestedFix::AddDrain { at }) => match self.hollow.hollow_at(world(at)) {
+                Some((leaf, _)) => {
+                    self.open_drain_tool(leaf);
+                    return;
                 }
-                DrainRequest::Busy => Some(ctr!(
-                    "Review",
-                    "A model is being hollowed; try again when it is done."
-                )),
-                DrainRequest::NoHollow => Some(ctr!(
+                None => Some(ctr!(
                     "Review",
                     "This cavity is not in a model hollowed here, so the drain cannot be drilled."
                 )),
@@ -708,7 +718,7 @@ fn worst_severity(findings: &[Finding]) -> i32 {
 /// whose fix was applied keeps its kind, for its mark.
 fn review_rows(
     findings: &[Finding],
-    drainable: &[bool],
+    hollows: &[Option<usize>],
     fixed: &BTreeSet<usize>,
     fixable: bool,
 ) -> Vec<ReviewRow> {
@@ -730,7 +740,7 @@ fn review_rows(
             _ if !fixable && !fixed.contains(&i) => FixKind::None,
             None => FixKind::None,
             Some(SuggestedFix::AddSupport { .. }) => FixKind::AddSupport,
-            Some(SuggestedFix::AddDrain { .. }) if drainable.get(i).copied().unwrap_or(false) => {
+            Some(SuggestedFix::AddDrain { .. }) if hollow_drains(hollows, i).is_some() => {
                 FixKind::AddDrain
             }
             Some(SuggestedFix::AddDrain { .. }) => FixKind::DrainNeedsHollow,
@@ -742,13 +752,31 @@ fn review_rows(
             Some(SuggestedFix::ClearRaft { lift_to_mm }) => raft_lift_label(lift_to_mm),
             _ => SharedString::default(),
         };
+        // A hollow made here with no drain holes at all: the cavity is the
+        // hollow, and what is missing is the drain holes (#158).
+        let undrained = matches!(finding.fix, Some(SuggestedFix::AddDrain { .. }))
+            && hollow_drains(hollows, i) == Some(0);
+        let (title, detail) = if undrained {
+            (
+                ctr!("Review", "Hollow without drain holes"),
+                ctr!(
+                    "Review",
+                    "This model is hollow, but its hollow has no drain holes, so its liquid resin stays inside. Add drain holes in the Hollow tab."
+                ),
+            )
+        } else {
+            (
+                finding.title.as_str().into(),
+                finding.detail.as_str().into(),
+            )
+        };
         rows.push(ReviewRow {
             id: i as i32,
             severity: code,
             header,
-            title: finding.title.as_str().into(),
+            title,
             layers: layers_label(finding.first_layer, finding.last_layer),
-            detail: finding.detail.as_str().into(),
+            detail,
             fix: fix as i32,
             fixed: fixed.contains(&i),
             fill: 0,
@@ -757,6 +785,11 @@ fn review_rows(
         });
     }
     rows
+}
+
+/// The drain holes of the hollow made here that holds finding `i`'s cavity.
+fn hollow_drains(hollows: &[Option<usize>], i: usize) -> Option<usize> {
+    hollows.get(i).copied().flatten()
 }
 
 /// What the marks make of each finding of the held review, by index.
