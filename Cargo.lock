@@ -5050,6 +5050,7 @@ dependencies = [
  "crc32fast",
  "png 0.18.1",
  "proptest",
+ "rayon",
  "sc-3mf",
  "sc-mesh-core",
  "sc-mesh-fixtures",
