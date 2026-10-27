@@ -9,7 +9,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { Icon, ToolButton, WorkflowTab } from "./kit/controls.slint";
-import { ExportInspector, HollowInspector, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { ExportInspector, HollowInspector, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
@@ -194,6 +194,13 @@ export component MainWindow inherits Window {
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
     callback support-option-changed(int, float);
+    // The raft would take the models' first layers (#131): the warning and
+    // the label of its lift button, both empty when it does not.
+    in property <string> support-raft-clash-message;
+    in property <string> support-raft-lift-label;
+    callback support-raft-lift-requested();
+    callback support-raft-off-requested();
+    callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
     // is clicked, 2 remove the support clicked.
     in-out property <int> support-tool: 0;
@@ -250,6 +257,29 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
+    // The Review card of the Slice tab (#90), driven by Rust
+    // (`review_panel`): see `SliceInspector` for the meaning of each.
+    in property <int> review-state: 0;
+    in property <string> review-summary;
+    in property <int> review-worst: -1;
+    in property <[ReviewRow]> review-rows: [];
+    in property <bool> review-stale: false;
+    in property <string> review-message;
+    in-out property <int> review-selected: -1;
+    in property <int> review-notes;
+    in property <bool> review-notes-open;
+    in property <int> review-fill-small;
+    in property <string> review-fills-note;
+    in property <bool> review-fills-clearable;
+    callback review-finding-clicked(int);
+    callback review-fix-requested(int);
+    callback review-fill-toggled(int);
+    callback review-leave-requested(int);
+    callback review-fill-small-requested();
+    callback review-fills-cleared();
+    callback review-notes-toggled();
+    // The second fix of a model inside the raft: turn the raft off (#131).
+    callback review-raft-off-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
     in-out property <bool> slice-split: false;
     callback support-preset-picked(int);
@@ -293,6 +323,8 @@ export component MainWindow inherits Window {
     in property <bool> support-gen-cancelable: false;
 
     in property <int> slice-completed: 0;
+    // Raised once every layer is cut, while the slice is reviewed.
+    in property <bool> slice-reviewing: false;
     in property <int> slice-total: 0;
     in property <float> slice-progress: 0.0;
     // Raised by the Rust driver after a Slice press whose inputs already
@@ -1318,6 +1350,17 @@ export component MainWindow inherits Window {
                             raft-index: root.support-raft-index;
                             raft-thickness: root.support-raft-thickness;
                             raft-wall: root.support-raft-wall;
+                            raft-clash-message: root.support-raft-clash-message;
+                            raft-lift-label: root.support-raft-lift-label;
+                            raft-lift => {
+                                root.support-raft-lift-requested();
+                            }
+                            raft-off => {
+                                root.support-raft-off-requested();
+                            }
+                            raft-ignore => {
+                                root.support-raft-ignore-requested();
+                            }
                             selection-valid: root.selection-valid;
                             lift: root.selection-pos-z;
                             option-changed(code, value) => {
@@ -1355,6 +1398,42 @@ export component MainWindow inherits Window {
                             estimate-volume: root.slice-estimate-volume;
                             estimate-mass: root.slice-estimate-mass;
                             estimate-note: root.slice-estimate-note;
+                            review-state: root.review-state;
+                            review-summary: root.review-summary;
+                            review-worst: root.review-worst;
+                            review-rows: root.review-rows;
+                            review-stale: root.review-stale;
+                            review-message: root.review-message;
+                            review-selected <=> root.review-selected;
+                            review-notes: root.review-notes;
+                            review-notes-open: root.review-notes-open;
+                            review-fill-small: root.review-fill-small;
+                            review-fills-note: root.review-fills-note;
+                            review-fills-clearable: root.review-fills-clearable;
+                            review-fill-toggled(id) => {
+                                root.review-fill-toggled(id);
+                            }
+                            review-leave-requested(id) => {
+                                root.review-leave-requested(id);
+                            }
+                            review-fill-small-requested => {
+                                root.review-fill-small-requested();
+                            }
+                            review-fills-cleared => {
+                                root.review-fills-cleared();
+                            }
+                            review-notes-toggled => {
+                                root.review-notes-toggled();
+                            }
+                            review-finding-clicked(id) => {
+                                root.review-finding-clicked(id);
+                            }
+                            review-fix-requested(id) => {
+                                root.review-fix-requested(id);
+                            }
+                            review-raft-off-requested(id) => {
+                                root.review-raft-off-requested(id);
+                            }
                             printer-picked(i) => {
                                 root.slice-printer-picked(i);
                             }
@@ -1835,7 +1914,8 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: root.slice-total > 0
+                    text: root.slice-reviewing ? @tr("SlicePanel" => "Checking the layers...")
+                        : root.slice-total > 0
                         ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                         : @tr("SlicePanel" => "Preparing...");
                     color: Palette.foreground.transparentize(0.3);
