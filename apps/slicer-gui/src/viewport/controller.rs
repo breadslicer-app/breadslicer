@@ -78,6 +78,9 @@ pub(crate) struct ViewportController {
     /// an empty image. Shares the cap key space with the 3D cut so the 2 stay
     /// in lockstep.
     slice_view_key: Cell<Option<u64>>,
+    /// The name of the printer whose plate the viewport shows, drawn under
+    /// the word on the plate's front tab; `None` for the placeholder plate.
+    plate_printer_name: RefCell<Option<String>>,
     /// Set by every scene event that can move or reselect the object: the
     /// Transform inspector's numbers are read again on the next frame, at
     /// most once per frame however many drag ticks landed.
@@ -126,6 +129,7 @@ impl ViewportController {
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            plate_printer_name: RefCell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
@@ -158,6 +162,7 @@ impl ViewportController {
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
+            plate_printer_name: RefCell::new(None),
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
@@ -546,6 +551,15 @@ impl ViewportController {
         if self.session.set_build_volume(bv) {
             // `mark_dirty` owes the redraw, which the render path needs before
             // it paints.
+            self.mark_dirty();
+        }
+    }
+
+    /// Replaces the name of the printer whose plate is shown and, when it
+    /// changes, schedules a redraw: the paint pass draws it on the front tab.
+    pub(crate) fn set_plate_printer_name(&self, name: Option<String>) {
+        if *self.plate_printer_name.borrow() != name {
+            *self.plate_printer_name.borrow_mut() = name;
             self.mark_dirty();
         }
     }
@@ -2073,12 +2087,16 @@ impl ViewportController {
             Err(err) => self.session.loader().note_render_failure(&err),
         }
 
-        // The word on the plate's front tab, keyed on the text so a language
-        // change rebuilds it and an orbit does not.
+        // The word on the plate's front tab and the printer's name under it,
+        // keyed on the text so a language or printer change rebuilds it and an
+        // orbit does not.
         let front_word = ctr!("MeshViewer", "FRONT");
+        let printer_name = self.plate_printer_name.borrow().clone();
         let mut hasher = DefaultHasher::new();
         front_word.as_str().hash(&mut hasher);
-        let mut build_label = || crate::front_label::rasterise_label(front_word.as_str());
+        printer_name.hash(&mut hasher);
+        let mut build_label =
+            || crate::front_label::rasterise_label(front_word.as_str(), printer_name.as_deref());
         match renderer.update_front_label(hasher.finish(), &mut build_label) {
             Ok(()) | Err(RenderError::DeviceLost) => {}
             Err(err) => self.session.loader().note_render_failure(&err),
