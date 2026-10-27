@@ -24,6 +24,7 @@ serde.workspace = true
 toml_edit.workspace = true
 
 [dev-dependencies]
+sc-bread-format.workspace = true
 sc-mesh-fixtures.workspace = true
 sc-scene-fixtures.workspace = true
 serde_json.workspace = true
