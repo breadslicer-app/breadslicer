@@ -2328,3 +2328,36 @@ msgstr "Registro de diagnóstico (para reportar errores)"
 msgctxt "AppearancePreferences"
 msgid "Open logs folder"
 msgstr "Abrir carpeta de registros"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Save As 3MF…"
+msgstr "Guardar como 3MF…"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Breadslicer projects"
+msgstr "Proyectos de Breadslicer"
+
+#: src/scene_save.rs
+msgctxt "ErrorDialog"
+msgid ""
+"Project files are saved as .bread files. To save a 3MF project, use Save As "
+"3MF."
+msgstr ""
+"Los archivos de proyecto se guardan como archivos .bread. Para guardar un "
+"proyecto 3MF, usa Guardar como 3MF."
+
+#: src/scene_loader.rs
+msgctxt "DfSupportDialog"
+msgid "Supports not restored"
+msgstr "Soportes no restaurados"
+
+#: src/scene_loader.rs
+msgctxt "DfSupportDialog"
+msgid ""
+"The project opened, but its supports could not be rebuilt and were left out. "
+"Generate them again."
+msgstr ""
+"El proyecto se abrió, pero sus soportes no se pudieron reconstruir y se "
+"dejaron fuera. Vuelve a generarlos."

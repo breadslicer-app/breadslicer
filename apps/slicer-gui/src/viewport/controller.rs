@@ -62,6 +62,7 @@ use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
+use crate::support_persist::install_session;
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
@@ -733,6 +734,7 @@ impl ViewportController {
             reloaded_slices,
             source_path,
             mesh_health,
+            restored_supports,
             ..
         } = prepared;
 
@@ -756,6 +758,10 @@ impl ViewportController {
         self.session
             .document()
             .install_spatial(spatial, source_path, project_payload);
+
+        // A reopened `.bread`'s rebuilt supports are the editable session of
+        // the fresh scene; any other load leaves no session in force.
+        install_session(self.session.document(), restored_supports.session);
 
         // A reopened project's revalidated slices become the held result now,
         // after install has cleared any previous one, so the viewer opens on

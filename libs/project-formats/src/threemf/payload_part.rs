@@ -37,25 +37,27 @@ struct PayloadDoc {
     slices: SlicesSection,
 }
 
+/// The profile references; the `.bread` settings document shares it.
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct ProfilesSection {
+pub(crate) struct ProfilesSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    printer: Option<PrinterId>,
+    pub(crate) printer: Option<PrinterId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    resin: Option<MaterialId>,
+    pub(crate) resin: Option<MaterialId>,
 }
 
-/// Per-print slicing settings that live with the project.
+/// Per-print slicing settings that live with the project; the `.bread`
+/// settings document shares it.
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct PrintSection {
+pub(crate) struct PrintSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    first_layer_height_mm: Option<PositiveFiniteMm>,
+    pub(crate) first_layer_height_mm: Option<PositiveFiniteMm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    output_format: Option<OutputFormatBinding>,
+    pub(crate) output_format: Option<OutputFormatBinding>,
 }
 
 impl PrintSection {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.first_layer_height_mm.is_none() && self.output_format.is_none()
     }
 }

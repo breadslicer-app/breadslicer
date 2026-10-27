@@ -15,6 +15,7 @@ use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use sc_bread_format::SupportDocument;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
@@ -30,7 +31,8 @@ use crate::payload::ProjectPayload;
 use crate::progress_reader::ProgressReader;
 use crate::read::{LoadedProject, read_project_with_progress};
 
-pub const SUPPORTED_SCENE_FILE_EXTENSIONS: &[&str] = &["3mf", "obj", "stl", "stla", "stlb"];
+pub const SUPPORTED_SCENE_FILE_EXTENSIONS: &[&str] =
+    &["bread", "3mf", "obj", "stl", "stla", "stlb"];
 
 /// Returns whether `path`'s extension is in
 /// [`SUPPORTED_SCENE_FILE_EXTENSIONS`], matching case-insensitively.
@@ -61,6 +63,9 @@ pub struct LoadedScene {
 
 /// The scene of a loaded file, by whether the file carries project data that
 /// this build reads.
+// Built and moved once per load; boxing the project would only cost every
+// caller a deref in its match.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum LoadedContent {
     /// A file without such data: a mesh file, a 3MF without the project part,
@@ -79,6 +84,9 @@ pub struct ProjectContent {
     pub payload: ProjectPayload,
     /// `None` unless the file stores both the slices and their token.
     pub persisted_slices: Option<PersistedSlices>,
+    /// Supports stored as data, whose leaves arrive with an empty mesh for the
+    /// application to rebuild (see [`crate::LoadedProject::supports`]).
+    pub supports: Vec<SupportDocument>,
 }
 
 /// Slices that a project file stores, with the token that they were saved with.
@@ -239,6 +247,7 @@ fn open_project<F: FnMut(LoadProgress)>(
         payload,
         slices,
         slice_fingerprint,
+        supports,
     } = read_project_with_progress(&mut reader, file_type, |p| {
         announced_total = p.total_bytes;
         on_progress(LoadProgress {
@@ -267,6 +276,7 @@ fn open_project<F: FnMut(LoadProgress)>(
                     contours,
                     fingerprint,
                 }),
+            supports,
         }),
         None => LoadedContent::Mesh(scene),
     };

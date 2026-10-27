@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectFileType {
     ThreeMf,
+    /// Breadslicer's own project file (#145).
+    Bread,
 }
 
 /// Returned by [`infer_project_file_type_from_extension`] when the
@@ -51,6 +53,7 @@ pub fn infer_project_file_type_from_extension(
 
     match extension.as_str() {
         "3mf" => Ok(ProjectFileType::ThreeMf),
+        "bread" => Ok(ProjectFileType::Bread),
         _ => Err(InferProjectFileTypeError::UnknownExtension {
             path: path.to_path_buf(),
         }),
