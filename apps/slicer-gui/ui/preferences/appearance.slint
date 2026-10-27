@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, CheckBox, ComboBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export enum ThemePreference { System, Light, Dark }
@@ -31,6 +31,11 @@ export component AppearancePreferences inherits PreferencesPage {
     in-out property <bool> diagnostic-log: false;
     callback diagnostic-log-changed(bool);
     callback open-logs-folder();
+
+    // How many app messages are silenced with "Don't show again"; the reset
+    // button shows them all again (#133).
+    in property <int> silenced-message-count: 0;
+    callback show-all-messages-again();
 
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
@@ -115,6 +120,25 @@ export component AppearancePreferences inherits PreferencesPage {
             clicked => {
                 root.open-logs-folder();
             }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Button {
+            text: @tr("AppearancePreferences" => "Show all messages again");
+            enabled: root.silenced-message-count > 0;
+            clicked => {
+                root.show-all-messages-again();
+            }
+        }
+
+        if root.silenced-message-count > 0: Text {
+            text: @tr("AppearancePreferences" => "Hidden messages: {}", root.silenced-message-count);
+            vertical-alignment: center;
+            color: Palette.foreground.transparentize(0.4);
         }
     }
 

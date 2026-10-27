@@ -5,7 +5,6 @@
 
 import { Button, Palette, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
-import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
@@ -16,10 +15,8 @@ import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
 import { ForkDialog } from "fork-dialog.slint";
-import { InfoDialog } from "info-dialog.slint";
+import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "message-layer.slint";
 import { ProfileViewDialog } from "profile-view-dialog.slint";
-import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
-import { SliceOverwriteDialog } from "slice-overwrite-dialog.slint";
 
 // Embeds Noto Sans into the executable and registers it process wide.
 // Text layout then resolves to this in-memory font instead of scanning
@@ -27,7 +24,7 @@ import { SliceOverwriteDialog } from "slice-overwrite-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, InfoDialog, PointerModifiers, PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, SliceOverwriteDialog, ThemePreference }
+export { AboutWindow, AppMessage, AxisView, ExtendDialog, ForkDialog, MessageAnswer, MessageKind, PointerModifiers, PreferencesWindow, ProfileViewDialog, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the
@@ -72,6 +69,17 @@ export component MainWindow inherits Window {
     background: Theme.ground;
 
     in property <image> mesh-rendering;
+    // The app message on show (#133), centred over the window on a dimmed
+    // layer; Rust (`error_dialog::DialogManager`) owns the queue and decides
+    // what a click outside does.
+    in property <AppMessage> message;
+    in property <bool> message-open: false;
+    in property <int> message-serial: 0;
+    in-out property <bool> message-silence: false;
+    // Heading of an error message that brings none of its own.
+    out property <string> message-default-heading: @tr("ErrorDialog" => "An error occurred");
+    callback message-answered(MessageAnswer);
+    callback message-outside-clicked();
     in property <bool> loading: false;
     in property <bool> has-scene: false;
     in property <bool> can-undo: false;
@@ -1926,6 +1934,30 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // App messages (#133): last, so they sit over everything else.
+    MessageLayer {
+        width: 100%;
+        height: 100%;
+        message: root.message;
+        open: root.message-open;
+        serial: root.message-serial;
+        default-heading: root.message-default-heading;
+        silence <=> root.message-silence;
+        answered(answer) => {
+            root.message-answered(answer);
+        }
+        outside-clicked => {
+            root.message-outside-clicked();
+        }
+    }
+
+    // A closed message hands the keyboard back to the viewport.
+    changed message-open => {
+        if (!root.message-open) {
+            mv.focus-viewport();
         }
     }
 }

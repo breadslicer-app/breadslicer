@@ -328,6 +328,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
     settings.set_diagnostic_log(snap.diagnostic_log);
+    settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
     settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
@@ -458,6 +459,7 @@ impl AppState {
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
             diagnostic_log: settings.diagnostic_log(),
+            silenced_messages: settings.silenced_messages(),
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
             object_list_anchor_bottom: settings.object_list_anchor_bottom(),
@@ -1197,17 +1199,19 @@ impl AppState {
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         {
             let app = Rc::downgrade(self);
+            let ui_weak = ui.as_weak();
             ui.on_show_about_requested(move || {
-                if let Some(app) = app.upgrade() {
-                    app.show_about();
+                if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
+                    app.show_about(&ui);
                 }
             });
         }
         {
             let app = Rc::downgrade(self);
+            let ui_weak = ui.as_weak();
             ui.on_show_preferences_requested(move || {
-                if let Some(app) = app.upgrade() {
-                    app.show_preferences();
+                if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
+                    app.show_preferences(&ui);
                 }
             });
         }
@@ -1364,13 +1368,15 @@ impl AppState {
         }
     }
 
-    /// Shows the app-wide About window, creating it on first use and re-showing
-    /// the same instance on subsequent calls. The window's bus subscription
-    /// keeps it up-to-date while hidden, so no extra re-apply is needed here.
-    fn show_about(&self) {
+    /// Shows the app-wide About window centred over `over`, the window that
+    /// asked for it, creating it on first use and re-showing the same instance
+    /// on subsequent calls. The window's bus subscription keeps it up-to-date
+    /// while hidden, so no extra re-apply is needed here.
+    fn show_about(&self, over: &MainWindow) {
         let mut slot = self.about_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
             let _ = existing.window.show();
+            crate::window_placement::centre_over(&existing.window, over);
             return;
         }
         match build_about_window(&self.prefs) {
@@ -1379,19 +1385,22 @@ impl AppState {
                     eprintln!("Failed to show About window: {err}");
                     return;
                 }
+                crate::window_placement::centre_over(&wired.window, over);
                 *slot = Some(wired);
             }
             Err(err) => eprintln!("Failed to create About window: {err}"),
         }
     }
 
-    /// Shows the app-wide Preferences window, creating it on first use and
-    /// re-showing the same instance on subsequent calls. The window's bus
-    /// subscription keeps it up-to-date while hidden.
-    fn show_preferences(&self) {
+    /// Shows the app-wide Preferences window centred over `over`, the window
+    /// that asked for it, creating it on first use and re-showing the same
+    /// instance on subsequent calls. The window's bus subscription keeps it
+    /// up-to-date while hidden.
+    fn show_preferences(&self, over: &MainWindow) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
             let _ = existing.window.show();
+            crate::window_placement::centre_over(&existing.window, over);
             return;
         }
         match build_preferences_window(&self.prefs, self.catalog.clone()) {
@@ -1400,6 +1409,7 @@ impl AppState {
                     eprintln!("Failed to show Preferences window: {err}");
                     return;
                 }
+                crate::window_placement::centre_over(&wired.window, over);
                 *slot = Some(wired);
             }
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
@@ -1582,6 +1592,17 @@ mod settings_saver_tests {
 
         assert!(settings.favourite_printers().contains(&printer));
         assert!(settings.favourite_resins().contains(&resin));
+    }
+
+    #[test]
+    fn apply_snapshot_copies_the_silenced_messages_into_settings() {
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.silenced_messages.insert("repair.summary".to_owned());
+
+        let mut settings = AppSettings::default();
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert_eq!(settings.silenced_messages(), snap.silenced_messages);
     }
 
     #[test]
@@ -2057,6 +2078,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
             PreferencesChange::DiagnosticLog,
+            PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,
@@ -2157,7 +2179,7 @@ mod window_wiring_tests {
     use crate::language::{BundledLanguage, LanguagePreference};
     use crate::test_support::catalog_entries::printer_entry;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
-    use crate::{ErrorDialog, WorkspaceSection};
+    use crate::{MainWindow, WorkspaceSection};
 
     fn listed_printer() -> PrinterId {
         PrinterId::new("listed-printer").expect("valid printer id")
@@ -2565,11 +2587,12 @@ mod window_wiring_tests {
         LanguagePreference::Bundled(BundledLanguage::from_code(code).expect("bundled language"))
     }
 
-    /// Returns the heading of a new error dialog, in the language in force.
+    /// Returns the default heading of an error message in a new window, in the
+    /// language in force.
     fn error_heading() -> String {
-        ErrorDialog::new()
+        MainWindow::new()
             .expect("the headless platform creates components")
-            .get_heading()
+            .get_message_default_heading()
             .to_string()
     }
 
