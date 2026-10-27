@@ -14,7 +14,7 @@
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
-use sc_geom::df_supports::is_support_mesh_name;
+use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_review::{Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, review_with};
 use sc_sl1cer::LeafSlices;
 use sc_sl1cer::profile::SliceProfile;
@@ -64,7 +64,8 @@ pub(crate) fn review_slices(
     guarded(|| {
         let input = ReviewInput::from_profile(review_leaves(leaves), profile)
             .map_err(|err| err.to_string())?
-            .with_raft_top_mm(raft_top_mm);
+            .with_raft_top_mm(raft_top_mm)
+            .with_support_lift_mm(Some(recommended_lift_mm(None)));
         let report = review_with(&input, &ReviewOptions::default());
         Ok(ReviewOutcome::Reviewed {
             findings: report.findings,

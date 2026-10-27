@@ -352,11 +352,16 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         .switch();
 
     let df_lift = long("df-lift")
-        .help(
-            "With --df-supports and auto-placement: the height in millimetres the scene is raised off the plate to make room for the supports (default 5).",
-        )
+        // Built once per parse; the help names the generator's own default.
+        .help(&*Box::leak(
+            format!(
+                "With --df-supports and auto-placement: the height in millimetres the scene is raised off the plate to make room for the supports (default {}).",
+                sc_geom::df_supports::DEFAULT_SUPPORT_LIFT_MM
+            )
+            .into_boxed_str(),
+        ))
         .argument::<f64>("MM")
-        .fallback(5.0);
+        .fallback(sc_geom::df_supports::DEFAULT_SUPPORT_LIFT_MM);
 
     construct!(PlateOptions {
         printer_profile,

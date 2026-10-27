@@ -192,14 +192,12 @@ pub enum SuggestedFix {
         /// Where the hole goes.
         at: PlatePoint,
     },
-    /// Clear the model of the raft (#131): lift it `layers` layers, so its
-    /// lowest point stands at `lift_to_mm` above the plate, or turn the raft
-    /// off. Either needs the supports generated again.
+    /// Clear the model of the raft (#131): lift it so its lowest point
+    /// stands `lift_to_mm` above the plate, the support lift that leaves the
+    /// supports room under it, or turn the raft off. Either needs the
+    /// supports generated again.
     ClearRaft {
-        /// The layers the model must rise.
-        layers: usize,
-        /// The height its lowest point must reach, the raft's last layer's
-        /// top.
+        /// The height the model's lowest point must reach.
         lift_to_mm: f64,
     },
 }
@@ -209,9 +207,7 @@ impl SuggestedFix {
         match *self {
             Self::AddSupport { at } => (0, at),
             Self::AddDrain { at } => (1, at),
-            Self::ClearRaft { layers, lift_to_mm } => {
-                (2, PlatePoint::new(layers as f64, lift_to_mm, 0.0))
-            }
+            Self::ClearRaft { lift_to_mm } => (2, PlatePoint::new(0.0, 0.0, lift_to_mm)),
         }
     }
 

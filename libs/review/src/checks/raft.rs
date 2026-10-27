@@ -18,15 +18,19 @@
 //!   layer to its last, focused on the centre of what it has there. Only
 //!   when the plate has a raft: an input that knows the raft's top, with
 //!   support contour on the first layer. It suggests
-//!   [`SuggestedFix::ClearRaft`]: lift the model the layers it reaches into
-//!   the raft, or turn the raft off.
+//!   [`SuggestedFix::ClearRaft`]: lift the model to the recommended support
+//!   lift ([`ReviewInput::recommended_lift_mm`]), or turn the raft off.
+//!   Lifting it only above the raft would leave the supports no room to
+//!   grow under its lowest overhangs.
 //!
-//! Islands that start inside the raft zone, within the footprint of a model
-//! in the raft, are not reported on their own ([`covers`]): the raft
-//! finding explains them, and a support cannot reach them there.
+//! Islands that start below the recommended lift, within the footprint the
+//! model in the raft has below it, are not reported on their own
+//! ([`covers`]): the raft finding explains them, and no support fits under
+//! them until the model is lifted.
 //!
 //! [`ReviewInput::raft_top_mm`]: crate::input::ReviewInput::raft_top_mm
 //! [`ReviewInput::raft_layers`]: crate::input::ReviewInput::raft_layers
+//! [`ReviewInput::recommended_lift_mm`]: crate::input::ReviewInput::recommended_lift_mm
 
 use sc_sl1cer::contour::Polygon;
 
@@ -40,8 +44,9 @@ pub struct RaftOptions {
     /// The least contour area, in pixels, a model must have on a layer of
     /// the raft zone to be in the raft: less is a sliver of the mesh.
     pub min_area_px: f64,
-    /// How far, in millimetres, around the footprint a model has in the raft
-    /// an island may start and still be covered by the raft finding.
+    /// How far, in millimetres, around the footprint a model in the raft has
+    /// below the recommended lift an island may start and still be covered
+    /// by the raft finding.
     pub island_margin_mm: f64,
 }
 
@@ -59,9 +64,10 @@ impl Default for RaftOptions {
 pub struct RaftClash {
     /// The finding reported for it.
     pub finding: Finding,
-    /// The raft zone's layer count: layers `0..zone_layers`.
-    pub zone_layers: usize,
-    /// The bounding box of the model's contours in the raft zone,
+    /// The layers below the recommended lift, `0..cover_layers`: an island
+    /// that starts on one of them, within the footprint, is covered.
+    pub cover_layers: usize,
+    /// The bounding box of the model's contours below the recommended lift,
     /// `[min_x, min_y, max_x, max_y]` in plate millimetres.
     pub footprint_mm: [f64; 4],
 }
@@ -94,7 +100,10 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
         return Vec::new();
     }
     let spans = input.layers();
-    let lift_to_mm = spans[zone - 1].top_mm;
+    let lift_to_mm = input
+        .recommended_lift_mm()
+        .unwrap_or(spans[zone - 1].top_mm);
+    let cover = input.lift_layers().clamp(zone, input.layer_count());
     let mut clashes = Vec::new();
     for leaf in input
         .leaves()
@@ -108,12 +117,14 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
             f64::NEG_INFINITY,
             f64::NEG_INFINITY,
         ];
-        for (layer, contours) in leaf.stack.layers()[..zone].iter().enumerate() {
+        for (layer, contours) in leaf.stack.layers()[..cover].iter().enumerate() {
             let polygons = contours.polygons();
             if layer_area_mm2(polygons) < min_area_mm2 {
                 continue;
             }
-            range = Some(range.map_or((layer, layer), |(first, _)| (first, layer)));
+            if layer < zone {
+                range = Some(range.map_or((layer, layer), |(first, _)| (first, layer)));
+            }
             for polygon in polygons {
                 for v in polygon.outer().vertices() {
                     footprint[0] = footprint[0].min(v.x);
@@ -126,7 +137,6 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
         let Some((first, last)) = range else {
             continue;
         };
-        let rise = zone - first;
         let focus = PlatePoint::new(
             (footprint[0] + footprint[2]) * 0.5,
             (footprint[1] + footprint[3]) * 0.5,
@@ -141,19 +151,15 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
             RoleScope::Model,
             "Model inside the raft",
             format!(
-                "The raft takes {zone} {layers} ({raft_top_mm:.2} mm) and the model reaches down into it from layer {from}; lift it at least {rise} {rise_layers} or turn the raft off.",
+                "The raft takes {zone} {layers} ({raft_top_mm:.2} mm) and the model reaches down into it from layer {from}, leaving no room for supports under it; lift it to {lift_to_mm:.2} mm or turn the raft off.",
                 layers = if zone == 1 { "layer" } else { "layers" },
                 from = first + 1,
-                rise_layers = if rise == 1 { "layer" } else { "layers" },
             ),
         )
-        .with_fix(SuggestedFix::ClearRaft {
-            layers: rise,
-            lift_to_mm,
-        });
+        .with_fix(SuggestedFix::ClearRaft { lift_to_mm });
         clashes.push(RaftClash {
             finding,
-            zone_layers: zone,
+            cover_layers: cover,
             footprint_mm: footprint,
         });
     }
@@ -161,15 +167,15 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
 }
 
 /// Whether `finding` is an island the raft finding of one of `clashes`
-/// explains: an island of model that starts inside the raft zone, within
-/// `margin_mm` of the footprint the model has there.
+/// explains: an island, of model or of the supports crammed under it, that
+/// starts below the recommended lift, within `margin_mm` of the footprint
+/// the model in the raft has there.
 pub fn covers(clashes: &[RaftClash], finding: &Finding, margin_mm: f64) -> bool {
     finding.check == CheckKind::Island
-        && finding.scope != RoleScope::Support
         && clashes.iter().any(|clash| {
             let [x0, y0, x1, y1] = clash.footprint_mm;
             let (x, y) = (finding.focus.x_mm, finding.focus.y_mm);
-            finding.first_layer < clash.zone_layers
+            finding.first_layer < clash.cover_layers
                 && x >= x0 - margin_mm
                 && x <= x1 + margin_mm
                 && y >= y0 - margin_mm

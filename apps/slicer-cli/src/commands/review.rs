@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::is_support_mesh_name;
+use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
     Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport,
@@ -54,9 +54,13 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         .collect();
     // Generated supports stand on the raft their options build.
     let raft_top_mm = options.df_supports.then(df_raft_top_mm).flatten();
+    // A model in the raft is pointed at the support lift: the default, or a
+    // higher --df-lift.
+    let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.df_lift)));
     let input = ReviewInput::from_profile(leaves, plate.profile())
         .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?
-        .with_raft_top_mm(raft_top_mm);
+        .with_raft_top_mm(raft_top_mm)
+        .with_support_lift_mm(support_lift_mm);
     let regions = PlateRegions::compute(&input);
     let report = review_regions(
         &ReviewContext::new(&input, &regions),
@@ -186,10 +190,9 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
-        Some(SuggestedFix::ClearRaft { layers, lift_to_mm }) => format!(
-            " Fix: lift the model {layers} {} (to {lift_to_mm:.2} mm) or turn the raft off.",
-            if *layers == 1 { "layer" } else { "layers" }
-        ),
+        Some(SuggestedFix::ClearRaft { lift_to_mm }) => {
+            format!(" Fix: lift the model to {lift_to_mm:.2} mm or turn the raft off.")
+        }
     };
     format!(
         "{layers:<15} {:<7} {:<13} {:<7} {}. {} At ({:.2}, {:.2}, {:.2}) mm.{fix}",
@@ -344,13 +347,10 @@ mod review_output_tests {
 
     #[test]
     fn a_raft_fix_names_the_lift_and_the_raft() {
-        let finding = island().with_fix(SuggestedFix::ClearRaft {
-            layers: 9,
-            lift_to_mm: 0.9,
-        });
+        let finding = island().with_fix(SuggestedFix::ClearRaft { lift_to_mm: 5.0 });
         let line = finding_line(&finding);
         assert!(
-            line.ends_with(" Fix: lift the model 9 layers (to 0.90 mm) or turn the raft off."),
+            line.ends_with(" Fix: lift the model to 5.00 mm or turn the raft off."),
             "{line}"
         );
     }
