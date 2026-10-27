@@ -22,6 +22,8 @@ use crate::profile_catalog::ProfileCatalog;
 /// catalog rebuild alone leaves it as it is.
 pub(crate) struct DefaultEnvelope {
     current: Rc<Cell<BuildVolume>>,
+    /// The name of the printer whose plate it is, for the plate's front tab.
+    printer_name: Rc<RefCell<Option<String>>>,
     _subscription: Subscription,
 }
 
@@ -34,23 +36,25 @@ impl DefaultEnvelope {
         bus: &Rc<PreferencesBus>,
         catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
     ) -> Rc<Self> {
-        let current = Rc::new(Cell::new(default_printer_plate(
-            &catalog.borrow(),
-            bus.snapshot().default_printer.as_ref(),
-        )));
+        let (plate, name) =
+            default_printer_plate(&catalog.borrow(), bus.snapshot().default_printer.as_ref());
+        let current = Rc::new(Cell::new(plate));
+        let printer_name = Rc::new(RefCell::new(name));
         let subscription = bus.subscribe({
             let current = current.clone();
+            let printer_name = printer_name.clone();
             move |snap, change| {
                 if *change == PreferencesChange::DefaultPrinter {
-                    current.set(default_printer_plate(
-                        &catalog.borrow(),
-                        snap.default_printer.as_ref(),
-                    ));
+                    let (plate, name) =
+                        default_printer_plate(&catalog.borrow(), snap.default_printer.as_ref());
+                    current.set(plate);
+                    *printer_name.borrow_mut() = name;
                 }
             }
         });
         Rc::new(Self {
             current,
+            printer_name,
             _subscription: subscription,
         })
     }
@@ -58,13 +62,46 @@ impl DefaultEnvelope {
     pub(crate) fn current(&self) -> BuildVolume {
         self.current.get()
     }
+
+    /// Returns the printer's manufacturer and model, or `None` for the
+    /// placeholder plate.
+    pub(crate) fn printer_name(&self) -> Option<String> {
+        self.printer_name.borrow().clone()
+    }
 }
 
-fn default_printer_plate(catalog: &ProfileCatalog, chosen: Option<&PrinterId>) -> BuildVolume {
-    catalog
+/// The plate of the default printer and its display name, or the
+/// placeholder and no name when the catalog does not hold that printer.
+fn default_printer_plate(
+    catalog: &ProfileCatalog,
+    chosen: Option<&PrinterId>,
+) -> (BuildVolume, Option<String>) {
+    let entry = catalog
         .effective_default_printer(chosen)
-        .and_then(|printer| catalog.printer_build_volume(&printer))
-        .map_or(NO_PRINTER_BUILD_VOLUME, BuildVolume::from)
+        .and_then(|printer| catalog.printers().iter().find(|entry| entry.id == printer));
+    match entry {
+        Some(entry) => (
+            BuildVolume::from(entry.build_volume),
+            Some(printer_display_name(&entry.manufacturer, &entry.name)),
+        ),
+        None => (NO_PRINTER_BUILD_VOLUME, None),
+    }
+}
+
+/// "Anycubic Photon Mono M7 Pro" from its manufacturer and model, without
+/// repeating a manufacturer the model name already starts with.
+fn printer_display_name(manufacturer: &str, name: &str) -> String {
+    let manufacturer = manufacturer.trim();
+    let name = name.trim();
+    let starts_with_maker = name
+        .get(..manufacturer.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(manufacturer));
+    let maker = if starts_with_maker { "" } else { manufacturer };
+    [maker, name]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -219,5 +256,35 @@ mod default_envelope_tests {
         pick_default_printer(&bus, other_printer());
 
         assert_eq!(seen.get(), Some(BuildVolume::new(120.0, 68.0, 150.0)));
+    }
+    #[test]
+    fn the_printer_name_follows_the_plate() {
+        let bus = bus_with_default(Some(other_printer()));
+        let envelope = DefaultEnvelope::new(&bus, cell(catalog(OTHER, GENERIC)));
+        assert_eq!(envelope.printer_name().as_deref(), Some("Alpha"));
+
+        pick_default_printer(&bus, generic_printer_id().clone());
+        assert_eq!(envelope.printer_name().as_deref(), Some("Generic"));
+    }
+
+    #[test]
+    fn the_placeholder_plate_has_no_printer_name() {
+        let bus = bus_with_default(None);
+        let envelope = DefaultEnvelope::new(&bus, cell(ProfileCatalog::default()));
+        assert_eq!(envelope.printer_name(), None);
+    }
+
+    #[test]
+    fn a_display_name_does_not_repeat_its_manufacturer() {
+        assert_eq!(
+            printer_display_name("Anycubic", "Photon Mono M7 Pro"),
+            "Anycubic Photon Mono M7 Pro"
+        );
+        assert_eq!(
+            printer_display_name("Creality", "Creality Halot One"),
+            "Creality Halot One"
+        );
+        assert_eq!(printer_display_name("Elegoo", ""), "Elegoo");
+        assert_eq!(printer_display_name("", " Saturn 4 "), "Saturn 4");
     }
 }

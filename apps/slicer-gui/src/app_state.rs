@@ -402,6 +402,13 @@ fn spawn_settings_saver(
 /// `controller` build its texts again. `envelope` and `UiLanguage` must
 /// subscribe to `bus` first, so that the listener reads the new plate and the
 /// new language.
+/// Shows the default printer's plate in `controller`, with the printer's
+/// name on its front tab.
+fn show_envelope(controller: &ViewportController, envelope: &DefaultEnvelope) {
+    controller.set_build_volume(envelope.current());
+    controller.set_plate_printer_name(envelope.printer_name());
+}
+
 fn subscribe_window_preferences(
     bus: &Rc<PreferencesBus>,
     window: &MainWindow,
@@ -414,7 +421,7 @@ fn subscribe_window_preferences(
             w.apply_preferences(snap);
         }
         if matches!(change, PreferencesChange::DefaultPrinter) {
-            controller.set_build_volume(envelope.current());
+            show_envelope(&controller, &envelope);
         }
         if matches!(change, PreferencesChange::Language) {
             controller.refresh_texts();
@@ -566,7 +573,7 @@ impl AppState {
         // Bus listeners run on `update` only, so the window gets the current
         // build volume here, and the subscription below delivers each later
         // change.
-        ctrl.set_build_volume(self.default_envelope.current());
+        show_envelope(&ctrl, &self.default_envelope);
 
         let id = self.next_window_id.get();
         let open_app = Rc::downgrade(self);
@@ -1973,7 +1980,7 @@ mod subscribe_window_preferences_tests {
             &bus,
         ));
         controller.register_document_listener();
-        controller.set_build_volume(envelope.current());
+        show_envelope(&controller, &envelope);
         let subscription =
             subscribe_window_preferences(&bus, &window, controller.clone(), envelope);
         SubscribedWindow {
@@ -2186,7 +2193,7 @@ mod window_wiring_tests {
             &app.prefs,
         ));
         controller.register_document_listener();
-        controller.set_build_volume(app.default_envelope.current());
+        show_envelope(&controller, &app.default_envelope);
         (window, pending_load, controller)
     }
 

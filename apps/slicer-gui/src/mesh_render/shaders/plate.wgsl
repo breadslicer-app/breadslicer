@@ -62,16 +62,20 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-const FLOOR_BASE: vec3<f32> = vec3<f32>(0.16, 0.20, 0.22);
-const FLOOR_GRID: vec3<f32> = vec3<f32>(0.22, 0.28, 0.30);
-const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.55, 0.40, 0.25);
-// Plate top border (outer rounded ring): slightly darker than the
-// grid floor base so the build-area edge reads visually without a
-// hard separator.
-const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.13, 0.16, 0.18);
-// Plate sides: darker still so the slab fakes 3D depth without a
-// lighting model.
-const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.09, 0.11, 0.13);
+// Colours are Breadslicer's theme tokens (`ui/kit/theme.slint`, dark),
+// written as-is: the viewport target is not sRGB-encoded.
+// Floor: `raised` #272b2e, grid lines: `border` #383e42.
+const FLOOR_BASE: vec3<f32> = vec3<f32>(0.153, 0.169, 0.180);
+const FLOOR_GRID: vec3<f32> = vec3<f32>(0.220, 0.243, 0.259);
+// Cage edges: `border-strong` #545c62.
+const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.329, 0.361, 0.384);
+// Plate top border (outer rounded ring): `border-soft` #2c3135, a
+// shade lighter than the floor, so the build area reads as set into
+// a rim without a hard separator.
+const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.173, 0.192, 0.208);
+// Plate sides: `well` #16181a, darker so the slab fakes 3D depth
+// without a lighting model.
+const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.086, 0.094, 0.102);
 // Bottom face: same hue as the sides, but emitted with alpha < 1
 // so the alpha-blending pipeline mixes it over whatever was in the
 // framebuffer when the camera looks up from below.
@@ -108,9 +112,10 @@ fn floor_colour(world_xy: vec2<f32>) -> vec3<f32> {
 // enough that the offending mesh's red-tinted pixels remain readable
 // through the wall, high enough that the wall reads as an unambiguous
 // warning at default viewing distance.
-const WALL_WARNING_COLOUR: vec3<f32> = vec3<f32>(1.00, 0.15, 0.15);
+// The theme's highlight, `accent` #d7a75a.
+const WALL_WARNING_COLOUR: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
 const WALL_STRIPE_PERIOD_MM: f32 = 12.0;
-const WALL_STRIPE_DUTY: f32 = 0.50;
+const WALL_STRIPE_DUTY: f32 = 0.36;
 const WALL_STRIPE_ALPHA: f32 = 0.55;
 
 // Returns the 2D parameter `u + v` (in mm) used by the diagonal stripe
