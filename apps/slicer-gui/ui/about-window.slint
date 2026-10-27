@@ -7,8 +7,8 @@ import { Button, Palette } from "std-widgets.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 
 export component AboutWindow inherits Window {
-    title: @tr("About SoulCrafted Slicer");
-    icon: @image-url("../assets/images/soulcrafted.svg");
+    title: @tr("About Breadslicer");
+    icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
 
     in property <string> app-version: "";
@@ -45,14 +45,14 @@ export component AboutWindow inherits Window {
         HorizontalLayout {
             alignment: center;
             Image {
-                source: @image-url("../assets/images/soulcrafted.svg");
+                source: @image-url("../assets/images/breadslicer.png");
                 width: 144px;
                 height: 144px;
             }
         }
 
         Text {
-            text: @tr("SoulCrafted Slicer");
+            text: "Breadslicer";
             font-size: root.font-title;
             font-weight: 700;
             horizontal-alignment: center;

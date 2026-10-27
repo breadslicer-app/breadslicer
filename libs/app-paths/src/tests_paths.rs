@@ -12,7 +12,8 @@ use std::path::{Component, PathBuf};
 use tempfile::tempdir;
 
 use super::{
-    APP_ID, all_app_dirs, bundled_data_dirs, bundled_data_dirs_from, home_dir, project_dirs,
+    APP_ID, all_app_dirs, bundled_data_dirs, bundled_data_dirs_from, home_dir, migrate_dir,
+    project_dirs,
 };
 
 #[cfg(target_os = "linux")]
@@ -138,7 +139,7 @@ fn project_dirs_paths_embed_the_app_identity() {
     if let Some(dirs) = project_dirs() {
         let data = dirs.data_dir().to_string_lossy().to_lowercase();
         assert!(
-            data.contains("slicer") || data.contains("soulcrafted"),
+            data.contains("breadslicer"),
             "data dir should embed the app or org identifier: {data}",
         );
     }
@@ -235,4 +236,43 @@ fn exe_relative_bases_are_the_binary_dir_and_its_share_sibling() {
         exe_relative_bases(exe_dir),
         vec![exe_dir.to_path_buf(), exe_dir.join("share")],
     );
+}
+
+#[test]
+fn a_legacy_dir_is_copied_once_and_kept() {
+    let root = tempdir().unwrap();
+    let old = root.path().join("old");
+    fs::create_dir_all(old.join("logs")).unwrap();
+    fs::write(old.join("settings.toml"), "aa_level = \"x4\"").unwrap();
+    fs::write(old.join("logs").join("session.log"), "hello").unwrap();
+    let new = root.path().join("new").join("config");
+
+    assert!(migrate_dir(&old, &new));
+    assert_eq!(
+        fs::read_to_string(new.join("settings.toml")).unwrap(),
+        "aa_level = \"x4\""
+    );
+    assert_eq!(
+        fs::read_to_string(new.join("logs").join("session.log")).unwrap(),
+        "hello"
+    );
+    // The old folder stays as a backup.
+    assert!(old.join("settings.toml").is_file());
+    // A second start finds the new folder and leaves it alone.
+    fs::write(new.join("settings.toml"), "newer").unwrap();
+    assert!(!migrate_dir(&old, &new));
+    assert_eq!(
+        fs::read_to_string(new.join("settings.toml")).unwrap(),
+        "newer"
+    );
+}
+
+#[test]
+fn nothing_to_migrate_without_a_legacy_dir() {
+    let root = tempdir().unwrap();
+    assert!(!migrate_dir(
+        &root.path().join("missing"),
+        &root.path().join("new")
+    ));
+    assert!(!root.path().join("new").exists());
 }
