@@ -17,8 +17,6 @@
 use std::io::{Seek, SeekFrom, Write};
 
 use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::raster::pixel_map::PixelMap;
-use sc_sl1cer::raster::rasterize_layer;
 
 use super::header::write_header;
 use super::layer_record::{ImageLocation, write_layer_record, write_table_record};
@@ -34,9 +32,9 @@ use crate::ctb::rle7;
 use crate::ctb::rle15;
 use crate::ctb::wire::{counted, write_zeros};
 use crate::error::WriteFailure;
+use crate::layer_images::write_layer_images;
 use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::PrintProgram;
-use crate::row_order::reverse_rows;
 
 /// Write `stack` as a plain CTB v5 file running the schedule in
 /// `program`, whose records pair with the stack's layers in order.
@@ -117,31 +115,26 @@ pub fn write_file(
     write_zeros(out, table_bytes)?;
     let mut table = Vec::with_capacity(table_bytes);
 
-    let raster = &program.raster;
-    let plate = raster.build_volume();
-    let pixel_map = PixelMap::new(
-        plate.x(),
-        plate.y(),
-        *raster.pixel_resolution(),
-        raster.mirror(),
-    );
-    let mut image = Vec::new();
-    let mut rows = Vec::new();
     let mut record_at = u64::from(layout.layer_data);
-
-    for (layer, contours) in program.layers.iter().zip(stack.layers()) {
-        let pixels = rasterize_layer(contours, &pixel_map, raster.aa(), raster.min_alpha_pct());
-        reverse_rows(pixels.runs(), raster.pixel_resolution().x(), &mut rows);
-        image.clear();
-        rle7::encode_layer(&rows, &mut image);
-
-        let length = counted(image.len(), "layer image")?;
-        let location = ImageLocation::new(record_at + u64::from(LAYER_RECORD_SIZE), length);
-        write_table_record(layer, location, &mut table)?;
-        write_layer_record(layer, location, out)?;
-        out.write_all(&image)?;
-        record_at += u64::from(LAYER_RECORD_SIZE) + u64::from(length);
-    }
+    write_layer_images(
+        stack,
+        &program.raster,
+        |_, rows| {
+            let mut image = Vec::new();
+            rle7::encode_layer(rows, &mut image);
+            image
+        },
+        |index, image| -> Result<(), WriteFailure> {
+            let layer = &program.layers[index];
+            let length = counted(image.len(), "layer image")?;
+            let location = ImageLocation::new(record_at + u64::from(LAYER_RECORD_SIZE), length);
+            write_table_record(layer, location, &mut table)?;
+            write_layer_record(layer, location, out)?;
+            out.write_all(&image)?;
+            record_at += u64::from(LAYER_RECORD_SIZE) + u64::from(length);
+            Ok(())
+        },
+    )?;
 
     out.seek(SeekFrom::Start(u64::from(layout.layer_table)))?;
     out.write_all(&table)?;

@@ -19,6 +19,12 @@
 //! hole interior count = `0`) and their mirror-image variants
 //! without special casing.
 //!
+//! Only the edges whose Y span reaches a row are tested against it
+//! ([`EdgeRows`]): each row scans the few edges that can cross it
+//! instead of the whole layer. The crossing test and the crossing
+//! itself are the same arithmetic either way, and the edges are kept
+//! in their original order, so the output does not depend on it.
+//!
 //! For each row, runs of equal-value adjacent pixels are pushed into
 //! a single [`RleRunAccumulator`], which merges across row breaks
 //! when consecutive rows end and begin with the same value.
@@ -55,6 +61,65 @@ fn push_ring_edges(ring: &ClosedRing, pixel_map: &PixelMap, edges: &mut Vec<Edge
     }
 }
 
+/// The edges a pixel row can cross, kept up to date row by row.
+///
+/// An edge can only cross a sample line `y` with
+/// `min(ay, by) <= y < max(ay, by)`, so for the rows `[row, row + 1)`
+/// it matters from row `floor(min)` to row `floor(max)`. The window
+/// kept here is one row wider on each side, a superset, because the
+/// exact crossing test still runs on every edge it returns. Edges
+/// enter in row order and stay sorted by their index in the layer,
+/// which is the order the full scan visited them in.
+struct EdgeRows {
+    /// First and last row each edge can matter for.
+    spans: Vec<(i64, i64)>,
+    /// Edge indices sorted by their first row (stable, so by index
+    /// within a row).
+    by_first_row: Vec<u32>,
+    next: usize,
+    active: Vec<u32>,
+}
+
+impl EdgeRows {
+    fn new(edges: &[Edge]) -> Self {
+        let spans: Vec<(i64, i64)> = edges
+            .iter()
+            .map(|e| {
+                let lo = e.ay.min(e.by).floor() as i64;
+                let hi = e.ay.max(e.by).floor() as i64;
+                (lo.saturating_sub(1), hi.saturating_add(1))
+            })
+            .collect();
+        let mut by_first_row: Vec<u32> = (0..edges.len() as u32).collect();
+        by_first_row.sort_by_key(|&i| spans[i as usize].0);
+        Self {
+            spans,
+            by_first_row,
+            next: 0,
+            active: Vec::new(),
+        }
+    }
+
+    /// The edges that can cross row `row`, in layer order. Rows must
+    /// be visited in increasing order.
+    fn at(&mut self, row: u32) -> &[u32] {
+        let row = i64::from(row);
+        let spans = &self.spans;
+        self.active.retain(|&i| spans[i as usize].1 >= row);
+        while let Some(&i) = self.by_first_row.get(self.next) {
+            if spans[i as usize].0 > row {
+                break;
+            }
+            self.next += 1;
+            if spans[i as usize].1 >= row {
+                let at = self.active.partition_point(|&a| a < i);
+                self.active.insert(at, i);
+            }
+        }
+        &self.active
+    }
+}
+
 fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
     let mut edges = Vec::new();
     for polygon in layer.polygons() {
@@ -76,13 +141,15 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
     let height_px = pixel_map.pixel_resolution().y();
     let edges = collect_edges(layer, pixel_map);
 
+    let mut rows = EdgeRows::new(&edges);
     let mut acc = RleRunAccumulator::new();
     let mut crossings: Vec<(f64, i32)> = Vec::new();
 
     for row in 0..height_px {
         let y = f64::from(row) + 0.5;
         crossings.clear();
-        for edge in &edges {
+        for &i in rows.at(row) {
+            let edge = &edges[i as usize];
             if (edge.ay > y) != (edge.by > y) {
                 let t = (y - edge.ay) / (edge.by - edge.ay);
                 let x_int = (edge.bx - edge.ax).mul_add(t, edge.ax);
@@ -153,6 +220,7 @@ fn rasterize_layer_aa(
     let height_px = pixel_map.pixel_resolution().y();
     let edges = collect_edges(layer, pixel_map);
 
+    let mut rows = EdgeRows::new(&edges);
     let mut acc = RleRunAccumulator::new();
     let mut row_acc: Vec<f64> = vec![0.0; width_px as usize];
     let mut crossings: Vec<(f64, i32)> = Vec::new();
@@ -162,14 +230,17 @@ fn rasterize_layer_aa(
     let per_sub_strip = 1.0 / f64::from(n);
 
     for row in 0..height_px {
-        for v in row_acc.iter_mut() {
-            *v = 0.0;
-        }
+        // Columns `[touched_lo, touched_hi)` received coverage this row;
+        // every other column is exactly zero and leaves as one run.
+        let mut touched_lo = width_px as usize;
+        let mut touched_hi = 0usize;
+        let active = rows.at(row);
 
         for k in 0..n {
             let y = f64::from(row) + (f64::from(k) + 0.5) / f64::from(n);
             crossings.clear();
-            for edge in &edges {
+            for &i in active {
+                let edge = &edges[i as usize];
                 if (edge.ay > y) != (edge.by > y) {
                     let t = (y - edge.ay) / (edge.by - edge.ay);
                     let x_int = (edge.bx - edge.ax).mul_add(t, edge.ax);
@@ -191,22 +262,41 @@ fn rasterize_layer_aa(
                 } else if was_filled
                     && !is_filled
                     && let Some(start) = span_start.take()
+                    && let Some((lo, hi)) =
+                        accumulate_span(&mut row_acc, start, *x_c, width_px, per_sub_strip)
                 {
-                    accumulate_span(&mut row_acc, start, *x_c, width_px, per_sub_strip);
+                    touched_lo = touched_lo.min(lo);
+                    touched_hi = touched_hi.max(hi);
                 }
             }
         }
 
-        for &cov in row_acc.iter() {
-            let raw_value = (cov * 255.0).round() as i32;
+        if touched_lo >= touched_hi {
+            acc.push(0, width_px);
+            continue;
+        }
+        acc.push(0, touched_lo as u32);
+        let mut run_value = 0u8;
+        let mut run_length = 0u32;
+        for cov in &mut row_acc[touched_lo..touched_hi] {
+            let raw_value = (*cov * 255.0).round() as i32;
             let clamped = raw_value.clamp(0, 255) as u32;
             let final_value = if clamped > 0 && clamped < threshold {
                 0
             } else {
                 clamped as u8
             };
-            acc.push(final_value, 1);
+            *cov = 0.0;
+            if final_value == run_value {
+                run_length += 1;
+            } else {
+                acc.push(run_value, run_length);
+                run_value = final_value;
+                run_length = 1;
+            }
         }
+        acc.push(run_value, run_length);
+        acc.push(0, width_px - touched_hi as u32);
     }
 
     LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
@@ -214,18 +304,20 @@ fn rasterize_layer_aa(
 
 /// Distribute one sub-scanline's `[x_start, x_end]` X interval over
 /// the pixel columns it touches, weighted by `per_sub_strip` (the
-/// 1 / N Y-fraction one sub-scanline contributes).
+/// 1 / N Y-fraction one sub-scanline contributes). Returns the
+/// columns written, `[first, last + 1)`, or `None` for an interval
+/// that misses the raster.
 fn accumulate_span(
     row_acc: &mut [f64],
     x_start: f64,
     x_end: f64,
     width_px: u32,
     per_sub_strip: f64,
-) {
+) -> Option<(usize, usize)> {
     let x_start = x_start.max(0.0);
     let x_end = x_end.min(f64::from(width_px));
     if x_end <= x_start {
-        return;
+        return None;
     }
 
     let left = x_start.floor() as i64;
@@ -246,7 +338,12 @@ fn accumulate_span(
         let right_frac = x_end - right as f64;
         row_acc[right_col] += per_sub_strip * right_frac;
     }
+    Some((left as usize, right as usize + 1))
 }
+
+#[cfg(test)]
+#[path = "tests_active_edges.rs"]
+mod tests_active_edges;
 
 #[cfg(test)]
 mod scanline_tests {

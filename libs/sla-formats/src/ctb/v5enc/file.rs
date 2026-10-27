@@ -21,8 +21,6 @@ use std::num::NonZeroU32;
 
 use crc32fast::Hasher;
 use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::raster::pixel_map::PixelMap;
-use sc_sl1cer::raster::rasterize_layer;
 
 use super::header::write_header;
 use super::layer_record::{EncryptedRange, LayerImage, write_layer_pointer, write_layer_record};
@@ -41,9 +39,9 @@ use crate::ctb::rle7;
 use crate::ctb::rle15;
 use crate::ctb::wire::{counted, write_u32, write_zeros};
 use crate::error::WriteFailure;
+use crate::layer_images::write_layer_images;
 use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::PrintProgram;
-use crate::row_order::reverse_rows;
 
 /// The value the file states in the clear and signs. Nothing
 /// observed constrains it: 3 producers write 3 unrelated values, and
@@ -143,37 +141,31 @@ pub fn write_file(
     write_zeros(out, table_bytes)?;
     let mut table = Vec::with_capacity(table_bytes);
 
-    let raster = &program.raster;
-    let plate = raster.build_volume();
-    let pixel_map = PixelMap::new(
-        plate.x(),
-        plate.y(),
-        *raster.pixel_resolution(),
-        raster.mirror(),
-    );
-    let mut image = Vec::new();
-    let mut rows = Vec::new();
     let mut record_at = u64::from(layout.layer_data);
-
     let mut layers = Summed::new(&mut *out);
-    for (index, (layer, contours)) in program.layers.iter().zip(stack.layers()).enumerate() {
-        let pixels = rasterize_layer(contours, &pixel_map, raster.aa(), raster.min_alpha_pct());
-        reverse_rows(pixels.runs(), raster.pixel_resolution().x(), &mut rows);
-        image.clear();
-        rle7::encode_layer(&rows, &mut image);
-        layer_xor::apply(layer_key, index as u32, &mut image);
-
-        let length = counted(image.len(), "layer image")?;
-        let image_at = record_at + u64::from(LAYER_RECORD_SIZE);
-        write_layer_pointer(record_at, &mut table)?;
-        write_layer_record(
-            layer,
-            LayerImage::new(image_at, length, ENCRYPTED_RANGE),
-            &mut layers,
-        )?;
-        layers.write_all(&image)?;
-        record_at = image_at + u64::from(length);
-    }
+    write_layer_images(
+        stack,
+        &program.raster,
+        |index, rows| {
+            let mut image = Vec::new();
+            rle7::encode_layer(rows, &mut image);
+            layer_xor::apply(layer_key, index as u32, &mut image);
+            image
+        },
+        |index, image| -> Result<(), WriteFailure> {
+            let length = counted(image.len(), "layer image")?;
+            let image_at = record_at + u64::from(LAYER_RECORD_SIZE);
+            write_layer_pointer(record_at, &mut table)?;
+            write_layer_record(
+                &program.layers[index],
+                LayerImage::new(image_at, length, ENCRYPTED_RANGE),
+                &mut layers,
+            )?;
+            layers.write_all(&image)?;
+            record_at = image_at + u64::from(length);
+            Ok(())
+        },
+    )?;
 
     // A quantity neither producer explains and the 2 of them
     // disagree on, so nothing is stated where one would go.
