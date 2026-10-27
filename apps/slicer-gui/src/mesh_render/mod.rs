@@ -116,6 +116,10 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStenci
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
+/// The front label's vertices over the tab's top face, and under it.
+const LABEL_TOP: std::ops::Range<u32> = 0..6;
+const LABEL_UNDERSIDE: std::ops::Range<u32> = 6..12;
+
 /// A `GpuScene` paired with its models bind group. The bind group references
 /// the scene's storage buffer by handle, so it must be rebuilt every time the
 /// storage buffer is recreated (i.e. on every scene install or upload).
@@ -909,7 +913,7 @@ impl Renderer {
                 self.record_plate_solid(&mut pass, plate_buffers);
                 self.record_plate_top(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
-                self.record_front_label(&mut pass, plate_buffers);
+                self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -927,6 +931,8 @@ impl Renderer {
                 self.record_cap(&mut pass);
                 self.record_envelope_walls(&mut pass, plate_buffers);
                 self.record_plate_bottom(&mut pass, plate_buffers);
+                // Over the translucent bottom, so it reads clear from below.
+                self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
             }
         }
         if selection.is_some() && scene_for_draws {
@@ -1002,10 +1008,17 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
     }
 
-    /// The word on the plate's front tab, over the tab's own top face. Binds
-    /// its own vertex buffer at slot 0, so the plate draws that share the
-    /// plate's must come before it.
-    fn record_front_label(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+    /// The word on the plate's front tab: `vertices` picks the copy over the
+    /// tab's top face ([`LABEL_TOP`]) or the one under it
+    /// ([`LABEL_UNDERSIDE`]). Binds its own vertex buffer at slot 0, so the
+    /// plate draws that share the plate's must come before it, or bind theirs
+    /// again.
+    fn record_front_label(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        plate_buffers: &PlateBuffers,
+        vertices: std::ops::Range<u32>,
+    ) {
         let LabelState::Shown { bind_group, .. } = &self.pipelines.label_state else {
             return;
         };
@@ -1017,7 +1030,7 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, quad.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(0..6, 0..1);
+        pass.draw(vertices, 0..1);
     }
 
     /// 1 draw call per installed scene object. The models bind group is rebound
