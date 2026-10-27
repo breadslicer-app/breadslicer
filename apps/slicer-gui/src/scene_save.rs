@@ -7,7 +7,10 @@
 //! `&SceneDocument` plus explicit inputs. The wiring layer drives the file
 //! dialog, then calls in here to produce the file.
 //!
-//! A save always writes a 3MF project: the scene plus the project payload. The
+//! A save writes a project: the scene plus the project payload. "Save" and "Save
+//! As" write Breadslicer's `.bread` (#145), which keeps DragonFruit supports as
+//! data so they reopen editable, and never stores slices; "Save As 3MF" writes
+//! a 3MF project, with the supports as a mesh and the in-sync slices. The
 //! payload holds the scene's own printer, resin, first-layer height and printer
 //! file, with a missing printer or resin filled from the app-wide default at
 //! save time, and the embedded profile documents that the document holds.
@@ -21,27 +24,65 @@ use anyhow::Result;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
-    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, WriteProgress,
-    write_project_with_progress,
+    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, SupportDocument, WriteProgress,
+    write_bread_project_with_progress, write_project_with_progress,
 };
 use sc_scene::Scene;
 
+use crate::error_dialog::InfoTexts;
 use crate::i18n::ctr;
 use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
 use crate::scene_document::{SaveStamp, SceneDocument};
 use crate::slice_projection::resolve_current_schedule;
+use crate::support_persist::{SupportsAsMesh, support_documents};
+
+/// The format a project is saved in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectFormat {
+    /// Breadslicer's own `.bread`, the default.
+    Bread,
+    /// A 3MF project, on request.
+    ThreeMf,
+}
+
+impl ProjectFormat {
+    /// The extension a file of this format carries, without the dot.
+    pub(crate) fn extension(self) -> &'static str {
+        match self {
+            Self::Bread => "bread",
+            Self::ThreeMf => "3mf",
+        }
+    }
+
+    /// The format a save to `path` writes: 3MF for a `.3mf` path, `.bread`
+    /// otherwise.
+    pub(crate) fn of_path(path: &Path) -> Self {
+        if Self::ThreeMf.names(path) {
+            Self::ThreeMf
+        } else {
+            Self::Bread
+        }
+    }
+
+    /// Whether `path` carries this format's extension (in any case).
+    fn names(self, path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(self.extension()))
+    }
+}
 
 /// Classification of a "Save" command against the document state.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SaveDispatch {
-    /// The document is a project with a known location and unsaved changes:
-    /// overwrite it in place, no dialog.
+    /// The document is a `.bread` project with a known location and unsaved
+    /// changes: overwrite it in place, no dialog.
     OverwriteProject(PathBuf),
-    /// The source is a plain mesh file (or a 3MF without project data): route
-    /// to "Save As" so an STL, OBJ or other interop file is never silently
-    /// replaced by a project.
+    /// The source is a plain mesh file, a 3MF without project data, or a 3MF
+    /// project: route to "Save As", which writes a `.bread`, so an STL, OBJ,
+    /// 3MF or other interop file is never silently replaced.
     NeedsSaveAs,
     /// The project file already matches the document: nothing to write.
     AlreadySaved,
@@ -54,7 +95,7 @@ pub(crate) fn decide_save_dispatch(doc: &SceneDocument) -> SaveDispatch {
     if !doc.is_loaded() {
         return SaveDispatch::NoScene;
     }
-    if !doc.is_project() {
+    if !saves_in_place(doc) {
         return SaveDispatch::NeedsSaveAs;
     }
     if !doc.is_dirty() {
@@ -66,6 +107,16 @@ pub(crate) fn decide_save_dispatch(doc: &SceneDocument) -> SaveDispatch {
     SaveDispatch::OverwriteProject(path)
 }
 
+/// Whether "Save" writes the document back to its own file: only a `.bread`
+/// project's. Anything else, a 3MF project included, is saved through "Save
+/// As" (see [`SaveDispatch::NeedsSaveAs`]).
+pub(crate) fn saves_in_place(doc: &SceneDocument) -> bool {
+    doc.is_project()
+        && doc
+            .with_source_path(|path| ProjectFormat::Bread.names(path))
+            .unwrap_or(false)
+}
+
 /// Classification of the file-save dialog's outcome for "Save As".
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SaveTargetDispatch {
@@ -74,34 +125,45 @@ pub(crate) enum SaveTargetDispatch {
     /// The picked path names a different format; a project save would not
     /// produce what the name promises.
     WrongExtension(PathBuf),
-    /// The path is ready to write (a missing extension gets `.3mf` appended:
-    /// 3MF is the only project format, so the intent is unambiguous).
+    /// The path is ready to write (a missing extension gets the format's
+    /// appended: the command named the format, so the intent is unambiguous).
     Ready(PathBuf),
 }
 
-pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch {
+/// Classifies the path picked for a save in `format`.
+pub(crate) fn decide_save_target(
+    target: Option<PathBuf>,
+    format: ProjectFormat,
+) -> SaveTargetDispatch {
     let Some(target) = target else {
         return SaveTargetDispatch::Cancelled;
     };
-    match target.extension().and_then(|e| e.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("3mf") => SaveTargetDispatch::Ready(target),
+    if format.names(&target) {
+        return SaveTargetDispatch::Ready(target);
+    }
+    match target.extension() {
         Some(_) => SaveTargetDispatch::WrongExtension(target),
-        None => SaveTargetDispatch::Ready(target.with_extension("3mf")),
+        None => SaveTargetDispatch::Ready(target.with_extension(format.extension())),
     }
 }
 
-/// The refusal of a "Save As" path that names another format
-/// ([`SaveTargetDispatch::WrongExtension`]). Its text is in the language in
-/// force each time it is formatted.
+/// The refusal of a "Save As" path that names another format than the one
+/// asked for ([`SaveTargetDispatch::WrongExtension`]). Its text is in the
+/// language in force each time it is formatted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct WrongProjectExtension;
+pub(crate) struct WrongProjectExtension(pub(crate) ProjectFormat);
 
 impl fmt::Display for WrongProjectExtension {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&ctr!(
-            "ErrorDialog",
-            "Project files are saved as .3mf packages."
-        ))
+        f.write_str(&match self.0 {
+            ProjectFormat::Bread => ctr!(
+                "ErrorDialog",
+                "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+            ),
+            ProjectFormat::ThreeMf => {
+                ctr!("ErrorDialog", "Project files are saved as .3mf packages.")
+            }
+        })
     }
 }
 
@@ -124,42 +186,96 @@ pub(crate) fn payload_for_save(
 /// Everything a project write needs, captured as owned, `Send` data so the
 /// write can run off the UI thread. The scene is a cheap clone of the
 /// document's graph (mesh payloads are shared through `Arc`), and the slices,
-/// payload, and target are owned. Built on the UI thread by [`prepare_save`];
-/// consumed by [`write_bundle`] on a worker thread.
+/// supports, payload, and target are owned. Built on the UI thread by
+/// [`prepare_save`]; consumed by [`write_bundle`] on a worker thread.
 pub(crate) struct SaveBundle {
+    format: ProjectFormat,
     scene: Scene,
     payload: ProjectPayload,
+    /// 3MF only: a `.bread` never stores slices.
     slices: Option<PlateSlices>,
     slice_fingerprint: Option<String>,
+    /// `.bread` only: the supports kept as data.
+    supports: Vec<SupportDocument>,
+    /// `.bread` only: set when the scene's supports go in as a mesh.
+    supports_as_mesh: Option<SupportsAsMesh>,
     target: PathBuf,
 }
 
-/// Snapshots the document's scene and the slices to persist into a `Send`
-/// [`SaveBundle`], on the UI thread. Returns `None` when no scene is loaded.
-/// The scene clone and the slice capture are taken together under the same
-/// scene borrow, so the persisted slices match the geometry written.
+/// Snapshots the document's scene, and the slices (3MF) or the supports
+/// (`.bread`) to persist, into a `Send` [`SaveBundle`], on the UI thread. The
+/// format follows the target's extension ([`ProjectFormat::of_path`]). Returns
+/// `None` when no scene is loaded. The scene clone and the slice or support
+/// capture are taken together under the same scene borrow, so what is
+/// persisted matches the geometry written.
 pub(crate) fn prepare_save(
     doc: &SceneDocument,
     payload: ProjectPayload,
     target: PathBuf,
 ) -> Option<SaveBundle> {
+    let format = ProjectFormat::of_path(&target);
     doc.with_scene(|spatial| {
         let scene = spatial.graph().clone();
-        let (slices, slice_fingerprint) = match persist_slices(doc, &payload, spatial.graph()) {
-            Some((plate, token)) => (Some(plate), Some(token)),
-            None => (None, None),
-        };
+        let (mut slices, mut slice_fingerprint) = (None, None);
+        let (mut supports, mut supports_as_mesh) = (Vec::new(), None);
+        match format {
+            ProjectFormat::ThreeMf => {
+                if let Some((plate, token)) = persist_slices(doc, &payload, spatial.graph()) {
+                    slices = Some(plate);
+                    slice_fingerprint = Some(token);
+                }
+            }
+            ProjectFormat::Bread => {
+                let kept = support_documents(doc, spatial);
+                supports = kept.documents;
+                supports_as_mesh = kept.as_mesh;
+            }
+        }
         SaveBundle {
+            format,
             scene,
             payload,
             slices,
             slice_fingerprint,
+            supports,
+            supports_as_mesh,
             target,
         }
     })
 }
 
-/// Writes a prepared bundle to its target as a 3MF project, atomically,
+impl SaveBundle {
+    /// Why the scene's supports go into a `.bread` as a mesh, or `None` when
+    /// they are kept as data or there are none.
+    pub(crate) fn supports_as_mesh(&self) -> Option<SupportsAsMesh> {
+        self.supports_as_mesh
+    }
+}
+
+/// The notice for a save whose supports went in as a mesh.
+pub(crate) fn supports_as_mesh_texts(why: SupportsAsMesh) -> InfoTexts {
+    let message = match why {
+        SupportsAsMesh::SeveralSets => ctr!(
+            "DfSupportDialog",
+            "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
+        ),
+        SupportsAsMesh::NoSession => ctr!(
+            "DfSupportDialog",
+            "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
+        ),
+        SupportsAsMesh::NoRecipe => ctr!(
+            "DfSupportDialog",
+            "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
+        ),
+    };
+    InfoTexts {
+        heading: ctr!("DfSupportDialog", "Supports saved as a mesh"),
+        message,
+        details: Default::default(),
+    }
+}
+
+/// Writes a prepared bundle to its target in its format, atomically,
 /// reporting each phase through `progress`. Pure with respect to the document,
 /// so it runs on a worker thread; the caller records success on the UI thread.
 pub(crate) fn write_bundle(
@@ -167,19 +283,30 @@ pub(crate) fn write_bundle(
     mut progress: impl FnMut(SavePhase, u64, u64),
 ) -> Result<()> {
     let mut bytes = Vec::new();
-    write_project_with_progress(
-        &bundle.scene,
-        &bundle.payload,
-        EmbedProfiles::Yes,
-        bundle.slices.as_ref(),
-        bundle.slice_fingerprint.as_deref(),
-        ProjectFileType::ThreeMf,
-        &mut bytes,
-        |report| match report {
-            WriteProgress::Serialize { done, total } => progress(SavePhase::Serialize, done, total),
-            WriteProgress::Compress { done, total } => progress(SavePhase::Compress, done, total),
-        },
-    )?;
+    let report = |report| match report {
+        WriteProgress::Serialize { done, total } => progress(SavePhase::Serialize, done, total),
+        WriteProgress::Compress { done, total } => progress(SavePhase::Compress, done, total),
+    };
+    match bundle.format {
+        ProjectFormat::ThreeMf => write_project_with_progress(
+            &bundle.scene,
+            &bundle.payload,
+            EmbedProfiles::Yes,
+            bundle.slices.as_ref(),
+            bundle.slice_fingerprint.as_deref(),
+            ProjectFileType::ThreeMf,
+            &mut bytes,
+            report,
+        )?,
+        ProjectFormat::Bread => write_bread_project_with_progress(
+            &bundle.scene,
+            &bundle.payload,
+            EmbedProfiles::Yes,
+            &bundle.supports,
+            &mut bytes,
+            report,
+        )?,
+    }
     progress(SavePhase::Writing, 0, 1);
     write_bytes_atomically(&bundle.target, &bytes)?;
     progress(SavePhase::Writing, 1, 1);
@@ -345,13 +472,13 @@ mod scene_save_tests {
             let doc = SceneDocument::new();
             doc.install_project_graph(
                 one_object_graph(),
-                PathBuf::from("/tmp/plate.3mf"),
+                PathBuf::from("/tmp/plate.bread"),
                 ProjectPayload::default(),
             );
             make_dirty(&doc);
             assert_eq!(
                 decide_save_dispatch(&doc),
-                SaveDispatch::OverwriteProject(PathBuf::from("/tmp/plate.3mf")),
+                SaveDispatch::OverwriteProject(PathBuf::from("/tmp/plate.bread")),
             );
         }
 
@@ -360,10 +487,25 @@ mod scene_save_tests {
             let doc = SceneDocument::new();
             doc.install_project_graph(
                 one_object_graph(),
-                PathBuf::from("/tmp/plate.3mf"),
+                PathBuf::from("/tmp/plate.bread"),
                 ProjectPayload::default(),
             );
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::AlreadySaved);
+        }
+
+        // "Save" writes a `.bread`: a 3MF project, clean or dirty, goes
+        // through the dialog rather than being overwritten in another format.
+        #[test]
+        fn a_3mf_project_document_routes_to_save_as() {
+            let doc = SceneDocument::new();
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/tmp/plate.3mf"),
+                ProjectPayload::default(),
+            );
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+            make_dirty(&doc);
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
         }
 
         #[test]
@@ -412,15 +554,28 @@ mod scene_save_tests {
         use super::*;
         use std::path::PathBuf;
 
+        use ProjectFormat::{Bread, ThreeMf};
+
         #[test]
         fn none_classifies_as_cancelled() {
-            assert_eq!(decide_save_target(None), SaveTargetDispatch::Cancelled);
+            assert_eq!(
+                decide_save_target(None, Bread),
+                SaveTargetDispatch::Cancelled
+            );
         }
 
         #[test]
-        fn a_threemf_extension_is_ready_as_is() {
+        fn a_bread_extension_is_ready_as_is() {
             assert_eq!(
-                decide_save_target(Some(PathBuf::from("/tmp/plate.3mf"))),
+                decide_save_target(Some(PathBuf::from("/tmp/plate.bread")), Bread),
+                SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.bread")),
+            );
+        }
+
+        #[test]
+        fn a_threemf_extension_is_ready_as_is_for_a_3mf_save() {
+            assert_eq!(
+                decide_save_target(Some(PathBuf::from("/tmp/plate.3mf")), ThreeMf),
                 SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.3mf")),
             );
         }
@@ -428,15 +583,23 @@ mod scene_save_tests {
         #[test]
         fn the_extension_match_is_case_insensitive() {
             assert_eq!(
-                decide_save_target(Some(PathBuf::from("/tmp/plate.3MF"))),
+                decide_save_target(Some(PathBuf::from("/tmp/plate.3MF")), ThreeMf),
                 SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.3MF")),
+            );
+            assert_eq!(
+                decide_save_target(Some(PathBuf::from("/tmp/plate.Bread")), Bread),
+                SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.Bread")),
             );
         }
 
         #[test]
-        fn a_missing_extension_gets_threemf_appended() {
+        fn a_missing_extension_gets_the_format_appended() {
             assert_eq!(
-                decide_save_target(Some(PathBuf::from("/tmp/plate"))),
+                decide_save_target(Some(PathBuf::from("/tmp/plate")), Bread),
+                SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.bread")),
+            );
+            assert_eq!(
+                decide_save_target(Some(PathBuf::from("/tmp/plate")), ThreeMf),
                 SaveTargetDispatch::Ready(PathBuf::from("/tmp/plate.3mf")),
             );
         }
@@ -444,17 +607,36 @@ mod scene_save_tests {
         #[test]
         fn a_different_extension_is_rejected() {
             assert_eq!(
-                decide_save_target(Some(PathBuf::from("/tmp/plate.stl"))),
+                decide_save_target(Some(PathBuf::from("/tmp/plate.stl")), Bread),
                 SaveTargetDispatch::WrongExtension(PathBuf::from("/tmp/plate.stl")),
+            );
+            // Each command writes its own format only.
+            assert_eq!(
+                decide_save_target(Some(PathBuf::from("/tmp/plate.3mf")), Bread),
+                SaveTargetDispatch::WrongExtension(PathBuf::from("/tmp/plate.3mf")),
+            );
+            assert_eq!(
+                decide_save_target(Some(PathBuf::from("/tmp/plate.bread")), ThreeMf),
+                SaveTargetDispatch::WrongExtension(PathBuf::from("/tmp/plate.bread")),
             );
         }
 
         #[test]
-        fn the_refusal_says_projects_are_3mf_packages() {
+        fn the_refusal_names_the_format_asked_for() {
             assert_eq!(
-                WrongProjectExtension.to_string(),
+                WrongProjectExtension(Bread).to_string(),
+                "Project files are saved as .bread files. To save a 3MF project, use Save As 3MF."
+            );
+            assert_eq!(
+                WrongProjectExtension(ThreeMf).to_string(),
                 "Project files are saved as .3mf packages."
             );
+        }
+
+        #[test]
+        fn the_target_extension_picks_the_written_format() {
+            assert_eq!(ProjectFormat::of_path(Path::new("/tmp/a.3MF")), ThreeMf);
+            assert_eq!(ProjectFormat::of_path(Path::new("/tmp/a.bread")), Bread);
         }
     }
 
@@ -633,8 +815,9 @@ mod scene_save_tests {
             assert_eq!(doc.source_path(), Some(target.clone()));
             assert!(doc.is_project());
             assert!(!doc.is_dirty());
-            // A follow-up "Save" has nothing to write.
-            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::AlreadySaved);
+            // "Save" writes a `.bread`, so it goes through Save As rather than
+            // overwrite the 3MF.
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
 
             let bytes = fs::read(&target).expect("the file exists");
             let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
@@ -648,7 +831,7 @@ mod scene_save_tests {
          {
             let dir = tempfile::tempdir().expect("temp dir");
             let source = dir.path().join("widget.stl");
-            let target = dir.path().join("widget.3mf");
+            let target = dir.path().join("widget.bread");
             let stl_bytes = b"solid widget\nendsolid widget\n".to_vec();
             fs::write(&source, &stl_bytes).expect("the mesh file is written");
 
@@ -670,6 +853,38 @@ mod scene_save_tests {
             assert_eq!(
                 decide_save_dispatch(&doc),
                 SaveDispatch::OverwriteProject(target),
+            );
+        }
+
+        #[test]
+        fn a_bread_save_writes_a_readable_project_and_updates_the_document() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("widget.bread");
+            save_project_to(
+                &doc,
+                &target,
+                &defaults(printer_id("global-printer"), material_id("global-resin")),
+            )
+            .expect("the bread project saves");
+            let loaded = read_project(
+                &mut fs::File::open(&target).unwrap(),
+                ProjectFileType::Bread,
+            )
+            .expect("the file reads back as a .bread project");
+            let payload = loaded.payload.expect("a payload");
+            assert_eq!(payload.printer, Some(printer_id("global-printer")));
+            assert!(loaded.supports.is_empty(), "no supports in the scene");
+            assert!(loaded.slices.is_none());
+            assert_eq!(doc.source_path(), Some(target.clone()));
+            assert!(doc.is_project());
+            assert!(!doc.is_dirty());
+            // From here on "Save" overwrites the `.bread` in place.
+            make_dirty(&doc);
+            assert_eq!(
+                decide_save_dispatch(&doc),
+                SaveDispatch::OverwriteProject(target)
             );
         }
 

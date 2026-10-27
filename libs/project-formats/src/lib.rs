@@ -12,7 +12,8 @@
 //!
 //! [`ProjectPayload`] and the warning enums say nothing about how a given file
 //! format stores them. The container specifics live in 1 submodule per format;
-//! [`threemf`] stores the payload in custom OPC parts of a 3MF package.
+//! [`threemf`] stores the payload in custom OPC parts of a 3MF package, and
+//! [`bread`] in the settings chunk of Breadslicer's `.bread` file.
 //! [`read_project`] / [`write_project`] pick the submodule from a
 //! [`ProjectFileType`].
 //!
@@ -21,6 +22,7 @@
 //! extension, enforces the file-size cap, and reports byte progress on both
 //! routes.
 
+pub mod bread;
 pub mod error;
 pub mod filetypes;
 pub mod loader;
@@ -33,6 +35,8 @@ pub mod threemf;
 pub mod write;
 
 #[cfg(test)]
+mod tests_bread;
+#[cfg(test)]
 mod tests_error;
 #[cfg(test)]
 mod tests_filetypes;
@@ -43,6 +47,7 @@ mod tests_payload;
 
 pub use sc_3mf::package::DecompressionProgress;
 
+pub use bread::{BREAD_SETTINGS_VERSION, read_bread_project, write_bread_project_with_progress};
 pub use error::{ReadProjectError, WriteProjectError};
 pub use filetypes::{
     InferProjectFileTypeError, ProjectFileType, infer_project_file_type_from_extension,
@@ -54,6 +59,7 @@ pub use loader::{
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
+pub use sc_bread_format::SupportDocument;
 pub use slices::PlateSlices;
 pub use write::progress::WriteProgress;
 pub use write::{write_project, write_project_with_progress};

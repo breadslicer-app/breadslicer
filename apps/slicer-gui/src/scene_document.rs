@@ -38,6 +38,7 @@ pub(crate) use sc_scene_edit::SceneEdit;
 use crate::print_selection::{PrintDefaults, PrintSelection};
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
+use crate::support_persist::SupportSessions;
 
 /// An opaque marker of which scene is installed and of its committed-edit
 /// state, taken by [`SceneDocument::scene_revision`] and compared by
@@ -243,6 +244,10 @@ pub(crate) struct SceneDocument {
     /// Bumped by every project-level change, giving those the same comparable
     /// identity committed edits get from their ids.
     project_state_generation: Cell<u64>,
+    /// The editable DragonFruit support sessions, shared with the support
+    /// driver: a save keeps the one in force as data, and opening a `.bread`
+    /// puts the rebuilt one here.
+    support_sessions: Rc<RefCell<SupportSessions>>,
 }
 
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
@@ -294,7 +299,13 @@ impl SceneDocument {
             slice_generation: Cell::new(0),
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
+            support_sessions: Rc::default(),
         })
+    }
+
+    /// The editable support sessions (see [`crate::support_persist`]).
+    pub(crate) fn support_sessions(&self) -> Rc<RefCell<SupportSessions>> {
+        self.support_sessions.clone()
     }
 
     /// Wraps a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and installs it.
