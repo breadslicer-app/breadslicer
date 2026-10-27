@@ -54,6 +54,7 @@ use crate::scene_document::{
     SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
 use crate::slice_projection::load_selected_profiles;
+use crate::support_persist::{SupportSessions, current_session, support_leaf};
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
@@ -138,7 +139,8 @@ pub(crate) struct DfSupportRun {
     /// revision it was drawn into. A click edits the entry matching the
     /// current scene, so Undo and Redo keep the editor in step; a scene that
     /// moved on otherwise is refused.
-    sessions: RefCell<Vec<(Arc<DfSupportSession>, SceneRevision)>>,
+    /// The document's sessions ([`SceneDocument::support_sessions`]).
+    sessions: Rc<RefCell<SupportSessions>>,
     /// The viewport, for the hover preview of the hand tools.
     ctrl: Rc<ViewportController>,
     /// Computes hand-tool previews off the UI thread, always the latest.
@@ -349,6 +351,7 @@ impl DfSupportRun {
                 }
             }
         });
+        let sessions = document.support_sessions();
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             bus,
@@ -364,7 +367,7 @@ impl DfSupportRun {
             _scene_events: scene_events,
             options: RefCell::new(load_saved_options()),
             presets: RefCell::new(Vec::new()),
-            sessions: RefCell::new(Vec::new()),
+            sessions,
             ctrl,
             hover_worker: HoverWorker::spawn(),
             hover_generation: Cell::new(0),
@@ -887,16 +890,7 @@ impl DfSupportRun {
 
     /// The support mesh this driver pasted: its leaf and current mesh.
     fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
-        self.document
-            .with_scene(|spatial| {
-                (0..)
-                    .map_while(|i| spatial.leaf_id_at_index(i))
-                    .find_map(|id| {
-                        let mesh = spatial.graph().leaf_mesh_arc(id)?;
-                        sc_geom::df_supports::is_support_mesh(mesh).then(|| (id, mesh.clone()))
-                    })
-            })
-            .flatten()
+        self.document.with_scene(support_leaf).flatten()
     }
 
     /// A click in the viewport with the Add (1) or Delete (2) support tool
@@ -905,10 +899,7 @@ impl DfSupportRun {
     /// The editable session for the scene as it stands: the last run or hand
     /// edit drawn into it (Undo and Redo land on earlier ones).
     fn current_session(&self) -> Option<usize> {
-        self.sessions
-            .borrow()
-            .iter()
-            .rposition(|(_, drawn_on)| !self.document.slice_geometry_changed(*drawn_on))
+        current_session(&self.document, &self.sessions)
     }
 
     /// The cursor moved over the model (`Some`) or off it with a hand tool
@@ -1525,5 +1516,110 @@ mod hand_edit_tests {
         for line in log {
             println!("{line}");
         }
+    }
+
+    /// Supports saved in a `.bread` reopen as data (#145): the models come
+    /// back where they were, the support mesh is redrawn from the saved
+    /// session, and the supports still edit by hand, with Undo.
+    #[test]
+    fn supports_saved_as_bread_reopen_editable() {
+        let (saved_triangles, reopened, after_add, after_undo, after_remove) =
+            on_fresh_slint_thread(|| {
+                let window =
+                    MainWindow::new().expect("the headless platform creates a main window");
+                let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+                let ctrl = Rc::new(ViewportController::new_for_test());
+                let document = ctrl.document();
+                let mut graph = Scene::new();
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                        LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+                document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+                let run = DfSupportRun::install(
+                    &window,
+                    bus,
+                    document.clone(),
+                    ctrl.dialogs(),
+                    ctrl.clone(),
+                );
+                let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                    .unwrap()
+                    .join();
+                *run.started_on.borrow_mut() = Some(document.scene_revision());
+                run.finish(outcome);
+                let (_, saved_mesh) = run.support_leaf().expect("the supports were pasted");
+                let world_box = |document: &SceneDocument| {
+                    document
+                        .with_scene(|s| s.graph().aabb().unwrap().unwrap())
+                        .unwrap()
+                };
+                let saved_box = world_box(&document);
+
+                let dir = tempfile::tempdir().unwrap();
+                let target = dir.path().join("cube.bread");
+                crate::scene_save::save_project_to(&document, &target, &PrintDefaults::default())
+                    .expect("the project saves");
+                assert_eq!(document.source_path(), Some(target.clone()));
+                assert!(!document.is_dirty());
+
+                // The file keeps the supports as data and their leaf empty.
+                let stored = sc_project_formats::read_project(
+                    &mut std::fs::File::open(&target).unwrap(),
+                    sc_project_formats::ProjectFileType::Bread,
+                )
+                .unwrap();
+                assert_eq!(stored.supports.len(), 1);
+                assert!(
+                    stored
+                        .scene
+                        .leaf_mesh_arc(stored.supports[0].leaf)
+                        .is_some_and(|m| m.faces().is_empty())
+                );
+
+                // Reopened as the load worker and the controller do it.
+                let loaded = sc_project_formats::load_scene(&target, None, |_| {}).unwrap();
+                let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+                    panic!("a .bread opens as a project");
+                };
+                let mut scene = project.scene;
+                let restored =
+                    crate::support_persist::restore_supports(&mut scene, project.supports);
+                assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+                document.install_project_graph(scene, target.clone(), project.payload);
+                crate::support_persist::install_session(&document, restored.session);
+                let (_, mesh) = run.support_leaf().expect("the supports are back");
+                let reopened = mesh.faces() == saved_mesh.faces()
+                    && mesh.vertices() == saved_mesh.vertices()
+                    && world_box(&document) == saved_box;
+
+                window.set_support_tool(1);
+                run.on_tool_click([20.2, 20.2, 7.5]);
+                let after_add = window.get_supports_last_run().to_string();
+                assert!(document.undo().unwrap(), "the hand edit undoes");
+                let after_undo = run.current_session();
+                // The reopened session edits again after Undo: the support
+                // added anew, then taken away.
+                run.on_tool_click([20.2, 20.2, 7.5]);
+                window.set_support_tool(2);
+                run.on_tool_click([20.2, 20.2, 7.4]);
+                let after_remove = window.get_supports_last_run().to_string();
+                (
+                    saved_mesh.faces().len(),
+                    reopened,
+                    after_add,
+                    after_undo,
+                    after_remove,
+                )
+            });
+        assert!(saved_triangles > 0);
+        assert!(reopened, "the same supports and poses come back");
+        assert!(after_add.contains("edited by hand"), "{after_add}");
+        assert_eq!(after_undo, Some(0), "Undo lands on the reopened session");
+        assert!(after_remove.contains("edited by hand"), "{after_remove}");
     }
 }

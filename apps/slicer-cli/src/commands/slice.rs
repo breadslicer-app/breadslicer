@@ -31,7 +31,7 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::df_supports::{add_df_supports, lift_scene};
+use crate::commands::df_supports::{add_df_supports, lift_scene, restore_df_supports};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
@@ -119,7 +119,12 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             }
             scene
         }
-        LoadedContent::Project(ProjectContent { mut scene, .. }) => {
+        LoadedContent::Project(ProjectContent {
+            mut scene,
+            supports,
+            ..
+        }) => {
+            restore_df_supports(&mut scene, supports, &mut std::io::stderr());
             if args.repair {
                 repair_scene(&mut scene, &mut std::io::stderr());
             }

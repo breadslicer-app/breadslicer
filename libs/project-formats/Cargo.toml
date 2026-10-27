@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 sc-3mf.workspace = true
+sc-bread-format.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
 sc-print-primitives = { workspace = true, features = ["serde"] }

@@ -91,7 +91,7 @@ mod replace_scene_policy {
         supported_extension: bool,
         document_loaded: bool,
         document_is_dirty: bool,
-        document_is_project: bool,
+        document_saves_in_place: bool,
     ) -> OpenPathAction {
         if !supported_extension {
             return OpenPathAction::RejectUnsupported;
@@ -101,7 +101,7 @@ mod replace_scene_policy {
         }
         let offer = if !document_is_dirty {
             KeepChangesOffer::NothingToKeep
-        } else if document_is_project {
+        } else if document_saves_in_place {
             KeepChangesOffer::SaveExisting
         } else {
             KeepChangesOffer::SaveAsNew
@@ -818,7 +818,7 @@ impl AppState {
             is_supported_mesh_extension(&path),
             controller.document().is_loaded(),
             controller.document().is_dirty(),
-            controller.document().is_project(),
+            crate::scene_save::saves_in_place(&controller.document()),
         );
         match action {
             OpenPathAction::RejectUnsupported => {
@@ -1071,7 +1071,7 @@ impl AppState {
             self.finish_scene_change(window_id, change);
             return;
         }
-        let offer = if ctrl.document().is_project() {
+        let offer = if crate::scene_save::saves_in_place(&ctrl.document()) {
             crate::error_dialog::KeepChangesOffer::SaveExisting
         } else {
             crate::error_dialog::KeepChangesOffer::SaveAsNew
@@ -1410,7 +1410,7 @@ mod replace_scene_policy_tests {
             decide_open_path_action(true, false, false, false),
             OpenPathAction::DispatchImmediately
         );
-        // `document_is_dirty` / `document_is_project` are irrelevant when
+        // `document_is_dirty` / `document_saves_in_place` are irrelevant when
         // nothing is loaded.
         assert_eq!(
             decide_open_path_action(true, false, true, true),

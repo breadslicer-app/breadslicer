@@ -5,15 +5,22 @@
 
 //! `slice --df-supports`: runs the native DragonFruit support port
 //! (`sc_geom::df_supports`) on the loaded scene and adds the supports and raft
-//! as one more mesh leaf before slicing, as the GUI's Tools menu does.
+//! as one more mesh leaf before slicing, as the GUI's Tools menu does. A
+//! `.bread` project keeps its supports as data; [`restore_df_supports`] draws
+//! them again, as the GUI does when it opens one.
 
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::{DF_SUPPORT_MESH_NAME, DfSupportRequest, start_df_supports};
+use sc_geom::df_supports::{
+    DF_SUPPORT_GENERATOR, DF_SUPPORT_MESH_NAME, DfSupportRequest, DfSupportSession,
+    start_df_supports,
+};
 use sc_mesh_core::transform::Transform3D;
 use sc_print_primitives::BuildVolume;
+use sc_project_formats::SupportDocument;
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, SceneMetadata};
 
@@ -32,6 +39,41 @@ pub(crate) fn lift_scene(
     let [x, y, floor_z] = build_volume.floor_centre_mm();
     scene.drop_at([x as f32, y as f32], (floor_z + lift_mm) as f32)?;
     Ok(())
+}
+
+/// Draws the supports a `.bread` project kept as data into their empty
+/// leaves. Supports that cannot be rebuilt are reported to `out` and their
+/// leaves removed, so the scene slices without them rather than with an empty
+/// part.
+pub(crate) fn restore_df_supports(
+    scene: &mut Scene,
+    documents: Vec<SupportDocument>,
+    out: &mut dyn Write,
+) {
+    for document in documents {
+        let restored = if document.generator == DF_SUPPORT_GENERATOR {
+            DfSupportSession::restore_into(
+                scene,
+                document.leaf,
+                document.version,
+                &document.document,
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        } else {
+            Err(format!(
+                "unknown support generator \"{}\"",
+                document.generator
+            ))
+        };
+        if let Err(why) = restored {
+            let _ = scene.remove_leaf(document.leaf);
+            let _ = writeln!(
+                out,
+                "WARNING: the project's supports could not be rebuilt ({why}); slicing without them"
+            );
+        }
+    }
 }
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
