@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::checks::islands::{self, IslandOptions};
 use crate::checks::output::{self, OutputOptions};
+use crate::checks::raft::{self, RaftOptions};
 use crate::checks::thin::{self, ThinFeatureOptions};
 use crate::checks::traps::{self, TrapOptions};
 use crate::finding::{Finding, sort_findings};
@@ -45,6 +46,8 @@ pub struct ReviewOptions {
     pub thin: ThinFeatureOptions,
     /// Output checks (#93).
     pub output: OutputOptions,
+    /// Models inside the supports' raft (#131).
+    pub raft: RaftOptions,
 }
 
 /// Wall-clock time spent in each part of a review. The checks run in
@@ -110,7 +113,13 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
             )
         },
     );
-    let mut findings = islands;
+    // A model in the raft explains the islands it starts there (#131).
+    let clashes = raft::clashes(ctx, &options.raft);
+    let mut findings: Vec<Finding> = islands
+        .into_iter()
+        .filter(|finding| !raft::covers(&clashes, finding, options.raft.island_margin_mm))
+        .collect();
+    findings.extend(clashes.into_iter().map(|clash| clash.finding));
     findings.extend(traps);
     findings.extend(thin);
     findings.extend(output);
