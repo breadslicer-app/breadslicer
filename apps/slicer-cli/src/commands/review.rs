@@ -13,13 +13,14 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::is_support_mesh_name;
+use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
     Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport,
     Role, Severity, SuggestedFix, review_regions,
 };
 
+use crate::commands::df_supports::df_raft_top_mm;
 use crate::commands::slice::{
     SlicedScene, load_and_slice, load_material_profile, load_printer_profile,
 };
@@ -51,8 +52,15 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         .iter()
         .map(|slices| ReviewLeaf::from_slices(slices, role_of(slices.leaf_name())))
         .collect();
+    // Generated supports stand on the raft their options build.
+    let raft_top_mm = options.df_supports.then(df_raft_top_mm).flatten();
+    // A model in the raft is pointed at the support lift: the default, or a
+    // higher --df-lift.
+    let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.df_lift)));
     let input = ReviewInput::from_profile(leaves, plate.profile())
-        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?;
+        .map_err(|err| anyhow!("internal error: the sliced stacks do not fit the run: {err}"))?
+        .with_raft_top_mm(raft_top_mm)
+        .with_support_lift_mm(support_lift_mm);
     let regions = PlateRegions::compute(&input);
     let report = review_regions(
         &ReviewContext::new(&input, &regions),
@@ -182,6 +190,9 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
+        Some(SuggestedFix::ClearRaft { lift_to_mm }) => {
+            format!(" Fix: lift the model to {lift_to_mm:.2} mm or turn the raft off.")
+        }
     };
     format!(
         "{layers:<15} {:<7} {:<13} {:<7} {}. {} At ({:.2}, {:.2}, {:.2}) mm.{fix}",
@@ -332,6 +343,22 @@ mod review_output_tests {
             line.ends_with(" Fix: add a support at (1.00, 2.00, 0.60) mm."),
             "{line}"
         );
+    }
+
+    #[test]
+    fn a_raft_fix_names_the_lift_and_the_raft() {
+        let finding = island().with_fix(SuggestedFix::ClearRaft { lift_to_mm: 5.0 });
+        let line = finding_line(&finding);
+        assert!(
+            line.ends_with(" Fix: lift the model to 5.00 mm or turn the raft off."),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn the_review_knows_the_raft_of_the_generated_supports() {
+        let top = df_raft_top_mm().expect("the default supports stand on a raft");
+        assert!((top - 0.85).abs() < 1e-9, "{top}");
     }
 
     #[test]

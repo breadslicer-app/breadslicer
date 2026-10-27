@@ -14,7 +14,7 @@
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
-use sc_geom::df_supports::is_support_mesh_name;
+use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_review::{Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, review_with};
 use sc_sl1cer::LeafSlices;
 use sc_sl1cer::profile::SliceProfile;
@@ -54,11 +54,18 @@ pub(crate) fn review_leaves(leaves: &[LeafSlices]) -> Vec<ReviewLeaf<'_>> {
 }
 
 /// Reviews the leaves of one slicing run, cut with `profile`: its layer
-/// schedule, its screen and its maximum height.
-pub(crate) fn review_slices(leaves: &[LeafSlices], profile: &SliceProfile) -> ReviewOutcome {
+/// schedule, its screen and its maximum height; the supports stand on a raft
+/// whose top is `raft_top_mm` above the plate, or on none (#131).
+pub(crate) fn review_slices(
+    leaves: &[LeafSlices],
+    profile: &SliceProfile,
+    raft_top_mm: Option<f64>,
+) -> ReviewOutcome {
     guarded(|| {
         let input = ReviewInput::from_profile(review_leaves(leaves), profile)
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| err.to_string())?
+            .with_raft_top_mm(raft_top_mm)
+            .with_support_lift_mm(Some(recommended_lift_mm(None)));
         let report = review_with(&input, &ReviewOptions::default());
         Ok(ReviewOutcome::Reviewed {
             findings: report.findings,
@@ -165,7 +172,7 @@ mod review_tests {
     #[test]
     fn a_plate_standing_on_the_build_plate_reviews_clean() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        match review_slices(&leaves, &profile(4)) {
+        match review_slices(&leaves, &profile(4), None) {
             ReviewOutcome::Reviewed { findings, .. } => {
                 assert!(findings.is_empty(), "two cubes on the plate: {findings:?}")
             }
@@ -179,7 +186,8 @@ mod review_tests {
         add_cube(&mut scene, "Wolf", [0.0, 0.0, 0.0]);
         add_cube(&mut scene, "Floating", [4.0, 0.0, 2.0]);
         let leaves = slice_scene(&scene, &profile(12)).expect("the scene slices");
-        let ReviewOutcome::Reviewed { findings, .. } = review_slices(&leaves, &profile(12)) else {
+        let ReviewOutcome::Reviewed { findings, .. } = review_slices(&leaves, &profile(12), None)
+        else {
             panic!("the review failed");
         };
         assert!(
@@ -193,7 +201,7 @@ mod review_tests {
     #[test]
     fn stacks_that_do_not_fit_the_profile_fail_the_review_only() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        let outcome = review_slices(&leaves, &profile(8));
+        let outcome = review_slices(&leaves, &profile(8), None);
         let ReviewOutcome::Failed(why) = outcome else {
             panic!("a 4-layer slice reviewed on 8 layers: {outcome:?}");
         };
