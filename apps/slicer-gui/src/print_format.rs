@@ -13,7 +13,9 @@
 //! them.
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
-use sc_sla_formats::{CtbVariant, GooVersion, PrinterFileFormat, UnwritableBinding};
+use sc_sla_formats::{
+    AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, PrinterFileFormat, UnwritableBinding,
+};
 
 use crate::i18n::ctr;
 
@@ -147,6 +149,8 @@ fn automatic_label(format: PrinterFileFormat) -> String {
     match format {
         PrinterFileFormat::Goo(_) => ctr!("SlicePanel", ".goo (automatic)"),
         PrinterFileFormat::Ctb(_) => ctr!("SlicePanel", ".ctb (automatic)"),
+        PrinterFileFormat::Cxdlp(_) => ctr!("SlicePanel", ".cxdlp (automatic)"),
+        PrinterFileFormat::AnycubicZip(_) => ctr!("SlicePanel", "Anycubic (automatic)"),
     }
     .to_string()
 }
@@ -162,6 +166,11 @@ fn format_label(format: PrinterFileFormat) -> String {
         PrinterFileFormat::Ctb(CtbVariant::EncryptedV5) => {
             ctr!("SlicePanel", ".ctb (v5 encrypted)")
         }
+        PrinterFileFormat::Cxdlp(CxdlpVersion::V2) => ctr!("SlicePanel", ".cxdlp (v2)"),
+        PrinterFileFormat::Cxdlp(CxdlpVersion::V3) => ctr!("SlicePanel", ".cxdlp (v3)"),
+        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz) => ctr!("SlicePanel", ".pwsz"),
+        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pm7) => ctr!("SlicePanel", ".pm7"),
+        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pm7m) => ctr!("SlicePanel", ".pm7m"),
     }
     .to_string()
 }
@@ -289,7 +298,7 @@ mod print_format_tests {
         let declared = declared(&[
             binding(FormatKind::Goo, Some("v5.1")),
             goo_v3_0(),
-            binding(FormatKind::Unknown("azf".to_owned()), Some("pm7")),
+            binding(FormatKind::Unknown("lumen".to_owned()), Some("v1")),
         ]);
         let model = print_format_model(&declared, None);
 
@@ -298,7 +307,7 @@ mod print_format_tests {
             model.refusals,
             vec![
                 "goo@v5.1: this build cannot write it yet".to_owned(),
-                "azf@pm7: unknown format \"azf\"".to_owned(),
+                "lumen@v1: unknown format \"lumen\"".to_owned(),
             ],
         );
     }
@@ -320,6 +329,14 @@ mod print_format_tests {
         assert_eq!(
             format_label(PrinterFileFormat::Ctb(CtbVariant::EncryptedV5)),
             ".ctb (v5 encrypted)",
+        );
+        assert_eq!(
+            format_label(PrinterFileFormat::Cxdlp(CxdlpVersion::V3)),
+            ".cxdlp (v3)",
+        );
+        assert_eq!(
+            format_label(PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz)),
+            ".pwsz",
         );
     }
 
