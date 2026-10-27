@@ -36,8 +36,8 @@ use std::time::{Duration, Instant};
 use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{
-    DF_SUPPORT_MESH_NAME, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
-    DfSupportSession, EditPreview, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, DfSupportSession, EditPreview,
+    RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -541,6 +541,10 @@ impl DfSupportRun {
         {
             let revision = *revision;
             prescan.running = None;
+            crate::breadcrumbs::note(&format!(
+                "supports: prescan finished ok={}",
+                finished.is_ok()
+            ));
             if let Ok(done) = finished {
                 prescan.ready = Some((revision, done.scans));
             }
@@ -609,6 +613,7 @@ impl DfSupportRun {
         // Models the last prescan already scanned are taken from it.
         request.prescanned = prescan.ready.as_ref().map(|(_, scans)| scans.clone());
         let job = start_df_prescan(&scene, request);
+        crate::breadcrumbs::note("supports: prescan started");
         prescan.running = Some((job, self.document.scene_revision(), Instant::now()));
     }
 
@@ -624,6 +629,10 @@ impl DfSupportRun {
                 job.cancel();
                 ahead.running = None;
             } else if let Some(finished) = job.try_poll() {
+                crate::breadcrumbs::note(&format!(
+                    "supports: ahead finished ok={}",
+                    finished.is_ok()
+                ));
                 let (revision, key) = (*revision, key.clone());
                 ahead.running = None;
                 if let Ok(outcome) = finished {
@@ -651,6 +660,7 @@ impl DfSupportRun {
         };
         request.prescanned = scans;
         if let Ok(job) = start_df_supports(&scene, request) {
+            crate::breadcrumbs::note("supports: ahead started");
             ahead.running = Some((job, self.document.scene_revision(), key));
         }
     }
@@ -667,6 +677,7 @@ impl DfSupportRun {
         {
             let (revision, _, outcome) = ahead.ready.take().expect("checked above");
             drop(ahead);
+            crate::breadcrumbs::note("supports: generate used the supports made ahead");
             *self.started_on.borrow_mut() = Some(revision);
             self.finish(Ok(outcome));
             return true;
@@ -679,6 +690,7 @@ impl DfSupportRun {
         }
         let (job, revision, _) = ahead.running.take().expect("checked above");
         drop(ahead);
+        crate::breadcrumbs::note("supports: generate took over the run made ahead");
         ui.set_support_gen_in_progress(true);
         ui.set_support_gen_cancelable(true);
         ui.set_support_gen_progress(0.0);
@@ -881,9 +893,7 @@ impl DfSupportRun {
                     .map_while(|i| spatial.leaf_id_at_index(i))
                     .find_map(|id| {
                         let mesh = spatial.graph().leaf_mesh_arc(id)?;
-                        (mesh.meta().as_ref().and_then(|m| m.name.as_deref())
-                            == Some(DF_SUPPORT_MESH_NAME))
-                        .then(|| (id, mesh.clone()))
+                        sc_geom::df_supports::is_support_mesh(mesh).then(|| (id, mesh.clone()))
                     })
             })
             .flatten()

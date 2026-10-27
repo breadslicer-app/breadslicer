@@ -725,6 +725,7 @@ impl ViewportController {
         let Some(prepared) = self.session.loader().take_finished_load() else {
             return;
         };
+        crate::breadcrumbs::note("load: finished");
         let PreparedScene {
             spatial,
             gpu_scene,
@@ -1305,10 +1306,10 @@ impl ViewportController {
             .document()
             .with_scene(|spatial| {
                 let is_supports = |id: sc_scene::NodeId| {
-                    spatial.graph().leaf_mesh_arc(id).is_some_and(|m| {
-                        m.meta().as_ref().and_then(|m| m.name.as_deref())
-                            == Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME)
-                    })
+                    spatial
+                        .graph()
+                        .leaf_mesh_arc(id)
+                        .is_some_and(|m| sc_geom::df_supports::is_support_mesh(&m))
                 };
                 let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
                     is_supports(id) == (tool == TabTool::RemoveSupport)
@@ -1745,6 +1746,7 @@ impl ViewportController {
     }
 
     pub(crate) fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
+        crate::breadcrumbs::note("window: graphics ready");
         // Mint a fresh token for this setup. Both the loader snapshot (consumed
         // by the worker-side `GpuScene::build`) and the renderer (built below)
         // carry it. The 2 values match for the entire lifetime of this setup;

@@ -303,7 +303,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
 
     let df_supports = long("df-supports")
         .help(
-            "Generate supports and a raft with the native DragonFruit support port before slicing, as the GUI's Tools > Generate Supports (DragonFruit) does. The supports are sliced with the scene.",
+            "Generate supports and a raft before slicing, as the Supports tab does in the app. The supports are sliced with the scene.",
         )
         .switch();
 
@@ -498,7 +498,7 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         version
     ])
         .to_options()
-        .descr("sc-slicer-cli (SoulCrafted Slicer, CLI) is an FLOSS command line slicer for resin 3d printers")
+        .descr("sc-slicer-cli (Breadslicer, CLI) is a free software command line slicer for resin 3D printers")
         // .header(header) // TODO: Implement these lines for the embedded help
         .footer("Add `--help` after any of the subcommands to learn more about them.")
         .fallback_to_usage()

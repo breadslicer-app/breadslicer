@@ -270,6 +270,7 @@ async fn run_export_flow(
     let previews = previews_for(format);
 
     export_progress.begin();
+    crate::breadcrumbs::note("export: started");
     let sink = export_progress.sink();
     let (tx, rx) = oneshot::channel();
     let worker_target = target.clone();
@@ -293,6 +294,10 @@ async fn run_export_flow(
 
     let outcome = rx.await;
     export_progress.end();
+    crate::breadcrumbs::note(&format!(
+        "export: finished ok={}",
+        matches!(outcome, Ok(Ok(())))
+    ));
     match outcome {
         Ok(Ok(())) => {}
         Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), err),

@@ -29,7 +29,6 @@ use sc_geom::df_hollow::{
     HollowKind, HollowOutcome, HollowRequest, HollowResult, PreparedHollow, WorldDrain,
     start_hollow_mesh,
 };
-use sc_geom::df_supports::DF_SUPPORT_MESH_NAME;
 use sc_geom::{JobError, JobHandle};
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, Vertex};
@@ -346,7 +345,7 @@ impl HollowRun {
 
     /// 0 a solid model, 1 a hollow this driver made, 2 the support mesh.
     fn model_state(&self, mesh: &Arc<IndexedMesh>) -> i32 {
-        if mesh.meta().as_ref().and_then(|m| m.name.as_deref()) == Some(DF_SUPPORT_MESH_NAME) {
+        if sc_geom::df_supports::is_support_mesh(mesh) {
             2
         } else if self.entry_for(mesh).is_some() {
             1
@@ -924,6 +923,7 @@ impl HollowRun {
                 None if same_model => return,
                 None => {}
                 Some(Ok(outcome)) => {
+                    crate::breadcrumbs::note("hollow: cavity preview ready");
                     let job_key = *job_key;
                     *self.prepared.borrow_mut() = Some(outcome.prepared.clone());
                     if let HollowResult::Preview { cavity, infill, .. } = outcome.result {
@@ -953,6 +953,7 @@ impl HollowRun {
             ..HollowRequest::default()
         };
         if let Ok(handle) = start_hollow_mesh(original.clone(), world, request) {
+            crate::breadcrumbs::note("hollow: cavity preview started");
             preview.job = Some((handle, key));
         }
     }
