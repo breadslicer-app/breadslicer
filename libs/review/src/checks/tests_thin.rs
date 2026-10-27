@@ -19,6 +19,7 @@ use super::lines::{self, Axis, Disc, Edges, Lines};
 use super::*;
 use crate::input::{ReviewLeaf, pixel_to_plate};
 use crate::regions::PlateRegions;
+use crate::runner::ReviewContext;
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
 
 fn thin(fixture: &Fixture) -> Vec<Finding> {
@@ -104,7 +105,13 @@ fn a_thin_wall_is_one_warning_over_its_layers() {
         wall.detail,
         "This wall is 0.150 mm (1.5 px) wide, under 2 pixels: it will not print."
     );
-    assert_eq!(wall.fix, None);
+    assert_eq!(
+        wall.fix,
+        Some(SuggestedFix::Thicken {
+            at: wall.focus,
+            feature: 0
+        })
+    );
     assert!(
         focus_in(&fixture, wall, 100.0, 20.0, 101.5, 80.0),
         "{wall:?}"
@@ -1223,4 +1230,83 @@ fn every_feature_is_measured_however_many_there_are() {
             );
         }
     }
+}
+
+/// The thin findings of `fixture` with the thickenings they offer.
+fn thickenings(fixture: &Fixture) -> (Vec<Finding>, Vec<CavityFill>) {
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input);
+    run_with_thickenings(
+        &ReviewContext::new(&input, &regions),
+        &ThinFeatureOptions::default(),
+    )
+}
+
+#[test]
+fn a_thickening_grows_the_pixels_of_the_wall_by_one() {
+    // A wall half a pixel thick inside pixel column 100, from row 20 to 80.
+    let fixture = FixtureBuilder::new(12)
+        .model(.., Shape::rect(100.25, 20.0, 100.75, 80.0))
+        .build();
+    let (findings, fills) = thickenings(&fixture);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(fills.len(), 1);
+    let fill = &fills[0];
+    assert_eq!(fill.slabs.len(), 12);
+    // Columns 99 to 101, rows 19 to 80: the wall's pixels and one more on
+    // every side.
+    let a = fixture.pixel_to_plate([99.0, 19.0]);
+    let b = fixture.pixel_to_plate([102.0, 81.0]);
+    for slab in &fill.slabs {
+        assert_eq!(slab.rects.len(), 1, "{slab:?}");
+        let rect = slab.rects[0];
+        assert!((rect.x0_mm - a[0].min(b[0])).abs() < 1e-9, "{rect:?}");
+        assert!((rect.x1_mm - a[0].max(b[0])).abs() < 1e-9, "{rect:?}");
+        assert!((rect.y0_mm - a[1].min(b[1])).abs() < 1e-9, "{rect:?}");
+        assert!((rect.y1_mm - a[1].max(b[1])).abs() < 1e-9, "{rect:?}");
+    }
+}
+
+#[test]
+fn a_thickened_feature_is_gone_on_the_next_review() {
+    // A wall under a pixel, a pin under a pixel and a wall 1.5 pixels
+    // thick, beside a block: all three thickened, none is left.
+    let fixture = FixtureBuilder::new(16)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 60.0))
+        .model(.., Shape::rect(100.0, 20.0, 100.5, 80.0))
+        .model(.., Shape::circle(130.0, 60.0, 0.3))
+        .model(0..12, Shape::rect(150.0, 20.0, 151.5, 80.0))
+        .build();
+    let (findings, fills) = thickenings(&fixture);
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    let picked: Vec<&CavityFill> = findings
+        .iter()
+        .map(|f| match f.fix {
+            Some(SuggestedFix::Thicken { feature, .. }) => &fills[feature],
+            other => panic!("expected a thickening, got {other:?}"),
+        })
+        .collect();
+    let thick = crate::fill::fill_stack(picked, fixture.schedule()).expect("three features");
+    let again = fixture.input_with(ReviewLeaf::new(Some("Thickened"), Role::Model, &thick));
+    let regions = PlateRegions::compute(&again);
+    let after = run(
+        &ReviewContext::new(&again, &regions),
+        &ThinFeatureOptions::default(),
+    );
+    assert!(after.is_empty(), "{after:?}");
+    // The pin the printer dropped now lights pixels.
+    assert!(!regions.layer(14).is_empty());
+}
+
+#[test]
+fn a_thin_support_offers_no_thickening() {
+    let fixture = FixtureBuilder::new(12)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 60.0))
+        .support(.., Shape::circle(100.0, 60.0, 0.3))
+        .build();
+    let (findings, fills) = thickenings(&fixture);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].scope, RoleScope::Support);
+    assert_eq!(findings[0].fix, None);
+    assert!(fills.is_empty());
 }
