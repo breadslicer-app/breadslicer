@@ -458,7 +458,7 @@ pub fn write_file(
         write_u32_be(&mut out, *area)?;
     }
     out.write_all(&PAGE_BREAK)?;
-    if version >= CxdlpVersion::V3 {
+    if version == CxdlpVersion::V3 {
         write_v3_block(&mut out, program)?;
     }
 

@@ -279,13 +279,19 @@ mod target_format_tests {
     #[test]
     fn the_formats_ported_from_uvtools_settle_once_installed() {
         sc_sla_formats_uvtools::install();
-        let halot = declared(&[binding("cxdlp", Some("v2")), binding("cxdlp", Some("v3"))]);
-        assert_eq!(
-            settle_for_printer(TargetFormat::from_str("cxdlp").unwrap(), &halot),
-            Ok(SettledTarget::PrinterFile(PrinterFileFormat::Cxdlp(
-                sc_sla_formats::CxdlpVersion::V3
-            ))),
-        );
+        // The first revision a printer lists is its default: the Halot One
+        // lists v2, the dialect of the files it prints from.
+        for (listed, first) in [
+            (["v2", "v3"], sc_sla_formats::CxdlpVersion::V2),
+            (["v3", "v2"], sc_sla_formats::CxdlpVersion::V3),
+        ] {
+            let halot = declared(&listed.map(|version| binding("cxdlp", Some(version))));
+            assert_eq!(
+                settle_for_printer(TargetFormat::from_str("cxdlp").unwrap(), &halot),
+                Ok(SettledTarget::PrinterFile(PrinterFileFormat::Cxdlp(first))),
+                "{listed:?}",
+            );
+        }
         let m7_pro = declared(&[binding("azf", Some("pwsz"))]);
         assert_eq!(
             settle_for_printer(TargetFormat::from_str("azf").unwrap(), &m7_pro),

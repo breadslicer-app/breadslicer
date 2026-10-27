@@ -17,6 +17,14 @@ use sc_profiles_converter::source_note::SourceNote;
 /// so have no data sheet behind them.
 const GENERIC_PROFILES: [&str; 2] = ["abs-like-405", "standard-405"];
 
+/// Profiles written by hand from the settings of files that print
+/// correctly on their owner's machines, not converted from a vendor's
+/// dataset, so no sheet stands behind a density for them.
+const OWNER_PRINT_SETTINGS: [&str; 2] = [
+    "anycubic-standard-resin-grey-50um",
+    "creality-halot-one-printer-profile-50um",
+];
+
 /// The vendor resins we ship with no density.
 const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
     // Its strontium aluminate pigment is far denser than the base
@@ -124,6 +132,7 @@ fn the_curation_we_ship_covers_every_resin_but_the_ones_with_no_sheet() {
     let mut expected: Vec<String> = GENERIC_PROFILES
         .iter()
         .chain(RESINS_WITHOUT_A_FIGURE.iter())
+        .chain(OWNER_PRINT_SETTINGS.iter())
         .map(|id| (*id).to_owned())
         .collect();
     expected.sort();

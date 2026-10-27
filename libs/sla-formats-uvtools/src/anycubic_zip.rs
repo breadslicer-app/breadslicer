@@ -620,12 +620,24 @@ fn user_resin(program: &PrintProgram) -> Resin {
     resin
 }
 
+/// The machine name as Anycubic's own files carry it: Photon Workshop and Lychee
+/// both write `Anycubic Photon Mono M7 Pro`, the brand included, where a
+/// profile names the machine without it.
+fn anycubic_machine_name(machine_name: &str) -> String {
+    let name = machine_name.trim();
+    if name.to_ascii_lowercase().starts_with("anycubic") {
+        name.to_owned()
+    } else {
+        format!("Anycubic {name}")
+    }
+}
+
 fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> SettingsManifest {
     let resolution = program.raster.pixel_resolution();
     let plate = program.raster.build_volume();
     let display_x = round_display(plate.x_mm() as f32);
     let display_y = round_display(plate.y_mm() as f32);
-    let name = program.machine_name.as_str().to_owned();
+    let name = anycubic_machine_name(program.machine_name.as_str());
     let raster_antialiasing = match program.raster.aa() {
         AaLevel::Off => 1,
         AaLevel::X2 => 2,
