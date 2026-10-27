@@ -22,6 +22,11 @@
 //! ([`ReviewMarks::landed`]), so a Slice press re-slices when the fills
 //! asked for differ from those ([`ReviewMarks::pending`]), even though the
 //! scene did not change.
+//!
+//! Fix All (#156) marks two more kinds of pixels the same way
+//! ([`PatchKind`]): a thin feature to thicken, cured as a fill is, and a
+//! floating speck to erase, which the next slice removes from the models'
+//! layers ([`sc_review::erase_stack`]).
 
 use std::sync::Arc;
 
@@ -49,13 +54,37 @@ impl FindingKey {
     }
 }
 
-/// A cavity to fill.
+/// What the next slice does with a mark's pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PatchKind {
+    /// Cures a cavity solid.
+    Fill,
+    /// Cures a thin feature's pixels, grown (#156).
+    Thicken,
+    /// Removes a floating speck (#156).
+    Erase,
+}
+
+/// Pixels to change on the next slice: a cavity to fill, a feature to
+/// thicken or a speck to erase.
 #[derive(Clone, Debug)]
 struct FillMark {
     /// Stable for the mark's life, so a slice can name what it cured.
     id: u64,
     key: FindingKey,
+    kind: PatchKind,
     fill: Arc<CavityFill>,
+}
+
+/// What the next slice changes, from the marks.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SlicePatches {
+    /// The marks' ids, for [`ReviewMarks::landed`].
+    pub(crate) ids: Vec<u64>,
+    /// The pixels to cure: cavities and thin features.
+    pub(crate) fills: Vec<Arc<CavityFill>>,
+    /// The pixels to erase from the models: specks.
+    pub(crate) erasures: Vec<Arc<CavityFill>>,
 }
 
 /// The marks of the Review card. `P` describes the models the marks were
@@ -69,6 +98,8 @@ pub(crate) struct ReviewMarks<P> {
     next_id: u64,
     /// The fills the held slice cured, by id, sorted.
     in_slice: Vec<u64>,
+    /// Whether all of those were cavities.
+    in_slice_cavities: bool,
 }
 
 impl<P> Default for ReviewMarks<P> {
@@ -79,6 +110,7 @@ impl<P> Default for ReviewMarks<P> {
             left: Vec::new(),
             next_id: 0,
             in_slice: Vec::new(),
+            in_slice_cavities: true,
         }
     }
 }
@@ -110,6 +142,13 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
 
     /// Whether the cavity of `key` is marked to fill.
     pub(crate) fn is_filled(&self, key: &FindingKey) -> bool {
+        self.fills
+            .iter()
+            .any(|mark| &mark.key == key && mark.kind == PatchKind::Fill)
+    }
+
+    /// Whether the finding of `key` has a mark of any kind.
+    pub(crate) fn is_marked(&self, key: &FindingKey) -> bool {
         self.fills.iter().any(|mark| &mark.key == key)
     }
 
@@ -122,28 +161,35 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
             self.release();
             return false;
         }
-        self.mark_fill(key, fill);
+        self.mark_fill(key, PatchKind::Fill, fill);
         true
     }
 
     /// Marks the cavity of `key` to fill, unless it is marked already.
     pub(crate) fn fill(&mut self, key: FindingKey, fill: &CavityFill, models: &P) {
+        self.mark(PatchKind::Fill, key, fill, models);
+    }
+
+    /// Marks the finding of `key` for the next slice to change `fill`'s
+    /// pixels as `kind` says, unless it is marked already.
+    pub(crate) fn mark(&mut self, kind: PatchKind, key: FindingKey, fill: &CavityFill, models: &P) {
         self.adopt(models);
-        if !self.is_filled(&key) {
-            self.mark_fill(key, fill);
+        if !self.is_marked(&key) {
+            self.mark_fill(key, kind, fill);
         }
     }
 
-    fn mark_fill(&mut self, key: FindingKey, fill: &CavityFill) {
+    fn mark_fill(&mut self, key: FindingKey, kind: PatchKind, fill: &CavityFill) {
         self.fills.push(FillMark {
             id: self.next_id,
             key,
+            kind,
             fill: Arc::new(fill.clone()),
         });
         self.next_id += 1;
     }
 
-    /// Unmarks every fill.
+    /// Unmarks every fill, thickening and erasure.
     pub(crate) fn clear_fills(&mut self) {
         self.fills.clear();
         self.release();
@@ -175,19 +221,35 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
         }
     }
 
-    /// The fills to cure on the next slice, and their ids for
+    /// What the next slice cures and erases, with the marks' ids for
     /// [`landed`](Self::landed).
-    pub(crate) fn for_slice(&self) -> (Vec<u64>, Vec<Arc<CavityFill>>) {
-        self.fills
-            .iter()
-            .map(|mark| (mark.id, mark.fill.clone()))
-            .unzip()
+    pub(crate) fn for_slice(&self) -> SlicePatches {
+        let mut patches = SlicePatches::default();
+        for mark in &self.fills {
+            patches.ids.push(mark.id);
+            match mark.kind {
+                PatchKind::Fill | PatchKind::Thicken => patches.fills.push(mark.fill.clone()),
+                PatchKind::Erase => patches.erasures.push(mark.fill.clone()),
+            }
+        }
+        patches
     }
 
-    /// Records that the held slice cured the fills `ids`.
+    /// Records that the held slice applied the marks `ids`.
     pub(crate) fn landed(&mut self, mut ids: Vec<u64>) {
         ids.sort_unstable();
+        self.in_slice_cavities = self
+            .fills
+            .iter()
+            .filter(|mark| ids.binary_search(&mark.id).is_ok())
+            .all(|mark| mark.kind == PatchKind::Fill);
         self.in_slice = ids;
+    }
+
+    /// Whether every mark, and every mark the held slice applied, is a
+    /// cavity to fill: the card then speaks of cavities, not of fixes.
+    pub(crate) fn only_cavities(&self) -> bool {
+        self.in_slice_cavities && self.fills.iter().all(|mark| mark.kind == PatchKind::Fill)
     }
 
     /// Whether the fills asked for differ from those the held slice cured.
@@ -263,18 +325,18 @@ mod review_marks_tests {
         assert!(marks.toggle_fill(key, &cavity(), &7));
         assert!(marks.is_filled(&key));
         assert!(marks.pending());
-        let (ids, fills) = marks.for_slice();
-        assert_eq!(fills.len(), 1);
-        assert_eq!(*fills[0], cavity());
-        marks.landed(ids);
+        let patches = marks.for_slice();
+        assert_eq!(patches.fills.len(), 1);
+        assert!(patches.erasures.is_empty());
+        assert_eq!(*patches.fills[0], cavity());
+        marks.landed(patches.ids);
         assert!(!marks.pending());
         assert_eq!((marks.fill_count(), marks.cured_count()), (1, 1));
 
         // Unticked, the next slice must drop it again.
         assert!(!marks.toggle_fill(key, &cavity(), &7));
         assert!(marks.pending());
-        let (ids, _) = marks.for_slice();
-        marks.landed(ids);
+        marks.landed(marks.for_slice().ids);
         assert!(!marks.pending());
         assert_eq!(marks.cured_count(), 0);
     }
@@ -283,7 +345,7 @@ mod review_marks_tests {
     fn a_slice_launched_before_a_new_mark_leaves_it_pending() {
         let mut marks: ReviewMarks<i32> = ReviewMarks::default();
         marks.fill(FindingKey::of(&trap(2, 1.0)), &cavity(), &7);
-        let (launched, _) = marks.for_slice();
+        let launched = marks.for_slice().ids;
         marks.fill(FindingKey::of(&trap(9, 1.0)), &cavity(), &7);
         marks.landed(launched);
         assert!(marks.pending());
@@ -299,8 +361,7 @@ mod review_marks_tests {
         let left = FindingKey::of(&trap(9, 1.0));
         marks.fill(filled, &cavity(), &7);
         marks.leave(left, &7);
-        let (ids, _) = marks.for_slice();
-        marks.landed(ids);
+        marks.landed(marks.for_slice().ids);
         assert!(!marks.follow(Some(&7)));
         assert!(marks.is_filled(&filled) && marks.is_left(&left));
 
@@ -335,5 +396,44 @@ mod review_marks_tests {
         marks.fill(FindingKey::of(&trap(2, 1.0)), &cavity(), &8);
         marks.clear_fills();
         assert!(!marks.follow(Some(&9)));
+    }
+
+    #[test]
+    fn thickenings_cure_and_erasures_erase() {
+        let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+        marks.fill(FindingKey::of(&trap(2, 1.0)), &cavity(), &7);
+        assert!(marks.only_cavities());
+        marks.mark(
+            PatchKind::Thicken,
+            FindingKey::of(&trap(4, 1.0)),
+            &cavity(),
+            &7,
+        );
+        marks.mark(
+            PatchKind::Erase,
+            FindingKey::of(&trap(6, 1.0)),
+            &cavity(),
+            &7,
+        );
+        // A finding marked once stays marked once, whatever the kind.
+        marks.mark(
+            PatchKind::Fill,
+            FindingKey::of(&trap(6, 1.0)),
+            &cavity(),
+            &7,
+        );
+        assert!(!marks.only_cavities());
+        assert!(!marks.is_filled(&FindingKey::of(&trap(6, 1.0))));
+        assert!(marks.is_marked(&FindingKey::of(&trap(6, 1.0))));
+        let patches = marks.for_slice();
+        assert_eq!((patches.fills.len(), patches.erasures.len()), (2, 1));
+        assert_eq!(patches.ids.len(), 3);
+        marks.landed(patches.ids);
+        assert!(!marks.pending());
+        marks.clear_fills();
+        // The slice held still applied more than cavities.
+        assert!(!marks.only_cavities());
+        marks.landed(marks.for_slice().ids);
+        assert!(marks.only_cavities());
     }
 }

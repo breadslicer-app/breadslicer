@@ -27,7 +27,10 @@
 //! the worker cuts them on the run's schedule, reviews them as model and
 //! merges them into the plate, so the preview, the printer file and its
 //! estimates all cure them. A Slice press with fills to change re-slices
-//! even when nothing else changed.
+//! even when nothing else changed. Fix All (#156) adds thin features to
+//! thicken, cured the same way, and specks to erase: their stack is cut from
+//! the model leaves and the fills and merged with them, which removes the
+//! specks from all three.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,7 +51,7 @@ use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
-use crate::review::{ReviewOutcome, review_slices};
+use crate::review::{ReviewOutcome, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
@@ -146,6 +149,15 @@ impl SliceRun {
             ui.on_slice_requested(move || run.start());
         }
         {
+            // Fix All (#156) slices again on its own: no overwrite to confirm.
+            let weak = Rc::downgrade(&run);
+            run.review.set_reslice(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.start_with(true);
+                }
+            });
+        }
+        {
             let run = run.clone();
             ui.on_slice_cancel_requested(move || run.cancel());
         }
@@ -163,6 +175,13 @@ impl SliceRun {
     /// when no printer or no resin is in force (the button gates both, but the
     /// checks keep the path safe).
     fn start(self: &Rc<Self>) {
+        self.start_with(false);
+    }
+
+    /// [`start`](Self::start), for the Slice button (`by_fix_all` false) or
+    /// for the Review card's Fix All, which promised a new slice: a changed
+    /// input then launches without asking to overwrite the held slice.
+    fn start_with(self: &Rc<Self>, by_fix_all: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -188,18 +207,21 @@ impl SliceRun {
             .as_ref()
             .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
         match decide_re_slice(held.as_ref(), &current, geometry_changed) {
-            ReSliceDecision::FirstSlice => self.launch(current),
+            ReSliceDecision::FirstSlice => self.launch(current, by_fix_all),
             // Fills to add or drop: the scene is the same, the slice is not.
-            ReSliceDecision::Unchanged if self.review.fills_pending() => self.launch(current),
+            ReSliceDecision::Unchanged if self.review.fills_pending() => {
+                self.launch(current, by_fix_all)
+            }
             ReSliceDecision::Unchanged => {
                 // The held slice already matches the inputs; nothing to
                 // recompute. Surface the transient "up to date" hint.
                 self.show_up_to_date_hint();
             }
+            ReSliceDecision::Changed if by_fix_all => self.launch(current, true),
             ReSliceDecision::Changed => {
                 let this = self.clone();
                 self.dialogs.show_slice_overwrite_confirm(move || {
-                    this.launch(current);
+                    this.launch(current, false);
                 });
             }
         }
@@ -210,7 +232,7 @@ impl SliceRun {
     /// over stale data is confirmed. The scene clone and the geometry marker
     /// are taken together here so the marker recorded with the result matches
     /// the geometry actually sliced.
-    fn launch(self: &Rc<Self>, mut current: SliceParams) {
+    fn launch(self: &Rc<Self>, mut current: SliceParams, by_fix_all: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -233,8 +255,9 @@ impl SliceRun {
         let cancel = CancelToken::new();
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
-        let (fill_ids, fills) = self.review.fills_for_slice();
-        *self.pending_fills.borrow_mut() = fill_ids;
+        self.review.slice_started(by_fix_all);
+        let patches = self.review.fills_for_slice();
+        *self.pending_fills.borrow_mut() = patches.ids;
 
         self.start_poll();
         // The raft the scene's supports stand on, for the review (#131).
@@ -247,7 +270,8 @@ impl SliceRun {
                 first_layer_height: current.first_layer_height,
                 aa_level: current.aa_level,
                 raft_top_mm,
-                fills,
+                fills: patches.fills,
+                erasures: patches.erasures,
             },
             cancel,
         );
@@ -427,8 +451,10 @@ struct SliceInputs {
     /// The top of the raft the scene's supports stand on, for the review
     /// (#131).
     raft_top_mm: Option<f64>,
-    /// The cavities to fill (#132).
+    /// The cavities to fill (#132) and the thin features to thicken (#156).
     fills: Vec<Arc<CavityFill>>,
+    /// The specks to erase (#156).
+    erasures: Vec<Arc<CavityFill>>,
 }
 
 /// Loads the profiles and runs the shared slicing service, publishing progress
@@ -466,9 +492,16 @@ fn run_slice(
         sc_print_glue::SliceRun::Completed(plate) => {
             progress.reviewing.store(true, Ordering::Relaxed);
             let filled = fill_stack(inputs.fills.iter().map(|fill| &**fill), plate.schedule());
+            let erased = erased_stack(
+                plate.leaves(),
+                filled.as_ref(),
+                inputs.erasures.iter().map(|erasure| &**erasure),
+                plate.schedule(),
+            );
             let review = review_slices(
                 plate.leaves(),
                 filled.as_ref(),
+                erased.as_ref(),
                 plate.profile(),
                 inputs.raft_top_mm,
             );
@@ -480,7 +513,7 @@ fn run_slice(
                 return Ok(SliceRunOutcome::Cancelled);
             }
             let contours = plate
-                .merge_with(filled)
+                .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
             capture(scene, contours, review).map(SliceRunOutcome::Completed)
         }
@@ -543,6 +576,8 @@ mod capture_tests {
         ReviewOutcome::Reviewed {
             findings: Vec::new(),
             fills: Vec::new(),
+            erasures: Vec::new(),
+            thickenings: Vec::new(),
             took: Duration::ZERO,
         }
     }
