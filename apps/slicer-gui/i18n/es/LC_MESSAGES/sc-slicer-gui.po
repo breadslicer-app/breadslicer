@@ -2600,6 +2600,11 @@ msgid "Lift to {} mm"
 msgstr "Elevar a {} mm"
 
 #: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Generate anyway"
+msgstr "Generar igual"
+
+#: ui/workspace/inspectors.slint
 msgctxt "Review"
 msgid "No raft"
 msgstr "Sin balsa"
