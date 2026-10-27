@@ -4,23 +4,41 @@
  */
 
 use crate::container::{BreadReader, BreadWriter, ChunkTag};
-use crate::file::{ReadSceneError, read_scene, write_scene};
+use crate::file::{BreadProject, ReadProjectError, read_project, write_project};
 use crate::scene::{SCENE_TAG, SCENE_VERSION, encode_scene};
 use crate::tests_scene::scene;
 
+fn project() -> BreadProject {
+    BreadProject {
+        scene: scene(),
+        settings: Some(b"version = 1\nprinter = \"m7-pro\"\n".to_vec()),
+        supports: vec![],
+    }
+}
+
 #[test]
-fn a_scene_survives_the_file() {
-    let scene = scene();
-    let bytes = write_scene(&scene, Vec::new()).unwrap();
-    let back = read_scene(bytes.as_slice()).unwrap();
+fn a_project_survives_the_file() {
+    let project = project();
+    let bytes = write_project(&project, Vec::new()).unwrap();
+    let back = read_project(bytes.as_slice()).unwrap();
     assert_eq!(
-        encode_scene(&back).unwrap().payload,
-        encode_scene(&scene).unwrap().payload
+        encode_scene(&back.scene).unwrap().payload,
+        encode_scene(&project.scene).unwrap().payload
     );
+    assert_eq!(back.settings, project.settings);
+    assert!(back.supports.is_empty());
+}
+
+#[test]
+fn a_project_without_settings_has_none() {
+    let mut project = project();
+    project.settings = None;
+    let bytes = write_project(&project, Vec::new()).unwrap();
+    assert_eq!(read_project(bytes.as_slice()).unwrap().settings, None);
 }
 
 /// The file's chunks, rewritten through `edit`.
-fn rewrite(
+pub(crate) fn rewrite(
     bytes: &[u8],
     edit: impl Fn(ChunkTag, u16, Vec<u8>) -> Vec<(ChunkTag, u16, Vec<u8>)>,
 ) -> Vec<u8> {
@@ -36,19 +54,19 @@ fn rewrite(
 
 #[test]
 fn unknown_chunks_are_skipped() {
-    let bytes = write_scene(&scene(), Vec::new()).unwrap();
+    let bytes = write_project(&project(), Vec::new()).unwrap();
     let extended = rewrite(&bytes, |tag, version, payload| {
         vec![
             (ChunkTag(*b"NEW1"), 9, b"from a newer build".to_vec()),
             (tag, version, payload),
         ]
     });
-    assert!(read_scene(extended.as_slice()).is_ok());
+    assert!(read_project(extended.as_slice()).is_ok());
 }
 
 #[test]
 fn a_newer_scene_layout_is_refused() {
-    let bytes = write_scene(&scene(), Vec::new()).unwrap();
+    let bytes = write_project(&project(), Vec::new()).unwrap();
     let newer = rewrite(&bytes, |tag, version, payload| {
         let version = if tag == SCENE_TAG {
             SCENE_VERSION + 1
@@ -58,14 +76,14 @@ fn a_newer_scene_layout_is_refused() {
         vec![(tag, version, payload)]
     });
     assert!(matches!(
-        read_scene(newer.as_slice()),
-        Err(ReadSceneError::NewerChunk { tag, .. }) if tag == SCENE_TAG
+        read_project(newer.as_slice()),
+        Err(ReadProjectError::NewerChunk { tag, .. }) if tag == SCENE_TAG
     ));
 }
 
 #[test]
-fn a_file_without_a_scene_is_refused() {
-    let bytes = write_scene(&scene(), Vec::new()).unwrap();
+fn a_file_without_a_scene_or_with_two_is_refused() {
+    let bytes = write_project(&project(), Vec::new()).unwrap();
     let headless = rewrite(&bytes, |tag, version, payload| {
         if tag == SCENE_TAG {
             vec![]
@@ -74,7 +92,15 @@ fn a_file_without_a_scene_is_refused() {
         }
     });
     assert!(matches!(
-        read_scene(headless.as_slice()),
-        Err(ReadSceneError::SceneChunkCount(0))
+        read_project(headless.as_slice()),
+        Err(ReadProjectError::ChunkCount { tag, count: 0 }) if tag == SCENE_TAG
+    ));
+    let doubled = rewrite(&bytes, |tag, version, payload| {
+        let copies = if tag == SCENE_TAG { 2 } else { 1 };
+        vec![(tag, version, payload); copies]
+    });
+    assert!(matches!(
+        read_project(doubled.as_slice()),
+        Err(ReadProjectError::ChunkCount { count: 2, .. })
     ));
 }

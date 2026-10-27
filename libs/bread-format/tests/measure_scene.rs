@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use sc_bread_format::{read_scene, write_scene};
+use sc_bread_format::{BreadProject, read_project, write_project};
 use sc_mesh_formats::load_mesh_from_path;
 
 #[test]
@@ -33,10 +33,16 @@ fn measure_scene_save_and_open() {
     );
     for round in 0..3 {
         let started = Instant::now();
-        let bytes = write_scene(&scene, Vec::new()).expect("the scene writes");
+        let project = BreadProject {
+            scene: scene.clone(),
+            ..Default::default()
+        };
+        let bytes = write_project(&project, Vec::new()).expect("the scene writes");
         let save = started.elapsed();
         let started = Instant::now();
-        let back = read_scene(bytes.as_slice()).expect("the scene reads");
+        let back = read_project(bytes.as_slice())
+            .expect("the scene reads")
+            .scene;
         let open = started.elapsed();
         let back_mesh = back.leaf_mesh_arc(back.first_leaf_id().unwrap()).unwrap();
         assert_eq!(back_mesh.faces(), mesh.faces());

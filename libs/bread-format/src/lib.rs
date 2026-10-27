@@ -12,15 +12,18 @@
 //! and a damaged chunk is reported instead of read.
 //!
 //! The file holds the scene, not what is computed from it: slices, previews
-//! and other caches are rebuilt after opening. [`container`] reads and writes
-//! chunks without knowing what they hold; [`scene`] and [`mesh`] are the
-//! codecs of the scene graph and its meshes, and [`file`] puts them together.
+//! and other caches are rebuilt after opening, and supports are kept as data
+//! from which their mesh is rebuilt. [`container`] reads and writes chunks
+//! without knowing what they hold; [`scene`], [`mesh`] and [`supports`] are
+//! the codecs of the scene graph, its meshes and its supports, and [`file`]
+//! puts them together with the project settings.
 
 mod bytes;
 pub mod container;
 pub mod file;
 pub mod mesh;
 pub mod scene;
+pub mod supports;
 
 #[cfg(test)]
 mod tests_container;
@@ -30,11 +33,17 @@ mod tests_file;
 mod tests_mesh;
 #[cfg(test)]
 mod tests_scene;
+#[cfg(test)]
+mod tests_supports;
 
 pub use container::{BreadReader, BreadWriter, Chunk, ChunkTag, ReadBreadError};
-pub use file::{ReadSceneError, WriteSceneError, read_scene, write_scene};
+pub use file::{
+    BreadProject, ReadProjectError, SETTINGS_TAG, SETTINGS_VERSION, WriteBreadError, read_project,
+    write_project,
+};
 pub use mesh::{DecodeMeshError, MESH_TAG, MESH_VERSION, decode_mesh, encode_mesh};
 pub use scene::{
-    DecodeSceneError, EncodeSceneError, EncodedScene, SCENE_TAG, SCENE_VERSION, decode_scene,
-    encode_scene,
+    DecodeSceneError, DecodedScene, EncodeSceneError, EncodedScene, SCENE_TAG, SCENE_VERSION,
+    decode_scene, encode_scene, encode_scene_emptying,
 };
+pub use supports::{DecodeSupportsError, SUPPORTS_TAG, SUPPORTS_VERSION, SupportDocument};
