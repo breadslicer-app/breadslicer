@@ -58,6 +58,7 @@ mod project_profiles;
 mod reloaded_slices;
 mod repair_run;
 mod review;
+mod review_marks;
 mod review_panel;
 mod save_progress;
 mod save_progress_panel;

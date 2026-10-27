@@ -25,7 +25,7 @@ use crate::regions::{
     AIR_CONNECTIVITY, LayerPixels, Overlap, PixelBox, Region, label_runs, measure_runs,
 };
 use crate::runs::{Run, for_each_overlap};
-use crate::union_find::{Groups, UnionFind};
+use crate::union_find::{Groups, RegionRef, UnionFind};
 
 /// Solid pixels by role. A pixel can be both model and support.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -454,6 +454,52 @@ pub(super) fn classify(
             }
         })
         .collect()
+}
+
+/// The opened air runs of each cavity in `cavities` (its member regions),
+/// layer by layer from the plate up: the pixels a fill cures. Each layer
+/// any cavity touches is rasterised once, in parallel.
+pub(super) fn cavity_runs(
+    input: &ReviewInput<'_>,
+    width: u32,
+    cavities: &[&[RegionRef]],
+) -> Vec<Vec<(usize, Vec<Run>)>> {
+    let mut wanted: Vec<(usize, usize, u32)> = cavities
+        .iter()
+        .enumerate()
+        .flat_map(|(cavity, members)| {
+            members
+                .iter()
+                .map(move |member| (member.layer, cavity, member.index))
+        })
+        .collect();
+    wanted.sort_unstable();
+    let layers: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = layers
+        .par_iter()
+        .map(|members| {
+            let layer = members[0].0;
+            let air = AirPixels::from_pixels(LayerPixels::compute(input, layer), width, input);
+            members
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|regions| {
+                    let runs = air
+                        .air
+                        .iter()
+                        .zip(&air.labels)
+                        .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
+                        .map(|(run, _)| *run)
+                        .collect();
+                    (layer, regions[0].1, runs)
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); cavities.len()];
+    for (layer, cavity, runs) in found.into_iter().flatten() {
+        out[cavity].push((layer, runs));
+    }
+    out
 }
 
 /// Whether the run list `runs` holds pixel `(x, row)`.

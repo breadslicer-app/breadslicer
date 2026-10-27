@@ -12,6 +12,7 @@ use crate::checks::islands::{self, IslandOptions};
 use crate::checks::output::{self, OutputOptions};
 use crate::checks::thin::{self, ThinFeatureOptions};
 use crate::checks::traps::{self, TrapOptions};
+use crate::fill::CavityFill;
 use crate::finding::{Finding, sort_findings};
 use crate::input::ReviewInput;
 use crate::regions::PlateRegions;
@@ -72,6 +73,9 @@ pub struct ReviewTimings {
 pub struct ReviewReport {
     /// Every finding, in listing order.
     pub findings: Vec<Finding>,
+    /// The pixels of every cavity offered a fill, by the index its
+    /// [`SuggestedFix::Fill`](crate::SuggestedFix::Fill) names.
+    pub fills: Vec<CavityFill>,
     /// Where the time went.
     pub timings: ReviewTimings,
 }
@@ -94,13 +98,13 @@ pub fn review_with(input: &ReviewInput<'_>, options: &ReviewOptions) -> ReviewRe
 pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> ReviewReport {
     let started = Instant::now();
     let (
-        ((islands, islands_time), (traps, traps_time)),
+        ((islands, islands_time), ((traps, fills), traps_time)),
         ((thin, thin_time), (output, output_time)),
     ) = rayon::join(
         || {
             rayon::join(
                 || timed(|| islands::run(ctx, &options.islands)),
-                || timed(|| traps::run(ctx, &options.traps)),
+                || timed(|| traps::run_with_fills(ctx, &options.traps)),
             )
         },
         || {
@@ -125,7 +129,11 @@ pub fn review_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Revie
         checks,
         total: ctx.regions.elapsed() + checks,
     };
-    ReviewReport { findings, timings }
+    ReviewReport {
+        findings,
+        fills,
+        timings,
+    }
 }
 
 fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {

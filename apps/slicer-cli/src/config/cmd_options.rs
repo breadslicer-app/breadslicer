@@ -119,6 +119,7 @@ pub(crate) enum CmdOptions {
         source: OsString,
         plate: PlateOptions,
         json: bool,
+        fill: bool,
     },
     Slice {
         source: OsString,
@@ -285,10 +286,17 @@ fn get_review_options() -> impl Parser<CmdOptions> {
         .help("Print the findings and the summary as JSON instead of text.")
         .switch();
 
+    let fill = long("fill")
+        .help(
+            "Fill every cavity the review offers to fill (small resin traps and suction cups), as the app does on the next slice, and review the plate again.",
+        )
+        .switch();
+
     construct!(CmdOptions::Review {
         source,
         plate,
         json,
+        fill,
     })
 }
 

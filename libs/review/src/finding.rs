@@ -187,6 +187,14 @@ pub enum SuggestedFix {
         /// Where the hole goes.
         at: PlatePoint,
     },
+    /// Cure the cavity solid on the next slice (#132): its pixels are
+    /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`.
+    Fill {
+        /// The floor of the cavity, where the camera looks.
+        at: PlatePoint,
+        /// The cavity's index among the review's fills.
+        cavity: usize,
+    },
 }
 
 impl SuggestedFix {
@@ -194,13 +202,20 @@ impl SuggestedFix {
         match self {
             Self::AddSupport { at } => (0, at),
             Self::AddDrain { at } => (1, at),
+            Self::Fill { at, .. } => (2, at),
         }
     }
 
     fn total_cmp(&self, other: &Self) -> Ordering {
         let (a_rank, a_at) = self.rank();
         let (b_rank, b_at) = other.rank();
-        a_rank.cmp(&b_rank).then_with(|| a_at.total_cmp(b_at))
+        a_rank
+            .cmp(&b_rank)
+            .then_with(|| a_at.total_cmp(b_at))
+            .then_with(|| match (self, other) {
+                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. }) => a.cmp(b),
+                _ => Ordering::Equal,
+            })
     }
 }
 

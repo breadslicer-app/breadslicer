@@ -88,11 +88,13 @@ fn main() -> Result<()> {
             source,
             plate,
             json,
+            fill,
         } => review(
             ReviewArgs {
                 source,
                 plate,
                 json,
+                fill,
             },
             &libraries,
         ),
