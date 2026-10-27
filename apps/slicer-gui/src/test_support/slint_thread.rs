@@ -78,7 +78,7 @@ mod slint_thread_tests {
     use slint::{ComponentHandle, SelectBundledTranslationError, select_bundled_translation};
 
     use super::*;
-    use crate::slint_ui::ErrorDialog;
+    use crate::slint_ui::AboutWindow;
 
     fn no_translations_installed() -> bool {
         matches!(
@@ -95,14 +95,14 @@ mod slint_thread_tests {
     #[test]
     fn a_fresh_thread_creates_components_of_the_crate() {
         let created =
-            on_fresh_slint_thread(|| ErrorDialog::new().map(drop).map_err(|err| err.to_string()));
+            on_fresh_slint_thread(|| AboutWindow::new().map(drop).map_err(|err| err.to_string()));
         assert_eq!(created, Ok(()));
     }
 
     #[test]
     fn each_run_starts_with_no_installed_translations() {
         let selected = on_fresh_slint_thread(|| {
-            let _dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let _dialog = AboutWindow::new().expect("the headless platform creates components");
             select_bundled_translation("es").is_ok()
         });
         assert!(selected, "a component of the crate installs the bundle");
@@ -118,11 +118,11 @@ mod slint_thread_tests {
     #[test]
     fn a_shown_window_draws_1_frame_until_it_changes() {
         let drawn = on_fresh_slint_thread(|| {
-            let dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let dialog = AboutWindow::new().expect("the headless platform creates components");
             dialog.show().expect("the headless platform shows windows");
             let first = render_frames();
             let unchanged = render_frames();
-            dialog.set_heading("changed".into());
+            dialog.set_app_version("changed".into());
             (first, unchanged, render_frames())
         });
         assert_eq!(drawn, (1, 0, 1));
@@ -131,7 +131,7 @@ mod slint_thread_tests {
     #[test]
     fn a_closed_window_draws_nothing() {
         let drawn = on_fresh_slint_thread(|| {
-            let dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let dialog = AboutWindow::new().expect("the headless platform creates components");
             dialog.show().expect("the headless platform shows windows");
             dialog.hide().expect("the headless platform hides windows");
             drop(dialog);

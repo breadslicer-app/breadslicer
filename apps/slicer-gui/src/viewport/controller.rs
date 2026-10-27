@@ -107,6 +107,7 @@ impl ViewportController {
         bus: &Rc<PreferencesBus>,
     ) -> Self {
         let dialogs = DialogManager::new(bus);
+        dialogs.attach(ui);
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
