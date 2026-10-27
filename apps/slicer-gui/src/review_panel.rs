@@ -18,12 +18,22 @@
 //! project's reloaded slices, a new scene or a closed one drop them. When the
 //! scene changes after the slice, the card says the review is out of date;
 //! the findings stay, since the layers shown are still that slice's.
+//!
+//! A fix is drilled or glued at the point the slice saw, so it is offered
+//! only while every model stands where it stood when sliced
+//! ([`ModelPose`]): editing the supports (an added support) keeps the other
+//! fixes, moving, scaling or re-meshing a model withdraws them.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
+use std::sync::{Arc, Weak};
 
+use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_spatial::SceneSpatial;
 use sc_review::{Finding, Severity, SuggestedFix};
+use sc_scene::NodeId;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::df_support_run::{DfSupportRun, HandEdit};
@@ -64,10 +74,51 @@ enum FixKind {
     DrainNeedsHollow = 3,
 }
 
+/// Where one model (a leaf that is not generated supports) stood, and which
+/// mesh it carried. The mesh is held weakly, so a dropped mesh never lingers
+/// and its address is never reused while the pose is kept.
+#[derive(Clone, Debug)]
+struct ModelPose {
+    leaf: NodeId,
+    world: Transform3D,
+    mesh: Weak<IndexedMesh>,
+}
+
+impl PartialEq for ModelPose {
+    fn eq(&self, other: &Self) -> bool {
+        self.leaf == other.leaf && self.world == other.world && self.mesh.ptr_eq(&other.mesh)
+    }
+}
+
+/// Every model of `spatial` with its world pose and mesh, in row order.
+/// Generated supports are left out: adding a support keeps the models where
+/// the review saw them.
+fn model_poses(spatial: &SceneSpatial) -> Vec<ModelPose> {
+    let scene = spatial.graph();
+    (0..)
+        .map_while(|i| spatial.leaf_id_at_index(i))
+        .filter_map(|leaf| {
+            let mesh = scene.leaf_mesh_arc(leaf)?;
+            if sc_geom::df_supports::is_support_mesh(mesh) {
+                return None;
+            }
+            Some(ModelPose {
+                leaf,
+                world: scene.world_transform_of(leaf).ok()?,
+                mesh: Arc::downgrade(mesh),
+            })
+        })
+        .collect()
+}
+
 /// The review of the slice the document holds.
 struct HeldReview {
     /// The document's slice generation when the review landed.
     generation: u64,
+    /// The models as the slice saw them, or `None` when the scene had
+    /// already changed when the review landed: the fixes are offered only
+    /// while the scene's models still match.
+    models: Option<Vec<ModelPose>>,
     outcome: ReviewOutcome,
     /// Whether each finding's drain can be drilled here, by index.
     drainable: Vec<bool>,
@@ -145,8 +196,14 @@ impl ReviewPanel {
                 .collect(),
             ReviewOutcome::Failed(_) => Vec::new(),
         };
+        let models = if self.is_stale() {
+            None
+        } else {
+            self.current_models()
+        };
         *self.held.borrow_mut() = Some(HeldReview {
             generation: self.document.slice_generation(),
+            models,
             outcome,
             drainable,
             fixed: BTreeSet::new(),
@@ -193,6 +250,17 @@ impl ReviewPanel {
             .is_some_and(|params| self.document.slice_geometry_changed(params.geometry))
     }
 
+    /// The scene's models as they stand now.
+    fn current_models(&self) -> Option<Vec<ModelPose>> {
+        self.document.with_scene(model_poses)
+    }
+
+    /// Whether the held review's fixes still land where the slice saw them:
+    /// every model stands as it stood when sliced.
+    fn fixes_apply(&self, held: &HeldReview) -> bool {
+        held.models.is_some() && held.models == self.current_models()
+    }
+
     /// Pushes the card to the window, with `message` (fix feedback) under
     /// the summary.
     fn push(&self, message: Option<SharedString>) {
@@ -207,7 +275,12 @@ impl ReviewPanel {
             Some(held) => match &held.outcome {
                 ReviewOutcome::Reviewed { findings, .. } => (
                     CardState::Reviewed,
-                    review_rows(findings, &held.drainable, &held.fixed),
+                    review_rows(
+                        findings,
+                        &held.drainable,
+                        &held.fixed,
+                        self.fixes_apply(held),
+                    ),
                     review_summary(findings),
                     worst_severity(findings),
                     None,
@@ -259,6 +332,18 @@ impl ReviewPanel {
             return;
         };
         let index = id as usize;
+        let applies = self
+            .held
+            .borrow()
+            .as_ref()
+            .is_some_and(|held| self.fixes_apply(held));
+        if finding.fix.is_some() && !applies {
+            self.push(Some(ctr!(
+                "Review",
+                "The models changed since this slice. Slice again before applying a fix."
+            )));
+            return;
+        }
         let message = match finding.fix {
             Some(SuggestedFix::AddSupport { at }) => {
                 match self.supports.add_support_at(world(at)) {
@@ -330,11 +415,14 @@ fn worst_severity(findings: &[Finding]) -> i32 {
 
 /// The card's rows: errors, then warnings, then information, each group in
 /// listing order (layer, then check), the first row of a group carrying its
-/// heading. A row's `id` is the finding's index in `findings`.
+/// heading. A row's `id` is the finding's index in `findings`. Unless
+/// `fixable` (the models still stand as sliced), no row offers a fix; a row
+/// whose fix was applied keeps its kind, for its mark.
 fn review_rows(
     findings: &[Finding],
     drainable: &[bool],
     fixed: &BTreeSet<usize>,
+    fixable: bool,
 ) -> Vec<ReviewRow> {
     let mut order: Vec<usize> = (0..findings.len()).collect();
     // Stable: listing order stays within a severity.
@@ -351,6 +439,7 @@ fn review_rows(
             group_heading(finding.severity)
         };
         let fix = match finding.fix {
+            _ if !fixable && !fixed.contains(&i) => FixKind::None,
             None => FixKind::None,
             Some(SuggestedFix::AddSupport { .. }) => FixKind::AddSupport,
             Some(SuggestedFix::AddDrain { .. }) if drainable.get(i).copied().unwrap_or(false) => {
