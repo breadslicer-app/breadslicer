@@ -55,7 +55,9 @@ pub fn area_px(runs: &[Run]) -> u64 {
 
 /// Turns a layer raster into the run list of its lit pixels (any value other
 /// than 0). Raster runs may wrap from the end of one row into the next; they
-/// are split at row ends. Pixels past the raster's last row are dropped.
+/// are split at row ends. Neighbouring lit raster runs of different values
+/// (an anti-aliased edge) merge into one run. Pixels past the raster's last
+/// row are dropped.
 pub fn runs_from_raster(raster: &LayerRaster) -> Vec<Run> {
     let width = u64::from(raster.width_px());
     let height = u64::from(raster.height_px());
@@ -79,11 +81,15 @@ pub fn runs_from_raster(raster: &LayerRaster) -> Vec<Run> {
             let seg_end = end.min(row_start + width);
             // Every value fits in u32: rows < height and columns < width,
             // both u32 in the raster.
-            runs.push(Run::new(
+            let run = Run::new(
                 row as u32,
                 (at - row_start) as u32,
                 (seg_end - row_start) as u32,
-            ));
+            );
+            match runs.last_mut() {
+                Some(last) if last.row == run.row && last.x1 == run.x0 => last.x1 = run.x1,
+                _ => runs.push(run),
+            }
             at = seg_end;
         }
     }
