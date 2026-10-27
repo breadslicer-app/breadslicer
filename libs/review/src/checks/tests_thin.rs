@@ -1190,3 +1190,37 @@ fn batches_of_layers_give_the_same_findings_on_any_thread_count() {
     spans.sort_unstable();
     assert_eq!(spans, vec![(0, 99), (30, 44), (50, 89)], "{all:?}");
 }
+
+#[test]
+fn every_feature_is_measured_however_many_there_are() {
+    // 400 free-standing pins on a large screen, each measured again before
+    // it is reported: none keeps the coarse width of its sub-pixel phase.
+    let field = |d: f64| {
+        let mut builder = FixtureBuilder::new(10).screen(2000, 1200, 0.1);
+        for i in 0..20 {
+            for j in 0..20 {
+                let (cx, cy) = (
+                    50.0 + 90.0 * f64::from(i) + 0.07 * f64::from(j),
+                    50.0 + 55.0 * f64::from(j) + 0.11 * f64::from(i),
+                );
+                builder = builder.model(.., Shape::circle(cx, cy, d / 2.0));
+            }
+        }
+        builder.build()
+    };
+    for (d, severity, title) in [
+        (1.1, Severity::Warning, "Pin thinner than 2 pixels"),
+        (0.95, Severity::Error, "Pin thinner than 1 pixel"),
+    ] {
+        let findings = thin(&field(d));
+        assert_eq!(findings.len(), 400, "{d} px");
+        for finding in &findings {
+            assert_eq!(finding.severity, severity, "{d} px: {finding:?}");
+            assert_eq!(finding.title, title, "{d} px: {finding:?}");
+            assert!(
+                (reported_px(finding) - d).abs() <= 0.1 + 1e-9,
+                "{d} px: {finding:?}"
+            );
+        }
+    }
+}
