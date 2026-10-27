@@ -5003,6 +5003,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-review"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "sc-print-primitives",
+ "sc-sl1cer",
+ "serde",
+]
+
+[[package]]
 name = "sc-scene"
 version = "0.2.0"
 dependencies = [
@@ -5096,10 +5106,12 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-review",
  "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
  "sc-sla-formats-uvtools",
+ "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -5133,6 +5145,7 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-review",
  "sc-scene",
  "sc-scene-edit",
  "sc-scene-fixtures",

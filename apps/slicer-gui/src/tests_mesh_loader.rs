@@ -38,7 +38,7 @@ use crate::mesh_loader::{
 use crate::mesh_render::{DeviceToken, RendererStage, StageRefusal};
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::scene_loader::{PreparedScene, SceneLoader};
-use crate::slint_ui::ErrorDialog;
+use crate::slint_ui::AboutWindow;
 use crate::test_support::gpu_devices::shared_test_device;
 use crate::test_support::language_pick::pick_language;
 use crate::test_support::projects::project_with_in_sync_slices;
@@ -108,7 +108,7 @@ fn the_oversize_text_follows_the_language() {
     let (german, english) = on_fresh_slint_thread(|| {
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
         // In the app, the 1st main window is the 1st component of the thread.
-        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let first = AboutWindow::new().expect("the headless platform creates components");
         let _ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), &bus);
         let dir = tempfile::tempdir().expect("tempdir");
         let err = check_file_size(&oversize_file(dir.path())).expect_err("over the cap");
