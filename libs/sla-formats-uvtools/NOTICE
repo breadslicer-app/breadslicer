@@ -1,0 +1,36 @@
+UVtools printer-file formats, native Rust port
+==============================================
+
+This crate ports printer-file writers (and, for tests, their readers) of:
+
+  UVtools, Copyright 2020-2026 PTRTECH, Tiago Conceição (sn4k3) and UVtools
+  contributors
+  https://github.com/sn4k3/UVtools
+  v7.1.1, commit 8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8
+
+from these files, each named again in the header of the module that ports it:
+
+  UVtools.Core/FileFormats/CrealityCXDLPFile.cs  -> src/cxdlp.rs, src/read.rs
+  UVtools.Core/FileFormats/ColumnLines.cs        -> src/cxdlp.rs (column runs)
+  UVtools.Core/FileFormats/FileFormat.cs         -> src/cxdlp.rs (RGB565 packing)
+  UVtools.Core/Printer/Machine.cs                -> src/cxdlp.rs (Creality models)
+  UVtools.Core/FileFormats/AnycubicZipFile.cs    -> src/anycubic_zip.rs, src/read.rs
+  UVtools.Core/FileFormats/AnycubicFile.cs       -> src/pw0.rs (PW0 codec)
+
+The ported code was modified for Breadslicer: layers are encoded from the
+slicer's run-length rows in parallel, the per-layer figures are measured on
+those rows and on the sliced contours, and the print settings come from a
+Breadslicer print program. src/lib.rs, src/program.rs, src/layer_stats.rs,
+src/resample.rs and the tests are written for Breadslicer by SynrgStudio.
+
+UVtools is licensed under the GNU Affero General Public License, version 3 or
+(at your option) any later version (AGPL-3.0-or-later; its LICENSE file and
+the PackageLicenseExpression of its Directory.Build.props). This crate is
+licensed the same way; the license text is reproduced in LICENSE.md.
+
+sc-sla-formats, which names these formats and dispatches to this crate, stays
+Apache-2.0 and does not depend on it: the AGPL applications install this
+crate's writers at start-up.
+
+No code from Lychee, Photon Workshop, Halot Box or any other closed slicer is
+included.
