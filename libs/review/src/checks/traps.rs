@@ -86,11 +86,22 @@
 //! instead. It is in square millimetres, not pixels, and is far above the
 //! 100 pixels (0.05 mm² on a 19 x 24 µm screen) a pixel count would allow.
 //!
-//! # Severity
+//! # Severity: traps by size (#132)
 //!
-//! A trap of [`error_volume_mm3`](TrapOptions::error_volume_mm3) or more and
-//! a cup of [`error_cup_area_mm2`](TrapOptions::error_cup_area_mm2) or more
-//! are errors; smaller ones are warnings.
+//! What a trap risks is its liquid resin: sealed in, it seeps out or cracks
+//! the part later, and the more there is the worse. A few pixels of it do
+//! not, and a drain several millimetres wide for them would do more harm
+//! than the resin. Traps come in three tiers by volume ([`trap_severity`]):
+//!
+//! - **tiny**, under [`info_volume_mm3`](TrapOptions::info_volume_mm3):
+//!   information. The fix is to fill it, or to leave it;
+//! - **medium**, under [`error_volume_mm3`](TrapOptions::error_volume_mm3):
+//!   a warning. The fix is to fill it;
+//! - **large**: an error. The fix is a drain.
+//!
+//! A cup of [`error_cup_area_mm2`](TrapOptions::error_cup_area_mm2) or more
+//! is an error, a smaller one a warning: what a cup risks is its pull on the
+//! film, which grows with its area.
 //!
 //! # What a finding says
 //!
@@ -99,10 +110,15 @@
 //! its largest cross-section. The camera centres on the cavity's floor: the
 //! pixel nearest the centroid of the largest air region on its lowest layer.
 //!
-//! The suggested fix is a drain at that point, at the bottom of the lowest
-//! layer: the floor of the cavity, the side facing the plate.
+//! The suggested fix of a large trap is a drain at that point, at the bottom
+//! of the lowest layer: the floor of the cavity, the side facing the plate.
+//! A tiny or medium trap, and a cup no drain helps that holds less than
+//! [`error_volume_mm3`](TrapOptions::error_volume_mm3), get a
+//! [`SuggestedFix::Fill`] instead: its exact pixels, cured solid on the next
+//! slice ([`run_with_fills`], [`crate::fill`]). Filling a cup also fills the
+//! recess it makes in the model's surface.
 //!
-//! - A **trap** gets one unless the solid straight below that point is
+//! - A large **trap** gets a drain unless the solid straight below that point is
 //!   support alone. The resin collects there when the part stands on its
 //!   base, and a hole drilled toward the plate side lets it out once the
 //!   part is off the plate.
@@ -124,6 +140,7 @@
 #[path = "traps_air.rs"]
 mod air;
 
+use crate::fill::CavityFill;
 use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 use crate::input::ReviewInput;
 use crate::regions::Region;
@@ -144,8 +161,11 @@ pub const DEFAULT_MIN_TRAP_VOLUME_MM3: f64 = 0.01;
 /// Default of [`TrapOptions::min_cup_area_mm2`].
 pub const DEFAULT_MIN_CUP_AREA_MM2: f64 = 1.0;
 
+/// Default of [`TrapOptions::info_volume_mm3`].
+pub const DEFAULT_INFO_VOLUME_MM3: f64 = 1.0;
+
 /// Default of [`TrapOptions::error_volume_mm3`].
-pub const DEFAULT_ERROR_VOLUME_MM3: f64 = 1.0;
+pub const DEFAULT_ERROR_VOLUME_MM3: f64 = 27.0;
 
 /// Default of [`TrapOptions::error_cup_area_mm2`].
 pub const DEFAULT_ERROR_CUP_AREA_MM2: f64 = 100.0;
@@ -179,9 +199,18 @@ pub struct TrapOptions {
     /// at a full vacuum, so a cup under a square millimetre is lost in the
     /// peel force of an ordinary layer.
     pub min_cup_area_mm2: f64,
-    /// Resin traps at least this large, in cubic millimetres, are errors;
-    /// smaller ones are warnings. A cubic millimetre of liquid resin sealed
-    /// in a part is enough to seep out or crack it later.
+    /// Resin traps smaller than this, in cubic millimetres, are *tiny*:
+    /// information, to fill or to leave. A cubic millimetre is a drop about
+    /// a millimetre across, a microlitre of resin: too little to crack a
+    /// part, and partly cured by light bleeding through its walls anyway.
+    pub info_volume_mm3: f64,
+    /// Resin traps at least this large, in cubic millimetres, are *large*:
+    /// errors, to drain. Smaller ones, down to
+    /// [`info_volume_mm3`](Self::info_volume_mm3), are warnings, to fill.
+    /// 27 mm³ is a 3 mm cube: about the smallest cavity a common 2-3 mm
+    /// drain is not as large as. Filling a smaller one cures at most 27 µl
+    /// of resin and keeps the part whole. It also caps the cups offered a
+    /// fill.
     pub error_volume_mm3: f64,
     /// Suction cups whose largest cross-section is at least this, in square
     /// millimetres, are errors; smaller ones are warnings. At up to 0.1 N
@@ -203,6 +232,7 @@ impl Default for TrapOptions {
             drain_width_px: DEFAULT_DRAIN_WIDTH_PX,
             min_trap_volume_mm3: DEFAULT_MIN_TRAP_VOLUME_MM3,
             min_cup_area_mm2: DEFAULT_MIN_CUP_AREA_MM2,
+            info_volume_mm3: DEFAULT_INFO_VOLUME_MM3,
             error_volume_mm3: DEFAULT_ERROR_VOLUME_MM3,
             error_cup_area_mm2: DEFAULT_ERROR_CUP_AREA_MM2,
             max_drain_mm: DEFAULT_MAX_DRAIN_MM,
@@ -212,14 +242,24 @@ impl Default for TrapOptions {
 
 /// Finds the resin traps and suction cups of the plate.
 pub fn run(ctx: &ReviewContext<'_>, options: &TrapOptions) -> Vec<Finding> {
+    run_with_fills(ctx, options).0
+}
+
+/// Finds the resin traps and suction cups of the plate, with the pixels of
+/// every cavity offered a fill: a [`SuggestedFix::Fill`] names its
+/// [`CavityFill`] by index in the second list.
+pub fn run_with_fills(
+    ctx: &ReviewContext<'_>,
+    options: &TrapOptions,
+) -> (Vec<Finding>, Vec<CavityFill>) {
     let input = ctx.input;
     if input.layer_count() == 0 {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let map = AirMap::compute(input, options.drain_width_px);
     let drained = drain_pass(&map, options.drain_px);
     let (groups, vented) = vent_pass(&map, &drained, options.drain_px);
-    (0..groups.len())
+    let cavities: Vec<(Cavity<'_>, Remedy)> = (0..groups.len())
         .filter(|&group| {
             let lowest = groups.members(group)[0];
             !drained[lowest.layer][lowest.index as usize]
@@ -227,10 +267,46 @@ pub fn run(ctx: &ReviewContext<'_>, options: &TrapOptions) -> Vec<Finding> {
         .map(|group| Cavity::measure(input, &map, groups.members(group), vented[group]))
         .filter(|cavity| cavity.is_reported(options))
         .map(|cavity| {
-            let fix = cavity.drain(input, &drained, options);
+            let remedy = cavity.remedy(input, &drained, options);
+            (cavity, remedy)
+        })
+        .collect();
+    let filled: Vec<&[RegionRef]> = cavities
+        .iter()
+        .filter(|(_, remedy)| *remedy == Remedy::Fill)
+        .map(|(cavity, _)| cavity.members)
+        .collect();
+    let fills: Vec<CavityFill> = air::cavity_runs(input, options.drain_width_px, &filled)
+        .into_iter()
+        .map(|layers| CavityFill::from_runs(input, layers))
+        .collect();
+    let mut next_fill = 0;
+    let findings = cavities
+        .iter()
+        .map(|(cavity, remedy)| {
+            let fix = match *remedy {
+                Remedy::Drain(fix) => fix,
+                Remedy::Fill => {
+                    next_fill += 1;
+                    Some(SuggestedFix::Fill {
+                        at: cavity.floor_at(input),
+                        cavity: next_fill - 1,
+                    })
+                }
+            };
             cavity.finding(input, fix, options)
         })
-        .collect()
+        .collect();
+    (findings, fills)
+}
+
+/// How a cavity is fixed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Remedy {
+    /// A drain, when one works.
+    Drain(Option<SuggestedFix>),
+    /// Cure it solid.
+    Fill,
 }
 
 /// Pass 1, from the plate up: which air regions of every layer are drained.
@@ -412,6 +488,33 @@ impl<'g> Cavity<'g> {
         }
     }
 
+    /// The fix of the cavity (see the module documentation): a fill for a
+    /// trap too small to drain, and for a cup as small that no drain helps;
+    /// otherwise a drain, when one works.
+    fn remedy(
+        &self,
+        input: &ReviewInput<'_>,
+        drained: &[Vec<bool>],
+        options: &TrapOptions,
+    ) -> Remedy {
+        let small = self.volume_mm3 < options.error_volume_mm3;
+        match self.kind() {
+            CheckKind::ResinTrap if small => Remedy::Fill,
+            CheckKind::ResinTrap => Remedy::Drain(self.drain(input, drained, options)),
+            _ => match self.drain(input, drained, options) {
+                None if small => Remedy::Fill,
+                drain => Remedy::Drain(drain),
+            },
+        }
+    }
+
+    /// The bottom of the floor point: where a drain is drilled and a fill
+    /// is aimed.
+    fn floor_at(&self, input: &ReviewInput<'_>) -> PlatePoint {
+        let [x_mm, y_mm] = input.pixel_to_plate(self.floor_point());
+        PlatePoint::new(x_mm, y_mm, input.layers()[self.first_layer()].bottom_mm)
+    }
+
     /// The drain suggested for the cavity, if one would work (see the module
     /// documentation).
     fn drain(
@@ -437,11 +540,8 @@ impl<'g> Cavity<'g> {
             }
             _ => self.reaches_drained_air(input, drained, options),
         };
-        works.then(|| {
-            let [x_mm, y_mm] = input.pixel_to_plate(self.floor_point());
-            SuggestedFix::AddDrain {
-                at: PlatePoint::new(x_mm, y_mm, input.layers()[first].bottom_mm),
-            }
+        works.then(|| SuggestedFix::AddDrain {
+            at: self.floor_at(input),
         })
     }
 
@@ -503,8 +603,12 @@ impl<'g> Cavity<'g> {
         };
         let (severity, title, detail) = match kind {
             CheckKind::ResinTrap => (
-                worse_than(self.volume_mm3, options.error_volume_mm3),
-                "Sealed cavity traps resin",
+                trap_severity(self.volume_mm3, options),
+                match trap_severity(self.volume_mm3, options) {
+                    Severity::Error => "Sealed cavity traps resin",
+                    Severity::Warning => "Small sealed cavity traps resin",
+                    Severity::Info => "Tiny sealed cavity",
+                },
                 format!(
                     "A sealed cavity of {volume} mm³ over {span}, up to {section} mm² wide, has no opening at least {} pixels wide and {} pixels in area, so its liquid resin stays inside.",
                     options.drain_width_px, options.drain_px
@@ -532,6 +636,19 @@ impl<'g> Cavity<'g> {
             Some(fix) => finding.with_fix(fix),
             None => finding,
         }
+    }
+}
+
+/// The tier of a resin trap holding `volume_mm3` of resin: tiny
+/// ([`Severity::Info`]), medium ([`Severity::Warning`]) or large
+/// ([`Severity::Error`]).
+pub fn trap_severity(volume_mm3: f64, options: &TrapOptions) -> Severity {
+    if volume_mm3 < options.info_volume_mm3 {
+        Severity::Info
+    } else if volume_mm3 < options.error_volume_mm3 {
+        Severity::Warning
+    } else {
+        Severity::Error
     }
 }
 

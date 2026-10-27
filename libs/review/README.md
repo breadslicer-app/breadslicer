@@ -19,7 +19,14 @@ Written for the
 Each finding names its layers, a point in plate millimetres to centre the
 camera on, which part of the plate it concerns (model, support or both), a
 short title and a sentence with the measured numbers, and optionally a
-one-click fix (add a support, add a drain).
+one-click fix (add a support, add a drain, fill the cavity).
+
+Resin traps are tiered by volume: tiny ones are information, medium ones
+warnings, large ones errors. Tiny and medium traps, and small suction cups
+no drain helps, are offered a fill instead of a drain: the report carries the
+cavity's pixels in plate millimetres, and `fill_stack` turns the fills a
+frontend kept into one more model stack for the next slice of the same
+scene, which cures them in the review, the preview and the printer file.
 
 ## How it works
 
@@ -48,7 +55,8 @@ for finding in review(&input) {
 ```
 
 From the command line, `sc-slicer-cli review` takes the same options as
-`slice`, writes no file and prints the findings (`--json` for JSON).
+`slice`, writes no file and prints the findings (`--json` for JSON; `--fill`
+fills every cavity offered a fill and reviews again).
 
 ## Not included
 
