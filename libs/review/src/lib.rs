@@ -1,0 +1,51 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Pre-flight review of a sliced resin plate.
+//!
+//! `sc-review` reads the contours of one slicing run, knowing which leaves
+//! are models and which are supports, and reports what is likely to fail
+//! before anything is printed: islands, resin traps and suction cups,
+//! features thinner than a pixel, and output problems (plate edges, maximum
+//! height, empty layers, floating parts). Each [`Finding`] names its layers
+//! and a point to centre the camera on, and may suggest a one-click fix.
+//!
+//! # Pipeline
+//!
+//! 1. Build a [`ReviewInput`]: the per-leaf contour stacks with their
+//!    [`Role`], the layer schedule, the printer's screen and its maximum
+//!    height ([`ReviewInput::from_profile`] takes the last three from the
+//!    engine's `SliceProfile`).
+//! 2. [`review`] (or [`review_with`] for options and timings) computes the
+//!    shared [`PlateRegions`] once: every layer rasterised at the printer's
+//!    resolution, split into solid regions (8-connected) and air regions
+//!    (4-connected), with the pixel overlaps between consecutive layers.
+//! 3. Each check in [`checks`] reads the regions through a
+//!    [`ReviewContext`] and returns findings; the runner sorts them by
+//!    layer, then check.
+//!
+//! The crate does no I/O and depends only on the slicing engine's types.
+
+pub mod checks;
+pub mod finding;
+pub mod input;
+pub mod regions;
+pub mod runner;
+pub mod runs;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+pub mod union_find;
+
+pub use finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
+pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf, Role};
+pub use regions::{
+    AIR_CONNECTIVITY, Connectivity, LayerLinks, LayerPixels, LayerRegions, Overlap, PixelBox,
+    PlateRegions, Region, SOLID_CONNECTIVITY, label_runs, measure_runs,
+};
+pub use runner::{
+    ReviewContext, ReviewOptions, ReviewReport, ReviewTimings, review, review_regions, review_with,
+};
+pub use runs::Run;
+pub use union_find::{Groups, RegionRef, UnionFind};
