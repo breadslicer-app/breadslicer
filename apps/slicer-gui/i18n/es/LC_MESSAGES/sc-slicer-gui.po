@@ -2313,3 +2313,8 @@ msgstr "Preparar soportes en segundo plano"
 msgctxt "AppearancePreferences"
 msgid "Smooth shading on models"
 msgstr "Sombreado suave en los modelos"
+
+#: ui/about-window.slint
+msgctxt "AboutWindow"
+msgid "About Breadslicer"
+msgstr "Acerca de Breadslicer"

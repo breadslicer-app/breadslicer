@@ -143,8 +143,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // environment, which is only safe before wgpu and the drivers below it
     // start threads.
     let startup_token = startup_token::take_from_env();
+    // Before anything reads or writes the per-user folders (logs, settings).
+    let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();
     breadcrumbs::start();
+    for dir in &migrated {
+        breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
+    }
 
     // Build the wgpu Instance/Adapter/Device/Queue once up front and hand them
     // to Slint via `WGPUConfiguration::Manual` so every top-level Window shares

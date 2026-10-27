@@ -4,7 +4,7 @@ runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: sc-slicer-gui
+command: breadslicer
 
 finish-args:
   # The GUI renders through wgpu (Vulkan), so it needs the GPU and a display
@@ -31,7 +31,7 @@ modules:
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release
-      - install -Dm755 target/release/sc-slicer-gui /app/bin/sc-slicer-gui
+      - install -Dm755 target/release/breadslicer /app/bin/breadslicer
       - install -Dm755 target/release/sc-slicer-cli /app/bin/sc-slicer-cli
       # Bundled vendor profiles. sc-app-paths resolves the data root by
       # searching XDG_DATA_DIRS (which includes /app/share in the sandbox)

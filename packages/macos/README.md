@@ -18,7 +18,7 @@ dragging the bundle to `/Applications`.
 ```
 SoulCrafted Slicer.app/Contents/
   Info.plist
-  MacOS/sc-slicer-gui        the bundle's main executable
+  MacOS/breadslicer           the bundle's main executable
   MacOS/sc-slicer-cli        the command-line tool
   Resources/it.soulcrafted.slicer.icns
   Resources/slicer/profiles/ the bundled profiles

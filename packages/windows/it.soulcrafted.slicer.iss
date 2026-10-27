@@ -1,4 +1,4 @@
-﻿; Inno Setup script for the SoulCrafted Slicer Windows installer.
+﻿; Inno Setup script for the Breadslicer Windows installer.
 ;
 ; The payload is a staging directory assembled by build.ps1 (both
 ; executables, the app-local VC runtime DLLs, and the bundled profiles
@@ -20,8 +20,8 @@
   #define OutputDir ".cache"
 #endif
 
-#define AppName "SoulCrafted Slicer"
-#define GuiExe "sc-slicer-gui.exe"
+#define AppName "Breadslicer"
+#define GuiExe "breadslicer.exe"
 #define CliExe "sc-slicer-cli.exe"
 
 ; One ProgID per format the GUI can open. Each is a key this installer
@@ -36,8 +36,8 @@ AppId=it.soulcrafted.slicer
 AppName={#AppName}
 AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
-AppPublisher=SoulCrafted
-AppPublisherURL=https://codeberg.org/SoulCrafted/Slicer
+AppPublisher=SynrgStudio
+AppPublisherURL=https://breadslicer.app
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir={#OutputDir}
