@@ -34,6 +34,8 @@ mod test_fixtures;
 #[cfg(test)]
 mod tests_foreign;
 #[cfg(test)]
+mod tests_measure_bread;
+#[cfg(test)]
 mod tests_payload_part;
 #[cfg(test)]
 mod tests_reader;
