@@ -2482,6 +2482,95 @@ msgstr[0] "{n} nota"
 msgstr[1] "{n} notas"
 
 #: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Do not fill"
+msgstr "No rellenar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill on the next slice"
+msgstr "Rellenar en el próximo laminado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Leave it"
+msgstr "Dejarla así"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice cures this cavity solid."
+msgstr "Marcada: el próximo laminado cura esta cavidad maciza."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Hide the notes"
+msgstr "Ocultar las notas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Show {n} note"
+msgid_plural "Show {n} notes"
+msgstr[0] "Mostrar {n} nota"
+msgstr[1] "Mostrar {n} notas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill all small traps ({})"
+msgstr "Rellenar todas las trampas chicas ({})"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Clear fills"
+msgstr "Quitar los rellenos"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The cavity will be filled on the next slice."
+msgstr "La cavidad se va a rellenar en el próximo laminado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The cavity will not be filled."
+msgstr "La cavidad no se va a rellenar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity will be filled on the next slice."
+msgid_plural "{n} cavities will be filled on the next slice."
+msgstr[0] "Se va a rellenar una cavidad en el próximo laminado."
+msgstr[1] "Se van a rellenar {n} cavidades en el próximo laminado."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} left alone"
+msgid_plural "{n} left alone"
+msgstr[0] "{n} dejado de lado"
+msgstr[1] "{n} dejados de lado"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The fills are cleared. Slice again to apply."
+msgstr "Se quitaron los rellenos. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity will be filled. Slice again to apply."
+msgid_plural "{n} cavities will be filled. Slice again to apply."
+msgstr[0] "Se va a rellenar una cavidad. Laminá de nuevo para aplicar."
+msgstr[1] "Se van a rellenar {n} cavidades. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity is filled in this slice."
+msgid_plural "{n} cavities are filled in this slice."
+msgstr[0] "Una cavidad está rellena en este laminado."
+msgstr[1] "{n} cavidades están rellenas en este laminado."
+
+#: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "RAFT"
 msgstr "BALSA"
@@ -2539,3 +2628,11 @@ msgstr "El modelo ya está por encima de la balsa."
 msgctxt "Review"
 msgid "Raft turned off. Generate the supports again, then slice."
 msgstr "Balsa desactivada. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} fixed"
+msgid_plural "{n} fixed"
+msgstr[0] "{n} corregido"
+msgstr[1] "{n} corregidos"
