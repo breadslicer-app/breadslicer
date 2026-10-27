@@ -17,10 +17,15 @@
 //! (completion, cancellation, error, worker panic). The worker wraps its body
 //! in `catch_unwind` so a panic still deposits a result and the modal always
 //! closes.
+//!
+//! Right after the engine finishes, the worker reviews the per-leaf stacks
+//! (`crate::review`, #90) before merging them, and the findings travel to
+//! the Review card with the slice. A review that fails leaves the slice as
+//! it is.
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -36,6 +41,8 @@ use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
+use crate::review::{ReviewOutcome, review_slices};
+use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
@@ -49,18 +56,21 @@ const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
 
 /// Shared completed/total layer-slice counters: the worker writes them, the UI
 /// polls them into the modal. `completed` climbs monotonically (`fetch_max`);
-/// `total` is the run's fixed denominator.
+/// `total` is the run's fixed denominator. `reviewing` is raised once every
+/// layer is cut, while the review runs.
 #[derive(Default)]
 struct SliceProgressCell {
     completed: AtomicU32,
     total: AtomicU32,
+    reviewing: AtomicBool,
 }
 
-/// A completed slice, already merged and fingerprinted on the worker thread so
-/// the event loop never does that work.
+/// A completed slice, already merged, fingerprinted and reviewed on the worker
+/// thread so the event loop never does that work.
 struct CompletedSlice {
     contours: PlateContours,
     token: String,
+    review: ReviewOutcome,
 }
 
 /// The worker's finished payload, past the engine's raw per-leaf output: a
@@ -77,6 +87,8 @@ pub(crate) struct SliceRun {
     bus: Rc<PreferencesBus>,
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
+    // The Review card, which receives each completed slice's findings.
+    review: Rc<ReviewPanel>,
     progress: Arc<SliceProgressCell>,
     slot: SliceSlot,
     // The current run's cancel token, so the modal's Cancel can trip it. `None`
@@ -103,12 +115,14 @@ impl SliceRun {
         bus: Rc<PreferencesBus>,
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
+        review: Rc<ReviewPanel>,
     ) -> Rc<Self> {
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             bus,
             document,
             dialogs,
+            review,
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
@@ -196,6 +210,8 @@ impl SliceRun {
 
         self.progress.completed.store(0, Ordering::Relaxed);
         self.progress.total.store(0, Ordering::Relaxed);
+        self.progress.reviewing.store(false, Ordering::Relaxed);
+        ui.set_slice_reviewing(false);
         ui.set_slice_completed(0);
         ui.set_slice_total(0);
         ui.set_slice_progress(0.0);
@@ -275,6 +291,7 @@ impl SliceRun {
                 }
                 let completed = progress.completed.load(Ordering::Relaxed);
                 let total = progress.total.load(Ordering::Relaxed);
+                ui.set_slice_reviewing(progress.reviewing.load(Ordering::Relaxed));
                 ui.set_slice_completed(completed as i32);
                 ui.set_slice_total(total as i32);
                 ui.set_slice_progress(if total == 0 {
@@ -356,6 +373,9 @@ impl SliceRun {
                         ui.set_slice_layer_count(layer_count as i32);
                         ui.set_selected_layer_index(layer_count.saturating_sub(1) as f32);
                     }
+                    // After the slice is stored: the panel ties the findings
+                    // to the slice now held.
+                    self.review.show(completed.review);
                 }
             }
             Ok(SliceRunOutcome::Cancelled) => {
@@ -392,7 +412,9 @@ fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
 }
 
 /// Loads the profiles and runs the shared slicing service, publishing progress
-/// into `progress` as layers complete.
+/// into `progress` as layers complete, then reviews the per-leaf stacks
+/// before merging them. A cancel that arrives during the review still
+/// cancels the run.
 fn run_slice(
     scene: &Scene,
     printer: &PrinterId,
@@ -425,19 +447,37 @@ fn run_slice(
     match run {
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
+            progress.reviewing.store(true, Ordering::Relaxed);
+            let review = review_slices(plate.leaves(), plate.profile());
+            crate::breadcrumbs::note(&format!(
+                "slice: reviewed ok={}",
+                matches!(review, ReviewOutcome::Reviewed { .. })
+            ));
+            if cancel.is_cancelled() {
+                return Ok(SliceRunOutcome::Cancelled);
+            }
             let contours = plate.merge().map_err(|_| SliceFailure::SliceMerge)?;
-            capture(scene, contours).map(SliceRunOutcome::Completed)
+            capture(scene, contours, review).map(SliceRunOutcome::Completed)
         }
     }
 }
 
 /// Fingerprints the slice inputs off the event loop and wraps the merged plate
-/// contours for the UI hand-off.
-fn capture(scene: &Scene, contours: PlateContours) -> Result<CompletedSlice, SliceFailure> {
+/// contours and their review for the UI hand-off. The review's outcome never
+/// decides whether the slice completes.
+fn capture(
+    scene: &Scene,
+    contours: PlateContours,
+    review: ReviewOutcome,
+) -> Result<CompletedSlice, SliceFailure> {
     let token = slice_input_fingerprint(scene, contours.schedule())
         .map_err(SliceFailure::Fingerprint)?
         .to_token();
-    Ok(CompletedSlice { contours, token })
+    Ok(CompletedSlice {
+        contours,
+        token,
+        review,
+    })
 }
 
 #[cfg(test)]
@@ -474,10 +514,17 @@ mod capture_tests {
             .expect("2 layers pair with a 2-layer schedule")
     }
 
+    fn clean_review() -> ReviewOutcome {
+        ReviewOutcome::Reviewed {
+            findings: Vec::new(),
+            took: Duration::ZERO,
+        }
+    }
+
     #[test]
     fn capture_carries_the_stack_and_fingerprints_the_scene() {
         let scene = cube_scene();
-        let completed = capture(&scene, contours()).expect("capture");
+        let completed = capture(&scene, contours(), clean_review()).expect("capture");
         assert_eq!(completed.contours.stack().layers().len(), 2);
         assert_eq!(completed.contours.schedule(), &schedule());
         assert_eq!(
@@ -491,8 +538,8 @@ mod capture_tests {
     #[test]
     fn capture_is_deterministic() {
         let scene = cube_scene();
-        let first = capture(&scene, contours()).expect("first capture");
-        let second = capture(&scene, contours()).expect("second capture");
+        let first = capture(&scene, contours(), clean_review()).expect("first capture");
+        let second = capture(&scene, contours(), clean_review()).expect("second capture");
         assert_eq!(first.token, second.token);
     }
 
@@ -500,8 +547,23 @@ mod capture_tests {
     fn capture_fails_when_the_scene_has_no_geometry() {
         // An empty scene has no sliceable leaf, so the fingerprint, and thus
         // the capture, cannot be computed.
-        let result = capture(&Scene::new(), contours());
+        let result = capture(&Scene::new(), contours(), clean_review());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
+    }
+
+    #[test]
+    fn a_failed_review_still_completes_the_slice() {
+        let scene = cube_scene();
+        let failed = ReviewOutcome::Failed("the checks fell over".to_owned());
+        let completed = capture(&scene, contours(), failed.clone()).expect("the slice lands");
+        assert_eq!(completed.contours.stack().layers().len(), 2);
+        assert_eq!(completed.review, failed);
+        assert_eq!(
+            completed.token,
+            capture(&scene, contours(), clean_review())
+                .expect("a reviewed capture")
+                .token,
+        );
     }
 }
 

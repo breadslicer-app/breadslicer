@@ -7,10 +7,37 @@
 // shows only what its tab acts on; the window binds them to its own
 // properties and callbacks, which Rust drives.
 
-import { CheckBox, ComboBox, LineEdit, ProgressIndicator, Slider } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, Dot, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
+
+// One finding of the slice review (#90), as Rust lays it out.
+export struct ReviewRow {
+    // The finding's index in the review, for the callbacks.
+    id: int,
+    // 0 error, 1 warning, 2 information.
+    severity: int,
+    // The group heading on the first row of a severity, else empty.
+    header: string,
+    title: string,
+    // "Layer 12" or "Layers 11–25".
+    layers: string,
+    // One sentence with the numbers.
+    detail: string,
+    // 0 none, 1 add a support, 2 add a drain, 3 a drain that needs a model
+    // hollowed in this window.
+    fix: int,
+    // The fix was applied since the slice.
+    fixed: bool,
+}
+
+// The colour of a review severity.
+global ReviewTint {
+    public pure function of(severity: int) -> brush {
+        return severity == 0 ? Theme.danger : severity == 1 ? Theme.warning : Theme.text-muted;
+    }
+}
 
 // A selectable object row.
 component ObjectRow inherits Rectangle {
@@ -54,6 +81,103 @@ component ObjectRow inherits Rectangle {
         mouse-cursor: pointer;
         clicked => {
             root.clicked();
+        }
+    }
+}
+
+// A finding of the review: its severity icon, title and layers. Selected,
+// it unfolds its detail and its fix.
+component FindingRow inherits VerticalLayout {
+    in property <ReviewRow> finding;
+    in property <bool> selected;
+    callback clicked();
+    callback fix();
+
+    spacing: 4px;
+
+    if root.finding.header != "": Text {
+        text: root.finding.header;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: ReviewTint.of(root.finding.severity);
+    }
+    Rectangle {
+        min-height: line.preferred-height;
+        border-radius: Theme.radius;
+        background: root.selected ? Theme.hover : touch.has-hover ? Theme.raised : transparent;
+        accessible-role: list-item;
+        accessible-label: root.finding.title + ", " + root.finding.layers;
+        accessible-item-selected: root.selected;
+        accessible-action-default => {
+            root.clicked();
+        }
+
+        line := HorizontalLayout {
+            padding: 6px;
+            padding-left: 8px;
+            spacing: 8px;
+
+            Icon {
+                commands: root.finding.severity == 0 ? Icons.error : root.finding.severity == 1 ? Icons.warning : Icons.info;
+                color: ReviewTint.of(root.finding.severity);
+                size: 16px;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.finding.title;
+                font-size: Theme.font;
+                color: Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.finding.layers;
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+    if root.selected: VerticalLayout {
+        padding-left: 32px;
+        padding-right: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
+
+        Note {
+            text: root.finding.detail;
+            color: Theme.text-soft;
+        }
+        if root.finding.fix == 1 && !root.finding.fixed: ScButton {
+            text: @tr("Review" => "Add support here");
+            icon: Icons.add-support;
+            clicked => {
+                root.fix();
+            }
+        }
+        if root.finding.fix == 2 && !root.finding.fixed: ScButton {
+            text: @tr("Review" => "Add drain here");
+            icon: Icons.hole;
+            clicked => {
+                root.fix();
+            }
+        }
+        if root.finding.fix == 3: Note {
+            text: @tr("Review" => "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab.");
+        }
+        if root.finding.fixed: Note {
+            text: root.finding.fix == 1 ? @tr("Review" => "Support added.") : @tr("Review" => "Drain requested.");
+            color: Theme.success;
         }
     }
 }
@@ -795,10 +919,22 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> estimate-volume;
     in property <string> estimate-mass;
     in property <string> estimate-note;
+    // The review of the held slice (#90): 0 no slice, 1 reviewed, 2 failed,
+    // 3 a slice not reviewed here (a reopened project's).
+    in property <int> review-state;
+    in property <string> review-summary;
+    // The worst severity found (0 error, 1 warning, 2 information), -1 none.
+    in property <int> review-worst: -1;
+    in property <[ReviewRow]> review-rows;
+    in property <bool> review-stale;
+    in property <string> review-message;
+    in-out property <int> review-selected: -1;
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
     callback slice-requested();
+    callback review-finding-clicked(int);
+    callback review-fix-requested(int);
 
     // The LineEdit's text binding breaks the first time the user types, so
     // a value pushed from Rust is written into it explicitly.
@@ -912,6 +1048,69 @@ export component SliceInspector inherits VerticalLayout {
                 source: root.layer-image;
                 image-fit: contain;
             }
+        }
+    }
+
+    if root.layer-count > 0: Card {
+        title: @tr("Review" => "REVIEW");
+        note: root.review-stale ? @tr("Review" => "Out of date") : "";
+        note-color: Theme.warning;
+
+        if root.review-state == 1: HorizontalLayout {
+            spacing: 8px;
+
+            Icon {
+                commands: root.review-worst == 0 ? Icons.error : root.review-worst == 1 ? Icons.warning
+                    : root.review-worst == 2 ? Icons.info : Icons.check;
+                color: root.review-worst < 0 ? Theme.success : ReviewTint.of(root.review-worst);
+                size: 18px;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.review-summary;
+                font-size: Theme.font;
+                font-weight: 600;
+                color: root.review-worst < 0 ? Theme.success : Theme.text;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+        if root.review-state == 3: Note {
+            text: @tr("Review" => "This slice was not reviewed. Slice again to check it.");
+        }
+        if root.review-stale: Note {
+            text: @tr("Review" => "The scene changed since this slice. Slice again to review it.");
+            color: Theme.warning;
+        }
+        if root.review-message != "": Note {
+            text: root.review-message;
+            color: root.review-state == 2 ? Theme.danger : Theme.text-soft;
+        }
+        if root.review-state == 1 && root.review-rows.length > 0: Rectangle {
+            // Long reviews scroll inside the card.
+            height: Math.min(findings.preferred-height, 360px);
+
+            ScrollView {
+                findings := VerticalLayout {
+                    spacing: 2px;
+
+                    for row in root.review-rows: FindingRow {
+                        finding: row;
+                        selected: root.review-selected == row.id;
+                        clicked => {
+                            root.review-selected = row.id;
+                            root.review-finding-clicked(row.id);
+                        }
+                        fix => {
+                            root.review-fix-requested(row.id);
+                        }
+                    }
+                }
+            }
+        }
+        if root.review-state == 1 && root.review-rows.length > 0: Note {
+            text: @tr("Review" => "Click a finding to show its layer and centre the view on it.");
         }
     }
 }
