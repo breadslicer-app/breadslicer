@@ -87,7 +87,9 @@ fn a_scene_comes_back_with_its_graph_and_shared_meshes() {
     let scene = scene();
     let encoded = encode_scene(&scene).unwrap();
     assert_eq!(encoded.meshes.len(), 2, "each mesh is stored once");
-    let back = decode_scene(&encoded.payload, encoded.meshes.clone()).unwrap();
+    let back = decode_scene(&encoded.payload, encoded.meshes.clone())
+        .unwrap()
+        .scene;
 
     // The encoding is canonical, so equal payloads mean equal scenes.
     let again = encode_scene(&back).unwrap();
@@ -121,7 +123,9 @@ fn a_scene_comes_back_with_its_graph_and_shared_meshes() {
 fn transforms_come_back_bit_for_bit() {
     let scene = scene();
     let encoded = encode_scene(&scene).unwrap();
-    let back = decode_scene(&encoded.payload, encoded.meshes).unwrap();
+    let back = decode_scene(&encoded.payload, encoded.meshes)
+        .unwrap()
+        .scene;
     let transform = |s: &Scene| s.node(s.roots()[0]).unwrap().local_transform;
     let Transform3D::Affine(affine) = transform(&back) else {
         panic!("the first root is moved");
@@ -134,7 +138,7 @@ fn transforms_come_back_bit_for_bit() {
 fn an_empty_scene_round_trips() {
     let encoded = encode_scene(&Scene::new()).unwrap();
     assert!(encoded.meshes.is_empty());
-    let back = decode_scene(&encoded.payload, vec![]).unwrap();
+    let back = decode_scene(&encoded.payload, vec![]).unwrap().scene;
     assert!(back.roots().is_empty());
     assert_eq!(back.meta(), &None);
 }
