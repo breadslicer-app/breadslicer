@@ -538,7 +538,7 @@ impl Renderer {
             self.pipelines.label_state = LabelState::Off;
             return Ok(());
         };
-        let tab = FrontTab::around_label(raster.aspect());
+        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word());
         match self.upload_label_texture(&raster) {
             Ok(bind_group) => {
                 self.pipelines.label_state = LabelState::Shown {
@@ -561,6 +561,7 @@ impl Renderer {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
                 "cap",
+                wgpu::TextureFormat::R8Unorm,
                 &raster.coverage,
                 raster.width,
                 raster.height,
@@ -574,12 +575,13 @@ impl Renderer {
         })
     }
 
-    /// Upload a label raster as an R8 texture and build the label's group-1
-    /// bind group.
+    /// Upload a label raster as an RG8 texture (the word, the printer's name)
+    /// and build the label's group-1 bind group.
     fn upload_label_texture(&self, raster: &LabelRaster) -> Result<wgpu::BindGroup, RenderError> {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
                 "front label",
+                wgpu::TextureFormat::Rg8Unorm,
                 &raster.coverage,
                 raster.width,
                 raster.height,
@@ -593,12 +595,14 @@ impl Renderer {
         })
     }
 
-    /// Upload a single-channel coverage bitmap as an R8 texture and bind it
-    /// with `sampler`. Each row is padded to wgpu's copy alignment, as
-    /// `write_texture` requires.
+    /// Upload a coverage bitmap as an 8-bit-per-channel texture of `format`
+    /// (R8 or RG8, channels interleaved) and bind it with `sampler`. Each row
+    /// is padded to wgpu's copy alignment, as `write_texture` requires.
+    #[allow(clippy::too_many_arguments)]
     fn coverage_bind_group(
         &self,
         name: &str,
+        format: wgpu::TextureFormat,
         coverage: &[u8],
         width: u32,
         height: u32,
@@ -615,18 +619,20 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
-        let padded_bpr =
-            width.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let row_bytes = width * format.block_copy_size(None).unwrap_or(1);
+        let padded_bpr = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let mut padded = vec![0u8; (padded_bpr * height) as usize];
         for row in 0..height as usize {
-            let src = row * width as usize;
+            let src = row * row_bytes as usize;
             let dst = row * padded_bpr as usize;
-            padded[dst..dst + width as usize].copy_from_slice(&coverage[src..src + width as usize]);
+            padded[dst..dst + row_bytes as usize]
+                .copy_from_slice(&coverage[src..src + row_bytes as usize]);
         }
         self.core.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
