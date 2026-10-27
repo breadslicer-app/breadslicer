@@ -30,11 +30,16 @@ const LAYERS_PER_CORE: usize = 4;
 /// (with the layer's index), on every core; then hands each encoded
 /// image to `write`, in layer order. The first error `write` returns
 /// stops the run.
-pub(crate) fn write_layer_images<E>(
+///
+/// The rows reach `encode` as one run-length list over the whole
+/// frame, `pixel_resolution().x()` pixels per row, starting with the
+/// row at the plate's maximum Y edge: the order GOO and CTB store, and
+/// the top-down order of an image whose first row is that edge.
+pub fn write_layer_images<T: Send, E>(
     stack: &ContourStack,
     raster: &RasterSetup,
-    encode: impl Fn(usize, &[RleRun]) -> Vec<u8> + Sync,
-    mut write: impl FnMut(usize, Vec<u8>) -> Result<(), E>,
+    encode: impl Fn(usize, &[RleRun]) -> T + Sync,
+    mut write: impl FnMut(usize, T) -> Result<(), E>,
 ) -> Result<(), E> {
     let plate = raster.build_volume();
     let pixel_map = PixelMap::new(
@@ -50,7 +55,7 @@ pub(crate) fn write_layer_images<E>(
     let mut start = 0;
     while start < layers.len() {
         let end = (start + batch).min(layers.len());
-        let images: Vec<Vec<u8>> = (start..end)
+        let images: Vec<T> = (start..end)
             .into_par_iter()
             .map_init(Vec::new, |rows, index| {
                 let pixels = rasterize_layer(

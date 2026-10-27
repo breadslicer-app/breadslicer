@@ -417,6 +417,8 @@ fn map_output_format(output_format: &str, version: Option<String>) -> Option<Out
         "ctb" => FormatKind::Ctb,
         "goo" => FormatKind::Goo,
         "pwmx" => FormatKind::Pwmx,
+        "cxdlp" => FormatKind::Cxdlp,
+        "azf" => FormatKind::Azf,
         other => FormatKind::Unknown(other.to_owned()),
     };
     let version = version.and_then(|value| NonEmptyString::new(&value).ok());
@@ -793,17 +795,17 @@ mod tests {
     #[test]
     fn unknown_output_extension_is_preserved_verbatim() {
         let json = r#"{
-            "presetId": "azf-printer", "profileVersion": 1,
-            "manufacturer": "TestCorp", "family": "Series", "name": "AZF Printer",
+            "presetId": "lumen-printer", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Lumen Printer",
             "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
             "pixelSize": { "x": 100.0, "y": 100.0 },
-            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".azf" }
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".lumen" }
         }"#;
         let profile = map(json).unwrap();
         assert_eq!(
             *profile.capabilities.output_formats.first(),
             OutputFormatBinding {
-                format: FormatKind::Unknown("azf".to_owned()),
+                format: FormatKind::Unknown("lumen".to_owned()),
                 version: None,
             },
         );

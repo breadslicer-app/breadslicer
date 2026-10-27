@@ -1,0 +1,23 @@
+Breadslicer
+===========
+
+Breadslicer is licensed under the GNU Affero General Public License (see
+LICENSE.md); each crate states its own license in its Cargo.toml and
+LICENSE.md. It includes work from these projects, whose notices are kept in
+the source as their licenses require:
+
+- SoulCrafted Slicer (MyMiniFactory Ltd, CTRLback SCCL; AGPL-3.0, with
+  libraries under Apache-2.0), which Breadslicer is based on.
+  https://codeberg.org/SoulCrafted/Slicer
+
+- DragonFruit (Open Resin Alliance and contributors; MIT): parts of the
+  support and hollowing engines. See libs/sc-geom/support-gen-df/NOTICE and
+  libs/sc-geom/hollow-df/NOTICE. The bundled printer profiles and product
+  images are converted from its printer plugins; see assets/profiles/README.md
+  and assets/profiles/images/README.md.
+
+- UVtools (Copyright 2020-2026 PTRTECH, Tiago Conceição (sn4k3) and UVtools
+  contributors; AGPL-3.0-or-later): the Creality CXDLP and Anycubic ZIP
+  (.pwsz, .pm7, .pm7m) printer-file writers, ported to Rust from UVtools
+  v7.1.1. See libs/sla-formats-uvtools/NOTICE.
+  https://github.com/sn4k3/UVtools
