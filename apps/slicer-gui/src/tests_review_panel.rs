@@ -51,7 +51,7 @@ fn titles(rows: &[ReviewRow]) -> Vec<&str> {
 
 #[test]
 fn rows_are_grouped_by_severity_in_listing_order() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new());
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
     assert_eq!(titles(&rows), ["Island", "Trap", "Cup", "Thin", "Empty"]);
     let ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, [1, 3, 0, 4, 2]);
@@ -61,14 +61,14 @@ fn rows_are_grouped_by_severity_in_listing_order() {
 
 #[test]
 fn the_first_row_of_each_group_carries_its_heading() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new());
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
     let headers: Vec<&str> = rows.iter().map(|r| r.header.as_str()).collect();
     assert_eq!(headers, ["Errors", "", "Warnings", "", "Notes"]);
 }
 
 #[test]
 fn rows_name_their_layers_from_one() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new());
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
     let layers: Vec<&str> = rows.iter().map(|r| r.layers.as_str()).collect();
     assert_eq!(
         layers,
@@ -86,19 +86,19 @@ fn rows_name_their_layers_from_one() {
 #[test]
 fn a_drain_is_offered_only_where_it_can_be_drilled() {
     let support = FixKind::AddSupport as i32;
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new());
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     assert_eq!(fixes, [support, FixKind::DrainNeedsHollow as i32, 0, 0, 0]);
 
     let drainable = [false, false, false, true, false];
-    let rows = review_rows(&findings(), &drainable, &BTreeSet::new());
+    let rows = review_rows(&findings(), &drainable, &BTreeSet::new(), true);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     assert_eq!(fixes, [support, FixKind::AddDrain as i32, 0, 0, 0]);
 }
 
 #[test]
 fn an_applied_fix_marks_its_row() {
-    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::from([1]));
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::from([1]), true);
     let fixed: Vec<bool> = rows.iter().map(|r| r.fixed).collect();
     assert_eq!(fixed, [true, false, false, false, false]);
 }
@@ -124,7 +124,7 @@ fn the_worst_severity_leads() {
 
 #[test]
 fn an_empty_review_has_no_rows() {
-    assert!(review_rows(&[], &[], &BTreeSet::new()).is_empty());
+    assert!(review_rows(&[], &[], &BTreeSet::new(), true).is_empty());
 }
 
 #[test]
@@ -133,4 +133,77 @@ fn plate_points_are_world_points() {
         world(PlatePoint::new(8.33, -31.5, 1.05)),
         [8.33, -31.5, 1.05]
     );
+}
+
+#[test]
+fn rows_offer_no_fix_once_the_models_moved_but_keep_their_marks() {
+    let drainable = [false, false, false, true, false];
+    let rows = review_rows(&findings(), &drainable, &BTreeSet::from([1]), false);
+    let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
+    // The applied support keeps its kind for its mark; the drain is withdrawn.
+    assert_eq!(fixes, [FixKind::AddSupport as i32, 0, 0, 0, 0]);
+    assert!(rows[0].fixed);
+}
+
+mod model_poses {
+    use std::sync::Arc;
+
+    use sc_mesh_core::indexed_mesh::MeshMetadata;
+    use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_scene::{LeafPayload, Scene};
+
+    use super::*;
+
+    fn supports_mesh() -> Arc<IndexedMesh> {
+        let mut mesh = unit_cube_mesh();
+        mesh.meta = Some(MeshMetadata {
+            name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+            ..Default::default()
+        });
+        Arc::new(mesh)
+    }
+
+    /// A model at `model_x` and a support mesh beside it, as a spatial scene.
+    fn plate(model: &Arc<IndexedMesh>, model_x: f64, supports: &Arc<IndexedMesh>) -> SceneSpatial {
+        let mut scene = Scene::new();
+        for (mesh, x) in [(model, model_x), (supports, 5.0)] {
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.5])),
+                    LeafPayload::Mesh(mesh.clone()),
+                )
+                .expect("inline-mesh leaf");
+            scene.add_root(leaf).expect("a fresh root");
+        }
+        SceneSpatial::from_graph(scene)
+    }
+
+    #[test]
+    fn supports_are_not_models() {
+        let model = Arc::new(unit_cube_mesh());
+        let poses = model_poses(&plate(&model, 0.0, &supports_mesh()));
+        assert_eq!(poses.len(), 1);
+        assert!(std::ptr::eq(poses[0].mesh.as_ptr(), Arc::as_ptr(&model)));
+    }
+
+    #[test]
+    fn an_edit_of_the_supports_keeps_the_models_as_sliced() {
+        let model = Arc::new(unit_cube_mesh());
+        let sliced = model_poses(&plate(&model, 0.0, &supports_mesh()));
+        let with_a_new_support = model_poses(&plate(&model, 0.0, &supports_mesh()));
+        assert_eq!(sliced, with_a_new_support);
+    }
+
+    #[test]
+    fn a_moved_or_re_meshed_model_is_a_change() {
+        let model = Arc::new(unit_cube_mesh());
+        let supports = supports_mesh();
+        let sliced = model_poses(&plate(&model, 0.0, &supports));
+        assert_ne!(sliced, model_poses(&plate(&model, 3.0, &supports)));
+        // The same shape in a new mesh (a hollow swapped in) counts too.
+        let re_meshed = Arc::new(unit_cube_mesh());
+        assert_ne!(sliced, model_poses(&plate(&re_meshed, 0.0, &supports)));
+    }
 }
