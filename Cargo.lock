@@ -5028,6 +5028,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-review"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "sc-print-primitives",
+ "sc-sl1cer",
+ "serde",
+]
+
+[[package]]
 name = "sc-scene"
 version = "0.2.0"
 dependencies = [
@@ -5088,6 +5098,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-sla-formats-uvtools"
+version = "0.1.0"
+dependencies = [
+ "png 0.18.1",
+ "proptest",
+ "sc-print-primitives",
+ "sc-sl1cer",
+ "sc-sla-formats",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
 name = "sc-slicer-cli"
 version = "0.3.1"
 dependencies = [
@@ -5106,9 +5131,12 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-review",
  "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
+ "sc-sla-formats-uvtools",
+ "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -5142,11 +5170,13 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-review",
  "sc-scene",
  "sc-scene-edit",
  "sc-scene-fixtures",
  "sc-sl1cer",
  "sc-sla-formats",
+ "sc-sla-formats-uvtools",
  "serde",
  "slint",
  "slint-build",

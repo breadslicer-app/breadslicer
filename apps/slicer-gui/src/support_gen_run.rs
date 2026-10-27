@@ -47,7 +47,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::build_volume::BuildVolume;
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::scene_document::SceneDocument;
 use crate::viewport::ViewportController;
@@ -231,11 +231,12 @@ impl GenSupportRun {
                 }
                 let material_g = *result.algorithm_specs.estimated_material_g.value();
                 let details = details_message(&result.recipe, &result.resolution_trail);
-                self.dialogs.show_info(move || InfoTexts {
-                    heading: ctr!("GenSupportDialog", "Support-structures generated"),
-                    message: summary_message(inserted, total, material_g).into(),
-                    details: details.as_str().into(),
-                });
+                self.dialogs
+                    .show_notice(MessageKey::SupportStructuresGenerated, move || InfoTexts {
+                        heading: ctr!("GenSupportDialog", "Support-structures generated"),
+                        message: summary_message(inserted, total, material_g).into(),
+                        details: details.as_str().into(),
+                    });
             }
             Err(err) => {
                 let message = err.to_string();

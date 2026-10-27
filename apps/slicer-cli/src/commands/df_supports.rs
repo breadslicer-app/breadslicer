@@ -41,6 +41,12 @@ pub(crate) fn lift_scene(
     Ok(())
 }
 
+/// The height above the plate of the top of the raft [`add_df_supports`]
+/// builds (its plate and wall), or `None` when it builds none.
+pub(crate) fn df_raft_top_mm() -> Option<f64> {
+    DfSupportRequest::default().options.raft_top_mm()
+}
+
 /// Draws the supports a `.bread` project kept as data into their empty
 /// leaves. Supports that cannot be rebuilt are reported to `out` and their
 /// leaves removed, so the scene slices without them rather than with an empty
