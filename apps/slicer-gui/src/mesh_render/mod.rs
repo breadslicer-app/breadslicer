@@ -116,6 +116,10 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStenci
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
+/// The front label's vertices over the tab's top face, and under it.
+const LABEL_TOP: std::ops::Range<u32> = 0..6;
+const LABEL_UNDERSIDE: std::ops::Range<u32> = 6..12;
+
 /// A `GpuScene` paired with its models bind group. The bind group references
 /// the scene's storage buffer by handle, so it must be rebuilt every time the
 /// storage buffer is recreated (i.e. on every scene install or upload).
@@ -538,7 +542,7 @@ impl Renderer {
             self.pipelines.label_state = LabelState::Off;
             return Ok(());
         };
-        let tab = FrontTab::around_label(raster.aspect());
+        let tab = FrontTab::around_label(raster.aspect(), raster.height_over_word());
         match self.upload_label_texture(&raster) {
             Ok(bind_group) => {
                 self.pipelines.label_state = LabelState::Shown {
@@ -561,6 +565,7 @@ impl Renderer {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
                 "cap",
+                wgpu::TextureFormat::R8Unorm,
                 &raster.coverage,
                 raster.width,
                 raster.height,
@@ -574,12 +579,13 @@ impl Renderer {
         })
     }
 
-    /// Upload a label raster as an R8 texture and build the label's group-1
-    /// bind group.
+    /// Upload a label raster as an RG8 texture (the word, the printer's name)
+    /// and build the label's group-1 bind group.
     fn upload_label_texture(&self, raster: &LabelRaster) -> Result<wgpu::BindGroup, RenderError> {
         scoped(&self.core.device, || {
             self.coverage_bind_group(
                 "front label",
+                wgpu::TextureFormat::Rg8Unorm,
                 &raster.coverage,
                 raster.width,
                 raster.height,
@@ -593,12 +599,14 @@ impl Renderer {
         })
     }
 
-    /// Upload a single-channel coverage bitmap as an R8 texture and bind it
-    /// with `sampler`. Each row is padded to wgpu's copy alignment, as
-    /// `write_texture` requires.
+    /// Upload a coverage bitmap as an 8-bit-per-channel texture of `format`
+    /// (R8 or RG8, channels interleaved) and bind it with `sampler`. Each row
+    /// is padded to wgpu's copy alignment, as `write_texture` requires.
+    #[allow(clippy::too_many_arguments)]
     fn coverage_bind_group(
         &self,
         name: &str,
+        format: wgpu::TextureFormat,
         coverage: &[u8],
         width: u32,
         height: u32,
@@ -615,18 +623,20 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
-        let padded_bpr =
-            width.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let row_bytes = width * format.block_copy_size(None).unwrap_or(1);
+        let padded_bpr = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let mut padded = vec![0u8; (padded_bpr * height) as usize];
         for row in 0..height as usize {
-            let src = row * width as usize;
+            let src = row * row_bytes as usize;
             let dst = row * padded_bpr as usize;
-            padded[dst..dst + width as usize].copy_from_slice(&coverage[src..src + width as usize]);
+            padded[dst..dst + row_bytes as usize]
+                .copy_from_slice(&coverage[src..src + row_bytes as usize]);
         }
         self.core.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -903,7 +913,7 @@ impl Renderer {
                 self.record_plate_solid(&mut pass, plate_buffers);
                 self.record_plate_top(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
-                self.record_front_label(&mut pass, plate_buffers);
+                self.record_front_label(&mut pass, plate_buffers, LABEL_TOP);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -921,6 +931,8 @@ impl Renderer {
                 self.record_cap(&mut pass);
                 self.record_envelope_walls(&mut pass, plate_buffers);
                 self.record_plate_bottom(&mut pass, plate_buffers);
+                // Over the translucent bottom, so it reads clear from below.
+                self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
             }
         }
         if selection.is_some() && scene_for_draws {
@@ -996,10 +1008,17 @@ impl Renderer {
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
     }
 
-    /// The word on the plate's front tab, over the tab's own top face. Binds
-    /// its own vertex buffer at slot 0, so the plate draws that share the
-    /// plate's must come before it.
-    fn record_front_label(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+    /// The word on the plate's front tab: `vertices` picks the copy over the
+    /// tab's top face ([`LABEL_TOP`]) or the one under it
+    /// ([`LABEL_UNDERSIDE`]). Binds its own vertex buffer at slot 0, so the
+    /// plate draws that share the plate's must come before it, or bind theirs
+    /// again.
+    fn record_front_label(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        plate_buffers: &PlateBuffers,
+        vertices: std::ops::Range<u32>,
+    ) {
         let LabelState::Shown { bind_group, .. } = &self.pipelines.label_state else {
             return;
         };
@@ -1011,7 +1030,7 @@ impl Renderer {
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, quad.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(0..6, 0..1);
+        pass.draw(vertices, 0..1);
     }
 
     /// 1 draw call per installed scene object. The models bind group is rebound

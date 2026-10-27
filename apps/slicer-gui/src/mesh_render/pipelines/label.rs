@@ -5,7 +5,10 @@
 
 //! Front-label pipeline. Draws the word the plate's front tab carries
 //! as one quad at `Z = 0`, textured with the label's coverage raster
-//! and blended over the tab underneath.
+//! and blended over the tab underneath, and a mirrored copy on the
+//! tab's underside. Each quad faces out of its own face and back faces
+//! are culled, so from above only the top one shows and from below
+//! only the underside one, which reads the right way round.
 //!
 //! Group 0 reuses the mesh `Uniforms` buffer, as the plate and cap
 //! pipelines do; group 1 is the coverage texture, uploaded when the
@@ -55,6 +58,30 @@ pub(in crate::mesh_render) fn label_quad(text_box: [f32; 4]) -> [LabelVertex; 6]
         bottom_left,
         top_right,
         top_left,
+    ]
+}
+
+/// Builds the copy of [`label_quad`] read from below: the same box at
+/// height `z`, mirrored in `v` so the word reads the right way round
+/// from underneath (looking up, the plate's front edge is at the top
+/// of the view), and wound counter-clockwise as seen from below.
+pub(in crate::mesh_render) fn underside_label_quad(text_box: [f32; 4], z: f32) -> [LabelVertex; 6] {
+    let [min_x, min_y, max_x, max_y] = text_box;
+    let corner = |x: f32, y: f32, u: f32, v: f32| LabelVertex {
+        position: [x, y, z],
+        uv: [u, v],
+    };
+    let bottom_left = corner(min_x, min_y, 0.0, 1.0);
+    let bottom_right = corner(max_x, min_y, 1.0, 1.0);
+    let top_right = corner(max_x, max_y, 1.0, 0.0);
+    let top_left = corner(min_x, max_y, 0.0, 0.0);
+    [
+        bottom_left,
+        top_right,
+        bottom_right,
+        bottom_left,
+        top_left,
+        top_right,
     ]
 }
 
@@ -141,8 +168,9 @@ impl LabelPipeline {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                // Flat quad, read from above or through the plate.
-                cull_mode: None,
+                // The top quad faces up and the underside one down: each
+                // shows only from its own side of the plate.
+                cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -235,6 +263,40 @@ mod label_quad_tests {
                 corner.uv[1],
                 if corner.position[1] < -67.0 { 0.0 } else { 1.0 }
             );
+        }
+    }
+
+    /// The turn of `triangle` seen from above: positive when it winds
+    /// counter-clockwise.
+    fn turn_from_above(triangle: &[LabelVertex]) -> f32 {
+        let [a, b, c] = [
+            triangle[0].position,
+            triangle[1].position,
+            triangle[2].position,
+        ];
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    }
+
+    #[test]
+    fn the_underside_copy_faces_down_and_is_mirrored_in_v() {
+        let quad = underside_label_quad([-10.0, -70.0, 10.0, -64.0], -4.0);
+
+        for corner in &quad {
+            assert_eq!(corner.position[2], -4.0);
+            // Mirrored in v: the top of the word points to the plate's
+            // front edge, which is at the top of the view from below;
+            // the word still runs with +X.
+            assert_eq!(
+                corner.uv[0],
+                if corner.position[0] < 0.0 { 0.0 } else { 1.0 }
+            );
+            assert_eq!(
+                corner.uv[1],
+                if corner.position[1] < -67.0 { 1.0 } else { 0.0 }
+            );
+        }
+        for triangle in quad.chunks(3) {
+            assert!(turn_from_above(triangle) < 0.0, "faces down");
         }
     }
 
