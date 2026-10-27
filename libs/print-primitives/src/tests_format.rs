@@ -13,6 +13,8 @@ fn format_kind_canonical_roundtrips_for_known_variants() {
         ("ctb", FormatKind::Ctb),
         ("goo", FormatKind::Goo),
         ("pwmx", FormatKind::Pwmx),
+        ("cxdlp", FormatKind::Cxdlp),
+        ("azf", FormatKind::Azf),
         ("png_per_layer", FormatKind::PngPerLayer),
         ("svg_per_layer", FormatKind::SvgPerLayer),
         ("svg_combined", FormatKind::SvgCombined),

@@ -22,6 +22,7 @@ sc-project-formats.workspace = true
 sc-scene.workspace = true
 sc-sl1cer.workspace = true
 sc-sla-formats.workspace = true
+sc-sla-formats-uvtools.workspace = true
 
 anyhow.workspace = true
 

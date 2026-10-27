@@ -26,6 +26,20 @@ where the dataset names one per machine. The Mars 2 Pro mirrors in X,
 like the other 18 ELEGOO machines, where the dataset alone says
 otherwise.
 
+The Creality Halot One, One Pro and One Plus are not in that dataset.
+Their panel, plate and height come from the printer data bundled with
+UVtools (its `Printer/Machine.cs` and PrusaSlicer printer profiles,
+AGPL-3.0), which also names CXDLP as their file format. No photo of them
+can be shipped, so their profiles name no image.
+
+The Photon Mono M7, M7 Pro and M7 Max differ from that dataset on 2
+counts, both following UVtools' printer data, which its Anycubic writers
+are validated against, and Anycubic's published specifications: the M7
+and M7 Pro panels are 16.8 x 24.8 µm, so 126.976 mm deep, and the M7 Max
+is 46 µm square, so 298.08 x 165.6 mm; and all 3 mirror in X (the
+dataset says so for the M7 Pro and M7 Max in its current revision, and
+leaves the M7 unverified).
+
 `generic-machine` is ours. It describes no product: it is what a resin
 is calibrated against when the calibration is not tied to a machine.
 

@@ -29,6 +29,7 @@ sc-scene = { workspace = true }
 sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }
 sc-sla-formats = { workspace = true }
+sc-sla-formats-uvtools = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
