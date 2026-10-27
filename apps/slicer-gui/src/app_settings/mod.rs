@@ -443,6 +443,10 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_diagnostic_log"
     )]
     diagnostic_log: bool,
+    /// The app messages the user silenced with "Don't show again", by key
+    /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    silenced_messages: BTreeSet<String>,
     /// Floating object-list panel state. Omitted in TOML while every field
     /// holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -476,6 +480,7 @@ impl Default for AppSettings {
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
             diagnostic_log: default_diagnostic_log(),
+            silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
@@ -601,6 +606,14 @@ impl AppSettings {
 
     pub(crate) fn set_diagnostic_log(&mut self, on: bool) {
         self.diagnostic_log = on;
+    }
+
+    pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {
+        self.silenced_messages.clone()
+    }
+
+    pub(crate) fn set_silenced_messages(&mut self, keys: BTreeSet<String>) {
+        self.silenced_messages = keys;
     }
 
     pub(crate) fn object_list_visible(&self) -> bool {

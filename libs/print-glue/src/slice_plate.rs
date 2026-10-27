@@ -99,10 +99,23 @@ impl SlicedPlate {
     /// Fails only when stacks disagree on their layer grid; the leaves of one
     /// run share one schedule and always merge.
     pub fn merge(self) -> Result<PlateContours, LayerAlignmentError> {
+        self.merge_with(None)
+    }
+
+    /// Merge the per-leaf stacks, then `extra` stacks cut on the same
+    /// schedule, into the whole plate's contours: solid added to the plate
+    /// after slicing, such as the cavities a review fills (#132).
+    ///
+    /// Fails when a stack does not follow the run's layer grid.
+    pub fn merge_with(
+        self,
+        extra: impl IntoIterator<Item = ContourStack>,
+    ) -> Result<PlateContours, LayerAlignmentError> {
         let stack = merge_stacks(
             self.leaves
                 .into_iter()
                 .map(LeafSlices::into_stack)
+                .chain(extra)
                 .collect(),
         )?;
         Ok(PlateContours {

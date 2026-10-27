@@ -178,5 +178,9 @@ fn dragonfruit_punch_specs_cut_like_its_manifold_path() {
     assert!(is_edge_manifold(&out.mesh));
     assert_eq!(out.report.punch_count, 1);
     let expected = 1000.0 - prism_area(2.0, 18) * 6.0;
-    assert!((out.mesh.signed_volume() - expected).abs() < 1e-3, "{}", out.mesh.signed_volume());
+    assert!(
+        (out.mesh.signed_volume() - expected).abs() < 1e-3,
+        "{}",
+        out.mesh.signed_volume()
+    );
 }
