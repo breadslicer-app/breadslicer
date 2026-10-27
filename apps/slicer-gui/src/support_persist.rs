@@ -59,31 +59,85 @@ fn support_leaves(spatial: &SceneSpatial) -> impl Iterator<Item = (NodeId, Arc<I
         })
 }
 
-/// The supports to save as data with the scene of `spatial`: the session in
-/// force, for the support leaf. Empty when there is none, when the scene moved
-/// on from it, or when the scene shows more than one support mesh (which of
-/// them the session drew is not known); those supports are saved as meshes.
-pub(crate) fn support_documents(
-    doc: &SceneDocument,
-    spatial: &SceneSpatial,
-) -> Vec<SupportDocument> {
-    let sessions = doc.support_sessions();
-    let Some(current) = current_session(doc, &sessions) else {
-        return Vec::new();
-    };
+/// Why a `.bread` save keeps a scene's supports as a mesh, which reopens as
+/// supports that cannot be edited by hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SupportsAsMesh {
+    /// The scene shows more than one set of supports: which of them a
+    /// session drew is not known.
+    SeveralSets,
+    /// No session made these supports for the models as they now are: they
+    /// came in as a mesh, or the models changed since they were generated.
+    NoSession,
+    /// The session was run with settings given outright, which cannot be
+    /// made again.
+    NoRecipe,
+}
+
+/// What a `.bread` save keeps of a scene's supports.
+#[derive(Debug, Default)]
+pub(crate) struct SupportsToSave {
+    /// The supports kept as data.
+    pub(crate) documents: Vec<SupportDocument>,
+    /// Set when the scene shows supports that go into the file as a mesh.
+    pub(crate) as_mesh: Option<SupportsAsMesh>,
+}
+
+/// The supports to save as data with the scene of `spatial`: a session, for
+/// the support leaf. The session in force is taken; when edits since (an
+/// Undo, a transform put back, one that left the models alone) leave none
+/// in force, the latest session that still fits the models and drew the
+/// mesh the leaf shows is. Supports with no such session go in as a mesh,
+/// and [`SupportsToSave::as_mesh`] says why.
+pub(crate) fn support_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> SupportsToSave {
     let mut leaves = support_leaves(spatial);
-    let (Some((leaf, _)), None) = (leaves.next(), leaves.next()) else {
-        return Vec::new();
+    let (leaf, leaf_mesh) = match (leaves.next(), leaves.next()) {
+        (None, _) => return SupportsToSave::default(),
+        (Some(one), None) => one,
+        (Some(_), Some(_)) => return as_mesh(SupportsAsMesh::SeveralSets),
     };
-    let Some(document) = sessions.borrow()[current].0.to_document() else {
-        return Vec::new();
+    let sessions = doc.support_sessions();
+    let session = match current_session(doc, &sessions) {
+        Some(current) => Some(sessions.borrow()[current].0.clone()),
+        None => sessions
+            .borrow()
+            .iter()
+            .rev()
+            .map(|(session, _)| session.clone())
+            .find(|session| drew(session, spatial, &leaf_mesh)),
     };
-    vec![SupportDocument {
-        leaf,
-        generator: DF_SUPPORT_GENERATOR.to_owned(),
-        version: DF_SUPPORT_DOCUMENT_VERSION,
-        document,
-    }]
+    let Some(session) = session else {
+        return as_mesh(SupportsAsMesh::NoSession);
+    };
+    let Some(document) = session.to_document() else {
+        return as_mesh(SupportsAsMesh::NoRecipe);
+    };
+    SupportsToSave {
+        documents: vec![SupportDocument {
+            leaf,
+            generator: DF_SUPPORT_GENERATOR.to_owned(),
+            version: DF_SUPPORT_DOCUMENT_VERSION,
+            document,
+        }],
+        as_mesh: None,
+    }
+}
+
+fn as_mesh(why: SupportsAsMesh) -> SupportsToSave {
+    SupportsToSave {
+        documents: Vec::new(),
+        as_mesh: Some(why),
+    }
+}
+
+/// Whether `session` fits the models of `spatial` and draws the mesh the
+/// support leaf shows (the same size, as a reopened file would redraw it).
+fn drew(session: &DfSupportSession, spatial: &SceneSpatial, shown: &IndexedMesh) -> bool {
+    session.fits_models_of(spatial.graph())
+        && session.mesh().ok().flatten().is_some_and(|mesh| {
+            mesh.vertices().len() == shown.vertices().len()
+                && mesh.faces().len() == shown.faces().len()
+        })
 }
 
 /// Makes `session`, a reopened file's rebuilt supports, the editable session of
