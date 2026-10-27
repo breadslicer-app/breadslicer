@@ -309,7 +309,7 @@ async fn run_open_file_flow(
 ) {
     let start_dir =
         resolve_open_dialog_dir(prefs.snapshot().last_open_dir, sc_app_paths::home_dir());
-    let Some(path) = pick_mesh_file(start_dir).await else {
+    let Some(path) = pick_mesh_file(ctrl.dialogs().file_dialog(), start_dir).await else {
         // User cancelled the dialog.
         return;
     };
@@ -438,8 +438,11 @@ fn remember_open_directory(prefs: &Rc<PreferencesBus>, opened_file: &Path) {
     });
 }
 
-async fn pick_mesh_file(start_dir: Option<PathBuf>) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new()
+async fn pick_mesh_file(
+    dialog: rfd::AsyncFileDialog,
+    start_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let mut dialog = dialog
         .add_filter(
             ctr!("FileDialog", "All supported files").to_string(),
             mesh_loader::SUPPORTED_MESH_EXTENSIONS,
@@ -638,7 +641,8 @@ async fn run_save_as_flow(
     default_stem: Option<String>,
     defaults: PrintDefaults,
 ) -> SaveOutcome {
-    let dispatch = scene_save::decide_save_target(pick_save_target(default_stem).await);
+    let dispatch =
+        scene_save::decide_save_target(pick_save_target(dialogs.file_dialog(), default_stem).await);
     match dispatch {
         SaveTargetDispatch::Cancelled => SaveOutcome::NotSaved,
         SaveTargetDispatch::WrongExtension(target) => {
@@ -652,9 +656,11 @@ async fn run_save_as_flow(
     }
 }
 
-async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"]);
+async fn pick_save_target(
+    dialog: rfd::AsyncFileDialog,
+    default_stem: Option<String>,
+) -> Option<PathBuf> {
+    let mut dialog = dialog.add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"]);
     if let Some(stem) = default_stem {
         dialog = dialog.set_file_name(format!("{stem}.3mf"));
     }
@@ -718,8 +724,9 @@ pub(crate) async fn run_export_as_flow(
     // -> binary, `.stla` -> ASCII, `.obj` -> OBJ. The dialog seeds the active
     // filter's extension into the filename so the user gets the format they
     // implicitly chose.
-    let dispatch =
-        decide_export_dispatch(pick_export_target(default_stem, default_extension).await);
+    let dispatch = decide_export_dispatch(
+        pick_export_target(dialogs.file_dialog(), default_stem, default_extension).await,
+    );
     match dispatch {
         ExportDispatch::Cancelled => false,
         ExportDispatch::UnsupportedExtension(target) => {
@@ -799,6 +806,7 @@ fn export_error_texts(target: &Path, err: &anyhow::Error) -> ErrorTexts {
 }
 
 async fn pick_export_target(
+    dialog: rfd::AsyncFileDialog,
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> Option<PathBuf> {
@@ -828,7 +836,7 @@ async fn pick_export_target(
         // "stl" or fallback.
         _ => [&stl_bin, &stl_ascii, &obj, &threemf],
     };
-    let mut dialog = rfd::AsyncFileDialog::new();
+    let mut dialog = dialog;
     for (name, exts) in ordered {
         dialog = dialog.add_filter(name.clone(), exts);
     }

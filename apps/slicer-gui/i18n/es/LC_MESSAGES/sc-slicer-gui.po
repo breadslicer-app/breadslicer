@@ -2328,3 +2328,18 @@ msgstr "Registro de diagnóstico (para reportar errores)"
 msgctxt "AppearancePreferences"
 msgid "Open logs folder"
 msgstr "Abrir carpeta de registros"
+
+#: ui/message-layer.slint
+msgctxt "MessageLayer"
+msgid "Don't show again"
+msgstr "No volver a mostrar"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Show all messages again"
+msgstr "Volver a mostrar todos los mensajes"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Hidden messages: {}"
+msgstr "Mensajes ocultos: {}"
