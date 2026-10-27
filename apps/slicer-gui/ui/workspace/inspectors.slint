@@ -26,10 +26,13 @@ export struct ReviewRow {
     // One sentence with the numbers.
     detail: string,
     // 0 none, 1 add a support, 2 add a drain, 3 a drain that needs a model
-    // hollowed in this window.
+    // hollowed in this window, 4 lift the model clear of the raft or turn
+    // the raft off.
     fix: int,
     // The fix was applied since the slice.
     fixed: bool,
+    // The lift button of fix 4 ("Lift 17 layers").
+    lift-label: string,
 }
 
 // The colour of a review severity.
@@ -92,6 +95,8 @@ component FindingRow inherits VerticalLayout {
     in property <bool> selected;
     callback clicked();
     callback fix();
+    // The second fix of fix 4: turn the raft off.
+    callback fix-alt();
 
     spacing: 4px;
 
@@ -172,11 +177,31 @@ component FindingRow inherits VerticalLayout {
                 root.fix();
             }
         }
+        if root.finding.fix == 4 && !root.finding.fixed: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: root.finding.lift-label;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.fix();
+                }
+            }
+            ScButton {
+                text: @tr("Review" => "No raft");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.fix-alt();
+                }
+            }
+        }
         if root.finding.fix == 3: Note {
             text: @tr("Review" => "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab.");
         }
         if root.finding.fixed: Note {
-            text: root.finding.fix == 1 ? @tr("Review" => "Support added.") : @tr("Review" => "Drain requested.");
+            text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
+                : root.finding.fix == 4 ? @tr("Review" => "Done. Generate the supports again, then slice.")
+                : @tr("Review" => "Drain requested.");
             color: Theme.success;
         }
     }
@@ -665,6 +690,10 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // The raft would take the models' first layers (#131): the warning, empty
+    // when it does not, and the label of its lift button.
+    in property <string> raft-clash-message;
+    in property <string> raft-lift-label;
     // The selected object lift, editable here too.
     in property <bool> selection-valid;
     in property <float> lift;
@@ -677,8 +706,40 @@ export component SupportsInspector inherits VerticalLayout {
     callback preset-delete();
     callback lift-edit(float);
     callback drop-to-plate();
+    callback raft-lift();
+    callback raft-off();
 
     spacing: 12px;
+
+    if root.raft-clash-message != "": Card {
+        title: @tr("Inspector" => "RAFT");
+        note: @tr("Inspector" => "Interferes with the model");
+        note-color: Theme.warning;
+        highlighted: true;
+
+        Note {
+            text: root.raft-clash-message;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: root.raft-lift-label;
+                kind: ButtonKind.primary;
+                horizontal-stretch: 1;
+                clicked => {
+                    root.raft-lift();
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "No raft");
+                horizontal-stretch: 1;
+                clicked => {
+                    root.raft-off();
+                }
+            }
+        }
+    }
 
     Card {
         title: @tr("Inspector" => "AUTO SUPPORTS");
@@ -935,6 +996,7 @@ export component SliceInspector inherits VerticalLayout {
     callback slice-requested();
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
+    callback review-raft-off-requested(int);
 
     // The LineEdit's text binding breaks the first time the user types, so
     // a value pushed from Rust is written into it explicitly.
@@ -1104,6 +1166,9 @@ export component SliceInspector inherits VerticalLayout {
                         }
                         fix => {
                             root.review-fix-requested(row.id);
+                        }
+                        fix-alt => {
+                            root.review-raft-off-requested(row.id);
                         }
                     }
                 }
