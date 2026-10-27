@@ -35,13 +35,15 @@
 //!
 //! # Conventions
 //!
-//! Raster space is the printer screen as the file stores it, mirror
-//! included: pixel `(x, y)` covers `[x, x + 1) x [y, y + 1)`, row `y` from 0
-//! to `height - 1`. Convert to plate millimetres with
+//! Raster space is the slicer's raster grid, mirror included: pixel `(x, y)`
+//! covers `[x, x + 1) x [y, y + 1)`, row `y` from 0 to `height - 1`, row 0
+//! at the plate's minimum Y (some printer files store their rows the other
+//! way round). Convert to plate millimetres with
 //! [`ReviewInput::pixel_to_plate`] or [`ReviewInput::focus`]. Layer 0 rests
 //! on the build plate; nothing below it is represented. Nothing above the
 //! last layer is represented either, although in reality it is all open
-//! resin.
+//! resin: an air region of the last layer is open towards the resin above
+//! even when it is enclosed within its layer.
 //!
 //! Region indices are the order in which a raster scan (row by row, left to
 //! right) first meets each region, so they are deterministic and identical
@@ -158,7 +160,9 @@ pub struct Region {
     /// or to aim a support or a drain.
     pub inside_px: [u32; 2],
     /// Whether it has a pixel on the screen's outer edge. For solid, the
-    /// part is cut by the screen edge; for air, it is open air.
+    /// part is cut by the screen edge; for air, it is open air. Air on the
+    /// last layer is open towards the resin above as well, whatever this
+    /// says.
     pub touches_border: bool,
     /// Pixels that are model. Solid only; 0 for air.
     pub model_px: u64,
@@ -286,12 +290,15 @@ impl LayerPixels {
         }
     }
 
-    /// The runs of solid region `region`.
+    /// The runs of solid region `region`. It scans every run of the layer:
+    /// to visit every region, walk `solid` and `solid_labels` together once
+    /// instead.
     pub fn solid_runs_of(&self, region: u32) -> impl Iterator<Item = &Run> + '_ {
         runs_of(&self.solid, &self.solid_labels, region)
     }
 
-    /// The runs of air region `region`.
+    /// The runs of air region `region`. It scans every run of the layer, as
+    /// [`solid_runs_of`](Self::solid_runs_of) does.
     pub fn air_runs_of(&self, region: u32) -> impl Iterator<Item = &Run> + '_ {
         runs_of(&self.air, &self.air_labels, region)
     }
@@ -647,8 +654,9 @@ impl PlateRegions {
 
     /// Groups the air regions of all layers, as
     /// [`group_solid`](Self::group_solid) does for solid. With `|_, _| true`
-    /// a group is a cavity, or the open air when one of its regions touches
-    /// the screen edge.
+    /// a group is a cavity, or open air when one of its regions touches the
+    /// screen edge or lies on the last layer (open towards the resin above,
+    /// which is not represented).
     pub fn group_air(&self, keep: impl FnMut(usize, &Overlap) -> bool) -> Groups {
         self.group(|layer| layer.air.len(), |links| &links.air, keep)
     }
@@ -690,3 +698,7 @@ impl PlateRegions {
 #[cfg(test)]
 #[path = "tests_regions.rs"]
 mod tests_regions;
+
+#[cfg(test)]
+#[path = "tests_reference.rs"]
+mod tests_reference;
