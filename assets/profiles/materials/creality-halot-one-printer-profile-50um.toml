@@ -1,0 +1,29 @@
+[identity]
+id = "creality-halot-one-printer-profile-50um"
+brand = "Creality"
+family = "standard"
+name = "Halot One printer-side profile (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[physical]
+
+# NOTE: The Halot uses the profile stored on the printer, not the file's exposure; these values mirror what known-good Lychee files carry
+[per_printer.creality-halot-one]
+normal_exposure_sec = 0.3
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 7.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 60.0

@@ -2330,6 +2330,328 @@ msgid "Open logs folder"
 msgstr "Abrir carpeta de registros"
 
 #: ui/main-window.slint
+msgctxt "SlicePanel"
+msgid "Checking the layers..."
+msgstr "Revisando las capas..."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "REVIEW"
+msgstr "REVISIÓN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Out of date"
+msgstr "Desactualizada"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Add support here"
+msgstr "Agregar soporte acá"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Add drain here"
+msgstr "Agregar drenaje acá"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab."
+msgstr "Un drenaje por el piso la vaciaría. Los drenajes se perforan en modelos ahuecados en la pestaña Ahuecar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Support added."
+msgstr "Soporte agregado."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Drain requested."
+msgstr "Drenaje pedido."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "This slice was not reviewed. Slice again to check it."
+msgstr "Este laminado no se revisó. Laminá de nuevo para revisarlo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "The scene changed since this slice. Slice again to review it."
+msgstr "La escena cambió desde este laminado. Laminá de nuevo para revisarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Click a finding to show its layer and centre the view on it."
+msgstr "Hacé clic en un hallazgo para ver su capa y centrar la vista en él."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "The checks could not run: {}"
+msgstr "No se pudieron hacer las revisiones: {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Support added. Slice again to check the result."
+msgstr "Soporte agregado. Laminá de nuevo para revisar el resultado."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "The support could not be added: {}"
+msgstr "No se pudo agregar el soporte: {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Hollowing the model again with the drain. Slice again when it is done."
+msgstr "Ahuecando el modelo de nuevo con el drenaje. Laminá de nuevo cuando termine."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "A model is being hollowed; try again when it is done."
+msgstr "Se está ahuecando un modelo; probá de nuevo cuando termine."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "This cavity is not in a model hollowed here, so the drain cannot be drilled."
+msgstr "Esta cavidad no está en un modelo ahuecado acá, así que no se puede perforar el drenaje."
+
+msgctxt "Review"
+msgid "The models changed since this slice. Slice again before applying a fix."
+msgstr "Los modelos cambiaron desde este laminado. Laminá de nuevo antes de aplicar una corrección."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Errors"
+msgstr "Errores"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Warnings"
+msgstr "Advertencias"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Notes"
+msgstr "Notas"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Layer {}"
+msgstr "Capa {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Layers {}–{}"
+msgstr "Capas {}–{}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No problems found"
+msgstr "No se encontraron problemas"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports are being generated; try again when they are done."
+msgstr "Se están generando los soportes; probá de nuevo cuando terminen."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} error"
+msgid_plural "{n} errors"
+msgstr[0] "{n} error"
+msgstr[1] "{n} errores"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} warning"
+msgid_plural "{n} warnings"
+msgstr[0] "{n} advertencia"
+msgstr[1] "{n} advertencias"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} note"
+msgid_plural "{n} notes"
+msgstr[0] "{n} nota"
+msgstr[1] "{n} notas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Do not fill"
+msgstr "No rellenar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill on the next slice"
+msgstr "Rellenar en el próximo laminado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Leave it"
+msgstr "Dejarla así"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Marked: the next slice cures this cavity solid."
+msgstr "Marcada: el próximo laminado cura esta cavidad maciza."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Hide the notes"
+msgstr "Ocultar las notas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Show {n} note"
+msgid_plural "Show {n} notes"
+msgstr[0] "Mostrar {n} nota"
+msgstr[1] "Mostrar {n} notas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill all small traps ({})"
+msgstr "Rellenar todas las trampas chicas ({})"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Clear fills"
+msgstr "Quitar los rellenos"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The cavity will be filled on the next slice."
+msgstr "La cavidad se va a rellenar en el próximo laminado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The cavity will not be filled."
+msgstr "La cavidad no se va a rellenar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity will be filled on the next slice."
+msgid_plural "{n} cavities will be filled on the next slice."
+msgstr[0] "Se va a rellenar una cavidad en el próximo laminado."
+msgstr[1] "Se van a rellenar {n} cavidades en el próximo laminado."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} left alone"
+msgid_plural "{n} left alone"
+msgstr[0] "{n} dejado de lado"
+msgstr[1] "{n} dejados de lado"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The fills are cleared. Slice again to apply."
+msgstr "Se quitaron los rellenos. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity will be filled. Slice again to apply."
+msgid_plural "{n} cavities will be filled. Slice again to apply."
+msgstr[0] "Se va a rellenar una cavidad. Laminá de nuevo para aplicar."
+msgstr[1] "Se van a rellenar {n} cavidades. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity is filled in this slice."
+msgid_plural "{n} cavities are filled in this slice."
+msgstr[0] "Una cavidad está rellena en este laminado."
+msgstr[1] "{n} cavidades están rellenas en este laminado."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "RAFT"
+msgstr "BALSA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Interferes with the model"
+msgstr "Interfiere con el modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No raft"
+msgstr "Sin balsa"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgid_plural "The raft takes {n} layers and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgstr[0] "La balsa ocupa {n} capa e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
+msgstr[1] "La balsa ocupa {n} capas e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Lift to {} mm"
+msgstr "Elevar a {} mm"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Generate anyway"
+msgstr "Generar igual"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "No raft"
+msgstr "Sin balsa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Done. Generate the supports again, then slice."
+msgstr "Listo. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Model lifted clear of the raft. Generate the supports again, then slice."
+msgstr "Modelo elevado por encima de la balsa. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The model already stands clear of the raft."
+msgstr "El modelo ya está por encima de la balsa."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Raft turned off. Generate the supports again, then slice."
+msgstr "Balsa desactivada. Generá los soportes de nuevo y después laminá."
+
+#: ui/message-layer.slint
+msgctxt "MessageLayer"
+msgid "Don't show again"
+msgstr "No volver a mostrar"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Show all messages again"
+msgstr "Volver a mostrar todos los mensajes"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Hidden messages: {}"
+msgstr "Mensajes ocultos: {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} fixed"
+msgid_plural "{n} fixed"
+msgstr[0] "{n} corregido"
+msgstr[1] "{n} corregidos"
+
 msgctxt "MenuBar"
 msgid "Save As 3MF…"
 msgstr "Guardar como 3MF…"

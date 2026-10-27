@@ -242,9 +242,18 @@ impl OrbitCamera {
         let radius = ((max - min).length() * 0.5).max(1e-3);
         self.detail_radius = radius;
         self.view_radius = self.view_radius.max(radius);
-        let tan_half = (fov_y * 0.5).tan() * aspect.min(1.0).max(0.01);
-        let half_angle = tan_half.atan();
-        self.distance = (1.12 * radius / half_angle.sin()).max(self.min_distance());
+        self.distance = framing_distance(radius, fov_y, aspect).max(self.min_distance());
+    }
+
+    /// Centres the orbit on `point`, keeping the view direction and the
+    /// projection. A camera farther away than the distance that frames a
+    /// sphere of `radius` around the point comes in to it; a closer one keeps
+    /// its distance, so a jump never zooms out.
+    pub fn centre_on(&mut self, point: Vec3, radius: f32, fov_y: f32, aspect: f32) {
+        self.target = point;
+        let framed = framing_distance(radius.max(1e-3), fov_y, aspect)
+            .clamp(self.min_distance(), self.max_distance());
+        self.distance = self.distance.min(framed);
     }
 
     fn min_distance(&self) -> f32 {
@@ -267,6 +276,13 @@ fn clamp_pitch(pitch: f32) -> f32 {
     pitch.clamp(-limit, limit)
 }
 
+/// The distance at which a sphere of `radius` fills the narrower field of
+/// view, with a little margin.
+fn framing_distance(radius: f32, fov_y: f32, aspect: f32) -> f32 {
+    let tan_half = (fov_y * 0.5).tan() * aspect.clamp(0.01, 1.0);
+    1.12 * radius / tan_half.atan().sin()
+}
+
 fn world_per_pixel_at_depth(depth: f32, fov_y: f32, viewport_height: f32) -> f32 {
     2.0 * depth * (fov_y * 0.5).tan() / viewport_height.max(1.0)
 }
@@ -275,6 +291,39 @@ fn world_per_pixel_at_depth(depth: f32, fov_y: f32, viewport_height: f32) -> f32
 mod tests {
     use super::*;
     use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn centring_on_a_point_keeps_the_view_direction() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 100.0);
+        let (yaw, pitch, projection) = (cam.yaw, cam.pitch, cam.orthographic);
+        let far = cam.distance;
+        cam.centre_on(Vec3::new(10.0, -5.0, 3.0), 15.0, 0.8, 1.5);
+        assert_eq!(cam.target, Vec3::new(10.0, -5.0, 3.0));
+        assert_eq!(
+            (cam.yaw, cam.pitch, cam.orthographic),
+            (yaw, pitch, projection)
+        );
+        assert!(
+            cam.distance < far,
+            "a far camera comes in: {}",
+            cam.distance
+        );
+        assert_approx_eq!(
+            f32,
+            cam.distance,
+            framing_distance(15.0, 0.8, 1.5),
+            ulps = 4
+        );
+    }
+
+    #[test]
+    fn centring_on_a_point_never_zooms_out() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 100.0);
+        cam.distance = 20.0;
+        cam.centre_on(Vec3::new(1.0, 2.0, 3.0), 15.0, 0.8, 1.5);
+        assert_eq!(cam.distance, 20.0);
+        assert_eq!(cam.target, Vec3::new(1.0, 2.0, 3.0));
+    }
 
     #[test]
     fn frame_resets_to_defaults() {

@@ -1,0 +1,31 @@
+[package]
+name = "sc-sla-formats-uvtools"
+version = "0.1.0"
+edition.workspace = true
+# Ported from UVtools, which is published as AGPL-3.0-or-later; see NOTICE.
+license = "AGPL-3.0-or-later"
+authors = [
+    "Tiago Conceição (sn4k3) and UVtools contributors",
+    "SynrgStudio",
+]
+description = "SLA printer-file writers ported from UVtools: Creality CXDLP and the Anycubic ZIP family."
+categories = ["rendering::data-formats"]
+keywords = ["3d", "slicer", "resin", "sla"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-print-primitives.workspace = true
+sc-sl1cer.workspace = true
+sc-sla-formats.workspace = true
+
+png = "0.18.1"
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3.23.0"

@@ -22,9 +22,10 @@
 pub mod ctb;
 pub mod debug;
 pub mod error;
+pub mod external;
 pub mod format;
 pub mod goo;
-pub(crate) mod layer_images;
+pub mod layer_images;
 pub(crate) mod layer_values;
 pub mod options;
 pub mod preview;
@@ -46,7 +47,8 @@ mod tests_row_order;
 #[cfg(test)]
 mod tests_threemf;
 
-pub use error::WriterError;
+pub use error::{WriteFailure, WriterError};
+pub use external::{PrinterFileSink, PrinterFileWriter, install_printer_file_writer};
 pub use format::Format;
 pub use options::WriterOptions;
 pub use preview::{
@@ -54,8 +56,8 @@ pub use preview::{
 };
 pub use print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
-    CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding, UnwritableBinding,
-    UnwritableFamily, printer_file_family_from_path,
+    AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, PrinterFileFormat, UnresolvedBinding,
+    UnwritableBinding, UnwritableFamily, printer_file_family_from_path,
 };
 pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;

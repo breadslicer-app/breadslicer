@@ -108,6 +108,7 @@ impl ViewportController {
         bus: &Rc<PreferencesBus>,
     ) -> Self {
         let dialogs = DialogManager::new(bus);
+        dialogs.attach(ui);
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
@@ -698,6 +699,24 @@ impl ViewportController {
                 );
                 self.mark_dirty();
             }
+        }
+    }
+
+    /// Centres the camera on `point` (world mm), keeping the view direction;
+    /// a far camera comes in to frame about `radius` around it. For the
+    /// Review card's jump to a finding.
+    pub(crate) fn centre_camera_on(&self, point: glam::Vec3, radius: f32) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
+            cam.centre_on(
+                point,
+                radius,
+                crate::mesh_render::default_fov_y(),
+                vp.width() / vp.height().max(1.0),
+            );
+            self.mark_dirty();
         }
     }
 
