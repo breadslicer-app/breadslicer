@@ -11,17 +11,30 @@
 //! file still opens in an older build as far as that build understands it,
 //! and a damaged chunk is reported instead of read.
 //!
-//! [`container`] reads and writes chunks without knowing what they hold; the
-//! other modules are the codecs of the payloads, starting with the sliced
-//! plate ([`slices`]).
+//! The file holds the scene, not what is computed from it: slices, previews
+//! and other caches are rebuilt after opening. [`container`] reads and writes
+//! chunks without knowing what they hold; [`scene`] and [`mesh`] are the
+//! codecs of the scene graph and its meshes, and [`file`] puts them together.
 
+mod bytes;
 pub mod container;
-pub mod slices;
+pub mod file;
+pub mod mesh;
+pub mod scene;
 
 #[cfg(test)]
 mod tests_container;
 #[cfg(test)]
-mod tests_slices;
+mod tests_file;
+#[cfg(test)]
+mod tests_mesh;
+#[cfg(test)]
+mod tests_scene;
 
 pub use container::{BreadReader, BreadWriter, Chunk, ChunkTag, ReadBreadError};
-pub use slices::{DecodeSlicesError, SLICES_TAG, SLICES_VERSION, decode_slices, encode_slices};
+pub use file::{ReadSceneError, WriteSceneError, read_scene, write_scene};
+pub use mesh::{DecodeMeshError, MESH_TAG, MESH_VERSION, decode_mesh, encode_mesh};
+pub use scene::{
+    DecodeSceneError, EncodeSceneError, EncodedScene, SCENE_TAG, SCENE_VERSION, decode_scene,
+    encode_scene,
+};

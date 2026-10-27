@@ -3193,6 +3193,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshopt"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a403c16e3ca5752600e1d4c5ba3ba2a6496f407ded66e767f05279514363f461"
+dependencies = [
+ "bitflags 2.13.2",
+ "cc",
+ "float-cmp 0.10.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4845,7 +4857,10 @@ name = "sc-bread-format"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
- "sc-sl1cer",
+ "meshopt",
+ "sc-mesh-core",
+ "sc-mesh-formats",
+ "sc-scene",
  "zstd",
 ]
 
@@ -4996,7 +5011,6 @@ name = "sc-project-formats"
 version = "0.2.0"
 dependencies = [
  "sc-3mf",
- "sc-bread-format",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
