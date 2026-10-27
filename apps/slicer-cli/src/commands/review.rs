@@ -6,6 +6,10 @@
 //! `review`: slices a model exactly as `slice` does, writes no file, and runs
 //! the pre-flight review (`sc_review`) on the per-leaf contours, knowing which
 //! leaves are models and which are the generated supports.
+//!
+//! With `--fill`, every cavity the review offers to fill is cut on the run's
+//! schedule and added to the plate as model, as the app does on the next
+//! slice (#132), and the plate is reviewed again.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -16,8 +20,8 @@ use anyhow::{Result, anyhow};
 use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
-    Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport,
-    Role, Severity, SuggestedFix, review_regions,
+    CavityFill, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
+    ReviewReport, Role, Severity, SuggestedFix, fill_stack, review_regions, review_with,
 };
 
 use crate::commands::df_supports::df_raft_top_mm;
@@ -32,6 +36,7 @@ pub(crate) struct ReviewArgs {
     pub source: OsString,
     pub plate: PlateOptions,
     pub json: bool,
+    pub fill: bool,
 }
 
 pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -68,12 +73,76 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
     );
     let stats = RegionStats::of(&input, &regions);
 
+    let picked = offered_fills(&report);
+    let filled_stack = if args.fill {
+        fill_stack(picked.iter().copied(), plate.schedule())
+    } else {
+        None
+    };
+    let refilled = filled_stack.as_ref().map(|stack| {
+        let mut leaves = input.leaves().to_vec();
+        leaves.push(ReviewLeaf::new(Some("Filled cavities"), Role::Model, stack));
+        let again = ReviewInput::from_profile(leaves, plate.profile())
+            .expect("the fill is cut on the run's schedule")
+            .with_raft_top_mm(raft_top_mm)
+            .with_support_lift_mm(support_lift_mm);
+        Refilled {
+            cavities: picked.len(),
+            volume_mm3: picked.iter().map(|fill| fill.volume_mm3()).sum(),
+            report: review_with(&again, &ReviewOptions::default()),
+        }
+    });
+
     let mut out = std::io::stdout().lock();
     if args.json {
-        write_json(&input, &report, &stats, slice_time, &mut out)?;
+        write_json(
+            &input,
+            &report,
+            &stats,
+            refilled.as_ref(),
+            slice_time,
+            &mut out,
+        )?;
     } else {
         write_text(&input, &report, &stats, slice_time, &mut out)?;
+        if let Some(refilled) = &refilled {
+            write_refilled(&input, refilled, &mut out)?;
+        }
     }
+    Ok(())
+}
+
+/// The fills of every finding that offers one.
+fn offered_fills(report: &ReviewReport) -> Vec<&CavityFill> {
+    report
+        .findings
+        .iter()
+        .filter_map(|finding| match finding.fix {
+            Some(SuggestedFix::Fill { cavity, .. }) => report.fills.get(cavity),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The review of the plate once its offered fills are cured.
+struct Refilled {
+    cavities: usize,
+    volume_mm3: f64,
+    report: ReviewReport,
+}
+
+/// The second review, after the fills, as text.
+fn write_refilled(input: &ReviewInput<'_>, refilled: &Refilled, out: &mut dyn Write) -> Result<()> {
+    writeln!(
+        out,
+        "Filled {} ({:.3} mm3 of resin); the review again:",
+        plural(refilled.cavities, "cavity", "cavities"),
+        refilled.volume_mm3,
+    )?;
+    for finding in &refilled.report.findings {
+        writeln!(out, "{}", finding_line(finding))?;
+    }
+    writeln!(out, "{}", summary_line(input, &refilled.report.findings))?;
     Ok(())
 }
 
@@ -190,6 +259,7 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
+        Some(SuggestedFix::Fill { .. }) => " Fix: fill it on the next slice.".to_owned(),
         Some(SuggestedFix::ClearRaft { lift_to_mm }) => {
             format!(" Fix: lift the model to {lift_to_mm:.2} mm or turn the raft off.")
         }
@@ -251,15 +321,18 @@ fn write_json(
     input: &ReviewInput<'_>,
     report: &ReviewReport,
     stats: &RegionStats,
+    refilled: Option<&Refilled>,
     slice_time: Duration,
     out: &mut dyn Write,
 ) -> Result<()> {
-    let count = |severity: Severity| {
-        report
-            .findings
-            .iter()
-            .filter(|f| f.severity == severity)
-            .count()
+    let summary = |findings: &[Finding]| {
+        let count = |severity: Severity| findings.iter().filter(|f| f.severity == severity).count();
+        serde_json::json!({
+            "findings": findings.len(),
+            "errors": count(Severity::Error),
+            "warnings": count(Severity::Warning),
+            "info": count(Severity::Info),
+        })
     };
     let leaves: Vec<serde_json::Value> = input
         .leaves()
@@ -271,12 +344,13 @@ fn write_json(
         "layers": input.layer_count(),
         "leaves": leaves,
         "findings": report.findings,
-        "summary": {
-            "findings": report.findings.len(),
-            "errors": count(Severity::Error),
-            "warnings": count(Severity::Warning),
-            "info": count(Severity::Info),
-        },
+        "summary": summary(&report.findings),
+        "filled": refilled.map(|refilled| serde_json::json!({
+            "cavities": refilled.cavities,
+            "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
+            "findings": refilled.report.findings,
+            "summary": summary(&refilled.report.findings),
+        })),
         "regions": {
             "solid": stats.solid,
             "air": stats.air,

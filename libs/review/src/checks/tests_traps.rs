@@ -14,6 +14,7 @@ use sc_print_primitives::Mirror;
 
 use super::*;
 use crate::input::Role;
+use crate::regions::PlateRegions;
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
 
 /// The outside of the standard box.
@@ -45,8 +46,19 @@ fn corner_pillars(builder: FixtureBuilder, layers: std::ops::Range<usize>) -> Fi
         .support(layers, Shape::rect(96.0, 76.0, 100.0, 80.0))
 }
 
+/// The options under which every trap is large and no cup is filled: most
+/// tests below pin where a drain goes, whatever the cavity's size. The tiers
+/// have tests of their own.
+fn drains_only() -> TrapOptions {
+    TrapOptions {
+        info_volume_mm3: 0.0,
+        error_volume_mm3: 0.0,
+        ..TrapOptions::default()
+    }
+}
+
 fn traps(fixture: &Fixture) -> Vec<Finding> {
-    fixture.check(|ctx| run(ctx, &TrapOptions::default()))
+    fixture.check(|ctx| run(ctx, &drains_only()))
 }
 
 fn traps_with(fixture: &Fixture, options: &TrapOptions) -> Vec<Finding> {
@@ -230,7 +242,7 @@ fn cavities_too_small_to_matter_are_not_reported() {
     let everything = TrapOptions {
         min_trap_volume_mm3: 0.0,
         min_cup_area_mm2: 0.0,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     let findings = traps_with(&fixture, &everything);
     let found: Vec<(CheckKind, usize, usize)> = findings
@@ -277,30 +289,191 @@ fn a_closed_hollow_box_is_a_resin_trap() {
     assert_close(drain.y_mm, y);
     assert_close(drain.z_mm, 3.0 * 0.05);
 
-    // The whole review reports it too.
-    assert!(fixture.review().contains(trap));
+    // The whole review reports it too: 10 mm³ is a medium trap there, to
+    // fill.
+    let reviewed = fixture.review();
+    assert_eq!(reviewed.len(), 1, "{reviewed:?}");
+    assert_eq!(spans(&reviewed), spans(&findings));
+    assert_eq!(reviewed[0].severity, Severity::Warning);
+    assert!(matches!(
+        reviewed[0].fix,
+        Some(SuggestedFix::Fill { cavity: 0, .. })
+    ));
+}
+
+/// A sealed `side` x `side` pixel cavity over `layers` layers, in walls 5
+/// pixels thick, with two layers of floor and two of lid.
+fn sealed_box(side: f64, layers: usize) -> FixtureBuilder {
+    let outside = || Shape::rect(40.0, 30.0, 50.0 + side, 40.0 + side);
+    FixtureBuilder::new(layers + 4)
+        .model(0..2, outside())
+        .model(
+            2..2 + layers,
+            Shape::frame(40.0, 30.0, 50.0 + side, 40.0 + side, 5.0),
+        )
+        .model(2 + layers..layers + 4, outside())
 }
 
 #[test]
-fn a_small_trap_is_a_warning() {
+fn a_tiny_trap_is_a_note_to_fill() {
     // A 10 x 10 pixel cavity over 4 layers: 0.2 mm³.
-    let outside = || Shape::rect(40.0, 30.0, 60.0, 50.0);
-    let fixture = FixtureBuilder::new(8)
-        .model(0..2, outside())
-        .model(2..6, Shape::frame(40.0, 30.0, 60.0, 50.0, 5.0))
-        .model(6..8, outside())
-        .build();
-    let findings = traps(&fixture);
+    let fixture = sealed_box(10.0, 4).build();
+    let findings = fixture.check(|ctx| run(ctx, &TrapOptions::default()));
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].check, CheckKind::ResinTrap);
-    assert_eq!(findings[0].severity, Severity::Warning);
-    assert!(findings[0].detail.contains("0.200 mm³"), "{findings:?}");
+    let trap = &findings[0];
+    assert_eq!(trap.check, CheckKind::ResinTrap);
+    assert_eq!(trap.severity, Severity::Info);
+    assert_eq!(trap.title, "Tiny sealed cavity");
+    assert!(trap.detail.contains("0.200 mm³"), "{findings:?}");
+    let Some(SuggestedFix::Fill { at, cavity: 0 }) = trap.fix else {
+        panic!("expected the first fill, got {:?}", trap.fix);
+    };
+    // Aimed at the floor, like a drain would be.
+    assert_close(at.z_mm, 2.0 * 0.05);
+    assert_close(at.x_mm, trap.focus.x_mm);
+}
 
+#[test]
+fn traps_are_tiered_by_volume() {
+    // 0.2 mm³, 10 mm³ and 40 mm³ (40 x 40 pixels over 50 layers).
+    let tier = |fixture: &Fixture, options: &TrapOptions| {
+        let findings = traps_with(fixture, options);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let fix = match findings[0].fix {
+            Some(SuggestedFix::Fill { .. }) => "fill",
+            Some(SuggestedFix::AddDrain { .. }) => "drain",
+            _ => "none",
+        };
+        (findings[0].severity, findings[0].title.clone(), fix)
+    };
+    let defaults = TrapOptions::default();
+    let tiny = sealed_box(10.0, 4).build();
+    let medium = sealed_box(50.0, 8).build();
+    let large = sealed_box(40.0, 50).build();
+    assert_eq!(
+        tier(&tiny, &defaults),
+        (Severity::Info, "Tiny sealed cavity".to_owned(), "fill")
+    );
+    assert_eq!(
+        tier(&medium, &defaults),
+        (
+            Severity::Warning,
+            "Small sealed cavity traps resin".to_owned(),
+            "fill"
+        )
+    );
+    assert_eq!(
+        tier(&large, &defaults),
+        (
+            Severity::Error,
+            "Sealed cavity traps resin".to_owned(),
+            "drain"
+        )
+    );
+
+    // The thresholds are options.
     let strict = TrapOptions {
-        error_volume_mm3: 0.1,
+        info_volume_mm3: 0.1,
+        error_volume_mm3: 5.0,
         ..TrapOptions::default()
     };
-    assert_eq!(traps_with(&fixture, &strict)[0].severity, Severity::Error);
+    assert_eq!(tier(&tiny, &strict).0, Severity::Warning);
+    assert_eq!(tier(&medium, &strict).0, Severity::Error);
+    assert_eq!(tier(&medium, &strict).2, "drain");
+    assert_eq!(trap_severity(0.99, &defaults), Severity::Info);
+    assert_eq!(trap_severity(1.0, &defaults), Severity::Warning);
+    assert_eq!(trap_severity(26.9, &defaults), Severity::Warning);
+    assert_eq!(trap_severity(27.0, &defaults), Severity::Error);
+}
+
+#[test]
+fn a_fill_holds_the_pixels_of_the_cavity() {
+    // 50 x 40 pixels over layers 3-12 of the standard box: 10 mm³.
+    let fixture = FixtureBuilder::new(16)
+        .model(0..3, block())
+        .model(3..13, walls())
+        .model(13..16, block())
+        .build();
+    let input = fixture.input();
+    let regions = fixture.regions();
+    let ctx = ReviewContext::new(&input, &regions);
+    let (findings, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    assert_eq!(findings.len(), 1);
+    assert_eq!(fills.len(), 1);
+    let fill = &fills[0];
+    assert_eq!(fill.slabs.len(), 10);
+    assert_close(fill.slabs[0].bottom_mm, 3.0 * 0.05);
+    assert_close(fill.slabs[9].top_mm, 13.0 * 0.05);
+    assert!(
+        (fill.volume_mm3() - 10.0).abs() < 1e-9,
+        "{}",
+        fill.volume_mm3()
+    );
+    // The hole is one rectangle per layer: x 45-95 px, y 35-75 px.
+    let [x0, y0] = fixture.pixel_to_plate([45.0, 35.0]);
+    let [x1, y1] = fixture.pixel_to_plate([95.0, 75.0]);
+    let rect = fill.slabs[4].rects[0];
+    assert_eq!(fill.slabs[4].rects.len(), 1);
+    assert_close(rect.x0_mm, x0.min(x1));
+    assert_close(rect.x1_mm, x0.max(x1));
+    assert_close(rect.y0_mm, y0.min(y1));
+    assert_close(rect.y1_mm, y0.max(y1));
+}
+
+#[test]
+fn a_filled_cavity_is_gone_on_the_next_review() {
+    // A tiny and a medium trap side by side, and a large one: fill the two
+    // that offer it, as the app does on the next slice.
+    let sealed = |builder: FixtureBuilder, [x0, y0, x1, y1]: [f64; 4], top: usize| {
+        builder
+            .model(0..2, Shape::rect(x0, y0, x1, y1))
+            .model(2..top, Shape::frame(x0, y0, x1, y1, 5.0))
+            .model(top..top + 2, Shape::rect(x0, y0, x1, y1))
+    };
+    // 0.2 mm3, 10 mm3 and 40 mm3.
+    let builder = sealed(FixtureBuilder::new(56), [10.0, 10.0, 30.0, 30.0], 6);
+    let builder = sealed(builder, [40.0, 10.0, 100.0, 70.0], 10);
+    let fixture = sealed(builder, [110.0, 10.0, 160.0, 60.0], 52).build();
+    let input = fixture.input();
+    let report = crate::runner::review_with(&input, &crate::runner::ReviewOptions::default());
+    let trap_tiers = |findings: &[Finding]| {
+        let mut tiers: Vec<Severity> = findings
+            .iter()
+            .filter(|f| f.check == CheckKind::ResinTrap)
+            .map(|f| f.severity)
+            .collect();
+        tiers.sort();
+        tiers
+    };
+    assert_eq!(
+        trap_tiers(&report.findings),
+        [Severity::Error, Severity::Warning, Severity::Info],
+        "{:?}",
+        report.findings
+    );
+    let picked: Vec<&CavityFill> = report
+        .findings
+        .iter()
+        .filter_map(|f| match f.fix {
+            Some(SuggestedFix::Fill { cavity, .. }) => Some(&report.fills[cavity]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(picked.len(), 2);
+    let filled = crate::fill::fill_stack(picked, fixture.schedule()).expect("two cavities to fill");
+    let again = fixture.input_with(crate::input::ReviewLeaf::new(
+        Some("Filled cavities"),
+        Role::Model,
+        &filled,
+    ));
+    let after = crate::runner::review_with(&again, &crate::runner::ReviewOptions::default());
+    assert_eq!(
+        trap_tiers(&after.findings),
+        [Severity::Error],
+        "{:?}",
+        after.findings
+    );
+    assert!(after.fills.is_empty());
 }
 
 #[test]
@@ -322,7 +495,7 @@ fn a_pinhole_drain_leaves_a_trap() {
     // A lower threshold lets the same drain work.
     let loose = TrapOptions {
         drain_px: 9,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     assert!(traps_with(&fixture, &loose).is_empty());
 }
@@ -637,7 +810,7 @@ fn a_one_pixel_wide_slit_does_not_drain_a_trap() {
     // Without the width rule its 20 pixels drain the box.
     let any_width = TrapOptions {
         drain_width_px: 1,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     assert!(traps_with(&fixture, &any_width).is_empty());
 }
@@ -656,7 +829,7 @@ fn a_one_pixel_wide_crack_is_not_a_trap() {
     let any_width = TrapOptions {
         drain_width_px: 1,
         min_trap_volume_mm3: 0.0,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     assert_eq!(
         spans(&traps_with(&fixture, &any_width)),
@@ -855,7 +1028,7 @@ fn a_cup_over_open_air_gets_a_drain_through_its_floor() {
     // Through a floor thicker than the longest drain, none.
     let short = TrapOptions {
         max_drain_mm: 0.05,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     assert_eq!(traps_with(&fixture, &short)[0].fix, None);
 }
@@ -887,10 +1060,41 @@ fn a_wide_cup_is_an_error() {
 
     let lenient = TrapOptions {
         error_cup_area_mm2: 200.0,
-        ..TrapOptions::default()
+        ..drains_only()
     };
     assert_eq!(
         traps_with(&fixture, &lenient)[0].severity,
         Severity::Warning
     );
+}
+
+#[test]
+fn a_small_cup_no_drain_helps_is_offered_a_fill() {
+    // The recess under a block on the plate: 20 mm² over 5 layers, 5 mm³.
+    let fixture = recess().build();
+    let input = fixture.input();
+    let regions = fixture.regions();
+    let ctx = ReviewContext::new(&input, &regions);
+    let (findings, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 4)]);
+    assert!(matches!(
+        findings[0].fix,
+        Some(SuggestedFix::Fill { cavity: 0, .. })
+    ));
+    // Filled, the recess is gone.
+    let filled = crate::fill::fill_stack(&fills, fixture.schedule()).expect("a fill");
+    let again = fixture.input_with(crate::input::ReviewLeaf::new(None, Role::Model, &filled));
+    let regions = PlateRegions::compute(&again);
+    let after = run(
+        &ReviewContext::new(&again, &regions),
+        &TrapOptions::default(),
+    );
+    assert!(after.is_empty(), "{after:?}");
+
+    // A cup holding more than a fill is worth keeps no fix.
+    let big = TrapOptions {
+        error_volume_mm3: 4.0,
+        ..TrapOptions::default()
+    };
+    assert_eq!(traps_with(&fixture, &big)[0].fix, None);
 }

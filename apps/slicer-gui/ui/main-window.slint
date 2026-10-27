@@ -258,8 +258,18 @@ export component MainWindow inherits Window {
     in property <bool> review-stale: false;
     in property <string> review-message;
     in-out property <int> review-selected: -1;
+    in property <int> review-notes;
+    in property <bool> review-notes-open;
+    in property <int> review-fill-small;
+    in property <string> review-fills-note;
+    in property <bool> review-fills-clearable;
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
+    callback review-fill-toggled(int);
+    callback review-leave-requested(int);
+    callback review-fill-small-requested();
+    callback review-fills-cleared();
+    callback review-notes-toggled();
     // The second fix of a model inside the raft: turn the raft off (#131).
     callback review-raft-off-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
@@ -1387,6 +1397,26 @@ export component MainWindow inherits Window {
                             review-stale: root.review-stale;
                             review-message: root.review-message;
                             review-selected <=> root.review-selected;
+                            review-notes: root.review-notes;
+                            review-notes-open: root.review-notes-open;
+                            review-fill-small: root.review-fill-small;
+                            review-fills-note: root.review-fills-note;
+                            review-fills-clearable: root.review-fills-clearable;
+                            review-fill-toggled(id) => {
+                                root.review-fill-toggled(id);
+                            }
+                            review-leave-requested(id) => {
+                                root.review-leave-requested(id);
+                            }
+                            review-fill-small-requested => {
+                                root.review-fill-small-requested();
+                            }
+                            review-fills-cleared => {
+                                root.review-fills-cleared();
+                            }
+                            review-notes-toggled => {
+                                root.review-notes-toggled();
+                            }
                             review-finding-clicked(id) => {
                                 root.review-finding-clicked(id);
                             }
