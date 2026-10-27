@@ -153,6 +153,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // environment, which is only safe before wgpu and the drivers below it
     // start threads.
     let startup_token = startup_token::take_from_env();
+    // The formats ported from UVtools write through `sc-sla-formats` once
+    // installed. No threads start here.
+    sc_sla_formats_uvtools::install();
     // Before anything reads or writes the per-user folders (logs, settings).
     let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();
