@@ -2499,18 +2499,16 @@ msgstr "Sin balsa"
 #: src/df_support_run.rs
 #, rust-format
 msgctxt "Inspector"
-msgid "The raft takes {n} layer and will interfere with the model. Lift the model at least {n} layer above the plate, or turn the raft off."
-msgid_plural "The raft takes {n} layers and will interfere with the model. Lift the model at least {n} layers above the plate, or turn the raft off."
-msgstr[0] "La balsa ocupa {n} capa e interferirá con el modelo. Elevá el modelo al menos {n} capa sobre la plataforma, o desactivá la balsa."
-msgstr[1] "La balsa ocupa {n} capas e interferirá con el modelo. Elevá el modelo al menos {n} capas sobre la plataforma, o desactivá la balsa."
+msgid "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgid_plural "The raft takes {n} layers and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off."
+msgstr[0] "La balsa ocupa {n} capa e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
+msgstr[1] "La balsa ocupa {n} capas e interferirá con el modelo, sin dejar lugar para los soportes debajo. Elevá el modelo a {} mm sobre la plataforma, o desactivá la balsa."
 
 #: src/df_support_run.rs
 #, rust-format
 msgctxt "Inspector"
-msgid "Lift {n} layer"
-msgid_plural "Lift {n} layers"
-msgstr[0] "Elevar {n} capa"
-msgstr[1] "Elevar {n} capas"
+msgid "Lift to {} mm"
+msgstr "Elevar a {} mm"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Review"

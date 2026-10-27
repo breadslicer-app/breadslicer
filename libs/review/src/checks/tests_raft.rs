@@ -7,20 +7,31 @@
 //!
 //! The default fake printer: a 200 x 120 pixel screen of 0.1 mm pixels,
 //! 0.05 mm layers. Shapes are in raster pixels. A raft top of 0.25 mm makes
-//! the first five layers the raft zone.
+//! the first five layers the raft zone; a support lift of 0.4 mm makes the
+//! first eight the layers a model in the raft leaves no room under.
 
 use super::*;
 use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
+use crate::input::ReviewInput;
 use crate::regions::PlateRegions;
 use crate::runner::{ReviewOptions, review_with};
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
 
 const RAFT_TOP_MM: f64 = 0.25;
+const LIFT_MM: f64 = 0.4;
 
-/// The raft check on `fixture`, its supports on a raft whose top is
-/// `raft_top_mm`.
+/// `fixture` with its supports on a raft whose top is `raft_top_mm`, and the
+/// support lift.
+fn rafted(fixture: &Fixture, raft_top_mm: Option<f64>) -> ReviewInput<'_> {
+    fixture
+        .input()
+        .with_raft_top_mm(raft_top_mm)
+        .with_support_lift_mm(Some(LIFT_MM))
+}
+
+/// The raft check on `fixture`.
 fn raft(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
-    let input = fixture.input().with_raft_top_mm(raft_top_mm);
+    let input = rafted(fixture, raft_top_mm);
     let regions = PlateRegions::compute(&input);
     run(
         &ReviewContext::new(&input, &regions),
@@ -28,10 +39,9 @@ fn raft(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
     )
 }
 
-/// The whole review of `fixture` with a raft whose top is `raft_top_mm`.
+/// The whole review of `fixture`.
 fn review(fixture: &Fixture, raft_top_mm: Option<f64>) -> Vec<Finding> {
-    let input = fixture.input().with_raft_top_mm(raft_top_mm);
-    review_with(&input, &ReviewOptions::default()).findings
+    review_with(&rafted(fixture, raft_top_mm), &ReviewOptions::default()).findings
 }
 
 /// A model standing on the plate beside a support on its raft.
@@ -55,15 +65,15 @@ fn a_model_on_the_plate_is_inside_the_raft() {
     assert_eq!(finding.title, "Model inside the raft");
     assert!(
         finding.detail.contains("5 layers (0.25 mm)")
-            && finding.detail.contains("at least 5 layers"),
+            && finding.detail.contains("no room for supports")
+            && finding.detail.contains("lift it to 0.40 mm"),
         "{}",
         finding.detail
     );
-    let Some(SuggestedFix::ClearRaft { layers, lift_to_mm }) = finding.fix else {
+    let Some(SuggestedFix::ClearRaft { lift_to_mm }) = finding.fix else {
         panic!("no raft fix: {finding:?}");
     };
-    assert_eq!(layers, 5);
-    assert!((lift_to_mm - 0.25).abs() < 1e-9, "{lift_to_mm}");
+    assert!((lift_to_mm - LIFT_MM).abs() < 1e-9, "{lift_to_mm}");
     // Centred on the model's footprint (pixels 20..60 x 20..50).
     let [x, y] = fixture.pixel_to_plate([40.0, 35.0]);
     assert!((finding.focus.x_mm - x).abs() < 1e-9);
@@ -72,7 +82,22 @@ fn a_model_on_the_plate_is_inside_the_raft() {
 }
 
 #[test]
-fn a_model_partly_lifted_rises_the_layers_it_reaches_into_the_raft() {
+fn without_a_support_lift_the_raft_top_is_recommended() {
+    let fixture = model_on_the_plate().build();
+    let input = fixture.input().with_raft_top_mm(Some(RAFT_TOP_MM));
+    let regions = PlateRegions::compute(&input);
+    let findings = run(
+        &ReviewContext::new(&input, &regions),
+        &RaftOptions::default(),
+    );
+    let Some(SuggestedFix::ClearRaft { lift_to_mm }) = findings[0].fix else {
+        panic!("no raft fix: {findings:?}");
+    };
+    assert!((lift_to_mm - 0.25).abs() < 1e-9, "{lift_to_mm}");
+}
+
+#[test]
+fn a_model_partly_lifted_is_still_in_the_raft() {
     let fixture = FixtureBuilder::new(12)
         .model(3..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
         .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
@@ -83,12 +108,13 @@ fn a_model_partly_lifted_rises_the_layers_it_reaches_into_the_raft() {
     assert_eq!((findings[0].first_layer, findings[0].last_layer), (3, 4));
     assert!(matches!(
         findings[0].fix,
-        Some(SuggestedFix::ClearRaft { layers: 2, .. })
+        Some(SuggestedFix::ClearRaft { lift_to_mm }) if (lift_to_mm - LIFT_MM).abs() < 1e-9
     ));
 }
 
 #[test]
 fn a_model_lifted_above_the_raft_is_clear() {
+    // Above the raft, yet below the support lift: not this check's concern.
     let fixture = FixtureBuilder::new(12)
         .model(5..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
         .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
@@ -130,7 +156,7 @@ fn every_model_in_the_raft_has_its_own_finding() {
 }
 
 /// The model on the plate with a piece of it that starts in mid-air on
-/// layer `start`, within its footprint.
+/// layer `start`, beside it.
 fn with_overhang(start: usize) -> Fixture {
     model_on_the_plate()
         .model(start..12, Shape::rect(64.0, 20.0, 80.0, 40.0))
@@ -145,40 +171,70 @@ fn islands(findings: &[Finding]) -> Vec<(usize, usize)> {
         .collect()
 }
 
+fn raft_findings(findings: &[Finding]) -> usize {
+    findings
+        .iter()
+        .filter(|f| f.check == CheckKind::ModelInRaft)
+        .count()
+}
+
 #[test]
 fn islands_inside_the_raft_zone_are_covered_by_the_raft_finding() {
     let fixture = with_overhang(3);
     let without = review(&fixture, None);
     assert_eq!(islands(&without), [(3, 11)], "{without:?}");
-    assert!(without.iter().all(|f| f.check != CheckKind::ModelInRaft));
+    assert_eq!(raft_findings(&without), 0);
 
     let with = review(&fixture, Some(RAFT_TOP_MM));
     assert!(islands(&with).is_empty(), "{with:?}");
-    let raft: Vec<&Finding> = with
-        .iter()
-        .filter(|f| f.check == CheckKind::ModelInRaft)
-        .collect();
-    assert_eq!(raft.len(), 1, "{with:?}");
+    assert_eq!(raft_findings(&with), 1, "{with:?}");
 }
 
 #[test]
-fn islands_above_the_raft_zone_are_still_reported() {
-    let fixture = with_overhang(7);
+fn islands_above_the_raft_but_below_the_support_lift_are_covered() {
+    let fixture = with_overhang(6);
+    let without = review(&fixture, None);
+    assert_eq!(islands(&without), [(6, 11)], "{without:?}");
+    let with = review(&fixture, Some(RAFT_TOP_MM));
+    assert!(islands(&with).is_empty(), "{with:?}");
+    assert_eq!(raft_findings(&with), 1, "{with:?}");
+}
+
+#[test]
+fn islands_above_the_support_lift_are_still_reported() {
+    let fixture = with_overhang(9);
     let with = review(&fixture, Some(RAFT_TOP_MM));
     assert_eq!(islands(&with), islands(&review(&fixture, None)), "{with:?}");
     assert!(!islands(&with).is_empty(), "{with:?}");
 }
 
 #[test]
-fn only_model_islands_near_the_footprint_and_in_the_zone_are_covered() {
+fn islands_of_a_model_clear_of_the_raft_are_still_reported() {
+    // The model stands above the raft: no raft finding, so nothing is
+    // folded, even below the support lift.
+    let fixture = FixtureBuilder::new(12)
+        .model(5..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(6..12, Shape::rect(64.0, 20.0, 80.0, 40.0))
+        .support(0..5, Shape::rect(100.0, 20.0, 160.0, 80.0))
+        .support(0..5, Shape::circle(40.0, 35.0, 3.0))
+        .build();
+    let with = review(&fixture, Some(RAFT_TOP_MM));
+    assert_eq!(raft_findings(&with), 0, "{with:?}");
+    assert_eq!(islands(&with), islands(&review(&fixture, None)));
+    assert!(!islands(&with).is_empty(), "{with:?}");
+}
+
+#[test]
+fn only_islands_near_the_footprint_and_below_the_lift_are_covered() {
     let fixture = model_on_the_plate().build();
-    let input = fixture.input().with_raft_top_mm(Some(RAFT_TOP_MM));
+    let input = rafted(&fixture, Some(RAFT_TOP_MM));
     let regions = PlateRegions::compute(&input);
     let clashes = clashes(
         &ReviewContext::new(&input, &regions),
         &RaftOptions::default(),
     );
     assert_eq!(clashes.len(), 1);
+    assert_eq!(clashes[0].cover_layers, 8);
     let [x0, y0, x1, y1] = clashes[0].footprint_mm;
     let island = |layer: usize, x: f64, y: f64, scope: RoleScope| {
         Finding::new(
@@ -194,20 +250,22 @@ fn only_model_islands_near_the_footprint_and_in_the_zone_are_covered() {
     };
     let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
     assert!(covers(&clashes, &island(3, cx, cy, RoleScope::Model), 1.0));
+    assert!(covers(&clashes, &island(7, cx, cy, RoleScope::Model), 1.0));
     assert!(covers(
         &clashes,
         &island(4, x1 + 0.5, cy, RoleScope::Both),
         1.0
     ));
-    assert!(!covers(&clashes, &island(5, cx, cy, RoleScope::Model), 1.0));
+    // The supports crammed under the model are its doing too.
+    assert!(covers(
+        &clashes,
+        &island(3, cx, cy, RoleScope::Support),
+        1.0
+    ));
+    assert!(!covers(&clashes, &island(8, cx, cy, RoleScope::Model), 1.0));
     assert!(!covers(
         &clashes,
         &island(3, x1 + 3.0, cy, RoleScope::Model),
-        1.0
-    ));
-    assert!(!covers(
-        &clashes,
-        &island(3, cx, cy, RoleScope::Support),
         1.0
     ));
     let mut not_island = island(3, cx, cy, RoleScope::Model);

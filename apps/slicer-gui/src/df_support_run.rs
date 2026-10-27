@@ -872,8 +872,8 @@ impl DfSupportRun {
         };
         let (message, label) = match clash {
             Some(clash) => (
-                raft_clash_message(clash.layers),
-                raft_lift_label(clash.layers),
+                raft_clash_message(clash.layers, clash.lift_to_mm),
+                raft_lift_label(clash.lift_to_mm),
             ),
             None => Default::default(),
         };
@@ -884,16 +884,27 @@ impl DfSupportRun {
     /// The warning's lift button: the models in the raft rise clear of it.
     fn lift_for_warning(&self) {
         if let Some(clash) = self.raft_clash() {
-            self.lift_clear_of_raft(clash.lift_to_mm);
+            self.lift_models(clash.raft_top_mm, clash.lift_to_mm);
         }
     }
 
-    /// Lifts every model lower than `lift_to_mm` so its lowest point stands
-    /// there, as one undoable edit. Returns whether a model moved.
+    /// Lifts every model in the raft of the scene's supports (or, without
+    /// them, of the options in force) so its lowest point stands at
+    /// `lift_to_mm`, as one undoable edit. Returns whether a model moved.
     pub(crate) fn lift_clear_of_raft(&self, lift_to_mm: f64) -> bool {
+        let raft_top = self
+            .raft_top_mm()
+            .or_else(|| self.options.borrow().raft_top_mm())
+            .unwrap_or(lift_to_mm);
+        self.lift_models(raft_top, lift_to_mm)
+    }
+
+    /// Lifts every model lower than `below_mm` so its lowest point stands at
+    /// `lift_to_mm`, as one undoable edit. Returns whether a model moved.
+    fn lift_models(&self, below_mm: f64, lift_to_mm: f64) -> bool {
         let Some(edit) = self
             .document
-            .with_scene(|spatial| lift_edit(spatial, lift_to_mm))
+            .with_scene(|spatial| lift_edit(spatial, below_mm, lift_to_mm))
             .flatten()
         else {
             return false;
@@ -1404,19 +1415,28 @@ impl DfSupportRun {
     }
 }
 
-/// The Supports tab's raft warning for a raft of `layers` layers.
-fn raft_clash_message(layers: usize) -> slint::SharedString {
+/// The Supports tab's raft warning for a raft of `layers` layers, the
+/// models to be lifted to `lift_to_mm`.
+fn raft_clash_message(layers: usize, lift_to_mm: f64) -> slint::SharedString {
     ctr!(
         "Inspector",
-        "The raft takes {n} layer and will interfere with the model. Lift the model at least {n} layer above the plate, or turn the raft off.",
-        "The raft takes {n} layers and will interfere with the model. Lift the model at least {n} layers above the plate, or turn the raft off.",
-        layers
+        "The raft takes {n} layer and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off.",
+        "The raft takes {n} layers and will interfere with the model, leaving no room for supports under it. Lift the model to {} mm above the plate, or turn the raft off.",
+        layers,
+        mm_text(lift_to_mm)
     )
 }
 
-/// The label of a button that lifts the models `layers` layers.
-pub(crate) fn raft_lift_label(layers: usize) -> slint::SharedString {
-    ctr!("Inspector", "Lift {n} layer", "Lift {n} layers", layers)
+/// The label of a button that lifts the models to `lift_to_mm`.
+pub(crate) fn raft_lift_label(lift_to_mm: f64) -> slint::SharedString {
+    ctr!("Inspector", "Lift to {} mm", mm_text(lift_to_mm))
+}
+
+/// Millimetres to two decimals at most, without trailing zeros ("5",
+/// "0.85").
+fn mm_text(mm: f64) -> String {
+    let text = format!("{mm:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// One line: models, islands, roots and triangles.
@@ -1648,10 +1668,12 @@ mod hand_edit_tests {
                 (on_generate, label, after_lift, undone, after_off, raft)
             });
         assert!(
-            on_generate.contains("17 layers") && on_generate.contains("turn the raft off"),
+            on_generate.contains("17 layers")
+                && on_generate.contains("to 5 mm")
+                && on_generate.contains("turn the raft off"),
             "{on_generate}"
         );
-        assert_eq!(label, "Lift 17 layers");
+        assert_eq!(label, "Lift to 5 mm");
         assert!(after_lift.is_empty(), "{after_lift}");
         assert_eq!(undone, on_generate, "Undo puts the model back in the raft");
         assert!(after_off.is_empty(), "{after_off}");

@@ -12,7 +12,7 @@
 //! warns on Generate and offers to lift the models clear of the raft or to
 //! turn the raft off; the Review card offers the same for a slice.
 
-use sc_geom::df_supports::DfSupportOptions;
+use sc_geom::df_supports::{DfSupportOptions, recommended_lift_mm};
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
@@ -24,8 +24,12 @@ use crate::viewport::numeric_transform::{self, NumericEdit};
 pub(crate) struct RaftClash {
     /// The layers the raft takes, from the plate up.
     pub layers: usize,
-    /// Where a model's lowest point must stand to clear them: the top of the
-    /// raft's last layer, in millimetres above the plate.
+    /// The top of the raft above the plate: a model lower than this is in
+    /// it.
+    pub raft_top_mm: f64,
+    /// Where a model's lowest point should stand: the generator's default
+    /// support lift (or a higher configured one), which leaves the supports
+    /// room under the model, never below the raft's last layer.
     pub lift_to_mm: f64,
 }
 
@@ -50,7 +54,8 @@ pub(crate) fn raft_clash(
     }
     Some(RaftClash {
         layers,
-        lift_to_mm: layers as f64 * layer_height_mm,
+        raft_top_mm: top,
+        lift_to_mm: recommended_lift_mm(None).max(layers as f64 * layer_height_mm),
     })
 }
 
@@ -79,13 +84,18 @@ pub(crate) fn lowest_model_mm(spatial: &SceneSpatial) -> Option<f64> {
         .reduce(f64::min)
 }
 
-/// The edit that lifts every model of `spatial` lower than `lift_to_mm` so
-/// its lowest point stands there, as one undoable step; `None` when every
-/// model already stands that high.
-pub(crate) fn lift_edit(spatial: &SceneSpatial, lift_to_mm: f64) -> Option<SceneEdit> {
+/// The edit that lifts every model of `spatial` lower than `below_mm` (in
+/// the raft) so its lowest point stands at `lift_to_mm`, as one undoable
+/// step; `None` when no model is that low.
+pub(crate) fn lift_edit(
+    spatial: &SceneSpatial,
+    below_mm: f64,
+    lift_to_mm: f64,
+) -> Option<SceneEdit> {
+    let below_mm = below_mm.min(lift_to_mm);
     let mut edits: Vec<SceneEdit> = model_bottoms(spatial)
         .into_iter()
-        .filter(|(_, z)| *z < lift_to_mm - TOLERANCE_MM)
+        .filter(|(_, z)| *z < below_mm - TOLERANCE_MM)
         .filter_map(|(id, _)| {
             let query = spatial.leaf(id)?;
             let before = query.local_transform();
@@ -108,7 +118,7 @@ pub(crate) fn lift_edit(spatial: &SceneSpatial, lift_to_mm: f64) -> Option<Scene
 mod raft_clash_tests {
     use std::sync::Arc;
 
-    use sc_geom::df_supports::RaftMode;
+    use sc_geom::df_supports::{DEFAULT_SUPPORT_LIFT_MM, RaftMode};
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_scene::Scene;
     use sc_scene::{LeafPayload, SceneMetadata};
@@ -119,16 +129,17 @@ mod raft_clash_tests {
     fn a_model_on_the_plate_clashes_with_the_default_raft() {
         // Plate 0.5 mm plus wall 0.35 mm: 17 layers of 0.05 mm, 9 of 0.1 mm.
         let options = DfSupportOptions::default();
-        assert_eq!(
-            raft_clash(&options, 0.05, Some(0.0)),
-            Some(RaftClash {
-                layers: 17,
-                lift_to_mm: 17.0 * 0.05
-            })
-        );
+        let clash = raft_clash(&options, 0.05, Some(0.0)).expect("in the raft");
+        assert_eq!(clash.layers, 17);
+        assert!((clash.raft_top_mm - 0.85).abs() < 1e-9);
+        // Not just above the raft: the default support lift, room for the
+        // supports under the model.
+        assert_eq!(clash.lift_to_mm, DEFAULT_SUPPORT_LIFT_MM);
         let coarse = raft_clash(&options, 0.1, Some(0.3)).expect("still in the raft");
         assert_eq!(coarse.layers, 9);
-        assert!((coarse.lift_to_mm - 0.9).abs() < 1e-9);
+        assert_eq!(coarse.lift_to_mm, DEFAULT_SUPPORT_LIFT_MM);
+        // Above the raft but below the support lift: no warning.
+        assert_eq!(raft_clash(&options, 0.05, Some(2.0)), None);
     }
 
     #[test]
@@ -177,7 +188,7 @@ mod raft_clash_tests {
         let mut spatial = SceneSpatial::from_graph(scene);
         let lowest = lowest_model_mm(&spatial).expect("three models");
         assert!(lowest.abs() < 1e-6, "{lowest}");
-        let edit = lift_edit(&spatial, 0.85).expect("models to lift");
+        let edit = lift_edit(&spatial, 0.85, 5.0).expect("models to lift");
         let SceneEdit::Compound(edits) = &edit else {
             panic!("two models lifted in one step: {edit:?}");
         };
@@ -188,9 +199,13 @@ mod raft_clash_tests {
             .map(|(_, z)| z)
             .collect();
         assert_eq!(bottoms.len(), 3);
-        assert!((bottoms[0] - 0.85).abs() < 1e-5, "{bottoms:?}");
-        assert!((bottoms[1] - 0.85).abs() < 1e-5, "{bottoms:?}");
+        // The two in the raft rise to the lift; the one above it stays.
+        assert!((bottoms[0] - 5.0).abs() < 1e-5, "{bottoms:?}");
+        assert!((bottoms[1] - 5.0).abs() < 1e-5, "{bottoms:?}");
         assert!((bottoms[2] - 4.0).abs() < 1e-5, "{bottoms:?}");
-        assert!(lift_edit(&spatial, 0.85).is_none(), "nothing left to lift");
+        assert!(
+            lift_edit(&spatial, 0.85, 5.0).is_none(),
+            "nothing left to lift"
+        );
     }
 }

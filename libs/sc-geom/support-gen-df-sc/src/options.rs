@@ -13,6 +13,23 @@ use support_gen_df::supports::auto_support::settings::{SizingPreset, auto_suppor
 use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 
+/// How high a model is lifted off the plate to leave room for its supports
+/// under it, in millimetres: the usual automatic lift of resin slicers, and
+/// what the command line's `--df-lift` defaults to. A model lifted only
+/// above the raft leaves the supports no room to grow under its lowest
+/// overhangs (#131).
+pub const DEFAULT_SUPPORT_LIFT_MM: f64 = 5.0;
+
+/// The lift to recommend for a model that stands in the raft: the default
+/// support lift, or the lift a person configured when it is higher.
+pub fn recommended_lift_mm(configured_mm: Option<f64>) -> f64 {
+    configured_mm
+        .filter(|mm| mm.is_finite())
+        .map_or(DEFAULT_SUPPORT_LIFT_MM, |mm| {
+            mm.max(DEFAULT_SUPPORT_LIFT_MM)
+        })
+}
+
 /// How the raft's bottom is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -239,5 +256,13 @@ mod options_tests {
         assert_eq!(off.raft_top_mm(), None);
         assert_eq!(off.raft_layers(0.05), 0);
         assert_eq!(solid.raft_layers(0.0), 0);
+    }
+
+    #[test]
+    fn the_recommended_lift_is_the_default_or_a_higher_configured_one() {
+        assert_eq!(recommended_lift_mm(None), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(0.0)), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(f64::NAN)), DEFAULT_SUPPORT_LIFT_MM);
+        assert_eq!(recommended_lift_mm(Some(8.0)), 8.0);
     }
 }
