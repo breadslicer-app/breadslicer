@@ -145,6 +145,35 @@ fn rows_offer_no_fix_once_the_models_moved_but_keep_their_marks() {
     assert!(rows[0].fixed);
 }
 
+#[test]
+fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
+    let raft = finding(
+        CheckKind::ModelInRaft,
+        Severity::Error,
+        0,
+        16,
+        "Model inside the raft",
+    )
+    .with_fix(SuggestedFix::ClearRaft {
+        layers: 17,
+        lift_to_mm: 0.85,
+    });
+    let rows = review_rows(
+        std::slice::from_ref(&raft),
+        &[false],
+        &BTreeSet::new(),
+        true,
+    );
+    assert_eq!(rows[0].fix, FixKind::ClearRaft as i32);
+    assert_eq!(rows[0].lift_label.as_str(), "Lift 17 layers");
+    // Other rows carry no lift label.
+    let rows = review_rows(&findings(), &[false; 5], &BTreeSet::new(), true);
+    assert!(rows.iter().all(|r| r.lift_label.is_empty()));
+    // Once the models moved, the raft fixes are withdrawn too.
+    let rows = review_rows(&[raft], &[false], &BTreeSet::new(), false);
+    assert_eq!(rows[0].fix, FixKind::None as i32);
+}
+
 mod model_poses {
     use std::sync::Arc;
 

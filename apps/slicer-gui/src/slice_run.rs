@@ -222,12 +222,15 @@ impl SliceRun {
         *self.pending_params.borrow_mut() = Some(current.clone());
 
         self.start_poll();
+        // The raft the scene's supports stand on, for the review (#131).
+        let raft_top_mm = self.review.raft_top_mm();
         self.spawn(
             scene,
             current.printer,
             current.resin,
             current.first_layer_height,
             current.aa_level,
+            raft_top_mm,
             cancel,
         );
     }
@@ -235,6 +238,7 @@ impl SliceRun {
     /// Spawns the worker: run the projection + slicing, then deposit the result
     /// and wake the UI thread. `catch_unwind` converts a panic into a deposited
     /// error so the modal always closes.
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &self,
         scene: Scene,
@@ -242,6 +246,7 @@ impl SliceRun {
         resin: MaterialId,
         first_layer_height: Option<PositiveFiniteMm>,
         aa_level: AaLevel,
+        raft_top_mm: Option<f64>,
         cancel: CancelToken,
     ) {
         let slot = self.slot.clone();
@@ -256,6 +261,7 @@ impl SliceRun {
                     &resin,
                     first_layer_height,
                     aa_level,
+                    raft_top_mm,
                     &cancel,
                     &progress,
                 )
@@ -415,12 +421,14 @@ fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
 /// into `progress` as layers complete, then reviews the per-leaf stacks
 /// before merging them. A cancel that arrives during the review still
 /// cancels the run.
+#[allow(clippy::too_many_arguments)]
 fn run_slice(
     scene: &Scene,
     printer: &PrinterId,
     resin: &MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
     aa_level: AaLevel,
+    raft_top_mm: Option<f64>,
     cancel: &CancelToken,
     progress: &SliceProgressCell,
 ) -> Result<SliceRunOutcome, SliceFailure> {
@@ -448,7 +456,7 @@ fn run_slice(
         sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
         sc_print_glue::SliceRun::Completed(plate) => {
             progress.reviewing.store(true, Ordering::Relaxed);
-            let review = review_slices(plate.leaves(), plate.profile());
+            let review = review_slices(plate.leaves(), plate.profile(), raft_top_mm);
             crate::breadcrumbs::note(&format!(
                 "slice: reviewed ok={}",
                 matches!(review, ReviewOutcome::Reviewed { .. })

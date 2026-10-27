@@ -148,6 +148,7 @@ pub struct ReviewInput<'a> {
     layers: Vec<LayerSpan>,
     pixel_map: PixelMap,
     max_z_mm: f64,
+    raft_top_mm: Option<f64>,
 }
 
 impl<'a> ReviewInput<'a> {
@@ -202,6 +203,7 @@ impl<'a> ReviewInput<'a> {
             layers,
             pixel_map,
             max_z_mm: max_z.value(),
+            raft_top_mm: None,
         })
     }
 
@@ -224,6 +226,34 @@ impl<'a> ReviewInput<'a> {
             profile.mirror(),
         );
         Self::new(leaves, profile.layer_schedule(), pixel_map, volume.z())
+    }
+
+    /// The same input, knowing that the generated supports stand on a raft
+    /// whose top is `raft_top_mm` above the plate (its plate and wall), or
+    /// on none (`None`, the default). The raft check (#131) reads it.
+    #[must_use]
+    pub fn with_raft_top_mm(mut self, raft_top_mm: Option<f64>) -> Self {
+        self.raft_top_mm = raft_top_mm.filter(|top| top.is_finite() && *top > 0.0);
+        self
+    }
+
+    /// The top of the supports' raft above the plate, when there is one.
+    #[inline]
+    pub fn raft_top_mm(&self) -> Option<f64> {
+        self.raft_top_mm
+    }
+
+    /// The layers the raft takes from the plate up: every layer whose slab
+    /// starts below the raft's top. 0 without a raft.
+    pub fn raft_layers(&self) -> usize {
+        let Some(top) = self.raft_top_mm else {
+            return 0;
+        };
+        // A hair under a slab's bottom does not reach into it.
+        self.layers
+            .iter()
+            .take_while(|span| span.bottom_mm < top - 1e-6)
+            .count()
     }
 
     /// The leaves, in the order given.
@@ -378,6 +408,12 @@ mod input_tests {
         assert!((input.layers()[0].height_mm() - 0.1).abs() < 1e-12);
         assert!((input.layers()[2].height_mm() - 0.05).abs() < 1e-12);
         assert_eq!(input.pixel_size_mm(), [0.1, 0.1]);
+        assert_eq!(input.raft_layers(), 0);
+        let rafted = input.with_raft_top_mm(Some(0.15));
+        assert_eq!(rafted.raft_top_mm(), Some(0.15));
+        assert_eq!(rafted.raft_layers(), 2);
+        assert_eq!(rafted.clone().with_raft_top_mm(Some(9.0)).raft_layers(), 3);
+        assert_eq!(rafted.with_raft_top_mm(Some(-1.0)).raft_top_mm(), None);
     }
 
     #[test]
