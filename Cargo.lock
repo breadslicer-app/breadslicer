@@ -5129,6 +5129,7 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-review",
  "sc-scene",
  "sc-scene-edit",
  "sc-scene-fixtures",

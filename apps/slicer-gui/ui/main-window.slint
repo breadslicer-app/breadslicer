@@ -10,7 +10,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { Icon, ToolButton, WorkflowTab } from "./kit/controls.slint";
-import { ExportInspector, HollowInspector, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { ExportInspector, HollowInspector, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
@@ -242,6 +242,17 @@ export component MainWindow inherits Window {
     in property <string> slice-estimate-volume;
     in property <string> slice-estimate-mass;
     in property <string> slice-estimate-note;
+    // The Review card of the Slice tab (#90), driven by Rust
+    // (`review_panel`): see `SliceInspector` for the meaning of each.
+    in property <int> review-state: 0;
+    in property <string> review-summary;
+    in property <int> review-worst: -1;
+    in property <[ReviewRow]> review-rows: [];
+    in property <bool> review-stale: false;
+    in property <string> review-message;
+    in-out property <int> review-selected: -1;
+    callback review-finding-clicked(int);
+    callback review-fix-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
     in-out property <bool> slice-split: false;
     callback support-preset-picked(int);
@@ -285,6 +296,8 @@ export component MainWindow inherits Window {
     in property <bool> support-gen-cancelable: false;
 
     in property <int> slice-completed: 0;
+    // Raised once every layer is cut, while the slice is reviewed.
+    in property <bool> slice-reviewing: false;
     in property <int> slice-total: 0;
     in property <float> slice-progress: 0.0;
     // Raised by the Rust driver after a Slice press whose inputs already
@@ -1347,6 +1360,19 @@ export component MainWindow inherits Window {
                             estimate-volume: root.slice-estimate-volume;
                             estimate-mass: root.slice-estimate-mass;
                             estimate-note: root.slice-estimate-note;
+                            review-state: root.review-state;
+                            review-summary: root.review-summary;
+                            review-worst: root.review-worst;
+                            review-rows: root.review-rows;
+                            review-stale: root.review-stale;
+                            review-message: root.review-message;
+                            review-selected <=> root.review-selected;
+                            review-finding-clicked(id) => {
+                                root.review-finding-clicked(id);
+                            }
+                            review-fix-requested(id) => {
+                                root.review-fix-requested(id);
+                            }
                             printer-picked(i) => {
                                 root.slice-printer-picked(i);
                             }
@@ -1827,7 +1853,8 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: root.slice-total > 0
+                    text: root.slice-reviewing ? @tr("SlicePanel" => "Checking the layers...")
+                        : root.slice-total > 0
                         ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
                         : @tr("SlicePanel" => "Preparing...");
                     color: Palette.foreground.transparentize(0.3);

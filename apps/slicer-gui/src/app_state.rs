@@ -40,6 +40,7 @@ use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window
 use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::ProfileCatalog;
 use crate::repair_run::RepairRun;
+use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
@@ -217,6 +218,9 @@ struct WindowDrivers {
     /// The Slice action driver. Held so its Slint callbacks and progress timer
     /// live as long as the window.
     _slice_run: Rc<SliceRun>,
+    /// The Slice tab's Review card. Held so its callbacks and document
+    /// subscription live as long as the window.
+    _review_panel: Rc<ReviewPanel>,
     /// The Repair action driver. Held so its Slint callbacks live as long as
     /// the window.
     _repair_run: Rc<RepairRun>,
@@ -636,7 +640,6 @@ impl AppState {
             ctrl.document(),
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
-        let slice_run = SliceRun::install(ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
@@ -648,10 +651,27 @@ impl AppState {
             ctrl.clone(),
         );
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+        // The Review card applies its fixes through the support and hollow
+        // drivers, and the Slice driver hands it each slice's findings.
+        let review_panel = ReviewPanel::install(
+            ui,
+            ctrl.document(),
+            ctrl.clone(),
+            df_support_run.clone(),
+            hollow_run.clone(),
+        );
+        let slice_run = SliceRun::install(
+            ui,
+            self.prefs.clone(),
+            ctrl.document(),
+            ctrl.dialogs(),
+            review_panel.clone(),
+        );
         WindowDrivers {
             _hollow_run: hollow_run,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
+            _review_panel: review_panel,
             _repair_run: repair_run,
             _support_gen_run: support_gen_run,
             _df_support_run: df_support_run,
