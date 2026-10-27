@@ -2623,3 +2623,11 @@ msgstr "El modelo ya está por encima de la balsa."
 msgctxt "Review"
 msgid "Raft turned off. Generate the supports again, then slice."
 msgstr "Balsa desactivada. Generá los soportes de nuevo y después laminá."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} fixed"
+msgid_plural "{n} fixed"
+msgstr[0] "{n} corregido"
+msgstr[1] "{n} corregidos"

@@ -7,7 +7,7 @@
 // shows only what its tab acts on; the window binds them to its own
 // properties and callbacks, which Rust drives.
 
-import { CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ProgressIndicator, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
 import { ButtonKind, Card, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
@@ -1193,12 +1193,8 @@ export component SliceInspector inherits VerticalLayout {
             text: root.review-message;
             color: root.review-state == 2 ? Theme.danger : Theme.text-soft;
         }
-        if root.review-state == 1 && root.review-rows.length > 0: Rectangle {
-            // Long reviews scroll inside the card.
-            height: Math.min(findings.preferred-height, 360px);
-
-            ScrollView {
-                findings := VerticalLayout {
+        // The list takes the room it needs: the inspector panel scrolls.
+        if root.review-state == 1 && root.review-rows.length > 0: VerticalLayout {
                     spacing: 2px;
 
                     for row in root.review-rows: FindingRow {
@@ -1221,8 +1217,6 @@ export component SliceInspector inherits VerticalLayout {
                             root.review-raft-off-requested(row.id);
                         }
                     }
-                }
-            }
         }
         if root.review-state == 1 && root.review-notes > 0: ScButton {
             text: root.review-notes-open ? @tr("Review" => "Hide the notes") : @tr("Review" => "Show {n} note" | "Show {n} notes" % root.review-notes);
