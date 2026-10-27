@@ -31,7 +31,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
-use crate::{DF_SUPPORT_MESH_NAME, weld_parts};
+use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
 const ADD_REACH_MM: f64 = 2.0;
@@ -45,6 +45,9 @@ const REMOVE_REACH_MM: f64 = 3.0;
 pub struct DfSupportSession {
     models: Arc<[ModelInput]>,
     settings: Arc<PipelineSettings>,
+    /// What `settings` were made from, for saving the session as data;
+    /// `None` when the run was given its settings outright.
+    recipe: Option<Arc<SettingsRecipe>>,
     state: SupportState,
     /// Per model, its world mesh, built on the first edit and shared by
     /// every copy of the session.
@@ -292,8 +295,22 @@ impl DfSupportSession {
     pub(crate) fn new(
         models: Vec<ModelInput>,
         settings: PipelineSettings,
+        recipe: Option<SettingsRecipe>,
         state: SupportState,
         id_prefix: String,
+    ) -> Self {
+        Self::restored(models, settings, recipe, state, id_prefix, 1_000_000)
+    }
+
+    /// A session from its parts, with the next hand-placed id counting on
+    /// from `next_id`.
+    pub(crate) fn restored(
+        models: Vec<ModelInput>,
+        settings: PipelineSettings,
+        recipe: Option<SettingsRecipe>,
+        state: SupportState,
+        id_prefix: String,
+        next_id: u64,
     ) -> Self {
         let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
         let sdfs = (0..models.len()).map(|_| SdfSlot::default()).collect();
@@ -301,12 +318,24 @@ impl DfSupportSession {
             removal_index: Arc::default(),
             models: models.into(),
             settings: Arc::new(settings),
+            recipe: recipe.map(Arc::new),
             state,
             bvhs,
             sdfs,
             id_prefix,
-            next_id: 1_000_000,
+            next_id,
         }
+    }
+
+    /// The models, the recipe of the settings, the id prefix and the next
+    /// hand-placed id: what a saved session keeps besides the state.
+    pub(crate) fn parts(&self) -> (&[ModelInput], Option<&SettingsRecipe>, &str, u64) {
+        (
+            &self.models,
+            self.recipe.as_deref(),
+            &self.id_prefix,
+            self.next_id,
+        )
     }
 
     /// The support state as it now stands.

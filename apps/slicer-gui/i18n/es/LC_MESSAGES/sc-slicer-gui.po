@@ -2329,21 +2329,6 @@ msgctxt "AppearancePreferences"
 msgid "Open logs folder"
 msgstr "Abrir carpeta de registros"
 
-#: ui/message-layer.slint
-msgctxt "MessageLayer"
-msgid "Don't show again"
-msgstr "No volver a mostrar"
-
-#: ui/preferences/appearance.slint
-msgctxt "AppearancePreferences"
-msgid "Show all messages again"
-msgstr "Volver a mostrar todos los mensajes"
-
-#: ui/preferences/appearance.slint
-msgctxt "AppearancePreferences"
-msgid "Hidden messages: {}"
-msgstr "Mensajes ocultos: {}"
-
 #: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "Checking the layers..."
@@ -2644,6 +2629,21 @@ msgctxt "Review"
 msgid "Raft turned off. Generate the supports again, then slice."
 msgstr "Balsa desactivada. Generá los soportes de nuevo y después laminá."
 
+#: ui/message-layer.slint
+msgctxt "MessageLayer"
+msgid "Don't show again"
+msgstr "No volver a mostrar"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Show all messages again"
+msgstr "Volver a mostrar todos los mensajes"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Hidden messages: {}"
+msgstr "Mensajes ocultos: {}"
+
 #: src/review_panel.rs
 #, rust-format
 msgctxt "Review"
@@ -2651,3 +2651,60 @@ msgid "{n} fixed"
 msgid_plural "{n} fixed"
 msgstr[0] "{n} corregido"
 msgstr[1] "{n} corregidos"
+
+msgctxt "MenuBar"
+msgid "Save As 3MF…"
+msgstr "Guardar como 3MF…"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Breadslicer projects"
+msgstr "Proyectos de Breadslicer"
+
+#: src/scene_save.rs
+msgctxt "ErrorDialog"
+msgid ""
+"Project files are saved as .bread files. To save a 3MF project, use Save As "
+"3MF."
+msgstr ""
+"Los archivos de proyecto se guardan como archivos .bread. Para guardar un "
+"proyecto 3MF, usá Guardar como 3MF."
+
+#: src/scene_loader.rs
+msgctxt "DfSupportDialog"
+msgid "Supports not restored"
+msgstr "Soportes no restaurados"
+
+#: src/scene_loader.rs
+msgctxt "DfSupportDialog"
+msgid ""
+"The project opened, but its supports could not be rebuilt and were left out. "
+"Generate them again."
+msgstr ""
+"El proyecto se abrió, pero sus soportes no se pudieron reconstruir y se "
+"dejaron afuera. Volvé a generarlos."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "Supports saved as a mesh"
+msgstr "Soportes guardados como malla"
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
+msgstr "La escena tiene más de un juego de soportes, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Dejá un solo juego y guardá de nuevo para que sigan siendo editables."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."
+msgstr "Estos soportes ya no coinciden con los modelos (o se abrieron como malla), así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano. Generalos de nuevo y guardá para que sigan siendo editables."
+
+#: src/scene_save.rs
+msgctxt "DfSupportDialog"
+msgid "These supports cannot be kept as data, so they were saved as a mesh: they will open, but cannot be edited by hand."
+msgstr "Estos soportes no se pueden guardar como datos, así que se guardaron como malla: se van a abrir, pero no se van a poder editar a mano."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
+msgstr "Estos soportes se abrieron como malla, así que no se pueden editar a mano. Generá soportes de nuevo para editarlos."

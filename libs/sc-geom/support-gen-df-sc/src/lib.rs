@@ -29,9 +29,11 @@ use support_gen_df::supports::types::SupportState;
 use support_gen_df::three::Vec3;
 use support_gen_df::three::buffer_geometry::BufferGeometry;
 
+mod document;
 mod options;
 mod session;
 
+pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
@@ -301,21 +303,47 @@ pub fn start_df_supports(
 /// The pipeline settings a request runs with: its explicit `settings`, or
 /// SoulCrafted's defaults with the person's `options` applied.
 fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
-    if let Some(settings) = &request.settings {
-        return settings.clone();
+    match &request.settings {
+        Some(settings) => settings.clone(),
+        None => SettingsRecipe::of(request).settings(),
     }
-    let mut settings = PipelineSettings {
-        // SoulCrafted draws smooth tubes with bicones by default.
-        shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
-        // Walls that slice cleanly on trimmed footprints.
-        robust_raft_geometry: true,
-        tip_penetration_mm: request.pixel_pitch_mm.map_or(0.0, |[x, y]| {
-            default_tip_offset_mm(request.layer_height_mm, x, y)
-        }),
-        ..PipelineSettings::defaults(request.layer_height_mm)
-    };
-    request.options.apply(&mut settings);
-    settings
+}
+
+/// What a request's settings are made from when it gives none explicitly:
+/// enough to make them again, so a saved session rebuilds with the settings
+/// it ran with.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SettingsRecipe {
+    pub(crate) layer_height_mm: f64,
+    pub(crate) pixel_pitch_mm: Option<[f64; 2]>,
+    pub(crate) options: DfSupportOptions,
+}
+
+impl SettingsRecipe {
+    fn of(request: &DfSupportRequest) -> Self {
+        SettingsRecipe {
+            layer_height_mm: request.layer_height_mm,
+            pixel_pitch_mm: request.pixel_pitch_mm,
+            options: request.options.clone(),
+        }
+    }
+
+    /// SoulCrafted's defaults with the options applied.
+    pub(crate) fn settings(&self) -> PipelineSettings {
+        let mut settings = PipelineSettings {
+            // SoulCrafted draws smooth tubes with bicones by default.
+            shaft_style: ShaftStyle::Smooth(SmoothShaftParams::default()),
+            // Walls that slice cleanly on trimmed footprints.
+            robust_raft_geometry: true,
+            tip_penetration_mm: self.pixel_pitch_mm.map_or(0.0, |[x, y]| {
+                default_tip_offset_mm(self.layer_height_mm, x, y)
+            }),
+            ..PipelineSettings::defaults(self.layer_height_mm)
+        };
+        self.options.apply(&mut settings);
+        settings
+    }
 }
 
 /// What a prescan hands back.
@@ -445,6 +473,10 @@ fn run_df_supports(
     let session = DfSupportSession::new(
         models.to_vec(),
         settings.clone(),
+        request
+            .settings
+            .is_none()
+            .then(|| SettingsRecipe::of(request)),
         out.support.clone(),
         id_prefix.clone(),
     );

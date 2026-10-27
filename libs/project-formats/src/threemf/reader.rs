@@ -67,6 +67,7 @@ where
         payload,
         slices,
         slice_fingerprint,
+        supports: Vec::new(),
     })
 }
 

@@ -537,6 +537,113 @@ fn a_loaded_project_keeps_its_placement() {
     assert_eq!(world_box(scene), ([24.0, -21.0, 14.5], [36.0, -19.0, 17.0]));
 }
 
+/// A `.bread` of a lifted cube and its DragonFruit supports, the supports kept
+/// as data; `support_offset` moves the cube after the supports were made, so
+/// the supports no longer fit it.
+fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
+    use sc_geom::df_supports::{
+        DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, DfSupportRequest, start_df_supports,
+    };
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_project_formats::{SupportDocument, write_bread_project_with_progress};
+    use sc_scene::node::LeafPayload;
+
+    let cube_at = |offset: [f64; 3]| {
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation(offset)),
+                LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+        scene
+    };
+    let outcome = start_df_supports(&cube_at([20.0, 20.0, 8.0]), DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    let mesh = outcome.mesh.expect("supports for a lifted cube");
+    let triangles = mesh.faces().len();
+    let mut scene = cube_at(support_offset);
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(mesh)),
+        )
+        .unwrap();
+    scene.add_root(leaf).unwrap();
+    let supports = [SupportDocument {
+        leaf,
+        generator: DF_SUPPORT_GENERATOR.to_owned(),
+        version: DF_SUPPORT_DOCUMENT_VERSION,
+        document: outcome.session.to_document().unwrap(),
+    }];
+    let mut bytes = Vec::new();
+    write_bread_project_with_progress(
+        &scene,
+        &ProjectPayload::default(),
+        EmbedProfiles::Yes,
+        &supports,
+        &mut bytes,
+        |_| {},
+    )
+    .unwrap();
+    std::fs::write(path, bytes).unwrap();
+    triangles
+}
+
+/// The leaf meshes of `scene` that are support meshes, by face count.
+fn support_mesh_faces(scene: &Scene) -> Vec<usize> {
+    scene
+        .roots()
+        .iter()
+        .filter_map(|&id| scene.leaf_mesh_arc(id))
+        .filter(|mesh| sc_geom::df_supports::is_support_mesh(mesh))
+        .map(|mesh| mesh.faces().len())
+        .collect()
+}
+
+#[test]
+fn a_loaded_bread_redraws_its_supports_and_hands_back_their_session() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cube.bread");
+    let triangles = write_bread_with_supports(&path, [20.0, 20.0, 8.0]);
+    let Some(prepared) = load_on_the_test_device(&path) else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert!(
+        prepared.project_payload.is_some(),
+        "a .bread opens as a project"
+    );
+    assert!(prepared.restored_supports.failures.is_empty());
+    assert!(prepared.restored_supports.session.is_some());
+    assert_eq!(support_mesh_faces(prepared.spatial.graph()), [triangles]);
+}
+
+#[test]
+fn a_loaded_bread_whose_supports_do_not_fit_opens_without_them() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cube.bread");
+    write_bread_with_supports(&path, [30.0, 20.0, 8.0]);
+    let Some(prepared) = load_on_the_test_device(&path) else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    assert_eq!(prepared.restored_supports.failures.len(), 1);
+    assert!(prepared.restored_supports.session.is_none());
+    let scene = prepared.spatial.graph();
+    assert_eq!(
+        support_mesh_faces(scene),
+        Vec::<usize>::new(),
+        "no empty leaf left"
+    );
+    assert_eq!(scene.roots().len(), 1, "the cube opens");
+}
+
 #[test]
 fn a_loaded_project_reports_a_printer_that_is_not_installed() {
     let dir = tempfile::tempdir().expect("tempdir");

@@ -36,6 +36,7 @@ use crate::mesh_render::{DeviceLoss, GpuScene};
 use crate::project_profiles::profile_ref_warnings;
 use crate::reloaded_slices::revalidate_persisted_slices;
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
+use crate::support_persist::{RestoredSupports, restore_supports};
 
 pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = MAX_MESH_FILE_SIZE_BYTES / (1024 * 1024);
@@ -214,6 +215,7 @@ fn prepare_scene(
         mesh_warnings,
         project_warnings,
     } = parse_source(path, sink)?;
+    let mut restored_supports = RestoredSupports::default();
     let (scene, project_payload, profile_warnings, reloaded_slices) = match content {
         LoadedContent::Mesh(mut scene) => {
             // Drop the scene onto the build plate before the GPU upload and
@@ -223,10 +225,16 @@ fn prepare_scene(
             (scene, None, Vec::new(), None)
         }
         LoadedContent::Project(ProjectContent {
-            scene,
+            mut scene,
             payload,
             persisted_slices,
+            supports,
         }) => {
+            // Supports kept as data (a `.bread`) are redrawn into their empty
+            // leaves before the scene is checked, primed and uploaded.
+            if !supports.is_empty() {
+                restored_supports = restore_supports(&mut scene, supports);
+            }
             // A project's placement is part of its saved content, so it reopens
             // as saved. Classify its profile references against the installed
             // libraries here on the worker: the checks probe the filesystem.
@@ -270,6 +278,7 @@ fn prepare_scene(
         reloaded_slices,
         source_path: path.to_path_buf(),
         mesh_health,
+        restored_supports,
     })
 }
 
