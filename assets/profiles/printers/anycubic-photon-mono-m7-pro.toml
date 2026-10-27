@@ -8,7 +8,7 @@ image_asset_path = "images/anycubic-photon-mono-m7-pro.png"
 
 [hardware.build_volume]
 x_mm = 223.642
-y_mm = 126.48
+y_mm = 126.976
 z_mm = 230.0
 
 [hardware.pixel_resolution]
@@ -17,15 +17,16 @@ y = 5120
 
 [hardware.pixel_size_microns]
 x = 16.80003004807692
-y = 24.703125
+y = 24.8
 
 [hardware.mirror]
-x = false
+x = true
 y = false
 
 [capabilities]
 supports_grayscale = true
-two_stage_lift = false
+two_stage_lift = true
+transition_layers = 6
 has_camera = false
 
 [[capabilities.output_formats]]
