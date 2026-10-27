@@ -54,6 +54,8 @@ pub(crate) struct PreferencesSnapshot {
     pub prescan_supports: bool,
     /// Whether models shade smooth in the viewport; supports always do.
     pub smooth_models: bool,
+    /// Whether the diagnostic log writes the session's events to disk.
+    pub diagnostic_log: bool,
     /// Whether the floating object-list panel is shown. Persisted so a window
     /// restores the last state on the next launch. Per-window live state: a
     /// change in a window is written to disk and left out of the other open
@@ -135,6 +137,7 @@ impl PreferencesSnapshot {
             aa_level: AaLevel::Off,
             prescan_supports: false,
             smooth_models: false,
+            diagnostic_log: false,
             object_list_visible: true,
             object_list_anchor_right: true,
             object_list_anchor_bottom: false,
@@ -175,6 +178,7 @@ pub(crate) enum PreferencesChange {
     AaLevel,
     PrescanSupports,
     SmoothModels,
+    DiagnosticLog,
     ObjectListPanel,
     SliceControlPanel,
     SliceViewPanel,

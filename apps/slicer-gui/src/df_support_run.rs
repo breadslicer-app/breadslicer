@@ -1260,9 +1260,11 @@ fn summary_message(outcome: &DfSupportOutcome) -> String {
 /// diagnostic: a failure never stops the run).
 fn append_timing_log(summary: &str, report: &str) -> Option<std::path::PathBuf> {
     use std::io::Write;
-    let dir = sc_app_paths::project_dirs()?.data_local_dir().join("logs");
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("df-supports-timings.log");
+    // Written only while the diagnostic log is on.
+    if !crate::breadcrumbs::enabled() {
+        return None;
+    }
+    let path = crate::breadcrumbs::logs_dir()?.join("df-supports-timings.log");
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

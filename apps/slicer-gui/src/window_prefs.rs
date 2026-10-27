@@ -55,6 +55,7 @@ impl WindowPreferences for PreferencesWindow {
         self.set_current_aa_index(aa_combo_index(prefs.aa_level));
         self.set_prescan_supports(prefs.prescan_supports);
         self.set_smooth_models(prefs.smooth_models);
+        self.set_diagnostic_log(prefs.diagnostic_log);
         // Printer / resin selection is pushed separately (see
         // `preferences_window::apply_printing`); the catalog-backed models are
         // not part of the plain snapshot.
