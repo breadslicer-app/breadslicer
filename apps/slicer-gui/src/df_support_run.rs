@@ -57,27 +57,6 @@ use crate::slice_projection::load_selected_profiles;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
-/// The instant marker: a small octahedral dot (0.8 mm) at `p`.
-fn marker_at(p: [f32; 3], tint: OverlayTint) -> OverlayMesh {
-    const R: f32 = 0.8;
-    let positions = vec![
-        [p[0] + R, p[1], p[2]],
-        [p[0] - R, p[1], p[2]],
-        [p[0], p[1] + R, p[2]],
-        [p[0], p[1] - R, p[2]],
-        [p[0], p[1], p[2] + R],
-        [p[0], p[1], p[2] - R],
-    ];
-    let indices = vec![
-        0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5,
-    ];
-    OverlayMesh {
-        positions,
-        indices,
-        tint,
-    }
-}
-
 /// An overlay piece of a mesh in world coordinates.
 pub(crate) fn overlay_of(mesh: &sc_mesh_core::IndexedMesh, tint: OverlayTint) -> OverlayMesh {
     OverlayMesh {
@@ -174,9 +153,6 @@ pub(crate) struct DfSupportRun {
     last_preview: RefCell<Option<HoverAnswer>>,
     /// The worker's last ghost, kept on screen while the next is computed.
     last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
-    /// The instant marker at the cursor: drawn on the UI thread on every
-    /// move, so the tool answers at once while the worker computes the rest.
-    marker: RefCell<Option<Arc<OverlayMesh>>>,
 }
 
 /// How often the UI looks for a finished preview.
@@ -396,7 +372,6 @@ impl DfSupportRun {
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
             last_ghost: RefCell::new(None),
-            marker: RefCell::new(None),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -953,19 +928,9 @@ impl DfSupportRun {
             self.hover_poll.stop();
             self.hover_shown.set(generation);
             *self.last_ghost.borrow_mut() = None;
-            *self.marker.borrow_mut() = None;
             self.ctrl.set_preview_overlay(None);
             return;
         };
-        // At once, before the worker answers: a dot where the tool acts, in
-        // the colour of what it does (green adds, red removes).
-        let tint = if ask.tool == 1 {
-            OverlayTint::Valid
-        } else {
-            OverlayTint::Invalid
-        };
-        *self.marker.borrow_mut() = Some(Arc::new(marker_at(ask.point, tint)));
-        self.show_hover_overlay();
         if self.hover_worker.asks.send(ask).is_err() {
             return;
         }
@@ -1013,15 +978,9 @@ impl DfSupportRun {
         *self.last_preview.borrow_mut() = Some(answer);
     }
 
-    /// The worker's last ghost and the marker at the cursor, together.
+    /// The worker's last ghost, the only hover overlay.
     fn show_hover_overlay(&self) {
-        let pieces: Vec<Arc<OverlayMesh>> = self
-            .last_ghost
-            .borrow()
-            .iter()
-            .chain(self.marker.borrow().iter())
-            .cloned()
-            .collect();
+        let pieces: Vec<Arc<OverlayMesh>> = self.last_ghost.borrow().iter().cloned().collect();
         self.ctrl
             .set_preview_overlay((!pieces.is_empty()).then(|| pieces.into()));
     }
