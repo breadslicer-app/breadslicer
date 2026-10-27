@@ -77,6 +77,34 @@ fn drain_at(finding: &Finding) -> PlatePoint {
     }
 }
 
+/// Kind and layer range of every finding.
+fn spans(findings: &[Finding]) -> Vec<(CheckKind, usize, usize)> {
+    findings
+        .iter()
+        .map(|f| (f.check, f.first_layer, f.last_layer))
+        .collect()
+}
+
+/// The walls of the standard box on `layer`, the left one cut by a gap
+/// `rows` pixels tall from row 55.
+fn walls_with_gap(builder: FixtureBuilder, layer: usize, rows: f64) -> FixtureBuilder {
+    let on = layer..layer + 1;
+    builder
+        .model(on.clone(), Shape::rect(40.0, 30.0, 45.0, 55.0))
+        .model(on.clone(), Shape::rect(40.0, 55.0 + rows, 45.0, 80.0))
+        .model(on.clone(), Shape::rect(95.0, 30.0, 100.0, 80.0))
+        .model(on.clone(), Shape::rect(45.0, 30.0, 95.0, 35.0))
+        .model(on, Shape::rect(45.0, 75.0, 95.0, 80.0))
+}
+
+/// The recess under a block standing on the plate: the standard walls on
+/// layers 0-4, a lid on 5-7.
+fn recess() -> FixtureBuilder {
+    FixtureBuilder::new(10)
+        .model(0..5, walls())
+        .model(5..8, block())
+}
+
 // ---- Clean shapes stay quiet ------------------------------------------------
 
 #[test]
@@ -198,7 +226,7 @@ fn cavities_too_small_to_matter_are_not_reported() {
     assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
 
     // Without the size limits the void and the cup show; the hairline,
-    // narrower than a drain on every layer, never does.
+    // smaller than a drain on every layer, never does.
     let everything = TrapOptions {
         min_trap_volume_mm3: 0.0,
         min_cup_area_mm2: 0.0,
@@ -235,7 +263,7 @@ fn a_closed_hollow_box_is_a_resin_trap() {
     assert_eq!(trap.title, "Sealed cavity traps resin");
     assert_eq!(
         trap.detail,
-        "A sealed cavity of 10.0 mm³ over 10 layers (0.50 mm), up to 20.0 mm² wide, has no opening of 10 pixels or more, so its liquid resin stays inside."
+        "A sealed cavity of 10.0 mm³ over 10 layers (0.50 mm), up to 20.0 mm² wide, has no opening at least 3 pixels wide and 10 pixels in area, so its liquid resin stays inside."
     );
 
     // Aimed at the floor: the hole's inside point on layer 3; the drain at
@@ -451,7 +479,9 @@ fn a_cavity_reaching_the_last_layer_is_a_suction_cup() {
         cup.detail,
         "A cavity of 7.00 mm³ over 7 layers (0.35 mm) is closed toward the plate and opens only above, so up to 20.0 mm² of it pulls on the film at every peel."
     );
-    assert_close(drain_at(cup).z_mm, 3.0 * 0.05);
+    // Below its floor the block stands on the plate: a drain there would
+    // end at the plate and relieve nothing while printing.
+    assert_eq!(cup.fix, None);
 }
 
 #[test]
@@ -554,4 +584,313 @@ fn a_single_layer_ring_on_the_plate_is_a_cup() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].check, CheckKind::SuctionCup);
     assert_eq!((findings[0].first_layer, findings[0].last_layer), (0, 0));
+}
+
+// ---- Openings as wide as a drain --------------------------------------------
+
+#[test]
+fn a_one_pixel_gap_in_a_wall_does_not_drain_a_trap() {
+    // The closed box of `a_closed_hollow_box_is_a_resin_trap`, its left wall
+    // cut on layer 8 by a gap one pixel tall: a hairline, like the 3 x 3
+    // pinhole vent of `a_pinhole_vent_leaves_a_trap`.
+    let fixture = walls_with_gap(
+        FixtureBuilder::new(16)
+            .model(0..3, block())
+            .model(3..8, walls())
+            .model(9..13, walls())
+            .model(13..16, block()),
+        8,
+        1.0,
+    )
+    .build();
+    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::ResinTrap, 3, 12)]);
+}
+
+#[test]
+fn a_gap_as_wide_as_a_drain_opens_the_wall() {
+    // The same box with a gap 3 pixels tall: the cavity below it is a cup
+    // that opens there, and the part above drains through it.
+    let fixture = walls_with_gap(
+        FixtureBuilder::new(16)
+            .model(0..3, block())
+            .model(3..8, walls())
+            .model(9..13, walls())
+            .model(13..16, block()),
+        8,
+        3.0,
+    )
+    .build();
+    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::SuctionCup, 3, 7)]);
+}
+
+#[test]
+fn a_one_pixel_wide_slit_does_not_drain_a_trap() {
+    // The box of `a_drain_in_the_floor_drains_the_cavity` with a 1 x 20
+    // pixel slit for a drain: 20 pixels, but a hairline.
+    let fixture = corner_pillars(FixtureBuilder::new(18), 0..4)
+        .model(4..6, block_with_hole(68.0, 45.0, 69.0, 65.0))
+        .model(6..14, walls())
+        .model(14..16, block())
+        .build();
+    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::ResinTrap, 6, 13)]);
+
+    // Without the width rule its 20 pixels drain the box.
+    let any_width = TrapOptions {
+        drain_width_px: 1,
+        ..TrapOptions::default()
+    };
+    assert!(traps_with(&fixture, &any_width).is_empty());
+}
+
+#[test]
+fn a_one_pixel_wide_crack_is_not_a_trap() {
+    // A sealed 40 x 1 pixel crack through a block over 6 layers: 40 pixels
+    // a layer, but a hairline that light bleed cures shut.
+    let fixture = FixtureBuilder::new(12)
+        .model(0..2, block())
+        .model(2..8, block_with_hole(50.0, 55.0, 90.0, 56.0))
+        .model(8..12, block())
+        .build();
+    assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
+
+    let any_width = TrapOptions {
+        drain_width_px: 1,
+        min_trap_volume_mm3: 0.0,
+        ..TrapOptions::default()
+    };
+    assert_eq!(
+        spans(&traps_with(&fixture, &any_width)),
+        vec![(CheckKind::ResinTrap, 2, 7)]
+    );
+}
+
+// ---- Support pockets --------------------------------------------------------
+
+#[test]
+fn a_support_ring_under_a_hollow_model_is_still_a_cup() {
+    // Support walls on layers 0-3 carry the model walls and lid: the cavity
+    // is walled by the model on layers 4-11.
+    let fixture = FixtureBuilder::new(16)
+        .support(0..4, walls())
+        .model(4..12, walls())
+        .model(12..14, block())
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 11)]);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+}
+
+#[test]
+fn support_pads_in_a_recess_do_not_hide_it() {
+    // Pads on layers 0-1, fused to the inside of the left and right walls,
+    // make half the outer wall support there, but not above.
+    let fixture = recess()
+        .support(0..2, Shape::rect(45.0, 35.0, 50.0, 75.0))
+        .support(0..2, Shape::rect(90.0, 35.0, 95.0, 75.0))
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 4)]);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+}
+
+#[test]
+fn a_support_sliver_on_the_plate_does_not_hide_a_recess() {
+    // A 1-pixel support line across the recess on layer 0.
+    let fixture = recess()
+        .support(0..1, Shape::rect(69.0, 35.0, 70.0, 75.0))
+        .build();
+    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::SuctionCup, 0, 4)]);
+}
+
+#[test]
+fn a_hollow_support_foot_in_a_recess_does_not_drain_it() {
+    // A support ring on layers 0-2 inside a recess on layers 0-5: its bore
+    // joins the recess where the ring ends.
+    let fixture = FixtureBuilder::new(10)
+        .model(0..6, walls())
+        .model(6..9, block())
+        .support(0..3, Shape::ring(70.0, 55.0, 10.0, 6.0))
+        .build();
+    assert_eq!(spans(&traps(&fixture)), vec![(CheckKind::SuctionCup, 0, 5)]);
+}
+
+#[test]
+fn a_raft_hole_under_an_open_box_is_still_a_cup() {
+    // A raft with a hole on layers 0-2, under a box with no floor and with a
+    // lid: the hole is the bottom of the cavity of the box.
+    let fixture = FixtureBuilder::new(16)
+        .support(0..3, Shape::frame(20.0, 10.0, 180.0, 110.0, 30.0))
+        .model(3..12, Shape::frame(40.0, 30.0, 160.0, 90.0, 15.0))
+        .model(12..15, Shape::rect(40.0, 30.0, 160.0, 90.0))
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 11)]);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+}
+
+/// A 50 x 10 pixel recess on layers 0-4 with nothing above, its long walls
+/// of role `long` and its short walls of role `short`; mirrored across a
+/// diagonal, which swaps rows and columns (10 x 50 pixels), when `tall`.
+fn walled_recess(long: Role, short: Role, tall: bool) -> Fixture {
+    let place = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        if tall {
+            // Mirrored about the line x - y = 20: (x, y) to (y + 20, x - 20).
+            Shape::rect(y0 + 20.0, x0 - 20.0, y1 + 20.0, x1 - 20.0)
+        } else {
+            Shape::rect(x0, y0, x1, y1)
+        }
+    };
+    let leaf = |role: Role| match role {
+        Role::Model => "Model",
+        Role::Support => "Supports",
+    };
+    FixtureBuilder::new(10)
+        .shape(leaf(long), long, 0..5, place(45.0, 45.0, 105.0, 50.0))
+        .shape(leaf(long), long, 0..5, place(45.0, 60.0, 105.0, 65.0))
+        .shape(leaf(short), short, 0..5, place(45.0, 50.0, 50.0, 60.0))
+        .shape(leaf(short), short, 0..5, place(100.0, 50.0, 105.0, 60.0))
+        .build()
+}
+
+#[test]
+fn the_support_pocket_rule_does_not_depend_on_orientation() {
+    for tall in [false, true] {
+        // Model on the long walls: a recess in the model, a cup.
+        let model = walled_recess(Role::Model, Role::Support, tall);
+        assert_eq!(
+            spans(&traps(&model)),
+            vec![(CheckKind::SuctionCup, 0, 4)],
+            "tall: {tall}"
+        );
+        // Support on the long walls: a pocket in the supports.
+        let support = walled_recess(Role::Support, Role::Model, tall);
+        assert!(traps(&support).is_empty(), "tall: {tall}");
+    }
+}
+
+#[test]
+fn a_pocket_in_the_supports_above_the_plate_is_not_reported() {
+    // A solid raft on layers 0-2. On layers 3-5 its rim and the support
+    // bases fused in the middle leave a trench, open from layer 6 on, where
+    // a trunk carries a block.
+    let fixture = FixtureBuilder::new(12)
+        .support(0..3, Shape::rect(20.0, 10.0, 180.0, 110.0))
+        .support(3..6, Shape::frame(20.0, 10.0, 180.0, 110.0, 10.0))
+        .support(3..6, Shape::rect(60.0, 40.0, 140.0, 80.0))
+        .support(6..10, Shape::rect(95.0, 55.0, 105.0, 65.0))
+        .model(10..12, Shape::rect(80.0, 50.0, 120.0, 70.0))
+        .build();
+    assert!(traps(&fixture).is_empty(), "{:?}", traps(&fixture));
+}
+
+#[test]
+fn support_walls_on_a_model_floor_are_a_cup() {
+    // A support ring standing on a block: the floor of the pocket is model.
+    let fixture = FixtureBuilder::new(10)
+        .model(0..3, block())
+        .support(3..8, walls())
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 3, 7)]);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+}
+
+// ---- Scope ------------------------------------------------------------------
+
+#[test]
+fn walls_in_front_and_behind_count_for_the_scope() {
+    // `a_cavity_walled_by_model_and_support_has_both_scopes` with the
+    // support wall along the first rows instead of on the right.
+    let fixture = FixtureBuilder::new(10)
+        .model(0..2, block())
+        .model(2..7, Shape::rect(40.0, 30.0, 45.0, 80.0))
+        .model(2..7, Shape::rect(95.0, 30.0, 100.0, 80.0))
+        .model(2..7, Shape::rect(45.0, 75.0, 95.0, 80.0))
+        .support(2..7, Shape::rect(45.0, 30.0, 95.0, 35.0))
+        .model(7..9, block())
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].scope, RoleScope::Both);
+}
+
+#[test]
+fn a_trap_on_a_model_floor_between_support_sides_gets_a_drain() {
+    // Model floor, lid, and front and back walls; support left and right.
+    let fixture = FixtureBuilder::new(10)
+        .model(0..2, block())
+        .model(2..7, Shape::rect(40.0, 30.0, 100.0, 35.0))
+        .model(2..7, Shape::rect(40.0, 75.0, 100.0, 80.0))
+        .support(2..7, Shape::rect(40.0, 35.0, 45.0, 75.0))
+        .support(2..7, Shape::rect(95.0, 35.0, 100.0, 75.0))
+        .model(7..9, block())
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::ResinTrap, 2, 6)]);
+    assert_eq!(findings[0].scope, RoleScope::Both);
+    assert_close(drain_at(&findings[0]).z_mm, 2.0 * 0.05);
+}
+
+// ---- Drains for cups --------------------------------------------------------
+
+/// A box with a floor on layers 4-5 and walls up to the last layer, held by
+/// corner pillars over the open air.
+fn cup_on_pillars() -> FixtureBuilder {
+    corner_pillars(FixtureBuilder::new(12), 0..4)
+        .model(4..6, block())
+        .model(6..12, walls())
+}
+
+#[test]
+fn a_cup_over_open_air_gets_a_drain_through_its_floor() {
+    let fixture = cup_on_pillars().build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 6, 11)]);
+    let [x, y] = fixture.pixel_to_plate(hole_point(&fixture, 6));
+    let drain = drain_at(&findings[0]);
+    assert_close(drain.x_mm, x);
+    assert_close(drain.y_mm, y);
+    assert_close(drain.z_mm, 6.0 * 0.05);
+
+    // Through a floor thicker than the longest drain, none.
+    let short = TrapOptions {
+        max_drain_mm: 0.05,
+        ..TrapOptions::default()
+    };
+    assert_eq!(traps_with(&fixture, &short)[0].fix, None);
+}
+
+#[test]
+fn a_cup_whose_drain_would_end_in_a_support_gets_none() {
+    // A pillar under the middle of the floor.
+    let fixture = cup_on_pillars()
+        .support(0..4, Shape::rect(60.0, 45.0, 80.0, 65.0))
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 6, 11)]);
+    assert_eq!(findings[0].fix, None);
+}
+
+// ---- Severity ---------------------------------------------------------------
+
+#[test]
+fn a_wide_cup_is_an_error() {
+    // A 150 x 90 pixel recess (135 mm²) under a block on the plate.
+    let fixture = FixtureBuilder::new(20)
+        .model(0..17, Shape::frame(20.0, 10.0, 180.0, 110.0, 5.0))
+        .model(17..19, Shape::rect(20.0, 10.0, 180.0, 110.0))
+        .build();
+    let findings = traps(&fixture);
+    assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 0, 16)]);
+    assert_eq!(findings[0].severity, Severity::Error);
+    assert!(findings[0].detail.contains("135.0 mm²"), "{findings:?}");
+
+    let lenient = TrapOptions {
+        error_cup_area_mm2: 200.0,
+        ..TrapOptions::default()
+    };
+    assert_eq!(
+        traps_with(&fixture, &lenient)[0].severity,
+        Severity::Warning
+    );
 }
