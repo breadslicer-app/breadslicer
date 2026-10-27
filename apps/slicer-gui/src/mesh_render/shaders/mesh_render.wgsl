@@ -73,12 +73,13 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
-// Build-envelope warning palette. The "wash" is the mild pink applied
-// across every fragment of an offending object; the "outside" red is
-// the saturated colour painted where a fragment's world position
-// actually lies beyond the envelope corners.
-const WARNING_WASH: vec3<f32> = vec3<f32>(0.95, 0.55, 0.55);
-const WARNING_RED: vec3<f32> = vec3<f32>(1.00, 0.15, 0.15);
+// Build-envelope warning palette, in the theme's highlight, the amber
+// `accent` #d7a75a, as the plate's warning stripes. The "wash" is the
+// mild amber applied across every fragment of an offending object; the
+// "outside" amber is the full accent painted where a fragment's world
+// position actually lies beyond the envelope corners.
+const WARNING_WASH: vec3<f32> = vec3<f32>(0.92, 0.78, 0.55);
+const WARNING_OUTSIDE: vec3<f32> = vec3<f32>(0.843, 0.655, 0.353);
 const WARNING_WASH_STRENGTH: f32 = 0.55;
 
 @fragment
@@ -103,12 +104,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let base_color = mix(unselected, highlighted, f32(in.selected));
     let washed = mix(base_color, WARNING_WASH, f32(in.breaches) * WARNING_WASH_STRENGTH);
     // Componentwise envelope test: a fragment outside on any axis
-    // is painted in the saturated warning red instead of the wash.
+    // is painted in the full warning amber instead of the wash.
     let p = in.world_pos;
     let lo = u.env_min.xyz;
     let hi = u.env_max.xyz;
     let outside = any(p < lo) || any(p > hi);
-    let final_color = select(washed, WARNING_RED, outside);
+    let final_color = select(washed, WARNING_OUTSIDE, outside);
     return vec4<f32>(final_color * intensity, 1.0);
 }
 
