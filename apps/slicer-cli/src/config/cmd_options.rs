@@ -63,6 +63,22 @@ impl From<Point3> for sc_mesh_core::Vector3D<f64> {
     }
 }
 
+/// The options `slice` and `review` share: the printer and material, and how
+/// the model is prepared and sliced.
+#[derive(Clone, Debug)]
+pub(crate) struct PlateOptions {
+    pub printer_profile: PrinterProfileRef,
+    pub material_profile: MaterialProfileRef,
+    pub layer_height: Option<PositiveFiniteMm>,
+    pub first_layer_height: Option<PositiveFiniteMm>,
+    pub aa: AaLevel,
+    pub verbose: bool,
+    pub no_auto_place: bool,
+    pub repair: bool,
+    pub df_supports: bool,
+    pub df_lift: f64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum CmdOptions {
     Convert {
@@ -99,20 +115,16 @@ pub(crate) enum CmdOptions {
     ProfilesList {
         kind: ListKind,
     },
+    Review {
+        source: OsString,
+        plate: PlateOptions,
+        json: bool,
+    },
     Slice {
         source: OsString,
         target: OsString,
         target_format: Option<TargetFormat>,
-        printer_profile: PrinterProfileRef,
-        material_profile: MaterialProfileRef,
-        layer_height: Option<PositiveFiniteMm>,
-        first_layer_height: Option<PositiveFiniteMm>,
-        aa: AaLevel,
-        verbose: bool,
-        no_auto_place: bool,
-        repair: bool,
-        df_supports: bool,
-        df_lift: f64,
+        plate: PlateOptions,
     },
     GenSupport {
         source: OsString,
@@ -251,6 +263,38 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         .argument::<TargetFormat>("TARGET_FORMAT")
         .optional();
 
+    let plate = get_plate_options();
+
+    construct!(CmdOptions::Slice {
+        source,
+        target,
+        target_format,
+        plate,
+    })
+}
+
+fn get_review_options() -> impl Parser<CmdOptions> {
+    let source = short('s')
+        .long("source")
+        .help("Specify the path of the 3D model file to be sliced and reviewed")
+        .argument::<OsString>("SOURCE_FILEPATH");
+
+    let plate = get_plate_options();
+
+    let json = long("json")
+        .help("Print the findings and the summary as JSON instead of text.")
+        .switch();
+
+    construct!(CmdOptions::Review {
+        source,
+        plate,
+        json,
+    })
+}
+
+/// The options `slice` and `review` share, in the order `slice --help` lists
+/// them.
+fn get_plate_options() -> impl Parser<PlateOptions> {
     let printer_profile = long("printer-profile")
         .help(
             "Printer profile to slice for: either a profile id (slug) looked up in the configured libraries, or a path to a profile TOML file (a value starting with a path marker such as '/' or './').",
@@ -314,10 +358,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         .argument::<f64>("MM")
         .fallback(5.0);
 
-    construct!(CmdOptions::Slice {
-        source,
-        target,
-        target_format,
+    construct!(PlateOptions {
         printer_profile,
         material_profile,
         layer_height,
@@ -471,6 +512,10 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .to_options()
         .descr("List, export, and import profiles in the user library")
         .command("profiles");
+    let review = get_review_options()
+        .to_options()
+        .descr("Slice a given 3d model file without writing it, and list the pre-flight findings")
+        .command("review");
     let slice = get_slice_options()
         .to_options()
         .descr("Slice a given 3d model file")
@@ -493,6 +538,7 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         help,
         inspect,
         profiles,
+        review,
         slice,
         support_gen,
         version
