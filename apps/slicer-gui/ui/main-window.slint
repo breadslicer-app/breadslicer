@@ -1251,7 +1251,82 @@ export component MainWindow inherits Window {
                     background: Theme.border;
                 }
 
-                ScrollView {
+                // The Slice tab does not scroll as a whole: its setup, Slice
+                // button and result stay put, and only the review list
+                // scrolls inside it.
+                if root.workspace-section == WorkspaceSection.Slice: VerticalLayout {
+                    x: 1px;
+                    width: parent.width - 1px;
+                    padding: 12px;
+
+                    SliceInspector {
+                        printer-options: root.slice-printer-options;
+                        printer-current-index <=> root.slice-printer-current-index;
+                        resin-options: root.slice-resin-options;
+                        resin-current-index <=> root.slice-resin-current-index;
+                        first-layer-height-text <=> root.slice-first-layer-height-text;
+                        slicing: root.slicing-in-progress;
+                        up-to-date: root.slice-up-to-date;
+                        layer-count: root.slice-layer-count;
+                        selected-layer: root.selected-layer-index;
+                        layer-image: root.slice-view-image;
+                        estimate-valid: root.slice-estimate-valid;
+                        estimate-time: root.slice-estimate-time;
+                        estimate-volume: root.slice-estimate-volume;
+                        estimate-mass: root.slice-estimate-mass;
+                        estimate-note: root.slice-estimate-note;
+                        review-state: root.review-state;
+                        review-summary: root.review-summary;
+                        review-worst: root.review-worst;
+                        review-rows: root.review-rows;
+                        review-stale: root.review-stale;
+                        review-message: root.review-message;
+                        review-selected <=> root.review-selected;
+                        review-notes: root.review-notes;
+                        review-notes-open: root.review-notes-open;
+                        review-fill-small: root.review-fill-small;
+                        review-fills-note: root.review-fills-note;
+                        review-fills-clearable: root.review-fills-clearable;
+                        review-fill-toggled(id) => {
+                            root.review-fill-toggled(id);
+                        }
+                        review-leave-requested(id) => {
+                            root.review-leave-requested(id);
+                        }
+                        review-fill-small-requested => {
+                            root.review-fill-small-requested();
+                        }
+                        review-fills-cleared => {
+                            root.review-fills-cleared();
+                        }
+                        review-notes-toggled => {
+                            root.review-notes-toggled();
+                        }
+                        review-finding-clicked(id) => {
+                            root.review-finding-clicked(id);
+                        }
+                        review-fix-requested(id) => {
+                            root.review-fix-requested(id);
+                        }
+                        review-raft-off-requested(id) => {
+                            root.review-raft-off-requested(id);
+                        }
+                        printer-picked(i) => {
+                            root.slice-printer-picked(i);
+                        }
+                        resin-picked(i) => {
+                            root.slice-resin-picked(i);
+                        }
+                        first-layer-height-edited(t) => {
+                            root.slice-first-layer-height-edited(t);
+                        }
+                        slice-requested => {
+                            root.slice-requested();
+                        }
+                    }
+                }
+
+                if root.workspace-section != WorkspaceSection.Slice: ScrollView {
                     x: 1px;
                     width: parent.width - 1px;
 
@@ -1389,71 +1464,6 @@ export component MainWindow inherits Window {
                             }
                             drop-to-plate => {
                                 root.numeric-edit(10, 0);
-                            }
-                        }
-                        if root.workspace-section == WorkspaceSection.Slice: SliceInspector {
-                            printer-options: root.slice-printer-options;
-                            printer-current-index <=> root.slice-printer-current-index;
-                            resin-options: root.slice-resin-options;
-                            resin-current-index <=> root.slice-resin-current-index;
-                            first-layer-height-text <=> root.slice-first-layer-height-text;
-                            slicing: root.slicing-in-progress;
-                            up-to-date: root.slice-up-to-date;
-                            layer-count: root.slice-layer-count;
-                            selected-layer: root.selected-layer-index;
-                            layer-image: root.slice-view-image;
-                            estimate-valid: root.slice-estimate-valid;
-                            estimate-time: root.slice-estimate-time;
-                            estimate-volume: root.slice-estimate-volume;
-                            estimate-mass: root.slice-estimate-mass;
-                            estimate-note: root.slice-estimate-note;
-                            review-state: root.review-state;
-                            review-summary: root.review-summary;
-                            review-worst: root.review-worst;
-                            review-rows: root.review-rows;
-                            review-stale: root.review-stale;
-                            review-message: root.review-message;
-                            review-selected <=> root.review-selected;
-                            review-notes: root.review-notes;
-                            review-notes-open: root.review-notes-open;
-                            review-fill-small: root.review-fill-small;
-                            review-fills-note: root.review-fills-note;
-                            review-fills-clearable: root.review-fills-clearable;
-                            review-fill-toggled(id) => {
-                                root.review-fill-toggled(id);
-                            }
-                            review-leave-requested(id) => {
-                                root.review-leave-requested(id);
-                            }
-                            review-fill-small-requested => {
-                                root.review-fill-small-requested();
-                            }
-                            review-fills-cleared => {
-                                root.review-fills-cleared();
-                            }
-                            review-notes-toggled => {
-                                root.review-notes-toggled();
-                            }
-                            review-finding-clicked(id) => {
-                                root.review-finding-clicked(id);
-                            }
-                            review-fix-requested(id) => {
-                                root.review-fix-requested(id);
-                            }
-                            review-raft-off-requested(id) => {
-                                root.review-raft-off-requested(id);
-                            }
-                            printer-picked(i) => {
-                                root.slice-printer-picked(i);
-                            }
-                            resin-picked(i) => {
-                                root.slice-resin-picked(i);
-                            }
-                            first-layer-height-edited(t) => {
-                                root.slice-first-layer-height-edited(t);
-                            }
-                            slice-requested => {
-                                root.slice-requested();
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Export: ExportInspector {
