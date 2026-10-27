@@ -18,6 +18,10 @@
 //! cavity the current settings carve (DragonFruit's fast preview, recomputed
 //! as the wall or detail change and re-posed as the model moves), its drains,
 //! and with the drain tool the drain a click would drill.
+//!
+//! The Review card (#90) drills the drain it suggests for a resin trap
+//! through the same path: on a hollow made here, straight up through the
+//! cavity's floor ([`HollowRun::add_drain_at`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -99,6 +103,71 @@ impl HollowOptions {
             ..HollowSettings::default()
         }
     }
+}
+
+/// What [`HollowRun::add_drain_at`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrainRequest {
+    /// The model is being hollowed again with the drain.
+    Started,
+    /// A hollowing job is running (or the window is loading); nothing
+    /// started.
+    Busy,
+    /// No hollow made here has that floor; nothing started.
+    NoHollow,
+}
+
+/// Where a vertical line down from `at` (world mm) first leaves the solid of
+/// `mesh` posed by `world`: below a cavity's floor point, the underside of
+/// that floor. The faces are read in the mesh's own frame, where the line is
+/// `at + t * down` mapped back; `t` is then the world distance, since the
+/// map is affine. A face is left, not entered, when its outward normal (the
+/// winding's) points along the line.
+fn floor_underside(mesh: &IndexedMesh, world: &Transform3D, at: [f32; 3]) -> Option<[f32; 3]> {
+    let inverse = world.inverse().ok()?;
+    let local = |p: [f32; 3]| inverse.apply_to_vertex(Vertex::new(p)).coords();
+    let origin = local(at);
+    let below = local([at[0], at[1], at[2] - 1.0]);
+    let down: [f32; 3] = std::array::from_fn(|i| below[i] - origin[i]);
+    let vertices = mesh.vertices();
+    let mut nearest: Option<f32> = None;
+    for face in mesh.faces() {
+        let corner = |k: usize| {
+            vertices
+                .get(usize::from(face.vertices[k]))
+                .map(|v| v.coords())
+        };
+        let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else {
+            continue;
+        };
+        let e1: [f32; 3] = std::array::from_fn(|i| b[i] - a[i]);
+        let e2: [f32; 3] = std::array::from_fn(|i| c[i] - a[i]);
+        if dot(cross(e1, e2), down) <= 0.0 {
+            continue;
+        }
+        // The determinant is minus the normal's projection on the line, so a
+        // face the line leaves never gives 0, save by underflow.
+        let h = cross(down, e2);
+        let det = dot(e1, h);
+        if det == 0.0 {
+            continue;
+        }
+        let s: [f32; 3] = std::array::from_fn(|i| origin[i] - a[i]);
+        let u = dot(s, h) / det;
+        if !(0.0..=1.0).contains(&u) {
+            continue;
+        }
+        let q = cross(s, e1);
+        let v = dot(down, q) / det;
+        if v < 0.0 || u + v > 1.0 {
+            continue;
+        }
+        let t = dot(e2, q) / det;
+        if t > 1e-4 && nearest.is_none_or(|best| t < best) {
+            nearest = Some(t);
+        }
+    }
+    nearest.map(|t| [at[0], at[1], at[2] - t])
 }
 
 /// A drain in the leaf's local frame: a point on the surface and the
@@ -548,6 +617,71 @@ impl HollowRun {
             self.set_pending(&mesh, drains);
             self.refresh_ui();
             self.tick_preview();
+        }
+    }
+
+    /// The drain the review suggests for a cavity whose floor is at `at`
+    /// (world mm): on a hollow made here, on the underside of that floor
+    /// straight below `at`, pointing up into the cavity. Of several hollows,
+    /// the one whose underside is nearest below `at`.
+    fn drain_target(
+        &self,
+        at: [f32; 3],
+    ) -> Option<(NodeId, Arc<IndexedMesh>, Transform3D, LocalDrain)> {
+        let radius_mm = self.options.borrow().drain_radius_mm;
+        let hollows: Vec<Arc<IndexedMesh>> = self
+            .hollowed
+            .borrow()
+            .iter()
+            .map(|h| h.hollow.clone())
+            .collect();
+        self.document
+            .with_scene(|spatial| {
+                let scene = spatial.graph();
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .filter_map(|leaf| {
+                        let mesh = scene.leaf_mesh_arc(leaf)?;
+                        if !hollows.iter().any(|h| Arc::ptr_eq(h, mesh)) {
+                            return None;
+                        }
+                        let world = scene.world_transform_of(leaf).ok()?;
+                        let exit = floor_underside(mesh, &world, at)?;
+                        Some((leaf, mesh.clone(), world, exit))
+                    })
+                    .max_by(|a, b| a.3[2].total_cmp(&b.3[2]))
+            })
+            .flatten()
+            .and_then(|(leaf, mesh, world, exit)| {
+                let drain = LocalDrain::at(exit, [0.0, 0.0, -1.0], radius_mm, &world)?;
+                Some((leaf, mesh, world, drain))
+            })
+    }
+
+    /// Whether [`Self::add_drain_at`] has a hollow to drill for a cavity
+    /// whose floor is at `at` (world mm).
+    pub(crate) fn can_drain_at(&self, at: [f32; 3]) -> bool {
+        self.drain_target(at).is_some()
+    }
+
+    /// Hollows again, with one more drain, the hollow made here under the
+    /// cavity floor at `at` (world mm): the drain goes straight up through
+    /// that floor. The new hollow replaces the old as one undoable edit when
+    /// the job lands, like a drain drilled with the drain tool.
+    pub(crate) fn add_drain_at(self: &Rc<Self>, at: [f32; 3]) -> DrainRequest {
+        if self.job.borrow().is_some() {
+            return DrainRequest::Busy;
+        }
+        let Some((leaf, mesh, world, drain)) = self.drain_target(at) else {
+            return DrainRequest::NoHollow;
+        };
+        let (original, mut drains) = self.source_for(&mesh);
+        drains.push(drain);
+        self.launch(leaf, mesh, original, drains, &world);
+        if self.job.borrow().is_some() {
+            DrainRequest::Started
+        } else {
+            DrainRequest::Busy
         }
     }
 
@@ -1038,6 +1172,10 @@ fn normalized(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -1068,6 +1206,75 @@ mod tests {
         let drain = LocalDrain::at([10.0, 0.0, 5.0], [0.0, 0.0, 1.0], 1.5, &world).unwrap();
         assert_eq!(drain.center, [0.0, 0.0, 5.0]);
         assert_eq!(drain.direction, [0.0, 0.0, -1.0]);
+    }
+
+    /// A 10 mm box standing on the plate, hollowed to a 6 mm cavity: walls
+    /// of 2 mm, the cavity floor at z = 2.
+    fn hollow_box() -> IndexedMesh {
+        let cube = sc_mesh_fixtures::unit_cube_mesh();
+        let scaled = |k: f32| {
+            cube.vertices
+                .iter()
+                .map(move |v| Vertex::new(v.coords().map(|c| c * k)))
+        };
+        let vertices: Vec<Vertex> = scaled(10.0).chain(scaled(6.0)).collect();
+        let mut faces = cube.faces.clone();
+        faces.extend(cube.faces.iter().map(|f| {
+            let [a, b, c] = f.vertices.map(|v| usize::from(v) as u32 + 8);
+            sc_mesh_core::IndexedTriangle::from_raw_indices([a, c, b])
+        }));
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    fn standing(transform: sc_mesh_core::transform::AffineTransform3D) -> Transform3D {
+        Transform3D::Affine(
+            sc_mesh_core::transform::AffineTransform3D::from_translation([0.0, 0.0, 5.0])
+                .compose(&transform),
+        )
+    }
+
+    #[test]
+    fn a_drain_under_a_cavity_floor_leaves_through_the_underside() {
+        let mesh = hollow_box();
+        let world = standing(sc_mesh_core::transform::AffineTransform3D::identity());
+        // The review's floor point is on the cavity floor, give or take half
+        // a layer: either way the line leaves the solid at the box's bottom.
+        for z in [2.05, 2.0, 1.97] {
+            let exit = floor_underside(&mesh, &world, [0.3, -0.2, z]).expect("under the floor");
+            assert!((exit[2] - 0.0).abs() < 1e-4, "{z}: {exit:?}");
+            assert_eq!([exit[0], exit[1]], [0.3, -0.2]);
+        }
+        // Beside the box, nothing.
+        assert_eq!(floor_underside(&mesh, &world, [8.0, 0.0, 2.05]), None);
+    }
+
+    #[test]
+    fn a_mirrored_or_scaled_hollow_keeps_its_underside() {
+        let mesh = hollow_box();
+        let mirrored = standing(
+            sc_mesh_core::transform::AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]),
+        );
+        let exit = floor_underside(&mesh, &mirrored, [1.0, 1.0, 2.05]).expect("mirrored");
+        assert!(exit[2].abs() < 1e-4, "{exit:?}");
+        let scaled = Transform3D::Affine(
+            sc_mesh_core::transform::AffineTransform3D::from_translation([0.0, 0.0, 10.0])
+                .compose(&sc_mesh_core::transform::AffineTransform3D::from_uniform_scale(2.0)),
+        );
+        // Twice the size: the cavity floor is at z = 4 and the underside at 0.
+        let exit = floor_underside(&mesh, &scaled, [1.0, 1.0, 4.05]).expect("scaled");
+        assert!(exit[2].abs() < 1e-4, "{exit:?}");
+    }
+
+    #[test]
+    fn a_drain_under_the_floor_points_up_into_the_cavity() {
+        let world = standing(sc_mesh_core::transform::AffineTransform3D::identity());
+        let drain = LocalDrain::at([0.3, -0.2, 0.0], [0.0, 0.0, -1.0], 1.5, &world).unwrap();
+        assert_eq!(drain.center, [0.3, -0.2, -5.0]);
+        assert_eq!(drain.direction, [0.0, 0.0, 1.0]);
     }
 
     #[test]

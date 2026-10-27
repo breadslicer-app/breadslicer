@@ -17,8 +17,8 @@ use crate::aa_level::aa_combo_index;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::slint_ui::{
-    AboutWindow, ErrorDialog, ExtendDialog, ForkDialog, InfoDialog, MainWindow, MenuLayout,
-    PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, SliceOverwriteDialog,
+    AboutWindow, ExtendDialog, ForkDialog, MainWindow, MenuLayout, PreferencesWindow,
+    ProfileViewDialog,
 };
 
 pub(crate) trait WindowPreferences {
@@ -56,6 +56,7 @@ impl WindowPreferences for PreferencesWindow {
         self.set_prescan_supports(prefs.prescan_supports);
         self.set_smooth_models(prefs.smooth_models);
         self.set_diagnostic_log(prefs.diagnostic_log);
+        self.set_silenced_message_count(prefs.silenced_messages.len() as i32);
         // Printer / resin selection is pushed separately (see
         // `preferences_window::apply_printing`); the catalog-backed models are
         // not part of the plain snapshot.
@@ -69,32 +70,9 @@ impl WindowPreferences for AboutWindow {
     }
 }
 
-// The dialogs of a main window. Their texts built in Rust follow the language
-// through their manager.
-
-impl WindowPreferences for ErrorDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for InfoDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for ReplaceSceneDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
-
-impl WindowPreferences for SliceOverwriteDialog {
-    fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
-        self.set_theme(prefs.theme);
-    }
-}
+// The messages of a main window are drawn inside it (`error_dialog.rs`), so
+// they follow its theme; their texts built in Rust follow the language through
+// their manager.
 
 // The dialogs of the Preferences window. Their texts built in Rust follow the
 // language through their own follow.

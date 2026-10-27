@@ -313,6 +313,22 @@ fn stacks_from_different_schedules_refuse_to_merge() {
 }
 
 #[test]
+fn extra_stacks_merge_after_the_leaves() {
+    let cube = completed(&meshes_as_roots([unit_cube_mesh()]));
+    let zs: Vec<f64> = cube.schedule().iter_z().collect();
+    let leaf_polygons = cube.leaves()[0].stack().layers()[0].polygons().len();
+    let extra = cube.leaves()[0].stack().clone();
+    let merged = cube.merge_with([extra]).expect("the same grid merges");
+    let layer = &merged.stack().layers()[0];
+    assert_eq!(layer.polygons().len(), 2 * leaf_polygons);
+
+    // A stack on another grid is refused, as a mixed plate is.
+    let cube = completed(&meshes_as_roots([unit_cube_mesh()]));
+    let shifted: Vec<f64> = zs.iter().map(|z| z + 0.01).collect();
+    assert!(cube.merge_with([empty_layers_at(&shifted)]).is_err());
+}
+
+#[test]
 fn schedule_for_selection_matches_the_sliced_schedule() {
     let scene = meshes_as_roots([unit_cube_mesh()]);
     let schedule = schedule_for_selection(&scene, &printer(), &material(), &params())

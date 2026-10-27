@@ -319,6 +319,15 @@ fn every_elegoo_printer_mirrors_x_and_not_y() {
     }
 }
 
+/// The printers no photo can be shipped for: the image sources the
+/// library vendors (see `images/README.md`) have none of them, so their
+/// profiles name no image, as the generic machine does.
+const PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO: [&str; 3] = [
+    "creality-halot-one",
+    "creality-halot-one-plus",
+    "creality-halot-one-pro",
+];
+
 #[test]
 fn every_bundled_printer_declares_an_image_we_ship() {
     let root = bundled_profiles_dir();
@@ -326,6 +335,13 @@ fn every_bundled_printer_declares_an_image_we_ship() {
         let id = printer.identity.id.as_str().to_owned();
         // Our own stand-in, so there is no machine to photograph.
         if id == "generic-machine" {
+            continue;
+        }
+        if PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO.contains(&id.as_str()) {
+            assert!(
+                printer.identity.image_asset_path.is_none(),
+                "{id}: a photo nobody may ship must not be named",
+            );
             continue;
         }
         let image = printer
@@ -357,5 +373,63 @@ fn every_bundled_printer_id_is_the_machine_it_names() {
             ),
             "a printer id must be the machine it names and nothing else",
         );
+    }
+}
+
+/// The Photon Mono M7 family's plate in millimetres and its X mirror,
+/// as UVtools' printer data states them and its Anycubic writers are
+/// validated against.
+///
+/// Pinned here because the catalogue the converter reads stated a
+/// 126.48 mm deep M7 / M7 Pro plate (its own 24.8 µm pixel says
+/// 126.976), a 297.5 x 164 mm M7 Max and no mirror for the M7 as of
+/// 2026-10-27, and a mirrored or misscaled part is a failure nothing
+/// in the chain reports. For the M7 Pro both were checked against files
+/// that print correctly: Lychee rasterises it at 24.806 µm in Y (measured
+/// against its 50 µm Halot One file of the same scene, although its header
+/// says 126.48 mm), and Photon Workshop's `.pwsz` matches ours unmirrored
+/// only with mirror X on (`tests/printer_orientation.rs`).
+const M7_FAMILY_PLATES: [(&str, f64, f64); 3] = [
+    ("anycubic-photon-mono-m7", 223.642, 126.976),
+    ("anycubic-photon-mono-m7-pro", 223.642, 126.976),
+    ("anycubic-photon-mono-m7-max", 298.08, 165.6),
+];
+
+/// The M7 Pro runs the 2 stage move and the 6 transition layers that the
+/// Lychee files its owner prints from carry.
+#[test]
+fn the_m7_pro_runs_the_two_stage_move_and_transition_layers_lychee_writes() {
+    let capabilities = bundled_printer("anycubic-photon-mono-m7-pro").capabilities;
+    assert!(capabilities.two_stage_lift);
+    assert_eq!(capabilities.transition_layers, Some(6));
+}
+
+/// The Halot One family writes CXDLP v2 by default, the dialect of the
+/// Lychee files the Halot One prints from; v3 stays selectable.
+#[test]
+fn the_halot_family_lists_cxdlp_v2_first() {
+    for id in [
+        "creality-halot-one",
+        "creality-halot-one-pro",
+        "creality-halot-one-plus",
+    ] {
+        let formats: Vec<String> = bundled_printer(id)
+            .capabilities
+            .output_formats
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(formats, ["cxdlp@v2", "cxdlp@v3"], "{id}");
+    }
+}
+
+#[test]
+fn the_m7_family_keeps_uvtools_plate_and_mirrors_x() {
+    for (id, x_mm, y_mm) in M7_FAMILY_PLATES {
+        let hardware = bundled_printer(id).hardware;
+        let plate = hardware.build_volume();
+        assert_eq!((plate.x_mm(), plate.y_mm()), (x_mm, y_mm), "{id}");
+        let mirror = hardware.mirror();
+        assert!(mirror.x && !mirror.y, "{id} mirrors in X only");
     }
 }

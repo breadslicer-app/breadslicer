@@ -96,15 +96,17 @@ pub(super) fn relabel_picker(
 mod follow_preferences_tests {
     use super::*;
     use crate::preferences_bus::PreferencesSnapshot;
-    use crate::slint_ui::{ErrorDialog, ThemePreference};
+    use crate::slint_ui::{AboutWindow, ThemePreference};
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
     use crate::test_support::theme_pick::pick_theme;
 
-    fn followed_dialog(bus: &Rc<PreferencesBus>) -> ErrorDialog {
-        let dialog = ErrorDialog::new().expect("the headless platform creates components");
-        dialog.set_heading("sentinel".into());
-        follow_preferences(bus, &dialog, |dialog| dialog.set_heading("pushed".into()));
+    fn followed_dialog(bus: &Rc<PreferencesBus>) -> AboutWindow {
+        let dialog = AboutWindow::new().expect("the headless platform creates components");
+        dialog.set_app_version("sentinel".into());
+        follow_preferences(bus, &dialog, |dialog| {
+            dialog.set_app_version("pushed".into())
+        });
         dialog
     }
 
@@ -114,7 +116,7 @@ mod follow_preferences_tests {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let dialog = followed_dialog(&bus);
             pick_language(&bus, "es");
-            dialog.get_heading().to_string()
+            dialog.get_app_version().to_string()
         });
         assert_eq!(heading, "pushed");
     }
@@ -128,7 +130,7 @@ mod follow_preferences_tests {
                 snap.theme = ThemePreference::Dark;
                 PreferencesChange::Theme
             });
-            dialog.get_heading().to_string()
+            dialog.get_app_version().to_string()
         });
         assert_eq!(heading, "sentinel");
     }
@@ -148,7 +150,7 @@ mod follow_preferences_tests {
     fn the_follow_ends_at_the_1st_change_after_the_window_is_gone() {
         let holders = on_fresh_slint_thread(|| {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let dialog = ErrorDialog::new().expect("the headless platform creates components");
+            let dialog = AboutWindow::new().expect("the headless platform creates components");
             // Held by the listener only, so its count shows whether the bus
             // still holds the listener.
             let probe = Rc::new(());

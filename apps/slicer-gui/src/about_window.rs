@@ -37,6 +37,25 @@ pub(crate) fn build_about_window(
         }
     });
 
+    // Informational (#133): a click outside it, on the slicer or anywhere
+    // else, closes it, like the notices inside the main window.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+        let about_weak = about_weak.clone();
+        about.window().on_winit_window_event(move |_window, event| {
+            if matches!(event, winit::event::WindowEvent::Focused(false)) {
+                // Hidden after the event, not inside the window's own handler.
+                let about_weak = about_weak.clone();
+                slint::Timer::single_shot(core::time::Duration::ZERO, move || {
+                    if let Some(w) = about_weak.upgrade() {
+                        let _ = w.hide();
+                    }
+                });
+            }
+            EventResult::Propagate
+        });
+    }
+
     let subscription = bus.subscribe(move |snap, _change| {
         if let Some(w) = about_weak.upgrade() {
             w.apply_preferences(snap);

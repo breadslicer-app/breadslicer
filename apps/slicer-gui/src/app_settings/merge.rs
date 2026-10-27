@@ -29,6 +29,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         prescan_supports,
         smooth_models,
         diagnostic_log,
+        silenced_messages,
         object_list,
         slice_panel,
         slice_view,
@@ -66,6 +67,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         ),
         smooth_models: pick(&base.smooth_models, &ours.smooth_models, smooth_models),
         diagnostic_log: pick(&base.diagnostic_log, &ours.diagnostic_log, diagnostic_log),
+        silenced_messages: merge_set(
+            &base.silenced_messages,
+            &ours.silenced_messages,
+            silenced_messages,
+        ),
         object_list: merge_object_list(&base.object_list, &ours.object_list, object_list),
         slice_panel: merge_slice_panel(&base.slice_panel, &ours.slice_panel, slice_panel),
         slice_view: merge_slice_view(&base.slice_view, &ours.slice_view, slice_view),
@@ -285,6 +291,26 @@ mod merge_tests {
         assert_eq!(
             merged.favourite_printers(),
             printers(&["printer-x", "printer-y"])
+        );
+    }
+
+    #[test]
+    fn showing_all_messages_again_keeps_a_message_silenced_meanwhile_elsewhere() {
+        let mut base = AppSettings::default();
+        base.set_silenced_messages(["repair.summary".to_owned()].into_iter().collect());
+        let mut ours = base.clone();
+        ours.set_silenced_messages(BTreeSet::new());
+        let mut theirs = base.clone();
+        theirs.set_silenced_messages(
+            ["repair.summary".to_owned(), "supports.generated".to_owned()]
+                .into_iter()
+                .collect(),
+        );
+
+        let merged = merge(&base, &ours, theirs);
+        assert_eq!(
+            merged.silenced_messages(),
+            ["supports.generated".to_owned()].into_iter().collect()
         );
     }
 

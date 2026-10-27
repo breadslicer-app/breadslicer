@@ -131,6 +131,7 @@ pub(super) fn open_profile_editor(
         eprintln!("failed to show the profile editor: {err}");
         return;
     }
+    super::centre_over_preferences(&dialog);
     *dialog_slot.borrow_mut() = Some(dialog);
 }
 
@@ -404,7 +405,7 @@ mod language_change_tests {
     use super::*;
     use crate::language::InstalledTranslations;
     use crate::preferences_bus::PreferencesSnapshot;
-    use crate::slint_ui::{ErrorDialog, ProfileViewSection};
+    use crate::slint_ui::{AboutWindow, ProfileViewSection};
     use crate::test_support::language_pick::pick_language;
     use crate::test_support::material_profiles::resin_profile;
     use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
@@ -418,7 +419,7 @@ mod language_change_tests {
         note: Option<EditorNote>,
     ) -> (UiLanguage, ProfileViewDialog) {
         // In the app, the 1st main window is the 1st component of the thread.
-        let first = ErrorDialog::new().expect("the headless platform creates components");
+        let first = AboutWindow::new().expect("the headless platform creates components");
         let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
         let catalog = ProfileCatalog::from_entries(Vec::new(), Vec::new());
         let refresh_view: Rc<dyn Fn()> = Rc::new(|| {});

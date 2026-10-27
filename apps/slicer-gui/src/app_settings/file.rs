@@ -586,6 +586,27 @@ mod settings_file_tests {
     }
 
     #[test]
+    fn silenced_messages_round_trip_and_are_omitted_while_empty() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        file.save(&AppSettings::default()).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            !written.contains("silenced_messages"),
+            "got:
+{written}"
+        );
+
+        let mut s = AppSettings::default();
+        let keys: BTreeSet<String> = ["repair.summary".to_owned(), "supports.generated".to_owned()]
+            .into_iter()
+            .collect();
+        s.set_silenced_messages(keys.clone());
+        file.save(&s).unwrap();
+        assert_eq!(file.load().settings().silenced_messages(), keys);
+    }
+
+    #[test]
     fn saved_toml_omits_empty_favourites() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
