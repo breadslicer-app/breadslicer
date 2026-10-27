@@ -43,4 +43,7 @@ cargo test  --release -p sc-slicer-gui --lib
 <sub>**Acknowledgements.** Breadslicer is based on [SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer)
 (MyMiniFactory, CTRLback; AGPL-3.0). Parts of its support and hollowing engines derive from
 [DragonFruit](https://github.com/Open-Resin-Alliance/DragonFruit) (Open Resin Alliance; MIT).
-Thanks to both projects. Their notices are kept in the source as their licenses require.</sub>
+Thanks to both projects. Their notices are kept in the source as their licenses require.
+The `.bread` project format uses [meshoptimizer](https://github.com/zeux/meshoptimizer)
+(Arseny Kapoulkine; MIT) and [Zstandard](https://github.com/facebook/zstd) (Meta; BSD); see
+[`libs/bread-format/NOTICE`](libs/bread-format/NOTICE).</sub>

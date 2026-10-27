@@ -14,7 +14,8 @@
 //! through the scene's own checked API. Node and resource ids are renumbered
 //! in that order; the graph, names, transforms and child order come back as
 //! they were. Nodes no root or reference reaches are not part of the scene
-//! and are not stored.
+//! and are not stored. Leaves whose mesh the application rebuilds (supports)
+//! can be stored with an empty mesh ([`encode_scene_emptying`]).
 //!
 //! ```text
 //! metadata    u8 0 | 1, then name and comment (u8 0 | 1, u32 length, UTF-8)
@@ -38,7 +39,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::indexed_mesh::{IndexedMesh, MeshMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{
     CsgOp, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene, SceneError, SceneMetadata,
@@ -118,12 +119,32 @@ impl From<SceneError> for DecodeSceneError {
 pub struct EncodedScene {
     pub payload: Vec<u8>,
     pub meshes: Vec<Arc<IndexedMesh>>,
+    /// The index each stored node is listed at, for other chunks to name it.
+    pub nodes: HashMap<NodeId, usize>,
+}
+
+/// A decoded scene and its nodes in the order they were listed.
+#[derive(Clone, Debug)]
+pub struct DecodedScene {
+    pub scene: Scene,
+    pub nodes: Vec<NodeId>,
 }
 
 /// Encodes `scene` as a scene chunk payload plus the meshes it names.
 pub fn encode_scene(scene: &Scene) -> Result<EncodedScene, EncodeSceneError> {
+    encode_scene_emptying(scene, &HashSet::new())
+}
+
+/// Encodes `scene` as [`encode_scene`] does, storing the leaves in `emptied`
+/// with an empty mesh that keeps only the mesh's name and comment: meshes the
+/// application rebuilds from other chunks, such as supports.
+pub fn encode_scene_emptying(
+    scene: &Scene,
+    emptied: &HashSet<NodeId>,
+) -> Result<EncodedScene, EncodeSceneError> {
     let mut encoder = Encoder {
         scene,
+        emptied,
         records: Out::default(),
         record_count: 0,
         nodes: HashMap::new(),
@@ -165,11 +186,13 @@ pub fn encode_scene(scene: &Scene) -> Result<EncodedScene, EncodeSceneError> {
     Ok(EncodedScene {
         payload: out.0,
         meshes: encoder.meshes,
+        nodes: encoder.nodes,
     })
 }
 
 struct Encoder<'s> {
     scene: &'s Scene,
+    emptied: &'s HashSet<NodeId>,
     records: Out,
     record_count: usize,
     nodes: HashMap<NodeId, usize>,
@@ -195,6 +218,21 @@ impl Encoder<'_> {
         }
         let node = self.scene.node(id).ok_or(EncodeSceneError::Inconsistent)?;
         let (kind, tail) = match &node.kind {
+            NodeKind::Leaf(payload) if self.emptied.contains(&id) => {
+                let mesh = match payload {
+                    LeafPayload::Mesh(arc) => Some(arc),
+                    LeafPayload::MeshResource(resource) => self.scene.mesh_resource_arc(*resource),
+                }
+                .ok_or(EncodeSceneError::Inconsistent)?;
+                let meta = mesh.meta().as_ref().map(|meta| MeshMetadata {
+                    name: meta.name.clone(),
+                    header_comment: meta.header_comment.clone(),
+                    declared_facet_normals: None,
+                });
+                let mut tail = Out::default();
+                tail.len(self.mesh(&Arc::new(IndexedMesh::new(meta, vec![], vec![]))));
+                (LEAF_MESH, tail)
+            }
             NodeKind::Group { children } => (GROUP, self.children(children)?),
             NodeKind::Csg { op, children } => {
                 let mut tail = Out::default();
@@ -275,7 +313,7 @@ impl Encoder<'_> {
 pub fn decode_scene(
     payload: &[u8],
     meshes: Vec<Arc<IndexedMesh>>,
-) -> Result<Scene, DecodeSceneError> {
+) -> Result<DecodedScene, DecodeSceneError> {
     let mut input = In(payload);
     let mut scene = Scene::new();
     scene.set_meta(read_meta(&mut input).ok_or(DecodeSceneError::Malformed)?);
@@ -355,7 +393,7 @@ pub fn decode_scene(
     if !input.is_empty() {
         return Err(DecodeSceneError::Malformed);
     }
-    Ok(scene)
+    Ok(DecodedScene { scene, nodes })
 }
 
 fn node_at(nodes: &[NodeId], index: Option<usize>) -> Result<NodeId, DecodeSceneError> {
