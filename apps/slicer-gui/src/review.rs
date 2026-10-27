@@ -12,6 +12,12 @@
 //! solid here, and merged with the plate's stacks for the preview and the
 //! printer file, so all three see the same cured pixels.
 //!
+//! Specks marked to erase by Fix All (#156) arrive the same way, as one more
+//! stack ([`erased_stack`]): cut from the model leaves and the fills, it
+//! cancels them inside the specks' pixels when merged with them, so the
+//! review, the preview and the printer file all see the specks gone. The
+//! model meshes are not touched.
+//!
 //! A review never fails the slice. An input the review refuses, or a panic
 //! inside a check, becomes [`ReviewOutcome::Failed`], and the slice lands as
 //! usual.
@@ -20,10 +26,12 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
-use sc_review::{CavityFill, Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, review_with};
+use sc_review::{
+    CavityFill, Finding, ReviewInput, ReviewLeaf, ReviewOptions, Role, erase_stack, review_with,
+};
 use sc_sl1cer::LeafSlices;
 use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::profile::SliceProfile;
+use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
 
 use crate::mesh_loader::panic_message;
 
@@ -37,6 +45,12 @@ pub(crate) enum ReviewOutcome {
         /// The pixels of the cavities offered a fill, by the index their
         /// fix names.
         fills: Vec<CavityFill>,
+        /// The pixels that erase each floating speck, by the index its fix
+        /// names (#156).
+        erasures: Vec<CavityFill>,
+        /// The pixels that thicken each thin model feature, by the index
+        /// its fix names (#156).
+        thickenings: Vec<CavityFill>,
         /// How long the review took, layer regions included.
         took: Duration,
     },
@@ -62,13 +76,34 @@ pub(crate) fn review_leaves(leaves: &[LeafSlices]) -> Vec<ReviewLeaf<'_>> {
         .collect()
 }
 
+/// The stack that erases `erasures` (#156) from the model leaves of
+/// `leaves` and from `filled`, all cut on `schedule`; `None` when nothing is
+/// erased. Supports are never erased: a new support may run through where
+/// a speck was.
+pub(crate) fn erased_stack<'e>(
+    leaves: &[LeafSlices],
+    filled: Option<&ContourStack>,
+    erasures: impl IntoIterator<Item = &'e CavityFill>,
+    schedule: &LayerSchedule,
+) -> Option<ContourStack> {
+    let models: Vec<&ContourStack> = leaves
+        .iter()
+        .filter(|slices| role_of(slices.leaf_name()) == Role::Model)
+        .map(LeafSlices::stack)
+        .chain(filled)
+        .collect();
+    erase_stack(erasures, &models, schedule)
+}
+
 /// Reviews the leaves of one slicing run, cut with `profile`: its layer
 /// schedule, its screen and its maximum height. `filled` is the stack of the
-/// cavities filled on this slice, reviewed as model. The supports stand on a
-/// raft whose top is `raft_top_mm` above the plate, or on none (#131).
+/// cavities filled on this slice, and `erased` the one that erases the
+/// specks ([`erased_stack`]), both reviewed as model. The supports stand on
+/// a raft whose top is `raft_top_mm` above the plate, or on none (#131).
 pub(crate) fn review_slices(
     leaves: &[LeafSlices],
     filled: Option<&ContourStack>,
+    erased: Option<&ContourStack>,
     profile: &SliceProfile,
     raft_top_mm: Option<f64>,
 ) -> ReviewOutcome {
@@ -76,6 +111,9 @@ pub(crate) fn review_slices(
         let mut leaves = review_leaves(leaves);
         if let Some(stack) = filled {
             leaves.push(ReviewLeaf::new(Some(FILLED_LEAF), Role::Model, stack));
+        }
+        if let Some(stack) = erased {
+            leaves.push(ReviewLeaf::new(Some(ERASED_LEAF), Role::Model, stack));
         }
         let input = ReviewInput::from_profile(leaves, profile)
             .map_err(|err| err.to_string())?
@@ -85,6 +123,8 @@ pub(crate) fn review_slices(
         Ok(ReviewOutcome::Reviewed {
             findings: report.findings,
             fills: report.fills,
+            erasures: report.erasures,
+            thickenings: report.thickenings,
             took: report.timings.total,
         })
     })
@@ -92,6 +132,9 @@ pub(crate) fn review_slices(
 
 /// The name of the filled cavities' leaf in the review.
 const FILLED_LEAF: &str = "Filled cavities";
+
+/// The name of the erased specks' leaf in the review.
+const ERASED_LEAF: &str = "Erased specks";
 
 /// Runs `review`, turning its error or its panic into
 /// [`ReviewOutcome::Failed`].
@@ -194,7 +237,7 @@ mod review_tests {
     #[test]
     fn a_plate_standing_on_the_build_plate_reviews_clean() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        match review_slices(&leaves, None, &profile(4), None) {
+        match review_slices(&leaves, None, None, &profile(4), None) {
             ReviewOutcome::Reviewed { findings, .. } => {
                 assert!(findings.is_empty(), "two cubes on the plate: {findings:?}")
             }
@@ -209,7 +252,7 @@ mod review_tests {
         add_cube(&mut scene, "Floating", [4.0, 0.0, 2.0]);
         let leaves = slice_scene(&scene, &profile(12)).expect("the scene slices");
         let ReviewOutcome::Reviewed { findings, .. } =
-            review_slices(&leaves, None, &profile(12), None)
+            review_slices(&leaves, None, None, &profile(12), None)
         else {
             panic!("the review failed");
         };
@@ -224,7 +267,7 @@ mod review_tests {
     #[test]
     fn stacks_that_do_not_fit_the_profile_fail_the_review_only() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
-        let outcome = review_slices(&leaves, None, &profile(8), None);
+        let outcome = review_slices(&leaves, None, None, &profile(8), None);
         let ReviewOutcome::Failed(why) = outcome else {
             panic!("a 4-layer slice reviewed on 8 layers: {outcome:?}");
         };
@@ -308,7 +351,7 @@ mod review_tests {
         let leaves = slice_scene(&hollow_cube(6.0, 2.0), &profile).expect("the scene slices");
         let ReviewOutcome::Reviewed {
             findings, fills, ..
-        } = review_slices(&leaves, None, &profile, None)
+        } = review_slices(&leaves, None, None, &profile, None)
         else {
             panic!("the review failed");
         };
@@ -326,7 +369,7 @@ mod review_tests {
 
         // Reviewed with the fill, the trap is gone.
         let ReviewOutcome::Reviewed { findings, .. } =
-            review_slices(&leaves, Some(&filled), &profile, None)
+            review_slices(&leaves, Some(&filled), None, &profile, None)
         else {
             panic!("the review failed");
         };

@@ -33,6 +33,23 @@
 //! which hides it until the scene changes. The notes (information) are
 //! folded until opened. Moving or re-meshing a model drops every mark, as it
 //! withdraws the fixes.
+//!
+//! "Fix all" (#156) resolves in one go every finding the app can fix by
+//! itself, then slices again so the new review shows the result:
+//!
+//! - islands and floating parts get a support at their suggested point, all
+//!   of them in one undoable edit ([`DfSupportRun::add_supports_at`]);
+//! - the small resin traps are marked to fill, as "Fill all small traps"
+//!   does;
+//! - floating specks are marked to erase, and thin model features to
+//!   thicken ([`PatchKind`]): the next slice removes the speck's pixels from
+//!   the models' layers, or cures the feature's pixels grown a pixel on
+//!   every side.
+//!
+//! Everything else stays as it is: a hollow without drain holes, suction
+//! cups, the output checks, a model in the raft and the supports' own
+//! findings. On the review that follows, each finding left says why Fix All
+//! left it ([`fix_all_leaves`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
@@ -50,7 +67,7 @@ use crate::df_support_run::{DfSupportRun, HandEdit, raft_lift_label};
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
 use crate::review::ReviewOutcome;
-use crate::review_marks::{FindingKey, ReviewMarks};
+use crate::review_marks::{FindingKey, PatchKind, ReviewMarks, SlicePatches};
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::selection::{LeafId, Selection};
 use crate::viewport::ViewportController;
@@ -139,6 +156,8 @@ struct HeldReview {
     hollows: Vec<Option<usize>>,
     /// Findings whose fix was applied since the slice.
     fixed: BTreeSet<usize>,
+    /// Whether Fix All asked for this slice: the findings left say why.
+    after_fix_all: bool,
 }
 
 pub(crate) struct ReviewPanel {
@@ -153,6 +172,11 @@ pub(crate) struct ReviewPanel {
     marks: RefCell<ReviewMarks<Vec<ModelPose>>>,
     /// Whether the notes (information) are unfolded.
     notes_open: Cell<bool>,
+    /// Whether Fix All asked for the slice in flight.
+    fix_all_slicing: Cell<bool>,
+    /// Starts a slice without asking to overwrite the held one: Fix All
+    /// promises one. Set by the Slice driver.
+    reslice: RefCell<Option<Box<dyn Fn()>>>,
     scene_events: RefCell<Option<SceneSubscription>>,
 }
 
@@ -175,6 +199,8 @@ impl ReviewPanel {
             held: RefCell::new(None),
             marks: RefCell::new(ReviewMarks::default()),
             notes_open: Cell::new(false),
+            fix_all_slicing: Cell::new(false),
+            reslice: RefCell::new(None),
             scene_events: RefCell::new(None),
         });
         {
@@ -243,6 +269,12 @@ impl ReviewPanel {
             }
         });
         let weak = Rc::downgrade(self);
+        ui.on_review_fix_all_requested(move || {
+            if let Some(panel) = weak.upgrade() {
+                panel.fix_all();
+            }
+        });
+        let weak = Rc::downgrade(self);
         ui.on_review_notes_toggled(move || {
             if let Some(panel) = weak.upgrade() {
                 panel.notes_open.set(!panel.notes_open.get());
@@ -258,12 +290,23 @@ impl ReviewPanel {
         self.marks.borrow().pending()
     }
 
-    /// The fills the next slice cures, and their ids for
+    /// What the next slice cures and erases, with the marks' ids for
     /// [`fills_landed`](Self::fills_landed). Marks made on models that have
     /// changed since are dropped first.
-    pub(crate) fn fills_for_slice(&self) -> (Vec<u64>, Vec<Arc<CavityFill>>) {
+    pub(crate) fn fills_for_slice(&self) -> SlicePatches {
         self.follow_models();
         self.marks.borrow().for_slice()
+    }
+
+    /// Lets Fix All start a slice: `reslice` starts one without asking to
+    /// overwrite the held slice.
+    pub(crate) fn set_reslice(&self, reslice: impl Fn() + 'static) {
+        *self.reslice.borrow_mut() = Some(Box::new(reslice));
+    }
+
+    /// A slice is starting: it is Fix All's when Fix All asked for it.
+    pub(crate) fn slice_started(&self, by_fix_all: bool) {
+        self.fix_all_slicing.set(by_fix_all);
     }
 
     /// Records that the slice about to be shown cured the fills `ids`.
@@ -374,6 +417,122 @@ impl ReviewPanel {
         )));
     }
 
+    /// What Fix All would do with the held review: the fixes it applies,
+    /// without the findings left alone, fixed already or marked.
+    fn fix_all_plan(&self) -> FixAllPlan {
+        let held = self.held.borrow();
+        let Some(held) = held.as_ref() else {
+            return FixAllPlan::default();
+        };
+        let ReviewOutcome::Reviewed {
+            findings,
+            fills,
+            erasures,
+            thickenings,
+            ..
+        } = &held.outcome
+        else {
+            return FixAllPlan::default();
+        };
+        let marks = self.marks.borrow();
+        plan_fix_all(findings, fills, erasures, thickenings, |i| {
+            let key = FindingKey::of(&findings[i]);
+            held.fixed.contains(&i) || marks.is_left(&key) || marks.is_marked(&key)
+        })
+    }
+
+    /// Fix All (#156): adds the supports in one undoable edit, marks the
+    /// small traps to fill, the specks to erase and the thin features to
+    /// thicken, then slices again.
+    fn fix_all(&self) {
+        if self
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_slicing_in_progress())
+        {
+            return;
+        }
+        let Some(models) = self.markable_models() else {
+            return;
+        };
+        let plan = self.fix_all_plan();
+        if plan.is_empty() {
+            return;
+        }
+        let mut lines: Vec<String> = Vec::new();
+        let mut changed = false;
+        if !plan.supports.is_empty() {
+            match self.supports.add_supports_at(&plan.support_points()) {
+                (HandEdit::Applied, added) => {
+                    changed = true;
+                    for &(i, _) in &plan.supports {
+                        self.mark_fixed(i);
+                    }
+                    lines.push(
+                        ctr!("Review", "One support added.", "{n} supports added.", added)
+                            .to_string(),
+                    );
+                }
+                (HandEdit::Failed(why), _) => lines
+                    .push(ctr!("Review", "The supports could not be added: {}", why).to_string()),
+                (HandEdit::Notified, _) => lines
+                    .push(ctr!("Review", "No supports were added: see the notice.").to_string()),
+            }
+        }
+        let mut counts = [0usize; 3];
+        {
+            let mut marks = self.marks.borrow_mut();
+            for (i, kind, fill) in &plan.patches {
+                let key = FindingKey::of(&self.finding(*i as i32).expect("a planned finding"));
+                marks.mark(*kind, key, fill, &models);
+                counts[*kind as usize] += 1;
+            }
+        }
+        let [filled, thickened, erased] = counts;
+        if filled > 0 {
+            lines.push(
+                ctr!(
+                    "Review",
+                    "One cavity to fill.",
+                    "{n} cavities to fill.",
+                    filled
+                )
+                .to_string(),
+            );
+        }
+        if erased > 0 {
+            lines.push(
+                ctr!(
+                    "Review",
+                    "One speck to erase.",
+                    "{n} specks to erase.",
+                    erased
+                )
+                .to_string(),
+            );
+        }
+        if thickened > 0 {
+            lines.push(
+                ctr!(
+                    "Review",
+                    "One thin feature to thicken.",
+                    "{n} thin features to thicken.",
+                    thickened
+                )
+                .to_string(),
+            );
+        }
+        changed |= filled + erased + thickened > 0;
+        let reslice = self.reslice.borrow();
+        if changed && let Some(reslice) = reslice.as_ref() {
+            lines.push(ctr!("Review", "Slicing again…").to_string());
+            self.push(Some(lines.join(" ").into()));
+            reslice();
+        } else {
+            self.push(Some(lines.join(" ").into()));
+        }
+    }
+
     /// Hides the finding until the scene changes.
     fn leave(&self, id: i32) {
         let Some(finding) = self.finding(id) else {
@@ -420,17 +579,28 @@ impl ReviewPanel {
         } else {
             self.current_models()
         };
+        let after_fix_all = self.fix_all_slicing.replace(false);
+        let left = match &outcome {
+            ReviewOutcome::Reviewed { findings, .. } => findings.len(),
+            ReviewOutcome::Failed(_) => 0,
+        };
         *self.held.borrow_mut() = Some(HeldReview {
             generation: self.document.slice_generation(),
             models,
             outcome,
             hollows,
             fixed: BTreeSet::new(),
+            after_fix_all,
         });
         if let Some(ui) = self.ui.upgrade() {
             ui.set_review_selected(-1);
         }
-        self.push(None);
+        self.push((after_fix_all && left > 0).then(|| {
+            ctr!(
+                "Review",
+                "Fix All is done. Each finding left says why it was left."
+            )
+        }));
     }
 
     fn on_scene_event(&self, event: SceneEvent) {
@@ -497,6 +667,14 @@ impl ReviewPanel {
         let sliced = self.document.slice_layer_count().is_some();
         let mut notes = 0;
         let mut small = 0;
+        let fix_all = if held
+            .as_ref()
+            .is_some_and(|held| sliced && self.fixes_apply(held))
+        {
+            self.fix_all_plan().len()
+        } else {
+            0
+        };
         let (state, rows, summary, worst, failure) = match held.as_ref() {
             _ if !sliced => (CardState::Empty, Vec::new(), String::new(), -1, None),
             None => (CardState::NotReviewed, Vec::new(), String::new(), -1, None),
@@ -528,7 +706,13 @@ impl ReviewPanel {
                     (
                         CardState::Reviewed,
                         mark_rows(
-                            review_rows(findings, &held.hollows, &held.fixed, fixable),
+                            review_rows(
+                                findings,
+                                &held.hollows,
+                                &held.fixed,
+                                fixable,
+                                held.after_fix_all,
+                            ),
                             findings,
                             &row_marks,
                         ),
@@ -558,10 +742,22 @@ impl ReviewPanel {
         ui.set_review_notes(notes as i32);
         ui.set_review_notes_open(self.notes_open.get());
         ui.set_review_fill_small(small as i32);
+        ui.set_review_fix_all(fix_all as i32);
         ui.set_review_fills_note(
-            fills_note(marks.fill_count(), marks.cured_count(), marks.pending()).into(),
+            fills_note(
+                marks.fill_count(),
+                marks.cured_count(),
+                marks.pending(),
+                marks.only_cavities(),
+            )
+            .into(),
         );
         ui.set_review_fills_clearable(marks.fill_count() > 0);
+        ui.set_review_fills_clear_label(if marks.only_cavities() {
+            ctr!("Review", "Clear fills")
+        } else {
+            ctr!("Review", "Clear fixes")
+        });
     }
 
     /// The finding with index `id` in the held review.
@@ -652,7 +848,8 @@ impl ReviewPanel {
                     ))
                 }
             }
-            None => return,
+            // Applied by Fix All only, which offers no button per row.
+            Some(SuggestedFix::Erase { .. } | SuggestedFix::Thicken { .. }) | None => return,
         };
         self.push(message);
     }
@@ -715,12 +912,14 @@ fn worst_severity(findings: &[Finding]) -> i32 {
 /// listing order (layer, then check), the first row of a group carrying its
 /// heading. A row's `id` is the finding's index in `findings`. Unless
 /// `fixable` (the models still stand as sliced), no row offers a fix; a row
-/// whose fix was applied keeps its kind, for its mark.
+/// whose fix was applied keeps its kind, for its mark. `after_fix_all`: the
+/// slice Fix All asked for, so every row says why Fix All left it.
 fn review_rows(
     findings: &[Finding],
     hollows: &[Option<usize>],
     fixed: &BTreeSet<usize>,
     fixable: bool,
+    after_fix_all: bool,
 ) -> Vec<ReviewRow> {
     let mut order: Vec<usize> = (0..findings.len()).collect();
     // Stable: listing order stays within a severity.
@@ -747,6 +946,8 @@ fn review_rows(
             // Offered through the row's fill, see `mark_rows`.
             Some(SuggestedFix::Fill { .. }) => FixKind::None,
             Some(SuggestedFix::ClearRaft { .. }) => FixKind::ClearRaft,
+            // Applied by Fix All only.
+            Some(SuggestedFix::Erase { .. } | SuggestedFix::Thicken { .. }) => FixKind::None,
         };
         let lift_label = match finding.fix {
             Some(SuggestedFix::ClearRaft { lift_to_mm }) => raft_lift_label(lift_to_mm),
@@ -782,9 +983,135 @@ fn review_rows(
             fill: 0,
             leave: false,
             lift_label,
+            remains: if after_fix_all {
+                fix_all_leaves(finding, hollow_drains(hollows, i))
+            } else {
+                SharedString::default()
+            },
         });
     }
     rows
+}
+
+/// What Fix All does with a review (#156): the supports to add, by finding
+/// and point, and the pixels to mark for the next slice, by finding.
+#[derive(Debug, Default)]
+struct FixAllPlan {
+    supports: Vec<(usize, [f32; 3])>,
+    patches: Vec<(usize, PatchKind, CavityFill)>,
+}
+
+impl FixAllPlan {
+    /// Where the supports go, each point once: an island that is also a
+    /// floating part is the same spot, found twice.
+    fn support_points(&self) -> Vec<[f32; 3]> {
+        let mut points: Vec<[f32; 3]> = Vec::new();
+        for &(_, at) in &self.supports {
+            let twin = points
+                .iter()
+                .any(|other| at.iter().zip(other).all(|(a, b)| (a - b).abs() < 1e-3));
+            if !twin {
+                points.push(at);
+            }
+        }
+        points
+    }
+
+    /// How many findings it fixes.
+    fn len(&self) -> usize {
+        self.supports.len() + self.patches.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Fix All's plan for `findings` and the pixels their fixes name, without
+/// the findings `skip` names: a support under every island and floating
+/// part, a fill in every small resin trap (as "Fill all small traps"), an
+/// erasure of every speck and a thickening of every thin model feature that
+/// no erasure touches. Everything else is left.
+fn plan_fix_all(
+    findings: &[Finding],
+    fills: &[CavityFill],
+    erasures: &[CavityFill],
+    thickenings: &[CavityFill],
+    skip: impl Fn(usize) -> bool,
+) -> FixAllPlan {
+    let mut plan = FixAllPlan::default();
+    let mut thicken = Vec::new();
+    for (i, finding) in findings.iter().enumerate() {
+        if skip(i) {
+            continue;
+        }
+        match finding.fix {
+            Some(SuggestedFix::AddSupport { at }) => plan.supports.push((i, world(at))),
+            Some(SuggestedFix::Fill { cavity, .. }) if finding.check == CheckKind::ResinTrap => {
+                if let Some(fill) = fills.get(cavity) {
+                    plan.patches.push((i, PatchKind::Fill, fill.clone()));
+                }
+            }
+            Some(SuggestedFix::Erase { speck, .. }) => {
+                if let Some(erasure) = erasures.get(speck) {
+                    plan.patches.push((i, PatchKind::Erase, erasure.clone()));
+                }
+            }
+            Some(SuggestedFix::Thicken { feature, .. }) => {
+                if let Some(thickening) = thickenings.get(feature) {
+                    thicken.push((i, thickening));
+                }
+            }
+            _ => {}
+        }
+    }
+    // An erasure wins over a thickening of the same pixels: the speck goes.
+    for (i, thickening) in thicken {
+        let erased = plan
+            .patches
+            .iter()
+            .any(|(_, kind, erasure)| *kind == PatchKind::Erase && erasure.overlaps(thickening));
+        if !erased {
+            plan.patches
+                .push((i, PatchKind::Thicken, thickening.clone()));
+        }
+    }
+    plan
+}
+
+/// Why Fix All left `finding`, for the review of the slice it asked for.
+/// `drains`: the drain holes of the hollow made here that holds its cavity.
+fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
+    match (finding.check, finding.fix) {
+        (_, Some(SuggestedFix::AddDrain { .. })) if drains.is_some() => ctr!(
+            "Review",
+            "Left by Fix All: drain holes are placed by hand, in the Hollow tab."
+        ),
+        (CheckKind::ResinTrap | CheckKind::SuctionCup, _) => ctr!(
+            "Review",
+            "Left by Fix All: this cavity needs an opening, which only a change to the model makes."
+        ),
+        (CheckKind::ModelInRaft, _) => ctr!(
+            "Review",
+            "Left by Fix All: lift the model or turn the raft off with this finding's buttons."
+        ),
+        (CheckKind::PlateEdge | CheckKind::TooTall | CheckKind::EmptyLayer, _) => ctr!(
+            "Review",
+            "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
+        ),
+        _ if finding.scope == sc_review::RoleScope::Support => ctr!(
+            "Review",
+            "Left by Fix All: this is in the supports. Generate them again."
+        ),
+        (_, Some(SuggestedFix::AddSupport { .. })) => ctr!(
+            "Review",
+            "Left by Fix All: no support held here. Add one by hand."
+        ),
+        _ => ctr!(
+            "Review",
+            "Left by Fix All: it could not fix this. Change the model by hand."
+        ),
+    }
 }
 
 /// The drain holes of the hollow made here that holds finding `i`'s cavity.
@@ -903,8 +1230,29 @@ fn summary_with_fixed(summary: String, fixed: usize) -> String {
 }
 
 /// The line about the fills: those marked for the next slice, or those the
-/// held slice cured.
-fn fills_note(marked: usize, cured: usize, pending: bool) -> String {
+/// held slice cured. Unless `only_cavities`, the marks include Fix All's
+/// erasures and thickenings, and the line speaks of fixes.
+fn fills_note(marked: usize, cured: usize, pending: bool, only_cavities: bool) -> String {
+    if !only_cavities {
+        return match (pending, marked) {
+            (true, 0) => ctr!("Review", "The fixes are cleared. Slice again to apply.").to_string(),
+            (true, n) => ctr!(
+                "Review",
+                "One fix will be applied. Slice again to apply.",
+                "{n} fixes will be applied. Slice again to apply.",
+                n
+            )
+            .to_string(),
+            (false, _) if cured > 0 => ctr!(
+                "Review",
+                "One fix is applied in this slice.",
+                "{n} fixes are applied in this slice.",
+                cured
+            )
+            .to_string(),
+            _ => String::new(),
+        };
+    }
     match (pending, marked) {
         (true, 0) => ctr!("Review", "The fills are cleared. Slice again to apply.").to_string(),
         (true, n) => ctr!(

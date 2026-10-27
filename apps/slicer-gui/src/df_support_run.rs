@@ -1209,9 +1209,41 @@ impl DfSupportRun {
         self.hand_edit(&ui, 1, point)
     }
 
+    /// Adds a support at every point of `points` (world mm) as one undoable
+    /// edit, for the Review card's Fix All (#156). Points the engine refuses
+    /// are skipped; returns the outcome and how many supports went in.
+    pub(crate) fn add_supports_at(&self, points: &[[f32; 3]]) -> (HandEdit, usize) {
+        let Some(ui) = self.ui.upgrade() else {
+            return (HandEdit::Notified, 0);
+        };
+        self.hand_edits(&ui, 1, points)
+    }
+
     /// Adds (tool 1) or removes (tool 2) a support at `point`. The outcome
     /// also goes to the Supports tab's last-run line.
     fn hand_edit(&self, ui: &MainWindow, tool: i32, point: [f32; 3]) -> HandEdit {
+        self.hand_edits(ui, tool, &[point]).0
+    }
+
+    /// Adds (tool 1) or removes (tool 2) a support at every point of
+    /// `points`, as one undoable edit, and returns how many points took. A
+    /// point the engine refuses is skipped; the edit fails when none took.
+    fn hand_edits(&self, ui: &MainWindow, tool: i32, points: &[[f32; 3]]) -> (HandEdit, usize) {
+        if points.is_empty() {
+            return (HandEdit::Notified, 0);
+        }
+        let mut took = 0;
+        let outcome = self.hand_edits_counted(ui, tool, points, &mut took);
+        (outcome, took)
+    }
+
+    fn hand_edits_counted(
+        &self,
+        ui: &MainWindow,
+        tool: i32,
+        points: &[[f32; 3]],
+        took: &mut usize,
+    ) -> HandEdit {
         if self.handle.borrow().is_some() {
             return HandEdit::Failed(ctr!(
                 "DfSupportDialog",
@@ -1277,12 +1309,14 @@ impl DfSupportRun {
             );
             return HandEdit::Notified;
         };
-        crate::breadcrumbs::note(&format!("supports: click tool={tool}"));
-        let p = point.map(f64::from);
+        crate::breadcrumbs::note(&format!(
+            "supports: click tool={tool} points={}",
+            points.len()
+        ));
         // The preview of this very point already placed it: take that.
         let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
             let drawn_on = self.sessions.borrow()[current].1;
-            (answer.tool == tool && answer.point == point && answer.from == (current, drawn_on))
+            (points == [answer.point] && answer.tool == tool && answer.from == (current, drawn_on))
                 .then_some(answer.edited)
                 .flatten()
         });
@@ -1292,11 +1326,24 @@ impl DfSupportRun {
         // The port is DragonFruit's code on hand-picked input: a panic in it
         // is an edit that failed, not a reason to lose the person's work.
         let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if !reused {
-                if tool == 1 {
-                    edited.add_trunk_at(p)?;
-                } else {
-                    edited.remove_near(p)?;
+            if reused {
+                *took = 1;
+            } else {
+                let mut refused = None;
+                for point in points {
+                    let p = point.map(f64::from);
+                    let edit = if tool == 1 {
+                        edited.add_trunk_at(p)
+                    } else {
+                        edited.remove_near(p).map(|_| ())
+                    };
+                    match edit {
+                        Ok(()) => *took += 1,
+                        Err(err) => refused = Some(err),
+                    }
+                }
+                if let (0, Some(err)) = (*took, refused) {
+                    return Err(err);
                 }
             }
             edited.mesh()
@@ -1668,6 +1715,63 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
         assert!(edits);
+    }
+
+    /// Fix All's supports (#156): several points, one undoable edit; one
+    /// undo takes them all back.
+    #[test]
+    fn supports_at_several_points_are_one_undoable_edit() {
+        let (outcome, added, roots, undone) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let roots = |run: &DfSupportRun| {
+                let sessions = run.sessions.borrow();
+                sessions
+                    .last()
+                    .map_or(0, |s| s.0.state().collections.roots.len())
+            };
+            let generated = roots(&run);
+            let mesh = |document: &SceneDocument| {
+                document.with_scene(|spatial| {
+                    let (node, _) = run.support_leaf().expect("the supports' leaf");
+                    spatial.graph().leaf_mesh_arc(node).map(|m| m.faces().len())
+                })
+            };
+            let before = mesh(&document);
+            let (outcome, added) =
+                run.add_supports_at(&[[20.2, 20.2, 7.5], [19.8, 19.8, 7.5], [20.2, 19.8, 7.5]]);
+            let after = roots(&run);
+            assert_ne!(mesh(&document), before, "the supports changed");
+            document.undo().expect("one undo");
+            (
+                outcome,
+                added,
+                (generated, after),
+                mesh(&document) == before,
+            )
+        });
+        assert!(matches!(outcome, HandEdit::Applied), "{outcome:?}");
+        assert!(added >= 2, "{added} of 3 points took, {roots:?} roots");
+        assert!(undone, "one undo takes every support back");
     }
 
     /// Generate with the model on the plate raises the raft warning (#131);
