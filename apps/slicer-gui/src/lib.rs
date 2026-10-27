@@ -57,6 +57,8 @@ mod profile_view;
 mod project_profiles;
 mod reloaded_slices;
 mod repair_run;
+mod review;
+mod review_panel;
 mod save_progress;
 mod save_progress_panel;
 mod scene_document;

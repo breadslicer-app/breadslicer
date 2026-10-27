@@ -2328,3 +2328,155 @@ msgstr "Registro de diagnóstico (para reportar errores)"
 msgctxt "AppearancePreferences"
 msgid "Open logs folder"
 msgstr "Abrir carpeta de registros"
+
+#: ui/main-window.slint
+msgctxt "SlicePanel"
+msgid "Checking the layers..."
+msgstr "Revisando las capas..."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "REVIEW"
+msgstr "REVISIÓN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Out of date"
+msgstr "Desactualizada"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Add support here"
+msgstr "Agregar soporte acá"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Add drain here"
+msgstr "Agregar drenaje acá"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab."
+msgstr "Un drenaje por el piso la vaciaría. Los drenajes se perforan en modelos ahuecados en la pestaña Ahuecar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Support added."
+msgstr "Soporte agregado."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Drain requested."
+msgstr "Drenaje pedido."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "This slice was not reviewed. Slice again to check it."
+msgstr "Este laminado no se revisó. Laminá de nuevo para revisarlo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "The scene changed since this slice. Slice again to review it."
+msgstr "La escena cambió desde este laminado. Laminá de nuevo para revisarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Click a finding to show its layer and centre the view on it."
+msgstr "Hacé clic en un hallazgo para ver su capa y centrar la vista en él."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "The checks could not run: {}"
+msgstr "No se pudieron hacer las revisiones: {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Support added. Slice again to check the result."
+msgstr "Soporte agregado. Laminá de nuevo para revisar el resultado."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "The support could not be added: {}"
+msgstr "No se pudo agregar el soporte: {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Hollowing the model again with the drain. Slice again when it is done."
+msgstr "Ahuecando el modelo de nuevo con el drenaje. Laminá de nuevo cuando termine."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "A model is being hollowed; try again when it is done."
+msgstr "Se está ahuecando un modelo; probá de nuevo cuando termine."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "This cavity is not in a model hollowed here, so the drain cannot be drilled."
+msgstr "Esta cavidad no está en un modelo ahuecado acá, así que no se puede perforar el drenaje."
+
+msgctxt "Review"
+msgid "The models changed since this slice. Slice again before applying a fix."
+msgstr "Los modelos cambiaron desde este laminado. Laminá de nuevo antes de aplicar una corrección."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Errors"
+msgstr "Errores"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Warnings"
+msgstr "Advertencias"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Notes"
+msgstr "Notas"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Layer {}"
+msgstr "Capa {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Layers {}–{}"
+msgstr "Capas {}–{}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No problems found"
+msgstr "No se encontraron problemas"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports are being generated; try again when they are done."
+msgstr "Se están generando los soportes; probá de nuevo cuando terminen."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} error"
+msgid_plural "{n} errors"
+msgstr[0] "{n} error"
+msgstr[1] "{n} errores"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} warning"
+msgid_plural "{n} warnings"
+msgstr[0] "{n} advertencia"
+msgstr[1] "{n} advertencias"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "{n} note"
+msgid_plural "{n} notes"
+msgstr[0] "{n} nota"
+msgstr[1] "{n} notas"
