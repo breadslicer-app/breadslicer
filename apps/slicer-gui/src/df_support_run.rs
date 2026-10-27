@@ -158,6 +158,17 @@ pub(crate) struct DfSupportRun {
 /// How often the UI looks for a finished preview.
 const HOVER_POLL: Duration = Duration::from_millis(16);
 
+/// How a hand edit of the supports ended.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum HandEdit {
+    /// The edit is in the scene, as one undoable step.
+    Applied,
+    /// Nothing changed, for this reason.
+    Failed(slint::SharedString),
+    /// Nothing changed, and a notice already told the person why.
+    Notified,
+}
+
 /// A preview to compute: the session to edit, where, and with which tool.
 struct HoverAsk {
     generation: u64,
@@ -1017,9 +1028,36 @@ impl DfSupportRun {
             return;
         };
         let tool = ui.get_support_tool();
-        if tool == 0 || self.handle.borrow().is_some() {
+        if tool == 0 {
             return;
         }
+        self.hand_edit(&ui, tool, point);
+    }
+
+    /// Adds a support whose tip touches the model at `point` (world mm), the
+    /// way a click with the Add tool does: one undoable edit of the supports
+    /// generated last, or a notice when there are none to edit. For the
+    /// Review card's "Add support here".
+    pub(crate) fn add_support_at(&self, point: [f32; 3]) -> HandEdit {
+        let Some(ui) = self.ui.upgrade() else {
+            return HandEdit::Notified;
+        };
+        self.hand_edit(&ui, 1, point)
+    }
+
+    /// Adds (tool 1) or removes (tool 2) a support at `point`. The outcome
+    /// also goes to the Supports tab's last-run line.
+    fn hand_edit(&self, ui: &MainWindow, tool: i32, point: [f32; 3]) -> HandEdit {
+        if self.handle.borrow().is_some() {
+            return HandEdit::Failed(ctr!(
+                "DfSupportDialog",
+                "Supports are being generated; try again when they are done."
+            ));
+        }
+        let failed = |message: slint::SharedString| {
+            ui.set_supports_last_run(message.clone());
+            HandEdit::Failed(message)
+        };
         let notice = |heading: slint::SharedString, message: String| {
             self.dialogs.show_info(move || InfoTexts {
                 heading: heading.clone(),
@@ -1038,7 +1076,7 @@ impl DfSupportRun {
                 )
                 .to_string(),
             );
-            return;
+            return HandEdit::Notified;
         }
         let Some(current) = self.current_session() else {
             notice(
@@ -1049,7 +1087,7 @@ impl DfSupportRun {
                 )
                 .to_string(),
             );
-            return;
+            return HandEdit::Notified;
         };
         crate::breadcrumbs::note(&format!("supports: click tool={tool}"));
         let p = point.map(f64::from);
@@ -1077,23 +1115,18 @@ impl DfSupportRun {
         }));
         let mesh = match done {
             Err(_) => {
-                ui.set_supports_last_run(ctr!(
+                return failed(ctr!(
                     "DfSupportDialog",
                     "That edit failed inside the support engine; nothing was changed."
                 ));
-                return;
             }
-            Ok(Err(err)) => {
-                ui.set_supports_last_run(err.to_string().into());
-                return;
-            }
+            Ok(Err(err)) => return failed(err.to_string().into()),
             Ok(Ok(Some(mesh))) => mesh,
             Ok(Ok(None)) => {
-                ui.set_supports_last_run(ctr!(
+                return failed(ctr!(
                     "DfSupportDialog",
                     "That was the last support; use Undo to bring it back."
                 ));
-                return;
             }
         };
         crate::breadcrumbs::note(&format!(
@@ -1106,11 +1139,10 @@ impl DfSupportRun {
                 .flatten()
         });
         let Some(swap) = swap else {
-            ui.set_supports_last_run(ctr!(
+            return failed(ctr!(
                 "DfSupportDialog",
                 "The support mesh is not in the scene; generate supports again."
             ));
-            return;
         };
         match self.document.apply_edit(swap.clone()) {
             Ok(_) => {
@@ -1125,8 +1157,9 @@ impl DfSupportRun {
                 );
                 drop(sessions);
                 self.warm_worker();
+                HandEdit::Applied
             }
-            Err(err) => ui.set_supports_last_run(format!("The edit was refused: {err:?}").into()),
+            Err(err) => failed(format!("The edit was refused: {err:?}").into()),
         }
     }
 
