@@ -62,18 +62,19 @@ pub(in crate::mesh_render) fn label_quad(text_box: [f32; 4]) -> [LabelVertex; 6]
 }
 
 /// Builds the copy of [`label_quad`] read from below: the same box at
-/// height `z`, mirrored in `u` so the word reads the right way round
-/// from underneath, and wound counter-clockwise as seen from below.
+/// height `z`, mirrored in `v` so the word reads the right way round
+/// from underneath (looking up, the plate's front edge is at the top
+/// of the view), and wound counter-clockwise as seen from below.
 pub(in crate::mesh_render) fn underside_label_quad(text_box: [f32; 4], z: f32) -> [LabelVertex; 6] {
     let [min_x, min_y, max_x, max_y] = text_box;
     let corner = |x: f32, y: f32, u: f32, v: f32| LabelVertex {
         position: [x, y, z],
         uv: [u, v],
     };
-    let bottom_left = corner(min_x, min_y, 1.0, 0.0);
-    let bottom_right = corner(max_x, min_y, 0.0, 0.0);
-    let top_right = corner(max_x, max_y, 0.0, 1.0);
-    let top_left = corner(min_x, max_y, 1.0, 1.0);
+    let bottom_left = corner(min_x, min_y, 0.0, 1.0);
+    let bottom_right = corner(max_x, min_y, 1.0, 1.0);
+    let top_right = corner(max_x, max_y, 1.0, 0.0);
+    let top_left = corner(min_x, max_y, 0.0, 0.0);
     [
         bottom_left,
         top_right,
@@ -277,20 +278,21 @@ mod label_quad_tests {
     }
 
     #[test]
-    fn the_underside_copy_faces_down_and_is_mirrored() {
+    fn the_underside_copy_faces_down_and_is_mirrored_in_v() {
         let quad = underside_label_quad([-10.0, -70.0, 10.0, -64.0], -4.0);
 
         for corner in &quad {
             assert_eq!(corner.position[2], -4.0);
-            // Mirrored in u: the word's start is at +X, which is the
-            // left as seen from below.
+            // Mirrored in v: the top of the word points to the plate's
+            // front edge, which is at the top of the view from below;
+            // the word still runs with +X.
             assert_eq!(
                 corner.uv[0],
-                if corner.position[0] < 0.0 { 1.0 } else { 0.0 }
+                if corner.position[0] < 0.0 { 0.0 } else { 1.0 }
             );
             assert_eq!(
                 corner.uv[1],
-                if corner.position[1] < -67.0 { 0.0 } else { 1.0 }
+                if corner.position[1] < -67.0 { 1.0 } else { 0.0 }
             );
         }
         for triangle in quad.chunks(3) {
