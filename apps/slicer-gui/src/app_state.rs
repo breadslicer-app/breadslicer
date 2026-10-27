@@ -2361,19 +2361,27 @@ mod window_wiring_tests {
 
     #[test]
     fn a_dragonfruit_support_press_starts_a_cancelable_run() {
-        let (before, after, cancelable) = on_fresh_slint_thread(|| {
+        let (before, held, warned, after, cancelable) = on_fresh_slint_thread(|| {
             let app = test_app(PreferencesSnapshot::for_tests());
             let (window, _pending_load, controller) = new_window(&app);
             let _drivers = app.install_window_drivers(&window, &controller);
             load_cube(&controller);
             let before = window.get_support_gen_in_progress();
+            // The cube rests on the plate, in the raft: the press waits for
+            // the raft warning's answer (#131).
             window.invoke_df_support_requested();
+            let held = window.get_support_gen_in_progress();
+            let warned = !window.get_support_raft_clash_message().is_empty();
+            window.invoke_support_raft_ignore_requested();
             let after = window.get_support_gen_in_progress();
             let cancelable = window.get_support_gen_cancelable();
             window.invoke_support_gen_cancel_requested();
-            (before, after, cancelable)
+            (before, held, warned, after, cancelable)
         });
-        assert_eq!((before, after, cancelable), (false, true, true));
+        assert_eq!(
+            (before, held, warned, after, cancelable),
+            (false, false, true, true, true)
+        );
     }
 
     #[test]

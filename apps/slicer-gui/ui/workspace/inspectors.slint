@@ -708,6 +708,7 @@ export component SupportsInspector inherits VerticalLayout {
     callback drop-to-plate();
     callback raft-lift();
     callback raft-off();
+    callback raft-ignore();
 
     spacing: 12px;
 
@@ -737,6 +738,13 @@ export component SupportsInspector inherits VerticalLayout {
                 clicked => {
                     root.raft-off();
                 }
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Generate anyway");
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.raft-ignore();
             }
         }
     }
