@@ -192,6 +192,7 @@ export component MainWindow inherits Window {
     in property <string> support-raft-lift-label;
     callback support-raft-lift-requested();
     callback support-raft-off-requested();
+    callback support-raft-ignore-requested();
     // The Supports tab manual tool: 0 none, 1 add a support where the model
     // is clicked, 2 remove the support clicked.
     in-out property <int> support-tool: 0;
@@ -1338,6 +1339,9 @@ export component MainWindow inherits Window {
                             }
                             raft-off => {
                                 root.support-raft-off-requested();
+                            }
+                            raft-ignore => {
+                                root.support-raft-ignore-requested();
                             }
                             selection-valid: root.selection-valid;
                             lift: root.selection-pos-z;
