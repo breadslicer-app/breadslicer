@@ -42,9 +42,9 @@ mod ui_language_tests {
     use crate::language::{BundledLanguage, LanguagePreference};
     use crate::preferences_bus::PreferencesSnapshot;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
-    use crate::{ErrorDialog, ThemePreference};
+    use crate::{MainWindow, ThemePreference};
 
-    /// The source text of `ErrorDialog.heading`.
+    /// The source text of `MainWindow.message-default-heading`.
     const ENGLISH_HEADING: &str = "An error occurred";
 
     fn bundled(code: &str) -> LanguagePreference {
@@ -58,15 +58,15 @@ mod ui_language_tests {
         })
     }
 
-    fn new_dialog() -> ErrorDialog {
-        ErrorDialog::new().expect("the headless platform creates components")
+    fn new_dialog() -> MainWindow {
+        MainWindow::new().expect("the headless platform creates components")
     }
 
-    fn heading(dialog: &ErrorDialog) -> String {
-        dialog.get_heading().to_string()
+    fn heading(dialog: &MainWindow) -> String {
+        dialog.get_message_default_heading().to_string()
     }
 
-    fn follow_from(dialog: &ErrorDialog, bus: &Rc<PreferencesBus>) -> UiLanguage {
+    fn follow_from(dialog: &MainWindow, bus: &Rc<PreferencesBus>) -> UiLanguage {
         UiLanguage::follow(InstalledTranslations::proven_by(dialog), bus)
     }
 

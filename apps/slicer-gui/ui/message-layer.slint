@@ -1,0 +1,334 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL, 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The app's messages, drawn inside the main window (#133): a dimmed layer over
+// the whole window with the message card centred on it, so every message opens
+// in the same place, over the window it is about. Rust (`error_dialog.rs`)
+// owns the queue and the policy: it decides which messages a click outside
+// closes and which offer "Don't show again"; this layer only reports what the
+// person did.
+
+import { CheckBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "kit/theme.slint";
+import { ButtonKind, ScButton } from "kit/controls.slint";
+
+export enum MessageKind { info, error, scene-change, slice-overwrite }
+
+// What the person did with the message. `cancel` is also Escape and Enter;
+// Rust reads it as "close" for a message with nothing to decide.
+export enum MessageAnswer { close, discard, save, export, confirm, cancel }
+
+export struct AppMessage {
+    kind: MessageKind,
+    heading: string,
+    // What the message is about, such as the file; empty shows no line.
+    context: string,
+    text: string,
+    // Shown behind a toggle; empty shows no toggle.
+    details: string,
+    // Whether the message offers "Don't show again".
+    can-silence: bool,
+    // Scene change only: closing the scene (true) or opening another file.
+    closing: bool,
+    // Scene change only: the file about to open; empty shows no line.
+    source-name: string,
+    // Scene change only: offer Save and Export, and say how to keep changes.
+    has-unsaved-changes: bool,
+    // Scene change only: the scene has no project file yet ("Save As").
+    save-as-mode: bool,
+}
+
+export component MessageLayer inherits Rectangle {
+    in property <AppMessage> message;
+    in property <bool> open: false;
+    // Changes with each message shown, so a new message gets the keyboard and
+    // starts with its details folded.
+    in property <int> serial: 0;
+    in-out property <bool> silence: false;
+    // Shown when the message brings no heading of its own.
+    in property <string> default-heading;
+
+    callback answered(MessageAnswer);
+    // A click on the dimmed window around the card.
+    callback outside-clicked();
+
+    visible: root.open;
+    background: #0000008c;
+
+    property <bool> details-visible: false;
+    property <length> font-secondary: 0.85rem;
+    property <length> font-footnote: 0.8rem;
+    property <bool> notice: root.message.kind == MessageKind.info || root.message.kind == MessageKind.error;
+
+    changed serial => {
+        root.details-visible = false;
+        if (root.open) {
+            fs.focus();
+        }
+    }
+    changed open => {
+        if (root.open) {
+            fs.focus();
+        }
+    }
+
+    // Owns the keyboard while a message is open: Escape and Enter give the
+    // safe answer, other keys are swallowed so no shortcut acts under it.
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        enabled: root.open;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape || event.text == Key.Return) {
+                root.answered(MessageAnswer.cancel);
+            }
+            return accept;
+        }
+
+        // The dimmed window around the card.
+        TouchArea {
+            clicked => {
+                root.outside-clicked();
+            }
+            scroll-event(event) => {
+                return accept;
+            }
+        }
+
+        card := Rectangle {
+            width: Math.min(parent.width - 32px, root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px);
+            height: body.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: Math.max(16px, (parent.height - self.height) / 2);
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000066;
+
+            // A click on the card itself is not a click outside.
+            TouchArea {
+                scroll-event(event) => {
+                    return accept;
+                }
+            }
+
+            body := VerticalLayout {
+                padding: 18px;
+                spacing: 16px;
+
+                if root.notice: HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+
+                    if root.message.kind == MessageKind.error: Text {
+                        text: "⚠";
+                        font-size: 32px;
+                        color: Theme.warning;
+                        vertical-alignment: top;
+                        horizontal-alignment: center;
+                        width: 44px;
+                        accessible-role: text;
+                        accessible-label: @tr("ErrorDialog" => "Warning");
+                    }
+                    if root.message.kind == MessageKind.info: Text {
+                        text: "ℹ";
+                        font-size: 32px;
+                        color: Theme.accent;
+                        vertical-alignment: top;
+                        horizontal-alignment: center;
+                        width: 44px;
+                        accessible-role: text;
+                        accessible-label: @tr("InfoDialog" => "Information");
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: root.message.heading != "" ? root.message.heading : root.default-heading;
+                            font-weight: 700;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+
+                        if root.message.context != "": Text {
+                            text: root.message.context;
+                            font-size: root.font-secondary;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+
+                        if root.message.text != "": Text {
+                            text: root.message.text;
+                            font-size: root.font-secondary;
+                            color: Theme.text-soft;
+                            wrap: word-wrap;
+                        }
+
+                        if root.message.details != "": HorizontalLayout {
+                            alignment: start;
+                            TouchArea {
+                                width: toggle-text.preferred-width;
+                                height: toggle-text.preferred-height;
+                                mouse-cursor: pointer;
+                                toggle-text := Text {
+                                    // The glyph is kept out of the translatable
+                                    // strings so translators can't drop it.
+                                    text: (root.details-visible ? "▾ " : "▸ ") + (root.message.kind == MessageKind.error
+                                        ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
+                                        : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details")));
+                                    font-size: root.font-footnote;
+                                    color: Theme.accent;
+                                }
+
+                                clicked => {
+                                    root.details-visible = !root.details-visible;
+                                }
+                            }
+                        }
+
+                        if root.message.details != "" && root.details-visible: ScrollView {
+                            max-height: 180px;
+                            Text {
+                                text: root.message.details;
+                                font-size: root.font-footnote;
+                                wrap: word-wrap;
+                                horizontal-alignment: left;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+
+                if root.message.kind == MessageKind.scene-change: VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: root.message.closing ? @tr("ReplaceSceneDialog" => "Close the current scene?") : @tr("ReplaceSceneDialog" => "Replace the current scene?");
+                        font-weight: 700;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    if root.message.source-name != "": Text {
+                        text: @tr("ReplaceSceneDialog" => "Opening: {}", root.message.source-name);
+                        font-size: root.font-secondary;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: !root.message.has-unsaved-changes
+                            ? @tr("ReplaceSceneDialog" => "The current scene will be closed.")
+                            : (root.message.save-as-mode
+                                ? @tr(
+                                    "ReplaceSceneDialog"
+                                    => "The current scene will be closed. Save it as a project or export a copy first to keep the changes you've made."
+                                )
+                                : @tr(
+                                    "ReplaceSceneDialog"
+                                    => "The current scene will be closed. Save it or export a copy first to keep the changes you've made."
+                                ));
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.message.kind == MessageKind.slice-overwrite: VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: @tr("SliceOverwriteDialog" => "Re-slice this scene?");
+                        font-weight: 700;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr(
+                            "SliceOverwriteDialog"
+                            => "The geometry or the print settings changed since the last slice. Re-slicing replaces the slice data you already have."
+                        );
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    if root.message.can-silence: CheckBox {
+                        text: @tr("MessageLayer" => "Don't show again");
+                        checked <=> root.silence;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.notice: ScButton {
+                        text: root.message.kind == MessageKind.error ? @tr("ErrorDialog" => "Close") : @tr("InfoDialog" => "Close");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.close);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.scene-change: ScButton {
+                        text: root.message.closing ? @tr("ReplaceSceneDialog" => "Discard & Close") : @tr("ReplaceSceneDialog" => "Discard & Open");
+                        clicked => {
+                            root.answered(MessageAnswer.discard);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.scene-change && root.message.has-unsaved-changes: ScButton {
+                        text: root.message.closing
+                            ? (root.message.save-as-mode ? @tr("ReplaceSceneDialog" => "Save As & Close…") : @tr("ReplaceSceneDialog" => "Save & Close"))
+                            : (root.message.save-as-mode ? @tr("ReplaceSceneDialog" => "Save As & Open…") : @tr("ReplaceSceneDialog" => "Save & Open"));
+                        clicked => {
+                            root.answered(MessageAnswer.save);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.scene-change && root.message.has-unsaved-changes: ScButton {
+                        text: root.message.closing ? @tr("ReplaceSceneDialog" => "Export & Close…") : @tr("ReplaceSceneDialog" => "Export & Open…");
+                        clicked => {
+                            root.answered(MessageAnswer.export);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.slice-overwrite: ScButton {
+                        text: @tr("SliceOverwriteDialog" => "Re-slice");
+                        clicked => {
+                            root.answered(MessageAnswer.confirm);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.scene-change: ScButton {
+                        text: @tr("ReplaceSceneDialog" => "Cancel");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.slice-overwrite: ScButton {
+                        text: @tr("SliceOverwriteDialog" => "Cancel");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

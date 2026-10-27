@@ -45,7 +45,7 @@ use sc_scene::NodeId;
 use sc_scene_edit::SceneFragment;
 use slint::ComponentHandle;
 
-use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::preferences_bus::PreferencesBus;
@@ -1020,17 +1020,24 @@ impl DfSupportRun {
         if tool == 0 || self.handle.borrow().is_some() {
             return;
         }
-        let notice = |heading: slint::SharedString, message: String| {
-            self.dialogs.show_info(move || InfoTexts {
+        // `key`: the notice offers "Don't show again"; a notice that says the
+        // edit is stale offers none.
+        let notice = |key: Option<MessageKey>, heading: slint::SharedString, message: String| {
+            let texts = move || InfoTexts {
                 heading: heading.clone(),
                 message: message.as_str().into(),
                 details: Default::default(),
-            });
+            };
+            match key {
+                Some(key) => self.dialogs.show_notice(key, texts),
+                None => self.dialogs.show_info(texts),
+            }
         };
         // No borrow of the sessions is held across the edit: the scene events
         // it fires, and the hover preview, read them.
         if self.sessions.borrow().is_empty() {
             notice(
+                Some(MessageKey::SupportsEditNeedsSupports),
                 ctr!("DfSupportDialog", "No supports to edit"),
                 ctr!(
                     "DfSupportDialog",
@@ -1042,6 +1049,7 @@ impl DfSupportRun {
         }
         let Some(current) = self.current_session() else {
             notice(
+                None,
                 ctr!("DfSupportDialog", "Supports out of date"),
                 ctr!(
                     "DfSupportDialog",
@@ -1208,11 +1216,12 @@ impl DfSupportRun {
             details.push_str(&format!("\n\nFull timings: {}", path.display()));
         }
         let Some(mesh) = outcome.mesh else {
-            self.dialogs.show_info(move || InfoTexts {
-                heading: ctr!("DfSupportDialog", "No supports needed"),
-                message: summary.as_str().into(),
-                details: details.as_str().into(),
-            });
+            self.dialogs
+                .show_notice(MessageKey::SupportsNotNeeded, move || InfoTexts {
+                    heading: ctr!("DfSupportDialog", "No supports needed"),
+                    message: summary.as_str().into(),
+                    details: details.as_str().into(),
+                });
             return;
         };
         let fragment = SceneFragment::from_leaf_snapshot(Arc::new(mesh), Transform3D::Identity);
@@ -1235,11 +1244,12 @@ impl DfSupportRun {
             });
             return;
         }
-        self.dialogs.show_info(move || InfoTexts {
-            heading: ctr!("DfSupportDialog", "Supports generated"),
-            message: summary.as_str().into(),
-            details: details.as_str().into(),
-        });
+        self.dialogs
+            .show_notice(MessageKey::SupportsGenerated, move || InfoTexts {
+                heading: ctr!("DfSupportDialog", "Supports generated"),
+                message: summary.as_str().into(),
+                details: details.as_str().into(),
+            });
     }
 }
 
