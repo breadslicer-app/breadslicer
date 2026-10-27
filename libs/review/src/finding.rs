@@ -40,11 +40,13 @@ pub enum CheckKind {
     EmptyLayer,
     /// A part with nothing below it in any earlier layer (#93).
     FloatingPart,
+    /// A model that reaches down into the supports' raft (#131).
+    ModelInRaft,
 }
 
 impl CheckKind {
     /// Every kind, in listing order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Island,
         Self::ResinTrap,
         Self::SuctionCup,
@@ -53,6 +55,7 @@ impl CheckKind {
         Self::TooTall,
         Self::EmptyLayer,
         Self::FloatingPart,
+        Self::ModelInRaft,
     ];
 
     /// A stable machine name, as the JSON output spells it
@@ -67,6 +70,7 @@ impl CheckKind {
             Self::TooTall => "too-tall",
             Self::EmptyLayer => "empty-layer",
             Self::FloatingPart => "floating-part",
+            Self::ModelInRaft => "model-in-raft",
         }
     }
 
@@ -81,6 +85,7 @@ impl CheckKind {
             Self::TooTall => "Too tall",
             Self::EmptyLayer => "Empty layer",
             Self::FloatingPart => "Floating part",
+            Self::ModelInRaft => "Model in raft",
         }
     }
 }
@@ -195,14 +200,23 @@ pub enum SuggestedFix {
         /// The cavity's index among the review's fills.
         cavity: usize,
     },
+    /// Clear the model of the raft (#131): lift it so its lowest point
+    /// stands `lift_to_mm` above the plate, the support lift that leaves the
+    /// supports room under it, or turn the raft off. Either needs the
+    /// supports generated again.
+    ClearRaft {
+        /// The height the model's lowest point must reach.
+        lift_to_mm: f64,
+    },
 }
 
 impl SuggestedFix {
-    fn rank(&self) -> (u8, &PlatePoint) {
-        match self {
+    fn rank(&self) -> (u8, PlatePoint) {
+        match *self {
             Self::AddSupport { at } => (0, at),
             Self::AddDrain { at } => (1, at),
             Self::Fill { at, .. } => (2, at),
+            Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
         }
     }
 
@@ -211,7 +225,7 @@ impl SuggestedFix {
         let (b_rank, b_at) = other.rank();
         a_rank
             .cmp(&b_rank)
-            .then_with(|| a_at.total_cmp(b_at))
+            .then_with(|| a_at.total_cmp(&b_at))
             .then_with(|| match (self, other) {
                 (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. }) => a.cmp(b),
                 _ => Ordering::Equal,

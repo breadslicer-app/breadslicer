@@ -10,5 +10,6 @@
 
 pub mod islands;
 pub mod output;
+pub mod raft;
 pub mod thin;
 pub mod traps;

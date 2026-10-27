@@ -32,7 +32,7 @@ use support_gen_df::three::buffer_geometry::BufferGeometry;
 mod options;
 mod session;
 
-pub use options::{DfSupportOptions, RaftMode};
+pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
 
