@@ -73,7 +73,7 @@ fn is_solid(fixture: &Fixture, layer: usize, [x, y]: [u32; 2]) -> bool {
 
 /// Asserts that the finding's focus is a solid pixel of its first layer with
 /// nothing solid straight below it, and that a model island's suggested
-/// support is there.
+/// support is there, at the bottom of the layer.
 fn assert_focus_rests_on_nothing(fixture: &Fixture, finding: &Finding) {
     let pixel = focus_pixel(fixture, finding);
     assert!(is_solid(fixture, finding.first_layer, pixel), "{pixel:?}");
@@ -82,10 +82,10 @@ fn assert_focus_rests_on_nothing(fixture: &Fixture, finding: &Finding) {
         "the focus {pixel:?} rests on cured resin"
     );
     if finding.scope == RoleScope::Model {
-        assert_eq!(
-            finding.fix,
-            Some(SuggestedFix::AddSupport { at: finding.focus })
-        );
+        let at = fixture
+            .input()
+            .underside(finding.first_layer, finding.focus);
+        assert_eq!(finding.fix, Some(SuggestedFix::AddSupport { at }));
     }
 }
 
@@ -246,12 +246,17 @@ fn a_part_starting_in_mid_air_is_an_unsupported_island() {
     );
     // The middle of the bar, 5 pixels from its long edges: of the pixels that
     // far in, four are nearest its centroid (110, 65), and the first in scan
-    // order wins. On the bar's first layer, cut 0.225 mm above the plate: a
-    // support tip goes right there.
+    // order wins. On the bar's first layer, cut 0.225 mm above the plate; a
+    // support tip goes right below it, on the bar's underside 0.2 mm up.
     let expected = at_pixel(&fixture, 4, 109, 64);
     assert_eq!(finding.focus, expected);
     assert!((expected.z_mm - LAYER_HEIGHT_MM.mul_add(4.0, 0.5 * LAYER_HEIGHT_MM)).abs() < 1e-9);
-    assert_eq!(finding.fix, Some(SuggestedFix::AddSupport { at: expected }));
+    let at = PlatePoint::new(expected.x_mm, expected.y_mm, 4.0 * LAYER_HEIGHT_MM);
+    let Some(SuggestedFix::AddSupport { at: fix }) = finding.fix else {
+        panic!("{:?}", finding.fix)
+    };
+    assert!((fix.z_mm - at.z_mm).abs() < 1e-9, "{fix:?}");
+    assert_eq!((fix.x_mm, fix.y_mm), (at.x_mm, at.y_mm));
 }
 
 #[test]
