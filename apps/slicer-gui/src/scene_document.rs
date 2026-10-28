@@ -924,10 +924,45 @@ impl SceneDocument {
         fragment: &SceneFragment,
         placement_translation: [f64; 3],
     ) -> Result<Option<NodeId>, SceneError> {
-        let Some((compound, new_root)) =
-            self.paste_fragment_compound(fragment, placement_translation)
+        self.paste_fragment_replacing(fragment, placement_translation, &[])
+    }
+
+    /// [`Self::paste_fragment`] that also removes the leaves `replaced` (and
+    /// the mesh resources only they used), all as 1 undo entry: a fresh
+    /// support set taking the old one's place (#152). Ids that are not live
+    /// leaves are skipped.
+    pub(crate) fn paste_fragment_replacing(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+        replaced: &[NodeId],
+    ) -> Result<Option<NodeId>, SceneError> {
+        let Some((paste, new_root)) = self.paste_fragment_compound(fragment, placement_translation)
         else {
             return Ok(None);
+        };
+        let compound = if replaced.is_empty() {
+            paste
+        } else {
+            let Some(mut graph) = self.with_scene(|spatial| spatial.graph().clone()) else {
+                return Ok(None);
+            };
+            paste.apply_to_scene(&mut graph)?;
+            let mut edits = vec![paste];
+            // Each removal is worked out on the scene the ones before it
+            // leave, so a resource two replaced leaves share goes with the
+            // last of them.
+            for &node_id in replaced {
+                if let Some(remove) = SceneEdit::remove_leaf_with_gc(&graph, node_id) {
+                    remove.apply_to_scene(&mut graph)?;
+                    edits.push(remove);
+                }
+            }
+            if edits.len() == 1 {
+                edits.pop().expect("len == 1")
+            } else {
+                SceneEdit::Compound(edits)
+            }
         };
         match self.apply_edit(compound.clone()) {
             Ok(()) => {
