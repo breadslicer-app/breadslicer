@@ -384,6 +384,18 @@ impl<'a> ReviewInput<'a> {
         let [x_mm, y_mm] = self.pixel_to_plate(pixel);
         PlatePoint::new(x_mm, y_mm, self.layers[layer].sample_mm)
     }
+
+    /// Where a support for solid that starts on layer `layer` at `focus`
+    /// touches it: the same spot, at the bottom of the layer. The surface
+    /// nearest that point is the solid's underside, which a support holds;
+    /// the one nearest the layer's middle can be a side wall.
+    ///
+    /// # Panics
+    ///
+    /// When `layer` is out of range.
+    pub fn underside(&self, layer: usize, focus: PlatePoint) -> PlatePoint {
+        PlatePoint::new(focus.x_mm, focus.y_mm, self.layers[layer].bottom_mm)
+    }
 }
 
 /// The inverse of [`PixelMap::mm_to_pixel`]: raster space back to

@@ -12,9 +12,13 @@
 use sc_print_primitives::Mirror;
 
 use super::*;
+use crate::fill::erase_stack;
 use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
-use crate::input::Role;
+use crate::input::{ReviewLeaf, Role};
+use crate::regions::PlateRegions;
+use crate::runner::ReviewContext;
 use crate::test_support::{Fixture, FixtureBuilder, Shape};
+use sc_sl1cer::contour::ContourStack;
 
 fn output(fixture: &Fixture) -> Vec<Finding> {
     fixture.check(|ctx| run(ctx, &OutputOptions::default()))
@@ -905,9 +909,12 @@ fn a_part_with_nothing_below_it_floats() {
     // The block's inside pixel: column 130, rows 29 and 30 tie on the
     // centroid row and the first in scan order wins.
     assert_focus(&fixture, finding, [130, 29], 4);
+    // The support goes on its underside, at the bottom of that layer.
     assert_eq!(
         finding.fix,
-        Some(SuggestedFix::AddSupport { at: finding.focus })
+        Some(SuggestedFix::AddSupport {
+            at: fixture.input().underside(4, finding.focus)
+        })
     );
 }
 
@@ -994,7 +1001,7 @@ fn a_part_floating_above_a_gap_is_still_reported() {
 }
 
 #[test]
-fn a_floating_speck_is_a_warning_without_a_fix() {
+fn a_floating_speck_is_a_warning_to_erase() {
     // One pixel on one layer: 0.0005 mm³, too small for a support to hold.
     let fixture = FixtureBuilder::new(8)
         .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
@@ -1011,8 +1018,113 @@ fn a_floating_speck_is_a_warning_without_a_fix() {
         finding.detail,
         "This 0.000500 mm³ speck starts 0.20 mm above the build plate with nothing below it. It is too small to hold with a support: it may cure as loose debris in the vat, or not at all."
     );
-    assert_eq!(finding.fix, None);
+    assert_eq!(
+        finding.fix,
+        Some(SuggestedFix::Erase {
+            at: finding.focus,
+            speck: 0
+        })
+    );
     assert_focus(&fixture, finding, [120, 20], 4);
+}
+
+/// The output findings of `fixture` with the erasures they offer.
+fn erasures(fixture: &Fixture) -> (Vec<Finding>, Vec<CavityFill>) {
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input);
+    run_with_erasures(
+        &ReviewContext::new(&input, &regions),
+        &OutputOptions::default(),
+    )
+}
+
+#[test]
+fn an_erasure_holds_the_speck_and_a_pixel_around_it() {
+    // A 2 x 1 pixel speck on layers 4 and 5, a speck under 0.01 mm3.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(4..6, Shape::rect(120.0, 20.0, 122.0, 21.0))
+        .build();
+    let input = fixture.input();
+    let regions = PlateRegions::compute(&input);
+    let options = OutputOptions {
+        speck_volume_mm3: 0.01,
+        ..OutputOptions::default()
+    };
+    let (findings, fills) = run_with_erasures(&ReviewContext::new(&input, &regions), &options);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(fills.len(), 1);
+    let fill = &fills[0];
+    assert_eq!(fill.slabs.len(), 2);
+    for slab in &fill.slabs {
+        // 4 x 3 pixels of 0.01 mm²: the speck and its margin.
+        let area: f64 = slab.rects.iter().map(|r| r.area_mm2()).sum();
+        assert!((area - 0.12).abs() < 1e-9, "{slab:?}");
+    }
+}
+
+#[test]
+fn close_specks_never_erase_a_pixel_twice() {
+    // Two one-pixel specks with one air pixel between them: their margins
+    // meet on that column, which goes to the first.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(4..5, Shape::rect(120.0, 20.0, 121.0, 21.0))
+        .model(4..5, Shape::rect(122.0, 20.0, 123.0, 21.0))
+        .build();
+    let (findings, fills) = erasures(&fixture);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    let pixels: Vec<f64> = fills
+        .iter()
+        .map(|f| f.slabs[0].rects.iter().map(|r| r.area_mm2()).sum::<f64>() / 0.01)
+        .collect();
+    assert!((pixels[0] - 9.0).abs() < 1e-6, "{pixels:?}");
+    assert!((pixels[1] - 6.0).abs() < 1e-6, "{pixels:?}");
+    assert!(!fills[0].overlaps(&fills[1]));
+}
+
+#[test]
+fn an_erased_speck_is_gone_and_its_neighbours_stay() {
+    // A round model speck, a support speck two air pixels from the block,
+    // and the block itself.
+    let fixture = FixtureBuilder::new(8)
+        .model(.., Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .model(4..5, Shape::circle(120.5, 20.5, 0.6))
+        .support(4..5, Shape::rect(62.0, 30.0, 63.0, 31.0))
+        .build();
+    let (findings, fills) = erasures(&fixture);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    let input = fixture.input();
+    let stacks = |role: Role| -> Vec<&ContourStack> {
+        input
+            .leaves()
+            .iter()
+            .filter(|leaf| leaf.role == role)
+            .map(|leaf| leaf.stack)
+            .collect()
+    };
+    let model =
+        erase_stack(&fills, &stacks(Role::Model), fixture.schedule()).expect("the model speck");
+    let support =
+        erase_stack(&fills, &stacks(Role::Support), fixture.schedule()).expect("the support speck");
+    let again = fixture.input_with_all([
+        ReviewLeaf::new(Some("Erased"), Role::Model, &model),
+        ReviewLeaf::new(Some("Erased"), Role::Support, &support),
+    ]);
+    let regions = PlateRegions::compute(&again);
+    let after = run(
+        &ReviewContext::new(&again, &regions),
+        &OutputOptions::default(),
+    );
+    assert!(after.is_empty(), "{after:?}");
+    // Only the block is left, with every pixel it had.
+    let before = PlateRegions::compute(&input);
+    for layer in 0..8 {
+        assert_eq!(regions.layer(layer).solid.len(), 1, "layer {layer}");
+        let block = |r: &PlateRegions| r.layer(layer).solid_area_px();
+        assert_eq!(block(&regions), 40 * 30, "layer {layer}");
+        assert!(block(&before) >= block(&regions));
+    }
 }
 
 #[test]

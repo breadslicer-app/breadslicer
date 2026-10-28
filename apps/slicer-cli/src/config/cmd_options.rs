@@ -120,6 +120,7 @@ pub(crate) enum CmdOptions {
         plate: PlateOptions,
         json: bool,
         fill: bool,
+        fix_all: bool,
     },
     Slice {
         source: OsString,
@@ -292,11 +293,18 @@ fn get_review_options() -> impl Parser<CmdOptions> {
         )
         .switch();
 
+    let fix_all = long("fix-all")
+        .help(
+            "Apply what the app's Fix All applies on the next slice: fill the small resin traps, erase the floating specks and thicken the thin model features; then review the plate again. Supports are not added: the islands they would hold are counted.",
+        )
+        .switch();
+
     construct!(CmdOptions::Review {
         source,
         plate,
         json,
         fill,
+        fix_all,
     })
 }
 

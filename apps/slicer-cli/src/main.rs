@@ -92,12 +92,14 @@ fn main() -> Result<()> {
             plate,
             json,
             fill,
+            fix_all,
         } => review(
             ReviewArgs {
                 source,
                 plate,
                 json,
                 fill,
+                fix_all,
             },
             &libraries,
         ),

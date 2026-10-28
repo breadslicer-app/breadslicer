@@ -10,6 +10,12 @@
 //! With `--fill`, every cavity the review offers to fill is cut on the run's
 //! schedule and added to the plate as model, as the app does on the next
 //! slice (#132), and the plate is reviewed again.
+//!
+//! With `--fix-all`, the plate gets what the app's Fix All gives it on the
+//! next slice (#156): the small resin traps filled, the floating specks
+//! erased and the thin model features thickened. The supports Fix All would
+//! add for islands and floating parts are only counted: the CLI does not
+//! edit supports. The plate is then reviewed again.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -20,9 +26,11 @@ use anyhow::{Result, anyhow};
 use sc_geom::df_supports::{is_support_mesh_name, recommended_lift_mm};
 use sc_print_profiles::ProfileLibraries;
 use sc_review::{
-    CavityFill, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions,
-    ReviewReport, Role, Severity, SuggestedFix, fill_stack, review_regions, review_with,
+    CavityFill, CheckKind, Finding, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf,
+    ReviewOptions, ReviewReport, Role, Severity, SuggestedFix, erase_stack, fill_stack,
+    review_regions, review_with,
 };
+use sc_sl1cer::contour::ContourStack;
 
 use crate::commands::df_supports::df_raft_top_mm;
 use crate::commands::slice::{
@@ -37,6 +45,7 @@ pub(crate) struct ReviewArgs {
     pub plate: PlateOptions,
     pub json: bool,
     pub fill: bool,
+    pub fix_all: bool,
 }
 
 pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<()> {
@@ -93,6 +102,41 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         }
     });
 
+    let fixed_all = args.fix_all.then(|| {
+        let plan = FixAll::of(&report);
+        let filled = fill_stack(
+            plan.fills.iter().chain(&plan.thickenings).copied(),
+            plate.schedule(),
+        );
+        // Specks come out of the models and the fills, never the supports.
+        let models: Vec<&ContourStack> = input
+            .leaves()
+            .iter()
+            .filter(|leaf| leaf.role == Role::Model)
+            .map(|leaf| leaf.stack)
+            .chain(filled.as_ref())
+            .collect();
+        let erased = erase_stack(plan.erasures.iter().copied(), &models, plate.schedule());
+        let mut leaves = input.leaves().to_vec();
+        if let Some(stack) = &filled {
+            leaves.push(ReviewLeaf::new(Some("Filled cavities"), Role::Model, stack));
+        }
+        if let Some(stack) = &erased {
+            leaves.push(ReviewLeaf::new(Some("Erased specks"), Role::Model, stack));
+        }
+        let again = ReviewInput::from_profile(leaves, plate.profile())
+            .expect("the fixes are cut on the run's schedule")
+            .with_raft_top_mm(raft_top_mm)
+            .with_support_lift_mm(support_lift_mm);
+        FixedAll {
+            supports: plan.supports,
+            cavities: plan.fills.len(),
+            specks: plan.erasures.len(),
+            features: plan.thickenings.len(),
+            report: review_with(&again, &ReviewOptions::default()),
+        }
+    });
+
     let mut out = std::io::stdout().lock();
     if args.json {
         write_json(
@@ -100,6 +144,7 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
             &report,
             &stats,
             refilled.as_ref(),
+            fixed_all.as_ref(),
             slice_time,
             &mut out,
         )?;
@@ -108,8 +153,93 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         if let Some(refilled) = &refilled {
             write_refilled(&input, refilled, &mut out)?;
         }
+        if let Some(fixed_all) = &fixed_all {
+            write_fixed_all(&input, fixed_all, &mut out)?;
+        }
     }
     Ok(())
+}
+
+/// What the app's Fix All applies to a review (#156), as far as the CLI
+/// applies it: the small traps' fills, the specks' erasures and the thin
+/// model features' thickenings, those an erasure touches left out; plus the
+/// number of findings it would hold with a support.
+struct FixAll<'r> {
+    supports: usize,
+    fills: Vec<&'r CavityFill>,
+    erasures: Vec<&'r CavityFill>,
+    thickenings: Vec<&'r CavityFill>,
+}
+
+impl<'r> FixAll<'r> {
+    fn of(report: &'r ReviewReport) -> Self {
+        let mut plan = Self {
+            supports: 0,
+            fills: Vec::new(),
+            erasures: Vec::new(),
+            thickenings: Vec::new(),
+        };
+        let mut thicken = Vec::new();
+        for finding in &report.findings {
+            match finding.fix {
+                Some(SuggestedFix::AddSupport { .. }) => plan.supports += 1,
+                // Small traps and suction cups, as the app's Fix All.
+                Some(SuggestedFix::Fill { cavity, .. } | SuggestedFix::AddDrain { cavity, .. })
+                    if fills_unasked(finding) =>
+                {
+                    plan.fills.extend(report.fills.get(cavity));
+                }
+                Some(SuggestedFix::Erase { speck, .. }) => {
+                    plan.erasures.extend(report.erasures.get(speck));
+                }
+                Some(SuggestedFix::Thicken { feature, .. }) => {
+                    thicken.extend(report.thickenings.get(feature));
+                }
+                _ => {}
+            }
+        }
+        plan.thickenings = thicken
+            .into_iter()
+            .filter(|thickening| !plan.erasures.iter().any(|e| e.overlaps(thickening)))
+            .collect();
+        plan
+    }
+}
+
+/// The review of the plate once Fix All's fixes are applied.
+struct FixedAll {
+    supports: usize,
+    cavities: usize,
+    specks: usize,
+    features: usize,
+    report: ReviewReport,
+}
+
+/// The review after Fix All, as text.
+fn write_fixed_all(input: &ReviewInput<'_>, fixed: &FixedAll, out: &mut dyn Write) -> Result<()> {
+    writeln!(
+        out,
+        "Fix all: filled {}, erased {}, thickened {}; {} would get a support in the app (not added here). The review again:",
+        plural(fixed.cavities, "cavity", "cavities"),
+        plural(fixed.specks, "speck", "specks"),
+        plural(fixed.features, "thin feature", "thin features"),
+        plural(fixed.supports, "finding", "findings"),
+    )?;
+    for finding in &fixed.report.findings {
+        writeln!(out, "{}", finding_line(finding))?;
+    }
+    writeln!(out, "{}", summary_line(input, &fixed.report.findings))?;
+    Ok(())
+}
+
+/// Whether Fix All fills `finding`'s cavity without asking: a small resin
+/// trap (a note or a warning) or a suction cup.
+fn fills_unasked(finding: &Finding) -> bool {
+    match finding.check {
+        CheckKind::ResinTrap => finding.severity != Severity::Error,
+        CheckKind::SuctionCup => true,
+        _ => false,
+    }
 }
 
 /// The fills of every finding that offers one.
@@ -255,14 +385,16 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a support at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
-        Some(SuggestedFix::AddDrain { at }) => format!(
-            " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm.",
+        Some(SuggestedFix::AddDrain { at, .. }) => format!(
+            " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm, or fill it on the next slice.",
             at.x_mm, at.y_mm, at.z_mm
         ),
         Some(SuggestedFix::Fill { .. }) => " Fix: fill it on the next slice.".to_owned(),
         Some(SuggestedFix::ClearRaft { lift_to_mm }) => {
             format!(" Fix: lift the model to {lift_to_mm:.2} mm or turn the raft off.")
         }
+        Some(SuggestedFix::Erase { .. }) => " Fix: erase it on the next slice.".to_owned(),
+        Some(SuggestedFix::Thicken { .. }) => " Fix: thicken it on the next slice.".to_owned(),
     };
     format!(
         "{layers:<15} {:<7} {:<13} {:<7} {}. {} At ({:.2}, {:.2}, {:.2}) mm.{fix}",
@@ -322,6 +454,7 @@ fn write_json(
     report: &ReviewReport,
     stats: &RegionStats,
     refilled: Option<&Refilled>,
+    fixed_all: Option<&FixedAll>,
     slice_time: Duration,
     out: &mut dyn Write,
 ) -> Result<()> {
@@ -350,6 +483,14 @@ fn write_json(
             "volume_mm3": (refilled.volume_mm3 * 1e3).round() / 1e3,
             "findings": refilled.report.findings,
             "summary": summary(&refilled.report.findings),
+        })),
+        "fixed_all": fixed_all.map(|fixed| serde_json::json!({
+            "cavities": fixed.cavities,
+            "specks": fixed.specks,
+            "thin_features": fixed.features,
+            "supports_not_added": fixed.supports,
+            "findings": fixed.report.findings,
+            "summary": summary(&fixed.report.findings),
         })),
         "regions": {
             "solid": stats.solid,
@@ -446,6 +587,7 @@ mod review_output_tests {
     fn findings_serialise_with_kebab_case_names() {
         let finding = island().with_fix(SuggestedFix::AddDrain {
             at: PlatePoint::new(0.0, 0.0, 0.0),
+            cavity: 2,
         });
         let value = serde_json::to_value(&finding).unwrap();
         assert_eq!(value["check"], "island");
@@ -453,6 +595,7 @@ mod review_output_tests {
         assert_eq!(value["scope"], "model");
         assert_eq!(value["first_layer"], 12);
         assert_eq!(value["fix"]["kind"], "add-drain");
+        assert_eq!(value["fix"]["cavity"], 2);
         assert_eq!(value["focus"]["x_mm"], 1.234);
     }
 }

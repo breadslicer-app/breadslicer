@@ -25,19 +25,22 @@ export struct ReviewRow {
     layers: string,
     // One sentence with the numbers.
     detail: string,
-    // 0 none, 1 add a support, 2 add a drain, 3 a drain that needs a model
-    // hollowed in this window, 4 lift the model clear of the raft or turn
-    // the raft off.
+    // 0 none, 1 add a support, 2 add a drain, 4 lift the model clear of the
+    // raft or turn the raft off.
     fix: int,
     // The fix was applied since the slice.
     fixed: bool,
     // A cavity that can be cured on the next slice (#132): 0 no fill, 1
     // offered, 2 marked to fill.
     fill: int,
+    // The resin a fill cures ("0.67 ml"), or empty.
+    fill-resin: string,
     // A tiny cavity that can be left alone (hidden until the scene changes).
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
     lift-label: string,
+    // After Fix All (#156): why it left this finding, else empty.
+    remains: string,
 }
 
 // The colour of a review severity.
@@ -160,6 +163,15 @@ component FindingRow inherits VerticalLayout {
             }
         }
     }
+    if root.finding.remains != "": HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 4px;
+
+        Note {
+            text: root.finding.remains;
+            color: Theme.text-muted;
+        }
+    }
     if root.selected: VerticalLayout {
         padding-left: 32px;
         padding-right: 4px;
@@ -202,9 +214,6 @@ component FindingRow inherits VerticalLayout {
                 }
             }
         }
-        if root.finding.fix == 3: Note {
-            text: @tr("Review" => "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab.");
-        }
         if root.finding.fixed: Note {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
                 : root.finding.fix == 4 ? @tr("Review" => "Done. Generate the supports again, then slice.")
@@ -216,7 +225,9 @@ component FindingRow inherits VerticalLayout {
             alignment: start;
 
             ScButton {
-                text: root.finding.fill == 2 ? @tr("Review" => "Do not fill") : @tr("Review" => "Fill on the next slice");
+                text: root.finding.fill == 2 ? @tr("Review" => "Do not fill")
+                    : root.finding.fill-resin != "" ? @tr("Review" => "Fill on the next slice ({})", root.finding.fill-resin)
+                    : @tr("Review" => "Fill on the next slice");
                 icon: root.finding.fill == 2 ? "" : Icons.check;
                 clicked => {
                     root.fill-toggled();
@@ -1037,6 +1048,11 @@ export component SliceInspector inherits VerticalLayout {
     // cleared.
     in property <string> review-fills-note;
     in property <bool> review-fills-clearable;
+    // The label of the button that clears the marks: "Clear fills", or
+    // "Clear fixes" when Fix All also marked specks or thin features.
+    in property <string> review-fills-clear-label;
+    // How many findings Fix All (#156) would fix: 0 hides its button.
+    in property <int> review-fix-all;
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -1049,6 +1065,7 @@ export component SliceInspector inherits VerticalLayout {
     callback review-fills-cleared();
     callback review-notes-toggled();
     callback review-raft-off-requested(int);
+    callback review-fix-all-requested();
 
     // The LineEdit's text binding breaks the first time the user types, so
     // a value pushed from Rust is written into it explicitly.
@@ -1280,6 +1297,13 @@ export component SliceInspector inherits VerticalLayout {
                         root.review-notes-toggled();
                     }
                 }
+                if root.review-state == 1 && root.review-fix-all > 0: ScButton {
+                    text: @tr("Review" => "Fix all ({})", root.review-fix-all);
+                    icon: Icons.check;
+                    clicked => {
+                        root.review-fix-all-requested();
+                    }
+                }
                 if root.review-state == 1 && root.review-fill-small > 0: ScButton {
                     text: @tr("Review" => "Fill all small traps ({})", root.review-fill-small);
                     icon: Icons.check;
@@ -1295,7 +1319,7 @@ export component SliceInspector inherits VerticalLayout {
                         horizontal-stretch: 1;
                     }
                     if root.review-fills-clearable: ScButton {
-                        text: @tr("Review" => "Clear fills");
+                        text: root.review-fills-clear-label;
                         kind: ButtonKind.ghost;
                         clicked => {
                             root.review-fills-cleared();
