@@ -25,15 +25,16 @@ export struct ReviewRow {
     layers: string,
     // One sentence with the numbers.
     detail: string,
-    // 0 none, 1 add a support, 2 add a drain, 3 a drain that needs a model
-    // hollowed in this window, 4 lift the model clear of the raft or turn
-    // the raft off.
+    // 0 none, 1 add a support, 2 add a drain, 4 lift the model clear of the
+    // raft or turn the raft off.
     fix: int,
     // The fix was applied since the slice.
     fixed: bool,
     // A cavity that can be cured on the next slice (#132): 0 no fill, 1
     // offered, 2 marked to fill.
     fill: int,
+    // The resin a fill cures ("0.67 ml"), or empty.
+    fill-resin: string,
     // A tiny cavity that can be left alone (hidden until the scene changes).
     leave: bool,
     // The lift button of fix 4 ("Lift 17 layers").
@@ -213,9 +214,6 @@ component FindingRow inherits VerticalLayout {
                 }
             }
         }
-        if root.finding.fix == 3: Note {
-            text: @tr("Review" => "A drain through the floor would empty it. Drains are drilled into models hollowed in the Hollow tab.");
-        }
         if root.finding.fixed: Note {
             text: root.finding.fix == 1 ? @tr("Review" => "Support added.")
                 : root.finding.fix == 4 ? @tr("Review" => "Done. Generate the supports again, then slice.")
@@ -227,7 +225,9 @@ component FindingRow inherits VerticalLayout {
             alignment: start;
 
             ScButton {
-                text: root.finding.fill == 2 ? @tr("Review" => "Do not fill") : @tr("Review" => "Fill on the next slice");
+                text: root.finding.fill == 2 ? @tr("Review" => "Do not fill")
+                    : root.finding.fill-resin != "" ? @tr("Review" => "Fill on the next slice ({})", root.finding.fill-resin)
+                    : @tr("Review" => "Fill on the next slice");
                 icon: root.finding.fill == 2 ? "" : Icons.check;
                 clicked => {
                     root.fill-toggled();
