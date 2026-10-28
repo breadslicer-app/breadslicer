@@ -1,0 +1,175 @@
+[identity]
+id = "anycubic-abs-like-resin-pro-50um"
+brand = "Anycubic"
+family = "abs-like"
+name = "ABS-Like Resin Pro (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-d2]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 28.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-m3-max]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 6
+wait_before_cure_sec = 2.5
+lift_distance_mm = 10.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-m3-premium]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 25.0
+bottom_layer_count = 2
+wait_before_cure_sec = 1.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-2]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-4k]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 40.0
+bottom_layer_count = 1
+wait_before_cure_sec = 0.5
+lift_distance_mm = 6.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m5]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m5s]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m5s-pro]
+normal_exposure_sec = 3.6
+bottom_exposure_sec = 35.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m7]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 25.0
+bottom_layer_count = 3
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m7-pro]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 4
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-se]
+normal_exposure_sec = 2.3
+bottom_exposure_sec = 23.0
+bottom_layer_count = 6
+wait_before_cure_sec = 0.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 180.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-mono-sq]
+normal_exposure_sec = 2.3
+bottom_exposure_sec = 23.0
+bottom_layer_count = 6
+wait_before_cure_sec = 0.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 180.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-mono-x]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 28.0
+bottom_layer_count = 4
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-mono-x-6k-m3-plus]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 23.0
+bottom_layer_count = 6
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-mono-x-6ks]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 20.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-mono-x2]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 20.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-s]
+normal_exposure_sec = 9.0
+bottom_exposure_sec = 60.0
+bottom_layer_count = 6
+wait_before_cure_sec = 1.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 180.0
+retract_speed_mm_min = 180.0
+
+[per_printer.anycubic-photon-ultra]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 35.0
+bottom_layer_count = 4
+wait_before_cure_sec = 1.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 120.0

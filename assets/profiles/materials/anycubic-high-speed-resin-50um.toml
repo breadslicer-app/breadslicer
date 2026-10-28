@@ -1,0 +1,49 @@
+[identity]
+id = "anycubic-high-speed-resin-50um"
+brand = "Anycubic"
+family = "standard"
+name = "High Speed Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-4]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 6.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m5s]
+normal_exposure_sec = 1.7
+bottom_exposure_sec = 10.0
+bottom_layer_count = 3
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 1200.0
+retract_speed_mm_min = 1200.0
+
+[per_printer.anycubic-photon-mono-m5s-pro]
+normal_exposure_sec = 1.9
+bottom_exposure_sec = 10.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 1200.0
+retract_speed_mm_min = 1200.0
+
+[per_printer.anycubic-photon-mono-m7-pro]
+normal_exposure_sec = 1.5
+bottom_exposure_sec = 15.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 4.0
+lift_speed_mm_min = 900.0
+retract_speed_mm_min = 900.0

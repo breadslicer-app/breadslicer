@@ -35,7 +35,14 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
 
 /// Resins nobody has gone looking for figures for yet, as tests over
 /// the ids they claim.
-const UNRESEARCHED: [fn(&str) -> bool; 0] = [];
+///
+/// Anycubic and Creality: converted from their resin settings pages,
+/// which state no density; their data sheets are still to be read. The
+/// owner's hand-written profiles are listed apart, above.
+const UNRESEARCHED: [fn(&str) -> bool; 2] = [
+    |id| id.starts_with("anycubic-") && !OWNER_PRINT_SETTINGS.contains(&id),
+    |id| id.starts_with("creality-") && !OWNER_PRINT_SETTINGS.contains(&id),
+];
 
 /// Resins whose vendor publishes no density for any of them, as tests
 /// over the ids they claim.
