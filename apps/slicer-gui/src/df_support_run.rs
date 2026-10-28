@@ -55,7 +55,7 @@ use crate::scene_document::{
     SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
 use crate::slice_projection::load_selected_profiles;
-use crate::support_persist::{SupportSessions, current_session, support_leaf};
+use crate::support_persist::{SupportSessions, current_session, support_leaf, support_leaves};
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
@@ -1548,9 +1548,26 @@ impl DfSupportRun {
         };
         let fragment = SceneFragment::from_leaf_snapshot(Arc::new(mesh), Transform3D::Identity);
         let session = outcome.session;
-        let pasted = self.document.paste_fragment(&fragment, [0.0, 0.0, 0.0]);
+        // Generating again replaces the supports already there (#152), in the
+        // same undoable step as the paste.
+        let replaced: Vec<NodeId> = self
+            .document
+            .with_scene(|spatial| support_leaves(spatial).map(|(id, _)| id).collect())
+            .unwrap_or_default();
+        let current = self.current_session();
+        let pasted = self
+            .document
+            .paste_fragment_replacing(&fragment, [0.0, 0.0, 0.0], &replaced);
         if pasted.is_ok() {
-            *self.sessions.borrow_mut() = vec![(Arc::new(session), self.document.scene_revision())];
+            // The run follows the session it replaces, so Undo lands back on
+            // an editable set.
+            let mut sessions = self.sessions.borrow_mut();
+            match current {
+                Some(current) => sessions.truncate(current + 1),
+                None => sessions.clear(),
+            }
+            sessions.push((Arc::new(session), self.document.scene_revision()));
+            drop(sessions);
             self.generated_raft_top
                 .set(Some(self.options.borrow().raft_top_mm()));
             self.warm_worker();
@@ -1835,6 +1852,83 @@ mod hand_edit_tests {
         assert!(matches!(outcome, HandEdit::Applied), "{outcome:?}");
         assert!(added >= 2, "{added} of 3 points took, {roots:?} roots");
         assert!(undone, "one undo takes every support back");
+    }
+
+    /// Generating again replaces the supports already there (#152), by a
+    /// Generate press and by the raft warning's "Generate anyway"; one undo
+    /// brings back the set before, still editable by hand.
+    #[test]
+    fn generating_again_replaces_the_supports() {
+        let (plain, anyway, undone, editable) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            // Clear of the default raft, not of a 3 mm one.
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 3.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let finish_run = |run: &Rc<DfSupportRun>| {
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+            let sets = || {
+                document
+                    .with_scene(|spatial| {
+                        let leaves = (0..).map_while(|i| spatial.leaf_id_at_index(i)).count();
+                        let supports: Vec<_> = support_leaves(spatial).map(|(_, m)| m).collect();
+                        (leaves, supports)
+                    })
+                    .expect("a scene")
+            };
+            // The first set: a plain Generate press.
+            run.set_options(DfSupportOptions::default());
+            run.start();
+            finish_run(&run);
+            let first = sets();
+            assert_eq!(first.1.len(), 1, "one set");
+            // Again, the same way.
+            run.start();
+            finish_run(&run);
+            let plain = sets();
+            // A raft that takes the model's first layers: the warning holds
+            // the press back, and "Generate anyway" runs it.
+            run.set_options(DfSupportOptions {
+                raft_thickness_mm: 3.0,
+                ..DfSupportOptions::default()
+            });
+            run.start();
+            assert!(run.handle.borrow().is_none(), "held back by the warning");
+            run.generate_ignoring_raft();
+            finish_run(&run);
+            let anyway = sets();
+            document.undo().expect("one undo");
+            let undone = sets();
+            let undone_is_plain = undone.0 == plain.0
+                && undone.1.len() == 1
+                && Arc::ptr_eq(&undone.1[0], &plain.1[0]);
+            let editable = run.current_session().is_some();
+            (
+                (plain.0, plain.1.len()),
+                (anyway.0, anyway.1.len()),
+                undone_is_plain,
+                editable,
+            )
+        });
+        assert_eq!(plain, (2, 1), "the model and one support set");
+        assert_eq!(anyway, (2, 1), "the model and one support set");
+        assert!(undone, "one undo brings back the set before");
+        assert!(editable, "the set before is editable again");
     }
 
     /// Generate with the model on the plate raises the raft warning (#131);
