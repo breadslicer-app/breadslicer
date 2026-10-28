@@ -36,7 +36,7 @@ pub struct RawCliArgs {
 pub fn cli_parser() -> OptionParser<RawCliArgs> {
     let format = short('f')
         .long("format")
-        .help("Source format to read. Supported: dragonfruit.")
+        .help("Source format to read. Supported: dragonfruit, elegoo-settings, anycubic-wiki.")
         .argument::<SourceFormat>("FORMAT");
     let inputs = short('i')
         .long("input")

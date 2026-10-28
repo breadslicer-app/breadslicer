@@ -14,6 +14,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::anycubic_wiki::{AnycubicWikiError, AnycubicWikiReader};
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
@@ -32,6 +33,7 @@ use crate::writer::{WriteError, WriteReport, write_profiles};
 pub enum RunError {
     Read(DragonFruitError),
     ElegooSettings(ElegooSettingsError),
+    AnycubicWiki(AnycubicWikiError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
     Fold(FoldError),
@@ -43,6 +45,7 @@ impl fmt::Display for RunError {
         match self {
             Self::Read(err) => write!(f, "{err}"),
             Self::ElegooSettings(err) => write!(f, "{err}"),
+            Self::AnycubicWiki(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
             Self::Fold(err) => write!(f, "{err}"),
@@ -56,6 +59,7 @@ impl std::error::Error for RunError {
         match self {
             Self::Read(err) => Some(err),
             Self::ElegooSettings(err) => Some(err),
+            Self::AnycubicWiki(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
             Self::Fold(err) => Some(err),
@@ -97,6 +101,9 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::ElegooSettingsSheet => ElegooSettingsReader
             .read(&paths)
             .map_err(RunError::ElegooSettings)?,
+        SourceFormat::AnycubicWikiPage => AnycubicWikiReader
+            .read(&paths)
+            .map_err(RunError::AnycubicWiki)?,
     };
     let mut notes = reading.notes;
     // Folding comes first, so the resin a profile joins decides whether
