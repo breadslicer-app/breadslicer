@@ -1,0 +1,37 @@
+[identity]
+id = "creality-castable-jewelry-resin-50um"
+brand = "Creality"
+family = "other"
+name = "Castable Jewelry Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.creality-halot-one]
+normal_exposure_sec = 5.0
+bottom_exposure_sec = 60.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 60.0
+
+[per_printer.creality-halot-one-plus]
+normal_exposure_sec = 5.0
+bottom_exposure_sec = 60.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 60.0
+
+[per_printer.creality-halot-one-pro]
+normal_exposure_sec = 5.5
+bottom_exposure_sec = 65.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 60.0
