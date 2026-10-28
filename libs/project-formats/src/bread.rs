@@ -14,7 +14,7 @@
 
 use std::io::{Read, Write};
 
-use sc_bread_format::{BreadProject, SupportDocument};
+use sc_bread_format::{BreadProject, HollowDocument, SupportDocument};
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_scene::Scene;
 use serde::{Deserialize, Serialize};
@@ -159,9 +159,11 @@ fn parse_settings(
     }))
 }
 
-/// Writes `scene`, `payload` and `supports` as a `.bread` project. Each
-/// support document names the leaf that shows it; that leaf is stored with an
-/// empty mesh, to be rebuilt from the document after opening.
+/// Writes `scene`, `payload`, `supports` and `hollows` as a `.bread`
+/// project. Each support document names the leaf that shows it; that leaf is
+/// stored with an empty mesh, to be rebuilt from the document after opening.
+/// Each hollow document names the leaf that shows the hollow, which keeps it
+/// (#161).
 ///
 /// The container is written in one pass, so `progress` reports the serialize
 /// phase as begun and the compress phase as done.
@@ -170,6 +172,7 @@ pub fn write_bread_project_with_progress<W: Write>(
     payload: &ProjectPayload,
     embed: EmbedProfiles,
     supports: &[SupportDocument],
+    hollows: &[HollowDocument],
     writer: &mut W,
     mut progress: impl FnMut(WriteProgress),
 ) -> Result<(), WriteBreadProjectError> {
@@ -178,6 +181,7 @@ pub fn write_bread_project_with_progress<W: Write>(
         scene: scene.clone(),
         settings: Some(serialize_settings(payload, embed)?.into_bytes()),
         supports: supports.to_vec(),
+        hollows: hollows.to_vec(),
     };
     progress(WriteProgress::Serialize { done: 1, total: 1 });
     sc_bread_format::write_project(&project, writer).map_err(WriteBreadProjectError::Container)?;
@@ -193,6 +197,7 @@ pub fn read_bread_project<R: Read>(reader: R) -> Result<LoadedProject, ReadBread
         scene,
         settings,
         supports,
+        hollows,
     } = sc_bread_format::read_project(reader).map_err(ReadBreadProjectError::Container)?;
     let mut warnings = Vec::new();
     let payload = match settings {
@@ -206,5 +211,6 @@ pub fn read_bread_project<R: Read>(reader: R) -> Result<LoadedProject, ReadBread
         slices: None,
         slice_fingerprint: None,
         supports,
+        hollows,
     })
 }

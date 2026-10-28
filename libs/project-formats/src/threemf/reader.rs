@@ -68,6 +68,7 @@ where
         slices,
         slice_fingerprint,
         supports: Vec::new(),
+        hollows: Vec::new(),
     })
 }
 

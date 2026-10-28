@@ -53,6 +53,7 @@ use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, format_anyhow_chain};
 use crate::failure_gate::FailureGate;
 use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
+use crate::hollow_persist::RestoredHollows;
 use crate::i18n::ctr;
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
@@ -115,6 +116,9 @@ pub(crate) struct PreparedScene {
     /// editable session, whose mesh is already in the scene, and why any
     /// could not be rebuilt.
     pub restored_supports: RestoredSupports,
+    /// The models a `.bread` remembers hollowing in the Hollow tab (#161),
+    /// read on the worker against the leaves' meshes.
+    pub restored_hollows: RestoredHollows,
 }
 
 type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedScene>)>>>;

@@ -5160,6 +5160,7 @@ dependencies = [
  "pollster",
  "rfd",
  "sc-app-paths",
+ "sc-bread-format",
  "sc-geom",
  "sc-mesh-core",
  "sc-mesh-fixtures",
