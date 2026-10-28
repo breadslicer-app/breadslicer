@@ -1017,6 +1017,19 @@ fn bodies_touching_at_a_point_are_a_neck_under_a_pixel() {
 }
 
 #[test]
+fn supports_that_only_touch_are_not_reported() {
+    // Two support shafts meeting at the corner (50, 60) on every layer, as
+    // two shafts side by side whose facets graze (#156): each stands.
+    let fixture = FixtureBuilder::new(20)
+        .support(.., Shape::rect(20.0, 20.0, 50.0, 60.0))
+        .support(.., Shape::rect(50.0, 60.0, 80.0, 100.0))
+        .build();
+    assert_eq!(fixture.regions().layer(5).solid.len(), 1);
+    let findings = thin(&fixture);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
 fn short_sub_pixel_spikes_are_reported_whatever_their_width() {
     // Free-standing spikes 0.25 to 1.5 pixels across, 6 layers tall (the
     // first rests on the plate): the thinnest are the worst, and need no

@@ -75,7 +75,9 @@
 //!   and only where no model covers them. Support tips are thin on purpose,
 //!   so only a support too thin to be sure to print at all is reported. A
 //!   round support up to 1.41 pixels across can still miss every pixel
-//!   centre; the limit is an option.
+//!   centre; the limit is an option. Two supports that only touch (a short
+//!   neck between them, such as two shafts side by side whose facets graze)
+//!   are not: each stands on its own (#156).
 //! - **Not the steps of a surface.** A thin sliver lying on thick solid in
 //!   the layer below or above it is the crest of a slope or a ridge, or the
 //!   rounding of a leaning edge, as the layers cut it: its pixels are
@@ -1070,6 +1072,12 @@ fn report(
             })
             .sum();
         if size < rules.min_size {
+            continue;
+        }
+        // Two supports that only touch: each stands on its own, and the
+        // graze between them holds nothing up.
+        let long = piece(focus).area as f64 >= WALL_LENGTH * width * width;
+        if pass.role == Role::Support && neck && !long {
             continue;
         }
         let feature = Feature {
