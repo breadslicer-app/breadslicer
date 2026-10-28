@@ -16,7 +16,6 @@
 //! reported, not read as 8 mm/s.
 
 pub mod machines;
-pub mod page;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -33,8 +32,8 @@ use sc_print_profiles::{
 use semver::Version;
 
 use crate::anycubic_wiki::machines::{Machines, machines_named_by};
-use crate::anycubic_wiki::page::{Table, tables_of};
 use crate::elegoo_settings::{microns, slug};
+use crate::html_tables::{Table, tables_of};
 use crate::profile::ConvertedProfile;
 use crate::reader::{ProfileReader, SourceReading};
 use crate::source_note::SourceNote;
@@ -176,7 +175,7 @@ impl Setting {
 
 /// What a cell says.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Cell {
+pub(crate) enum Cell {
     /// Empty, or the `/` the wiki writes for a resin it does not
     /// publish on that machine.
     Absent,
@@ -187,7 +186,7 @@ enum Cell {
 
 /// Read `cell` as a number in `unit`, which may be left off only where
 /// `bare` allows it.
-fn quantity(cell: &str, unit: &str, bare: bool) -> Cell {
+pub(crate) fn quantity(cell: &str, unit: &str, bare: bool) -> Cell {
     let text = cell.trim();
     if text.is_empty() || text == "/" {
         return Cell::Absent;

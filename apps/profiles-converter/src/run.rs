@@ -15,6 +15,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::anycubic_wiki::{AnycubicWikiError, AnycubicWikiReader};
+use crate::creality_blog::{CrealityBlogError, CrealityBlogReader};
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
@@ -34,6 +35,7 @@ pub enum RunError {
     Read(DragonFruitError),
     ElegooSettings(ElegooSettingsError),
     AnycubicWiki(AnycubicWikiError),
+    CrealityBlog(CrealityBlogError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
     Fold(FoldError),
@@ -46,6 +48,7 @@ impl fmt::Display for RunError {
             Self::Read(err) => write!(f, "{err}"),
             Self::ElegooSettings(err) => write!(f, "{err}"),
             Self::AnycubicWiki(err) => write!(f, "{err}"),
+            Self::CrealityBlog(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
             Self::Fold(err) => write!(f, "{err}"),
@@ -60,6 +63,7 @@ impl std::error::Error for RunError {
             Self::Read(err) => Some(err),
             Self::ElegooSettings(err) => Some(err),
             Self::AnycubicWiki(err) => Some(err),
+            Self::CrealityBlog(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
             Self::Fold(err) => Some(err),
@@ -104,6 +108,9 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::AnycubicWikiPage => AnycubicWikiReader
             .read(&paths)
             .map_err(RunError::AnycubicWiki)?,
+        SourceFormat::CrealityBlogPost => CrealityBlogReader
+            .read(&paths)
+            .map_err(RunError::CrealityBlog)?,
     };
     let mut notes = reading.notes;
     // Folding comes first, so the resin a profile joins decides whether

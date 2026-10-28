@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! The tables of a saved wiki page, each under the heading above it.
+//! The tables of a saved vendor page, each under the heading above it.
 //!
-//! The page is the HTML the wiki serves, saved as it is. Only its
+//! The page is the HTML the vendor serves, saved as it is. Only its
 //! headings and tables matter: every table sits below the heading that
-//! names the machine it calibrates.
+//! says what it calibrates, a machine on one vendor's page and a resin
+//! on another's.
 
 use scraper::{ElementRef, Html, Selector};
 
@@ -45,7 +46,7 @@ pub fn tables_of(html: &str) -> Vec<Table> {
     tables
 }
 
-/// The text of an element on one line, without the anchor mark the wiki
+/// The text of an element on one line, without the anchor mark a wiki
 /// puts before each heading.
 fn text_of(element: ElementRef<'_>) -> String {
     element
@@ -58,7 +59,7 @@ fn text_of(element: ElementRef<'_>) -> String {
 }
 
 #[cfg(test)]
-mod page_tests {
+mod html_tables_tests {
     use super::*;
 
     #[test]
