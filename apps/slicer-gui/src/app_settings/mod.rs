@@ -17,6 +17,7 @@ use newtypes::newtype_validated;
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::frame_rate::FrameRateCap;
 use crate::language::{BundledLanguage, LanguagePreference};
 use crate::{MenuLayout, ThemePreference};
 
@@ -373,6 +374,10 @@ fn is_default_smooth_models(on: &bool) -> bool {
     !*on
 }
 
+fn is_default_frame_rate(cap: &FrameRateCap) -> bool {
+    *cap == FrameRateCap::default()
+}
+
 /// The diagnostic log is off by default: people turn it on to report a
 /// problem.
 fn default_diagnostic_log() -> bool {
@@ -436,6 +441,10 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_smooth_models"
     )]
     smooth_models: bool,
+    /// The viewport's frame-rate cap. Omitted in TOML while it holds the
+    /// default (`Automatic`).
+    #[serde(default, skip_serializing_if = "is_default_frame_rate")]
+    frame_rate: FrameRateCap,
     /// Whether the diagnostic log writes the session's events to disk.
     /// Omitted in TOML while off (the default).
     #[serde(
@@ -479,6 +488,7 @@ impl Default for AppSettings {
             aa_level: default_aa_level(),
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
+            frame_rate: FrameRateCap::default(),
             diagnostic_log: default_diagnostic_log(),
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
@@ -598,6 +608,14 @@ impl AppSettings {
 
     pub(crate) fn set_smooth_models(&mut self, on: bool) {
         self.smooth_models = on;
+    }
+
+    pub(crate) fn frame_rate(&self) -> FrameRateCap {
+        self.frame_rate
+    }
+
+    pub(crate) fn set_frame_rate(&mut self, cap: FrameRateCap) {
+        self.frame_rate = cap;
     }
 
     pub(crate) fn diagnostic_log(&self) -> bool {

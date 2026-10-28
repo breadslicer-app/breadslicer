@@ -2902,3 +2902,67 @@ msgstr "Apoyanos en Patreon"
 msgctxt "MainWindow"
 msgid "Support us on Ko-fi"
 msgstr "Apoyanos en Ko-fi"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Frame rate"
+msgstr "Cuadros por segundo"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Automatic"
+msgstr "Automático"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "30 FPS"
+msgstr "30 FPS"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "60 FPS"
+msgstr "60 FPS"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "120 FPS"
+msgstr "120 FPS"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Automatic follows your monitor and uses 30 FPS on battery. The 3D view only draws when something changes."
+msgstr "Automático sigue a tu monitor y usa 30 FPS con batería. La vista 3D solo se dibuja cuando algo cambia."
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Test performance"
+msgstr "Probar rendimiento"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Use {} FPS"
+msgstr "Usar {} FPS"
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "AppearancePreferences"
+msgid "Testing… watch the 3D view; it takes about 10 seconds."
+msgstr "Probando… mirá la vista 3D; tarda unos 10 segundos."
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "AppearancePreferences"
+msgid "The test could not run. Make sure the 3D view is visible and try again."
+msgstr "No se pudo hacer la prueba. Fijate que la vista 3D esté visible y probá de nuevo."
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "AppearancePreferences"
+msgid "Your computer draws a heavy scene at about {} FPS and your monitor shows {} Hz. Recommended: {} FPS."
+msgstr "Tu computadora dibuja una escena pesada a unos {} FPS y tu monitor muestra {} Hz. Recomendado: {} FPS."
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "AppearancePreferences"
+msgid "Your computer draws a heavy scene at about {} FPS. Recommended: {} FPS."
+msgstr "Tu computadora dibuja una escena pesada a unos {} FPS. Recomendado: {} FPS."

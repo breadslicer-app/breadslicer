@@ -55,6 +55,7 @@ impl WindowPreferences for PreferencesWindow {
         self.set_current_aa_index(aa_combo_index(prefs.aa_level));
         self.set_prescan_supports(prefs.prescan_supports);
         self.set_smooth_models(prefs.smooth_models);
+        self.set_current_frame_rate_index(prefs.frame_rate.combo_index());
         self.set_diagnostic_log(prefs.diagnostic_log);
         self.set_silenced_message_count(prefs.silenced_messages.len() as i32);
         // Printer / resin selection is pushed separately (see
