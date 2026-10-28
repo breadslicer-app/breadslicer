@@ -39,6 +39,11 @@ const ADD_REACH_MM: f64 = 2.0;
 const MANUAL_ATTACH_REACH_MM: f64 = 15.0;
 /// How far from a support a click may land and still remove it.
 const REMOVE_REACH_MM: f64 = 3.0;
+/// How much lower [`DfSupportSession::add_trunk_near`] may move a point the
+/// engine cannot hold: a point a layer or two up the island's underside.
+const NUDGE_DOWN_MM: [f64; 4] = [0.05, 0.1, 0.2, 0.4];
+/// The directions [`DfSupportSession::add_trunk_near`] moves a point sideways.
+const NUDGE_DIRECTIONS: usize = 8;
 
 /// The supports of a run, kept for editing.
 #[derive(Debug, Clone)]
@@ -146,6 +151,26 @@ pub struct EditPreview {
     pub mesh: IndexedMesh,
     /// The edit would go through.
     pub valid: bool,
+}
+
+/// The points near `point` to try, nearest first: lower down the same
+/// spot, then around it in rings a tenth of a millimetre apart out to
+/// `reach_mm`, each at the same and at lower heights.
+fn nudges(point: [f64; 3], reach_mm: f64) -> Vec<[f64; 3]> {
+    let [x, y, z] = point;
+    let mut out: Vec<[f64; 3]> = NUDGE_DOWN_MM.iter().map(|dz| [x, y, z - dz]).collect();
+    // A small margin, or 0.3 / 0.1 rounds down to two rings.
+    let rings = (reach_mm / 0.1 + 1e-9).floor() as usize;
+    for ring in 1..=rings {
+        let r = ring as f64 * 0.1;
+        for dz in [0.0, NUDGE_DOWN_MM[0], NUDGE_DOWN_MM[1]] {
+            for k in 0..NUDGE_DIRECTIONS {
+                let a = k as f64 * std::f64::consts::TAU / NUDGE_DIRECTIONS as f64;
+                out.push([x + r * a.cos(), y + r * a.sin(), z - dz]);
+            }
+        }
+    }
+    out
 }
 
 fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -491,6 +516,45 @@ impl DfSupportSession {
         self.place(point).map(|_| ())
     }
 
+    /// Adds a support at `point` (world mm) as [`Self::add_trunk_at`] does
+    /// or, when nothing can hold that very point, at the nearest point the
+    /// engine can hold on a face that looks down, whose tip lands within
+    /// `reach_mm` of the one `point` gives: up to 0.4 mm lower and `reach_mm`
+    /// to the side. For a
+    /// point a check picked rather than a click (the Review card's islands):
+    /// the route from one tip can graze the model where a tip a step away
+    /// clears it. Returns the point used; the error is the one at `point`.
+    pub fn add_trunk_near(
+        &mut self,
+        point: [f64; 3],
+        reach_mm: f64,
+    ) -> Result<[f64; 3], EditError> {
+        let Some((_, aimed, normal)) = self.contact(point) else {
+            return Err(EditError::NothingThere);
+        };
+        // A face that looks up holds nothing above it: only the points next
+        // to it are tried.
+        let mut first = EditError::NoRoute("the nearest face looks up".to_owned());
+        if normal.z < 0.0 {
+            match self.place(point) {
+                Ok(_) => return Ok(point),
+                Err(err @ EditError::NoRoute(_)) => first = err,
+                Err(other) => return Err(other),
+            }
+        }
+        // A tip that lands farther than `reach_mm` from the one `point` gives
+        // would hold some other surface than the one asked for.
+        for q in nudges(point, reach_mm) {
+            let holds = self.contact(q).is_some_and(|(_, tip, n)| {
+                n.z < 0.0 && dist([tip.x, tip.y, tip.z], [aimed.x, aimed.y, aimed.z]) <= reach_mm
+            });
+            if holds && self.place(q).is_ok() {
+                return Ok(q);
+            }
+        }
+        Err(first)
+    }
+
     /// What adding a support at `point` would add: green when it goes
     /// through, red (a straight trunk to the plate) when nothing can hold
     /// that point. `NothingThere` when the point is not on a model.
@@ -693,6 +757,23 @@ mod session_tests {
         assert!(
             (segment_dist([3.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) - 2.0).abs() < 1e-12
         );
+    }
+
+    #[test]
+    fn nudges_go_down_first_then_out_in_rings_to_the_reach() {
+        let points = nudges([1.0, 2.0, 3.0], 0.3);
+        // Four steps down, then three rings of eight at three heights.
+        assert_eq!(points.len(), 4 + 3 * 3 * 8);
+        assert_eq!(points[0], [1.0, 2.0, 2.95]);
+        let far = |p: &[f64; 3]| (p[0] - 1.0).hypot(p[1] - 2.0);
+        assert!(points[..4].iter().all(|p| far(p) == 0.0));
+        let rings: Vec<f64> = points[4..].iter().map(far).collect();
+        assert!(
+            rings.windows(2).all(|w| w[0] <= w[1] + 1e-9),
+            "nearest first"
+        );
+        assert!(rings.iter().all(|r| *r <= 0.3 + 1e-9));
+        assert!(points.iter().all(|p| p[2] <= 3.0));
     }
 
     #[test]
