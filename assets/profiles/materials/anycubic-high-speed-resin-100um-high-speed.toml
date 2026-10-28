@@ -1,0 +1,22 @@
+[identity]
+id = "anycubic-high-speed-resin-100um-high-speed"
+brand = "Anycubic"
+family = "standard"
+name = "High Speed Resin (100 um, high speed)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-m7]
+normal_exposure_sec = 1.4
+bottom_exposure_sec = 15.0
+bottom_layer_count = 3
+wait_before_cure_sec = 0.5
+lift_distance_mm = 4.0
+lift_speed_mm_min = 900.0
+retract_speed_mm_min = 900.0
