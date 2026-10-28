@@ -31,6 +31,11 @@
 //! the fills kept from one review into a contour stack that cures them solid
 //! on the next slice of the same scene.
 //!
+//! Fix All (#156) adds two more fixes of the same kind: a floating speck is
+//! offered an erasure (its pixels, removed on the next slice with
+//! [`erase_stack`]), and a thin model feature a thickening (its pixels
+//! grown, cured with [`fill_stack`] as a fill is).
+//!
 //! The crate does no I/O and depends only on the slicing engine's types.
 
 pub mod checks;
@@ -44,7 +49,7 @@ pub mod runs;
 pub mod test_support;
 pub mod union_find;
 
-pub use fill::{CavityFill, FillSlab, PlateRect, fill_stack};
+pub use fill::{CavityFill, FillSlab, PlateRect, erase_stack, fill_stack};
 pub use finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf, Role};
 pub use regions::{

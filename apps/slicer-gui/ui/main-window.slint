@@ -271,6 +271,8 @@ export component MainWindow inherits Window {
     in property <int> review-fill-small;
     in property <string> review-fills-note;
     in property <bool> review-fills-clearable;
+    in property <string> review-fills-clear-label;
+    in property <int> review-fix-all;
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
@@ -278,6 +280,7 @@ export component MainWindow inherits Window {
     callback review-fill-small-requested();
     callback review-fills-cleared();
     callback review-notes-toggled();
+    callback review-fix-all-requested();
     // The second fix of a model inside the raft: turn the raft off (#131).
     callback review-raft-off-requested(int);
     // The Slice tab shows the layer image beside the 3D view (BS-72).
@@ -1287,6 +1290,11 @@ export component MainWindow inherits Window {
                         review-fill-small: root.review-fill-small;
                         review-fills-note: root.review-fills-note;
                         review-fills-clearable: root.review-fills-clearable;
+                        review-fills-clear-label: root.review-fills-clear-label;
+                        review-fix-all: root.review-fix-all;
+                        review-fix-all-requested => {
+                            root.review-fix-all-requested();
+                        }
                         review-fill-toggled(id) => {
                             root.review-fill-toggled(id);
                         }

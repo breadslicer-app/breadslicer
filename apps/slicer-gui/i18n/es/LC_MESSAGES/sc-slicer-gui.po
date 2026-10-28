@@ -2718,3 +2718,177 @@ msgstr "Hueco sin agujeros de drenaje"
 msgctxt "Review"
 msgid "This model is hollow, but its hollow has no drain holes, so its liquid resin stays inside. Add drain holes in the Hollow tab."
 msgstr "Este modelo está ahuecado, pero el hueco no tiene agujeros de drenaje, así que la resina líquida queda adentro. Agregá agujeros de drenaje en la pestaña Ahuecar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fix all ({})"
+msgstr "Corregir todo ({})"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Clear fixes"
+msgstr "Quitar las correcciones"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One support added."
+msgid_plural "{n} supports added."
+msgstr[0] "Se agregó un soporte."
+msgstr[1] "Se agregaron {n} soportes."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "The supports could not be added: {}"
+msgstr "No se pudieron agregar los soportes: {}"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "No supports were added: see the notice."
+msgstr "No se agregó ningún soporte: mirá el aviso."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One cavity to fill."
+msgid_plural "{n} cavities to fill."
+msgstr[0] "Una cavidad para rellenar."
+msgstr[1] "{n} cavidades para rellenar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One speck to erase."
+msgid_plural "{n} specks to erase."
+msgstr[0] "Una mota para borrar."
+msgstr[1] "{n} motas para borrar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One thin feature to thicken."
+msgid_plural "{n} thin features to thicken."
+msgstr[0] "Un detalle fino para engrosar."
+msgstr[1] "{n} detalles finos para engrosar."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Slicing again…"
+msgstr "Laminando de nuevo…"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All is done. Each finding left says why it was left."
+msgstr "Corregir todo terminó. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: drain holes are placed by hand, in the Hollow tab."
+msgstr "Corregir todo lo dejó: los agujeros de drenaje se ubican a mano, en la pestaña Ahuecar."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: this cavity needs an opening, which only a change to the model makes."
+msgstr "Corregir todo lo dejó: esta cavidad necesita una abertura, y eso solo lo logra un cambio en el modelo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: lift the model or turn the raft off with this finding's buttons."
+msgstr "Corregir todo lo dejó: levantá el modelo o desactivá la balsa con los botones de este hallazgo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
+msgstr "Corregir todo lo dejó: no mueve ni cambia el tamaño de los modelos. Acomodá la placa a mano."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: this is in the supports. Generate them again."
+msgstr "Corregir todo lo dejó: esto está en los soportes. Generalos de nuevo."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: no support held here. Add one by hand."
+msgstr "Corregir todo lo dejó: ningún soporte se sostuvo acá. Agregá uno a mano."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: it could not fix this. Change the model by hand."
+msgstr "Corregir todo lo dejó: no pudo corregir esto. Cambiá el modelo a mano."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The fixes are cleared. Slice again to apply."
+msgstr "Se quitaron las correcciones. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One fix will be applied. Slice again to apply."
+msgid_plural "{n} fixes will be applied. Slice again to apply."
+msgstr[0] "Se va a aplicar una corrección. Laminá de nuevo para aplicar."
+msgstr[1] "Se van a aplicar {n} correcciones. Laminá de nuevo para aplicar."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "One fix is applied in this slice."
+msgid_plural "{n} fixes are applied in this slice."
+msgstr[0] "Este laminado tiene una corrección aplicada."
+msgstr[1] "Este laminado tiene {n} correcciones aplicadas."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "there is no model or support within reach of that point"
+msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support can reach that point without crossing the model"
+msgstr "ningún soporte llega a ese punto sin atravesar el modelo"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "the supports could not be drawn: {}"
+msgstr "no se pudieron dibujar los soportes: {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support can hold one point; its row says why."
+msgid_plural "No support can hold {n} points; their rows say why."
+msgstr[0] "Ningún soporte puede sostener un punto; su fila dice por qué."
+msgstr[1] "Ningún soporte puede sostener {n} puntos; sus filas dicen por qué."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All is done, and nothing is left to fix automatically. Each finding left says why it was left."
+msgstr "Corregir todo terminó y no queda nada para corregir automáticamente. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support could be added here: {}. Try a point nearby with the Add tool in the Supports tab."
+msgstr "No se pudo agregar un soporte acá: {}. Probá un punto cercano con la herramienta Agregar de la pestaña Soportes."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "A support was added here, but this still starts with nothing cured below it. Place one by hand in the Supports tab, or leave it."
+msgstr "Se agregó un soporte acá, pero esto sigue empezando sin nada curado debajo. Poné uno a mano en la pestaña Soportes, o dejalo así."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: an island starts on this speck, so it got a support instead. Press Fix All again to erase it."
+msgstr "Corregir todo lo dejó: sobre esta mota empieza una isla, así que en lugar de borrarla le puso un soporte. Tocá Corregir todo de nuevo para borrarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill on the next slice ({})"
+msgstr "Rellenar en el próximo laminado ({})"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: it holds too much resin to fill without asking. Fill it from this row if the cavity is part of the model, or hollow the model in the Hollow tab and drill drain holes."
+msgstr "Corregir todo lo dejó: guarda demasiada resina para rellenarla sin preguntarte. Rellenala desde esta fila si la cavidad es parte del modelo, o ahuecá el modelo en la pestaña Ahuecar y hacele agujeros de drenaje."

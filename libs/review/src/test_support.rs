@@ -358,10 +358,23 @@ impl Fixture {
     ///
     /// When `extra` does not follow the schedule.
     pub fn input_with<'a>(&'a self, extra: ReviewLeaf<'a>) -> ReviewInput<'a> {
+        self.input_with_all([extra])
+    }
+
+    /// The plate as review input, with every leaf of `extra` added: the
+    /// erasures of each role, say.
+    ///
+    /// # Panics
+    ///
+    /// When a leaf of `extra` does not follow the schedule.
+    pub fn input_with_all<'a>(
+        &'a self,
+        extra: impl IntoIterator<Item = ReviewLeaf<'a>>,
+    ) -> ReviewInput<'a> {
         let mut leaves = self.input().leaves().to_vec();
-        leaves.push(extra);
+        leaves.extend(extra);
         ReviewInput::new(leaves, &self.schedule, self.pixel_map, self.max_z)
-            .expect("the extra leaf follows the schedule")
+            .expect("the extra leaves follow the schedule")
     }
 
     /// The layer schedule the plate is cut on.
