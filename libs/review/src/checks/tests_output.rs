@@ -909,9 +909,12 @@ fn a_part_with_nothing_below_it_floats() {
     // The block's inside pixel: column 130, rows 29 and 30 tie on the
     // centroid row and the first in scan order wins.
     assert_focus(&fixture, finding, [130, 29], 4);
+    // The support goes on its underside, at the bottom of that layer.
     assert_eq!(
         finding.fix,
-        Some(SuggestedFix::AddSupport { at: finding.focus })
+        Some(SuggestedFix::AddSupport {
+            at: fixture.input().underside(4, finding.focus)
+        })
     );
 }
 

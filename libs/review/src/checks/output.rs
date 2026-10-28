@@ -1247,7 +1247,9 @@ fn floating_parts(
             ),
         );
         findings.push(if base.model_px > 0 {
-            finding.with_fix(SuggestedFix::AddSupport { at: focus })
+            finding.with_fix(SuggestedFix::AddSupport {
+                at: input.underside(bottom, focus),
+            })
         } else {
             finding
         });

@@ -532,7 +532,9 @@ fn island_finding(
         detail,
     );
     if is_model && on_model {
-        finding.with_fix(SuggestedFix::AddSupport { at: focus })
+        finding.with_fix(SuggestedFix::AddSupport {
+            at: ctx.input.underside(start.at.layer, focus),
+        })
     } else {
         finding
     }
