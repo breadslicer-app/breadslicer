@@ -13,14 +13,17 @@
 //!
 //! The file holds the scene, not what is computed from it: slices, previews
 //! and other caches are rebuilt after opening, and supports are kept as data
-//! from which their mesh is rebuilt. [`container`] reads and writes chunks
-//! without knowing what they hold; [`scene`], [`mesh`] and [`supports`] are
-//! the codecs of the scene graph, its meshes and its supports, and [`file`]
-//! puts them together with the project settings.
+//! from which their mesh is rebuilt. A hollowed model keeps, besides its
+//! hollow, how it was made (#161). [`container`] reads and writes chunks
+//! without knowing what they hold; [`scene`], [`mesh`], [`supports`] and
+//! [`hollows`] are the codecs of the scene graph, its meshes, its supports
+//! and its hollows, and [`file`] puts them together with the project
+//! settings.
 
 mod bytes;
 pub mod container;
 pub mod file;
+pub mod hollows;
 pub mod mesh;
 pub mod scene;
 pub mod supports;
@@ -29,6 +32,8 @@ pub mod supports;
 mod tests_container;
 #[cfg(test)]
 mod tests_file;
+#[cfg(test)]
+mod tests_hollows;
 #[cfg(test)]
 mod tests_mesh;
 #[cfg(test)]
@@ -41,6 +46,7 @@ pub use file::{
     BreadProject, ReadProjectError, SETTINGS_TAG, SETTINGS_VERSION, WriteBreadError, read_project,
     write_project,
 };
+pub use hollows::{DecodeHollowsError, HOLLOWS_TAG, HOLLOWS_VERSION, HollowDocument};
 pub use mesh::{DecodeMeshError, MESH_TAG, MESH_VERSION, decode_mesh, encode_mesh};
 pub use scene::{
     DecodeSceneError, DecodedScene, EncodeSceneError, EncodedScene, SCENE_TAG, SCENE_VERSION,

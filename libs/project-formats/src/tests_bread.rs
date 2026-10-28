@@ -7,7 +7,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use sc_bread_format::{BreadProject, SupportDocument};
+use sc_bread_format::{BreadProject, HollowDocument, SupportDocument};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::{cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
@@ -65,6 +65,7 @@ fn write(scene: &Scene, payload: &ProjectPayload, supports: &[SupportDocument]) 
         payload,
         EmbedProfiles::Yes,
         supports,
+        &[],
         &mut bytes,
         |_| {},
     )
@@ -90,6 +91,41 @@ fn the_bread_extension_names_the_bread_format() {
         ProjectFileType::Bread,
     );
     assert!(is_supported_scene_file_extension(Path::new("plate.bread")));
+}
+
+#[test]
+fn a_bread_project_opens_with_its_hollows() {
+    let scene = two_leaf_scene();
+    let model = scene.roots()[0];
+    let hollows = vec![HollowDocument {
+        leaf: model,
+        hollower: "df".to_owned(),
+        version: 1,
+        document: b"how it was hollowed".to_vec(),
+    }];
+    let mut bytes = Vec::new();
+    write_bread_project_with_progress(
+        &scene,
+        &payload(),
+        EmbedProfiles::Yes,
+        &[],
+        &hollows,
+        &mut bytes,
+        |_| {},
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("plate.bread");
+    std::fs::write(&path, bytes).unwrap();
+    let opened = load_scene(&path, None, |_| {}).expect("the project opens");
+    let LoadedContent::Project(project) = opened.content else {
+        panic!("a .bread opens as a project");
+    };
+    let [hollow] = project.hollows.as_slice() else {
+        panic!("one hollow document");
+    };
+    assert_eq!(hollow.document, hollows[0].document);
+    assert_eq!(project.scene.roots()[0], hollow.leaf);
 }
 
 #[test]
@@ -148,6 +184,7 @@ fn references_alone_are_written_without_embedding() {
         &payload(),
         EmbedProfiles::No,
         &[],
+        &[],
         &mut bytes,
         |_| {},
     )
@@ -184,6 +221,7 @@ fn settings_of_a_newer_version_open_the_scene_as_a_project_without_them() {
         scene: two_leaf_scene(),
         settings: Some(b"version = 99\nfuture = true\n".to_vec()),
         supports: Vec::new(),
+        hollows: Vec::new(),
     };
     let bytes = sc_bread_format::write_project(&project, Vec::new()).unwrap();
     let loaded = read_bread_project(Cursor::new(bytes)).unwrap();
@@ -205,6 +243,7 @@ fn a_profile_that_is_not_text_is_refused() {
         &two_leaf_scene(),
         &payload,
         EmbedProfiles::Yes,
+        &[],
         &[],
         &mut Vec::new(),
         |_| {},
