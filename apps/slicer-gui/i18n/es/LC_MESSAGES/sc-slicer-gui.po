@@ -2882,3 +2882,13 @@ msgstr "Se agregó un soporte acá, pero esto sigue empezando sin nada curado de
 msgctxt "Review"
 msgid "Left by Fix All: an island starts on this speck, so it got a support instead. Press Fix All again to erase it."
 msgstr "Corregir todo lo dejó: sobre esta mota empieza una isla, así que en lugar de borrarla le puso un soporte. Tocá Corregir todo de nuevo para borrarla."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Fill on the next slice ({})"
+msgstr "Rellenar en el próximo laminado ({})"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: it holds too much resin to fill without asking. Fill it from this row if the cavity is part of the model, or hollow the model in the Hollow tab and drill drain holes."
+msgstr "Corregir todo lo dejó: guarda demasiada resina para rellenarla sin preguntarte. Rellenala desde esta fila si la cavidad es parte del modelo, o ahuecá el modelo en la pestaña Ahuecar y hacele agujeros de drenaje."

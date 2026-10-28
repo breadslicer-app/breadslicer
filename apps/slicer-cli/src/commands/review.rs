@@ -183,8 +183,9 @@ impl<'r> FixAll<'r> {
         for finding in &report.findings {
             match finding.fix {
                 Some(SuggestedFix::AddSupport { .. }) => plan.supports += 1,
-                Some(SuggestedFix::Fill { cavity, .. })
-                    if finding.check == CheckKind::ResinTrap =>
+                // Small traps and suction cups, as the app's Fix All.
+                Some(SuggestedFix::Fill { cavity, .. } | SuggestedFix::AddDrain { cavity, .. })
+                    if fills_unasked(finding) =>
                 {
                     plan.fills.extend(report.fills.get(cavity));
                 }
@@ -229,6 +230,16 @@ fn write_fixed_all(input: &ReviewInput<'_>, fixed: &FixedAll, out: &mut dyn Writ
     }
     writeln!(out, "{}", summary_line(input, &fixed.report.findings))?;
     Ok(())
+}
+
+/// Whether Fix All fills `finding`'s cavity without asking: a small resin
+/// trap (a note or a warning) or a suction cup.
+fn fills_unasked(finding: &Finding) -> bool {
+    match finding.check {
+        CheckKind::ResinTrap => finding.severity != Severity::Error,
+        CheckKind::SuctionCup => true,
+        _ => false,
+    }
 }
 
 /// The fills of every finding that offers one.
@@ -374,8 +385,8 @@ fn finding_line(finding: &Finding) -> String {
             " Fix: add a support at ({:.2}, {:.2}, {:.2}) mm.",
             at.x_mm, at.y_mm, at.z_mm
         ),
-        Some(SuggestedFix::AddDrain { at }) => format!(
-            " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm.",
+        Some(SuggestedFix::AddDrain { at, .. }) => format!(
+            " Fix: add a drain at ({:.2}, {:.2}, {:.2}) mm, or fill it on the next slice.",
             at.x_mm, at.y_mm, at.z_mm
         ),
         Some(SuggestedFix::Fill { .. }) => " Fix: fill it on the next slice.".to_owned(),
@@ -576,6 +587,7 @@ mod review_output_tests {
     fn findings_serialise_with_kebab_case_names() {
         let finding = island().with_fix(SuggestedFix::AddDrain {
             at: PlatePoint::new(0.0, 0.0, 0.0),
+            cavity: 2,
         });
         let value = serde_json::to_value(&finding).unwrap();
         assert_eq!(value["check"], "island");
@@ -583,6 +595,7 @@ mod review_output_tests {
         assert_eq!(value["scope"], "model");
         assert_eq!(value["first_layer"], 12);
         assert_eq!(value["fix"]["kind"], "add-drain");
+        assert_eq!(value["fix"]["cavity"], 2);
         assert_eq!(value["focus"]["x_mm"], 1.234);
     }
 }
