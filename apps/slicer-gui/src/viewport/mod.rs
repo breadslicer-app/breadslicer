@@ -6,6 +6,7 @@
 mod bed_clearance;
 mod camera_controller;
 mod controller;
+mod frame_pacer;
 mod gizmo_drag;
 mod gizmo_frame_composer;
 mod gizmo_fsm;
@@ -15,6 +16,7 @@ mod keyboard_drive;
 mod modal_transform;
 pub(crate) mod numeric_transform;
 mod object_list;
+mod performance_probe;
 mod render_host;
 mod render_scheduler;
 mod session_state;
@@ -30,5 +32,6 @@ mod translation_clamp;
 mod types;
 
 pub(crate) use controller::ViewportController;
+pub(crate) use performance_probe::{ProbeResult, ProbeUpdate};
 pub(crate) use render_scheduler::RESIZE_SETTLE;
 pub(crate) use types::{ScreenDelta, ScreenPoint};

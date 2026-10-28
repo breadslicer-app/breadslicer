@@ -29,6 +29,7 @@ use std::rc::{Rc, Weak};
 
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
+use crate::frame_rate::FrameRateCap;
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
 use crate::slint_ui::{MenuLayout, ThemePreference};
@@ -54,6 +55,8 @@ pub(crate) struct PreferencesSnapshot {
     pub prescan_supports: bool,
     /// Whether models shade smooth in the viewport; supports always do.
     pub smooth_models: bool,
+    /// The viewport's frame-rate cap (`frame_rate`).
+    pub frame_rate: FrameRateCap,
     /// Whether the diagnostic log writes the session's events to disk.
     pub diagnostic_log: bool,
     /// The app messages silenced with "Don't show again", by key. Cleared by
@@ -140,6 +143,7 @@ impl PreferencesSnapshot {
             aa_level: AaLevel::Off,
             prescan_supports: false,
             smooth_models: false,
+            frame_rate: FrameRateCap::Automatic,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -182,6 +186,7 @@ pub(crate) enum PreferencesChange {
     AaLevel,
     PrescanSupports,
     SmoothModels,
+    FrameRate,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,
