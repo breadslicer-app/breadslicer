@@ -1,0 +1,37 @@
+[identity]
+id = "creality-high-temperature-resin-50um"
+brand = "Creality"
+family = "engineering"
+name = "High temperature Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.creality-halot-one]
+normal_exposure_sec = 3.2
+bottom_exposure_sec = 50.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+
+[per_printer.creality-halot-one-plus]
+normal_exposure_sec = 2.8
+bottom_exposure_sec = 50.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
+
+[per_printer.creality-halot-one-pro]
+normal_exposure_sec = 3.2
+bottom_exposure_sec = 50.0
+wait_before_cure_sec = 5.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 300.0
