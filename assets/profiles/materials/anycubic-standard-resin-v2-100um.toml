@@ -1,0 +1,31 @@
+[identity]
+id = "anycubic-standard-resin-v2-100um"
+brand = "Anycubic"
+family = "standard"
+name = "Standard Resin V2 (100 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.1
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-m5s]
+normal_exposure_sec = 2.8
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 300.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-m5s-pro]
+normal_exposure_sec = 3.6
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
