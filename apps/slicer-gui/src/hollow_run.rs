@@ -21,6 +21,12 @@
 //!
 //! The Review card (#90) asks which hollow made here holds a resin trap
 //! ([`HollowRun::hollow_at`]) and opens the drain tool on that model (#158).
+//!
+//! The hollows made here live in the document
+//! ([`SceneDocument::hollows`]), so a `.bread` save keeps them and an open
+//! puts them back ([`crate::hollow_persist`], #161). Selecting a hollow puts
+//! the settings it was made with in the tab, so a new drain hollows it the
+//! same way again.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -55,15 +61,15 @@ const DRAIN_SIDES: u32 = 24;
 
 /// The Hollow tab's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct HollowOptions {
-    wall_mm: f32,
-    voxel_mm: f32,
+pub(crate) struct HollowOptions {
+    pub(crate) wall_mm: f32,
+    pub(crate) voxel_mm: f32,
     /// 0 empty, 1 lattice, 2 pillars.
-    fill: u8,
-    cell_mm: f32,
-    beam_mm: f32,
-    smooth: bool,
-    drain_radius_mm: f32,
+    pub(crate) fill: u8,
+    pub(crate) cell_mm: f32,
+    pub(crate) beam_mm: f32,
+    pub(crate) smooth: bool,
+    pub(crate) drain_radius_mm: f32,
 }
 
 impl Default for HollowOptions {
@@ -160,10 +166,10 @@ fn floor_underside(mesh: &IndexedMesh, world: &Transform3D, at: [f32; 3]) -> Opt
 /// A drain in the leaf's local frame: a point on the surface and the
 /// direction into the model.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct LocalDrain {
-    center: [f32; 3],
-    direction: [f32; 3],
-    radius_mm: f32,
+pub(crate) struct LocalDrain {
+    pub(crate) center: [f32; 3],
+    pub(crate) direction: [f32; 3],
+    pub(crate) radius_mm: f32,
 }
 
 impl LocalDrain {
@@ -194,11 +200,13 @@ impl LocalDrain {
 }
 
 /// A hollow this driver installed: the mesh it put on the leaf, what it was
-/// made from and with which drains.
-struct Hollowed {
-    hollow: Arc<IndexedMesh>,
-    original: Arc<IndexedMesh>,
-    drains: Vec<LocalDrain>,
+/// made from, with which drains and settings.
+#[derive(Debug, Clone)]
+pub(crate) struct Hollowed {
+    pub(crate) hollow: Arc<IndexedMesh>,
+    pub(crate) original: Arc<IndexedMesh>,
+    pub(crate) drains: Vec<LocalDrain>,
+    pub(crate) options: HollowOptions,
 }
 
 /// The job in flight and what it needs to land.
@@ -210,6 +218,7 @@ struct Job {
     before: Arc<IndexedMesh>,
     original: Arc<IndexedMesh>,
     drains: Vec<LocalDrain>,
+    options: HollowOptions,
 }
 
 pub(crate) struct HollowRun {
@@ -218,8 +227,12 @@ pub(crate) struct HollowRun {
     dialogs: Rc<DialogManager>,
     job: RefCell<Option<Job>>,
     poll_timer: Rc<slint::Timer>,
-    hollowed: RefCell<Vec<Hollowed>>,
+    /// The document's hollows ([`SceneDocument::hollows`]).
+    hollowed: Rc<RefCell<Vec<Hollowed>>>,
     options: RefCell<HollowOptions>,
+    /// The hollow (by identity) whose settings the tab took last: selecting
+    /// another hollow puts its own settings in the tab.
+    adopted: Cell<Option<usize>>,
     /// The last voxel session, reused when the next job matches it (a
     /// moved or rotated model, a new drain).
     prepared: RefCell<Option<Arc<PreparedHollow>>>,
@@ -322,8 +335,9 @@ impl HollowRun {
                 dialogs,
                 job: RefCell::new(None),
                 poll_timer: Rc::new(slint::Timer::default()),
-                hollowed: RefCell::new(Vec::new()),
+                hollowed: document.hollows(),
                 options: RefCell::new(HollowOptions::default()),
+                adopted: Cell::new(None),
                 prepared: RefCell::new(None),
                 _scene_events: scene_events,
                 ctrl,
@@ -485,6 +499,7 @@ impl HollowRun {
         };
         let (state, drains) = match self.selected() {
             Some((_, mesh, world)) => {
+                self.adopt_options_of(&mesh, &ui);
                 let (original, drains) = self.source_for(&mesh);
                 ui.set_hollow_recommended_wall(recommended_wall_mm(
                     self.longest_side_mm(&original, &world),
@@ -497,6 +512,26 @@ impl HollowRun {
         ui.set_hollow_drain_count(drains as i32);
         if state == 2 {
             ui.set_hollow_drain_tool(false);
+        }
+    }
+
+    /// Puts the settings `mesh` was hollowed with in the tab, the first time
+    /// that hollow is selected: a new drain then hollows it the same way.
+    fn adopt_options_of(&self, mesh: &Arc<IndexedMesh>, ui: &MainWindow) {
+        let ptr = Arc::as_ptr(mesh) as usize;
+        if self.adopted.get() == Some(ptr) {
+            return;
+        }
+        let options = self
+            .hollowed
+            .borrow()
+            .iter()
+            .find(|h| Arc::ptr_eq(&h.hollow, mesh))
+            .map(|h| h.options);
+        if let Some(options) = options {
+            self.adopted.set(Some(ptr));
+            *self.options.borrow_mut() = options;
+            self.push_options(ui);
         }
     }
 
@@ -688,6 +723,7 @@ impl HollowRun {
                     before,
                     original,
                     drains,
+                    options,
                 });
                 ui.set_hollow_running(true);
                 ui.set_hollow_progress(0.0);
@@ -818,10 +854,13 @@ impl HollowRun {
         self.pending
             .borrow_mut()
             .retain(|(m, _)| *m != original_ptr);
+        // The tab already shows the settings this hollow was made with.
+        self.adopted.set(Some(Arc::as_ptr(&hollow) as usize));
         self.hollowed.borrow_mut().push(Hollowed {
             hollow,
             original: job.original,
             drains: job.drains,
+            options: job.options,
         });
         self.refresh_ui();
     }

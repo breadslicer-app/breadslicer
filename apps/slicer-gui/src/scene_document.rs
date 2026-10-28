@@ -35,6 +35,7 @@ use sc_sl1cer::profile::LayerSchedule;
 
 pub(crate) use sc_scene_edit::SceneEdit;
 
+use crate::hollow_run::Hollowed;
 use crate::print_selection::{PrintDefaults, PrintSelection};
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
@@ -248,6 +249,7 @@ pub(crate) struct SceneDocument {
     /// driver: a save keeps the one in force as data, and opening a `.bread`
     /// puts the rebuilt one here.
     support_sessions: Rc<RefCell<SupportSessions>>,
+    hollows: Rc<RefCell<Vec<Hollowed>>>,
 }
 
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
@@ -300,12 +302,20 @@ impl SceneDocument {
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
             support_sessions: Rc::default(),
+            hollows: Rc::default(),
         })
     }
 
     /// The editable support sessions (see [`crate::support_persist`]).
     pub(crate) fn support_sessions(&self) -> Rc<RefCell<SupportSessions>> {
         self.support_sessions.clone()
+    }
+
+    /// The models hollowed in the Hollow tab, each by the hollow mesh it put
+    /// on its leaf (#161): kept here, beside the scene, so a `.bread` save
+    /// stores them and an open puts them back.
+    pub(crate) fn hollows(&self) -> Rc<RefCell<Vec<Hollowed>>> {
+        self.hollows.clone()
     }
 
     /// Wraps a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and installs it.
