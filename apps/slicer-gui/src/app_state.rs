@@ -36,7 +36,9 @@ use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
-use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
+use crate::preferences_window::{
+    WiredPreferencesWindow, build_preferences_window, wire_performance_test,
+};
 use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::ProfileCatalog;
 use crate::repair_run::RepairRun;
@@ -327,6 +329,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_aa_level(snap.aa_level);
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
+    settings.set_frame_rate(snap.frame_rate);
     settings.set_diagnostic_log(snap.diagnostic_log);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
@@ -438,6 +441,9 @@ fn subscribe_window_preferences(
             crate::mesh_render::set_smooth_models(snap.smooth_models);
             controller.upload_scene_again();
         }
+        if matches!(change, PreferencesChange::FrameRate) {
+            crate::frame_rate::set_frame_rate_cap(snap.frame_rate);
+        }
     })
 }
 
@@ -452,6 +458,7 @@ impl AppState {
             &ProfileLibraries::platform_default(),
         ))));
         crate::mesh_render::set_smooth_models(settings.smooth_models());
+        crate::frame_rate::set_frame_rate_cap(settings.frame_rate());
         crate::breadcrumbs::set_enabled(settings.diagnostic_log());
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
@@ -465,6 +472,7 @@ impl AppState {
             aa_level: settings.aa_level(),
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
+            frame_rate: settings.frame_rate(),
             diagnostic_log: settings.diagnostic_log(),
             silenced_messages: settings.silenced_messages(),
             object_list_visible: settings.object_list_visible(),
@@ -594,7 +602,7 @@ impl AppState {
             }),
         )?;
         let drivers = self.install_window_drivers(&ui, &ctrl);
-        self.wire_app_level_menus(&ui);
+        self.wire_app_level_menus(&ui, &ctrl);
 
         self.next_window_id.set(id.wrapping_add(1));
         self.wire_clipboard(&ui, id);
@@ -1201,7 +1209,7 @@ impl AppState {
         }
     }
 
-    fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {
+    fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow, ctrl: &Rc<ViewportController>) {
         // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
@@ -1217,9 +1225,10 @@ impl AppState {
         {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
+            let viewport = Rc::downgrade(ctrl);
             ui.on_show_preferences_requested(move || {
                 if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
-                    app.show_preferences(&ui);
+                    app.show_preferences(&ui, viewport.clone());
                 }
             });
         }
@@ -1403,16 +1412,19 @@ impl AppState {
     /// Shows the app-wide Preferences window centred over `over`, the window
     /// that asked for it, creating it on first use and re-showing the same
     /// instance on subsequent calls. The window's bus subscription keeps it
-    /// up-to-date while hidden.
-    fn show_preferences(&self, over: &MainWindow) {
+    /// up-to-date while hidden. Its performance test runs in `viewport`, the
+    /// 3D view of `over`.
+    fn show_preferences(&self, over: &MainWindow, viewport: Weak<ViewportController>) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
+            wire_performance_test(&existing.window, viewport);
             let _ = existing.window.show();
             crate::window_placement::centre_over(&existing.window, over);
             return;
         }
         match build_preferences_window(&self.prefs, self.catalog.clone()) {
             Ok(wired) => {
+                wire_performance_test(&wired.window, viewport);
                 if let Err(err) = wired.window.show() {
                     eprintln!("Failed to show Preferences window: {err}");
                     return;
@@ -2106,6 +2118,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
+            PreferencesChange::FrameRate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,

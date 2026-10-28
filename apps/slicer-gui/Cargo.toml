@@ -70,6 +70,9 @@ block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = ["objc2-core-services"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+
 [build-dependencies]
 sc-message-catalog = { workspace = true }
 slint-build = "1.18.1"

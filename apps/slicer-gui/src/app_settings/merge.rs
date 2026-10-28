@@ -28,6 +28,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         aa_level,
         prescan_supports,
         smooth_models,
+        frame_rate,
         diagnostic_log,
         silenced_messages,
         object_list,
@@ -66,6 +67,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             prescan_supports,
         ),
         smooth_models: pick(&base.smooth_models, &ours.smooth_models, smooth_models),
+        frame_rate: pick(&base.frame_rate, &ours.frame_rate, frame_rate),
         diagnostic_log: pick(&base.diagnostic_log, &ours.diagnostic_log, diagnostic_log),
         silenced_messages: merge_set(
             &base.silenced_messages,

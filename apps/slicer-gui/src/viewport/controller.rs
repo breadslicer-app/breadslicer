@@ -34,6 +34,7 @@ use super::numeric_transform::{
     GestureKind, NumericEdit, Readout, cheap_readout, gesture_delta_text, readout,
 };
 use super::object_list::{build_object_list_names, push_object_list};
+use super::performance_probe::{Detail, ProbeResult, ProbeRun, ProbeUpdate};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
 use super::types::{FrameState, ScreenDelta, ScreenPoint};
@@ -93,6 +94,12 @@ pub(crate) struct ViewportController {
     /// Preview pieces drawn over the scene (a support or drain before it is
     /// placed, a hollow cavity), set by the tab drivers.
     overlay: RefCell<Option<crate::mesh_render::Overlay>>,
+    /// The performance test while it runs. It owns the renderer's scene
+    /// meanwhile, so the frame pass waits until it ends.
+    probe: RefCell<Option<ProbeRun>>,
+    /// Steps the performance test a slice at a time, so the window keeps
+    /// answering while it runs.
+    probe_timer: slint::Timer,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -134,6 +141,8 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            probe: RefCell::new(None),
+            probe_timer: slint::Timer::default(),
         }
     }
 
@@ -167,6 +176,8 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            probe: RefCell::new(None),
+            probe_timer: slint::Timer::default(),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -446,6 +457,105 @@ impl ViewportController {
     pub(crate) fn upload_scene_again(&self) {
         self.render.update_frame(FrameState::with_upload_owed);
         self.mark_dirty();
+    }
+
+    /// Starts the performance test (Preferences, UI & Theme) in this viewport.
+    /// `report` hears its progress and its result. Returns `false`, and
+    /// reports nothing, when a test already runs.
+    pub(crate) fn start_performance_probe(
+        self: &Rc<Self>,
+        report: Rc<dyn Fn(ProbeUpdate)>,
+    ) -> bool {
+        if self.probe.borrow().is_some() {
+            return false;
+        }
+        let started = {
+            let mut slot = self.render.renderer_cell().borrow_mut();
+            match slot.as_mut() {
+                Some(renderer) if !self.session.loader().device_loss().is_lost() => {
+                    ProbeRun::start(renderer.as_mut(), self.session.build_volume(), Detail::FULL)
+                        .ok()
+                }
+                _ => None,
+            }
+        };
+        let Some(run) = started else {
+            // A refused upload may have dropped the user's scene.
+            self.upload_scene_again();
+            report(ProbeUpdate::Failed);
+            return true;
+        };
+        *self.probe.borrow_mut() = Some(run);
+        report(ProbeUpdate::Progress(0.0));
+        let controller = Rc::downgrade(self);
+        self.probe_timer.start(
+            slint::TimerMode::Repeated,
+            core::time::Duration::from_millis(1),
+            move || {
+                if let Some(controller) = controller.upgrade() {
+                    controller.step_performance_probe(&report);
+                }
+            },
+        );
+        true
+    }
+
+    /// Draws the next slice of the performance test, shows its last frame in
+    /// the viewport and reports the progress, or ends the test.
+    fn step_performance_probe(&self, report: &Rc<dyn Fn(ProbeUpdate)>) {
+        /// How long one slice draws before the event loop runs again.
+        const STEP_BUDGET: core::time::Duration = core::time::Duration::from_millis(40);
+
+        let Some(ui) = self.ui.upgrade() else {
+            return self.end_performance_probe(None, report);
+        };
+        let size = self.render.viewport().map(|vp| {
+            let scale = ui.window().scale_factor();
+            (
+                (vp.width() * scale).round() as u32,
+                (vp.height() * scale).round() as u32,
+            )
+        });
+        let Some((width, height)) = size.filter(|(w, h)| *w > 0 && *h > 0) else {
+            return self.end_performance_probe(None, report);
+        };
+        let stepped = {
+            let mut slot = self.render.renderer_cell().borrow_mut();
+            let mut probe = self.probe.borrow_mut();
+            match (slot.as_mut(), probe.as_mut()) {
+                (Some(renderer), Some(run)) => run
+                    .step(renderer.as_mut(), width, height, STEP_BUDGET)
+                    .map(|texture| (texture, run.is_done(), run.progress()))
+                    .ok(),
+                _ => None,
+            }
+        };
+        let Some((texture, done, progress)) = stepped else {
+            return self.end_performance_probe(None, report);
+        };
+        if let Some(image) = texture.and_then(|t| slint::Image::try_from(t).ok()) {
+            ui.set_mesh_rendering(image);
+        }
+        if done {
+            let run = self.probe.borrow_mut().take();
+            let result = run.and_then(|run| run.finish(self.render.refresh_hz()));
+            self.end_performance_probe(result, report);
+        } else {
+            report(ProbeUpdate::Progress(progress));
+        }
+    }
+
+    /// Ends the performance test: drops its scene from the renderer, uploads
+    /// the user's scene again and reports `result` (`None` for a test that
+    /// could not finish).
+    fn end_performance_probe(&self, result: Option<ProbeResult>, report: &Rc<dyn Fn(ProbeUpdate)>) {
+        self.probe_timer.stop();
+        self.probe.borrow_mut().take();
+        if let Some(renderer) = self.render.renderer_cell().borrow_mut().as_mut() {
+            renderer.clear_scene();
+        }
+        self.upload_scene_again();
+        report(result.map_or(ProbeUpdate::Failed, ProbeUpdate::Finished));
     }
 
     /// Resets the viewport after a fresh scene install: the camera goes back to
@@ -2031,7 +2141,7 @@ impl ViewportController {
     /// viewport, or camera), or when the viewport's width or height rounds to 0
     /// pixels.
     fn on_paint(&self) {
-        if !self.render.frame().redraw_owed() {
+        if !self.render.frame().redraw_owed() || self.render.hold_frame() {
             return;
         }
 
@@ -2198,6 +2308,9 @@ impl ViewportController {
     }
 
     pub(crate) fn handle_before_rendering(&self) {
+        if self.probe.borrow().is_some() {
+            return;
+        }
         self.refresh_readout();
         if !self.on_scene_change() {
             return;

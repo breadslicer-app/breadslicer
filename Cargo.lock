@@ -5186,6 +5186,7 @@ dependencies = [
  "tempfile",
  "toml",
  "wgpu",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 
