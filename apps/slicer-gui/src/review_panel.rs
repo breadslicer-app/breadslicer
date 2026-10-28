@@ -10,7 +10,7 @@
 //! and centres the camera on its focus point. A finding with a suggested fix
 //! offers it where the app's own tools apply it as one undoable edit:
 //! "Add support here" through the Supports tab's hand tool
-//! ([`DfSupportRun::add_support_at`]). A cavity in a model hollowed in this
+//! ([`DfSupportRun::add_supports_at`]). A cavity in a model hollowed in this
 //! window offers "Add drain holes…", which opens the Hollow tab's drain tool
 //! on that model, so the person picks where the holes go (#158); a hollow
 //! with no drain holes at all is reported as just that.
@@ -52,7 +52,7 @@
 //! left it ([`fix_all_leaves`]).
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
@@ -418,7 +418,8 @@ impl ReviewPanel {
     }
 
     /// What Fix All would do with the held review: the fixes it applies,
-    /// without the findings left alone, fixed already or marked.
+    /// without the findings left alone, fixed already, marked, or whose
+    /// support the engine refused or did not hold.
     fn fix_all_plan(&self) -> FixAllPlan {
         let held = self.held.borrow();
         let Some(held) = held.as_ref() else {
@@ -437,7 +438,11 @@ impl ReviewPanel {
         let marks = self.marks.borrow();
         plan_fix_all(findings, fills, erasures, thickenings, |i| {
             let key = FindingKey::of(&findings[i]);
-            held.fixed.contains(&i) || marks.is_left(&key) || marks.is_marked(&key)
+            held.fixed.contains(&i)
+                || marks.is_left(&key)
+                || marks.is_marked(&key)
+                || marks.refusal(&key).is_some()
+                || marks.was_supported(&key)
         })
     }
 
@@ -462,20 +467,57 @@ impl ReviewPanel {
         let mut lines: Vec<String> = Vec::new();
         let mut changed = false;
         if !plan.supports.is_empty() {
-            match self.supports.add_supports_at(&plan.support_points()) {
-                (HandEdit::Applied, added) => {
-                    changed = true;
-                    for &(i, _) in &plan.supports {
-                        self.mark_fixed(i);
+            let points = plan.support_points();
+            let (outcome, refused) = self.supports.add_supports_at(&points);
+            // The findings at each point the engine refused keep why, so
+            // their rows say it and Fix All does not offer them again.
+            let refusal_at = |at: [f32; 3]| {
+                refused
+                    .iter()
+                    .find(|(p, _)| same_point(points[*p], at))
+                    .map(|(_, why)| why)
+            };
+            {
+                let mut marks = self.marks.borrow_mut();
+                for &(i, at) in &plan.supports {
+                    if let Some(why) = refusal_at(at) {
+                        let key =
+                            FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
+                        marks.refuse(key, why, &models);
                     }
+                }
+            }
+            match outcome {
+                HandEdit::Applied => {
+                    changed = true;
+                    for &(i, at) in &plan.supports {
+                        if refusal_at(at).is_none() {
+                            let key =
+                                FindingKey::of(&self.finding(i as i32).expect("a planned finding"));
+                            self.marks.borrow_mut().supported(key, &models);
+                            self.mark_fixed(i);
+                        }
+                    }
+                    let added = points.len() - refused.len();
                     lines.push(
                         ctr!("Review", "One support added.", "{n} supports added.", added)
                             .to_string(),
                     );
+                    if !refused.is_empty() {
+                        lines.push(
+                            ctr!(
+                                "Review",
+                                "No support can hold one point; its row says why.",
+                                "No support can hold {n} points; their rows say why.",
+                                refused.len()
+                            )
+                            .to_string(),
+                        );
+                    }
                 }
-                (HandEdit::Failed(why), _) => lines
+                HandEdit::Failed(why) => lines
                     .push(ctr!("Review", "The supports could not be added: {}", why).to_string()),
-                (HandEdit::Notified, _) => lines
+                HandEdit::Notified => lines
                     .push(ctr!("Review", "No supports were added: see the notice.").to_string()),
             }
         }
@@ -595,11 +637,19 @@ impl ReviewPanel {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_review_selected(-1);
         }
+        let nothing_left = self.fix_all_plan().is_empty();
         self.push((after_fix_all && left > 0).then(|| {
-            ctr!(
-                "Review",
-                "Fix All is done. Each finding left says why it was left."
-            )
+            if nothing_left {
+                ctr!(
+                    "Review",
+                    "Fix All is done, and nothing is left to fix automatically. Each finding left says why it was left."
+                )
+            } else {
+                ctr!(
+                    "Review",
+                    "Fix All is done. Each finding left says why it was left."
+                )
+            }
         }));
     }
 
@@ -804,18 +854,29 @@ impl ReviewPanel {
         }
         let message = match finding.fix {
             Some(SuggestedFix::AddSupport { at }) => {
-                match self.supports.add_support_at(world(at)) {
-                    HandEdit::Applied => {
+                let key = FindingKey::of(&finding);
+                match self.supports.add_supports_at(&[world(at)]) {
+                    (HandEdit::Applied, _) => {
+                        if let Some(models) = self.markable_models() {
+                            self.marks.borrow_mut().supported(key, &models);
+                        }
                         self.mark_fixed(index);
                         Some(ctr!(
                             "Review",
                             "Support added. Slice again to check the result."
                         ))
                     }
-                    HandEdit::Failed(why) => {
+                    (HandEdit::Failed(why), refused) => {
+                        // The engine refused the point (not, say, a run in
+                        // progress): the row keeps why.
+                        if !refused.is_empty()
+                            && let Some(models) = self.markable_models()
+                        {
+                            self.marks.borrow_mut().refuse(key, &why, &models);
+                        }
                         Some(ctr!("Review", "The support could not be added: {}", why))
                     }
-                    HandEdit::Notified => None,
+                    (HandEdit::Notified, _) => None,
                 }
             }
             Some(SuggestedFix::Fill { .. }) => {
@@ -888,6 +949,11 @@ impl ReviewPanel {
 /// precision.
 fn world(point: sc_review::PlatePoint) -> [f32; 3] {
     [point.x_mm, point.y_mm, point.z_mm].map(|c| c as f32)
+}
+
+/// Whether two support points are the same spot, found twice.
+fn same_point(a: [f32; 3], b: [f32; 3]) -> bool {
+    a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-3)
 }
 
 /// The UI code of a severity: 0 error, 1 warning, 2 info.
@@ -1007,9 +1073,7 @@ impl FixAllPlan {
     fn support_points(&self) -> Vec<[f32; 3]> {
         let mut points: Vec<[f32; 3]> = Vec::new();
         for &(_, at) in &self.supports {
-            let twin = points
-                .iter()
-                .any(|other| at.iter().zip(other).all(|(a, b)| (a - b).abs() < 1e-3));
+            let twin = points.iter().any(|other| same_point(*other, at));
             if !twin {
                 points.push(at);
             }
@@ -1030,8 +1094,8 @@ impl FixAllPlan {
 /// Fix All's plan for `findings` and the pixels their fixes name, without
 /// the findings `skip` names: a support under every island and floating
 /// part, a fill in every small resin trap (as "Fill all small traps"), an
-/// erasure of every speck and a thickening of every thin model feature that
-/// no erasure touches. Everything else is left.
+/// erasure of every speck no support goes in and a thickening of every thin
+/// model feature that no erasure touches. Everything else is left.
 fn plan_fix_all(
     findings: &[Finding],
     fills: &[CavityFill],
@@ -1065,6 +1129,12 @@ fn plan_fix_all(
             _ => {}
         }
     }
+    // A speck where an island starts is the island's first layer: the
+    // support holds it, and erasing it would leave the island one layer up
+    // with nothing below it.
+    plan.patches.retain(|(_, kind, erasure)| {
+        *kind != PatchKind::Erase || !plan.supports.iter().any(|(_, at)| in_slab(erasure, *at))
+    });
     // An erasure wins over a thickening of the same pixels: the speck goes.
     for (i, thickening) in thicken {
         let erased = plan
@@ -1077,6 +1147,19 @@ fn plan_fix_all(
         }
     }
     plan
+}
+
+/// Whether a slab of `fill` holds `at` (world mm).
+fn in_slab(fill: &CavityFill, at: [f32; 3]) -> bool {
+    let [x, y, z] = at.map(f64::from);
+    fill.slabs.iter().any(|slab| {
+        slab.bottom_mm <= z + 1e-6
+            && z < slab.top_mm
+            && slab
+                .rects
+                .iter()
+                .any(|r| r.x0_mm <= x && x <= r.x1_mm && r.y0_mm <= y && y <= r.y1_mm)
+    })
 }
 
 /// Why Fix All left `finding`, for the review of the slice it asked for.
@@ -1103,6 +1186,10 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
             "Review",
             "Left by Fix All: this is in the supports. Generate them again."
         ),
+        (_, Some(SuggestedFix::Erase { .. })) => ctr!(
+            "Review",
+            "Left by Fix All: an island starts on this speck, so it got a support instead. Press Fix All again to erase it."
+        ),
         (_, Some(SuggestedFix::AddSupport { .. })) => ctr!(
             "Review",
             "Left by Fix All: no support held here. Add one by hand."
@@ -1126,6 +1213,10 @@ struct RowMarks {
     filled: BTreeSet<usize>,
     /// Findings left alone: hidden.
     left: BTreeSet<usize>,
+    /// Findings whose support the engine refused, with why.
+    refused: BTreeMap<usize, SharedString>,
+    /// Findings found again after a support went in: it did not hold them.
+    unheld: BTreeSet<usize>,
     /// Whether fills can be marked: the models stand as sliced.
     fixable: bool,
     /// Whether the notes are unfolded.
@@ -1151,6 +1242,11 @@ impl RowMarks {
             }
             if marks.is_left(&key) {
                 row_marks.left.insert(i);
+            }
+            if let Some(why) = marks.refusal(&key) {
+                row_marks.refused.insert(i, why.into());
+            } else if marks.was_supported(&key) {
+                row_marks.unheld.insert(i);
             }
         }
         row_marks
@@ -1183,6 +1279,18 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
                     0
                 };
                 row.leave = marks.fixable && finding.severity == Severity::Info;
+            }
+            if let Some(why) = marks.refused.get(&i) {
+                row.remains = ctr!(
+                    "Review",
+                    "No support could be added here: {}. Try a point nearby with the Add tool in the Supports tab.",
+                    why
+                );
+            } else if marks.unheld.contains(&i) {
+                row.remains = ctr!(
+                    "Review",
+                    "A support was added here, but this still starts with nothing cured below it. Place one by hand in the Supports tab, or leave it."
+                );
             }
             row.header = if group == Some(row.severity) {
                 SharedString::default()

@@ -2837,3 +2837,48 @@ msgid "One fix is applied in this slice."
 msgid_plural "{n} fixes are applied in this slice."
 msgstr[0] "Este laminado tiene una corrección aplicada."
 msgstr[1] "Este laminado tiene {n} correcciones aplicadas."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "there is no model or support within reach of that point"
+msgstr "no hay ningún modelo ni soporte al alcance de ese punto"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support can reach that point without crossing the model"
+msgstr "ningún soporte llega a ese punto sin atravesar el modelo"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "the supports could not be drawn: {}"
+msgstr "no se pudieron dibujar los soportes: {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support can hold one point; its row says why."
+msgid_plural "No support can hold {n} points; their rows say why."
+msgstr[0] "Ningún soporte puede sostener un punto; su fila dice por qué."
+msgstr[1] "Ningún soporte puede sostener {n} puntos; sus filas dicen por qué."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All is done, and nothing is left to fix automatically. Each finding left says why it was left."
+msgstr "Corregir todo terminó y no queda nada para corregir automáticamente. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support could be added here: {}. Try a point nearby with the Add tool in the Supports tab."
+msgstr "No se pudo agregar un soporte acá: {}. Probá un punto cercano con la herramienta Agregar de la pestaña Soportes."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "A support was added here, but this still starts with nothing cured below it. Place one by hand in the Supports tab, or leave it."
+msgstr "Se agregó un soporte acá, pero esto sigue empezando sin nada curado debajo. Poné uno a mano en la pestaña Soportes, o dejalo así."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Left by Fix All: an island starts on this speck, so it got a support instead. Press Fix All again to erase it."
+msgstr "Corregir todo lo dejó: sobre esta mota empieza una isla, así que en lugar de borrarla le puso un soporte. Tocá Corregir todo de nuevo para borrarla."

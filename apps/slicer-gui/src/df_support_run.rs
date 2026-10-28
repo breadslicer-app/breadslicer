@@ -36,8 +36,8 @@ use std::time::{Duration, Instant};
 use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::{
-    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, DfSupportSession, EditPreview,
-    RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, DfSupportSession, EditError,
+    EditPreview, RaftMode, ScanCache, start_df_prescan, start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -184,6 +184,57 @@ pub(crate) enum HandEdit {
     Failed(slint::SharedString),
     /// Nothing changed, and a notice already told the person why.
     Notified,
+}
+
+/// The points of a hand edit the engine refused, by index, with why.
+pub(crate) type Refusals = Vec<(usize, slint::SharedString)>;
+
+/// How far "Add support here" and Fix All may move a check's point to one
+/// the engine can hold (`DfSupportSession::add_trunk_near`). An island is
+/// often a fraction of a millimetre across: the tip has to stay on it.
+const REVIEW_NUDGE_MM: f64 = 0.3;
+
+/// What a hand edit does at each of its points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandTool {
+    /// A click of the Add tool: a support at that very point.
+    Add,
+    /// A support at a check's point, or right next to it.
+    AddNear,
+    /// A click of the Remove tool.
+    Remove,
+}
+
+impl HandTool {
+    /// The Supports tab's tool code of a click, whose preview it can take.
+    fn click(self) -> Option<i32> {
+        match self {
+            HandTool::Add => Some(1),
+            HandTool::Remove => Some(2),
+            HandTool::AddNear => None,
+        }
+    }
+}
+
+/// Why the engine refused an edit, in the person's words.
+fn refusal(err: &EditError) -> slint::SharedString {
+    match err {
+        EditError::NothingThere => ctr!(
+            "DfSupportDialog",
+            "there is no model or support within reach of that point"
+        ),
+        EditError::NoRoute(_) => ctr!(
+            "DfSupportDialog",
+            "no support can reach that point without crossing the model"
+        ),
+        EditError::Tessellation(why) => {
+            ctr!(
+                "DfSupportDialog",
+                "the supports could not be drawn: {}",
+                why
+            )
+        }
+    }
 }
 
 /// A preview to compute: the session to edit, where, and with which tool.
@@ -1198,51 +1249,54 @@ impl DfSupportRun {
         self.hand_edit(&ui, tool, point);
     }
 
-    /// Adds a support whose tip touches the model at `point` (world mm), the
-    /// way a click with the Add tool does: one undoable edit of the supports
+    /// Adds a support at every point of `points` (world mm), whose tip
+    /// touches the model there or at the nearest point next to it the engine
+    /// can hold ([`REVIEW_NUDGE_MM`]), as one undoable edit of the supports
     /// generated last, or a notice when there are none to edit. For the
-    /// Review card's "Add support here".
-    pub(crate) fn add_support_at(&self, point: [f32; 3]) -> HandEdit {
+    /// Review card's "Add support here" and Fix All (#156), whose points a
+    /// check picked. Points the engine refuses are skipped, and returned by
+    /// index with why; the edit fails when none took.
+    pub(crate) fn add_supports_at(&self, points: &[[f32; 3]]) -> (HandEdit, Refusals) {
         let Some(ui) = self.ui.upgrade() else {
-            return HandEdit::Notified;
+            return (HandEdit::Notified, Vec::new());
         };
-        self.hand_edit(&ui, 1, point)
-    }
-
-    /// Adds a support at every point of `points` (world mm) as one undoable
-    /// edit, for the Review card's Fix All (#156). Points the engine refuses
-    /// are skipped; returns the outcome and how many supports went in.
-    pub(crate) fn add_supports_at(&self, points: &[[f32; 3]]) -> (HandEdit, usize) {
-        let Some(ui) = self.ui.upgrade() else {
-            return (HandEdit::Notified, 0);
-        };
-        self.hand_edits(&ui, 1, points)
+        self.hand_edits(&ui, HandTool::AddNear, points)
     }
 
     /// Adds (tool 1) or removes (tool 2) a support at `point`. The outcome
     /// also goes to the Supports tab's last-run line.
     fn hand_edit(&self, ui: &MainWindow, tool: i32, point: [f32; 3]) -> HandEdit {
+        let tool = if tool == 1 {
+            HandTool::Add
+        } else {
+            HandTool::Remove
+        };
         self.hand_edits(ui, tool, &[point]).0
     }
 
-    /// Adds (tool 1) or removes (tool 2) a support at every point of
-    /// `points`, as one undoable edit, and returns how many points took. A
-    /// point the engine refuses is skipped; the edit fails when none took.
-    fn hand_edits(&self, ui: &MainWindow, tool: i32, points: &[[f32; 3]]) -> (HandEdit, usize) {
+    /// Edits the supports at every point of `points` with `tool`, as one
+    /// undoable edit. A point the engine refuses is skipped and returned, by
+    /// index, with why; the edit fails when none took.
+    fn hand_edits(
+        &self,
+        ui: &MainWindow,
+        tool: HandTool,
+        points: &[[f32; 3]],
+    ) -> (HandEdit, Refusals) {
         if points.is_empty() {
-            return (HandEdit::Notified, 0);
+            return (HandEdit::Notified, Vec::new());
         }
-        let mut took = 0;
-        let outcome = self.hand_edits_counted(ui, tool, points, &mut took);
-        (outcome, took)
+        let mut refused = Vec::new();
+        let outcome = self.hand_edits_counted(ui, tool, points, &mut refused);
+        (outcome, refused)
     }
 
     fn hand_edits_counted(
         &self,
         ui: &MainWindow,
-        tool: i32,
+        tool: HandTool,
         points: &[[f32; 3]],
-        took: &mut usize,
+        refused: &mut Refusals,
     ) -> HandEdit {
         if self.handle.borrow().is_some() {
             return HandEdit::Failed(ctr!(
@@ -1310,13 +1364,15 @@ impl DfSupportRun {
             return HandEdit::Notified;
         };
         crate::breadcrumbs::note(&format!(
-            "supports: click tool={tool} points={}",
+            "supports: click tool={tool:?} points={}",
             points.len()
         ));
         // The preview of this very point already placed it: take that.
         let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
             let drawn_on = self.sessions.borrow()[current].1;
-            (points == [answer.point] && answer.tool == tool && answer.from == (current, drawn_on))
+            (points == [answer.point]
+                && tool.click() == Some(answer.tool)
+                && answer.from == (current, drawn_on))
                 .then_some(answer.edited)
                 .flatten()
         });
@@ -1326,23 +1382,24 @@ impl DfSupportRun {
         // The port is DragonFruit's code on hand-picked input: a panic in it
         // is an edit that failed, not a reason to lose the person's work.
         let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if reused {
-                *took = 1;
-            } else {
-                let mut refused = None;
-                for point in points {
+            if !reused {
+                let mut last = None;
+                for (i, point) in points.iter().enumerate() {
                     let p = point.map(f64::from);
-                    let edit = if tool == 1 {
-                        edited.add_trunk_at(p)
-                    } else {
-                        edited.remove_near(p).map(|_| ())
+                    let edit = match tool {
+                        HandTool::Add => edited.add_trunk_at(p),
+                        HandTool::AddNear => edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ()),
+                        HandTool::Remove => edited.remove_near(p).map(|_| ()),
                     };
-                    match edit {
-                        Ok(()) => *took += 1,
-                        Err(err) => refused = Some(err),
+                    if let Err(err) = edit {
+                        crate::breadcrumbs::note(&format!("supports: point {i} refused: {err}"));
+                        refused.push((i, refusal(&err)));
+                        last = Some(err);
                     }
                 }
-                if let (0, Some(err)) = (*took, refused) {
+                if refused.len() == points.len()
+                    && let Some(err) = last
+                {
                     return Err(err);
                 }
             }
@@ -1355,7 +1412,7 @@ impl DfSupportRun {
                     "That edit failed inside the support engine; nothing was changed."
                 ));
             }
-            Ok(Err(err)) => return failed(err.to_string().into()),
+            Ok(Err(err)) => return failed(refusal(&err)),
             Ok(Ok(Some(mesh))) => mesh,
             Ok(Ok(None)) => {
                 return failed(ctr!(
@@ -1387,9 +1444,14 @@ impl DfSupportRun {
                 let mut sessions = self.sessions.borrow_mut();
                 sessions.truncate(current + 1);
                 sessions.push((Arc::new(edited), self.document.scene_revision()));
-                ui.set_supports_last_run(
-                    format!("{roots} support root(s), edited by hand.").into(),
-                );
+                let line = match refused.first() {
+                    None => format!("{roots} support root(s), edited by hand."),
+                    Some((_, why)) => format!(
+                        "{roots} support root(s), edited by hand; {} point(s) no support could hold: {why}.",
+                        refused.len()
+                    ),
+                };
+                ui.set_supports_last_run(line.into());
                 drop(sessions);
                 self.warm_worker();
                 HandEdit::Applied
@@ -1757,8 +1819,9 @@ mod hand_edit_tests {
                 })
             };
             let before = mesh(&document);
-            let (outcome, added) =
+            let (outcome, refused) =
                 run.add_supports_at(&[[20.2, 20.2, 7.5], [19.8, 19.8, 7.5], [20.2, 19.8, 7.5]]);
+            let added = 3 - refused.len();
             let after = roots(&run);
             assert_ne!(mesh(&document), before, "the supports changed");
             document.undo().expect("one undo");
