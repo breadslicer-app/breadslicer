@@ -50,7 +50,10 @@ pub(crate) fn support_leaf(spatial: &SceneSpatial) -> Option<(NodeId, Arc<Indexe
     support_leaves(spatial).next()
 }
 
-fn support_leaves(spatial: &SceneSpatial) -> impl Iterator<Item = (NodeId, Arc<IndexedMesh>)> + '_ {
+/// Every leaf of the scene that shows a support mesh, in row order.
+pub(crate) fn support_leaves(
+    spatial: &SceneSpatial,
+) -> impl Iterator<Item = (NodeId, Arc<IndexedMesh>)> + '_ {
     (0..)
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|id| {
