@@ -437,7 +437,7 @@ fn family_of(resin: &str) -> &'static str {
 /// A `+` becomes a word rather than vanishing: the sheet sells "3.0",
 /// "3.0 Pro" and "3.0+" as 3 products, and dropping the sign would give
 /// 2 of them one id.
-fn slug(value: &str) -> String {
+pub(crate) fn slug(value: &str) -> String {
     value
         .to_ascii_lowercase()
         .replace('+', " plus ")
@@ -448,7 +448,7 @@ fn slug(value: &str) -> String {
 }
 
 /// A layer height in microns, as a whole number.
-fn microns(height: PositiveFiniteMm) -> u32 {
+pub(crate) fn microns(height: PositiveFiniteMm) -> u32 {
     (height.value() * 1000.0).round() as u32
 }
 

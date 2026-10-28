@@ -1,0 +1,40 @@
+[identity]
+id = "anycubic-rigid-100-resin-50um"
+brand = "Anycubic"
+family = "standard"
+name = "Rigid 100 Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-4]
+normal_exposure_sec = 1.4
+bottom_exposure_sec = 35.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-4-ultra]
+normal_exposure_sec = 1.8
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 2.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 480.0
+retract_speed_mm_min = 480.0
+
+[per_printer.anycubic-photon-mono-m7-max]
+normal_exposure_sec = 2.2
+bottom_exposure_sec = 40.0
+bottom_layer_count = 5
+wait_before_cure_sec = 2.0
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
