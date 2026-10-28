@@ -699,6 +699,12 @@ impl Renderer {
         )
     }
 
+    /// Blocks until the GPU has finished the work submitted so far. A poll
+    /// error (a lost device) returns at once; the next frame reports it.
+    pub fn wait_for_gpu(&self) {
+        let _ = self.core.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+
     /// Draws the models alone against the clear colour, for a picture of the
     /// print rather than of the workspace: no plate, no envelope, no slice cap,
     /// and none of the editing overlays.

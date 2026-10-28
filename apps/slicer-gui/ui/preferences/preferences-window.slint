@@ -30,6 +30,11 @@ export component PreferencesWindow inherits Window {
     in-out property <int> current-aa-index: 0;
     in-out property <bool> prescan-supports: false;
     in-out property <bool> smooth-models: false;
+    in-out property <int> current-frame-rate-index: 0;
+    in property <bool> probe-running: false;
+    in property <float> probe-progress: 0;
+    in property <string> probe-message;
+    in property <int> probe-recommended-fps: 0;
     in-out property <bool> diagnostic-log: false;
     in property <int> silenced-message-count: 0;
 
@@ -56,6 +61,9 @@ export component PreferencesWindow inherits Window {
     callback aa-level-changed(int);
     callback prescan-supports-changed(bool);
     callback smooth-models-changed(bool);
+    callback frame-rate-changed(int);
+    callback test-performance();
+    callback use-recommended-frame-rate();
     callback diagnostic-log-changed(bool);
     callback open-logs-folder();
     callback show-all-messages-again();
@@ -121,6 +129,21 @@ export component PreferencesWindow inherits Window {
                 }
                 smooth-models-changed(on) => {
                     root.smooth-models-changed(on);
+                }
+                current-frame-rate-index: root.current-frame-rate-index;
+                frame-rate-selected(i) => {
+                    root.current-frame-rate-index = i;
+                    root.frame-rate-changed(i);
+                }
+                probe-running: root.probe-running;
+                probe-progress: root.probe-progress;
+                probe-message: root.probe-message;
+                probe-recommended-fps: root.probe-recommended-fps;
+                test-performance => {
+                    root.test-performance();
+                }
+                use-recommended-frame-rate => {
+                    root.use-recommended-frame-rate();
                 }
                 theme-selected(t) => {
                     root.theme = t;
