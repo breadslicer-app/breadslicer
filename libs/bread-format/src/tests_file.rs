@@ -13,6 +13,7 @@ fn project() -> BreadProject {
         scene: scene(),
         settings: Some(b"version = 1\nprinter = \"m7-pro\"\n".to_vec()),
         supports: vec![],
+        hollows: vec![],
     }
 }
 

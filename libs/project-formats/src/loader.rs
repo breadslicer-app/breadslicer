@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use sc_bread_format::SupportDocument;
+use sc_bread_format::{HollowDocument, SupportDocument};
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
@@ -87,6 +87,9 @@ pub struct ProjectContent {
     /// Supports stored as data, whose leaves arrive with an empty mesh for the
     /// application to rebuild (see [`crate::LoadedProject::supports`]).
     pub supports: Vec<SupportDocument>,
+    /// How hollowed models were made (see
+    /// [`crate::LoadedProject::hollows`]).
+    pub hollows: Vec<HollowDocument>,
 }
 
 /// Slices that a project file stores, with the token that they were saved with.
@@ -248,6 +251,7 @@ fn open_project<F: FnMut(LoadProgress)>(
         slices,
         slice_fingerprint,
         supports,
+        hollows,
     } = read_project_with_progress(&mut reader, file_type, |p| {
         announced_total = p.total_bytes;
         on_progress(LoadProgress {
@@ -277,6 +281,7 @@ fn open_project<F: FnMut(LoadProgress)>(
                     fingerprint,
                 }),
             supports,
+            hollows,
         }),
         None => LoadedContent::Mesh(scene),
     };
