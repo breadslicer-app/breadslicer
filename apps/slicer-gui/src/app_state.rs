@@ -1204,6 +1204,7 @@ impl AppState {
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {
         // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
+        ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
         {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
@@ -1422,6 +1423,27 @@ impl AppState {
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
         }
     }
+}
+
+/// Where the top bar's support links lead.
+fn support_page_url(page: crate::SupportPage) -> &'static str {
+    match page {
+        crate::SupportPage::Patreon => "https://www.patreon.com/cw/synrgstudio",
+        crate::SupportPage::KoFi => "https://ko-fi.com/synrg",
+    }
+}
+
+/// Opens a web page in the default browser, detached: a failure leaves
+/// nothing to report.
+fn open_in_browser(url: &str) {
+    let opener = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 
 #[cfg(test)]

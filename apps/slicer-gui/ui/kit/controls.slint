@@ -8,6 +8,7 @@
 // segmented choices and stat tiles.
 
 import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
 
 // A 24 x 24 stroke icon from SVG path commands.
 export component Icon inherits Path {
@@ -188,6 +189,49 @@ export component ToolButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A link to a page that supports the project: an amber heart and a short
+// label, quiet until hovered.
+export component SupportLink inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+
+    height: 26px;
+    border-radius: Theme.radius;
+    background: touch.has-hover ? Theme.raised : transparent;
+    accessible-role: button;
+    accessible-label: self.label;
+    accessible-action-default => {
+        self.clicked();
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+
+        Icon {
+            commands: Icons.heart;
+            size: 12px;
+            y: (parent.height - self.height) / 2;
+            color: Theme.accent;
+            fill: Theme.accent;
+        }
+        Text {
+            text: root.label;
+            color: touch.has-hover ? Theme.text : Theme.text-muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => {
             root.clicked();
         }
