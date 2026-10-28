@@ -1,0 +1,22 @@
+[identity]
+id = "anycubic-tough-resin-50um"
+brand = "Anycubic"
+family = "tough"
+name = "Tough Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-m7-max]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.5
+lift_distance_mm = 8.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
