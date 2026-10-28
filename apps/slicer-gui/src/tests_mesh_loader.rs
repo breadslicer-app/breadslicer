@@ -587,6 +587,7 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
         &ProjectPayload::default(),
         EmbedProfiles::Yes,
         &supports,
+        &[],
         &mut bytes,
         |_| {},
     )

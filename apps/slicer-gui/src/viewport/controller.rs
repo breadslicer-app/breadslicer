@@ -48,6 +48,7 @@ use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::gizmo;
 use crate::gizmo::axis::Axis;
+use crate::hollow_persist::install_hollows;
 use crate::i18n::ctr;
 use crate::mesh_health::needs_repair;
 use crate::mesh_loader::start_load_with_ticket;
@@ -768,6 +769,7 @@ impl ViewportController {
             source_path,
             mesh_health,
             restored_supports,
+            restored_hollows,
             ..
         } = prepared;
 
@@ -795,6 +797,11 @@ impl ViewportController {
         // A reopened `.bread`'s rebuilt supports are the editable session of
         // the fresh scene; any other load leaves no session in force.
         install_session(self.session.document(), restored_supports.session);
+        // And the models it remembers hollowing; any other load, none.
+        for why in &restored_hollows.failures {
+            crate::breadcrumbs::note(&format!("load: hollow not restored: {why}"));
+        }
+        install_hollows(self.session.document(), restored_hollows.hollows);
 
         // A reopened project's revalidated slices become the held result now,
         // after install has cleared any previous one, so the viewer opens on

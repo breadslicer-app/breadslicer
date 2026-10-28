@@ -24,12 +24,13 @@ use anyhow::Result;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
-    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, SupportDocument, WriteProgress,
-    write_bread_project_with_progress, write_project_with_progress,
+    EmbedProfiles, HollowDocument, PlateSlices, ProjectFileType, ProjectPayload, SupportDocument,
+    WriteProgress, write_bread_project_with_progress, write_project_with_progress,
 };
 use sc_scene::Scene;
 
 use crate::error_dialog::InfoTexts;
+use crate::hollow_persist::hollow_documents;
 use crate::i18n::ctr;
 use crate::print_selection::PrintDefaults;
 use crate::project_profiles::complete_embedded_documents;
@@ -199,6 +200,8 @@ pub(crate) struct SaveBundle {
     supports: Vec<SupportDocument>,
     /// `.bread` only: set when the scene's supports go in as a mesh.
     supports_as_mesh: Option<SupportsAsMesh>,
+    /// `.bread` only: how the models hollowed here were made (#161).
+    hollows: Vec<HollowDocument>,
     target: PathBuf,
 }
 
@@ -218,6 +221,7 @@ pub(crate) fn prepare_save(
         let scene = spatial.graph().clone();
         let (mut slices, mut slice_fingerprint) = (None, None);
         let (mut supports, mut supports_as_mesh) = (Vec::new(), None);
+        let mut hollows = Vec::new();
         match format {
             ProjectFormat::ThreeMf => {
                 if let Some((plate, token)) = persist_slices(doc, &payload, spatial.graph()) {
@@ -229,6 +233,7 @@ pub(crate) fn prepare_save(
                 let kept = support_documents(doc, spatial);
                 supports = kept.documents;
                 supports_as_mesh = kept.as_mesh;
+                hollows = hollow_documents(doc, spatial);
             }
         }
         SaveBundle {
@@ -239,6 +244,7 @@ pub(crate) fn prepare_save(
             slice_fingerprint,
             supports,
             supports_as_mesh,
+            hollows,
             target,
         }
     })
@@ -303,6 +309,7 @@ pub(crate) fn write_bundle(
             &bundle.payload,
             EmbedProfiles::Yes,
             &bundle.supports,
+            &bundle.hollows,
             &mut bytes,
             report,
         )?,
