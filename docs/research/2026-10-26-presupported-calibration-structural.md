@@ -1,6 +1,6 @@
 # Research from 2026-10-26
 
-Three surveys Damian asked for, carried out by read-only agents. They are proposals to decide on. Each one has its own issue: BS-77, BS-78 and BS-11.
+Three surveys Damian asked for. They are proposals to decide on. Each one has its own issue: BS-77, BS-78 and BS-11.
 
 ## 1. Pre-supported STLs: splitting bodies into objects (BS-77)
 

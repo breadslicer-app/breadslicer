@@ -1,6 +1,6 @@
 # Report: UVtools (sn4k3/UVtools v7.1.1) and what is useful for Breadslicer
 
-Survey from 2026-10-26 (BS-80). Carried out by an agent reading the source code of `UVtools.Core` and `UVtools.UI`. It is not a substitute for legal advice.
+Survey from 2026-10-26 (BS-80), based on reading the source code of `UVtools.Core` and `UVtools.UI`. It is not a substitute for legal advice.
 
 ## 1. License
 
