@@ -24,6 +24,7 @@ sc-mesh-spatial = { workspace = true }
 sc-print-glue = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
 sc-print-profiles = { workspace = true }
+sc-bread-format = { workspace = true }
 sc-project-formats = { workspace = true }
 sc-review = { workspace = true }
 sc-scene = { workspace = true }
