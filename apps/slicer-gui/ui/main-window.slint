@@ -8,7 +8,7 @@ import { AboutWindow } from "about-window.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
-import { Icon, ToolButton, WorkflowTab } from "./kit/controls.slint";
+import { Icon, SupportLink, ToolButton, WorkflowTab } from "./kit/controls.slint";
 import { ExportInspector, HollowInspector, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
@@ -44,6 +44,9 @@ export enum SavePhase { Flattening, Serializing, Compressing, Writing }
 // macOS always resolves to `Bar` in Rust because it renders a global
 // top-of-screen menu bar. Persisted app-wide.
 export enum MenuLayout { Bar, Compact }
+
+// The pages the top bar links to so people can support the project.
+export enum SupportPage { Patreon, KoFi }
 
 // The workflow tabs (BS-68): Transform hosts the scene-editing tools and
 // the mesh repair; Hollow and Supports are taken in either order once the
@@ -383,6 +386,8 @@ export component MainWindow inherits Window {
     callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
+    // The top bar's links to support the project; Rust opens the page.
+    callback support-page-requested(SupportPage);
     callback show-preferences-requested();
     callback new-window-requested();
     // Requests the persisted menu layout be switched to the given value.
@@ -867,6 +872,21 @@ export component MainWindow inherits Window {
                     spacing: 4px;
                     alignment: end;
 
+                    SupportLink {
+                        label: @tr("Support us on Patreon");
+                        y: (parent.height - self.height) / 2;
+                        clicked => {
+                            root.support-page-requested(SupportPage.Patreon);
+                        }
+                    }
+                    SupportLink {
+                        label: @tr("Support us on Ko-fi");
+                        y: (parent.height - self.height) / 2;
+                        clicked => {
+                            root.support-page-requested(SupportPage.KoFi);
+                        }
+                    }
+                    Rectangle { width: 8px; }
                     Text {
                         text: root.slice-printer-current-index >= 0
                             ? root.slice-printer-options[root.slice-printer-current-index]
