@@ -61,7 +61,9 @@
 //!   It suggests a support under the body's largest bottom region when that
 //!   region has model in it. A body
 //!   smaller than [`OutputOptions::speck_volume_mm3`] is a *floating speck*
-//!   (warning, no fix): too small for a support to hold.
+//!   (warning): too small for a support to hold. It suggests erasing it
+//!   (#156): its pixels, grown a pixel on every side, are erased on the next
+//!   slice ([`crate::fill::erase_stack`]).
 //!
 //! Joining solid within a layer follows the shared regions, which are
 //! 8-connected: a part that touches a body only by a corner pixel belongs to
@@ -78,11 +80,13 @@ use sc_sl1cer::contour::{ClosedRing, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 
+use crate::checks::thin;
+use crate::fill::CavityFill;
 use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 use crate::input::{ReviewInput, Role};
 use crate::regions::{LayerPixels, PlateRegions, Region};
 use crate::runner::ReviewContext;
-use crate::runs::{Run, for_each_overlap};
+use crate::runs::{self, Run, for_each_overlap};
 use crate::union_find::{Groups, RegionRef, UnionFind};
 
 /// The layers, counted from 0, on which a printed body rests on the plate:
@@ -121,18 +125,29 @@ impl Default for OutputOptions {
 
 /// Finds the output problems of the plate.
 pub fn run(ctx: &ReviewContext<'_>, options: &OutputOptions) -> Vec<Finding> {
+    run_with_erasures(ctx, options).0
+}
+
+/// Finds the output problems of the plate, with the pixels of every
+/// floating speck: a [`SuggestedFix::Erase`] names its [`CavityFill`] by
+/// index in the second list (#156).
+pub fn run_with_erasures(
+    ctx: &ReviewContext<'_>,
+    options: &OutputOptions,
+) -> (Vec<Finding>, Vec<CavityFill>) {
     let contours = scan_contours(ctx.input, options.edge_tolerance_mm);
     let bodies = ctx.regions.group_solid(|_, _| true);
     let edge = plate_edge(ctx, &bodies, &contours);
     let mut findings = edge.findings;
     let Some(extent) = SolidExtent::of(ctx.regions) else {
         findings.extend(nothing_to_print(ctx.input, &contours));
-        return findings;
+        return (findings, Vec::new());
     };
     findings.extend(too_tall(ctx, extent, options));
     findings.extend(empty_layers(ctx, extent, &contours));
-    findings.extend(floating_parts(ctx, &bodies, &edge.held_past, options));
-    findings
+    let (floating, erasures) = floating_parts(ctx, &bodies, &edge.held_past, options);
+    findings.extend(floating);
+    (findings, erasures)
 }
 
 /// The first and the last layer with solid.
@@ -1173,11 +1188,12 @@ fn floating_parts(
     bodies: &Groups,
     held_past: &[bool],
     options: &OutputOptions,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Vec<CavityFill>) {
     let (input, regions) = (ctx.input, ctx.regions);
     let layers = input.layers();
     let pixel_mm2 = input.pixel_area_mm2();
     let mut findings = Vec::new();
+    let mut specks: Vec<&[RegionRef]> = Vec::new();
     for (members, &held_past) in bodies.iter().zip(held_past) {
         let bottom = members[0].layer;
         if bottom < PLATE_LAYERS || regions.layer(bottom - 1).is_empty() || held_past {
@@ -1213,7 +1229,8 @@ fn floating_parts(
                     "This {} mm³ speck starts {height_mm:.2} mm above the build plate with nothing below it. It is too small to hold with a support: it may cure as loose debris in the vat, or not at all.",
                     volume_text(volume_mm3)
                 ),
-            ));
+            ).with_fix(SuggestedFix::Erase { at: focus, speck: specks.len() }));
+            specks.push(members);
             continue;
         }
         let finding = Finding::new(
@@ -1230,12 +1247,69 @@ fn floating_parts(
             ),
         );
         findings.push(if base.model_px > 0 {
-            finding.with_fix(SuggestedFix::AddSupport { at: focus })
+            finding.with_fix(SuggestedFix::AddSupport {
+                at: input.underside(bottom, focus),
+            })
         } else {
             finding
         });
     }
-    findings
+    let erasures = speck_erasures(input, &specks);
+    (findings, erasures)
+}
+
+/// The pixels that erase each speck of `specks` (its member regions): its
+/// own, grown a pixel on every side. The margin is air on the speck's
+/// layers, solid being 8-connected; where two specks' margins meet, the
+/// pixel goes to the first one, so no pixel is erased twice. Each layer any
+/// speck touches is rasterised once, in parallel.
+fn speck_erasures(input: &ReviewInput<'_>, specks: &[&[RegionRef]]) -> Vec<CavityFill> {
+    if specks.is_empty() {
+        return Vec::new();
+    }
+    let mut wanted: Vec<(usize, usize, u32)> = specks
+        .iter()
+        .enumerate()
+        .flat_map(|(speck, members)| {
+            members
+                .iter()
+                .map(move |member| (member.layer, speck, member.index))
+        })
+        .collect();
+    wanted.sort_unstable();
+    let by_layer: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
+    let (width, height) = (input.width_px(), input.height_px());
+    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = by_layer
+        .par_iter()
+        .map(|members| {
+            let layer = members[0].0;
+            let pixels = LayerPixels::compute(input, layer);
+            let mut claimed: Vec<Run> = Vec::new();
+            members
+                .chunk_by(|a, b| a.1 == b.1)
+                .map(|regions| {
+                    let own: Vec<Run> = pixels
+                        .solid
+                        .iter()
+                        .zip(&pixels.solid_labels)
+                        .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
+                        .map(|(run, _)| *run)
+                        .collect();
+                    let grown =
+                        thin::difference(&thin::dilate_square(&own, 1, width, height), &claimed);
+                    claimed = runs::union(&claimed, &grown);
+                    (layer, regions[0].1, grown)
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); specks.len()];
+    for (layer, speck, runs) in found.into_iter().flatten() {
+        out[speck].push((layer, runs));
+    }
+    out.into_iter()
+        .map(|layers| CavityFill::from_runs(input, layers))
+        .collect()
 }
 
 #[cfg(test)]

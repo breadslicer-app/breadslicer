@@ -6,8 +6,12 @@
 //! Features thinner than a pixel (#92): walls, pins, blades, edges and necks
 //! narrower than the printer can resolve.
 //!
-//! Reports [`CheckKind::ThinFeature`] findings, without a suggested fix:
-//! only the model itself can be changed.
+//! Reports [`CheckKind::ThinFeature`] findings. A model feature suggests
+//! thickening it (#156): the screen pixels its thin pieces touch, grown a
+//! pixel on every side, cured on the next slice as a fill is
+//! ([`run_with_thickenings`], [`crate::fill`]). That makes it at least 3
+//! pixels across wherever it was thin. A support too thin is left to the
+//! supports, which are generated again.
 //!
 //! # What is measured
 //!
@@ -71,7 +75,9 @@
 //!   and only where no model covers them. Support tips are thin on purpose,
 //!   so only a support too thin to be sure to print at all is reported. A
 //!   round support up to 1.41 pixels across can still miss every pixel
-//!   centre; the limit is an option.
+//!   centre; the limit is an option. Two supports that only touch (a short
+//!   neck between them, such as two shafts side by side whose facets graze)
+//!   are not: each stands on its own (#156).
 //! - **Not the steps of a surface.** A thin sliver lying on thick solid in
 //!   the layer below or above it is the crest of a slope or a ridge, or the
 //!   rounding of a leaning edge, as the layers cut it: its pixels are
@@ -130,7 +136,8 @@ use std::fmt::Write as _;
 use rayon::prelude::*;
 use sc_sl1cer::contour::ContourLayer;
 
-use crate::finding::{CheckKind, Finding, RoleScope, Severity};
+use crate::fill::CavityFill;
+use crate::finding::{CheckKind, Finding, RoleScope, Severity, SuggestedFix};
 use crate::input::{ReviewInput, Role};
 use crate::regions::{Connectivity, label_runs, measure_runs};
 use crate::runner::ReviewContext;
@@ -209,10 +216,20 @@ const FEATURE_PROBES: usize = 16;
 
 /// Finds the features thinner than the printer resolves.
 pub fn run(ctx: &ReviewContext<'_>, options: &ThinFeatureOptions) -> Vec<Finding> {
+    run_with_thickenings(ctx, options).0
+}
+
+/// Finds the features thinner than the printer resolves, with the pixels
+/// that thicken every model feature: a [`SuggestedFix::Thicken`] names its
+/// [`CavityFill`] by index in the second list.
+pub fn run_with_thickenings(
+    ctx: &ReviewContext<'_>,
+    options: &ThinFeatureOptions,
+) -> (Vec<Finding>, Vec<CavityFill>) {
     let input = ctx.input;
     let subpixels = options.subpixels.clamp(SUBPIXELS.0, SUBPIXELS.1);
     let Some(grid) = FineGrid::new(input, subpixels) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let scale = grid.scale();
     let passes: Vec<Pass> = [
@@ -229,19 +246,26 @@ pub fn run(ctx: &ReviewContext<'_>, options: &ThinFeatureOptions) -> Vec<Finding
     })
     .collect();
     if passes.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let layers = sweep(input, &grid, &passes);
     let rules = Rules {
         error_width_px: options.error_width_px,
         min_size: options.min_size.max(0.0),
     };
-    passes
+    let mut thickenings = Vec::new();
+    let findings = passes
         .iter()
         .zip(&layers)
-        .flat_map(|(pass, pass_layers)| report(input, &grid, pass, pass_layers, &rules))
-        .collect()
+        .flat_map(|(pass, pass_layers)| {
+            report(input, &grid, pass, pass_layers, &rules, &mut thickenings)
+        })
+        .collect();
+    (findings, thickenings)
 }
+
+/// How many pixels a thickening grows a feature's pixels by on every side.
+const THICKEN_PX: u32 = 1;
 
 /// The fine grid the contours are measured on: sub-pixels `scale` times
 /// smaller than the screen's pixels along each axis.
@@ -329,6 +353,9 @@ struct Piece {
     /// counting to 2: none for a piece standing alone, one for a fin, an
     /// edge or a corner, two for a neck.
     contacts: u8,
+    /// The screen pixels its sub-pixels touch, as runs: only for a model
+    /// piece, to thicken it.
+    pixels: Vec<Run>,
 }
 
 impl Piece {
@@ -533,6 +560,7 @@ fn thin_pieces(
             narrowest: region.inside_px,
             moments: Moments::default(),
             contacts,
+            pixels: Vec::new(),
         })
         .collect();
     // A piece attached in one place sticks out at most its area over one
@@ -571,12 +599,36 @@ fn thin_pieces(
             !thick && (p.contacts != 1 || p.area as f64 >= pass.min_length * p.width())
         })
         .collect();
-    let (thin, labels, pieces) = retain(&thin, &labels, pieces, &keep);
+    let (thin, labels, mut pieces) = retain(&thin, &labels, pieces, &keep);
+    if pass.role == Role::Model {
+        screen_pixels(grid, &thin, &labels, &mut pieces);
+    }
     RoleLayer {
         thick,
         thin,
         labels,
         pieces,
+    }
+}
+
+/// Fills each piece's `pixels`: the screen pixels its sub-pixel runs touch.
+fn screen_pixels(grid: &FineGrid, thin: &[Run], labels: &[u32], pieces: &mut [Piece]) {
+    let s = grid.scale;
+    for (run, &label) in thin.iter().zip(labels) {
+        pieces[label as usize]
+            .pixels
+            .push(Run::new(run.row / s, run.x0 / s, run.x1.div_ceil(s)));
+    }
+    // Neighbouring sub-pixel runs land on the same pixels: sort and merge.
+    for piece in pieces {
+        piece.pixels.sort_unstable_by_key(|run| (run.row, run.x0));
+        piece.pixels.dedup_by(|next, kept| {
+            let joins = next.row == kept.row && next.x0 <= kept.x1;
+            if joins {
+                kept.x1 = kept.x1.max(next.x1);
+            }
+            joins
+        });
     }
 }
 
@@ -935,6 +987,7 @@ fn report(
     pass: &Pass,
     layers: &[LayerPieces],
     rules: &Rules,
+    thickenings: &mut Vec<CavityFill>,
 ) -> Vec<Finding> {
     let mut offsets = Vec::with_capacity(layers.len() + 1);
     let mut total = 0;
@@ -1021,6 +1074,12 @@ fn report(
         if size < rules.min_size {
             continue;
         }
+        // Two supports that only touch: each stands on its own, and the
+        // graze between them holds nothing up.
+        let long = piece(focus).area as f64 >= WALL_LENGTH * width * width;
+        if pass.role == Role::Support && neck && !long {
+            continue;
+        }
         let feature = Feature {
             first: members[0].layer,
             last: members
@@ -1034,9 +1093,38 @@ fn report(
             focus_layer: focus.layer,
             focus: piece(focus),
         };
-        findings.push(feature.finding(input, grid, pass, rules));
+        let finding = feature.finding(input, grid, pass, rules);
+        findings.push(if pass.role == Role::Model {
+            let at = finding.focus;
+            thickenings.push(thickening(input, members, piece));
+            finding.with_fix(SuggestedFix::Thicken {
+                at,
+                feature: thickenings.len() - 1,
+            })
+        } else {
+            finding
+        });
     }
     findings
+}
+
+/// The pixels that thicken a feature: those of every piece of it, grown
+/// [`THICKEN_PX`] on every side, layer by layer.
+fn thickening<'p>(
+    input: &ReviewInput<'_>,
+    members: &[RegionRef],
+    piece: impl Fn(&RegionRef) -> &'p Piece,
+) -> CavityFill {
+    let mut by_layer: Vec<(usize, Vec<Run>)> = Vec::new();
+    for member in members {
+        let pixels = &piece(member).pixels;
+        match by_layer.last_mut() {
+            Some((layer, runs)) if *layer == member.layer => *runs = runs::union(runs, pixels),
+            _ => by_layer.push((member.layer, pixels.clone())),
+        }
+    }
+    by_layer.sort_by_key(|(layer, _)| *layer);
+    CavityFill::grown_from_runs(input, by_layer, THICKEN_PX)
 }
 
 /// A feature waiting for its samples to be measured.
@@ -1448,7 +1536,7 @@ fn covered_len(stretches: &mut [(u32, u32)]) -> u64 {
 
 /// Every sub-pixel within `r` of `runs` along both axes (a square), clipped
 /// to a grid `width` by `height`.
-fn dilate_square(runs: &[Run], r: u32, width: u32, height: u32) -> Vec<Run> {
+pub(crate) fn dilate_square(runs: &[Run], r: u32, width: u32, height: u32) -> Vec<Run> {
     let rows = Rows::new(runs);
     let Some((first, last)) = rows.span() else {
         return Vec::new();
@@ -1498,7 +1586,7 @@ fn intersection(a: &[Run], b: &[Run]) -> Vec<Run> {
 }
 
 /// The pixels of run list `a` that are not in run list `b`.
-fn difference(a: &[Run], b: &[Run]) -> Vec<Run> {
+pub(crate) fn difference(a: &[Run], b: &[Run]) -> Vec<Run> {
     let mut out = Vec::with_capacity(a.len());
     let mut j = 0;
     for run in a {

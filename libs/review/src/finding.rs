@@ -187,10 +187,16 @@ pub enum SuggestedFix {
         /// Where the tip goes.
         at: PlatePoint,
     },
-    /// Add a drain hole at `at`.
+    /// Add a drain hole at `at`, or cure the cavity solid on the next
+    /// slice: its pixels are
+    /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`
+    /// (#156). A drain suits a model hollowed on purpose; a fill, one whose
+    /// cavity is part of its shape.
     AddDrain {
         /// Where the hole goes.
         at: PlatePoint,
+        /// The cavity's index among the review's fills.
+        cavity: usize,
     },
     /// Cure the cavity solid on the next slice (#132): its pixels are
     /// [`ReviewReport::fills`](crate::runner::ReviewReport::fills)`[cavity]`.
@@ -208,15 +214,35 @@ pub enum SuggestedFix {
         /// The height the model's lowest point must reach.
         lift_to_mm: f64,
     },
+    /// Erase a floating speck on the next slice (#156): its pixels, with a
+    /// pixel around them, are
+    /// [`ReviewReport::erasures`](crate::runner::ReviewReport::erasures)`[speck]`.
+    Erase {
+        /// The speck, where the camera looks.
+        at: PlatePoint,
+        /// The speck's index among the review's erasures.
+        speck: usize,
+    },
+    /// Thicken a feature thinner than a pixel on the next slice (#156): its
+    /// pixels, grown a pixel on every side, are cured as
+    /// [`ReviewReport::thickenings`](crate::runner::ReviewReport::thickenings)`[feature]`.
+    Thicken {
+        /// The feature, where the camera looks.
+        at: PlatePoint,
+        /// The feature's index among the review's thickenings.
+        feature: usize,
+    },
 }
 
 impl SuggestedFix {
     fn rank(&self) -> (u8, PlatePoint) {
         match *self {
             Self::AddSupport { at } => (0, at),
-            Self::AddDrain { at } => (1, at),
+            Self::AddDrain { at, .. } => (1, at),
             Self::Fill { at, .. } => (2, at),
             Self::ClearRaft { lift_to_mm } => (3, PlatePoint::new(0.0, 0.0, lift_to_mm)),
+            Self::Erase { at, .. } => (4, at),
+            Self::Thicken { at, .. } => (5, at),
         }
     }
 
@@ -227,7 +253,9 @@ impl SuggestedFix {
             .cmp(&b_rank)
             .then_with(|| a_at.total_cmp(&b_at))
             .then_with(|| match (self, other) {
-                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. }) => a.cmp(b),
+                (Self::Fill { cavity: a, .. }, Self::Fill { cavity: b, .. })
+                | (Self::Erase { speck: a, .. }, Self::Erase { speck: b, .. })
+                | (Self::Thicken { feature: a, .. }, Self::Thicken { feature: b, .. }) => a.cmp(b),
                 _ => Ordering::Equal,
             })
     }
