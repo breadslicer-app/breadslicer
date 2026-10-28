@@ -98,9 +98,6 @@ enum FixKind {
     None = 0,
     AddSupport = 1,
     AddDrain = 2,
-    /// A drain would help, but no model hollowed in this window holds the
-    /// cavity: the row says so instead of offering a button.
-    DrainNeedsHollow = 3,
     /// A model inside the raft (#131): lift it clear, or turn the raft off.
     ClearRaft = 4,
 }
@@ -352,10 +349,9 @@ impl ReviewPanel {
         else {
             return None;
         };
-        let finding = findings.get(usize::try_from(id).ok()?)?;
-        let Some(SuggestedFix::Fill { cavity, .. }) = finding.fix else {
-            return None;
-        };
+        let i = usize::try_from(id).ok()?;
+        let finding = findings.get(i)?;
+        let cavity = fill_of(finding, hollow_drains(&held.as_ref()?.hollows, i))?;
         Some((finding.clone(), fills.get(cavity)?.clone()))
     }
 
@@ -608,7 +604,7 @@ impl ReviewPanel {
             ReviewOutcome::Reviewed { findings, .. } => findings
                 .iter()
                 .map(|finding| match finding.fix {
-                    Some(SuggestedFix::AddDrain { at }) => {
+                    Some(SuggestedFix::AddDrain { at, .. }) => {
                         self.hollow.hollow_at(world(at)).map(|(_, drains)| drains)
                     }
                     _ => None,
@@ -729,7 +725,9 @@ impl ReviewPanel {
             _ if !sliced => (CardState::Empty, Vec::new(), String::new(), -1, None),
             None => (CardState::NotReviewed, Vec::new(), String::new(), -1, None),
             Some(held) => match &held.outcome {
-                ReviewOutcome::Reviewed { findings, .. } => {
+                ReviewOutcome::Reviewed {
+                    findings, fills, ..
+                } => {
                     let fixable = self.fixes_apply(held);
                     let row_marks = RowMarks::of(findings, &marks, fixable, self.notes_open.get());
                     // A finding fixed since the slice leaves the list (the
@@ -755,16 +753,21 @@ impl ReviewPanel {
                     };
                     (
                         CardState::Reviewed,
-                        mark_rows(
-                            review_rows(
+                        with_fill_resin(
+                            mark_rows(
+                                review_rows(
+                                    findings,
+                                    &held.hollows,
+                                    &held.fixed,
+                                    fixable,
+                                    held.after_fix_all,
+                                ),
                                 findings,
-                                &held.hollows,
-                                &held.fixed,
-                                fixable,
-                                held.after_fix_all,
+                                &row_marks,
                             ),
                             findings,
-                            &row_marks,
+                            &held.hollows,
+                            fills,
                         ),
                         summary_with_fixed(
                             summary_with_left(review_summary(&visible), row_marks.left.len()),
@@ -885,15 +888,16 @@ impl ReviewPanel {
             }
             // The person picks where the holes go: a drain drilled right at
             // the finding is rarely where it looks good (#158).
-            Some(SuggestedFix::AddDrain { at }) => match self.hollow.hollow_at(world(at)) {
+            // A cavity in a model not hollowed here is filled instead (#156).
+            Some(SuggestedFix::AddDrain { at, .. }) => match self.hollow.hollow_at(world(at)) {
                 Some((leaf, _)) => {
                     self.open_drain_tool(leaf);
                     return;
                 }
-                None => Some(ctr!(
-                    "Review",
-                    "This cavity is not in a model hollowed here, so the drain cannot be drilled."
-                )),
+                None => {
+                    self.toggle_fill(id);
+                    return;
+                }
             },
             Some(SuggestedFix::ClearRaft { lift_to_mm, .. }) => {
                 if self.supports.lift_clear_of_raft(lift_to_mm) {
@@ -1008,9 +1012,8 @@ fn review_rows(
             Some(SuggestedFix::AddDrain { .. }) if hollow_drains(hollows, i).is_some() => {
                 FixKind::AddDrain
             }
-            Some(SuggestedFix::AddDrain { .. }) => FixKind::DrainNeedsHollow,
             // Offered through the row's fill, see `mark_rows`.
-            Some(SuggestedFix::Fill { .. }) => FixKind::None,
+            Some(SuggestedFix::AddDrain { .. } | SuggestedFix::Fill { .. }) => FixKind::None,
             Some(SuggestedFix::ClearRaft { .. }) => FixKind::ClearRaft,
             // Applied by Fix All only.
             Some(SuggestedFix::Erase { .. } | SuggestedFix::Thicken { .. }) => FixKind::None,
@@ -1046,7 +1049,9 @@ fn review_rows(
             detail,
             fix: fix as i32,
             fixed: fixed.contains(&i),
-            fill: 0,
+            // Offered for now; `mark_rows` says whether it is marked.
+            fill: i32::from(fill_of(finding, hollow_drains(hollows, i)).is_some()),
+            fill_resin: SharedString::default(),
             leave: false,
             lift_label,
             remains: if after_fix_all {
@@ -1111,7 +1116,10 @@ fn plan_fix_all(
         }
         match finding.fix {
             Some(SuggestedFix::AddSupport { at }) => plan.supports.push((i, world(at))),
-            Some(SuggestedFix::Fill { cavity, .. }) if finding.check == CheckKind::ResinTrap => {
+            // Small traps, as "Fill all small traps", and suction cups.
+            Some(SuggestedFix::Fill { cavity, .. } | SuggestedFix::AddDrain { cavity, .. })
+                if is_small_trap(finding) || finding.check == CheckKind::SuctionCup =>
+            {
                 if let Some(fill) = fills.get(cavity) {
                     plan.patches.push((i, PatchKind::Fill, fill.clone()));
                 }
@@ -1170,6 +1178,12 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
             "Review",
             "Left by Fix All: drain holes are placed by hand, in the Hollow tab."
         ),
+        (CheckKind::ResinTrap, Some(SuggestedFix::Fill { .. } | SuggestedFix::AddDrain { .. })) => {
+            ctr!(
+                "Review",
+                "Left by Fix All: it holds too much resin to fill without asking. Fill it from this row if the cavity is part of the model, or hollow the model in the Hollow tab and drill drain holes."
+            )
+        }
         (CheckKind::ResinTrap | CheckKind::SuctionCup, _) => ctr!(
             "Review",
             "Left by Fix All: this cavity needs an opening, which only a change to the model makes."
@@ -1270,7 +1284,7 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
         .map(|mut row| {
             let i = row.id as usize;
             let finding = &findings[i];
-            if matches!(finding.fix, Some(SuggestedFix::Fill { .. })) {
+            if row.fill > 0 {
                 row.fill = if marks.filled.contains(&i) {
                     2
                 } else if marks.fixable {
@@ -1307,11 +1321,48 @@ fn mark_rows(rows: Vec<ReviewRow>, findings: &[Finding], marks: &RowMarks) -> Ve
 /// traps" marks. Cups are left out: filling one changes the model's surface,
 /// so it is marked one by one.
 fn small_traps(findings: &[Finding]) -> impl Iterator<Item = usize> + '_ {
-    findings.iter().enumerate().filter_map(|(i, finding)| {
-        (finding.check == CheckKind::ResinTrap
-            && matches!(finding.fix, Some(SuggestedFix::Fill { .. })))
-        .then_some(i)
-    })
+    findings
+        .iter()
+        .enumerate()
+        .filter_map(|(i, finding)| is_small_trap(finding).then_some(i))
+}
+
+/// Whether `finding` is a resin trap small enough to fill without asking: a
+/// note or a warning offering a fill. A large one offers a fill too, when
+/// no drain helps it, but holds too much resin to fill unasked.
+fn is_small_trap(finding: &Finding) -> bool {
+    finding.check == CheckKind::ResinTrap
+        && finding.severity != Severity::Error
+        && matches!(finding.fix, Some(SuggestedFix::Fill { .. }))
+}
+
+/// The fill finding `finding` offers, by index among the review's fills:
+/// every cavity's, except a drain's in a model hollowed here (`drains`, its
+/// drain holes), where the hollow is on purpose.
+fn fill_of(finding: &Finding, drains: Option<usize>) -> Option<usize> {
+    match finding.fix {
+        Some(SuggestedFix::Fill { cavity, .. }) => Some(cavity),
+        Some(SuggestedFix::AddDrain { cavity, .. }) if drains.is_none() => Some(cavity),
+        _ => None,
+    }
+}
+
+/// The rows with the resin each offered fill cures ("0.67 ml").
+fn with_fill_resin(
+    mut rows: Vec<ReviewRow>,
+    findings: &[Finding],
+    hollows: &[Option<usize>],
+    fills: &[CavityFill],
+) -> Vec<ReviewRow> {
+    for row in &mut rows {
+        let i = row.id as usize;
+        if let Some(fill) =
+            fill_of(&findings[i], hollow_drains(hollows, i)).and_then(|c| fills.get(c))
+        {
+            row.fill_resin = format!("{:.2} ml", fill.volume_mm3() / 1000.0).into();
+        }
+    }
+    rows
 }
 
 /// The summary, with how many findings are left alone.

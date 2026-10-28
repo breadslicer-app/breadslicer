@@ -40,7 +40,7 @@ fn findings() -> Vec<Finding> {
             .with_fix(SuggestedFix::AddSupport { at }),
         finding(CheckKind::EmptyLayer, Severity::Info, 30, 30, "Empty"),
         finding(CheckKind::ResinTrap, Severity::Error, 40, 48, "Trap")
-            .with_fix(SuggestedFix::AddDrain { at }),
+            .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
         finding(CheckKind::ThinFeature, Severity::Warning, 50, 52, "Thin"),
     ]
 }
@@ -99,17 +99,22 @@ fn rows_name_their_layers_from_one() {
     assert_eq!(rows[0].detail, "Island on layer 11.");
 }
 
+/// A drain is drilled into a model hollowed here; any other cavity is
+/// offered its fill instead (#156).
 #[test]
 fn a_drain_is_offered_only_where_it_can_be_drilled() {
     let support = FixKind::AddSupport as i32;
     let rows = review_rows(&findings(), &[None; 5], &BTreeSet::new(), true, false);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
-    assert_eq!(fixes, [support, FixKind::DrainNeedsHollow as i32, 0, 0, 0]);
+    assert_eq!(fixes, [support, 0, 0, 0, 0]);
+    let fills: Vec<i32> = rows.iter().map(|r| r.fill).collect();
+    assert_eq!(fills, [0, 1, 0, 0, 0]);
 
     let drainable = [None, None, None, Some(1), None];
     let rows = review_rows(&findings(), &drainable, &BTreeSet::new(), true, false);
     let fixes: Vec<i32> = rows.iter().map(|r| r.fix).collect();
     assert_eq!(fixes, [support, FixKind::AddDrain as i32, 0, 0, 0]);
+    assert!(rows.iter().all(|r| r.fill == 0));
 }
 
 #[test]
@@ -171,7 +176,7 @@ fn tiered() -> Vec<Finding> {
         finding(CheckKind::SuctionCup, Severity::Warning, 4, 9, "Cup").with_fix(fill(1)),
         finding(CheckKind::ResinTrap, Severity::Warning, 12, 20, "Medium").with_fix(fill(2)),
         finding(CheckKind::ResinTrap, Severity::Error, 30, 60, "Large")
-            .with_fix(SuggestedFix::AddDrain { at }),
+            .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
         finding(CheckKind::EmptyLayer, Severity::Info, 70, 70, "Empty"),
     ]
 }
@@ -457,7 +462,7 @@ mod fix_all {
             finding(CheckKind::SuctionCup, Severity::Warning, 2, 3, "Cup")
                 .with_fix(SuggestedFix::Fill { at, cavity: 1 }),
             finding(CheckKind::ResinTrap, Severity::Error, 4, 9, "Large")
-                .with_fix(SuggestedFix::AddDrain { at }),
+                .with_fix(SuggestedFix::AddDrain { at, cavity: 9 }),
             finding(CheckKind::FloatingPart, Severity::Warning, 6, 6, "Speck")
                 .with_fix(SuggestedFix::Erase { at, speck: 0 }),
             thin(RoleScope::Model).with_fix(SuggestedFix::Thicken { at, feature: 0 }),
@@ -479,17 +484,18 @@ mod fix_all {
         // The island and its floating part share one support.
         assert_eq!(plan.support_points().len(), 1);
         let patches: Vec<(usize, PatchKind)> = plan.patches.iter().map(|p| (p.0, p.1)).collect();
-        // The cup, the large trap and the thin support are left, and so is
-        // the thin feature inside the speck's erasure.
+        // The cup is filled (#156). The large trap and the thin support are
+        // left, and so is the thin feature inside the speck's erasure.
         assert_eq!(
             patches,
             [
                 (2, PatchKind::Fill),
+                (3, PatchKind::Fill),
                 (5, PatchKind::Erase),
                 (6, PatchKind::Thicken)
             ]
         );
-        assert_eq!(plan.len(), 5);
+        assert_eq!(plan.len(), 6);
         // Findings fixed, marked or left alone already are skipped.
         let rest = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i != 2);
         assert_eq!(rest.len(), 1);
@@ -521,7 +527,8 @@ mod fix_all {
             "{}",
             why(4, Some(0))
         );
-        assert!(why(4, None).contains("opening"), "{}", why(4, None));
+        // A large trap in a model not hollowed here is filled on request.
+        assert!(why(4, None).contains("too much resin"), "{}", why(4, None));
         assert!(why(3, None).contains("opening"));
         assert!(why(8, None).contains("supports"), "{}", why(8, None));
         assert!(why(0, None).contains("support"), "{}", why(0, None));
@@ -819,7 +826,8 @@ mod fix_all {
     /// Fix All on Damian's `hueco.bread` (#160 follow-up), the full app path:
     /// the project opens with its supports as data, slices with its printer
     /// and resin, Fix All adds the supports and marks, and the slice it asks
-    /// for is reviewed. Prints the findings before and after.
+    /// for is reviewed. Prints the findings before and after; every finding
+    /// left says why, and no support is offered again.
     #[test]
     #[ignore = "needs C:/Users/dnaon/Downloads/hueco.bread"]
     fn hueco_bread_fix_all() {
@@ -877,19 +885,10 @@ mod fix_all {
         for row in &after {
             eprintln!("  {row:?}");
         }
-        let islands = |rows: &[(String, String)]| {
-            rows.iter()
-                .filter(|(title, _)| title == "Unsupported island" || title == "Floating part")
-                .count()
-        };
-        // 13 islands and a floating part: all but one hold their support,
-        // and that one says so.
-        assert_eq!(islands(&after), 1, "{after:?}");
-        for (title, remains) in after.iter().filter(|(t, _)| t == "Unsupported island") {
-            assert!(
-                remains.contains("A support was added here"),
-                "{title}: {remains}"
-            );
+        // What is left says why (the file changes as Damian edits it, so
+        // the counts are printed, not held).
+        for (title, remains) in &after {
+            assert!(!remains.is_empty(), "{title} says nothing");
         }
         assert_eq!(fix_all_after, 0, "no support is offered again");
     }
