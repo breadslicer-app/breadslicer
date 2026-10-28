@@ -327,6 +327,7 @@ impl PanelUpdate {
             | PreferencesChange::LastOpenDir
             | PreferencesChange::PrescanSupports
             | PreferencesChange::SmoothModels
+            | PreferencesChange::FrameRate
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
         }
@@ -389,6 +390,7 @@ mod panel_update_tests {
             (PreferencesChange::LastOpenDir, None),
             (PreferencesChange::PrescanSupports, None),
             (PreferencesChange::SmoothModels, None),
+            (PreferencesChange::FrameRate, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),
         ];

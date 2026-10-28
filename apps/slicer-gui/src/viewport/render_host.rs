@@ -25,6 +25,7 @@ use std::cell::{Cell, RefCell};
 
 use slint::{ComponentHandle, Weak};
 
+use super::frame_pacer::FramePacer;
 use super::render_scheduler;
 use super::types::{FrameState, ViewportSize};
 use crate::MainWindow;
@@ -51,6 +52,9 @@ pub(super) struct RenderHost {
     /// frame at; paints at that size are skipped until the viewport
     /// changes or a frame succeeds.
     refused_size: Cell<Option<(u32, u32)>>,
+    /// Keeps the frames to the frame-rate cap. `None` in the controller's
+    /// tests, which drive frames back to back with no event loop.
+    pacer: Option<FramePacer>,
 }
 
 impl RenderHost {
@@ -62,6 +66,7 @@ impl RenderHost {
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
             refused_size: Cell::new(None),
+            pacer: Some(FramePacer::new(ui.as_weak())),
         }
     }
 
@@ -78,7 +83,19 @@ impl RenderHost {
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
             refused_size: Cell::new(None),
+            pacer: None,
         }
+    }
+
+    /// Whether the owed frame must wait for the frame-rate cap; a held frame
+    /// stays owed and is asked for again at the end of the interval.
+    pub(super) fn hold_frame(&self) -> bool {
+        self.pacer.as_ref().is_some_and(FramePacer::hold)
+    }
+
+    /// The monitor's refresh rate in whole hertz, when the platform reports it.
+    pub(super) fn refresh_hz(&self) -> Option<u32> {
+        self.pacer.as_ref().and_then(FramePacer::refresh_hz)
     }
 
     /// Borrow access to the renderer cell. Used by

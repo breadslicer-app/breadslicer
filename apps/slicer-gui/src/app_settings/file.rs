@@ -499,6 +499,27 @@ mod settings_file_tests {
     }
 
     #[test]
+    fn explicit_frame_rate_round_trips_and_automatic_is_omitted() {
+        use crate::frame_rate::FrameRateCap;
+
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        file.save(&AppSettings::default()).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(!written.contains("frame_rate"), "got:\n{written}");
+
+        let mut s = AppSettings::default();
+        s.set_frame_rate(FrameRateCap::Fps60);
+        file.save(&s).unwrap();
+        assert_eq!(file.load().settings().frame_rate(), FrameRateCap::Fps60);
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("frame_rate = \"fps60\""),
+            "got:\n{written}"
+        );
+    }
+
+    #[test]
     fn saved_toml_omits_default_aa_level() {
         // Off (the default) is `skip_serializing_if`; a fresh config shouldn't
         // carry a redundant `aa_level = "off"` line.

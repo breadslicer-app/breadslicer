@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, CheckBox, ComboBox, Palette } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, Palette, ProgressIndicator } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export enum ThemePreference { System, Light, Dark }
@@ -25,6 +25,21 @@ export component AppearancePreferences inherits PreferencesPage {
     // (`mesh_render/smooth_shading.rs`).
     in-out property <bool> smooth-models: false;
     callback smooth-models-changed(bool);
+
+    // The viewport's frame-rate cap (`frame_rate.rs`). The combo order must
+    // match `FrameRateCap::combo_index`: Automatic, 30, 60, 120.
+    in-out property <int> current-frame-rate-index: 0;
+    callback frame-rate-selected(int);
+
+    // The performance test (`viewport/performance_probe.rs`): its progress
+    // while it runs, then the result and the rate it recommends (0 while
+    // there is nothing to apply).
+    in property <bool> probe-running: false;
+    in property <float> probe-progress: 0;
+    in property <string> probe-message;
+    in property <int> probe-recommended-fps: 0;
+    callback test-performance();
+    callback use-recommended-frame-rate();
 
     // Diagnostic log (off by default): writes the session's events to the
     // logs folder so a person can send them with a bug report.
@@ -149,5 +164,67 @@ export component AppearancePreferences inherits PreferencesPage {
             root.smooth-models = self.checked;
             root.smooth-models-changed(self.checked);
         }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Frame rate");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: [
+                @tr("AppearancePreferences" => "Automatic"),
+                @tr("AppearancePreferences" => "30 FPS"),
+                @tr("AppearancePreferences" => "60 FPS"),
+                @tr("AppearancePreferences" => "120 FPS"),
+            ];
+            current-index: root.current-frame-rate-index;
+            accessible-label: @tr("AppearancePreferences" => "Frame rate");
+            selected(_value) => {
+                root.current-frame-rate-index = self.current-index;
+                root.frame-rate-selected(self.current-index);
+            }
+        }
+    }
+
+    Text {
+        text: @tr("AppearancePreferences" => "Automatic follows your monitor and uses 30 FPS on battery. The 3D view only draws when something changes.");
+        wrap: word-wrap;
+        color: Palette.foreground.transparentize(0.4);
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Button {
+            text: @tr("AppearancePreferences" => "Test performance");
+            enabled: !root.probe-running;
+            clicked => {
+                root.test-performance();
+            }
+        }
+
+        if root.probe-recommended-fps > 0 && !root.probe-running: Button {
+            text: @tr("AppearancePreferences" => "Use {} FPS", root.probe-recommended-fps);
+            primary: true;
+            clicked => {
+                root.use-recommended-frame-rate();
+            }
+        }
+    }
+
+    if root.probe-running: ProgressIndicator {
+        progress: root.probe-progress;
+    }
+
+    if root.probe-message != "": Text {
+        text: root.probe-message;
+        wrap: word-wrap;
     }
 }

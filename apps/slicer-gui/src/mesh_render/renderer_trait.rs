@@ -80,6 +80,10 @@ pub(crate) trait MeshRenderer {
     /// clears them). Re-uploads only when `pieces` is a different `Arc`.
     fn set_overlay(&mut self, _pieces: Option<&super::Overlay>) {}
 
+    /// Blocks until the GPU has finished the work submitted so far, so a
+    /// caller can time a frame end to end (the performance test).
+    fn wait_for_gpu(&self) {}
+
     /// Draw the models alone and copy the frame off the GPU, for a
     /// picture that is not going on screen, such as the one a printer
     /// file carries. Returns `Ok(None)` for a zero-sized request.
@@ -154,5 +158,9 @@ impl MeshRenderer for Renderer {
 
     fn set_overlay(&mut self, pieces: Option<&super::Overlay>) {
         Renderer::set_overlay(self, pieces);
+    }
+
+    fn wait_for_gpu(&self) {
+        Renderer::wait_for_gpu(self);
     }
 }
