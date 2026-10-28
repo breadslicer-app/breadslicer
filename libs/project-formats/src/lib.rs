@@ -59,7 +59,7 @@ pub use loader::{
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
-pub use sc_bread_format::SupportDocument;
+pub use sc_bread_format::{HollowDocument, SupportDocument};
 pub use slices::PlateSlices;
 pub use write::progress::WriteProgress;
 pub use write::{write_project, write_project_with_progress};
