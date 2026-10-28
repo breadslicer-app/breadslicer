@@ -80,6 +80,10 @@
 //! at least [`min_cup_area_mm2`](TrapOptions::min_cup_area_mm2) of
 //! cross-section.
 //!
+//! A cup is not reported either when its section is under
+//! [`min_cup_share`](TrapOptions::min_cup_share) of the solid cured on each
+//! of its layers: the rest of the layer's peel force swamps its pull.
+//!
 //! Cups have no minimum height. A cup pulls with its sealed area at every
 //! peel whatever its depth, since the resin inside cannot stretch, so one
 //! peel of a wide cup can tear the part. The area limit keeps the noise out
@@ -110,13 +114,14 @@
 //! its largest cross-section. The camera centres on the cavity's floor: the
 //! pixel nearest the centroid of the largest air region on its lowest layer.
 //!
-//! The suggested fix of a large trap is a drain at that point, at the bottom
-//! of the lowest layer: the floor of the cavity, the side facing the plate.
-//! A tiny or medium trap, and a cup no drain helps that holds less than
-//! [`error_volume_mm3`](TrapOptions::error_volume_mm3), get a
-//! [`SuggestedFix::Fill`] instead: its exact pixels, cured solid on the next
+//! Every cavity can be filled: its exact pixels, cured solid on the next
 //! slice ([`run_with_fills`], [`crate::fill`]). Filling a cup also fills the
-//! recess it makes in the model's surface.
+//! recess it makes in the model's surface. A tiny or medium trap, and a
+//! cavity no drain helps, get a [`SuggestedFix::Fill`]; a large trap or a
+//! cup a drain helps gets a [`SuggestedFix::AddDrain`] at that point, at the
+//! bottom of the lowest layer (the floor of the cavity, the side facing the
+//! plate), with its fill too: a drain suits a model hollowed on purpose, a
+//! fill one whose cavity is part of its shape (#156).
 //!
 //! - A large **trap** gets a drain unless the solid straight below that point is
 //!   support alone. The resin collects there when the part stands on its
@@ -157,6 +162,9 @@ pub const DEFAULT_DRAIN_WIDTH_PX: u32 = 3;
 
 /// Default of [`TrapOptions::min_trap_volume_mm3`].
 pub const DEFAULT_MIN_TRAP_VOLUME_MM3: f64 = 0.01;
+
+/// Default of [`TrapOptions::min_cup_share`].
+pub const DEFAULT_MIN_CUP_SHARE: f64 = 0.10;
 
 /// Default of [`TrapOptions::min_cup_area_mm2`].
 pub const DEFAULT_MIN_CUP_AREA_MM2: f64 = 1.0;
@@ -199,6 +207,11 @@ pub struct TrapOptions {
     /// at a full vacuum, so a cup under a square millimetre is lost in the
     /// peel force of an ordinary layer.
     pub min_cup_area_mm2: f64,
+    /// Suction cups whose cross-section is smaller than this share of the
+    /// solid cured on each of their layers are not reported either: their
+    /// pull is lost in the peel force of the layer around them. 10 % is a safe
+    /// margin (#156, from printing).
+    pub min_cup_share: f64,
     /// Resin traps smaller than this, in cubic millimetres, are *tiny*:
     /// information, to fill or to leave. A cubic millimetre is a drop about
     /// a millimetre across, a microlitre of resin: too little to crack a
@@ -232,6 +245,7 @@ impl Default for TrapOptions {
             drain_width_px: DEFAULT_DRAIN_WIDTH_PX,
             min_trap_volume_mm3: DEFAULT_MIN_TRAP_VOLUME_MM3,
             min_cup_area_mm2: DEFAULT_MIN_CUP_AREA_MM2,
+            min_cup_share: DEFAULT_MIN_CUP_SHARE,
             info_volume_mm3: DEFAULT_INFO_VOLUME_MM3,
             error_volume_mm3: DEFAULT_ERROR_VOLUME_MM3,
             error_cup_area_mm2: DEFAULT_ERROR_CUP_AREA_MM2,
@@ -265,36 +279,28 @@ pub fn run_with_fills(
             !drained[lowest.layer][lowest.index as usize]
         })
         .map(|group| Cavity::measure(input, &map, groups.members(group), vented[group]))
-        .filter(|cavity| cavity.is_reported(options))
+        .filter(|cavity| cavity.is_reported(options) && cavity.pulls(ctx, options))
         .map(|cavity| {
             let remedy = cavity.remedy(input, &drained, options);
             (cavity, remedy)
         })
         .collect();
-    let filled: Vec<&[RegionRef]> = cavities
-        .iter()
-        .filter(|(_, remedy)| *remedy == Remedy::Fill)
-        .map(|(cavity, _)| cavity.members)
-        .collect();
+    // Every cavity can be filled: its fill has the cavity's index.
+    let filled: Vec<&[RegionRef]> = cavities.iter().map(|(cavity, _)| cavity.members).collect();
     let fills: Vec<CavityFill> = air::cavity_runs(input, options.drain_width_px, &filled)
         .into_iter()
         .map(|layers| CavityFill::from_runs(input, layers))
         .collect();
-    let mut next_fill = 0;
     let findings = cavities
         .iter()
-        .map(|(cavity, remedy)| {
+        .enumerate()
+        .map(|(index, (cavity, remedy))| {
+            let at = cavity.floor_at(input);
             let fix = match *remedy {
-                Remedy::Drain(fix) => fix,
-                Remedy::Fill => {
-                    next_fill += 1;
-                    Some(SuggestedFix::Fill {
-                        at: cavity.floor_at(input),
-                        cavity: next_fill - 1,
-                    })
-                }
+                Remedy::Drain => SuggestedFix::AddDrain { at, cavity: index },
+                Remedy::Fill => SuggestedFix::Fill { at, cavity: index },
             };
-            cavity.finding(input, fix, options)
+            cavity.finding(input, Some(fix), options)
         })
         .collect();
     (findings, fills)
@@ -303,8 +309,8 @@ pub fn run_with_fills(
 /// How a cavity is fixed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Remedy {
-    /// A drain, when one works.
-    Drain(Option<SuggestedFix>),
+    /// A drain, or a fill.
+    Drain,
     /// Cure it solid.
     Fill,
 }
@@ -374,6 +380,8 @@ struct Cavity<'g> {
     volume_mm3: f64,
     /// The air pixels of its widest layer.
     largest_px: u64,
+    /// Its air pixels on each of its layers.
+    sections: Vec<(usize, u64)>,
     /// The area of its widest layer.
     largest_section_mm2: f64,
     /// Where it is aimed at: the inside pixel of the largest region of its
@@ -398,6 +406,7 @@ impl<'g> Cavity<'g> {
         let first_layer = members[0].layer;
         let mut volume_mm3 = 0.0;
         let mut largest_px = 0u64;
+        let mut sections = Vec::new();
         let mut floor: Option<&Region> = None;
         let mut around = Roles::default();
         let mut base = Roles::default();
@@ -428,6 +437,7 @@ impl<'g> Cavity<'g> {
             }
             volume_mm3 += area_px as f64 * pixel_mm2 * input.layers()[layer].height_mm();
             largest_px = largest_px.max(area_px);
+            sections.push((layer, area_px));
             if layer == first_layer {
                 floor = layer_members
                     .iter()
@@ -446,6 +456,7 @@ impl<'g> Cavity<'g> {
             vented,
             volume_mm3,
             largest_px,
+            sections,
             largest_section_mm2: largest_px as f64 * pixel_mm2,
             floor_px: floor.map_or([0, 0], |region| region.inside_px),
             around,
@@ -480,6 +491,23 @@ impl<'g> Cavity<'g> {
             }
     }
 
+    /// Whether a cup pulls on the film for some layer: its section there is
+    /// at least [`min_cup_share`](TrapOptions::min_cup_share) of the solid
+    /// cured on that layer. A trap always counts.
+    fn pulls(&self, ctx: &ReviewContext<'_>, options: &TrapOptions) -> bool {
+        self.kind() != CheckKind::SuctionCup
+            || self.sections.iter().any(|&(layer, area_px)| {
+                let solid_px: u64 = ctx
+                    .regions
+                    .layer(layer)
+                    .solid
+                    .iter()
+                    .map(|region| region.area_px)
+                    .sum();
+                area_px as f64 >= options.min_cup_share * solid_px as f64
+            })
+    }
+
     fn kind(&self) -> CheckKind {
         if self.vented || self.first_layer() == 0 {
             CheckKind::SuctionCup
@@ -488,23 +516,21 @@ impl<'g> Cavity<'g> {
         }
     }
 
-    /// The fix of the cavity (see the module documentation): a fill for a
-    /// trap too small to drain, and for a cup as small that no drain helps;
-    /// otherwise a drain, when one works.
+    /// The fix of the cavity (see the module documentation): a drain or a
+    /// fill for a large trap and a cup a drain works for, a fill for
+    /// anything else.
     fn remedy(
         &self,
         input: &ReviewInput<'_>,
         drained: &[Vec<bool>],
         options: &TrapOptions,
     ) -> Remedy {
-        let small = self.volume_mm3 < options.error_volume_mm3;
-        match self.kind() {
-            CheckKind::ResinTrap if small => Remedy::Fill,
-            CheckKind::ResinTrap => Remedy::Drain(self.drain(input, drained, options)),
-            _ => match self.drain(input, drained, options) {
-                None if small => Remedy::Fill,
-                drain => Remedy::Drain(drain),
-            },
+        let small_trap =
+            self.kind() == CheckKind::ResinTrap && self.volume_mm3 < options.error_volume_mm3;
+        if !small_trap && self.drains(input, drained, options) {
+            Remedy::Drain
+        } else {
+            Remedy::Fill
         }
     }
 
@@ -515,19 +541,19 @@ impl<'g> Cavity<'g> {
         PlatePoint::new(x_mm, y_mm, input.layers()[self.first_layer()].bottom_mm)
     }
 
-    /// The drain suggested for the cavity, if one would work (see the module
+    /// Whether a drain at the floor point would work (see the module
     /// documentation).
-    fn drain(
+    fn drains(
         &self,
         input: &ReviewInput<'_>,
         drained: &[Vec<bool>],
         options: &TrapOptions,
-    ) -> Option<SuggestedFix> {
+    ) -> bool {
         let first = self.first_layer();
         if first == 0 {
-            return None;
+            return false;
         }
-        let works = match self.kind() {
+        match self.kind() {
             CheckKind::ResinTrap => {
                 let below = air::classify(
                     input,
@@ -539,10 +565,7 @@ impl<'g> Cavity<'g> {
                 below[0] != Pixel::Support
             }
             _ => self.reaches_drained_air(input, drained, options),
-        };
-        works.then(|| SuggestedFix::AddDrain {
-            at: self.floor_at(input),
-        })
+        }
     }
 
     /// Whether a hole straight down from the floor point, through model

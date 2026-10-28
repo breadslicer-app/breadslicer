@@ -82,9 +82,18 @@ fn assert_close(found: f64, expected: f64) {
     assert!((found - expected).abs() < 1e-9, "{found} != {expected}");
 }
 
+/// Asserts that `finding` is offered a fill and no drain.
+fn assert_fill_only(finding: &Finding) {
+    assert!(
+        matches!(finding.fix, Some(SuggestedFix::Fill { .. })),
+        "{:?}",
+        finding.fix
+    );
+}
+
 fn drain_at(finding: &Finding) -> PlatePoint {
     match finding.fix {
-        Some(SuggestedFix::AddDrain { at }) => at,
+        Some(SuggestedFix::AddDrain { at, .. }) => at,
         other => panic!("expected a drain, got {other:?}"),
     }
 }
@@ -242,6 +251,7 @@ fn cavities_too_small_to_matter_are_not_reported() {
     let everything = TrapOptions {
         min_trap_volume_mm3: 0.0,
         min_cup_area_mm2: 0.0,
+        min_cup_share: 0.0,
         ..drains_only()
     };
     let findings = traps_with(&fixture, &everything);
@@ -473,7 +483,8 @@ fn a_filled_cavity_is_gone_on_the_next_review() {
         "{:?}",
         after.findings
     );
-    assert!(after.fills.is_empty());
+    // The large trap left still offers its fill, beside its drain.
+    assert_eq!(after.fills.len(), 1);
 }
 
 #[test]
@@ -569,7 +580,7 @@ fn a_trap_walled_by_supports_has_support_scope_and_no_drain() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].check, CheckKind::ResinTrap);
     assert_eq!(findings[0].scope, RoleScope::Support);
-    assert_eq!(findings[0].fix, None);
+    assert_fill_only(&findings[0]);
 }
 
 #[test]
@@ -653,8 +664,8 @@ fn a_cavity_reaching_the_last_layer_is_a_suction_cup() {
         "A cavity of 7.00 mm³ over 7 layers (0.35 mm) is closed toward the plate and opens only above, so up to 20.0 mm² of it pulls on the film at every peel."
     );
     // Below its floor the block stands on the plate: a drain there would
-    // end at the plate and relieve nothing while printing.
-    assert_eq!(cup.fix, None);
+    // end at the plate and relieve nothing while printing. A fill would.
+    assert_fill_only(cup);
 }
 
 #[test]
@@ -721,7 +732,35 @@ fn a_cavity_on_the_plate_is_a_suction_cup_without_a_drain() {
     assert_eq!((cup.first_layer, cup.last_layer), (0, 4));
     assert_eq!(cup.title, "Cavity sealed by the build plate");
     assert!(cup.detail.contains("closed by the build plate"), "{cup:?}");
-    assert_eq!(cup.fix, None);
+    assert_fill_only(cup);
+}
+
+#[test]
+fn a_cup_small_beside_its_layer_is_not_reported() {
+    // A 10 x 10 pixel recess under a 180 x 100 pixel block on the plate:
+    // under 1 % of what each of its layers cures (#156).
+    let fixture = FixtureBuilder::new(8)
+        .model(
+            0..5,
+            Shape::polygon(
+                ring(10.0, 10.0, 190.0, 110.0),
+                vec![ring(95.0, 55.0, 105.0, 65.0)],
+            ),
+        )
+        .model(5..8, Shape::rect(10.0, 10.0, 190.0, 110.0))
+        .build();
+    let any_area = TrapOptions {
+        min_cup_area_mm2: 0.0,
+        ..TrapOptions::default()
+    };
+    assert!(traps_with(&fixture, &any_area).is_empty());
+    let any_share = TrapOptions {
+        min_cup_share: 0.0,
+        ..any_area
+    };
+    let found = traps_with(&fixture, &any_share);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].check, CheckKind::SuctionCup);
 }
 
 #[test]
@@ -1025,12 +1064,12 @@ fn a_cup_over_open_air_gets_a_drain_through_its_floor() {
     assert_close(drain.y_mm, y);
     assert_close(drain.z_mm, 6.0 * 0.05);
 
-    // Through a floor thicker than the longest drain, none.
+    // Through a floor thicker than the longest drain, none: a fill.
     let short = TrapOptions {
         max_drain_mm: 0.05,
         ..drains_only()
     };
-    assert_eq!(traps_with(&fixture, &short)[0].fix, None);
+    assert_fill_only(&traps_with(&fixture, &short)[0]);
 }
 
 #[test]
@@ -1041,7 +1080,7 @@ fn a_cup_whose_drain_would_end_in_a_support_gets_none() {
         .build();
     let findings = traps(&fixture);
     assert_eq!(spans(&findings), vec![(CheckKind::SuctionCup, 6, 11)]);
-    assert_eq!(findings[0].fix, None);
+    assert_fill_only(&findings[0]);
 }
 
 // ---- Severity ---------------------------------------------------------------
@@ -1091,10 +1130,11 @@ fn a_small_cup_no_drain_helps_is_offered_a_fill() {
     );
     assert!(after.is_empty(), "{after:?}");
 
-    // A cup holding more than a fill is worth keeps no fix.
+    // A cup holding more than an error's worth of resin is still offered a
+    // fill (#156): no drain helps it.
     let big = TrapOptions {
         error_volume_mm3: 4.0,
         ..TrapOptions::default()
     };
-    assert_eq!(traps_with(&fixture, &big)[0].fix, None);
+    assert_fill_only(&traps_with(&fixture, &big)[0]);
 }
