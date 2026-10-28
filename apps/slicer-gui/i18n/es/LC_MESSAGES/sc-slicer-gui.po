@@ -2892,3 +2892,13 @@ msgstr "Rellenar en el próximo laminado ({})"
 msgctxt "Review"
 msgid "Left by Fix All: it holds too much resin to fill without asking. Fill it from this row if the cavity is part of the model, or hollow the model in the Hollow tab and drill drain holes."
 msgstr "Corregir todo lo dejó: guarda demasiada resina para rellenarla sin preguntarte. Rellenala desde esta fila si la cavidad es parte del modelo, o ahuecá el modelo en la pestaña Ahuecar y hacele agujeros de drenaje."
+
+#: ui/main-window.slint
+msgctxt "MainWindow"
+msgid "Support us on Patreon"
+msgstr "Apoyanos en Patreon"
+
+#: ui/main-window.slint
+msgctxt "MainWindow"
+msgid "Support us on Ko-fi"
+msgstr "Apoyanos en Ko-fi"
