@@ -13,10 +13,13 @@
 //! source format or encoding; the binary is the driving adapter that
 //! selects a format and wires the port to the writer.
 
+pub mod anycubic_wiki;
 pub mod cli;
+pub mod creality_blog;
 pub mod dragonfruit;
 pub mod elegoo_settings;
 pub mod format;
+pub mod html_tables;
 pub mod material_curation;
 pub mod material_fold;
 pub mod printer_library;
