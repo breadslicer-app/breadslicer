@@ -20,6 +20,10 @@ pub enum SourceFormat {
     DragonFruit,
     /// ELEGOO's published resin settings spreadsheet.
     ElegooSettingsSheet,
+    /// Anycubic's resin settings wiki page, saved as HTML.
+    AnycubicWikiPage,
+    /// Creality's resin settings blog post, saved as HTML.
+    CrealityBlogPost,
 }
 
 impl SourceFormat {
@@ -28,6 +32,8 @@ impl SourceFormat {
         match self {
             Self::DragonFruit => "dragonfruit",
             Self::ElegooSettingsSheet => "elegoo-settings",
+            Self::AnycubicWikiPage => "anycubic-wiki",
+            Self::CrealityBlogPost => "creality-blog",
         }
     }
 }
@@ -49,7 +55,7 @@ impl fmt::Display for UnknownSourceFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings",
+            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog",
             self.got,
         )
     }
@@ -64,6 +70,8 @@ impl FromStr for SourceFormat {
         match value {
             "dragonfruit" => Ok(Self::DragonFruit),
             "elegoo-settings" => Ok(Self::ElegooSettingsSheet),
+            "anycubic-wiki" => Ok(Self::AnycubicWikiPage),
+            "creality-blog" => Ok(Self::CrealityBlogPost),
             other => Err(UnknownSourceFormat {
                 got: other.to_owned(),
             }),

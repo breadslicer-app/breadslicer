@@ -1,0 +1,31 @@
+[identity]
+id = "anycubic-abs-like-resin-50um"
+brand = "Anycubic"
+family = "abs-like"
+name = "ABS-Like Resin (50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.anycubic-photon-mono-4]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 360.0
+
+[per_printer.anycubic-photon-mono-4-ultra]
+normal_exposure_sec = 2.4
+bottom_exposure_sec = 35.0
+bottom_layer_count = 5
+wait_before_cure_sec = 1.0
+lift_distance_mm = 6.0
+lift_speed_mm_min = 480.0
+retract_speed_mm_min = 480.0
