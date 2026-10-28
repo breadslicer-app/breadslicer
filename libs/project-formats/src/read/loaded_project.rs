@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_bread_format::SupportDocument;
+use sc_bread_format::{HollowDocument, SupportDocument};
 use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 
@@ -32,4 +32,8 @@ pub struct LoadedProject {
     /// arrives with an empty mesh for the application to rebuild. Only a
     /// `.bread` file carries them.
     pub supports: Vec<SupportDocument>,
+    /// How the models hollowed in the application were made (#161), each
+    /// naming the leaf that shows the hollow. Only a `.bread` file carries
+    /// them.
+    pub hollows: Vec<HollowDocument>,
 }

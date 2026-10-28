@@ -29,6 +29,7 @@ use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::graphics_status::GraphicsUnavailable;
+use crate::hollow_persist::{RestoredHollows, restore_hollows};
 use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink};
 use crate::mesh_health::scene_mesh_health;
@@ -216,6 +217,7 @@ fn prepare_scene(
         project_warnings,
     } = parse_source(path, sink)?;
     let mut restored_supports = RestoredSupports::default();
+    let mut restored_hollows = RestoredHollows::default();
     let (scene, project_payload, profile_warnings, reloaded_slices) = match content {
         LoadedContent::Mesh(mut scene) => {
             // Drop the scene onto the build plate before the GPU upload and
@@ -229,11 +231,17 @@ fn prepare_scene(
             payload,
             persisted_slices,
             supports,
+            hollows,
         }) => {
             // Supports kept as data (a `.bread`) are redrawn into their empty
             // leaves before the scene is checked, primed and uploaded.
             if !supports.is_empty() {
                 restored_supports = restore_supports(&mut scene, supports);
+            }
+            // The models hollowed in the Hollow tab, by the mesh their leaf
+            // shows (#161).
+            if !hollows.is_empty() {
+                restored_hollows = restore_hollows(&scene, hollows);
             }
             // A project's placement is part of its saved content, so it reopens
             // as saved. Classify its profile references against the installed
@@ -279,6 +287,7 @@ fn prepare_scene(
         source_path: path.to_path_buf(),
         mesh_health,
         restored_supports,
+        restored_hollows,
     })
 }
 

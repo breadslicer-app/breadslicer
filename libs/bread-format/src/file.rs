@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! A whole `.bread` file: the scene chunk, the project settings and the
-//! supports when there are any, then one mesh chunk per mesh the scene names,
-//! in its order.
+//! A whole `.bread` file: the scene chunk, the project settings, the supports
+//! and the hollows when there are any, then one mesh chunk per mesh the scene
+//! names, in its order.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -15,6 +15,10 @@ use std::sync::Arc;
 use sc_scene::{NodeKind, Scene};
 
 use crate::container::{BreadReader, BreadWriter, ChunkTag, ReadBreadError};
+use crate::hollows::{
+    DecodeHollowsError, HOLLOWS_TAG, HOLLOWS_VERSION, HollowDocument, decode_hollows,
+    encode_hollows,
+};
 use crate::mesh::{DecodeMeshError, MESH_TAG, MESH_VERSION, decode_mesh, encode_mesh};
 use crate::scene::{
     DecodeSceneError, EncodeSceneError, SCENE_TAG, SCENE_VERSION, decode_scene,
@@ -41,6 +45,8 @@ pub struct BreadProject {
     pub settings: Option<Vec<u8>>,
     /// Supports kept as data; their leaves are stored with an empty mesh.
     pub supports: Vec<SupportDocument>,
+    /// How hollowed models were made (#161); their leaves keep the hollow.
+    pub hollows: Vec<HollowDocument>,
 }
 
 /// Why a project could not be written.
@@ -50,6 +56,8 @@ pub enum WriteBreadError {
     Scene(EncodeSceneError),
     /// A support document names a leaf the scene does not show.
     SupportLeafMissing,
+    /// A hollow document names a leaf the scene does not show.
+    HollowLeafMissing,
 }
 
 impl fmt::Display for WriteBreadError {
@@ -59,6 +67,9 @@ impl fmt::Display for WriteBreadError {
             Self::Scene(err) => write!(f, "{err}"),
             Self::SupportLeafMissing => {
                 f.write_str("the supports belong to a part that is not in the scene")
+            }
+            Self::HollowLeafMissing => {
+                f.write_str("a hollow belongs to a part that is not in the scene")
             }
         }
     }
@@ -89,6 +100,7 @@ pub enum ReadProjectError {
     Mesh(DecodeMeshError),
     Scene(DecodeSceneError),
     Supports(DecodeSupportsError),
+    Hollows(DecodeHollowsError),
 }
 
 impl fmt::Display for ReadProjectError {
@@ -105,6 +117,7 @@ impl fmt::Display for ReadProjectError {
             Self::Mesh(err) => write!(f, "{err}"),
             Self::Scene(err) => write!(f, "{err}"),
             Self::Supports(err) => write!(f, "{err}"),
+            Self::Hollows(err) => write!(f, "{err}"),
         }
     }
 }
@@ -124,6 +137,8 @@ pub fn write_project<W: Write>(project: &BreadProject, out: W) -> Result<W, Writ
         encode_scene_emptying(&project.scene, &emptied).map_err(WriteBreadError::Scene)?;
     let supports = encode_supports(&project.supports, |leaf| encoded.nodes.get(&leaf).copied())
         .ok_or(WriteBreadError::SupportLeafMissing)?;
+    let hollows = encode_hollows(&project.hollows, |leaf| encoded.nodes.get(&leaf).copied())
+        .ok_or(WriteBreadError::HollowLeafMissing)?;
 
     let mut writer = BreadWriter::new(out)?;
     writer.chunk(SCENE_TAG, SCENE_VERSION, &encoded.payload)?;
@@ -132,6 +147,9 @@ pub fn write_project<W: Write>(project: &BreadProject, out: W) -> Result<W, Writ
     }
     if !project.supports.is_empty() {
         writer.chunk(SUPPORTS_TAG, SUPPORTS_VERSION, &supports)?;
+    }
+    if !project.hollows.is_empty() {
+        writer.chunk(HOLLOWS_TAG, HOLLOWS_VERSION, &hollows)?;
     }
     for mesh in &encoded.meshes {
         writer.chunk(MESH_TAG, MESH_VERSION, &encode_mesh(mesh))?;
@@ -144,12 +162,14 @@ pub fn write_project<W: Write>(project: &BreadProject, out: W) -> Result<W, Writ
 pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError> {
     let mut reader = BreadReader::new(input)?;
     let (mut scenes, mut settings, mut supports) = (Vec::new(), Vec::new(), Vec::new());
+    let mut hollows = Vec::new();
     let mut meshes = Vec::new();
     while let Some(chunk) = reader.next_chunk()? {
         let supported = match chunk.tag {
             SCENE_TAG => SCENE_VERSION,
             SETTINGS_TAG => SETTINGS_VERSION,
             SUPPORTS_TAG => SUPPORTS_VERSION,
+            HOLLOWS_TAG => HOLLOWS_VERSION,
             MESH_TAG => MESH_VERSION,
             _ => continue,
         };
@@ -163,6 +183,7 @@ pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError>
             SCENE_TAG => scenes.push(chunk.payload),
             SETTINGS_TAG => settings.push(chunk.payload),
             SUPPORTS_TAG => supports.push(chunk.payload),
+            HOLLOWS_TAG => hollows.push(chunk.payload),
             _ => meshes.push(Arc::new(
                 decode_mesh(&chunk.payload).map_err(ReadProjectError::Mesh)?,
             )),
@@ -174,22 +195,31 @@ pub fn read_project<R: Read>(input: R) -> Result<BreadProject, ReadProjectError>
     })?;
     let settings = single(SETTINGS_TAG, settings)?;
     let supports = single(SUPPORTS_TAG, supports)?;
+    let hollows = single(HOLLOWS_TAG, hollows)?;
 
     let decoded = decode_scene(&scene, meshes).map_err(ReadProjectError::Scene)?;
+    let is_leaf = |id| {
+        matches!(
+            decoded.scene.node(id).map(|node| &node.kind),
+            Some(NodeKind::Leaf(_))
+        )
+    };
     let supports = match supports {
         None => Vec::new(),
-        Some(payload) => decode_supports(&payload, &decoded.nodes, |id| {
-            matches!(
-                decoded.scene.node(id).map(|node| &node.kind),
-                Some(NodeKind::Leaf(_))
-            )
-        })
-        .map_err(ReadProjectError::Supports)?,
+        Some(payload) => decode_supports(&payload, &decoded.nodes, is_leaf)
+            .map_err(ReadProjectError::Supports)?,
+    };
+    let hollows = match hollows {
+        None => Vec::new(),
+        Some(payload) => {
+            decode_hollows(&payload, &decoded.nodes, is_leaf).map_err(ReadProjectError::Hollows)?
+        }
     };
     Ok(BreadProject {
         scene: decoded.scene,
         settings,
         supports,
+        hollows,
     })
 }
 

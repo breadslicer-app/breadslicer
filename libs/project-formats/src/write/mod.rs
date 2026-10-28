@@ -85,7 +85,7 @@ where
         // support documents either, so support leaves keep their meshes; a
         // caller with supports as data uses `write_bread_project_with_progress`.
         ProjectFileType::Bread => {
-            write_bread_project_with_progress(scene, payload, embed, &[], writer, progress)
+            write_bread_project_with_progress(scene, payload, embed, &[], &[], writer, progress)
                 .map_err(WriteProjectError::Bread)
         }
     }
