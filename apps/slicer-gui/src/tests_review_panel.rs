@@ -495,6 +495,23 @@ mod fix_all {
         assert_eq!(rest.len(), 1);
     }
 
+    /// A speck where an island starts is its first layer: Fix All supports
+    /// it and does not erase it.
+    #[test]
+    fn fix_all_does_not_erase_a_speck_it_supports() {
+        let (mut findings, fills, mut erasures, thickenings) = review();
+        // The island's support point, inside the speck's erasure.
+        findings[0].fix = Some(SuggestedFix::AddSupport {
+            at: PlatePoint::new(5.5, 0.5, 0.02),
+        });
+        erasures[0] = pixels(5.0, 6.0);
+        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |_| false);
+        assert!(plan.patches.iter().all(|p| p.1 != PatchKind::Erase));
+        // With the island skipped (its support did not hold), the speck goes.
+        let plan = plan_fix_all(&findings, &fills, &erasures, &thickenings, |i| i == 0);
+        assert!(plan.patches.iter().any(|p| p.1 == PatchKind::Erase));
+    }
+
     #[test]
     fn every_finding_fix_all_leaves_says_why() {
         let (findings, ..) = review();
@@ -719,5 +736,161 @@ mod fix_all {
             );
         }
         assert!(done.contains("Fix All is done"), "{done}");
+    }
+
+    /// The review's findings by title, with why each one is left.
+    fn held_findings(panel: &ReviewPanel) -> Vec<(String, usize, usize)> {
+        let held = panel.held.borrow();
+        let Some(ReviewOutcome::Reviewed { findings, .. }) = held.as_ref().map(|h| &h.outcome)
+        else {
+            return Vec::new();
+        };
+        findings
+            .iter()
+            .map(|f| (f.title.clone(), f.first_layer + 1, f.last_layer + 1))
+            .collect()
+    }
+
+    /// Slices the document's scene as the Slice driver does, with the
+    /// project's printer and resin, and shows the review.
+    fn slice_project(
+        document: &SceneDocument,
+        panel: &ReviewPanel,
+        printer: &PrinterId,
+        resin: &MaterialId,
+        by_fix_all: bool,
+    ) {
+        let scene = document
+            .with_scene(|spatial| spatial.graph().clone())
+            .expect("a scene");
+        let (printer_profile, material) =
+            crate::slice_projection::load_selected_profiles(printer, resin).expect("profiles");
+        panel.slice_started(by_fix_all);
+        let patches = panel.fills_for_slice();
+        let params = sc_print_glue::SlicingParams {
+            layer_height_request: None,
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+        };
+        let run = sc_print_glue::slice_plate(
+            &scene,
+            &printer_profile,
+            &material,
+            &params,
+            &sc_sl1cer::CancelToken::default(),
+            |_| {},
+        )
+        .expect("the plate slices");
+        let sc_print_glue::SliceRun::Completed(plate) = run else {
+            panic!("not cancelled")
+        };
+        let filled = fill_stack(patches.fills.iter().map(|f| &**f), plate.schedule());
+        let erased = erased_stack(
+            plate.leaves(),
+            filled.as_ref(),
+            patches.erasures.iter().map(|e| &**e),
+            plate.schedule(),
+        );
+        let outcome = review_slices(
+            plate.leaves(),
+            filled.as_ref(),
+            erased.as_ref(),
+            plate.profile(),
+            panel.raft_top_mm(),
+        );
+        let contours = plate
+            .merge_with(filled.into_iter().chain(erased))
+            .expect("one schedule");
+        document.set_slice_result(SliceResult {
+            contours,
+            token: "hueco".to_owned(),
+            params: SliceParams {
+                printer: printer.clone(),
+                resin: resin.clone(),
+                first_layer_height: None,
+                aa_level: AaLevel::Off,
+                geometry: document.scene_revision(),
+            },
+        });
+        panel.fills_landed(patches.ids);
+        panel.show(outcome);
+    }
+
+    /// Fix All on Damian's `hueco.bread` (#160 follow-up), the full app path:
+    /// the project opens with its supports as data, slices with its printer
+    /// and resin, Fix All adds the supports and marks, and the slice it asks
+    /// for is reviewed. Prints the findings before and after.
+    #[test]
+    #[ignore = "needs C:/Users/dnaon/Downloads/hueco.bread"]
+    fn hueco_bread_fix_all() {
+        let path = PathBuf::from("C:/Users/dnaon/Downloads/hueco.bread");
+        if !path.is_file() {
+            eprintln!("skipping: {} is not here", path.display());
+            return;
+        }
+        let (before, message, after, done, fix_all_after) = on_fresh_slint_thread(move || {
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            let printer = project.payload.printer.clone().expect("a printer");
+            let resin = project.payload.resin.clone().expect("a resin");
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_session(&document, restored.session);
+            let supports =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel =
+                ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+            panel.set_reslice(|| {});
+            panel.notes_open.set(true);
+            slice_project(&document, &panel, &printer, &resin, false);
+            let before = held_findings(&panel);
+            window.invoke_review_fix_all_requested();
+            let message = window.get_review_message().to_string();
+            slice_project(&document, &panel, &printer, &resin, true);
+            (
+                before,
+                message,
+                card(&window),
+                window.get_review_message().to_string(),
+                panel.fix_all_plan().supports.len(),
+            )
+        });
+        eprintln!("BEFORE {} findings:", before.len());
+        for f in &before {
+            eprintln!("  {f:?}");
+        }
+        eprintln!("FIX ALL: {message}");
+        eprintln!(
+            "AFTER {} rows ({done}); supports offered again: {fix_all_after}",
+            after.len()
+        );
+        for row in &after {
+            eprintln!("  {row:?}");
+        }
+        let islands = |rows: &[(String, String)]| {
+            rows.iter()
+                .filter(|(title, _)| title == "Unsupported island" || title == "Floating part")
+                .count()
+        };
+        // 13 islands and a floating part: all but one hold their support,
+        // and that one says so.
+        assert_eq!(islands(&after), 1, "{after:?}");
+        for (title, remains) in after.iter().filter(|(t, _)| t == "Unsupported island") {
+            assert!(
+                remains.contains("A support was added here"),
+                "{title}: {remains}"
+            );
+        }
+        assert_eq!(fix_all_after, 0, "no support is offered again");
     }
 }

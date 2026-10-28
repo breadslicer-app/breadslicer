@@ -27,6 +27,12 @@
 //! ([`PatchKind`]): a thin feature to thicken, cured as a fill is, and a
 //! floating speck to erase, which the next slice removes from the models'
 //! layers ([`sc_review::erase_stack`]).
+//!
+//! It also keeps the findings whose support the engine refused, with why
+//! ([`ReviewMarks::refuse`]), and those that got a support
+//! ([`ReviewMarks::supported`]): when the next review still finds one, the
+//! support did not hold it. Either way the row says so, and Fix All does not
+//! offer the same support again while the models stand.
 
 use std::sync::Arc;
 
@@ -95,6 +101,10 @@ pub(crate) struct ReviewMarks<P> {
     models: Option<P>,
     fills: Vec<FillMark>,
     left: Vec<FindingKey>,
+    /// Findings whose support the engine refused, with why.
+    refused: Vec<(FindingKey, String)>,
+    /// Findings that got a support.
+    supported: Vec<FindingKey>,
     next_id: u64,
     /// The fills the held slice cured, by id, sorted.
     in_slice: Vec<u64>,
@@ -108,6 +118,8 @@ impl<P> Default for ReviewMarks<P> {
             models: None,
             fills: Vec::new(),
             left: Vec::new(),
+            refused: Vec::new(),
+            supported: Vec::new(),
             next_id: 0,
             in_slice: Vec::new(),
             in_slice_cavities: true,
@@ -128,6 +140,8 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
             self.models = None;
             self.fills.clear();
             self.left.clear();
+            self.refused.clear();
+            self.supported.clear();
         }
         moved
     }
@@ -214,9 +228,44 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
         self.release();
     }
 
+    /// Records that the engine refused the support of the finding of `key`,
+    /// for `why`, until the models change or a support there takes.
+    pub(crate) fn refuse(&mut self, key: FindingKey, why: &str, models: &P) {
+        self.adopt(models);
+        self.refused.retain(|(k, _)| k != &key);
+        self.refused.push((key, why.to_owned()));
+    }
+
+    /// Records that a support went in at the finding of `key`: a review
+    /// that still finds it was not helped by it.
+    pub(crate) fn supported(&mut self, key: FindingKey, models: &P) {
+        self.adopt(models);
+        self.refused.retain(|(k, _)| k != &key);
+        if !self.supported.contains(&key) {
+            self.supported.push(key);
+        }
+    }
+
+    /// Whether the finding of `key` got a support.
+    pub(crate) fn was_supported(&self, key: &FindingKey) -> bool {
+        self.supported.contains(key)
+    }
+
+    /// Why the engine refused the support of the finding of `key`, if it did.
+    pub(crate) fn refusal(&self, key: &FindingKey) -> Option<&str> {
+        self.refused
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, why)| why.as_str())
+    }
+
     /// Forgets the models once no mark needs them.
     fn release(&mut self) {
-        if self.fills.is_empty() && self.left.is_empty() {
+        if self.fills.is_empty()
+            && self.left.is_empty()
+            && self.refused.is_empty()
+            && self.supported.is_empty()
+        {
             self.models = None;
         }
     }
@@ -352,6 +401,23 @@ mod review_marks_tests {
         // Filling twice marks once.
         marks.fill(FindingKey::of(&trap(9, 1.0)), &cavity(), &7);
         assert_eq!(marks.fill_count(), 2);
+    }
+
+    #[test]
+    fn refused_and_supported_findings_are_kept_until_the_models_move() {
+        let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+        let refused = FindingKey::of(&trap(2, 1.0));
+        let supported = FindingKey::of(&trap(9, 1.0));
+        marks.refuse(refused, "no way there", &7);
+        marks.supported(supported, &7);
+        assert_eq!(marks.refusal(&refused), Some("no way there"));
+        assert!(marks.was_supported(&supported) && !marks.was_supported(&refused));
+        // A support that takes later replaces the refusal.
+        marks.supported(refused, &7);
+        assert_eq!(marks.refusal(&refused), None);
+        assert!(marks.was_supported(&refused));
+        assert!(marks.follow(Some(&8)));
+        assert!(!marks.was_supported(&supported));
     }
 
     #[test]
