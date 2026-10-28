@@ -28,6 +28,7 @@ use sc_print_profiles::{
 };
 
 use crate::aa_level::aa_level_from_combo_index;
+use crate::frame_rate::FrameRateCap;
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
@@ -47,6 +48,7 @@ use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
+use crate::viewport::{ProbeResult, ProbeUpdate, ViewportController};
 use crate::window_prefs::WindowPreferences;
 use crate::{
     ExtendDialog, ForkDialog, PillKind, PreferencesWindow, ProfileViewDialog, ResinPill, ResinRow,
@@ -80,6 +82,74 @@ pub(crate) struct WiredPreferencesWindow {
     // Keeps the thumbnail-loading poll timer alive for the window's lifetime;
     // dropping it (when the window closes) stops the poll.
     _thumbnail_timer: Rc<Timer>,
+}
+
+/// Points the "Test performance" button of `prefs` at `viewport`, the 3D view
+/// the test draws in, and shows the test's progress and result on the page.
+/// Called on every show, so the test follows the window that opened
+/// Preferences last.
+pub(crate) fn wire_performance_test(
+    prefs: &PreferencesWindow,
+    viewport: std::rc::Weak<ViewportController>,
+) {
+    let prefs_weak = prefs.as_weak();
+    prefs.on_test_performance(move || {
+        let Some(viewport) = viewport.upgrade() else {
+            return;
+        };
+        let prefs_weak = prefs_weak.clone();
+        viewport.start_performance_probe(Rc::new(move |update| {
+            if let Some(w) = prefs_weak.upgrade() {
+                show_probe_update(&w, update);
+            }
+        }));
+    });
+}
+
+fn show_probe_update(prefs: &PreferencesWindow, update: ProbeUpdate) {
+    match update {
+        ProbeUpdate::Progress(progress) => {
+            prefs.set_probe_running(true);
+            prefs.set_probe_progress(progress);
+            prefs.set_probe_recommended_fps(0);
+            prefs.set_probe_message(ctr!(
+                "AppearancePreferences",
+                "Testing… watch the 3D view; it takes about 10 seconds."
+            ));
+        }
+        ProbeUpdate::Finished(result) => {
+            prefs.set_probe_running(false);
+            prefs.set_probe_recommended_fps(i32::try_from(result.recommended_fps).unwrap_or(0));
+            prefs.set_probe_message(probe_result_text(&result));
+        }
+        ProbeUpdate::Failed => {
+            prefs.set_probe_running(false);
+            prefs.set_probe_recommended_fps(0);
+            prefs.set_probe_message(ctr!(
+                "AppearancePreferences",
+                "The test could not run. Make sure the 3D view is visible and try again."
+            ));
+        }
+    }
+}
+
+fn probe_result_text(result: &ProbeResult) -> SharedString {
+    let sustained = result.sustained_fps();
+    match result.refresh_hz {
+        Some(hz) => ctr!(
+            "AppearancePreferences",
+            "Your computer draws a heavy scene at about {} FPS and your monitor shows {} Hz. Recommended: {} FPS.",
+            sustained,
+            hz,
+            result.recommended_fps
+        ),
+        None => ctr!(
+            "AppearancePreferences",
+            "Your computer draws a heavy scene at about {} FPS. Recommended: {} FPS.",
+            sustained,
+            result.recommended_fps
+        ),
+    }
 }
 
 pub(crate) fn build_preferences_window(
@@ -296,6 +366,36 @@ pub(crate) fn build_preferences_window(
                 snap.smooth_models = on;
                 PreferencesChange::SmoothModels
             });
+        }
+    });
+
+    prefs.on_frame_rate_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.frame_rate = FrameRateCap::from_combo_index(index);
+                PreferencesChange::FrameRate
+            });
+        }
+    });
+
+    prefs.on_use_recommended_frame_rate({
+        let bus = bus.clone();
+        let prefs_weak = prefs_weak.clone();
+        move || {
+            let Some(w) = prefs_weak.upgrade() else {
+                return;
+            };
+            let Ok(fps) = u32::try_from(w.get_probe_recommended_fps()) else {
+                return;
+            };
+            if let Some(cap) = FrameRateCap::fixed(fps) {
+                w.set_probe_recommended_fps(0);
+                bus.update(move |snap| {
+                    snap.frame_rate = cap;
+                    PreferencesChange::FrameRate
+                });
+            }
         }
     });
 

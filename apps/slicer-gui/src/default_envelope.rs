@@ -215,6 +215,7 @@ mod default_envelope_tests {
             PreferencesChange::AaLevel,
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
+            PreferencesChange::FrameRate,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,
