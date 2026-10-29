@@ -2,8 +2,8 @@
 
 Validated primitive types for resin 3D printing: lengths, times, speeds,
 light intensity, energy density, build volume, pixel resolution and size,
-display mirroring, anti-aliasing level, scale compensation, and printer and
-material identifiers.
+display mirroring and panel rotation, anti-aliasing level, scale
+compensation, and printer and material identifiers.
 
 Written for the
 [Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md),

@@ -5,12 +5,14 @@
 
 use std::io::Cursor;
 
-use sc_print_primitives::{AaLevel, Mirror};
+use sc_print_primitives::{AaLevel, Mirror, PanelRotation};
 use sc_sla_formats::AnycubicZipVariant;
 
 use super::*;
 use crate::read::read_anycubic_zip;
-use crate::test_fixture::{PIXELS_X, PIXELS_Y, expected_images, program, raster, stack};
+use crate::test_fixture::{
+    PIXELS_X, PIXELS_Y, expected_images, program, raster, stack, turned_ccw,
+};
 
 fn written(variant: AnycubicZipVariant, aa: AaLevel) -> Vec<u8> {
     let program = program("Photon Mono M7 Pro", raster(aa, Mirror::default()), 6);
@@ -55,6 +57,32 @@ fn every_layer_reads_back_as_the_slicer_rasterised_it_at_16_greys() {
             .collect();
         assert_eq!(file.layers, quantised, "{aa:?}");
     }
+}
+
+#[test]
+fn a_quarter_turned_panel_is_named_and_stored_turned() {
+    let plate = raster(AaLevel::Off, Mirror::default());
+    let turned = plate.clone().with_panel_rotation(PanelRotation::Ccw90);
+    let program = program("Photon Mono M7 Pro", turned, 6);
+    let stack = stack(6);
+    let mut out = Cursor::new(Vec::new());
+    write_file(AnycubicZipVariant::Pwsz, &program, None, &stack, &mut out).unwrap();
+
+    let file = read_anycubic_zip(Cursor::new(out.into_inner())).unwrap();
+    let machine = &file.settings["machine_type"];
+    assert_eq!(machine["res_x"], PIXELS_Y);
+    assert_eq!(machine["res_y"], PIXELS_X);
+    assert_eq!(machine["print_xsize"], 7.5);
+    assert_eq!(machine["print_ysize"], 10);
+    let expected: Vec<Vec<u8>> = expected_images(&stack, &plate)
+        .iter()
+        .map(|image| turned_ccw(image, PIXELS_X, PIXELS_Y))
+        .collect();
+    assert_eq!(file.layers, expected);
+    // The scene's bounds are measured on the panel.
+    let [left, top, right, bottom] = file.scene_layers[5].bounds_mm;
+    assert!(left >= -3.75 && right <= 3.75 && left < right);
+    assert!(top >= -5.0 && bottom <= 5.0 && top < bottom);
 }
 
 #[test]

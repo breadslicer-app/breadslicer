@@ -4,7 +4,9 @@
  */
 
 use super::printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
-use sc_print_primitives::{BuildVolume, Mirror, PixelAxis, PixelResolution, PixelSizeMicrons};
+use sc_print_primitives::{
+    BuildVolume, Mirror, PanelRotation, PixelAxis, PixelResolution, PixelSizeMicrons,
+};
 
 fn consistent_hardware() -> PrinterHardware {
     PrinterHardware::new(
@@ -34,6 +36,7 @@ fn new_accepts_components_consistent_with_pixel_grid() {
     assert_eq!(hw.pixel_size_microns().x.value(), 100.0);
     assert_eq!(hw.pixel_size_microns().y.value(), 100.0);
     assert_eq!(hw.mirror(), Mirror::default());
+    assert_eq!(hw.panel_rotation(), PanelRotation::None);
 }
 
 #[test]
@@ -171,6 +174,36 @@ fn deserialise_rejects_missing_mirror() {
 #[test]
 fn roundtrip_through_toml_preserves_value() {
     let original = consistent_hardware();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: PrinterHardware = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn deserialise_reads_a_quarter_turned_panel() {
+    let toml = format!(
+        "panel_rotation = \"ccw90\"
+{VALID_TOML}"
+    );
+    let hw: PrinterHardware = toml_edit::de::from_str(&toml).unwrap();
+    assert_eq!(hw.panel_rotation(), PanelRotation::Ccw90);
+    // The plate keeps its own axes; only the stored image turns.
+    assert_eq!(hw.build_volume().x_mm(), 100.0);
+    assert_eq!(hw.pixel_resolution().x(), 1000);
+}
+
+#[test]
+fn serialise_leaves_out_an_unturned_panel() {
+    let serialised = toml_edit::ser::to_string(&consistent_hardware()).unwrap();
+    assert!(
+        !serialised.contains("panel_rotation"),
+        "serialised: {serialised}"
+    );
+}
+
+#[test]
+fn roundtrip_through_toml_preserves_a_quarter_turn() {
+    let original = consistent_hardware().with_panel_rotation(PanelRotation::Ccw90);
     let serialised = toml_edit::ser::to_string(&original).unwrap();
     let roundtripped: PrinterHardware = toml_edit::de::from_str(&serialised).unwrap();
     assert_eq!(original, roundtripped);

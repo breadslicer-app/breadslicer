@@ -156,3 +156,14 @@ pub(crate) fn expected_images(stack: &ContourStack, raster: &RasterSetup) -> Vec
     .unwrap();
     images
 }
+
+/// `image` (`width` greys per row, `height` rows) turned a quarter turn
+/// counter-clockwise, one pixel at a time: its last column becomes the first
+/// row.
+pub(crate) fn turned_ccw(image: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let (width, height) = (width as usize, height as usize);
+    (0..width)
+        .rev()
+        .flat_map(|col| (0..height).map(move |row| image[row * width + col]))
+        .collect()
+}

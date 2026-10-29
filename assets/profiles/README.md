@@ -34,6 +34,14 @@ can be shipped, so their profiles name no image. They write CXDLP v2
 first, the dialect of the Lychee files the Halot One prints from, with v3
 as the alternative.
 
+The Halot One's plate is laid out 128 mm wide and 81 mm deep, as the
+machine stands, where UVtools' data lists the panel as 81 x 128. Its files
+still carry the panel's 1620 x 2560 pixels: the profile turns the stored
+image a quarter turn (`panel_rotation = "ccw90"`), so the file's 2560
+pixel axis runs along the plate's X. Lychee's files for this machine are
+laid out the same way: its `.cxdlp` of a scene is its `.pwsz` of that
+scene transposed, and Breadslicer's pair relates the same way.
+
 The Photon Mono M7, M7 Pro and M7 Max differ from that dataset on 2
 counts, both following UVtools' printer data, which its Anycubic writers
 are validated against, and Anycubic's published specifications: the M7

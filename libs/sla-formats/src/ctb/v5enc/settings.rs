@@ -66,6 +66,8 @@ pub fn settings_block(
 ) -> io::Result<[u8; SETTINGS_BYTES]> {
     let raster = &program.raster;
     let plate = raster.build_volume();
+    let resolution = raster.panel_resolution();
+    let (panel_x_mm, panel_y_mm) = raster.panel_size_mm();
     let bottom = LayerValues::of(program.layers.first());
     let normal = LayerValues::of(program.layers.last());
     let aa = raster.aa();
@@ -75,8 +77,8 @@ pub fn settings_block(
 
     write_u64(out, signed_value)?;
     write_u32(out, layout.layer_pointer_table)?;
-    write_f32(out, plate.x_mm() as f32)?;
-    write_f32(out, plate.y_mm() as f32)?;
+    write_f32(out, panel_x_mm as f32)?;
+    write_f32(out, panel_y_mm as f32)?;
     write_f32(out, plate.z_mm() as f32)?;
     write_zeros(out, 8)?;
     write_f32(out, overall_height_mm(program))?;
@@ -85,8 +87,8 @@ pub fn settings_block(
     write_f32(out, bottom.exposure_sec)?;
     write_f32(out, LIGHT_OFF_SEC)?;
     write_u32(out, program.bottom_layer_count)?;
-    write_u32(out, raster.pixel_resolution().x())?;
-    write_u32(out, raster.pixel_resolution().y())?;
+    write_u32(out, resolution.x())?;
+    write_u32(out, resolution.y())?;
     write_u32(out, layer_count)?;
     write_u32(out, layout.large_preview_record)?;
     write_u32(out, layout.small_preview_record)?;

@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-use sc_print_primitives::{AaLevel, Mirror};
+use sc_print_primitives::{AaLevel, Mirror, PanelRotation};
 use sc_sl1cer::raster::rle::RleRun;
 use sc_sla_formats::{CxdlpVersion, PreviewImage, PrintPreviews, WriteFailure};
 
 use super::*;
 use crate::read::read_cxdlp;
-use crate::test_fixture::{PIXELS_X, PIXELS_Y, expected_images, program, raster, stack};
+use crate::test_fixture::{
+    PIXELS_X, PIXELS_Y, expected_images, program, raster, stack, turned_ccw,
+};
 
 fn written(version: CxdlpVersion, aa: AaLevel, machine: &str) -> Vec<u8> {
     let program = program(machine, raster(aa, Mirror::default()), 6);
@@ -57,6 +59,31 @@ fn every_layer_reads_back_as_the_slicer_rasterised_it() {
             assert_eq!(file.layers, expected_images(&stack, &raster), "{aa:?}");
         }
     }
+}
+
+#[test]
+fn a_quarter_turned_panel_stores_the_plate_turned() {
+    let plate = raster(AaLevel::X4, Mirror { x: true, y: false });
+    let turned = plate.clone().with_panel_rotation(PanelRotation::Ccw90);
+    let program = program("Halot One", turned, 6);
+    let stack = stack(6);
+    let mut out = Vec::new();
+    write_file(CxdlpVersion::V2, &program, None, &stack, &mut out).unwrap();
+
+    let file = read_cxdlp(&out).unwrap();
+    assert!(file.checksum_matches);
+    // The header names the panel: as many pixels wide as the plate is deep.
+    assert_eq!(
+        (file.resolution_x, file.resolution_y),
+        (PIXELS_Y as u16, PIXELS_X as u16)
+    );
+    assert_eq!(file.display_width, "7.5");
+    assert_eq!(file.display_height, "10");
+    let expected: Vec<Vec<u8>> = expected_images(&stack, &plate)
+        .iter()
+        .map(|image| turned_ccw(image, PIXELS_X, PIXELS_Y))
+        .collect();
+    assert_eq!(file.layers, expected);
 }
 
 #[test]

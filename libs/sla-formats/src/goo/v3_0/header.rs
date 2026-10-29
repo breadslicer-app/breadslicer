@@ -106,6 +106,8 @@ pub fn write_header(
     })?;
     let raster = &program.raster;
     let plate = raster.build_volume();
+    let resolution = raster.panel_resolution();
+    let (panel_x_mm, panel_y_mm) = raster.panel_size_mm();
     let bottom = LayerValues::of(program.layers.first());
     let normal = LayerValues::of(program.layers.last());
 
@@ -132,12 +134,12 @@ pub fn write_header(
     out.write_all(&DELIMITER)?;
 
     write_u32(out, layer_count)?;
-    write_u16(out, resolution_axis(raster.pixel_resolution().x()))?;
-    write_u16(out, resolution_axis(raster.pixel_resolution().y()))?;
+    write_u16(out, resolution_axis(resolution.x()))?;
+    write_u16(out, resolution_axis(resolution.y()))?;
     write_flag(out, raster.mirror().x)?;
     write_flag(out, raster.mirror().y)?;
-    write_f32(out, plate.x_mm() as f32)?;
-    write_f32(out, plate.y_mm() as f32)?;
+    write_f32(out, panel_x_mm as f32)?;
+    write_f32(out, panel_y_mm as f32)?;
     write_f32(out, plate.z_mm() as f32)?;
     write_f32(out, program.layer_height_mm.value() as f32)?;
     write_f32(out, normal.exposure_sec)?;

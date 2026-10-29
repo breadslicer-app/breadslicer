@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::PrinterId;
+use sc_print_primitives::{PanelRotation, PrinterId};
 use sc_print_profiles::{
     CalibrationTarget, EffectiveMaterial, PrinterProfile, SceneOverrides,
     load_material_profile_from_path, load_printer_profile_from_path, resolve,
@@ -421,6 +421,21 @@ fn the_halot_family_lists_cxdlp_v2_first() {
             .collect();
         assert_eq!(formats, ["cxdlp@v2", "cxdlp@v3"], "{id}");
     }
+}
+
+/// The Halot One's plate is 128 mm wide and 81 mm deep, as the machine
+/// stands and as Lychee lays it out; its files keep the panel's 1620 x 2560
+/// pixels, so the plate is stored turned a quarter turn.
+#[test]
+fn the_halot_one_plate_runs_wide_and_its_panel_turns() {
+    let hardware = bundled_printer("creality-halot-one").hardware;
+    let plate = hardware.build_volume();
+    assert_eq!((plate.x_mm(), plate.y_mm()), (128.0, 81.0));
+    let pixels = hardware.pixel_resolution();
+    assert_eq!((pixels.x(), pixels.y()), (2560, 1620));
+    assert_eq!(hardware.panel_rotation(), PanelRotation::Ccw90);
+    let mirror = hardware.mirror();
+    assert!(!mirror.x && !mirror.y, "the Halot One mirrors neither axis");
 }
 
 #[test]

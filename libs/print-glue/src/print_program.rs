@@ -149,7 +149,8 @@ pub(crate) fn project_to_print_program(
         NonNegativeFiniteSec::new(corrected).map_err(UnprojectablePrint::PrintTime)?;
 
     Ok(PrintProgram {
-        raster: RasterSetup::from_profile(profile),
+        raster: RasterSetup::from_profile(profile)
+            .with_panel_rotation(config.printer.hardware.panel_rotation()),
         machine_name: config.printer.identity.name.clone(),
         material_name: material.identity.name.clone(),
         layers,
