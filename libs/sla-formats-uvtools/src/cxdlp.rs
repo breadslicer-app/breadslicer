@@ -390,7 +390,8 @@ pub(crate) fn encode_layer(runs: &[RleRun], width: u32, largest_outline: u32) ->
 /// `program`.
 ///
 /// The first row of every layer image is the plate's maximum Y edge, as in the
-/// GOO and CTB files; the raster setup's mirror flags turn the image around.
+/// GOO and CTB files; the raster setup's mirror flags turn the image around,
+/// and its panel rotation turns it as [`write_layer_images`] describes.
 /// Without `previews` the machine shows black thumbnails.
 ///
 /// # Errors
@@ -406,7 +407,7 @@ pub fn write_file(
     stack: &ContourStack,
     out: &mut (impl Write + ?Sized),
 ) -> Result<(), WriteFailure> {
-    let resolution = program.raster.pixel_resolution();
+    let resolution = program.raster.panel_resolution();
     let (res_x, res_y) = (resolution.x(), resolution.y());
     if res_x > MAX_COLUMN + 1 || res_y > MAX_ROW + 1 {
         return Err(WriteFailure::Unencodable(format!(
@@ -501,12 +502,12 @@ fn write_header(
 }
 
 fn write_settings(out: &mut impl Write, program: &PrintProgram) -> io::Result<()> {
-    let plate = program.raster.build_volume();
+    let (panel_x_mm, panel_y_mm) = program.raster.panel_size_mm();
     let summary = ProgramSummary::of(program);
     let (bottom, normal) = (summary.bottom, summary.normal);
 
-    write_utf16_number(out, round_even(plate.x_mm() as f32, 2))?;
-    write_utf16_number(out, round_even(plate.y_mm() as f32, 2))?;
+    write_utf16_number(out, round_even(panel_x_mm as f32, 2))?;
+    write_utf16_number(out, round_even(panel_y_mm as f32, 2))?;
     write_utf16_number(out, round_height(program.layer_height_mm.value() as f32))?;
 
     // The normal exposure keeps tenths of a second; everything else is whole.

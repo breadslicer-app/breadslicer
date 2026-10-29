@@ -53,14 +53,16 @@ pub fn write_header(
     })?;
     let raster = &program.raster;
     let plate = raster.build_volume();
+    let resolution = raster.panel_resolution();
+    let (panel_x_mm, panel_y_mm) = raster.panel_size_mm();
     let bottom = LayerValues::of(program.layers.first());
     let normal = LayerValues::of(program.layers.last());
     let created_sec = u32::try_from(program.created_at.unix_sec).unwrap_or_default();
 
     write_u32(out, MAGIC)?;
     write_u32(out, VERSION)?;
-    write_f32(out, plate.x_mm() as f32)?;
-    write_f32(out, plate.y_mm() as f32)?;
+    write_f32(out, panel_x_mm as f32)?;
+    write_f32(out, panel_y_mm as f32)?;
     write_f32(out, plate.z_mm() as f32)?;
     write_u32(out, created_sec)?;
     write_u32(out, created_sec)?;
@@ -70,8 +72,8 @@ pub fn write_header(
     write_f32(out, bottom.exposure_sec)?;
     write_f32(out, LIGHT_OFF_SEC)?;
     write_u32(out, program.bottom_layer_count)?;
-    write_u32(out, raster.pixel_resolution().x())?;
-    write_u32(out, raster.pixel_resolution().y())?;
+    write_u32(out, resolution.x())?;
+    write_u32(out, resolution.y())?;
     write_u32(out, layout.large_preview_record)?;
     write_u32(out, layout.layer_table)?;
     write_u32(out, layer_count)?;

@@ -150,9 +150,16 @@ A **printer profile** describes a machine, in four sections:
 | Section         | Holds |
 |-----------------|-------|
 | `identity`      | Who the printer is. |
-| `hardware`      | Build volume, pixel resolution, pixel size, display mirroring. |
+| `hardware`      | Build volume, pixel resolution, pixel size, display mirroring, panel rotation. |
 | `capabilities`  | Output formats, grayscale support, network protocol. |
 | `constraints`   | Layer-height range, Z step, speed ranges, maximum lift distance, light intensity. |
+
+The build volume, pixel resolution and pixel size describe the plate as it
+sits in the machine: X across the front, Y in depth. A panel whose own rows
+run along the plate's depth declares `panel_rotation = "ccw90"` in
+`[hardware]`: its files store the plate's image turned a quarter turn
+counter-clockwise, so their headers name the panel's resolution and size
+with the axes swapped. Left out, the files store the plate as it lies.
 
 A **resin profile** describes a material, also in four sections:
 

@@ -5,16 +5,21 @@
 
 //! Hardware block of a printer profile.
 //!
-//! [`PrinterHardware`] composes the four physical descriptors of a
-//! resin printer: build volume, pixel resolution, per-axis pixel size
-//! in microns, and per-axis raster mirror flags. Construction validates
+//! [`PrinterHardware`] composes the physical descriptors of a resin
+//! printer: build volume, pixel resolution, per-axis pixel size in
+//! microns, per-axis raster mirror flags, and the turn between the
+//! plate and the image its files store. The first three describe the
+//! plate as it sits in the machine (X across the front, Y in depth),
+//! whichever way the panel's own rows run. Construction validates
 //! that the declared XY build volume agrees with the pixel grid implied
 //! by `pixel_resolution * pixel_size_microns` within a 0.5% relative
 //! tolerance; failure is reported through [`EnvelopeAxisMismatch`].
 
 use std::fmt;
 
-use sc_print_primitives::{BuildVolume, Mirror, PixelAxis, PixelResolution, PixelSizeMicrons};
+use sc_print_primitives::{
+    BuildVolume, Mirror, PanelRotation, PixelAxis, PixelResolution, PixelSizeMicrons,
+};
 use serde::{Deserialize, Serialize};
 
 const ENVELOPE_TOLERANCE: f64 = 0.005;
@@ -26,10 +31,13 @@ pub struct PrinterHardware {
     pixel_resolution: PixelResolution,
     pixel_size_microns: PixelSizeMicrons,
     mirror: Mirror,
+    panel_rotation: PanelRotation,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct RawPrinterHardware {
+    #[serde(default, skip_serializing_if = "PanelRotation::is_none")]
+    panel_rotation: PanelRotation,
     build_volume: BuildVolume,
     pixel_resolution: PixelResolution,
     pixel_size_microns: PixelSizeMicrons,
@@ -91,7 +99,17 @@ impl PrinterHardware {
             pixel_resolution,
             pixel_size_microns,
             mirror,
+            panel_rotation: PanelRotation::None,
         })
+    }
+
+    /// Set the turn between the plate and the image the printer's files
+    /// store. The plate itself, and so every other field, is unchanged.
+    #[inline]
+    #[must_use]
+    pub fn with_panel_rotation(mut self, panel_rotation: PanelRotation) -> Self {
+        self.panel_rotation = panel_rotation;
+        self
     }
 
     #[inline]
@@ -112,6 +130,11 @@ impl PrinterHardware {
     #[inline]
     pub fn mirror(&self) -> Mirror {
         self.mirror
+    }
+
+    #[inline]
+    pub fn panel_rotation(&self) -> PanelRotation {
+        self.panel_rotation
     }
 }
 
@@ -144,12 +167,14 @@ impl TryFrom<RawPrinterHardware> for PrinterHardware {
             raw.pixel_size_microns,
             raw.mirror,
         )
+        .map(|hw| hw.with_panel_rotation(raw.panel_rotation))
     }
 }
 
 impl From<PrinterHardware> for RawPrinterHardware {
     fn from(hw: PrinterHardware) -> Self {
         Self {
+            panel_rotation: hw.panel_rotation,
             build_volume: hw.build_volume,
             pixel_resolution: hw.pixel_resolution,
             pixel_size_microns: hw.pixel_size_microns,

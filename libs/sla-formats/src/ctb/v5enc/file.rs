@@ -63,7 +63,9 @@ const ENCRYPTED_RANGE: EncryptedRange = EncryptedRange {
 /// The first row of every layer image is the plate's maximum Y edge,
 /// the order this container stores its previews in. The raster
 /// setup's mirror flags, which the settings block declares, are what
-/// turns an image around.
+/// turns an image around; its panel rotation turns it as
+/// [`write_layer_images`](crate::layer_images::write_layer_images)
+/// describes.
 ///
 /// Without `previews` the machine displays a black thumbnail for the
 /// file, since the container has no way to say a preview is absent.

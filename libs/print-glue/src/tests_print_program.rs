@@ -7,7 +7,10 @@ use std::num::NonZeroU32;
 
 use sc_mesh_core::primitives::IndexedTriangle;
 use sc_mesh_fixtures::unit_cube_mesh;
-use sc_print_primitives::{LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm};
+use sc_print_primitives::{
+    LightPwm, NonEmptyString, NonNegativeFiniteSec, PanelRotation, PixelResolution,
+    PositiveFiniteMm,
+};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
 };
@@ -462,6 +465,28 @@ fn the_raster_setup_comes_from_the_slice_profile() {
     );
     assert_eq!(program.raster.mirror(), profile.mirror());
     assert_eq!(program.raster.aa(), profile.aa_level());
+}
+
+#[test]
+fn the_panel_rotation_comes_from_the_printer() {
+    assert_eq!(
+        program(PRINTER_TOML, 20).raster.panel_rotation(),
+        PanelRotation::None
+    );
+
+    let turned = PRINTER_TOML.replace(
+        "[hardware]
+",
+        "[hardware]
+panel_rotation = \"ccw90\"
+",
+    );
+    let program = program(&turned, 20);
+    assert_eq!(program.raster.panel_rotation(), PanelRotation::Ccw90);
+    assert_eq!(
+        program.raster.panel_resolution(),
+        PixelResolution::new(2560, 4098).unwrap()
+    );
 }
 
 #[test]

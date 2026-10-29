@@ -5,14 +5,17 @@ family = "Halot"
 name = "Halot One"
 profile_version = "1.0.0"
 
+[hardware]
+panel_rotation = "ccw90"
+
 [hardware.build_volume]
-x_mm = 81.0
-y_mm = 128.0
+x_mm = 128.0
+y_mm = 81.0
 z_mm = 160.0
 
 [hardware.pixel_resolution]
-x = 1620
-y = 2560
+x = 2560
+y = 1620
 
 [hardware.pixel_size_microns]
 x = 50.0

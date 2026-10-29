@@ -15,10 +15,17 @@
 //! principal frames of both stacks have the same handedness), and the relation
 //! between Breadslicer's `.pwsz` and `.cxdlp` of one model has the handedness
 //! of the relation between Lychee's `.pwsz` and `.cxdlp` of one scene, both of
-//! which print unmirrored on the owner's machines. A part on the plate's +X, +Y
-//! side therefore sits in the first rows of both files, at the first columns of
-//! the `.pwsz` (the M7 Pro's panel is mirrored in X) and at the last columns of
-//! the `.cxdlp`.
+//! which print unmirrored on the owner's machines.
+//!
+//! Lychee's `.cxdlp` is its `.pwsz` of the same scene transposed: it lays the
+//! Halot One's plate out 128 mm wide and 81 mm deep, as the machine stands,
+//! and its file's 2560-pixel axis runs along the plate's X. Since #134 the
+//! Halot One's profile does the same (its panel stores the plate turned a
+//! quarter turn counter-clockwise), and Breadslicer's pair relates the way
+//! Lychee's does. A part on the plate's +X, +Y side therefore sits at the first
+//! rows and first columns of both files: in the `.pwsz` the rows follow the
+//! plate's Y and the columns its X, mirrored; in the `.cxdlp` the rows follow
+//! the plate's X and the columns its Y.
 
 use std::fs::{self, File};
 use std::io::BufReader;
@@ -162,7 +169,7 @@ fn the_m7_pro_pwsz_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
 }
 
 #[test]
-fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_top_right() {
+fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
     let dir = tempdir().unwrap();
     let source = write_marked_plate(dir.path());
     let target = dir.path().join("marked.cxdlp");
@@ -175,13 +182,19 @@ fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_top_right() {
 
     let file = read_cxdlp(&fs::read(&target).unwrap()).unwrap();
     assert_eq!(file.version, 2, "the Halot One's default is CXDLP v2");
+    // The panel, as Lychee's files name it: the plate is 128 x 81 mm.
+    assert_eq!((file.resolution_x, file.resolution_y), (1620, 2560));
+    assert_eq!(
+        (file.display_width.as_str(), file.display_height.as_str()),
+        ("81", "128")
+    );
     let (block, marker) = block_and_marker(&file.layers[0], usize::from(file.resolution_x));
     assert!(
-        marker.0 > block.0,
-        "+X must land on the higher columns (no mirror), marker {marker:?} block {block:?}",
+        marker.1 < block.1,
+        "+X must land on the first rows, marker {marker:?} block {block:?}",
     );
     assert!(
-        marker.1 < block.1,
-        "+Y must land on the first rows, marker {marker:?} block {block:?}",
+        marker.0 < block.0,
+        "+Y must land on the first columns, marker {marker:?} block {block:?}",
     );
 }

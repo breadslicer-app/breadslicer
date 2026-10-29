@@ -29,7 +29,9 @@ const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
 /// The first row of every layer image is the plate's maximum Y edge,
 /// the order this container stores its previews in. The raster
 /// setup's mirror flags, which the header declares, are what turns an
-/// image around.
+/// image around; its panel rotation turns it as
+/// [`write_layer_images`](crate::layer_images::write_layer_images)
+/// describes.
 ///
 /// Without `previews` the machine displays an empty thumbnail for the
 /// file.

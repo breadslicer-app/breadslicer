@@ -633,10 +633,11 @@ fn anycubic_machine_name(machine_name: &str) -> String {
 }
 
 fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> SettingsManifest {
-    let resolution = program.raster.pixel_resolution();
+    let resolution = program.raster.panel_resolution();
     let plate = program.raster.build_volume();
-    let display_x = round_display(plate.x_mm() as f32);
-    let display_y = round_display(plate.y_mm() as f32);
+    let (panel_x_mm, panel_y_mm) = program.raster.panel_size_mm();
+    let display_x = round_display(panel_x_mm as f32);
+    let display_y = round_display(panel_y_mm as f32);
     let name = anycubic_machine_name(program.machine_name.as_str());
     let raster_antialiasing = match program.raster.aa() {
         AaLevel::Off => 1,
@@ -837,7 +838,7 @@ fn software_info_manifest(program: &PrintProgram) -> SoftwareInfoManifest {
     }
 }
 
-/// The plate geometry the binary figures are measured in.
+/// The panel geometry the binary figures are measured in.
 #[derive(Clone, Copy, Debug)]
 struct Display {
     width_mm: f32,
@@ -848,10 +849,10 @@ struct Display {
 
 impl Display {
     fn of(program: &PrintProgram) -> Self {
-        let resolution = program.raster.pixel_resolution();
-        let plate = program.raster.build_volume();
-        let width_mm = round_display(plate.x_mm() as f32);
-        let height_mm = round_display(plate.y_mm() as f32);
+        let resolution = program.raster.panel_resolution();
+        let (panel_x_mm, panel_y_mm) = program.raster.panel_size_mm();
+        let width_mm = round_display(panel_x_mm as f32);
+        let height_mm = round_display(panel_y_mm as f32);
         Self {
             width_mm,
             height_mm,
@@ -1038,7 +1039,8 @@ fn json_bytes(value: &impl Serialize) -> Result<Vec<u8>, WriteFailure> {
 /// `program`.
 ///
 /// The first row of every layer image is the plate's maximum Y edge, as in the
-/// GOO and CTB files; the raster setup's mirror flags turn the image around.
+/// GOO and CTB files; the raster setup's mirror flags turn the image around,
+/// and its panel rotation turns it as [`write_layer_images`] describes.
 /// Without `previews` the machine shows black thumbnails.
 ///
 /// # Errors
@@ -1067,7 +1069,7 @@ pub fn write_file(
     let middle = downscale(&large, MIDDLE_PREVIEW_SIZE);
 
     let display = Display::of(program);
-    let width = program.raster.pixel_resolution().x();
+    let width = program.raster.panel_resolution().x();
     let slab_heights = slabs(program);
     let contour_stats: Vec<ContourStats> = stack.layers().iter().map(ContourStats::of).collect();
 

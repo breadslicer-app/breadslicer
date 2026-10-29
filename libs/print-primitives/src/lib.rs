@@ -6,9 +6,9 @@
 //! Shared primitive types for the resin-printing pipeline.
 //!
 //! This crate hosts the typed values that describe a printer's physical
-//! characteristics (build volume, pixel resolution, display mirror flags) along
-//! with the measurement primitives that travel with them (validated
-//! positive-finite millimetre lengths and their parse errors).
+//! characteristics (build volume, pixel resolution, display mirror flags, panel
+//! rotation) along with the measurement primitives that travel with them
+//! (validated positive-finite millimetre lengths and their parse errors).
 
 pub mod aa_level;
 pub mod build_volume;
@@ -22,6 +22,7 @@ pub mod mass;
 pub mod mirror;
 pub mod network;
 pub mod non_empty_string;
+pub mod panel_rotation;
 pub mod pixel_resolution;
 pub mod pixel_size;
 pub mod scale_compensation;
@@ -45,6 +46,7 @@ pub use mass::{DensityGPerCm3, DensityOutOfRange, MassG, MassOutOfRange};
 pub use mirror::Mirror;
 pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
+pub use panel_rotation::PanelRotation;
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
 pub use scale_compensation::{
@@ -85,6 +87,8 @@ mod tests_mirror;
 mod tests_network;
 #[cfg(test)]
 mod tests_non_empty_string;
+#[cfg(test)]
+mod tests_panel_rotation;
 #[cfg(test)]
 mod tests_pixel_resolution;
 #[cfg(test)]
