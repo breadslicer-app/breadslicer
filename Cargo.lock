@@ -4987,6 +4987,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-arrange"
+version = "0.1.0"
+dependencies = [
+ "png 0.18.1",
+ "rayon",
+ "sc-mesh-core",
+ "sc-mesh-fixtures",
+ "sc-mesh-formats",
+]
+
+[[package]]
 name = "sc-bread-format"
 version = "0.1.0"
 dependencies = [
@@ -5295,6 +5306,7 @@ dependencies = [
  "pollster",
  "rfd",
  "sc-app-paths",
+ "sc-arrange",
  "sc-bread-format",
  "sc-geom",
  "sc-mesh-core",

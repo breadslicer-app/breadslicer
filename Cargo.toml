@@ -7,6 +7,7 @@ members = [
     "apps/slicer-gui",
     "libs/3mf",
     "libs/app-paths",
+    "libs/arrange",
     "libs/bread-format",
     "libs/mesh-core",
     "libs/mesh-fixtures",
@@ -49,6 +50,7 @@ strip = true
 [workspace.dependencies]
 sc-3mf = { path = "libs/3mf", version = "0.2.0" }
 sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
+sc-arrange = { path = "libs/arrange", version = "0.1.0" }
 sc-mesh-core = { path = "libs/mesh-core", version = "0.2.0" }
 sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }
