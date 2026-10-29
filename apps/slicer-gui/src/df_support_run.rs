@@ -3170,6 +3170,211 @@ mod hand_edit_tests {
         });
     }
 
+    /// #180: an arrangement moves several models in one edit. Each set goes
+    /// along with its model, one moved in X/Y and one turned about the
+    /// vertical axis, redrawn in that edit's undo entry and still editable;
+    /// nothing is generated again. One Undo takes everything back.
+    #[test]
+    fn an_arrangement_of_two_models_carries_both_sets_in_one_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let (first_leaf, first_mesh) = set_of(&document, &run, leaves[0]);
+            let (second_leaf, second_mesh) = set_of(&document, &run, leaves[1]);
+            let (first_start, second_start) = (
+                leaf_transform(&document, first_leaf),
+                leaf_transform(&document, second_leaf),
+            );
+            let sessions = |run: &DfSupportRun| -> Vec<Arc<DfSupportSession>> {
+                run.sets_in_force()
+                    .into_iter()
+                    .map(|drawn| drawn.session)
+                    .collect()
+            };
+            let before = sessions(&run);
+            let (moved_to, turn) = (
+                translation([30.0, 40.0, 8.0]),
+                turned([50.0, 20.0, 8.0], std::f64::consts::FRAC_PI_2),
+            );
+            let edit = SceneEdit::Compound(vec![
+                SceneEdit::SetLocalTransform {
+                    node_id: leaves[0],
+                    before: translation([20.0, 20.0, 8.0]),
+                    after: moved_to,
+                },
+                SceneEdit::SetLocalTransform {
+                    node_id: leaves[1],
+                    before: translation([50.0, 20.0, 8.0]),
+                    after: turn,
+                },
+            ]);
+            document.apply_edit(edit.clone()).unwrap();
+            document.push_edit(edit);
+
+            // Both sets redrawn where their models now are, the leaves where
+            // they were, nothing to make again.
+            let (_, first_moved) = set_of(&document, &run, leaves[0]);
+            assert!(
+                is_moved(&first_moved, &first_mesh, [10.0, 20.0]),
+                "the first set, moved"
+            );
+            let (_, second_turned) = set_of(&document, &run, leaves[1]);
+            assert!(!Arc::ptr_eq(&second_turned, &second_mesh), "redrawn");
+            assert_eq!(second_turned.faces().len(), second_mesh.faces().len());
+            // A quarter turn about the model's corner, (50, 20).
+            let turned_to = |p: &[f32; 3]| [50.0 - (p[1] - 20.0), 20.0 + (p[0] - 50.0), p[2]];
+            let bounds = |points: Vec<[f32; 3]>| {
+                points
+                    .iter()
+                    .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+                        (
+                            std::array::from_fn(|k| lo[k].min(p[k])),
+                            std::array::from_fn(|k| hi[k].max(p[k])),
+                        )
+                    })
+            };
+            let (lo, hi) = bounds(
+                second_turned
+                    .vertices()
+                    .iter()
+                    .map(|v| *v.as_array())
+                    .collect(),
+            );
+            let (want_lo, want_hi) = bounds(
+                second_mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| turned_to(v.as_array()))
+                    .collect(),
+            );
+            // The rings of a cylinder start at a fixed world angle (#153).
+            for k in 0..3 {
+                assert!((lo[k] - want_lo[k]).abs() < 0.2, "{lo:?} {want_lo:?}");
+                assert!((hi[k] - want_hi[k]).abs() < 0.2, "{hi:?} {want_hi:?}");
+            }
+            assert_eq!(leaf_transform(&document, first_leaf), first_start);
+            assert_eq!(leaf_transform(&document, second_leaf), second_start);
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "no run");
+            let after = sessions(&run);
+            assert_eq!(after.len(), 2, "both editable");
+            assert!(
+                after
+                    .iter()
+                    .all(|s| before.iter().all(|b| !Arc::ptr_eq(s, b))),
+                "each session went along"
+            );
+
+            // One Undo takes both models and both sets back; Redo again.
+            assert!(document.undo().unwrap());
+            assert_eq!(
+                leaf_transform(&document, leaves[0]),
+                translation([20.0, 20.0, 8.0])
+            );
+            assert_eq!(
+                leaf_transform(&document, leaves[1]),
+                translation([50.0, 20.0, 8.0])
+            );
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[0]).1,
+                &first_mesh
+            ));
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_mesh
+            ));
+            assert_eq!(sessions(&run).len(), 2);
+            assert!(document.redo().unwrap());
+            assert_eq!(leaf_transform(&document, leaves[0]), moved_to);
+            assert_eq!(leaf_transform(&document, leaves[1]), turn);
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[0]).1,
+                &first_moved
+            ));
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_turned
+            ));
+            assert_eq!(sessions(&run).len(), 2, "still editable after Redo");
+        });
+    }
+
+    /// #180: Arrange all moves both supported models in one edit. Each set
+    /// goes along, redrawn and still editable, nothing is generated again,
+    /// and one Undo takes everything back. Arrange selection moves the
+    /// selected model alone.
+    #[test]
+    fn arranging_the_plate_carries_every_set_in_one_step() {
+        use crate::arrange_run::{ArrangeOptions, arrange_now};
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let before: Vec<Transform3D> = leaves
+                .iter()
+                .map(|&l| leaf_transform(&document, l))
+                .collect();
+            let meshes: Vec<_> = leaves
+                .iter()
+                .map(|&l| set_of(&document, &run, l).1)
+                .collect();
+            let plate = sc_arrange::Plate {
+                min: [0.0, 0.0],
+                max: [60.0, 40.0],
+                floor: 0.0,
+            };
+            let outcome =
+                arrange_now(&document, &plate, ArrangeOptions::default(), false).expect("arranged");
+            assert!(outcome.left_off().is_empty());
+            let at = |l: NodeId| match leaf_transform(&document, l) {
+                Transform3D::Affine(a) => *a.translation(),
+                Transform3D::Identity => [0.0; 3],
+            };
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_ne!(leaf_transform(&document, l), before[i], "moved");
+                assert!(
+                    !Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
+                    "its set redrawn where it went"
+                );
+                assert!((at(l)[2] - 8.0).abs() < 1e-9, "still 8 mm up");
+            }
+            let (a, b) = (at(leaves[0]), at(leaves[1]));
+            assert!((a[0] - b[0]).hypot(a[1] - b[1]) > 2.0, "kept apart");
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "no run");
+
+            // One Undo takes both models and both sets back.
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(leaf_transform(&document, l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]));
+            }
+            assert_eq!(run.sets_in_force().len(), 2);
+
+            // The selection alone: the other model stays where it is.
+            document.set_selection(Selection::One(LeafId(leaves[1])));
+            arrange_now(&document, &plate, ArrangeOptions::default(), true).expect("arranged");
+            assert_eq!(leaf_transform(&document, leaves[0]), before[0]);
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[0]).1,
+                &meshes[0]
+            ));
+            assert_ne!(leaf_transform(&document, leaves[1]), before[1]);
+            assert_eq!(run.sets_in_force().len(), 2);
+        });
+    }
+
     /// #197: Generate with one model selected regenerates that model's set
     /// alone, in one undoable step; with nothing selected, every set.
     #[test]

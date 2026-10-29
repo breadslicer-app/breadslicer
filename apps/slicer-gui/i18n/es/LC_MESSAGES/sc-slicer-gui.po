@@ -2997,6 +2997,113 @@ msgctxt "DfSupportDialog"
 msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
 msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ARRANGE"
+msgstr "ACOMODAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Packs the objects with their supports by their whole shadow: nothing reaches over another object."
+msgstr "Acomoda los objetos con sus soportes por su sombra entera: nada pasa por encima de otro objeto."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Packs the objects with their supports by their real shape: a part may reach over a shorter object, never closer than the gap."
+msgstr "Acomoda los objetos con sus soportes por su forma real: una parte puede pasar por encima de un objeto más bajo, nunca más cerca que la separación."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Gap"
+msgstr "Separación"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Edge margin"
+msgstr "Margen del borde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Turn objects to fit"
+msgstr "Girar objetos para que entren"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Shadow only"
+msgstr "Solo sombra"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Arrange all"
+msgstr "Acomodar todo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Arrange selection"
+msgstr "Acomodar selección"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Arranging…"
+msgstr "Acomodando…"
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "Arrange failed"
+msgstr "No se pudo acomodar"
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "The arrangement stopped unexpectedly."
+msgstr "El acomodo se detuvo inesperadamente."
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "The scene rejected the arrangement; nothing was moved."
+msgstr "La escena rechazó el acomodo; no se movió nada."
+
+#: src/arrange_run.rs
+msgctxt "ArrangeDialog"
+msgid "Not everything fits"
+msgstr "No entra todo"
+
+#: src/arrange_run.rs
+#, rust-format
+msgctxt "ArrangeDialog"
+msgid "{n} object does not fit on the plate. It is beside the plate, on the right."
+msgid_plural "{n} objects do not fit on the plate. They are beside the plate, on the right."
+msgstr[0] "{n} objeto no entra en la plataforma. Quedó al lado, a la derecha."
+msgstr[1] "{n} objetos no entran en la plataforma. Quedaron al lado, a la derecha."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "The scene changed while arranging; nothing was moved."
+msgstr "La escena cambió mientras se acomodaba; no se movió nada."
+
+#: src/arrange_run.rs
+msgctxt "Inspector"
+msgid "Everything is already in place."
+msgstr "Todo ya está en su lugar."
+
+#: src/arrange_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Arranged {n} object in {} s."
+msgid_plural "Arranged {n} objects in {} s."
+msgstr[0] "Se acomodó {n} objeto en {} s."
+msgstr[1] "Se acomodaron {n} objetos en {} s."
+
+#: src/arrange_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} of {} objects fit; the rest are beside the plate."
+msgstr "Entran {} de {} objetos; el resto quedó al lado de la plataforma."
+
 #: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Previous Versions…"

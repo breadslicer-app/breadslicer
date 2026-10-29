@@ -19,6 +19,7 @@ use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
 use crate::app_settings::file::{LoadOutcome, SettingsFile};
+use crate::arrange_run::ArrangeRun;
 use crate::autosave::{Autosaver, recovery_line};
 use crate::autosave_store::{AutosaveStore, OrphanRun};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
@@ -230,6 +231,7 @@ struct WindowDrivers {
     /// The Repair action driver. Held so its Slint callbacks live as long as
     /// the window.
     _repair_run: Rc<RepairRun>,
+    _arrange_run: Rc<ArrangeRun>,
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
@@ -670,6 +672,7 @@ impl AppState {
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
+        let arrange_run = ArrangeRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let df_support_run = DfSupportRun::install(
@@ -702,6 +705,7 @@ impl AppState {
             _slice_run: slice_run,
             _review_panel: review_panel,
             _repair_run: repair_run,
+            _arrange_run: arrange_run,
             _support_gen_run: support_gen_run,
             _df_support_run: df_support_run,
         }

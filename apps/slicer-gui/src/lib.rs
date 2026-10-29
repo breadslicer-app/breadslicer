@@ -15,6 +15,7 @@ mod aa_level;
 mod about_window;
 mod app_settings;
 mod app_state;
+mod arrange_run;
 mod autosave;
 mod autosave_store;
 mod breadcrumbs;
