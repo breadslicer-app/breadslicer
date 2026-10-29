@@ -1,0 +1,38 @@
+[identity]
+id = "epax-x133-6k"
+manufacturer = "EPAX"
+family = "X133"
+name = "X133 6K"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 288.0
+y_mm = 162.0
+z_mm = 400.0
+
+[hardware.pixel_resolution]
+x = 5760
+y = 3240
+
+[hardware.pixel_size_microns]
+x = 50.0
+y = 50.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

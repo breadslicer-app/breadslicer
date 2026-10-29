@@ -1,0 +1,38 @@
+[identity]
+id = "uniformation-gktwo"
+manufacturer = "UniFormation"
+family = "GKtwo"
+name = "GKtwo"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 228.089
+y_mm = 128.3
+z_mm = 245.0
+
+[hardware.pixel_resolution]
+x = 7680
+y = 4320
+
+[hardware.pixel_size_microns]
+x = 29.699088541666665
+y = 29.699074074074076
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "gktwo.ctb"
+version = "v4"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

@@ -7,20 +7,20 @@ profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-se.png"
 
 [hardware.build_volume]
-x_mm = 130.56
-y_mm = 82.62
+x_mm = 82.62
+y_mm = 130.56
 z_mm = 160.0
 
 [hardware.pixel_resolution]
-x = 2560
-y = 1620
+x = 1620
+y = 2560
 
 [hardware.pixel_size_microns]
-x = 51.00000000000001
-y = 51.00000000000001
+x = 51.0
+y = 51.0
 
 [hardware.mirror]
-x = false
+x = true
 y = false
 
 [capabilities]

@@ -1,0 +1,38 @@
+[identity]
+id = "phrozen-sonic-mega-8k"
+manufacturer = "Phrozen"
+family = "Sonic"
+name = "Sonic Mega 8K"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 330.24
+y_mm = 185.76
+z_mm = 400.0
+
+[hardware.pixel_resolution]
+x = 7680
+y = 4320
+
+[hardware.pixel_size_microns]
+x = 43.0
+y = 43.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

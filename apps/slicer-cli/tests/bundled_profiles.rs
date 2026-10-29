@@ -8,12 +8,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::{PanelRotation, PrinterId};
+use sc_print_primitives::{FormatKind, PanelRotation, PrinterId};
 use sc_print_profiles::{
     CalibrationTarget, EffectiveMaterial, PrinterProfile, SceneOverrides,
     load_material_profile_from_path, load_printer_profile_from_path, resolve,
     save_material_profile_to_path, save_printer_profile_to_path,
 };
+use sc_sla_formats::PrinterFileFormat;
 
 fn bundled_profiles_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -319,6 +320,78 @@ fn every_elegoo_printer_mirrors_x_and_not_y() {
     }
 }
 
+/// Pinned because the dataset the Anycubic profiles were first converted
+/// from stated no mirror for them, while UVtools' printer data mirrors every
+/// Anycubic machine in X and Photon Workshop's own M7 Pro file needs it (#142,
+/// #195): text printed from an unmirrored file reads backwards.
+#[test]
+fn every_anycubic_printer_mirrors_x_and_not_y() {
+    for printer in bundled_printers() {
+        if printer.identity.manufacturer.as_str() != "Anycubic" {
+            continue;
+        }
+        let mirror = printer.hardware.mirror();
+        assert!(
+            mirror.x && !mirror.y,
+            "{}: Anycubic machines mirror in X only, this one mirrors x={} y={}",
+            printer.identity.id.as_str(),
+            mirror.x,
+            mirror.y,
+        );
+    }
+}
+
+/// The Anycubic panels the first dataset laid out the other way round, or at
+/// another resolution, as UVtools' printer data lists them: pixels, then
+/// millimetres (#195).
+const ANYCUBIC_PANELS_AS_UVTOOLS_LISTS_THEM: [(&str, (u32, u32), (f64, f64)); 6] = [
+    ("anycubic-photon-s", (1440, 2560), (68.04, 120.96)),
+    ("anycubic-photon-zero", (480, 854), (55.4, 98.63)),
+    ("anycubic-photon-mono", (1620, 2560), (82.62, 130.56)),
+    ("anycubic-photon-mono-se", (1620, 2560), (82.62, 130.56)),
+    ("anycubic-photon-mono-sq", (2400, 2560), (120.0, 128.0)),
+    ("anycubic-photon-m3-premium", (7680, 4320), (218.88, 123.12)),
+];
+
+#[test]
+fn the_anycubic_panels_lie_as_uvtools_lists_them() {
+    for (id, (x, y), (x_mm, y_mm)) in ANYCUBIC_PANELS_AS_UVTOOLS_LISTS_THEM {
+        let hardware = bundled_printer(id).hardware;
+        let pixels = hardware.pixel_resolution();
+        assert_eq!((pixels.x(), pixels.y()), (x, y), "{id}");
+        let plate = hardware.build_volume();
+        assert_eq!((plate.x_mm(), plate.y_mm()), (x_mm, y_mm), "{id}");
+        assert_eq!(hardware.panel_rotation(), PanelRotation::None, "{id}");
+    }
+}
+
+/// Every binding of a family this workspace knows names a printer file, so a
+/// regenerated profile cannot ask for a revision nothing can identify. The
+/// families nothing here identifies yet (UVtools' NanoDLP, SVGX, CWS, ...)
+/// are the printer's own business.
+#[test]
+fn every_known_format_a_printer_declares_names_a_printer_file() {
+    for printer in bundled_printers() {
+        for binding in printer.capabilities.output_formats.iter() {
+            if !matches!(
+                binding.format,
+                FormatKind::Goo
+                    | FormatKind::Ctb
+                    | FormatKind::Cxdlp
+                    | FormatKind::Azf
+                    | FormatKind::Aff
+            ) {
+                continue;
+            }
+            assert!(
+                PrinterFileFormat::from_binding(binding).is_ok(),
+                "{}: {binding} names no printer file",
+                printer.identity.id.as_str(),
+            );
+        }
+    }
+}
+
 /// The printers no photo can be shipped for: the image sources the
 /// library vendors (see `images/README.md`) have none of them, so their
 /// profiles name no image, as the generic machine does.
@@ -329,14 +402,10 @@ const PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO: [&str; 3] = [
 ];
 
 #[test]
-fn every_bundled_printer_declares_an_image_we_ship() {
+fn every_image_a_bundled_printer_names_is_shipped() {
     let root = bundled_profiles_dir();
     for printer in bundled_printers() {
         let id = printer.identity.id.as_str().to_owned();
-        // Our own stand-in, so there is no machine to photograph.
-        if id == "generic-machine" {
-            continue;
-        }
         if PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO.contains(&id.as_str()) {
             assert!(
                 printer.identity.image_asset_path.is_none(),
@@ -344,16 +413,41 @@ fn every_bundled_printer_declares_an_image_we_ship() {
             );
             continue;
         }
-        let image = printer
-            .identity
-            .image_asset_path
-            .unwrap_or_else(|| panic!("{id} declares no image"));
-        assert!(
-            image.resolve_in(&root).is_file(),
-            "{id}: \"{}\" is not a file in the library",
-            image.as_str(),
-        );
+        if let Some(image) = printer.identity.image_asset_path {
+            assert!(
+                image.resolve_in(&root).is_file(),
+                "{id}: \"{}\" is not a file in the library",
+                image.as_str(),
+            );
+        }
     }
+}
+
+/// Every photo the library ships is shown by the printer it is named for.
+///
+/// Pinned because most printers come from UVtools' printer catalog, which
+/// ships no photo, so a regeneration that dropped a profile's image would
+/// leave its machine without one and nothing would say so.
+#[test]
+fn every_shipped_photo_is_named_by_its_printer() {
+    let images = bundled_profiles_dir().join("images");
+    let mut photos = 0;
+    for entry in fs::read_dir(&images).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.extension().is_some_and(|ext| ext == "png") {
+            continue;
+        }
+        let file = path.file_name().unwrap().to_str().unwrap().to_owned();
+        let id = file.trim_end_matches(".png");
+        let named = bundled_printer(id).identity.image_asset_path;
+        assert_eq!(
+            named.as_ref().map(|image| image.as_str()),
+            Some(format!("images/{file}").as_str()),
+            "{id} must show the photo shipped for it",
+        );
+        photos += 1;
+    }
+    assert!(photos > 0, "no photo found under {}", images.display());
 }
 
 #[test]
