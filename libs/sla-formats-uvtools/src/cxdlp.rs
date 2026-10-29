@@ -107,34 +107,43 @@ const CREALITY_MODELS: [(&str, u32, u32); 12] = [
     ("CL-103", 7680, 4320),
 ];
 
-/// The model codes of the Halot machines Breadslicer ships profiles for, by
-/// the name the profile gives the machine. Checked before the panel, since 2
-/// models can share a panel.
-const BREADSLICER_PROFILE_MODELS: [(&str, &str); 3] = [
+/// The model codes of the CXDLP machines Breadslicer ships profiles for, by
+/// the name the profile gives the machine: the code UVtools picks out of the
+/// name its own printer profile gives the machine ("Creality Halot Sky CL-89",
+/// "Creality CT-005 Pro"). Checked first, since 2 models can share a panel
+/// and the profile names leave the code out.
+const BREADSLICER_PROFILE_MODELS: [(&str, &str); 10] = [
     ("Halot One", "CL-60"),
     ("Halot One Pro", "CL-70"),
     ("Halot One Plus", "CL-79"),
+    ("Halot Lite", "CL-89L"),
+    ("Halot Sky", "CL-89"),
+    ("Halot Sky Plus", "CL-92"),
+    ("Halot Ray", "CL925"),
+    ("Halot Max", "CL-133"),
+    ("CT-005 Pro", "CT-005"),
+    ("CT-133 Pro", "CT-133"),
 ];
 
 /// Finds the model code the machine checks a file against.
 ///
-/// A name that is a code already (`CL-...`, `CT-...`) is kept, a name holding
-/// one has it picked out, a Breadslicer profile name gives its own, and
+/// A Breadslicer profile name gives its own, a name that is a code already
+/// (`CL-...`, `CT-...`) is kept, a name holding one has it picked out, and
 /// otherwise the panel resolution picks the first Creality model with that
 /// panel.
 pub(crate) fn printer_model(machine_name: &str, resolution: (u32, u32)) -> Option<String> {
     let name = machine_name.trim();
-    if name.starts_with("CL") || name.starts_with("CT") {
-        return Some(name.to_owned());
-    }
-    if let Some(code) = code_in(name) {
-        return Some(code);
-    }
     if let Some((_, code)) = BREADSLICER_PROFILE_MODELS
         .iter()
         .find(|(profile_name, _)| profile_name.eq_ignore_ascii_case(name))
     {
         return Some((*code).to_owned());
+    }
+    if name.starts_with("CL") || name.starts_with("CT") {
+        return Some(name.to_owned());
+    }
+    if let Some(code) = code_in(name) {
+        return Some(code);
     }
     CREALITY_MODELS
         .iter()
