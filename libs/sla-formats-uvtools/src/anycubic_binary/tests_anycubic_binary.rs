@@ -159,7 +159,8 @@ fn the_layer_table_carries_each_layer_and_its_lit_pixels() {
         assert_eq!(record.layer_height_mm, 0.05);
         assert_eq!(record.lift_mm, if bottom { 7.0 } else { 6.0 });
         assert_eq!(record.lift_mm_s, if bottom { 1.0 } else { 1.5 });
-        let lit = image.iter().filter(|&&grey| grey != 0).count() as u32;
+        // Counted on the stored image, where greys under 16 are dark.
+        let lit = image.iter().filter(|&&grey| grey >= 16).count() as u32;
         assert_eq!(record.lit_pixels, lit, "layer {index}");
     }
     // The second layer table points at the same images.

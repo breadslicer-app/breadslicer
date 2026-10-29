@@ -30,7 +30,7 @@ use sc_sl1cer::raster::rle::RleRun;
 const RLE1_ENCODING_LIMIT: usize = 0x7d;
 
 /// The grey from which plane `level` (1-based) of `levels` lights a pixel.
-fn threshold(level: u8, levels: u8) -> u8 {
+pub(crate) fn threshold(level: u8, levels: u8) -> u8 {
     (255 * u32::from(level) / (u32::from(levels) + 1) + 1) as u8
 }
 

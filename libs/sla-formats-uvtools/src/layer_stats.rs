@@ -43,6 +43,13 @@ impl LayerStats {
     /// Measures a frame of `runs`, `width` pixels per row, rows from the
     /// image's first.
     pub(crate) fn of(runs: &[RleRun], width: u32) -> Self {
+        Self::of_greys_from(runs, width, 1)
+    }
+
+    /// Measures a frame as [`of`](Self::of) does, counting as lit only the
+    /// pixels at `dimmest` or brighter: the ones a codec that drops dim greys
+    /// keeps.
+    pub(crate) fn of_greys_from(runs: &[RleRun], width: u32, dimmest: u8) -> Self {
         let width = u64::from(width);
         let mut position = 0_u64;
         let mut covered = 0_u64;
@@ -50,7 +57,7 @@ impl LayerStats {
 
         for run in runs {
             let length = u64::from(run.length);
-            if run.value != 0 && length > 0 {
+            if run.value >= dimmest.max(1) && length > 0 {
                 covered += u64::from(run.value) * length;
                 let first = position;
                 let last = position + length - 1;
@@ -155,6 +162,23 @@ mod layer_stats_tests {
             })
         );
         assert!((stats.covered_pixels - (3.0 + 128.0 / 255.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn greys_dimmer_than_the_codec_keeps_leave_the_bounds() {
+        // 10 x 2 frame: a dim pixel at column 1, a bright one at column 6.
+        let runs = [run(0, 1), run(9, 1), run(0, 4), run(200, 1), run(0, 13)];
+        let stats = LayerStats::of_greys_from(&runs, 10, 16);
+        assert_eq!(
+            stats.bounds,
+            Some(PixelRect {
+                x0: 6,
+                y0: 0,
+                x1: 7,
+                y1: 1
+            })
+        );
+        assert_eq!(LayerStats::of(&runs, 10).bounds.unwrap().x0, 1);
     }
 
     #[test]

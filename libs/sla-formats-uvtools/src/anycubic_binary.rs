@@ -721,6 +721,11 @@ pub fn write_file(
     }
 
     let width = program.raster.panel_resolution().x();
+    let dimmest_stored = if bit_planes {
+        pws::threshold(1, anti_aliasing)
+    } else {
+        pw0::DIMMEST_STORED
+    };
     let mut records = Vec::with_capacity(program.layers.len());
     let mut bounds: Option<PixelRect> = None;
     write_layer_images(
@@ -732,12 +737,15 @@ pub fn write_file(
             } else {
                 pw0::encode(runs)
             };
+            // Counted on the stored image: a grey too dim for the codec is
+            // stored dark.
             let lit_pixels: u64 = runs
                 .iter()
-                .filter(|run| run.value != 0)
+                .filter(|run| run.value >= dimmest_stored)
                 .map(|run| u64::from(run.length))
                 .sum();
-            (image, LayerStats::of(runs, width).bounds, lit_pixels)
+            let bounds = LayerStats::of_greys_from(runs, width, dimmest_stored).bounds;
+            (image, bounds, lit_pixels)
         },
         |_, (image, rect, lit_pixels): (Vec<u8>, Option<PixelRect>, u64)| {
             let address = position(out)?;

@@ -15,13 +15,18 @@ from these files, each named again in the header of the module that ports it:
   UVtools.Core/FileFormats/FileFormat.cs         -> src/cxdlp.rs (RGB565 packing)
   UVtools.Core/Printer/Machine.cs                -> src/cxdlp.rs (Creality models)
   UVtools.Core/FileFormats/AnycubicZipFile.cs    -> src/anycubic_zip.rs, src/read.rs
-  UVtools.Core/FileFormats/AnycubicFile.cs       -> src/pw0.rs (PW0 codec)
+  UVtools.Core/FileFormats/AnycubicFile.cs       -> src/anycubic_binary.rs, src/read.rs,
+                                                    src/pw0.rs (PW0 codec),
+                                                    src/pws.rs (PWS codec)
+  UVtools.Core/FileFormats/BitPlaneRle.cs        -> src/pws.rs (PWS bit planes)
 
 The ported code was modified for Breadslicer: layers are encoded from the
 slicer's run-length rows in parallel, the per-layer figures are measured on
 those rows and on the sliced contours, and the print settings come from a
-Breadslicer print program. src/lib.rs, src/program.rs, src/layer_stats.rs,
-src/resample.rs and the tests are written for Breadslicer by SynrgStudio.
+Breadslicer print program. The rounding in src/program.rs follows .NET's
+MathF.Round, which UVtools relies on. src/lib.rs, src/program.rs,
+src/layer_stats.rs, src/resample.rs and the tests are written for Breadslicer
+by SynrgStudio.
 
 UVtools is licensed under the GNU Affero General Public License, version 3 or
 (at your option) any later version (AGPL-3.0-or-later; its LICENSE file and

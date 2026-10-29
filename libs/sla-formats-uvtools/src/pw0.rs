@@ -31,6 +31,10 @@ const RLE4_ENCODING_LIMIT: u32 = 0xfff;
 /// The longest grey run one code holds.
 const GREY_LIMIT: u32 = 0xf;
 
+/// The dimmest grey PW0 keeps: anything dimmer has a high nibble of 0 and is
+/// stored dark.
+pub(crate) const DIMMEST_STORED: u8 = 0x10;
+
 /// Encodes a frame of `runs`, rows in image order, as a PW0 layer image.
 pub(crate) fn encode(runs: &[RleRun]) -> Vec<u8> {
     let mut out = Vec::with_capacity(256);
