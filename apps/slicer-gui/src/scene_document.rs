@@ -864,8 +864,9 @@ impl SceneDocument {
     /// same place doesn't clutter history. A successful push clears the redo
     /// stack: a fresh edit invalidates the previously-rolled-back trail.
     ///
-    /// A model moved in X/Y takes its supports with it, redrawn in the same
-    /// entry ([`crate::support_follow::commit`]). A model moved in Z, tilted
+    /// A model moved in X/Y or turned about the vertical axis takes its
+    /// supports with it, redrawn in the same entry, also among several models
+    /// moved in one edit ([`crate::support_follow::commit`]). A model moved in Z, tilted
     /// or scaled loses them in the entry, and waits for new ones
     /// ([`Self::supports_wanted`]); models the entry before still waited for
     /// wait on.
@@ -894,7 +895,7 @@ impl SceneDocument {
             undo.push_back(HistoryEntry { id, edit, wants });
         }
         self.redo_stack.borrow_mut().clear();
-        if let Some(moved) = moved {
+        for moved in moved {
             // As a hand edit does: the moved set's session is the one that
             // drew it as the scene now stands.
             crate::support_persist::record(
