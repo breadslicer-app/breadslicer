@@ -389,7 +389,7 @@ fn resolve_axis(
 ///
 /// A model whose name carries nothing a slug can hold yields an empty
 /// id, which is refused.
-fn printer_id_of(manufacturer: &str, name: &str) -> Result<PrinterId, InvalidProfileId> {
+pub(crate) fn printer_id_of(manufacturer: &str, name: &str) -> Result<PrinterId, InvalidProfileId> {
     let parts = format!("{manufacturer} {name}");
     let slug = parts
         .split(|c: char| !c.is_ascii_alphanumeric())

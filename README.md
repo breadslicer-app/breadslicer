@@ -46,7 +46,8 @@ cargo test  --release -p sc-slicer-gui --lib
 [DragonFruit](https://github.com/Open-Resin-Alliance/DragonFruit) (Open Resin Alliance; MIT). The Creality
 `.cxdlp` writer, the ChiTuBox `.ctb` writer for versions 2 to 4 and the Anycubic writers (the ZIP family, `.pwsz`
 and the rest, and the binary family, `.pwmx`, `.pwma`, `.pm3`, `.pws` and the rest) are ported from
-[UVtools](https://github.com/sn4k3/UVtools) (Tiago Conceição / sn4k3 and UVtools contributors; AGPL-3.0).
+[UVtools](https://github.com/sn4k3/UVtools) (Tiago Conceição / sn4k3 and UVtools contributors; AGPL-3.0),
+and the bundled printers are converted from its printer catalog.
 Thanks to all three projects. Their notices are kept in the source as their licenses require; see
 [`NOTICE`](NOTICE).
 The `.bread` project format uses [meshoptimizer](https://github.com/zeux/meshoptimizer)

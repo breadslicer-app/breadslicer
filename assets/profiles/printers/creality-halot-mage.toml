@@ -1,0 +1,37 @@
+[identity]
+id = "creality-halot-mage"
+manufacturer = "Creality"
+family = "Halot"
+name = "Halot Mage"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 228.096
+y_mm = 128.304
+z_mm = 230.0
+
+[hardware.pixel_resolution]
+x = 7680
+y = 4320
+
+[hardware.pixel_size_microns]
+x = 29.7
+y = 29.7
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "cxdlpv4"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

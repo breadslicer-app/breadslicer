@@ -1,0 +1,38 @@
+[identity]
+id = "epax-dx10-pro-5k"
+manufacturer = "EPAX"
+family = "DX"
+name = "DX10 Pro 5K"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 221.4
+y_mm = 129.6
+z_mm = 120.0
+
+[hardware.pixel_resolution]
+x = 4920
+y = 2880
+
+[hardware.pixel_size_microns]
+x = 45.0
+y = 45.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

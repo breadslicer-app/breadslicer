@@ -1,0 +1,38 @@
+[identity]
+id = "peopoly-phenom-l"
+manufacturer = "Peopoly"
+family = "Phenom"
+name = "Phenom L"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 345.6
+y_mm = 194.4
+z_mm = 400.0
+
+[hardware.pixel_resolution]
+x = 3840
+y = 2160
+
+[hardware.pixel_size_microns]
+x = 90.0
+y = 90.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v3"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

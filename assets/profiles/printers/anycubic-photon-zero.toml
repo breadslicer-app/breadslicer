@@ -7,20 +7,20 @@ profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-zero.png"
 
 [hardware.build_volume]
-x_mm = 98.637
-y_mm = 55.44
+x_mm = 55.4
+y_mm = 98.63
 z_mm = 150.0
 
 [hardware.pixel_resolution]
-x = 854
-y = 480
+x = 480
+y = 854
 
 [hardware.pixel_size_microns]
-x = 115.5
-y = 115.49999999999999
+x = 115.41666666666667
+y = 115.49180327868852
 
 [hardware.mirror]
-x = false
+x = true
 y = false
 
 [capabilities]

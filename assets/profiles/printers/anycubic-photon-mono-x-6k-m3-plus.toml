@@ -20,7 +20,7 @@ x = 34.401041666666664
 y = 34.4
 
 [hardware.mirror]
-x = false
+x = true
 y = false
 
 [capabilities]

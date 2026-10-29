@@ -1,0 +1,38 @@
+[identity]
+id = "creality-ct-005-pro"
+manufacturer = "Creality"
+family = "CT"
+name = "CT-005 Pro"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 192.0
+y_mm = 120.0
+z_mm = 250.0
+
+[hardware.pixel_resolution]
+x = 3840
+y = 2400
+
+[hardware.pixel_size_microns]
+x = 50.0
+y = 50.0
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "cxdlp"
+version = "v3"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

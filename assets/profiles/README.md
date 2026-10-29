@@ -9,50 +9,86 @@ This page says where these numbers came from.
 
 ## Printers
 
-The build volume, the panel resolution, the pixel size, the mirroring
-and the file formats a machine accepts are converted from the printer
+The printers come from UVtools' printer catalog: the PrusaSlicer printer
+profiles UVtools bundles for every resin printer it converts files for
+(`PrusaSlicer/printer/*.ini`), published under the AGPL-3.0 with UVtools
+(Tiago Conceição (sn4k3) and UVtools contributors,
+<https://github.com/sn4k3/UVtools>). These were read from UVtools v7.1.1,
+commit `8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8`, whose installed copy holds
+the same 154 files. The converter's `uvtools` format reads them:
+
+```
+profiles-converter --format uvtools   --input <UVtools>/PrusaSlicer/printer   --printer-library assets/profiles --out assets/profiles
+```
+
+From each profile a printer takes its panel (pixels and millimetres, hence
+its pixel size), its mirror, its build height and the file UVtools converts
+a slice to for it, at the revision UVtools writes when the profile names
+none. The print values UVtools starts a file from (lift heights and speeds,
+waits, light power) are not taken: they belong to a resin, and the resin
+profiles carry them. UVtools states nothing about a 2 stage platform move,
+transition layers, a camera or a photo, so a printer that comes only from
+there declares none of them. Its family is the series its name opens with.
+
+55 of these machines take a file nothing in Breadslicer writes yet (NanoDLP,
+SVGX, CWS, LGS, FDG, ZIP, ...), and so do the Prusa SL1 and SL1S (their own
+archive) and the Jupiter 2 (GOO v5.1). Their profiles name the format all the
+same, and the Slice panel says that it cannot export it.
+
+The Anycubic and ELEGOO printers were first converted from the printer
 plugins of the DragonFruit slicer, published by the Open Resin Alliance
-under the MIT license, whose text is vendored in
-`images/LICENSE-MIT.txt`:
+under the MIT license, whose text is vendored in `images/LICENSE-MIT.txt`;
+their photos still come from there:
 
 - <https://github.com/Open-Resin-Alliance/df-plugin-anycubic>
 - <https://github.com/Open-Resin-Alliance/df-plugin-elegoo>
 
-4 things in these profiles are not that dataset's. The Mars 5 builds
-150 mm tall, which is the figure ELEGOO publishes. The 11 machines
-ELEGOO publishes a 2 stage platform move for declare that they can do
-it. The Mars 5 Ultra keeps both of the file formats it is bound to,
-where the dataset names one per machine. The Mars 2 Pro mirrors in X,
-like the other 18 ELEGOO machines, where the dataset alone says
-otherwise.
+Where UVtools disagreed, its panel, mirror and height replaced that
+dataset's, and the file it writes joined the profile's own, first. Every
+other figure of those profiles is kept. That made every Anycubic machine
+mirror in X, laid the Photon S, Photon Zero, Photon Mono, Mono SE and
+Mono SQ panels out as UVtools lists them (1440 x 2560 for the Photon S,
+not 2560 x 1440), gave the Photon M3 Premium its 7680 x 4320 panel, put
+the Mars 2 Pro panel the same way round, raised the Saturn 3 to 250 mm, and
+added the file UVtools writes for the Jupiter (CTB v5, encrypted), the
+Mars 2 Pro (CTB v4), the Mars 4 Ultra, the Saturn 3 and the Saturn 3 Ultra
+(GOO). UVtools lists the Photon M3 Plus and the Photon Mono X 6K, one
+machine, as 2 printers, and the Saturn 4 Ultra as the Saturn 4 Ultra 12K;
+each is the one profile we ship for it.
 
-The Creality Halot One, One Pro and One Plus are not in that dataset.
-Their panel, plate and height come from the printer data bundled with
-UVtools (its `Printer/Machine.cs` and PrusaSlicer printer profiles,
-AGPL-3.0), which also names CXDLP as their file format. No photo of them
-can be shipped, so their profiles name no image. They write CXDLP v2
-first, the dialect of the Lychee files the Halot One prints from, with v3
-as the alternative.
+The Jupiter SE, Mars 3 Pro and Saturn 2 14K are not in UVtools' catalog
+and keep that dataset's figures.
 
-The Halot One's plate is laid out 128 mm wide and 81 mm deep, as the
-machine stands, where UVtools' data lists the panel as 81 x 128. Its files
+4 things in the ELEGOO profiles are not that dataset's. The Mars 5 builds
+150 mm tall, which is the figure ELEGOO publishes (and UVtools states). The
+11 machines ELEGOO publishes a 2 stage platform move for declare that they
+can do it. The Mars 5 Ultra keeps both of the file formats it is bound to,
+where the dataset names one per machine. The Mars 2 Pro mirrors in X, like
+the other ELEGOO machines, where the dataset alone says otherwise.
+
+The Photon Mono M7 Pro is kept as it is, whatever UVtools states: its
+profile is checked against files that print on it. Its panel is 16.8 x 24.8
+µm, so 126.976 mm deep, as UVtools also states for the M7 and the P1, and it
+mirrors in X: Lychee rasterises it at 24.8 µm in Y (its header says
+126.48 mm all the same), and Photon Workshop's files match ours with no
+mirror only when X is mirrored. It also runs the 2 stage move and 6
+transition layers, as those Lychee files do.
+
+The Creality Halot One's plate is laid out 128 mm wide and 81 mm deep, as
+the machine stands, where UVtools lists the panel as 81 x 128. Its files
 still carry the panel's 1620 x 2560 pixels: the profile turns the stored
 image a quarter turn (`panel_rotation = "ccw90"`), so the file's 2560
-pixel axis runs along the plate's X. Lychee's files for this machine are
-laid out the same way: its `.cxdlp` of a scene is its `.pwsz` of that
-scene transposed, and Breadslicer's pair relates the same way.
+pixel axis runs along the plate's X, and that is what UVtools states.
+Lychee's files for this machine are laid out the same way: its `.cxdlp` of
+a scene is its `.pwsz` of that scene transposed, and Breadslicer's pair
+relates the same way. The Halot One, One Pro and One Plus write CXDLP v2
+first, the dialect of the Lychee files the Halot One prints from, with v3,
+which UVtools writes, as the alternative. Other Halot machines take v3.
 
-The Photon Mono M7, M7 Pro and M7 Max differ from that dataset on 2
-counts, both following UVtools' printer data, which its Anycubic writers
-are validated against, and Anycubic's published specifications: the M7
-and M7 Pro panels are 16.8 x 24.8 µm, so 126.976 mm deep, and the M7 Max
-is 46 µm square, so 298.08 x 165.6 mm; and all 3 mirror in X (the
-dataset says so for the M7 Pro and M7 Max in its current revision, and
-leaves the M7 unverified). For the M7 Pro both were checked against files
-that print on it: Lychee rasterises it at 24.8 µm in Y (its header says
-126.48 mm all the same), and Photon Workshop's files match ours with no
-mirror only when X is mirrored. The M7 Pro also runs the 2 stage move and
-6 transition layers, as those Lychee files do.
+Some figures in UVtools' catalog look unlike their machines, and are kept as
+it states them: the Wanhao CGR Mono's 1620 x 2560 pixels on a 192 x 120 mm
+plate, and the Longer Orange 4K's 31.5 x 10.5 µm pixel. Neither format is
+written yet.
 
 `generic-machine` is ours. It describes no product: it is what a resin
 is calibrated against when the calibration is not tied to a machine.

@@ -36,7 +36,7 @@ pub struct RawCliArgs {
 pub fn cli_parser() -> OptionParser<RawCliArgs> {
     let format = short('f')
         .long("format")
-        .help("Source format to read. Supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog.")
+        .help("Source format to read. Supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, uvtools.")
         .argument::<SourceFormat>("FORMAT");
     let inputs = short('i')
         .long("input")
@@ -54,7 +54,7 @@ pub fn cli_parser() -> OptionParser<RawCliArgs> {
         .switch();
     let printer_library = long("printer-library")
         .help(
-            "Profile library root whose printer profiles say what each machine can do. Without it, no calibration block carries a second travel stage.",
+            "Profile library root whose printer profiles say what each machine can do. Without it, no calibration block carries a second travel stage. The uvtools format needs it: its printers merge into these.",
         )
         .argument::<PathBuf>("DIR")
         .optional();
