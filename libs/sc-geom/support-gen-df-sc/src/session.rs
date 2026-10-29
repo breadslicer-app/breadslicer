@@ -31,6 +31,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
+use crate::shift::{bases, shift_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
@@ -366,6 +367,67 @@ impl DfSupportSession {
     /// The support state as it now stands.
     pub fn state(&self) -> &SupportState {
         &self.state
+    }
+
+    /// How many models the session was made on.
+    pub fn model_count(&self) -> usize {
+        self.models.len()
+    }
+
+    /// Whether every support stands on model `index`, so the support mesh
+    /// is that model's alone and can move with it as one piece.
+    pub fn supports_only_on(&self, index: usize) -> bool {
+        let Some(model) = self.models.get(index) else {
+            return false;
+        };
+        bases(&self.state.collections).all(|base| base.model_id == model.id)
+    }
+
+    /// The session with model `index` moved by `delta` (mm along X and Y)
+    /// and every support that stands on it moved with it (#119): nothing is
+    /// placed again. The models' geometry is shared; the moved model's BVH
+    /// and distance field build afresh on the next edit, and the others'
+    /// carry over.
+    pub fn moved_in_plane(&self, index: usize, delta: [f64; 2]) -> Self {
+        let d = Vec3::new(delta[0], delta[1], 0.0);
+        let mut models = self.models.to_vec();
+        let model = &mut models[index];
+        model.transform.position = model.transform.position.add(d);
+        let mut state = self.state.clone();
+        shift_model_supports(&mut state.collections, &model.id, d);
+        let bvhs = self
+            .bvhs
+            .iter()
+            .enumerate()
+            .map(|(i, bvh)| match bvh.get() {
+                Some(bvh) if i != index => OnceLock::from(bvh.clone()),
+                _ => OnceLock::new(),
+            })
+            .collect();
+        // Taken, as an edit borrows them: Undo back to this session builds
+        // its own again.
+        let sdfs = self
+            .sdfs
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let field = (i != index)
+                    .then(|| slot.0.lock().ok().and_then(|mut slot| slot.take()))
+                    .flatten();
+                SdfSlot(std::sync::Mutex::new(field))
+            })
+            .collect();
+        DfSupportSession {
+            models: models.into(),
+            settings: self.settings.clone(),
+            recipe: self.recipe.clone(),
+            state,
+            bvhs,
+            removal_index: Arc::default(),
+            sdfs,
+            id_prefix: self.id_prefix.clone(),
+            next_id: self.next_id,
+        }
     }
 
     /// Builds every model's BVH now (they are shared by every copy).

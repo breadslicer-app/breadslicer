@@ -61,6 +61,18 @@ impl ModelPrint {
                 max[k] = max[k].max(v[k]);
             }
         }
+        // The pipeline puts the geometry's box centre at the transform's
+        // position: a model moved in the session (#119) carries the move
+        // there, and its world bounds with it. For a model as a run makes
+        // it the two are the same.
+        let at = model.transform.position;
+        for (k, at) in [at.x, at.y, at.z].into_iter().enumerate() {
+            let shift = at - (f64::from(min[k]) + f64::from(max[k])) * 0.5;
+            if shift != 0.0 && shift.is_finite() {
+                min[k] = (f64::from(min[k]) + shift) as f32;
+                max[k] = (f64::from(max[k]) + shift) as f32;
+            }
+        }
         ModelPrint {
             id: model.id.clone(),
             vertices: position.len() / 3,

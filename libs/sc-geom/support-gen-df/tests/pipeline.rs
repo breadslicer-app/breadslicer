@@ -53,10 +53,10 @@ fn model(
     let soup: Vec<f64> = serde_json::from_value(meshes[name].clone()).unwrap();
     ModelInput {
         id: id.to_owned(),
-        geometry: BufferGeometry {
+        geometry: std::sync::Arc::new(BufferGeometry {
             position: Some(soup.iter().map(|&v| v as f32).collect()),
             ..Default::default()
-        },
+        }),
         transform: ModelTransform {
             position,
             rotation,

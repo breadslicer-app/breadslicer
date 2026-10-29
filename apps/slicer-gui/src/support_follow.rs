@@ -1,0 +1,296 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+//! Supports that move with their model in X/Y (#119).
+//!
+//! The document calls in here for every transform edit of a leaf, however it
+//! was made (the gizmo, `G`, the arrow keys, the Transform inspector,
+//! Center). While a move is live the support leaf rides along on its own
+//! transform, when the supports in it are that model's alone. When the move
+//! is committed in the plate plane, the session in force is moved with the
+//! model ([`DfSupportSession::moved_in_plane`]) and redrawn, the redrawn mesh
+//! takes the old one's place in the same undo entry as the move, and the
+//! support leaf is back where it was. Nothing is placed again, so the
+//! supports stay the ones the person made, editable by hand and saved as
+//! data. A move in Z, a rotation or a scale leaves the supports as they
+//! were.
+
+use std::sync::Arc;
+
+use sc_geom::df_supports::{DfSupportSession, is_support_mesh, model_index};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_scene::NodeId;
+
+use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, leaf_mesh_swap};
+use crate::support_persist::{current_session, support_leaves};
+
+/// Where a model and the supports stood when it started to move: the scene as
+/// last committed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Anchor {
+    revision: SceneRevision,
+    model: NodeId,
+    model_start: Transform3D,
+    supports: NodeId,
+    supports_start: Transform3D,
+    /// The supports are the model's alone, so they can ride along live.
+    rides: bool,
+}
+
+/// The leaf a transform edit moves; `None` for any other edit.
+pub(crate) fn moved_leaf(edit: &SceneEdit) -> Option<NodeId> {
+    match edit {
+        SceneEdit::SetLocalTransform { node_id, .. } => Some(*node_id),
+        _ => None,
+    }
+}
+
+fn affine(t: &Transform3D) -> AffineTransform3D {
+    match t {
+        Transform3D::Identity => AffineTransform3D::identity(),
+        Transform3D::Affine(a) => *a,
+    }
+}
+
+/// The move in the plate plane that takes the world transform `from` to `to`,
+/// when that is all that changed: no rotation, no scale, nothing in Z. `None`
+/// otherwise, and for no move at all.
+fn plane_move(from: &Transform3D, to: &Transform3D) -> Option<[f64; 2]> {
+    let (a, b) = (affine(from), affine(to));
+    let same_linear = a
+        .linear()
+        .iter()
+        .flatten()
+        .zip(b.linear().iter().flatten())
+        .all(|(x, y)| (x - y).abs() <= 1e-9);
+    let [ax, ay, az] = *a.translation();
+    let [bx, by, bz] = *b.translation();
+    let d = [bx - ax, by - ay];
+    (same_linear && (bz - az).abs() <= 1e-6 && d != [0.0, 0.0]).then_some(d)
+}
+
+/// The scene's one support leaf and its transform, when it is a root (its
+/// mesh is in world space, as the session draws it).
+fn support_root(doc: &SceneDocument) -> Option<(NodeId, Transform3D)> {
+    doc.with_scene(|spatial| {
+        let mut leaves = support_leaves(spatial);
+        let (Some((id, _)), None) = (leaves.next(), leaves.next()) else {
+            return None;
+        };
+        let query = spatial.leaf(id)?;
+        query
+            .parent_world()
+            .is_identity()
+            .then(|| (id, query.local_transform()))
+    })
+    .flatten()
+}
+
+/// The session in force and the index of `model` among its models, when it
+/// is one of them.
+fn session_for(
+    doc: &SceneDocument,
+    model: NodeId,
+) -> Option<(usize, Arc<DfSupportSession>, usize)> {
+    let sessions = doc.support_sessions();
+    let current = current_session(doc, &sessions)?;
+    let session = sessions.borrow()[current].0.clone();
+    let index = doc
+        .with_scene(|spatial| model_index(spatial.graph(), model))
+        .flatten()?;
+    (index < session.model_count()).then_some((current, session, index))
+}
+
+/// Before a live edit of `leaf`'s transform: the first one since the last
+/// commit remembers where the model and the supports stand.
+pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
+    let revision = doc.scene_revision();
+    let slot = doc.support_follow();
+    if slot
+        .get()
+        .is_some_and(|a| a.revision == revision && a.model == leaf)
+    {
+        return;
+    }
+    // A live move of another model may have left the supports moved.
+    settle(doc);
+    if doc.support_sessions().borrow().is_empty() {
+        return;
+    }
+    let model = doc
+        .with_scene(|spatial| {
+            let query = spatial.leaf(leaf)?;
+            (!is_support_mesh(query.mesh())).then(|| query.local_transform())
+        })
+        .flatten();
+    let (Some(model_start), Some((supports, supports_start))) = (model, support_root(doc)) else {
+        return;
+    };
+    let rides =
+        session_for(doc, leaf).is_some_and(|(_, session, index)| session.supports_only_on(index));
+    slot.set(Some(Anchor {
+        revision,
+        model: leaf,
+        model_start,
+        supports,
+        supports_start,
+        rides,
+    }));
+}
+
+/// After a live edit of `leaf`'s transform: the support leaf rides along by
+/// the model's move in the plate plane, or stands where it was.
+pub(crate) fn follow_live(doc: &SceneDocument, leaf: NodeId) {
+    let Some(anchor) = doc.support_follow().get() else {
+        return;
+    };
+    if anchor.model != leaf || anchor.revision != doc.scene_revision() {
+        return;
+    }
+    let moved = doc
+        .with_scene(|spatial| {
+            let query = spatial.leaf(leaf)?;
+            let parent = query.parent_world();
+            plane_move(
+                &parent.compose(&anchor.model_start),
+                &query.world_transform(),
+            )
+        })
+        .flatten();
+    let target = match moved {
+        Some([dx, dy]) if anchor.rides => {
+            Transform3D::Affine(AffineTransform3D::from_translation([dx, dy, 0.0]))
+                .compose(&anchor.supports_start)
+        }
+        _ => anchor.supports_start,
+    };
+    set_supports_transform(doc, anchor.supports, target);
+}
+
+/// Ends a live move: the support leaf goes back where the history has it.
+/// Once the scene has moved on (a commit, Undo, another scene) the anchor no
+/// longer describes it and is only dropped.
+pub(crate) fn settle(doc: &SceneDocument) {
+    if let Some(anchor) = doc.support_follow().take()
+        && anchor.revision == doc.scene_revision()
+    {
+        set_supports_transform(doc, anchor.supports, anchor.supports_start);
+    }
+}
+
+fn set_supports_transform(doc: &SceneDocument, supports: NodeId, target: Transform3D) {
+    let Some(current) = doc
+        .with_scene(|spatial| spatial.leaf(supports).map(|q| q.local_transform()))
+        .flatten()
+    else {
+        return;
+    };
+    if current != target {
+        // Not recorded: it only shows the supports where the live move puts
+        // them, and the commit puts the leaf back.
+        let _ = doc.apply_edit_unfollowed(SceneEdit::SetLocalTransform {
+            node_id: supports,
+            before: current,
+            after: target,
+        });
+    }
+}
+
+/// The supports session a committed edit leaves in force, after the session
+/// at `after` in the list, once the edit is recorded.
+pub(crate) struct MovedSession {
+    pub(crate) after: usize,
+    pub(crate) session: Arc<DfSupportSession>,
+}
+
+/// An edit about to be recorded. Supports a live move left moved go back
+/// first, whatever the edit. A move of a model in the plate plane comes back
+/// with the supports redrawn where the model now is, applied and in the same
+/// entry, and the session that drew them; any other edit comes back as it
+/// was.
+pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> (SceneEdit, Option<MovedSession>) {
+    settle(doc);
+    match follow_commit(doc, &edit) {
+        Some((swap, moved)) => (SceneEdit::Compound(vec![edit, swap]), Some(moved)),
+        None => (edit, None),
+    }
+}
+
+fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, MovedSession)> {
+    let SceneEdit::SetLocalTransform {
+        node_id,
+        before,
+        after,
+    } = edit
+    else {
+        return None;
+    };
+    if doc.support_sessions().borrow().is_empty() {
+        return None;
+    }
+    let delta = doc
+        .with_scene(|spatial| {
+            let query = spatial.leaf(*node_id)?;
+            if is_support_mesh(query.mesh()) {
+                return None;
+            }
+            let parent = query.parent_world();
+            plane_move(&parent.compose(before), &parent.compose(after))
+        })
+        .flatten()?;
+    let (supports, _) = support_root(doc)?;
+    let (current, session, index) = session_for(doc, *node_id)?;
+    let moved = session.moved_in_plane(index, delta);
+    // The port is DragonFruit's code: a panic in it leaves the supports
+    // where they were, as before, not a failed move.
+    let mesh = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| moved.mesh()))
+        .ok()?
+        .ok()??;
+    crate::breadcrumbs::note(&format!(
+        "supports: moved with their model by {delta:?} ({} triangles)",
+        mesh.faces().len()
+    ));
+    let swap = doc
+        .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), supports, Arc::new(mesh)))
+        .flatten()?;
+    doc.apply_edit_unfollowed(swap.clone()).ok()?;
+    Some((
+        swap,
+        MovedSession {
+            after: current,
+            session: Arc::new(moved),
+        },
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(t: [f64; 3]) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation(t))
+    }
+
+    #[test]
+    fn only_a_move_in_the_plate_plane_counts() {
+        assert_eq!(
+            plane_move(&at([1.0, 2.0, 3.0]), &at([4.0, 0.0, 3.0])),
+            Some([3.0, -2.0])
+        );
+        assert_eq!(
+            plane_move(&Transform3D::Identity, &at([0.5, 0.0, 0.0])),
+            Some([0.5, 0.0])
+        );
+        assert_eq!(plane_move(&at([1.0, 2.0, 3.0]), &at([1.0, 2.0, 3.0])), None);
+        assert_eq!(plane_move(&at([1.0, 2.0, 3.0]), &at([1.0, 2.0, 4.0])), None);
+        let turned = Transform3D::Affine(AffineTransform3D::from_rotation_z(0.3));
+        assert_eq!(plane_move(&Transform3D::Identity, &turned), None);
+        let scaled = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+            [5.0, 0.0, 0.0],
+        ));
+        assert_eq!(plane_move(&Transform3D::Identity, &scaled), None);
+    }
+}

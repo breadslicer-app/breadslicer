@@ -77,6 +77,7 @@ mod slice_result;
 mod slice_run;
 mod slice_selection;
 mod startup_token;
+mod support_follow;
 mod support_gen_run;
 mod support_persist;
 #[cfg(test)]
