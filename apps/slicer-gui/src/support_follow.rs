@@ -3,21 +3,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Supports that move with their model in X/Y (#119), and that make way
-//! for new ones when it moves in Z, turns or scales (#153).
+//! Supports that move with their model in the plate plane, in X/Y (#119) and
+//! turned about the vertical axis (#153), and that make way for new ones
+//! when it moves in Z, tilts or scales (#153).
 //!
 //! The document calls in here for every transform edit of a leaf, however it
-//! was made (the gizmo, `G`, the arrow keys, the Transform inspector,
-//! Center). Each model has a support set of its own (#197): while a move is
-//! live, the model's support leaf rides along on its own transform. When the
-//! move is committed in the plate plane, the set's session is moved with the
-//! model ([`DfSupportSession::moved_in_plane`]) and redrawn, the redrawn mesh
-//! takes the old one's place in the same undo entry as the move, and the
-//! support leaf is back where it was. Nothing is placed again, so the
-//! supports stay the ones the person made, editable by hand and saved as
-//! data. The other models' sets are left alone.
+//! was made (the gizmo, `G`, `R`, the arrow keys, the Transform inspector,
+//! Center). Each model has a support set of its own (#197): while a move in
+//! the plate plane is live, the model's support leaf rides along on its own
+//! transform. When it is committed, the set's session is taken along with the
+//! model ([`DfSupportSession::moved_in_plane`],
+//! [`DfSupportSession::turned_in_plane`]) and redrawn, the redrawn mesh takes
+//! the old one's place in the same undo entry as the move, and the support
+//! leaf is back where it was. A turn about the vertical axis leaves the model
+//! standing on the plate as it did, so its supports still hold it. Nothing
+//! is placed again, so the supports stay the ones the person made, editable
+//! by hand and saved as data. The other models' sets are left alone.
 //!
-//! A move in Z, a rotation or a scale (Drop to plate and a lift clear of the
+//! A move in Z, a tilt or a scale (Drop to plate and a lift clear of the
 //! raft among them) leaves the supports where they stood while it is live.
 //! When it is committed, they no longer fit the model: the set is removed in
 //! the same undo entry, and the model waits for new supports, which the
@@ -26,7 +29,7 @@
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::{DfSupportSession, is_support_mesh};
+use sc_geom::df_supports::{DfSupportSession, is_support_mesh, scene_model_leaves};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 
@@ -74,6 +77,54 @@ fn plane_move(from: &Transform3D, to: &Transform3D) -> Option<[f64; 2]> {
     let [bx, by, bz] = *b.translation();
     let d = [bx - ax, by - ay];
     (same_linear && (bz - az).abs() <= 1e-6 && d != [0.0, 0.0]).then_some(d)
+}
+
+/// A move of a model that its supports follow: in X/Y, or a turn about the
+/// vertical axis and then a move in X/Y (mm, radians).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlaneMotion {
+    Move([f64; 2]),
+    Turn { angle: f64, d: [f64; 2] },
+}
+
+impl PlaneMotion {
+    /// The motion as a world transform.
+    fn affine(self) -> AffineTransform3D {
+        match self {
+            PlaneMotion::Move([dx, dy]) => AffineTransform3D::from_translation([dx, dy, 0.0]),
+            PlaneMotion::Turn { angle, d: [dx, dy] } => {
+                let (s, c) = angle.sin_cos();
+                AffineTransform3D::from_linear_and_translation(
+                    [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+                    [dx, dy, 0.0],
+                )
+            }
+        }
+    }
+}
+
+/// The motion in the plate plane that takes the world transform `from` to
+/// `to`, when that is all that changed: a move in X/Y, maybe after a turn
+/// about the vertical axis; nothing in Z, no tilt, no scale. `None`
+/// otherwise, and for no move at all.
+fn plane_motion(from: &Transform3D, to: &Transform3D) -> Option<PlaneMotion> {
+    if let Some(d) = plane_move(from, to) {
+        return Some(PlaneMotion::Move(d));
+    }
+    let delta = affine(to).compose(&affine(from).inverse().ok()?);
+    let l = delta.linear();
+    let (c, s) = (l[0][0], l[1][0]);
+    let about_z = (l[1][1] - c).abs() <= 1e-9
+        && (l[0][1] + s).abs() <= 1e-9
+        && (l[2][2] - 1.0).abs() <= 1e-9
+        && [l[0][2], l[1][2], l[2][0], l[2][1]]
+            .iter()
+            .all(|v| v.abs() <= 1e-9)
+        && (c * c + s * s - 1.0).abs() <= 1e-9;
+    let [dx, dy, dz] = *delta.translation();
+    let angle = s.atan2(c);
+    (about_z && dz.abs() <= 1e-6 && angle != 0.0)
+        .then_some(PlaneMotion::Turn { angle, d: [dx, dy] })
 }
 
 /// The support set of the model `model` whose session is in force, with the
@@ -152,15 +203,14 @@ pub(crate) fn follow_live(doc: &SceneDocument, leaf: NodeId) {
         .with_scene(|spatial| {
             let query = spatial.leaf(leaf)?;
             let parent = query.parent_world();
-            plane_move(
+            plane_motion(
                 &parent.compose(&anchor.model_start),
                 &query.world_transform(),
             )
         })
         .flatten();
     let target = match moved {
-        Some([dx, dy]) => Transform3D::Affine(AffineTransform3D::from_translation([dx, dy, 0.0]))
-            .compose(&anchor.supports_start),
+        Some(motion) => Transform3D::Affine(motion.affine()).compose(&anchor.supports_start),
         None => anchor.supports_start,
     };
     set_supports_transform(doc, anchor.supports, target);
@@ -209,8 +259,8 @@ pub(crate) struct Committed {
     pub(crate) edit: SceneEdit,
     /// The set a move in the plate plane redrew.
     pub(crate) moved: Option<MovedSet>,
-    /// The models whose supports a move in Z, a rotation or a scale took
-    /// away: they get new ones (#153).
+    /// The models whose supports a move in Z, a tilt or a scale took away:
+    /// they get new ones (#153).
     pub(crate) regenerate: Vec<NodeId>,
     /// Whether the supports taken away were edited by hand.
     pub(crate) hand_edits_lost: bool,
@@ -293,7 +343,7 @@ fn take_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Vec<
                 let parent = query.parent_world();
                 let from = parent.compose(before);
                 // A move in the plate plane takes them along instead.
-                plane_move(&from, &parent.compose(after))
+                plane_motion(&from, &parent.compose(after))
                     .is_none()
                     .then_some(from)
             })
@@ -348,7 +398,7 @@ fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Mo
     if doc.support_sessions().borrow().is_empty() {
         return None;
     }
-    let (delta, from) = doc
+    let (motion, from) = doc
         .with_scene(|spatial| {
             let query = spatial.leaf(*node_id)?;
             if is_support_mesh(query.mesh()) {
@@ -356,20 +406,33 @@ fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Mo
             }
             let parent = query.parent_world();
             let from = parent.compose(before);
-            Some((plane_move(&from, &parent.compose(after))?, from))
+            Some((plane_motion(&from, &parent.compose(after))?, from))
         })
         .flatten()?;
     // The edit is already live: the set was in force where the model came
     // from.
     let (supports, session, _) = model_set(doc, *node_id, Some(&from))?;
-    let moved = session.moved_in_plane(0, delta);
+    let moved = match motion {
+        PlaneMotion::Move(d) => session.moved_in_plane(0, d),
+        PlaneMotion::Turn { angle, d } => {
+            // The session gets the turned model as a run makes it.
+            let (_, now) = doc
+                .with_scene(|spatial| {
+                    scene_model_leaves(spatial.graph(), Some(&[*node_id]))
+                        .ok()?
+                        .pop()
+                })
+                .flatten()?;
+            session.turned_in_plane(0, now, angle, d)
+        }
+    };
     // The port is DragonFruit's code: a panic in it leaves the supports
     // where they were, as before, not a failed move.
     let mesh = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| moved.mesh()))
         .ok()?
         .ok()??;
     crate::breadcrumbs::note(&format!(
-        "supports: moved with their model by {delta:?} ({} triangles)",
+        "supports: moved with their model, {motion:?} ({} triangles)",
         mesh.faces().len()
     ));
     let swap = doc
@@ -413,6 +476,51 @@ mod tests {
             [5.0, 0.0, 0.0],
         ));
         assert_eq!(plane_move(&Transform3D::Identity, &scaled), None);
+    }
+
+    /// #153: a turn about the vertical axis, about any point, is followed;
+    /// a tilt, a scale or a turn that also moves in Z is not.
+    #[test]
+    fn a_turn_about_the_vertical_axis_counts() {
+        let affine = |a: AffineTransform3D| Transform3D::Affine(a);
+        let at = AffineTransform3D::from_translation([20.0, 20.0, 8.0]);
+        let along = AffineTransform3D::from_translation([1.0, 0.0, 0.0]).compose(&at);
+        assert_eq!(
+            plane_motion(&affine(at), &affine(along)),
+            Some(PlaneMotion::Move([1.0, 0.0]))
+        );
+        // A quarter turn about the model's own corner, as the gizmo turns it.
+        let turned = at.compose(&AffineTransform3D::from_rotation_z(
+            std::f64::consts::FRAC_PI_2,
+        ));
+        let Some(PlaneMotion::Turn { angle, d }) = plane_motion(&affine(at), &affine(turned))
+        else {
+            panic!("a turn about Z");
+        };
+        assert!((angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        // The motion takes the corner to itself.
+        let corner = PlaneMotion::Turn { angle, d }
+            .affine()
+            .apply_to_vertex(sc_mesh_core::Vertex::new([20.0, 20.0, 8.0]));
+        assert!((corner.as_array()[0] - 20.0).abs() < 1e-5);
+        assert!((corner.as_array()[1] - 20.0).abs() < 1e-5);
+        // Half a turn of a model that was already tilted still counts.
+        let tilted = at.compose(&AffineTransform3D::from_rotation_x(0.4));
+        let half = AffineTransform3D::from_rotation_z(std::f64::consts::PI).compose(&tilted);
+        assert!(matches!(
+            plane_motion(&affine(tilted), &affine(half)),
+            Some(PlaneMotion::Turn { .. })
+        ));
+        // Not followed: a tilt, a turn about its own tilted Z, a scale, a
+        // turn that also lifts.
+        assert_eq!(plane_motion(&affine(at), &affine(tilted)), None);
+        let own_z = tilted.compose(&AffineTransform3D::from_rotation_z(0.3));
+        assert_eq!(plane_motion(&affine(tilted), &affine(own_z)), None);
+        let scaled = at.compose(&AffineTransform3D::from_uniform_scale(1.5));
+        assert_eq!(plane_motion(&affine(at), &affine(scaled)), None);
+        let lifted = AffineTransform3D::from_translation([0.0, 0.0, 2.0]).compose(&turned);
+        assert_eq!(plane_motion(&affine(at), &affine(lifted)), None);
+        assert_eq!(plane_motion(&affine(at), &affine(at)), None);
     }
 
     #[test]

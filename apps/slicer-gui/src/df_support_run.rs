@@ -15,7 +15,7 @@
 //! `SceneDocument::paste_fragment`: one undoable object, saved and exported
 //! like any other. A later run leaves that object out of its models.
 //!
-//! **Regeneration (#153).** A model moved in Z, rotated or scaled loses its
+//! **Regeneration (#153).** A model moved in Z, tilted or scaled loses its
 //! supports in the edit (`support_follow`) and waits for new ones
 //! ([`SceneDocument::supports_wanted`]). Once it stands where the edit left
 //! it, the same run makes them for that model alone, and they join the
@@ -804,7 +804,7 @@ impl DfSupportRun {
         prescan.running = Some((job, self.document.scene_revision(), Instant::now()));
     }
 
-    /// Regenerates the supports of the models a move in Z, a rotation or a
+    /// Regenerates the supports of the models a move in Z, a tilt or a
     /// scale took them from (#153): starts the run once they stand where the
     /// edit left them and no other run is in flight, and cancels it when the
     /// scene moves on (another edit, Undo, a live move of one of them). The
@@ -2809,32 +2809,116 @@ mod hand_edit_tests {
         )))
     }
 
-    /// #153: a model turned loses its supports on commit and gets new ones
+    fn tilted(at: [f64; 3], angle: f64) -> Transform3D {
+        translation(at).compose(&Transform3D::Affine(AffineTransform3D::from_rotation_x(
+            angle,
+        )))
+    }
+
+    /// #153: a model turned about the vertical axis still stands on the plate
+    /// the way it did: its supports turn with it, live and on commit, in the
+    /// same undo entry and still editable, and nothing is generated again.
+    #[test]
+    fn supports_turn_with_their_model_about_the_vertical_axis() {
+        use crate::support_persist::support_documents;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (supports, generated) = run.support_leaf().expect("the supports were pasted");
+            let start = leaf_transform(&document, supports);
+            let first = in_force_session(&run).expect("the run's session");
+            let (at, turn) = (
+                translation([20.0, 20.0, 8.0]),
+                turned([20.0, 20.0, 8.0], 0.5),
+            );
+            let edit = || SceneEdit::SetLocalTransform {
+                node_id: model,
+                before: at,
+                after: turn,
+            };
+
+            // Live, the support leaf turns along about the model's corner.
+            document.apply_edit(edit()).unwrap();
+            let live = leaf_transform(&document, supports);
+            let goes = |p: [f32; 3]| {
+                *live
+                    .apply_to_vertex(sc_mesh_core::Vertex::new(p))
+                    .as_array()
+            };
+            let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4);
+            assert!(near(goes([20.0, 20.0, 0.0]), [20.0, 20.0, 0.0]));
+            let (s, c) = 0.5f32.sin_cos();
+            assert!(near(goes([21.0, 20.0, 3.0]), [20.0 + c, 20.0 + s, 3.0]));
+
+            // Committed: drawn where the model is, the leaf where it was, and
+            // nothing waits for new supports.
+            document.push_edit(edit());
+            assert_eq!(leaf_transform(&document, supports), start);
+            let (_, turned_mesh) = run.support_leaf().expect("the supports stay");
+            assert!(!Arc::ptr_eq(&turned_mesh, &generated), "redrawn");
+            assert_eq!(turned_mesh.faces().len(), generated.faces().len());
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "no run");
+            let session = in_force_session(&run).expect("editable");
+            assert!(!Arc::ptr_eq(&session, &first), "a session turned along");
+            let kept = document
+                .with_scene(|spatial| support_documents(&document, spatial).documents.len())
+                .unwrap();
+            assert_eq!(kept, 1, "kept as data");
+            window.set_support_tool(1);
+            run.on_tool_click(goes([20.2, 20.2, 7.5]));
+            assert!(
+                window.get_supports_last_run().contains("edited by hand"),
+                "{}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap(), "the hand edit undoes");
+
+            // One Undo takes the model and its supports back; Redo again.
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, model), at);
+            let (_, back) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&back, &generated), "the supports as generated");
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
+            assert!(document.redo().unwrap());
+            assert_eq!(leaf_transform(&document, model), turn);
+            let (_, again) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&again, &turned_mesh));
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &session)));
+        });
+    }
+
+    /// #153: a model tilted loses its supports on commit and gets new ones
     /// for its new pose, editable, in the same undo entry: one Undo brings
     /// back the old pose with the old supports, Redo the new ones.
     #[test]
-    fn a_turned_model_gets_new_supports_in_the_same_undo_step() {
+    fn a_tilted_model_gets_new_supports_in_the_same_undo_step() {
         on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
             let model = leaves[0];
             let (_, generated) = run.support_leaf().expect("the supports were pasted");
             let first = in_force_session(&run).expect("the run's session");
-            let (at, turn) = (
+            let (at, tilt) = (
                 translation([20.0, 20.0, 8.0]),
-                turned([20.0, 20.0, 8.0], 0.5),
+                tilted([20.0, 20.0, 8.0], 0.5),
             );
             document
                 .apply_edit(SceneEdit::SetLocalTransform {
                     node_id: model,
                     before: at,
-                    after: turn,
+                    after: tilt,
                 })
                 .unwrap();
             document.push_edit(SceneEdit::SetLocalTransform {
                 node_id: model,
                 before: at,
-                after: turn,
+                after: tilt,
             });
             assert!(run.support_leaf().is_none(), "the old supports go at once");
             assert!(!document.supports_wanted().unwrap().1.hand_edits_lost);
@@ -2850,7 +2934,7 @@ mod hand_edit_tests {
             run.watch_wanted(&window);
             assert!(run.handle.borrow().is_none(), "no second run");
 
-            // One Undo takes the turn and the new supports back together.
+            // One Undo takes the tilt and the new supports back together.
             assert!(document.undo().unwrap());
             assert_eq!(leaf_transform(&document, model), at);
             let (_, back) = run.support_leaf().expect("the old supports");
@@ -2858,10 +2942,10 @@ mod hand_edit_tests {
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
             // The entry before is the first run's paste.
             assert!(document.undo().unwrap());
-            assert!(run.support_leaf().is_none(), "one entry for the turn");
+            assert!(run.support_leaf().is_none(), "one entry for the tilt");
             assert!(document.redo().unwrap());
             assert!(document.redo().unwrap());
-            assert_eq!(leaf_transform(&document, model), turn);
+            assert_eq!(leaf_transform(&document, model), tilt);
             let (_, again) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&again, &regenerated));
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &session)));

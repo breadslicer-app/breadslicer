@@ -145,7 +145,7 @@ struct HistoryEntry {
     wants: Option<SupportsWanted>,
 }
 
-/// Models whose supports a move in Z, a rotation or a scale took away, and
+/// Models whose supports a move in Z, a tilt or a scale took away, and
 /// that wait for new ones (#153). The run that makes them completes the edit
 /// that left them waiting ([`SceneDocument::paste_fragment_completing`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -865,7 +865,7 @@ impl SceneDocument {
     /// stack: a fresh edit invalidates the previously-rolled-back trail.
     ///
     /// A model moved in X/Y takes its supports with it, redrawn in the same
-    /// entry ([`crate::support_follow::commit`]). A model moved in Z, rotated
+    /// entry ([`crate::support_follow::commit`]). A model moved in Z, tilted
     /// or scaled loses them in the entry, and waits for new ones
     /// ([`Self::supports_wanted`]); models the entry before still waited for
     /// wait on.
@@ -972,7 +972,7 @@ impl SceneDocument {
 
     /// Applies `edit` and adds it to the newest entry, which then undoes
     /// both together, and takes `settled` off the models it left waiting:
-    /// the new supports of a model a move in Z, a rotation or a scale took
+    /// the new supports of a model a move in Z, a tilt or a scale took
     /// them from (#153). The entry gets a new id, so the scene revision moves
     /// on (a save or a slice before it no longer matches). Returns
     /// `Ok(false)`, applying nothing, when the scene is no longer at
@@ -1152,7 +1152,7 @@ impl SceneDocument {
     /// [`Self::paste_fragment_replacing_all`] at the origin, added to the
     /// newest entry rather than recorded on its own
     /// ([`Self::complete_last_edit`], which `settled` goes to): the new
-    /// supports of models a move in Z, a rotation or a scale left waiting
+    /// supports of models a move in Z, a tilt or a scale left waiting
     /// (#153). The selection stays. Returns the new root leaves, or none
     /// when the scene is no longer at `revision`.
     pub(crate) fn paste_fragment_completing(

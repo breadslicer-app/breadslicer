@@ -1,46 +1,107 @@
-//! Moving a model's supports with it (#119): every point of the supports
-//! that stand on one model moves by the same amount, and directions
-//! (normals, tangents, cone axes) stay as they are. DragonFruit keeps each
-//! model's supports to themselves (a fan, a merge or a brace only joins
+//! Moving a model's supports with it in the plate plane: in X/Y (#119), and
+//! turned about the vertical axis (#153). Every point of the supports that
+//! stand on one model goes where the motion takes it; directions (normals,
+//! tangents, cone axes) only turn with it, and Z stays. DragonFruit keeps
+//! each model's supports to themselves (a fan, a merge or a brace only joins
 //! supports of the same model), so they move apart from the others whole.
 
 use std::collections::HashSet;
 
 use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
 use support_gen_df::supports::types::{
-    BezierCurve, ContactDisk, Segment, SupportCollections, SupportEntity, Vec3,
+    BezierCurve, ContactDisk, Quaternion, Segment, SupportCollections, SupportEntity, Vec3,
 };
 
-fn shift(p: &mut Vec3, d: Vec3) {
-    *p = p.add(d);
+/// A rigid motion of the plate plane: a turn about the Z axis through the
+/// origin, then a move in X/Y.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlaneMotion {
+    /// The turn's angle and its cosine and sine; `None` for a plain move,
+    /// which leaves directions exactly as they were.
+    turn: Option<(f64, f64, f64)>,
+    d: Vec3,
 }
 
-/// The curve's control points; its tangents are directions.
-fn shift_curve(curve: &mut BezierCurve, d: Vec3) {
-    shift(&mut curve.control_point1, d);
-    shift(&mut curve.control_point2, d);
+impl PlaneMotion {
+    /// A move by `d` in X/Y.
+    pub(crate) fn shift(d: [f64; 2]) -> Self {
+        PlaneMotion {
+            turn: None,
+            d: Vec3::new(d[0], d[1], 0.0),
+        }
+    }
+
+    /// A turn by `angle` radians about the Z axis, then a move by `d`.
+    pub(crate) fn turn(angle: f64, d: [f64; 2]) -> Self {
+        let (s, c) = angle.sin_cos();
+        PlaneMotion {
+            turn: Some((angle, c, s)),
+            d: Vec3::new(d[0], d[1], 0.0),
+        }
+    }
+
+    fn direction(&self, v: Vec3) -> Vec3 {
+        match self.turn {
+            None => v,
+            Some((_, c, s)) => Vec3::new(c * v.x - s * v.y, s * v.x + c * v.y, v.z),
+        }
+    }
+
+    pub(crate) fn point(&self, p: Vec3) -> Vec3 {
+        self.direction(p).add(self.d)
+    }
+
+    fn rotation(&self, q: Quaternion) -> Quaternion {
+        match self.turn {
+            None => q,
+            Some((angle, ..)) => {
+                Quaternion::set_from_axis_angle(Vec3::new(0.0, 0.0, 1.0), angle).multiply(q)
+            }
+        }
+    }
 }
 
-fn shift_segments(segments: &mut [Segment], d: Vec3) {
+fn go(p: &mut Vec3, m: &PlaneMotion) {
+    *p = m.point(*p);
+}
+
+fn turn(v: &mut Vec3, m: &PlaneMotion) {
+    *v = m.direction(*v);
+}
+
+fn move_curve(curve: &mut BezierCurve, m: &PlaneMotion) {
+    go(&mut curve.control_point1, m);
+    go(&mut curve.control_point2, m);
+    turn(&mut curve.start_tangent, m);
+    turn(&mut curve.end_tangent, m);
+}
+
+fn move_segments(segments: &mut [Segment], m: &PlaneMotion) {
     for segment in segments {
         for joint in [&mut segment.top_joint, &mut segment.bottom_joint]
             .into_iter()
             .flatten()
         {
-            shift(&mut joint.pos, d);
+            go(&mut joint.pos, m);
         }
         if let Some(curve) = segment.bezier_mut() {
-            shift_curve(curve, d);
+            move_curve(curve, m);
         }
     }
 }
 
-fn shift_cone(cone: &mut ContactCone, d: Vec3) {
-    shift(&mut cone.pos, d);
+fn move_cone(cone: &mut ContactCone, m: &PlaneMotion) {
+    go(&mut cone.pos, m);
+    turn(&mut cone.normal, m);
+    if let Some(normal) = &mut cone.surface_normal {
+        turn(normal, m);
+    }
 }
 
-fn shift_disk(disk: &mut ContactDisk, d: Vec3) {
-    shift(&mut disk.pos, d);
+fn move_disk(disk: &mut ContactDisk, m: &PlaneMotion) {
+    go(&mut disk.pos, m);
+    turn(&mut disk.surface_normal, m);
+    turn(&mut disk.cone_axis, m);
 }
 
 /// Every entity of the collections, by its base record. Knots have none:
@@ -169,56 +230,57 @@ pub(crate) fn model_collections(c: &SupportCollections, model_id: &str) -> Suppo
     out
 }
 
-/// Moves every support of the model `model_id` by `d`, knots included
+/// Takes every support of the model `model_id` along by `m`, knots included
 /// ([`model_knots`]).
-pub(crate) fn shift_model_supports(c: &mut SupportCollections, model_id: &str, d: Vec3) {
+pub(crate) fn move_model_supports(c: &mut SupportCollections, model_id: &str, m: &PlaneMotion) {
     let on = |base: &SupportEntity| base.model_id == model_id;
     let own_knots = model_knots(c, model_id);
     for (id, knot) in &mut c.knots {
         if own_knots.contains(id) {
-            shift(&mut knot.pos, d);
+            go(&mut knot.pos, m);
         }
     }
     for root in c.roots.values_mut().filter(|e| on(&e.base)) {
-        shift(&mut root.transform.pos, d);
+        go(&mut root.transform.pos, m);
+        root.transform.rot = m.rotation(root.transform.rot);
     }
     for trunk in c.trunks.values_mut().filter(|e| on(&e.base)) {
-        shift_segments(&mut trunk.segments, d);
+        move_segments(&mut trunk.segments, m);
         if let Some(cone) = &mut trunk.contact_cone {
-            shift_cone(cone, d);
+            move_cone(cone, m);
         }
     }
     for branch in c.branches.values_mut().filter(|e| on(&e.base)) {
-        shift_segments(&mut branch.segments, d);
+        move_segments(&mut branch.segments, m);
         if let Some(cone) = &mut branch.contact_cone {
-            shift_cone(cone, d);
+            move_cone(cone, m);
         }
     }
     for leaf in c.leaves.values_mut().filter(|e| on(&e.base)) {
-        shift_cone(&mut leaf.contact_cone, d);
+        move_cone(&mut leaf.contact_cone, m);
     }
     for twig in c.twigs.values_mut().filter(|e| on(&e.base)) {
-        shift_segments(&mut twig.segments, d);
-        shift_disk(&mut twig.contact_disk_a, d);
-        shift_disk(&mut twig.contact_disk_b, d);
+        move_segments(&mut twig.segments, m);
+        move_disk(&mut twig.contact_disk_a, m);
+        move_disk(&mut twig.contact_disk_b, m);
     }
     for stick in c.sticks.values_mut().filter(|e| on(&e.base)) {
-        shift_segments(&mut stick.segments, d);
-        shift_cone(&mut stick.contact_cone_a, d);
-        shift_cone(&mut stick.contact_cone_b, d);
+        move_segments(&mut stick.segments, m);
+        move_cone(&mut stick.contact_cone_a, m);
+        move_cone(&mut stick.contact_cone_b, m);
     }
     for brace in c.braces.values_mut().filter(|e| on(&e.base)) {
         if let Some(curve) = &mut brace.curve {
-            shift_curve(&mut curve.curve, d);
+            move_curve(&mut curve.curve, m);
         }
     }
     for stump in c.stumps.values_mut().filter(|e| on(&e.base)) {
-        shift(&mut stump.root_pos, d);
-        shift(&mut stump.joint.pos, d);
-        shift_segments(&mut stump.segments, d);
-        shift_cone(&mut stump.contact_cone, d);
+        go(&mut stump.root_pos, m);
+        go(&mut stump.joint.pos, m);
+        move_segments(&mut stump.segments, m);
+        move_cone(&mut stump.contact_cone, m);
     }
     for kickstand in c.kickstands.values_mut().filter(|e| on(&e.base)) {
-        shift_segments(&mut kickstand.segments, d);
+        move_segments(&mut kickstand.segments, m);
     }
 }
