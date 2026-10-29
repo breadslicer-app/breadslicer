@@ -14,7 +14,7 @@ import { CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "kit/theme.slint";
 import { ButtonKind, ScButton } from "kit/controls.slint";
 
-export enum MessageKind { info, error, scene-change, slice-overwrite }
+export enum MessageKind { info, error, scene-change, slice-overwrite, recovery }
 
 // What the person did with the message. `cancel` is also Escape and Enter;
 // Rust reads it as "close" for a message with nothing to decide.
@@ -241,6 +241,36 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
+                // The scenes a run left unsaved (#18): heading, why, then 1
+                // line per scene.
+                if root.message.kind == MessageKind.recovery: VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: root.message.heading;
+                        font-weight: 700;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: root.message.text;
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    ScrollView {
+                        max-height: 160px;
+                        Text {
+                            text: root.message.context;
+                            font-size: root.font-secondary;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
                 if root.message.kind == MessageKind.slice-overwrite: VerticalLayout {
                     spacing: 6px;
 
@@ -317,6 +347,21 @@ export component MessageLayer inherits Rectangle {
                         kind: ButtonKind.primary;
                         clicked => {
                             root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.recovery: ScButton {
+                        text: @tr("RecoveryDialog" => "Discard");
+                        clicked => {
+                            root.answered(MessageAnswer.discard);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.recovery: ScButton {
+                        text: @tr("RecoveryDialog" => "Recover");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.confirm);
                         }
                     }
 

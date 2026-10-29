@@ -363,6 +363,11 @@ impl SceneLoader {
     /// since the loader is constructed before the first `RenderingSetup` and a
     /// synchronous gate would prevent the file dialog from opening at all in
     /// unit-test or pre-first-paint scenarios.
+    /// Whether a load is in flight.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.inflight.load(Ordering::Acquire) != 0
+    }
+
     pub(crate) fn begin_load(&self) -> Option<LoadTicket> {
         // compare_exchange 0 -> 1: atomically checks that no ticket is alive.
         // `AcqRel` on success synchronises with the prior ticket's `fetch_sub`

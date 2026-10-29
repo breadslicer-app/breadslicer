@@ -20,10 +20,12 @@ use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
 use crate::app_settings::file::{LoadOutcome, SettingsFile};
 use crate::arrange_run::ArrangeRun;
+use crate::autosave::{Autosaver, recovery_line};
+use crate::autosave_store::{AutosaveStore, OrphanRun};
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::default_envelope::DefaultEnvelope;
 use crate::df_support_run::DfSupportRun;
-use crate::error_dialog::{ErrorTexts, InfoTexts};
+use crate::error_dialog::{ErrorTexts, InfoTexts, RecoveryChoice};
 use crate::graphics_status::GraphicsUnavailable;
 use crate::hollow_run::HollowRun;
 use crate::i18n::ctr;
@@ -208,6 +210,8 @@ struct WiredMainWindow {
     // path here when the GPU device isn't yet available. The controller drains
     // it from `handle_rendering_setup`.
     pending_load: Rc<PendingLoad>,
+    /// Autosaves the window's scene (#18); `None` without a data folder.
+    autosaver: Option<Rc<Autosaver>>,
     _subscription: Subscription,
     _drivers: WindowDrivers,
 }
@@ -270,6 +274,8 @@ pub(crate) struct AppState {
     clipboard: RefCell<Option<Clipboard>>,
     /// The shared device's lost-device flag.
     device_loss: DeviceLoss,
+    /// This run's autosaves (#18); `None` without a data folder.
+    autosave: Option<Rc<AutosaveStore>>,
     /// Keeps the UI language equal to the preference. Set when the first window
     /// is created: Slint can select a language only once a component exists.
     ui_language: OnceCell<UiLanguage>,
@@ -527,6 +533,7 @@ impl AppState {
             default_envelope,
             clipboard: RefCell::new(None),
             device_loss,
+            autosave: AutosaveStore::platform_root().map(|root| Rc::new(AutosaveStore::new(root))),
             ui_language: OnceCell::new(),
             _settings_sub: settings_sub,
             _settings_saver: settings_saver,
@@ -607,6 +614,10 @@ impl AppState {
         self.wire_app_level_menus(&ui, &ctrl);
 
         self.next_window_id.set(id.wrapping_add(1));
+        let autosaver = self
+            .autosave
+            .as_ref()
+            .map(|store| Autosaver::install(id, store.clone(), &ctrl, self.prefs.clone()));
         self.wire_clipboard(&ui, id);
         self.wire_context_menu(&ui, &ctrl, id);
         let subscription = subscribe_window_preferences(
@@ -629,6 +640,7 @@ impl AppState {
                 window: ui,
                 controller: ctrl,
                 pending_load,
+                autosaver,
                 _subscription: subscription,
                 _drivers: drivers,
             },
@@ -792,7 +804,7 @@ impl AppState {
                         app.request_scene_close(id, true);
                         return CloseRequestResponse::KeepWindowShown;
                     }
-                    app.main_windows.borrow_mut().remove(&id);
+                    drop(app.remove_window(id));
                 }
                 CloseRequestResponse::HideWindow
             });
@@ -1083,11 +1095,113 @@ impl AppState {
                 }
             }
             SceneChange::CloseWindow => {
-                let window = self.main_windows.borrow_mut().remove(&window_id);
+                let window = self.remove_window(window_id);
                 if let Some(window) = window {
                     let _ = window.window.hide();
                 }
             }
+        }
+    }
+
+    /// Takes window `window_id` out of the app, with its scene's autosave:
+    /// the window closes with nothing left to recover.
+    fn remove_window(&self, window_id: u64) -> Option<WiredMainWindow> {
+        let window = self.main_windows.borrow_mut().remove(&window_id)?;
+        if let Some(autosaver) = &window.autosaver {
+            autosaver.close();
+        }
+        Some(window)
+    }
+
+    /// At start-up: offers back the scenes that earlier runs left with
+    /// unsaved changes (#18), asking in window `free`, which also takes the
+    /// 1st scene recovered while it is still empty. Without `free` (the start
+    /// opened files), it asks in the 1st window and recovers into new ones.
+    pub(crate) fn offer_recovery(self: &Rc<Self>, free: Option<u64>) {
+        let Some(store) = &self.autosave else {
+            return;
+        };
+        let orphans = store.claim_orphans(std::time::SystemTime::now());
+        if orphans.is_empty() {
+            return;
+        }
+        let host = free.or_else(|| self.main_windows.borrow().keys().min().copied());
+        let Some(dialogs) = host.and_then(|id| {
+            self.main_windows
+                .borrow()
+                .get(&id)
+                .map(|w| w.controller.dialogs())
+        }) else {
+            return;
+        };
+        let now = std::time::SystemTime::now();
+        let scenes = orphans
+            .iter()
+            .flat_map(|run| &run.entries)
+            .map(|entry| recovery_line(entry, now))
+            .collect();
+        let app_weak = Rc::downgrade(self);
+        dialogs.show_recovery(scenes, move |choice| match choice {
+            RecoveryChoice::Recover => {
+                if let Some(app) = app_weak.upgrade() {
+                    app.recover(orphans, free);
+                }
+            }
+            RecoveryChoice::Discard => orphans.into_iter().for_each(OrphanRun::discard),
+            // Dropped: their locks go, and the next start offers them again.
+            RecoveryChoice::Later => drop(orphans),
+        });
+    }
+
+    /// Opens each scene of `orphans` in a window of its own: `free` for the
+    /// 1st while it is still empty, new ones after. Each becomes the autosave
+    /// of its window, and a run whose scenes all moved is deleted; one that
+    /// could not be moved stays, to be offered again.
+    fn recover(self: &Rc<Self>, orphans: Vec<OrphanRun>, mut free: Option<u64>) {
+        let Some(store) = self.autosave.clone() else {
+            return;
+        };
+        for run in orphans {
+            let mut moved = true;
+            for entry in &run.entries {
+                let window = match free.take().filter(|id| self.is_empty_window(*id)) {
+                    Some(id) => id,
+                    None => match self.spawn_main_window() {
+                        Ok(id) => id,
+                        Err(err) => {
+                            eprintln!("Failed to open a window for a recovered scene: {err}");
+                            moved = false;
+                            continue;
+                        }
+                    },
+                };
+                match store.adopt(entry, window) {
+                    Ok(snapshot) => self.open_path_in_window(window, snapshot),
+                    Err(err) => {
+                        crate::breadcrumbs::note(&format!("autosave: not adopted: {err:#}"));
+                        moved = false;
+                        self.open_path_in_window(window, entry.snapshot.clone());
+                    }
+                }
+            }
+            if moved {
+                run.discard();
+            }
+        }
+    }
+
+    /// Whether window `window_id` shows no scene and loads none.
+    fn is_empty_window(&self, window_id: u64) -> bool {
+        self.main_windows.borrow().get(&window_id).is_some_and(|w| {
+            !w.controller.document().is_loaded() && !w.controller.loader().is_busy()
+        })
+    }
+
+    /// Ends this run's autosaves, as the app exits: their folder goes unless
+    /// a scene was left unsaved in it.
+    pub(crate) fn finish_autosave(&self) {
+        if let Some(store) = &self.autosave {
+            store.finish();
         }
     }
 
@@ -2258,6 +2372,8 @@ mod window_wiring_tests {
             default_envelope,
             clipboard: RefCell::new(None),
             device_loss: DeviceLoss::default(),
+            // These tests autosave nothing.
+            autosave: None,
             _settings_saver: SettingsSaverJoin { join: None },
         })
     }
@@ -2298,6 +2414,7 @@ mod window_wiring_tests {
                 window,
                 controller,
                 pending_load,
+                autosaver: None,
                 _subscription: subscription,
                 _drivers: drivers,
             },

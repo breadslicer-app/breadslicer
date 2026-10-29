@@ -94,6 +94,9 @@ export component MainWindow inherits Window {
     // the document's source path. Empty when no file is open, which
     // makes the title fall back to the application name.
     in property <string> document-name: "";
+    // The open project has earlier versions kept (#18): enables File >
+    // Previous Versions.
+    in property <bool> has-versions: false;
     // True while the user is dragging a file over the window (between
     // winit's `HoveredFile` and the matching `DroppedFile` /
     // `HoveredFileCancelled`). Toggled from Rust; drives the
@@ -383,6 +386,7 @@ export component MainWindow inherits Window {
     callback save-requested();
     callback save-as-requested();
     callback save-as-3mf-requested();
+    callback previous-versions-requested();
     callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
@@ -593,6 +597,14 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.save-as-3mf-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Previous Versions…");
+                enabled: root.has-versions && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.previous-versions-requested();
                 }
             }
 
@@ -1662,6 +1674,14 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.save-as-3mf-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Previous Versions…");
+                    enabled: root.has-versions && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.previous-versions-requested();
                     }
                 }
 

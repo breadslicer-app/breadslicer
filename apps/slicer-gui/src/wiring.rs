@@ -20,6 +20,7 @@ use crate::i18n::ctr;
 use crate::mesh_loader::{self, LoadDispatch};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::print_selection::PrintDefaults;
+use crate::project_versions::ProjectVersions;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SaveRecorded, SceneDocument};
 use crate::scene_export;
@@ -80,10 +81,11 @@ pub(crate) fn wire_main_window(
     confirm_open: Rc<dyn Fn(PathBuf)>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
-    wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open);
+    wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open.clone());
     wire_save(ui, ctrl.clone(), prefs.clone());
     wire_save_as(ui, ctrl.clone(), prefs.clone());
     wire_save_as_3mf(ui, ctrl.clone(), prefs);
+    wire_previous_versions(ui, ctrl.clone(), confirm_open);
     wire_export_as(ui, ctrl.clone());
     wire_edit_menu(ui, ctrl.clone());
     wire_workspace_section(ui, ctrl.clone());
@@ -583,8 +585,18 @@ async fn save_to_target(
     save_progress.begin();
     let sink = save_progress.sink();
     let (tx, rx) = oneshot::channel();
+    // A `.bread` about to be replaced is kept as an earlier version first
+    // (#18).
+    let versions = ProjectVersions::platform_default();
+    let replaced = target.to_path_buf();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(versions) = &versions
+                && let Err(err) = versions.keep_previous(&replaced)
+            {
+                // The save itself goes on: the version is a spare copy.
+                crate::breadcrumbs::note(&format!("versions: not kept: {err:#}"));
+            }
             scene_save::write_bundle(&bundle, |phase, done, total| sink.set(phase, done, total))
         }))
         .unwrap_or_else(|payload| Err(anyhow::anyhow!(mesh_loader::panic_message(&payload))));
@@ -617,6 +629,41 @@ async fn save_to_target(
         // treat as not saved.
         Err(_canceled) => SaveOutcome::NotSaved,
     }
+}
+
+/// File > "Previous Versions…" (#18): picks 1 of the kept versions of the open
+/// project and opens it through `open`, the external open path (which asks
+/// first about a scene in the window). The version opens as the project itself
+/// with unsaved changes (see `crate::autosave::recovered_identity`), so Save
+/// puts it back as the project.
+fn wire_previous_versions(
+    ui: &MainWindow,
+    ctrl: Rc<ViewportController>,
+    open: Rc<dyn Fn(PathBuf)>,
+) {
+    ui.on_previous_versions_requested(move || {
+        ctrl.on_modal_transform_finish(false);
+        let Some(dir) = crate::autosave::versions_dir_of(&ctrl.document()) else {
+            return;
+        };
+        let dialog = ctrl
+            .dialogs()
+            .file_dialog()
+            .set_title(ctr!("FileDialog", "Previous versions").to_string())
+            .add_filter(
+                ctr!("FileDialog", "Breadslicer projects").to_string(),
+                &["bread"],
+            )
+            .set_directory(dir);
+        let open = open.clone();
+        if let Err(err) = slint::spawn_local(async move {
+            if let Some(picked) = dialog.pick_file().await {
+                open(picked.path().to_path_buf());
+            }
+        }) {
+            eprintln!("Failed to spawn previous versions dialog task: {err}");
+        }
+    });
 }
 
 fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {

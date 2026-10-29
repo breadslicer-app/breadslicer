@@ -16,6 +16,8 @@ mod about_window;
 mod app_settings;
 mod app_state;
 mod arrange_run;
+mod autosave;
+mod autosave_store;
 mod breadcrumbs;
 pub mod build_volume;
 pub mod camera;
@@ -58,6 +60,7 @@ mod profile_forking;
 mod profile_transfer;
 mod profile_view;
 mod project_profiles;
+mod project_versions;
 mod raft_clash;
 mod reloaded_slices;
 mod repair_run;
@@ -322,12 +325,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         None
     };
 
+    // Scenes an earlier run left unsaved (#18).
+    app.offer_recovery(empty_window);
+
     #[cfg(target_os = "macos")]
     install_finder_open_documents(&app, empty_window);
     #[cfg(not(target_os = "macos"))]
     let _ = empty_window;
 
-    let Err(err) = slint::run_event_loop() else {
+    let looped = slint::run_event_loop();
+    // However the loop ended, a scene left unsaved keeps its autosave.
+    app.finish_autosave();
+    let Err(err) = looped else {
         return Ok(());
     };
     // A lost device that nothing polled since the loss has not fired its
