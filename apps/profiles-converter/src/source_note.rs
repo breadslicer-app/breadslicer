@@ -109,6 +109,56 @@ pub enum SourceNote {
         material: MaterialId,
         printer: PrinterId,
     },
+    /// UVtools lays a machine's panel out differently from our profile, so
+    /// the profile now carries UVtools' panel.
+    PanelFollowsUvtools {
+        printer: PrinterId,
+        ours: String,
+        uvtools: String,
+    },
+    /// UVtools mirrors a machine's image differently from our profile, so
+    /// the profile now mirrors as UVtools does.
+    MirrorFollowsUvtools {
+        printer: PrinterId,
+        ours: String,
+        uvtools: String,
+    },
+    /// UVtools states a different build height, which the profile now
+    /// carries.
+    HeightFollowsUvtools {
+        printer: PrinterId,
+        ours: String,
+        uvtools: String,
+    },
+    /// UVtools writes a file our profile does not list, so the profile now
+    /// lists it first and keeps its own.
+    FormatAddedFromUvtools { printer: PrinterId, format: String },
+    /// UVtools writes a format this workspace does not know for a machine,
+    /// so its profile names the format and nothing writes it yet.
+    FormatUnknownHere { printer: PrinterId, format: String },
+    /// Our profile was checked against files that print on the machine, so
+    /// the run left it as it is.
+    PinnedProfileKept { printer: PrinterId },
+    /// 2 printers of UVtools' catalog are one profile of ours, and they
+    /// state the same machine.
+    UvtoolsPrintersShareAProfile {
+        printer: PrinterId,
+        first: String,
+        second: String,
+    },
+    /// 2 printers of UVtools' catalog are one profile of ours, and they
+    /// disagree, so the profile follows the first.
+    UvtoolsPrintersDisagreeOnAProfile {
+        printer: PrinterId,
+        kept: String,
+        passed_over: String,
+    },
+    /// UVtools' catalog lists no printer for a profile we ship, so the run
+    /// left it as it is.
+    PrinterUvtoolsLacks { printer: PrinterId },
+    /// UVtools lays a panel out in portrait, which this converter does not
+    /// place on a plate yet, so it wrote no profile for it.
+    PortraitPanelSkipped { uvtools: String },
 }
 
 impl fmt::Display for SourceNote {
@@ -230,6 +280,75 @@ impl fmt::Display for SourceNote {
                 "the source calibrates {:?} for {:?} twice with different values, so the profile carries neither",
                 material.as_str(),
                 printer.as_str(),
+            ),
+            Self::PanelFollowsUvtools {
+                printer,
+                ours,
+                uvtools,
+            } => write!(
+                f,
+                "{:?}: the panel was {ours}, UVtools states {uvtools}, which the profile now carries",
+                printer.as_str(),
+            ),
+            Self::MirrorFollowsUvtools {
+                printer,
+                ours,
+                uvtools,
+            } => write!(
+                f,
+                "{:?}: the profile had {ours}, UVtools states {uvtools}, which the profile now carries",
+                printer.as_str(),
+            ),
+            Self::HeightFollowsUvtools {
+                printer,
+                ours,
+                uvtools,
+            } => write!(
+                f,
+                "{:?}: the build height was {ours}, UVtools states {uvtools}, which the profile now carries",
+                printer.as_str(),
+            ),
+            Self::FormatAddedFromUvtools { printer, format } => write!(
+                f,
+                "{:?}: UVtools writes {format}, which the profile now lists first, beside its own",
+                printer.as_str(),
+            ),
+            Self::FormatUnknownHere { printer, format } => write!(
+                f,
+                "{:?}: UVtools writes {format}, a format nothing here writes yet",
+                printer.as_str(),
+            ),
+            Self::PinnedProfileKept { printer } => write!(
+                f,
+                "{:?} is checked against files that print on the machine, so it was left as it is",
+                printer.as_str(),
+            ),
+            Self::UvtoolsPrintersShareAProfile {
+                printer,
+                first,
+                second,
+            } => write!(
+                f,
+                "UVtools lists {first:?} and {second:?}, which state the same machine: both are {:?}",
+                printer.as_str(),
+            ),
+            Self::UvtoolsPrintersDisagreeOnAProfile {
+                printer,
+                kept,
+                passed_over,
+            } => write!(
+                f,
+                "UVtools lists {kept:?} and {passed_over:?}, both {:?}, and they disagree: the profile follows {kept:?}",
+                printer.as_str(),
+            ),
+            Self::PrinterUvtoolsLacks { printer } => write!(
+                f,
+                "UVtools lists no printer for {:?}, so it was left as it is",
+                printer.as_str(),
+            ),
+            Self::PortraitPanelSkipped { uvtools } => write!(
+                f,
+                "UVtools lays the panel of {uvtools:?} out in portrait, which this converter does not place on a plate yet, so it has no profile",
             ),
         }
     }

@@ -24,6 +24,9 @@ pub enum SourceFormat {
     AnycubicWikiPage,
     /// Creality's resin settings blog post, saved as HTML.
     CrealityBlogPost,
+    /// UVtools' printer catalog: the PrusaSlicer printer profiles it
+    /// bundles.
+    UvtoolsCatalog,
 }
 
 impl SourceFormat {
@@ -34,6 +37,7 @@ impl SourceFormat {
             Self::ElegooSettingsSheet => "elegoo-settings",
             Self::AnycubicWikiPage => "anycubic-wiki",
             Self::CrealityBlogPost => "creality-blog",
+            Self::UvtoolsCatalog => "uvtools",
         }
     }
 }
@@ -55,7 +59,7 @@ impl fmt::Display for UnknownSourceFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog",
+            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings, anycubic-wiki, creality-blog, uvtools",
             self.got,
         )
     }
@@ -72,6 +76,7 @@ impl FromStr for SourceFormat {
             "elegoo-settings" => Ok(Self::ElegooSettingsSheet),
             "anycubic-wiki" => Ok(Self::AnycubicWikiPage),
             "creality-blog" => Ok(Self::CrealityBlogPost),
+            "uvtools" => Ok(Self::UvtoolsCatalog),
             other => Err(UnknownSourceFormat {
                 got: other.to_owned(),
             }),
@@ -113,7 +118,13 @@ mod tests {
 
     #[test]
     fn every_format_round_trips_through_its_token() {
-        for format in [SourceFormat::DragonFruit, SourceFormat::ElegooSettingsSheet] {
+        for format in [
+            SourceFormat::DragonFruit,
+            SourceFormat::ElegooSettingsSheet,
+            SourceFormat::AnycubicWikiPage,
+            SourceFormat::CrealityBlogPost,
+            SourceFormat::UvtoolsCatalog,
+        ] {
             assert_eq!(format.as_str().parse(), Ok(format));
         }
     }
