@@ -15,6 +15,13 @@
 //! `SceneDocument::paste_fragment`: one undoable object, saved and exported
 //! like any other. A later run leaves that object out of its models.
 //!
+//! **Regeneration (#153).** A model moved in Z, rotated or scaled loses its
+//! supports in the edit (`support_follow`) and waits for new ones
+//! ([`SceneDocument::supports_wanted`]). Once it stands where the edit left
+//! it, the same run makes them for that model alone, and they join the
+//! edit's undo entry: one Undo takes the model back with its old supports.
+//! A later edit, or Undo, cancels the run and leaves the next edit to wait.
+//!
 //! **Prescan (BS-66, BS-67, BS-68).** The island and overhang scans depend only on
 //! the geometry, its pose and the scan settings, so a second, lower-key job
 //! runs them ahead of time (`start_df_prescan`, in a pool of half the cores)
@@ -52,7 +59,8 @@ use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::raft_clash::{RaftClash, lift_edit, lowest_model_mm, raft_clash};
 use crate::scene_document::{
-    SceneDocument, SceneEdit, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
+    SceneDocument, SceneEdit, SceneEvent, SceneRevision, SceneSubscription, SupportsWanted,
+    leaf_mesh_swap,
 };
 use crate::slice_projection::load_selected_profiles;
 use crate::support_persist::{
@@ -125,6 +133,9 @@ pub(crate) struct DfSupportRun {
     // The scene the run was started on: a run that finishes on edited
     // geometry is discarded rather than pasted.
     started_on: RefCell<Option<SceneRevision>>,
+    /// For the run in flight that regenerates supports (#153): the scene
+    /// revision that left its models waiting, and the models.
+    regenerating: RefCell<Option<(SceneRevision, SupportsWanted)>>,
     poll_timer: Rc<slint::Timer>,
     prescan: RefCell<Prescan>,
     /// Supports computed while the person works on something else.
@@ -177,6 +188,9 @@ pub(crate) struct DfSupportRun {
 
 /// How often the UI looks for a finished preview.
 const HOVER_POLL: Duration = Duration::from_millis(16);
+
+/// A point of a hand edit, with its place among the edit's points.
+type IndexedPoint = (usize, [f32; 3]);
 
 /// How a hand edit of the supports ended.
 #[derive(Clone, Debug, PartialEq)]
@@ -473,6 +487,7 @@ impl DfSupportRun {
             dialogs,
             handle: RefCell::new(None),
             started_on: RefCell::new(None),
+            regenerating: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
             ahead: RefCell::new(Ahead::default()),
@@ -568,6 +583,12 @@ impl DfSupportRun {
         {
             let run = run.clone();
             ui.on_support_gen_cancel_requested(move || {
+                // A cancelled regeneration is not started again: the models
+                // stay without supports until Generate or Undo.
+                if let Some((revision, wanted)) = run.regenerating.borrow().as_ref() {
+                    run.document
+                        .settle_supports_wanted(*revision, &wanted.ids());
+                }
                 if let Some(handle) = run.handle.borrow().as_ref() {
                     handle.cancel();
                 }
@@ -618,18 +639,19 @@ impl DfSupportRun {
                 job.cancel();
             }
         }
-        self.launch(&ui);
+        self.launch(&ui, self.request_for_selection());
     }
 
-    /// Starts the run, from the last prescan when it still matches.
-    fn launch(self: &Rc<Self>, ui: &MainWindow) {
+    /// Starts the run of `request`, from the last prescan when it still
+    /// matches.
+    fn launch(self: &Rc<Self>, ui: &MainWindow, mut request: DfSupportRequest) {
         crate::breadcrumbs::note("supports: run started");
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             ui.set_support_gen_in_progress(false);
             ui.set_support_gen_cancelable(false);
+            self.regenerating.borrow_mut().take();
             return;
         };
-        let mut request = self.request_for_selection();
         {
             let prescan = self.prescan.borrow();
             // A stale entry would simply not match; there is no point
@@ -653,6 +675,11 @@ impl DfSupportRun {
             Err(err) => {
                 ui.set_support_gen_in_progress(false);
                 ui.set_support_gen_cancelable(false);
+                // Not tried again on every poll.
+                if let Some((revision, wanted)) = self.regenerating.borrow_mut().take() {
+                    self.document
+                        .settle_supports_wanted(revision, &wanted.ids());
+                }
                 let message = err.to_string();
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("DfSupportDialog", "Support generation failed"),
@@ -694,6 +721,7 @@ impl DfSupportRun {
         if self.last_change.get() > self.raft_checked_at.get() {
             self.refresh_raft_warning();
         }
+        self.watch_wanted(&ui);
         let mut prescan = self.prescan.borrow_mut();
         if let Some((job, revision, _)) = &prescan.running
             && let Some(finished) = job.try_poll()
@@ -710,7 +738,7 @@ impl DfSupportRun {
             if prescan.run_waiting {
                 prescan.run_waiting = false;
                 drop(prescan);
-                self.launch(&ui);
+                self.launch(&ui, self.request_for_selection());
                 return;
             }
         }
@@ -737,7 +765,7 @@ impl DfSupportRun {
             if prescan.run_waiting {
                 prescan.run_waiting = false;
                 drop(prescan);
-                self.launch(&ui);
+                self.launch(&ui, self.request_for_selection());
                 return;
             }
         }
@@ -774,6 +802,49 @@ impl DfSupportRun {
         let job = start_df_prescan(&scene, request);
         crate::breadcrumbs::note("supports: prescan started");
         prescan.running = Some((job, self.document.scene_revision(), Instant::now()));
+    }
+
+    /// Regenerates the supports of the models a move in Z, a rotation or a
+    /// scale took them from (#153): starts the run once they stand where the
+    /// edit left them and no other run is in flight, and cancels it when the
+    /// scene moves on (another edit, Undo, a live move of one of them). The
+    /// models' set goes to the same run Generate makes, for them alone; the
+    /// raft warning is not asked, as the person chose the pose.
+    fn watch_wanted(self: &Rc<Self>, ui: &MainWindow) {
+        let wanted = self.document.supports_wanted();
+        let stands = |w: &SupportsWanted| {
+            self.document
+                .with_scene(|spatial| w.stands_in(spatial))
+                .unwrap_or(false)
+        };
+        if let Some((revision, _)) = self.regenerating.borrow().as_ref() {
+            let current = wanted
+                .as_ref()
+                .is_some_and(|(r, w)| r == revision && stands(w));
+            if !current && let Some(handle) = self.handle.borrow().as_ref() {
+                handle.cancel();
+            }
+            return;
+        }
+        let Some((revision, wanted)) = wanted else {
+            return;
+        };
+        if self.handle.borrow().is_some()
+            || ui.get_loading()
+            || self.prescan.borrow().run_waiting
+            || !stands(&wanted)
+        {
+            return;
+        }
+        let mut request = self.request_for_printer();
+        request.options = self.options.borrow().clone();
+        request.models = Some(wanted.ids());
+        crate::breadcrumbs::note(&format!(
+            "supports: regenerating {} model(s)",
+            wanted.models.len()
+        ));
+        *self.regenerating.borrow_mut() = Some((revision, wanted));
+        self.launch(ui, request);
     }
 
     /// Keeps the supports generated ahead in step with the scene: drops them
@@ -1078,6 +1149,12 @@ impl DfSupportRun {
     /// Bottom setting does.
     pub(crate) fn turn_raft_off(&self) {
         self.on_option(9, 2.0);
+    }
+
+    /// Whether models wait for supports the last edit took away, or a run
+    /// is making them (#153).
+    pub(crate) fn regenerating(&self) -> bool {
+        self.regenerating.borrow().is_some() || self.document.supports_wanted().is_some()
     }
 
     /// The top of the raft the supports in the scene stand on, for the
@@ -1454,7 +1531,7 @@ impl DfSupportRun {
             points.len()
         ));
         // Each point goes to the set it acts on.
-        let mut groups: Vec<(DrawnSet, Vec<(usize, [f32; 3])>)> = Vec::new();
+        let mut groups: Vec<(DrawnSet, Vec<IndexedPoint>)> = Vec::new();
         let mut unset = Vec::new();
         for (i, point) in points.iter().enumerate() {
             let Some(drawn) = self.set_at(*point, tool) else {
@@ -1752,10 +1829,15 @@ impl DfSupportRun {
     fn finish(&self, outcome: Result<DfSupportOutcome, JobError>) {
         crate::breadcrumbs::note(&format!("supports: run finished ok={}", outcome.is_ok()));
         let started_on = self.started_on.borrow_mut().take();
+        let regenerating = self.regenerating.borrow_mut().take();
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(JobError::Cancelled) => return,
             Err(err) => {
+                if let Some((revision, wanted)) = &regenerating {
+                    self.document
+                        .settle_supports_wanted(*revision, &wanted.ids());
+                }
                 let message = err.to_string();
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("DfSupportDialog", "Support generation failed"),
@@ -1766,6 +1848,10 @@ impl DfSupportRun {
                 return;
             }
         };
+        if let Some((revision, wanted)) = regenerating {
+            self.finish_regeneration(revision, &wanted, outcome);
+            return;
+        }
         if started_on.is_none_or(|revision| self.document.slice_geometry_changed(revision)) {
             self.dialogs.show_info(|| InfoTexts {
                 heading: ctr!("DfSupportDialog", "Supports discarded"),
@@ -1844,6 +1930,9 @@ impl DfSupportRun {
             self.generated_raft_top
                 .set(Some(self.options.borrow().raft_top_mm()));
             self.warm_worker();
+            // Models left waiting for supports have them now.
+            self.document
+                .settle_supports_wanted(self.document.scene_revision(), &covered);
         }
         if let Err(error) = pasted {
             let details = error.to_string();
@@ -1864,6 +1953,104 @@ impl DfSupportRun {
                 message: summary.as_str().into(),
                 details: details.as_str().into(),
             });
+    }
+}
+
+impl DfSupportRun {
+    /// Ends a run that regenerated the supports of `wanted`, which the scene
+    /// at `revision` left waiting (#153): the new sets join that entry. A
+    /// scene that moved on drops the result quietly; the watcher starts again
+    /// for what then waits.
+    fn finish_regeneration(
+        &self,
+        revision: SceneRevision,
+        wanted: &SupportsWanted,
+        outcome: DfSupportOutcome,
+    ) {
+        let stands = self
+            .document
+            .with_scene(|spatial| wanted.stands_in(spatial))
+            .unwrap_or(false);
+        if self.document.scene_revision() != revision || !stands {
+            return;
+        }
+        let ids = wanted.ids();
+        let summary = summary_message(&outcome);
+        if let Some(ui) = self.ui.upgrade() {
+            let seconds = outcome.timings.total.as_secs_f64();
+            ui.set_supports_last_run(
+                format!("Supports regenerated for the new pose. {summary} {seconds:.1} s.").into(),
+            );
+        }
+        let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)> = outcome
+            .sets
+            .into_iter()
+            .filter_map(|set| Some((set.model, Arc::new(set.mesh?), set.session)))
+            .collect();
+        if sets.is_empty() {
+            // The new pose needs none.
+            self.document.settle_supports_wanted(revision, &ids);
+            return;
+        }
+        let fragment = SceneFragment::from_leaf_snapshots(
+            sets.iter()
+                .map(|(_, mesh, _)| (mesh.clone(), Transform3D::Identity)),
+        );
+        // The edit already took the models' sets away; a set of theirs that
+        // was out of date then goes now.
+        let replaced: Vec<NodeId> = self
+            .document
+            .with_scene(|spatial| {
+                support_leaves(spatial)
+                    .map(|(id, _)| id)
+                    .filter(|id| model_of(&self.sessions, *id).is_some_and(|m| ids.contains(&m)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        match self
+            .document
+            .paste_fragment_completing(&fragment, &replaced, revision, &ids)
+        {
+            Ok(leaves) if leaves.len() == sets.len() => {
+                for (leaf, (model, _, session)) in leaves.iter().zip(sets) {
+                    record(
+                        &self.document,
+                        &self.sessions,
+                        *leaf,
+                        model,
+                        Arc::new(session),
+                    );
+                }
+                self.generated_raft_top
+                    .set(Some(self.options.borrow().raft_top_mm()));
+                self.warm_worker();
+                if wanted.hand_edits_lost {
+                    self.dialogs
+                        .show_notice(MessageKey::SupportsRegeneratedHandEdits, || InfoTexts {
+                            heading: ctr!("DfSupportDialog", "Supports regenerated"),
+                            message: ctr!(
+                                "DfSupportDialog",
+                                "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
+                            ),
+                            details: Default::default(),
+                        });
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                self.document.settle_supports_wanted(revision, &ids);
+                let details = error.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("DfSupportDialog", "Support generation failed"),
+                    context: None,
+                    message: ctr!(
+                        "DfSupportDialog",
+                        "The scene rejected the generated supports; nothing was changed."
+                    ),
+                    details: details.as_str().into(),
+                });
+            }
+        }
     }
 }
 
@@ -2380,13 +2567,13 @@ mod hand_edit_tests {
         }
     }
 
-    /// Supports saved in a `.bread` reopen as data (#145): the models come
-    /// back where they were, the support mesh is redrawn from the saved
-    /// session, and the supports still edit by hand, with Undo.
+    /// Supports are saved as data (#145) while a session drew them for the
+    /// models as they stand: after a move in Z, which regenerates them
+    /// (#153), but not once the model has a new mesh.
     #[test]
     fn supports_stay_data_through_edits_that_leave_the_models_alone() {
         use crate::support_persist::{SupportsAsMesh, support_documents};
-        let (put_back, moved) = on_fresh_slint_thread(|| {
+        let (regenerated, out_of_date) = on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let ctrl = Rc::new(ViewportController::new_for_test());
@@ -2409,14 +2596,8 @@ mod hand_edit_tests {
                 .join();
             *run.started_on.borrow_mut() = Some(document.scene_revision());
             run.finish(outcome);
-            // Up: a move in X/Y takes the supports along (#119).
             let away = Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 10.0]));
-            let move_model = |before, after| {
-                let edit = SceneEdit::SetLocalTransform {
-                    node_id: model,
-                    before,
-                    after,
-                };
+            let edit_model = |edit: SceneEdit| {
                 document.apply_edit(edit.clone()).unwrap();
                 document.push_edit(edit);
             };
@@ -2428,16 +2609,34 @@ mod hand_edit_tests {
                     })
                     .unwrap()
             };
-            // Moved away and back: no session is in force, but the last one
-            // still fits the models and drew the supports shown.
-            move_model(at, away);
-            move_model(away, at);
-            let put_back = kept(&document);
-            move_model(at, away);
-            (put_back, kept(&document))
+            // Up in Z: the supports go, and come back regenerated as data
+            // (#153).
+            edit_model(SceneEdit::SetLocalTransform {
+                node_id: model,
+                before: at,
+                after: away,
+            });
+            assert_eq!(kept(&document), (0, None), "taken away");
+            run.watch_wanted(&window);
+            finish_running(&run);
+            let regenerated = kept(&document);
+            // A new mesh for the model (a repair, a hollow) leaves them out of
+            // date: saved as a mesh.
+            let swap = document
+                .with_scene(|spatial| {
+                    leaf_mesh_swap(
+                        spatial.graph(),
+                        model,
+                        Arc::new(sc_mesh_fixtures::cuboid_with_z_tunnel()),
+                    )
+                })
+                .flatten()
+                .expect("the model's mesh swaps");
+            edit_model(swap);
+            (regenerated, kept(&document))
         });
-        assert_eq!(put_back, (1, None));
-        assert_eq!(moved, (0, Some(SupportsAsMesh::NoSession)));
+        assert_eq!(regenerated, (1, None));
+        assert_eq!(out_of_date, (0, Some(SupportsAsMesh::NoSession)));
     }
 
     /// The scene of `cubes` (each a unit cube at its translation) with
@@ -2522,7 +2721,8 @@ mod hand_edit_tests {
     /// #119: a model moved in X/Y carries its supports along live and keeps
     /// them when the move is committed, redrawn in the same undo entry and
     /// still editable; Undo and Redo take both together. A move in Z leaves
-    /// them behind (#153 regenerates those).
+    /// them where they stood while live, and takes them away on commit
+    /// (#153 regenerates them).
     #[test]
     fn supports_move_with_their_model_in_x_and_y() {
         use crate::support_persist::support_documents;
@@ -2585,14 +2785,200 @@ mod hand_edit_tests {
             assert!(Arc::ptr_eq(&again, &moved));
             assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &moved_session)));
 
-            // Up in Z, they stay as they were and go out of date.
+            // Up in Z, they stay where they were while live, and go when
+            // the move is committed.
             let up = [27.0, 15.0, 10.0];
             move_live(&document, model, there, up);
             assert_eq!(leaf_transform(&document, supports), start);
             commit_move(&document, model, there, up);
-            let (_, after_z) = run.support_leaf().unwrap();
-            assert!(Arc::ptr_eq(&after_z, &moved));
-            assert!(in_force_session(&run).is_none(), "out of date");
+            assert!(run.support_leaf().is_none(), "taken away");
+            let (_, wanted) = document.supports_wanted().expect("new ones wanted");
+            assert_eq!(wanted.ids(), vec![model]);
+        });
+    }
+
+    /// Ends the run in flight as its poll would.
+    fn finish_running(run: &DfSupportRun) {
+        let handle = run.handle.borrow_mut().take().expect("a run in flight");
+        run.finish(handle.join());
+    }
+
+    fn turned(at: [f64; 3], angle: f64) -> Transform3D {
+        translation(at).compose(&Transform3D::Affine(AffineTransform3D::from_rotation_z(
+            angle,
+        )))
+    }
+
+    /// #153: a model turned loses its supports on commit and gets new ones
+    /// for its new pose, editable, in the same undo entry: one Undo brings
+    /// back the old pose with the old supports, Redo the new ones.
+    #[test]
+    fn a_turned_model_gets_new_supports_in_the_same_undo_step() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (_, generated) = run.support_leaf().expect("the supports were pasted");
+            let first = in_force_session(&run).expect("the run's session");
+            let (at, turn) = (
+                translation([20.0, 20.0, 8.0]),
+                turned([20.0, 20.0, 8.0], 0.5),
+            );
+            document
+                .apply_edit(SceneEdit::SetLocalTransform {
+                    node_id: model,
+                    before: at,
+                    after: turn,
+                })
+                .unwrap();
+            document.push_edit(SceneEdit::SetLocalTransform {
+                node_id: model,
+                before: at,
+                after: turn,
+            });
+            assert!(run.support_leaf().is_none(), "the old supports go at once");
+            assert!(!document.supports_wanted().unwrap().1.hand_edits_lost);
+
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_some(), "regenerating");
+            finish_running(&run);
+            let (_, regenerated) = run.support_leaf().expect("new supports");
+            assert!(!Arc::ptr_eq(&regenerated, &generated));
+            let session = in_force_session(&run).expect("editable");
+            assert!(!Arc::ptr_eq(&session, &first));
+            assert!(document.supports_wanted().is_none(), "nothing waits");
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "no second run");
+
+            // One Undo takes the turn and the new supports back together.
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, model), at);
+            let (_, back) = run.support_leaf().expect("the old supports");
+            assert!(Arc::ptr_eq(&back, &generated));
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
+            // The entry before is the first run's paste.
+            assert!(document.undo().unwrap());
+            assert!(run.support_leaf().is_none(), "one entry for the turn");
+            assert!(document.redo().unwrap());
+            assert!(document.redo().unwrap());
+            assert_eq!(leaf_transform(&document, model), turn);
+            let (_, again) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&again, &regenerated));
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &session)));
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "Redo needs no run");
+        });
+    }
+
+    /// #153: Undo while the new supports are being made cancels the run and
+    /// brings back the old pose with the old supports. A live move of the
+    /// model holds the run back until it ends where the edit left it.
+    #[test]
+    fn regenerating_waits_for_the_model_and_stops_on_undo() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (_, generated) = run.support_leaf().expect("the supports were pasted");
+            let (at, up) = ([20.0, 20.0, 8.0], [20.0, 20.0, 12.0]);
+            move_live(&document, model, at, up);
+            commit_move(&document, model, at, up);
+
+            // A live move elsewhere: the run waits.
+            move_live(&document, model, up, [20.0, 20.0, 14.0]);
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_none(), "waits for the model");
+            move_live(&document, model, [20.0, 20.0, 14.0], up);
+            run.watch_wanted(&window);
+            assert!(run.handle.borrow().is_some(), "back where the edit left it");
+
+            // Undo: the run is cancelled and nothing is pasted.
+            assert!(document.undo().unwrap());
+            run.watch_wanted(&window);
+            finish_running(&run);
+            assert_eq!(leaf_transform(&document, model), translation(at));
+            let (_, back) = run.support_leaf().expect("the old supports");
+            assert!(Arc::ptr_eq(&back, &generated));
+            assert_eq!(support_sets(&document).len(), 1);
+            assert!(document.supports_wanted().is_none());
+        });
+    }
+
+    /// #153: with two models, the one scaled gets new supports alone; the
+    /// other set is left as it was. A hand edit lost on the way is told.
+    #[test]
+    fn a_scaled_model_regenerates_its_set_alone() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let (_, other) = set_of(&document, &run, leaves[1]);
+            // A support by hand under the first model.
+            window.set_support_tool(1);
+            run.on_tool_click([20.2, 20.2, 7.5]);
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            let (_, edited) = set_of(&document, &run, leaves[0]);
+
+            let at = translation([20.0, 20.0, 8.0]);
+            let scaled = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+                [[1.5, 0.0, 0.0], [0.0, 1.5, 0.0], [0.0, 0.0, 1.5]],
+                [20.0, 20.0, 8.0],
+            ));
+            document
+                .apply_edit(SceneEdit::SetLocalTransform {
+                    node_id: leaves[0],
+                    before: at,
+                    after: scaled,
+                })
+                .unwrap();
+            document.push_edit(SceneEdit::SetLocalTransform {
+                node_id: leaves[0],
+                before: at,
+                after: scaled,
+            });
+            let (_, wanted) = document.supports_wanted().expect("new ones wanted");
+            assert_eq!(wanted.ids(), vec![leaves[0]]);
+            assert!(wanted.hand_edits_lost, "the hand edit goes");
+            run.watch_wanted(&window);
+            finish_running(&run);
+
+            assert_eq!(support_sets(&document).len(), 2);
+            let (_, regenerated) = set_of(&document, &run, leaves[0]);
+            assert!(!Arc::ptr_eq(&regenerated, &edited));
+            assert!(Arc::ptr_eq(&set_of(&document, &run, leaves[1]).1, &other));
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+        });
+    }
+
+    /// #153: a lift of several models in one edit (clear of the raft)
+    /// regenerates each one's set, in that edit's undo entry.
+    #[test]
+    fn a_lift_of_two_models_regenerates_both_sets() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let lift = |node_id, x| SceneEdit::SetLocalTransform {
+                node_id,
+                before: translation([x, 20.0, 8.0]),
+                after: translation([x, 20.0, 11.0]),
+            };
+            let edit = SceneEdit::Compound(vec![lift(leaves[0], 20.0), lift(leaves[1], 50.0)]);
+            document.apply_edit(edit.clone()).unwrap();
+            document.push_edit(edit);
+            assert!(support_sets(&document).is_empty(), "both sets go");
+            let (_, wanted) = document.supports_wanted().expect("new ones wanted");
+            assert_eq!(wanted.ids(), leaves);
+            run.watch_wanted(&window);
+            finish_running(&run);
+            assert_eq!(run.sets_in_force().len(), 2);
+
+            assert!(document.undo().unwrap());
+            assert_eq!(
+                leaf_transform(&document, leaves[0]),
+                translation([20.0, 20.0, 8.0])
+            );
+            assert_eq!(run.sets_in_force().len(), 2, "the old sets, in force");
         });
     }
 

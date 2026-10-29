@@ -115,6 +115,9 @@ pub(crate) enum MessageKey {
     SupportsGenerated,
     /// Supports tab: the generation found nothing to support.
     SupportsNotNeeded,
+    /// A model moved in Z, turned or scaled got new supports in place of
+    /// supports edited by hand (#153).
+    SupportsRegeneratedHandEdits,
     /// Tools menu: the summary of the support-structure generator.
     SupportStructuresGenerated,
     /// Transform tab: the summary of a mesh repair.
@@ -128,6 +131,7 @@ impl MessageKey {
             Self::SupportsEditNeedsSupports => "supports.edit-needs-supports",
             Self::SupportsGenerated => "supports.generated",
             Self::SupportsNotNeeded => "supports.not-needed",
+            Self::SupportsRegeneratedHandEdits => "supports.regenerated-hand-edits",
             Self::SupportStructuresGenerated => "support-structures.generated",
             Self::MeshRepairSummary => "repair.summary",
         }
@@ -861,6 +865,7 @@ mod message_policy_tests {
             MessageKey::SupportsEditNeedsSupports,
             MessageKey::SupportsGenerated,
             MessageKey::SupportsNotNeeded,
+            MessageKey::SupportsRegeneratedHandEdits,
             MessageKey::SupportStructuresGenerated,
             MessageKey::MeshRepairSummary,
         ];

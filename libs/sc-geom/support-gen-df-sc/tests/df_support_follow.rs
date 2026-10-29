@@ -180,6 +180,36 @@ fn supports_move_with_their_model_in_the_plane() {
         .expect("a support there");
 }
 
+/// A run made again would not keep hand edits (#153): a session tells
+/// whether it has any, through a move and, for hand additions, a reopen.
+#[test]
+fn a_session_knows_it_was_edited_by_hand() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    assert!(!session.hand_edited());
+    assert!(!session.moved_in_plane(0, [5.0, 0.0]).hand_edited());
+
+    let mut added = session.clone();
+    added
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    assert!(added.hand_edited());
+    assert!(added.moved_in_plane(0, [5.0, 0.0]).hand_edited());
+    let reopen = |s: &DfSupportSession| {
+        let document = s.to_document().expect("a run from options is data");
+        DfSupportSession::from_document(&scene, DF_SUPPORT_DOCUMENT_VERSION, &document)
+            .expect("the same models")
+    };
+    assert!(reopen(&added).hand_edited());
+
+    let mut removed = reopen(&session);
+    assert!(!removed.hand_edited());
+    removed
+        .remove_near([1.5, 1.5, 7.9])
+        .expect("a support there");
+    assert!(removed.hand_edited());
+}
+
 #[test]
 fn each_model_gets_a_set_of_its_own_that_moves_alone() {
     let (scene, leaves) = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 8.0])]);

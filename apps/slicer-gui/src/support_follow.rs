@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Supports that move with their model in X/Y (#119).
+//! Supports that move with their model in X/Y (#119), and that make way
+//! for new ones when it moves in Z, turns or scales (#153).
 //!
 //! The document calls in here for every transform edit of a leaf, however it
 //! was made (the gizmo, `G`, the arrow keys, the Transform inspector,
@@ -14,8 +15,14 @@
 //! takes the old one's place in the same undo entry as the move, and the
 //! support leaf is back where it was. Nothing is placed again, so the
 //! supports stay the ones the person made, editable by hand and saved as
-//! data. The other models' sets are left alone. A move in Z, a rotation or a
-//! scale leaves the supports as they were.
+//! data. The other models' sets are left alone.
+//!
+//! A move in Z, a rotation or a scale (Drop to plate and a lift clear of the
+//! raft among them) leaves the supports where they stood while it is live.
+//! When it is committed, they no longer fit the model: the set is removed in
+//! the same undo entry, and the model waits for new supports, which the
+//! support driver generates and adds to that entry
+//! ([`SceneDocument::supports_wanted`]).
 
 use std::sync::Arc;
 
@@ -196,16 +203,137 @@ pub(crate) struct MovedSet {
     pub(crate) session: Arc<DfSupportSession>,
 }
 
+/// An edit about to be recorded, as [`commit`] hands it back.
+pub(crate) struct Committed {
+    /// The edit, with the supports' part.
+    pub(crate) edit: SceneEdit,
+    /// The set a move in the plate plane redrew.
+    pub(crate) moved: Option<MovedSet>,
+    /// The models whose supports a move in Z, a rotation or a scale took
+    /// away: they get new ones (#153).
+    pub(crate) regenerate: Vec<NodeId>,
+    /// Whether the supports taken away were edited by hand.
+    pub(crate) hand_edits_lost: bool,
+}
+
 /// An edit about to be recorded. Supports a live move left moved go back
 /// first, whatever the edit. A move of a model in the plate plane comes back
 /// with its supports redrawn where the model now is, applied and in the same
-/// entry, and the set it redrew; any other edit comes back as it was.
-pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> (SceneEdit, Option<MovedSet>) {
+/// entry, and the set it redrew. Any other move of a model, by itself or
+/// among others in one edit, comes back with the model's supports removed,
+/// applied and in the same entry, and the model to regenerate. Any other edit
+/// comes back as it was.
+pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> Committed {
     settle(doc);
-    match follow_commit(doc, &edit) {
-        Some((swap, moved)) => (SceneEdit::Compound(vec![edit, swap]), Some(moved)),
-        None => (edit, None),
+    if let Some((swap, moved)) = follow_commit(doc, &edit) {
+        return Committed {
+            edit: SceneEdit::Compound(vec![edit, swap]),
+            moved: Some(moved),
+            regenerate: Vec::new(),
+            hand_edits_lost: false,
+        };
     }
+    match take_commit(doc, &edit) {
+        Some((removal, regenerate, hand_edits_lost)) => Committed {
+            edit: SceneEdit::Compound(vec![edit, removal]),
+            moved: None,
+            regenerate,
+            hand_edits_lost,
+        },
+        None => Committed {
+            edit,
+            moved: None,
+            regenerate: Vec::new(),
+            hand_edits_lost: false,
+        },
+    }
+}
+
+/// The transform edits `edit` makes: itself, or each part of a compound
+/// that only moves leaves (a lift of several models clear of the raft).
+fn transform_edits(edit: &SceneEdit) -> Vec<(NodeId, &Transform3D, &Transform3D)> {
+    let parts = match edit {
+        SceneEdit::Compound(parts) => parts.as_slice(),
+        other => std::slice::from_ref(other),
+    };
+    parts
+        .iter()
+        .map(|part| match part {
+            SceneEdit::SetLocalTransform {
+                node_id,
+                before,
+                after,
+            } => Some((*node_id, before, after)),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
+}
+
+/// For a committed move of models other than in the plate plane: the edit
+/// that removes the support sets in force where they came from, applied,
+/// the models whose sets it removes, and whether any of them was edited by
+/// hand. `None` when no such model has a set in force.
+fn take_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Vec<NodeId>, bool)> {
+    if doc.support_sessions().borrow().is_empty() {
+        return None;
+    }
+    let mut taken: Vec<(NodeId, NodeId)> = Vec::new();
+    let mut hand_edits_lost = false;
+    for (node_id, before, after) in transform_edits(edit) {
+        if before == after {
+            continue;
+        }
+        let from = doc
+            .with_scene(|spatial| {
+                let query = spatial.leaf(node_id)?;
+                if is_support_mesh(query.mesh()) {
+                    return None;
+                }
+                let parent = query.parent_world();
+                let from = parent.compose(before);
+                // A move in the plate plane takes them along instead.
+                plane_move(&from, &parent.compose(after))
+                    .is_none()
+                    .then_some(from)
+            })
+            .flatten();
+        // The edit is already live: the set was in force where the model
+        // came from.
+        if let Some(from) = from
+            && let Some((supports, session, _)) = model_set(doc, node_id, Some(&from))
+        {
+            hand_edits_lost |= session.hand_edited();
+            taken.push((node_id, supports));
+        }
+    }
+    if taken.is_empty() {
+        return None;
+    }
+    let mut graph = doc.with_scene(|spatial| spatial.graph().clone())?;
+    let mut removals = Vec::new();
+    // Each removal is worked out on the scene the ones before it leave.
+    for (_, supports) in &taken {
+        if let Some(remove) = SceneEdit::remove_leaf_with_gc(&graph, *supports) {
+            remove.apply_to_scene(&mut graph).ok()?;
+            removals.push(remove);
+        }
+    }
+    let removal = match removals.len() {
+        0 => return None,
+        1 => removals.pop().expect("len == 1"),
+        _ => SceneEdit::Compound(removals),
+    };
+    doc.apply_edit_unfollowed(removal.clone()).ok()?;
+    crate::breadcrumbs::note(&format!(
+        "supports: {} set(s) removed to regenerate",
+        taken.len()
+    ));
+    Some((
+        removal,
+        taken.into_iter().map(|(model, _)| model).collect(),
+        hand_edits_lost,
+    ))
 }
 
 fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, MovedSet)> {
@@ -285,5 +413,31 @@ mod tests {
             [5.0, 0.0, 0.0],
         ));
         assert_eq!(plane_move(&Transform3D::Identity, &scaled), None);
+    }
+
+    #[test]
+    fn a_compound_of_moves_counts_as_each_move() {
+        let mut scene = sc_scene::Scene::new();
+        let mut leaf = || {
+            scene
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    sc_scene::LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap()
+        };
+        let (a, b) = (leaf(), leaf());
+        let lift = |node_id| SceneEdit::SetLocalTransform {
+            node_id,
+            before: at([0.0, 0.0, 0.0]),
+            after: at([0.0, 0.0, 2.0]),
+        };
+        assert_eq!(transform_edits(&lift(a)).len(), 1);
+        let both = SceneEdit::Compound(vec![lift(a), lift(b)]);
+        let moved: Vec<NodeId> = transform_edits(&both).iter().map(|m| m.0).collect();
+        assert_eq!(moved, vec![a, b]);
+        let mixed = SceneEdit::Compound(vec![lift(a), SceneEdit::Compound(Vec::new())]);
+        assert!(transform_edits(&mixed).is_empty(), "not only moves");
     }
 }

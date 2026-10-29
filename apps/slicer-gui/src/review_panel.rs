@@ -902,10 +902,19 @@ impl ReviewPanel {
             Some(SuggestedFix::ClearRaft { lift_to_mm, .. }) => {
                 if self.supports.lift_clear_of_raft(lift_to_mm) {
                     self.mark_fixed(index);
-                    Some(ctr!(
-                        "Review",
-                        "Model lifted clear of the raft. Generate the supports again, then slice."
-                    ))
+                    // Supports that were in force are made again on their
+                    // own (#153).
+                    Some(if self.supports.regenerating() {
+                        ctr!(
+                            "Review",
+                            "Model lifted clear of the raft. Its supports are being generated again; slice once they are in."
+                        )
+                    } else {
+                        ctr!(
+                            "Review",
+                            "Model lifted clear of the raft. Generate the supports again, then slice."
+                        )
+                    })
                 } else {
                     Some(ctr!(
                         "Review",

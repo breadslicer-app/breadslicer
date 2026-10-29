@@ -70,7 +70,12 @@ pub struct DfSupportSession {
     sdfs: Arc<[SdfSlot]>,
     id_prefix: String,
     next_id: u64,
+    /// Whether a hand edit added or removed supports since the run.
+    hand_edited: bool,
 }
+
+/// The first hand-placed id is the one after this.
+const HAND_IDS_FROM: u64 = 1_000_000;
 
 /// The supports as a removal reads them: each entity's id, the points it
 /// passes through, the ids of its parts, and who names whom.
@@ -325,11 +330,12 @@ impl DfSupportSession {
         state: SupportState,
         id_prefix: String,
     ) -> Self {
-        Self::restored(models, settings, recipe, state, id_prefix, 1_000_000)
+        Self::restored(models, settings, recipe, state, id_prefix, HAND_IDS_FROM)
     }
 
     /// A session from its parts, with the next hand-placed id counting on
-    /// from `next_id`.
+    /// from `next_id`. A saved session only tells hand additions, by their
+    /// ids: one with any reads as edited by hand.
     pub(crate) fn restored(
         models: Vec<ModelInput>,
         settings: PipelineSettings,
@@ -350,6 +356,7 @@ impl DfSupportSession {
             sdfs,
             id_prefix,
             next_id,
+            hand_edited: next_id > HAND_IDS_FROM,
         }
     }
 
@@ -367,6 +374,12 @@ impl DfSupportSession {
     /// The support state as it now stands.
     pub fn state(&self) -> &SupportState {
         &self.state
+    }
+
+    /// Whether supports were added or removed by hand since the run: a run
+    /// made again would not keep those edits.
+    pub fn hand_edited(&self) -> bool {
+        self.hand_edited
     }
 
     /// How many models the session was made on.
@@ -427,6 +440,7 @@ impl DfSupportSession {
             sdfs,
             id_prefix: self.id_prefix.clone(),
             next_id: self.next_id,
+            hand_edited: self.hand_edited,
         }
     }
 
@@ -461,6 +475,7 @@ impl DfSupportSession {
                     sdfs: vec![SdfSlot(std::sync::Mutex::new(sdf))].into(),
                     id_prefix: format!("{}.{i}", self.id_prefix),
                     next_id: self.next_id,
+                    hand_edited: self.hand_edited,
                 }
             })
             .collect()
@@ -622,6 +637,7 @@ impl DfSupportSession {
                 .map_or_else(|| "rejected".to_owned(), |r| format!("{r:?}"));
             return Err(EditError::NoRoute(why));
         }
+        self.hand_edited = true;
         Ok(all_ids(&self.state.collections)
             .into_iter()
             .filter(|id| !before.contains(id))
@@ -837,6 +853,7 @@ impl DfSupportSession {
         let gone = self.removal(point)?;
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
+        self.hand_edited = true;
         Ok(gone.len())
     }
 
