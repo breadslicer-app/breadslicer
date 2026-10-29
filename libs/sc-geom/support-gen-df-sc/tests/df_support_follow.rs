@@ -1,7 +1,7 @@
-//! Supports that move with their model in X/Y (#119): the session moved in
-//! the plane draws the same supports moved, saves and reopens on the moved
-//! scene, edits by hand there. Each model has a set of its own (#197), which
-//! moves alone.
+//! Supports that move with their model in X/Y (#119) and turn with it about
+//! the vertical axis (#153): the session taken along draws the same supports
+//! where the model now is, saves and reopens on that scene, edits by hand
+//! there. Each model has a set of its own (#197), which moves alone.
 
 use std::sync::Arc;
 
@@ -10,7 +10,8 @@ use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, NodeId, Scene};
 use serde_json::Value;
 use support_gen_df_sc::{
-    DF_SUPPORT_DOCUMENT_VERSION, DfSupportRequest, DfSupportSession, model_index, start_df_supports,
+    DF_SUPPORT_DOCUMENT_VERSION, DfSupportRequest, DfSupportSession, model_index,
+    scene_model_leaves, start_df_supports,
 };
 
 /// A closed 10 mm cube, outward-wound.
@@ -46,13 +47,22 @@ fn cube() -> IndexedMesh {
 }
 
 fn scene_with(meshes: Vec<(IndexedMesh, [f64; 3])>) -> (Scene, Vec<NodeId>) {
+    scene_placed(
+        meshes
+            .into_iter()
+            .map(|(mesh, offset)| (mesh, AffineTransform3D::from_translation(offset)))
+            .collect(),
+    )
+}
+
+fn scene_placed(meshes: Vec<(IndexedMesh, AffineTransform3D)>) -> (Scene, Vec<NodeId>) {
     let mut g = Scene::new();
     let mut leaves = Vec::new();
-    for (mesh, offset) in meshes {
+    for (mesh, placed) in meshes {
         let leaf = g
             .add_leaf(
                 None,
-                Transform3D::Affine(AffineTransform3D::from_translation(offset)),
+                Transform3D::Affine(placed),
                 LeafPayload::Mesh(Arc::new(mesh)),
             )
             .unwrap();
@@ -74,55 +84,113 @@ fn run_on(scene: &Scene) -> DfSupportSession {
 
 /// Keys whose points are positions, and keys whose points are directions.
 const MOVED: [&str; 4] = ["pos", "rootPos", "controlPoint1", "controlPoint2"];
-const KEPT: [&str; 6] = [
+const TURNED: [&str; 5] = [
     "normal",
     "surfaceNormal",
     "coneAxis",
     "startTangent",
     "endTangent",
-    "rot",
 ];
 
+/// A motion of the plate plane: a turn by `angle` radians about the Z axis,
+/// then a move by `d`.
+#[derive(Clone, Copy)]
+struct Motion {
+    angle: f64,
+    d: [f64; 2],
+}
+
+impl Motion {
+    fn shift(d: [f64; 2]) -> Self {
+        Motion { angle: 0.0, d }
+    }
+
+    fn direction(&self, [x, y, z]: [f64; 3]) -> [f64; 3] {
+        let (s, c) = self.angle.sin_cos();
+        [c * x - s * y, s * x + c * y, z]
+    }
+
+    fn point(&self, p: [f64; 3]) -> [f64; 3] {
+        let [x, y, z] = self.direction(p);
+        [x + self.d[0], y + self.d[1], z]
+    }
+
+    /// The turn applied after the rotation `q` (`x, y, z, w`).
+    fn rotation(&self, [x, y, z, w]: [f64; 4]) -> [f64; 4] {
+        let (s, c) = (self.angle / 2.0).sin_cos();
+        [c * x - s * y, c * y + s * x, c * z + s * w, c * w - s * z]
+    }
+}
+
+fn near<const N: usize>(a: [f64; N], b: [f64; N]) -> bool {
+    (0..N).all(|k| (a[k] - b[k]).abs() < 1e-9)
+}
+
+/// How far the point of `from` farthest from all of `to` is from them.
+fn farthest(from: &[[f64; 3]], to: &[[f64; 3]]) -> f64 {
+    from.iter()
+        .map(|a| {
+            to.iter()
+                .map(|b| (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f64>())
+                .fold(f64::MAX, f64::min)
+                .sqrt()
+        })
+        .fold(0.0, f64::max)
+}
+
 /// Walks `before` and `after` together: every `{x, y, z}` point under a
-/// position key moved by `d`, every one under a direction key did not, and
-/// any other point did one or the other. Returns how many points moved.
-fn check_points(key: &str, before: &Value, after: &Value, d: [f64; 2]) -> usize {
+/// position key went where `m` takes it, every one under a direction key
+/// only turned, a root's rotation turned, and any other point did one or
+/// stayed. Z never changes. Returns how many points moved.
+fn check_points(key: &str, before: &Value, after: &Value, m: Motion) -> usize {
     let mut moved = 0;
     match (before, after) {
         (Value::Object(b), Value::Object(a)) => {
+            let xyz = |o: &serde_json::Map<String, Value>| {
+                Some([
+                    o.get("x")?.as_f64()?,
+                    o.get("y")?.as_f64()?,
+                    o.get("z")?.as_f64()?,
+                ])
+            };
             let mut point = false;
-            if let (Some(x0), Some(y0), Some(z0), Some(x1), Some(y1), Some(z1)) = (
-                b.get("x").and_then(Value::as_f64),
-                b.get("y").and_then(Value::as_f64),
-                b.get("z").and_then(Value::as_f64),
-                a.get("x").and_then(Value::as_f64),
-                a.get("y").and_then(Value::as_f64),
-                a.get("z").and_then(Value::as_f64),
-            ) {
-                let shifted = (x1 - x0 - d[0]).abs() < 1e-9 && (y1 - y0 - d[1]).abs() < 1e-9;
-                let same = x1 == x0 && y1 == y0;
-                assert_eq!(z1, z0, "{key}: a move in the plane keeps Z");
-                if MOVED.contains(&key) {
-                    assert!(shifted, "{key} did not move: {before} -> {after}");
-                } else if KEPT.contains(&key) {
-                    assert!(same, "{key} is a direction and moved: {before} -> {after}");
-                } else {
-                    assert!(shifted || same, "{key}: {before} -> {after}");
-                }
-                moved += usize::from(shifted && !same);
+            if let (Some(p0), Some(p1)) = (xyz(b), xyz(a)) {
                 point = true;
+                if key == "rot" {
+                    let w = |o: &serde_json::Map<String, Value>| o["w"].as_f64().unwrap();
+                    let (q0, q1) = ([p0[0], p0[1], p0[2], w(b)], [p1[0], p1[1], p1[2], w(a)]);
+                    assert!(
+                        near(q1, m.rotation(q0)),
+                        "rot did not turn: {before} -> {after}"
+                    );
+                } else {
+                    let went = near(p1, m.point(p0));
+                    let same = p1 == p0;
+                    assert_eq!(p1[2], p0[2], "{key}: a motion in the plane keeps Z");
+                    if MOVED.contains(&key) {
+                        assert!(went, "{key} did not move: {before} -> {after}");
+                    } else if TURNED.contains(&key) {
+                        assert!(
+                            near(p1, m.direction(p0)),
+                            "{key} is a direction and did not just turn: {before} -> {after}"
+                        );
+                    } else {
+                        assert!(went || same, "{key}: {before} -> {after}");
+                    }
+                    moved += usize::from(went && !same);
+                }
             }
             assert_eq!(b.len(), a.len(), "{key}: the same fields");
             for (k, v) in b {
-                if !(point && ["x", "y", "z"].contains(&k.as_str())) {
-                    moved += check_points(k, v, &a[k], d);
+                if !(point && ["x", "y", "z", "w"].contains(&k.as_str())) {
+                    moved += check_points(k, v, &a[k], m);
                 }
             }
         }
         (Value::Array(b), Value::Array(a)) => {
             assert_eq!(b.len(), a.len(), "{key}: the same items");
             for (b, a) in b.iter().zip(a) {
-                moved += check_points(key, b, a, d);
+                moved += check_points(key, b, a, m);
             }
         }
         (b, a) => assert_eq!(b, a, "{key}"),
@@ -142,7 +210,7 @@ fn supports_move_with_their_model_in_the_plane() {
     // Every position moves, no direction does, and nothing is placed again.
     let before = serde_json::to_value(session.state()).unwrap();
     let after = serde_json::to_value(moved.state()).unwrap();
-    assert!(check_points("state", &before, &after, d) > 0);
+    assert!(check_points("state", &before, &after, Motion::shift(d)) > 0);
 
     // The same supports, drawn where the model now is.
     let drawn = moved.mesh().unwrap().expect("a support mesh");
@@ -178,6 +246,98 @@ fn supports_move_with_their_model_in_the_plane() {
     reopened
         .remove_near([1.5 + d[0], 1.5 + d[1], 7.9])
         .expect("a support there");
+}
+
+/// #153: a model turned about the vertical axis still stands on the plate
+/// the way it did, so its supports turn with it instead of being made again.
+#[test]
+fn supports_turn_with_their_model_about_the_vertical_axis() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    let mesh = session.mesh().unwrap().expect("a support mesh");
+    // 30 degrees about the cube's centre line, then 12 mm along X.
+    let angle = 30f64.to_radians();
+    let (s, c) = angle.sin_cos();
+    let d = [5.0 - (c * 5.0 - s * 5.0) + 12.0, 5.0 - (s * 5.0 + c * 5.0)];
+    let m = Motion { angle, d };
+    let placed = AffineTransform3D::from_linear_and_translation(
+        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+        m.point([0.0, 0.0, 8.0]),
+    );
+    let (there, _) = scene_placed(vec![(cube(), placed)]);
+    let (_, now) = scene_model_leaves(&there, None).unwrap().remove(0);
+    let turned = session.turned_in_plane(0, now, angle, d);
+
+    // Every position turns and moves, every direction turns, nothing is
+    // placed again.
+    let before = serde_json::to_value(session.state()).unwrap();
+    let after = serde_json::to_value(turned.state()).unwrap();
+    assert!(check_points("state", &before, &after, m) > 0);
+
+    // Drawn where the model now is: the same supports, turned. Each round
+    // piece is tessellated from a fixed world angle, so its ring vertices
+    // slide along their circle (0.13 mm on this cube's), but no further.
+    let drawn = turned.mesh().unwrap().expect("a support mesh");
+    assert_eq!(drawn.faces().len(), mesh.faces().len());
+    assert_eq!(drawn.vertices().len(), mesh.vertices().len());
+    let points = |mesh: &IndexedMesh| -> Vec<[f64; 3]> {
+        mesh.vertices()
+            .iter()
+            .map(|v| v.as_array().map(f64::from))
+            .collect()
+    };
+    let drawn = points(&drawn);
+    let expected: Vec<[f64; 3]> = points(&mesh).into_iter().map(|p| m.point(p)).collect();
+    let off = farthest(&drawn, &expected).max(farthest(&expected, &drawn));
+    assert!(off < 0.25, "a vertex is {off} mm off the turned supports");
+
+    // It fits the turned scene, keeps as data and reopens there.
+    assert!(turned.fits_models_of(&there));
+    assert!(!turned.fits_models_of(&scene));
+    let document = turned.to_document().expect("a run from options is data");
+    let mut reopened =
+        DfSupportSession::from_document(&there, DF_SUPPORT_DOCUMENT_VERSION, &document)
+            .expect("the turned model");
+    assert_eq!(reopened.state(), turned.state());
+
+    // Hand edits go on where the model now is.
+    let mut edited = turned.clone();
+    edited
+        .add_trunk_at(m.point([1.5, 1.5, 8.0]))
+        .expect("a way to hold it");
+    reopened
+        .remove_near(m.point([1.5, 1.5, 7.9]))
+        .expect("a support there");
+}
+
+/// A run made again would not keep hand edits (#153): a session tells
+/// whether it has any, through a move and, for hand additions, a reopen.
+#[test]
+fn a_session_knows_it_was_edited_by_hand() {
+    let (scene, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    assert!(!session.hand_edited());
+    assert!(!session.moved_in_plane(0, [5.0, 0.0]).hand_edited());
+
+    let mut added = session.clone();
+    added
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    assert!(added.hand_edited());
+    assert!(added.moved_in_plane(0, [5.0, 0.0]).hand_edited());
+    let reopen = |s: &DfSupportSession| {
+        let document = s.to_document().expect("a run from options is data");
+        DfSupportSession::from_document(&scene, DF_SUPPORT_DOCUMENT_VERSION, &document)
+            .expect("the same models")
+    };
+    assert!(reopen(&added).hand_edited());
+
+    let mut removed = reopen(&session);
+    assert!(!removed.hand_edited());
+    removed
+        .remove_near([1.5, 1.5, 7.9])
+        .expect("a support there");
+    assert!(removed.hand_edited());
 }
 
 #[test]
@@ -315,7 +475,10 @@ fn moving_a_real_model_s_supports() {
     );
     let before = serde_json::to_value(session.state()).unwrap();
     let after = serde_json::to_value(moved.state()).unwrap();
-    println!("{} points moved", check_points("state", &before, &after, d));
+    println!(
+        "{} points moved",
+        check_points("state", &before, &after, Motion::shift(d))
+    );
     assert_eq!(drawn.faces().len(), mesh.faces().len());
     let off = drawn
         .vertices()

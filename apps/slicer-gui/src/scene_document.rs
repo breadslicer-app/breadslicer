@@ -140,6 +140,38 @@ type Listener = Rc<dyn Fn(SceneEvent)>;
 struct HistoryEntry {
     id: u64,
     edit: SceneEdit,
+    /// The models left waiting for new supports by this edit or one before
+    /// it (#153).
+    wants: Option<SupportsWanted>,
+}
+
+/// Models whose supports a move in Z, a tilt or a scale took away, and
+/// that wait for new ones (#153). The run that makes them completes the edit
+/// that left them waiting ([`SceneDocument::paste_fragment_completing`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SupportsWanted {
+    /// Each model, with its world transform as the edit left it: the new
+    /// supports are made for that pose, so a model a live move has taken
+    /// elsewhere waits for it.
+    pub(crate) models: Vec<(NodeId, Transform3D)>,
+    /// Whether the supports taken away were edited by hand.
+    pub(crate) hand_edits_lost: bool,
+}
+
+impl SupportsWanted {
+    /// The models waiting.
+    pub(crate) fn ids(&self) -> Vec<NodeId> {
+        self.models.iter().map(|(id, _)| *id).collect()
+    }
+
+    /// Whether every model waiting stands where the edit left it.
+    pub(crate) fn stands_in(&self, spatial: &SceneSpatial) -> bool {
+        self.models.iter().all(|(id, world)| {
+            spatial
+                .leaf(*id)
+                .is_some_and(|query| query.world_transform() == *world)
+        })
+    }
 }
 
 /// What the document was loaded as: a project or a mesh. It decides whether
@@ -833,12 +865,22 @@ impl SceneDocument {
     /// stack: a fresh edit invalidates the previously-rolled-back trail.
     ///
     /// A model moved in X/Y takes its supports with it, redrawn in the same
-    /// entry ([`crate::support_follow::commit`]).
+    /// entry ([`crate::support_follow::commit`]). A model moved in Z, tilted
+    /// or scaled loses them in the entry, and waits for new ones
+    /// ([`Self::supports_wanted`]); models the entry before still waited for
+    /// wait on.
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
-        let (edit, moved) = crate::support_follow::commit(self, edit);
+        let committed = crate::support_follow::commit(self, edit);
+        let (edit, moved) = (committed.edit, committed.moved);
         if edit.is_noop() {
             return;
         }
+        let carried = self
+            .undo_stack
+            .borrow()
+            .back()
+            .and_then(|entry| entry.wants.clone());
+        let wants = self.wants_after(carried, &committed.regenerate, committed.hand_edits_lost);
         let was_dirty = self.is_dirty();
         let id = self.next_edit_id.get();
         self.next_edit_id.set(id + 1);
@@ -849,7 +891,7 @@ impl SceneDocument {
                 self.evicted_since_save.set(true);
                 self.evicted_since_slice.set(true);
             }
-            undo.push_back(HistoryEntry { id, edit });
+            undo.push_back(HistoryEntry { id, edit, wants });
         }
         self.redo_stack.borrow_mut().clear();
         if let Some(moved) = moved {
@@ -865,6 +907,104 @@ impl SceneDocument {
         }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
+    }
+
+    /// The models waiting for supports once an edit is applied: those the
+    /// entry before left waiting and those it took the supports of, each
+    /// where the scene now has it. A model the scene no longer holds waits
+    /// no more.
+    fn wants_after(
+        &self,
+        carried: Option<SupportsWanted>,
+        taken: &[NodeId],
+        hand_edits_lost: bool,
+    ) -> Option<SupportsWanted> {
+        let hand_edits_lost =
+            hand_edits_lost || carried.as_ref().is_some_and(|w| w.hand_edits_lost);
+        let mut ids = carried.map(|w| w.ids()).unwrap_or_default();
+        for id in taken {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        let models: Vec<(NodeId, Transform3D)> = self
+            .with_scene(|spatial| {
+                ids.iter()
+                    .filter_map(|&id| Some((id, spatial.leaf(id)?.world_transform())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (!models.is_empty()).then_some(SupportsWanted {
+            models,
+            hand_edits_lost,
+        })
+    }
+
+    /// The models waiting for new supports (#153), and the scene revision
+    /// that left them waiting: those of the newest entry, while nothing is
+    /// left to redo (an entry with edits after it cannot take new ones in).
+    pub(crate) fn supports_wanted(&self) -> Option<(SceneRevision, SupportsWanted)> {
+        if !self.redo_stack.borrow().is_empty() {
+            return None;
+        }
+        let wants = self.undo_stack.borrow().back()?.wants.clone()?;
+        Some((self.scene_revision(), wants))
+    }
+
+    /// Takes `models` off the models waiting for supports, while the scene
+    /// is still at `revision`: they got supports, or the person cancelled
+    /// the run that would have made them.
+    pub(crate) fn settle_supports_wanted(&self, revision: SceneRevision, models: &[NodeId]) {
+        if self.scene_revision() != revision {
+            return;
+        }
+        let mut undo = self.undo_stack.borrow_mut();
+        let Some(entry) = undo.back_mut() else {
+            return;
+        };
+        if let Some(wants) = &mut entry.wants {
+            wants.models.retain(|(id, _)| !models.contains(id));
+            if wants.models.is_empty() {
+                entry.wants = None;
+            }
+        }
+    }
+
+    /// Applies `edit` and adds it to the newest entry, which then undoes
+    /// both together, and takes `settled` off the models it left waiting:
+    /// the new supports of a model a move in Z, a tilt or a scale took
+    /// them from (#153). The entry gets a new id, so the scene revision moves
+    /// on (a save or a slice before it no longer matches). Returns
+    /// `Ok(false)`, applying nothing, when the scene is no longer at
+    /// `revision` or something is left to redo.
+    pub(crate) fn complete_last_edit(
+        &self,
+        revision: SceneRevision,
+        edit: SceneEdit,
+        settled: &[NodeId],
+    ) -> Result<bool, SceneError> {
+        if self.scene_revision() != revision || !self.redo_stack.borrow().is_empty() {
+            return Ok(false);
+        }
+        let was_dirty = self.is_dirty();
+        match self.apply_edit_unfollowed(edit.clone()) {
+            Ok(()) => {}
+            Err(EditNotApplied::NoSceneLoaded) => return Ok(false),
+            Err(EditNotApplied::Rejected(error)) => return Err(error),
+        }
+        self.settle_supports_wanted(revision, settled);
+        let id = self.next_edit_id.get();
+        self.next_edit_id.set(id + 1);
+        {
+            let mut undo = self.undo_stack.borrow_mut();
+            let entry = undo.back_mut().expect("the revision names an entry");
+            let first = std::mem::replace(&mut entry.edit, SceneEdit::Compound(Vec::new()));
+            entry.edit = SceneEdit::Compound(vec![first, edit]);
+            entry.id = id;
+        }
+        self.notify(SceneEvent::UndoStackChanged);
+        self.notify_dirty_change(was_dirty);
+        Ok(true)
     }
 
     /// Allocates a fresh [`NodeId`] and installs a mesh-resource-backed leaf at
@@ -993,17 +1133,68 @@ impl SceneDocument {
         placement_translation: [f64; 3],
         replaced: &[NodeId],
     ) -> Result<Vec<NodeId>, SceneError> {
-        let Some((paste, new_roots)) =
-            self.paste_fragment_compound(fragment, placement_translation)
+        let Some((compound, new_roots)) =
+            self.replacing_paste(fragment, placement_translation, replaced)?
         else {
             return Ok(Vec::new());
         };
-        let new_root = new_roots[0];
+        match self.apply_edit(compound.clone()) {
+            Ok(()) => {
+                self.push_edit(compound);
+                self.set_selection(Selection::One(crate::selection::LeafId(new_roots[0])));
+                Ok(new_roots)
+            }
+            Err(EditNotApplied::NoSceneLoaded) => Ok(Vec::new()),
+            Err(EditNotApplied::Rejected(error)) => Err(error),
+        }
+    }
+
+    /// [`Self::paste_fragment_replacing_all`] at the origin, added to the
+    /// newest entry rather than recorded on its own
+    /// ([`Self::complete_last_edit`], which `settled` goes to): the new
+    /// supports of models a move in Z, a tilt or a scale left waiting
+    /// (#153). The selection stays. Returns the new root leaves, or none
+    /// when the scene is no longer at `revision`.
+    pub(crate) fn paste_fragment_completing(
+        &self,
+        fragment: &SceneFragment,
+        replaced: &[NodeId],
+        revision: SceneRevision,
+        settled: &[NodeId],
+    ) -> Result<Vec<NodeId>, SceneError> {
+        if self.scene_revision() != revision {
+            return Ok(Vec::new());
+        }
+        let Some((compound, new_roots)) = self.replacing_paste(fragment, [0.0; 3], replaced)?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(if self.complete_last_edit(revision, compound, settled)? {
+            new_roots
+        } else {
+            Vec::new()
+        })
+    }
+
+    /// The edit that pastes `fragment` and removes the leaves `replaced`,
+    /// unapplied, and the new root leaves; `None` when no scene is loaded or
+    /// nothing would be pasted.
+    fn replacing_paste(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+        replaced: &[NodeId],
+    ) -> Result<Option<(SceneEdit, Vec<NodeId>)>, SceneError> {
+        let Some((paste, new_roots)) =
+            self.paste_fragment_compound(fragment, placement_translation)
+        else {
+            return Ok(None);
+        };
         let compound = if replaced.is_empty() {
             paste
         } else {
             let Some(mut graph) = self.with_scene(|spatial| spatial.graph().clone()) else {
-                return Ok(Vec::new());
+                return Ok(None);
             };
             paste.apply_to_scene(&mut graph)?;
             let mut edits = vec![paste];
@@ -1022,15 +1213,7 @@ impl SceneDocument {
                 SceneEdit::Compound(edits)
             }
         };
-        match self.apply_edit(compound.clone()) {
-            Ok(()) => {
-                self.push_edit(compound);
-                self.set_selection(Selection::One(crate::selection::LeafId(new_root)));
-                Ok(new_roots)
-            }
-            Err(EditNotApplied::NoSceneLoaded) => Ok(Vec::new()),
-            Err(EditNotApplied::Rejected(error)) => Err(error),
-        }
+        Ok(Some((compound, new_roots)))
     }
 
     fn paste_fragment_compound(

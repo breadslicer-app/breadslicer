@@ -31,7 +31,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
-use crate::shift::{bases, model_collections, shift_model_supports};
+use crate::shift::{PlaneMotion, bases, model_collections, move_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
@@ -70,7 +70,12 @@ pub struct DfSupportSession {
     sdfs: Arc<[SdfSlot]>,
     id_prefix: String,
     next_id: u64,
+    /// Whether a hand edit added or removed supports since the run.
+    hand_edited: bool,
 }
+
+/// The first hand-placed id is the one after this.
+const HAND_IDS_FROM: u64 = 1_000_000;
 
 /// The supports as a removal reads them: each entity's id, the points it
 /// passes through, the ids of its parts, and who names whom.
@@ -325,11 +330,12 @@ impl DfSupportSession {
         state: SupportState,
         id_prefix: String,
     ) -> Self {
-        Self::restored(models, settings, recipe, state, id_prefix, 1_000_000)
+        Self::restored(models, settings, recipe, state, id_prefix, HAND_IDS_FROM)
     }
 
     /// A session from its parts, with the next hand-placed id counting on
-    /// from `next_id`.
+    /// from `next_id`. A saved session only tells hand additions, by their
+    /// ids: one with any reads as edited by hand.
     pub(crate) fn restored(
         models: Vec<ModelInput>,
         settings: PipelineSettings,
@@ -350,6 +356,7 @@ impl DfSupportSession {
             sdfs,
             id_prefix,
             next_id,
+            hand_edited: next_id > HAND_IDS_FROM,
         }
     }
 
@@ -367,6 +374,12 @@ impl DfSupportSession {
     /// The support state as it now stands.
     pub fn state(&self) -> &SupportState {
         &self.state
+    }
+
+    /// Whether supports were added or removed by hand since the run: a run
+    /// made again would not keep those edits.
+    pub fn hand_edited(&self) -> bool {
+        self.hand_edited
     }
 
     /// How many models the session was made on.
@@ -389,12 +402,40 @@ impl DfSupportSession {
     /// and distance field build afresh on the next edit, and the others'
     /// carry over.
     pub fn moved_in_plane(&self, index: usize, delta: [f64; 2]) -> Self {
-        let d = Vec3::new(delta[0], delta[1], 0.0);
-        let mut models = self.models.to_vec();
-        let model = &mut models[index];
-        model.transform.position = model.transform.position.add(d);
+        let mut model = self.models[index].clone();
+        model.transform.position = model
+            .transform
+            .position
+            .add(Vec3::new(delta[0], delta[1], 0.0));
+        self.taken_along(index, model, &PlaneMotion::shift(delta))
+    }
+
+    /// The session with model `index` turned by `angle` radians about the Z
+    /// axis through the origin, then moved by `delta` (mm along X and Y), and
+    /// every support that stands on it taken along (#153): the model still
+    /// stands on the plate the way it did, so its supports still hold it, and
+    /// nothing is placed again. `now` is the model where it now stands, as a
+    /// run makes it from the scene; it keeps the session's id. The moved
+    /// model's BVH and distance field build afresh on the next edit, and the
+    /// others' carry over.
+    pub fn turned_in_plane(
+        &self,
+        index: usize,
+        mut now: ModelInput,
+        angle: f64,
+        delta: [f64; 2],
+    ) -> Self {
+        now.id = self.models[index].id.clone();
+        self.taken_along(index, now, &PlaneMotion::turn(angle, delta))
+    }
+
+    /// The session with model `index` replaced by `model`, its supports
+    /// taken along by `motion`.
+    fn taken_along(&self, index: usize, model: ModelInput, motion: &PlaneMotion) -> Self {
         let mut state = self.state.clone();
-        shift_model_supports(&mut state.collections, &model.id, d);
+        move_model_supports(&mut state.collections, &model.id, motion);
+        let mut models = self.models.to_vec();
+        models[index] = model;
         let bvhs = self
             .bvhs
             .iter()
@@ -427,6 +468,7 @@ impl DfSupportSession {
             sdfs,
             id_prefix: self.id_prefix.clone(),
             next_id: self.next_id,
+            hand_edited: self.hand_edited,
         }
     }
 
@@ -461,6 +503,7 @@ impl DfSupportSession {
                     sdfs: vec![SdfSlot(std::sync::Mutex::new(sdf))].into(),
                     id_prefix: format!("{}.{i}", self.id_prefix),
                     next_id: self.next_id,
+                    hand_edited: self.hand_edited,
                 }
             })
             .collect()
@@ -622,6 +665,7 @@ impl DfSupportSession {
                 .map_or_else(|| "rejected".to_owned(), |r| format!("{r:?}"));
             return Err(EditError::NoRoute(why));
         }
+        self.hand_edited = true;
         Ok(all_ids(&self.state.collections)
             .into_iter()
             .filter(|id| !before.contains(id))
@@ -837,6 +881,7 @@ impl DfSupportSession {
         let gone = self.removal(point)?;
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
+        self.hand_edited = true;
         Ok(gone.len())
     }
 

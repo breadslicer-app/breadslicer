@@ -2633,6 +2633,11 @@ msgstr "Modelo elevado por encima de la balsa. Generá los soportes de nuevo y d
 
 #: src/review_panel.rs
 msgctxt "Review"
+msgid "Model lifted clear of the raft. Its supports are being generated again; slice once they are in."
+msgstr "Modelo elevado por encima de la balsa. Sus soportes se están generando de nuevo; laminá cuando estén listos."
+
+#: src/review_panel.rs
+msgctxt "Review"
 msgid "The model already stands clear of the raft."
 msgstr "El modelo ya está por encima de la balsa."
 
@@ -2983,3 +2988,11 @@ msgstr "Tu computadora dibuja una escena pesada a unos {} FPS. Recomendado: {} F
 msgctxt "DfSupportDialog"
 msgid "Select these supports, or their model, to remove them."
 msgstr "Seleccioná estos soportes, o su modelo, para quitarlos."
+
+msgctxt "DfSupportDialog"
+msgid "Supports regenerated"
+msgstr "Soportes regenerados"
+
+msgctxt "DfSupportDialog"
+msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
+msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
