@@ -78,6 +78,13 @@ pub(crate) struct SaveStamp {
     project_state: u64,
 }
 
+impl SaveStamp {
+    /// Whether both were taken from the same installed scene.
+    pub(crate) fn same_scene(self, other: Self) -> bool {
+        self.scene == other.scene
+    }
+}
+
 /// What [`SceneDocument::record_project_save_for`] did with a completed write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SaveRecorded {
@@ -554,6 +561,19 @@ impl SceneDocument {
         *self.embedded_profiles.borrow_mut() = embedded;
         self.mark_saved();
         SaveRecorded::Clean
+    }
+
+    /// Makes the scene stand for `source`, loaded as `origin`, with unsaved
+    /// changes: for a scene read from an autosave or from an earlier version
+    /// (#18). Save then goes where the scene came from, never to the copy it
+    /// was read from, and the scene reads dirty until it is saved.
+    pub(crate) fn restore_identity(&self, source: PathBuf, origin: DocumentOrigin) {
+        if !self.is_loaded() {
+            return;
+        }
+        *self.source_path.borrow_mut() = Some(source);
+        self.origin.set(origin);
+        self.mark_project_state_unsaved();
     }
 
     /// Returns a copy of the scene's own print choices.

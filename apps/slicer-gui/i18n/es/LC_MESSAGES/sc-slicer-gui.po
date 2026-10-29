@@ -2996,3 +2996,33 @@ msgstr "Soportes regenerados"
 msgctxt "DfSupportDialog"
 msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
 msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Previous Versions…"
+msgstr "Versiones anteriores…"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Previous versions"
+msgstr "Versiones anteriores"
+
+#: src/error_dialog.rs
+msgctxt "RecoveryDialog"
+msgid "Breadslicer closed without saving"
+msgstr "Breadslicer se cerró sin guardar"
+
+#: src/error_dialog.rs
+msgctxt "RecoveryDialog"
+msgid "These scenes had unsaved changes. Recover them to keep working on them, or discard them."
+msgstr "Estas escenas tenían cambios sin guardar. Recuperalas para seguir trabajando en ellas, o descartalas."
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Discard"
+msgstr "Descartar"
+
+#: ui/message-layer.slint
+msgctxt "RecoveryDialog"
+msgid "Recover"
+msgstr "Recuperar"
