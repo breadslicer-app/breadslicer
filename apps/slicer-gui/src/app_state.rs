@@ -330,7 +330,6 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
     settings.set_frame_rate(snap.frame_rate);
-    settings.set_diagnostic_log(snap.diagnostic_log);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -459,7 +458,6 @@ impl AppState {
         ))));
         crate::mesh_render::set_smooth_models(settings.smooth_models());
         crate::frame_rate::set_frame_rate_cap(settings.frame_rate());
-        crate::breadcrumbs::set_enabled(settings.diagnostic_log());
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             menu_layout: settings.menu_layout(),
@@ -473,7 +471,9 @@ impl AppState {
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
             frame_rate: settings.frame_rate(),
-            diagnostic_log: settings.diagnostic_log(),
+            // Never stored: the log runs until the app closes and every launch
+            // starts with it off (#74).
+            diagnostic_log: false,
             silenced_messages: settings.silenced_messages(),
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
@@ -565,6 +565,7 @@ impl AppState {
     /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        crate::breadcrumbs::note("window: opened");
         self.on_first_window(&ui);
         // Static platform flag consumed by the View menu to show the correct
         // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
@@ -1079,6 +1080,7 @@ impl AppState {
                 }
             }
             SceneChange::CloseWindow => {
+                crate::breadcrumbs::note("window: closed");
                 let window = self.main_windows.borrow_mut().remove(&window_id);
                 if let Some(window) = window {
                     let _ = window.window.hide();
@@ -1219,6 +1221,16 @@ impl AppState {
             ui.on_show_about_requested(move || {
                 if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
                     app.show_about(&ui);
+                }
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let viewport = Rc::downgrade(ctrl);
+            let bus = self.prefs.clone();
+            ui.on_export_diagnostics_requested(move || {
+                if let (Some(ui), Some(ctrl)) = (ui_weak.upgrade(), viewport.upgrade()) {
+                    crate::diagnostics::export(&ui, ctrl.document(), ctrl.dialogs(), bus.clone());
                 }
             });
         }

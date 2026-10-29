@@ -579,6 +579,7 @@ impl SceneLoader {
                 Some(prepared)
             }
             Err(err) => {
+                crate::breadcrumbs::finished("load", &format!("failed: {err}"));
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("ErrorDialog", "Failed to open 3D model"),
                     context: Some(ctr!("ErrorDialog", "File: {}", path.display())),

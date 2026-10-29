@@ -41,12 +41,6 @@ export component AppearancePreferences inherits PreferencesPage {
     callback test-performance();
     callback use-recommended-frame-rate();
 
-    // Diagnostic log (off by default): writes the session's events to the
-    // logs folder so a person can send them with a bug report.
-    in-out property <bool> diagnostic-log: false;
-    callback diagnostic-log-changed(bool);
-    callback open-logs-folder();
-
     // How many app messages are silenced with "Don't show again"; the reset
     // button shows them all again (#133).
     in property <int> silenced-message-count: 0;
@@ -113,27 +107,6 @@ export component AppearancePreferences inherits PreferencesPage {
             selected(_value) => {
                 root.current-language-index = self.current-index;
                 root.language-selected(self.current-index);
-            }
-        }
-    }
-
-    HorizontalLayout {
-        spacing: 12px;
-        alignment: start;
-
-        CheckBox {
-            text: @tr("AppearancePreferences" => "Diagnostic log (for bug reports)");
-            checked: root.diagnostic-log;
-            toggled => {
-                root.diagnostic-log = self.checked;
-                root.diagnostic-log-changed(self.checked);
-            }
-        }
-
-        Button {
-            text: @tr("AppearancePreferences" => "Open logs folder");
-            clicked => {
-                root.open-logs-folder();
             }
         }
     }

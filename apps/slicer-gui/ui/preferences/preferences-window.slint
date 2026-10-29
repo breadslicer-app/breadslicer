@@ -5,10 +5,12 @@
 
 import { Palette } from "std-widgets.slint";
 import { SideBar } from "../sidebar.slint";
+import { AppMessage, MessageAnswer, MessageKind, MessageLayer } from "../message-layer.slint";
 import { AppearancePreferences, ThemePreference } from "./appearance.slint";
 import { PrinterPreferences, PrinterCard } from "./printer.slint";
 import { ResinPreferences, ResinRow } from "./resin.slint";
 import { SlicingPreferences } from "./slicing.slint";
+import { PrivacyPreferences } from "./privacy.slint";
 
 export component PreferencesWindow inherits Window {
     title: @tr("Preferences");
@@ -36,6 +38,11 @@ export component PreferencesWindow inherits Window {
     in property <string> probe-message;
     in property <int> probe-recommended-fps: 0;
     in-out property <bool> diagnostic-log: false;
+    // The question before the diagnostic log starts (#74), drawn over the
+    // window like the main window's messages. Rust opens it and reads the
+    // answer.
+    in property <bool> log-question-open: false;
+    in property <int> log-question-serial: 0;
     in property <int> silenced-message-count: 0;
 
     in property <[PrinterCard]> printer-cards;
@@ -65,6 +72,7 @@ export component PreferencesWindow inherits Window {
     callback test-performance();
     callback use-recommended-frame-rate();
     callback diagnostic-log-changed(bool);
+    callback log-question-answered(MessageAnswer);
     callback open-logs-folder();
     callback show-all-messages-again();
     callback manufacturer-tab-changed(int);
@@ -108,6 +116,7 @@ export component PreferencesWindow inherits Window {
                     @tr("PreferencesMenu" => "Printer"),
                     @tr("PreferencesMenu" => "Resin"),
                     @tr("PreferencesMenu" => "Slicing"),
+                    @tr("PreferencesMenu" => "Privacy"),
                 ];
             }
 
@@ -116,13 +125,6 @@ export component PreferencesWindow inherits Window {
                 language-options: root.language-options;
                 current-language-index: root.current-language-index;
                 smooth-models <=> root.smooth-models;
-                diagnostic-log <=> root.diagnostic-log;
-                diagnostic-log-changed(on) => {
-                    root.diagnostic-log-changed(on);
-                }
-                open-logs-folder => {
-                    root.open-logs-folder();
-                }
                 silenced-message-count: root.silenced-message-count;
                 show-all-messages-again => {
                     root.show-all-messages-again();
@@ -231,6 +233,29 @@ export component PreferencesWindow inherits Window {
                     root.prescan-supports-changed(on);
                 }
             }
+            if(side-bar.current-item == 4) : PrivacyPreferences {
+                diagnostic-log <=> root.diagnostic-log;
+                diagnostic-log-changed(on) => {
+                    root.diagnostic-log-changed(on);
+                }
+                open-logs-folder => {
+                    root.open-logs-folder();
+                }
+            }
+        }
+    }
+
+    MessageLayer {
+        width: 100%;
+        height: 100%;
+        message: { kind: MessageKind.diagnostic-log };
+        open: root.log-question-open;
+        serial: root.log-question-serial;
+        answered(answer) => {
+            root.log-question-answered(answer);
+        }
+        outside-clicked => {
+            root.log-question-answered(MessageAnswer.cancel);
         }
     }
 }

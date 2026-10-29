@@ -692,6 +692,7 @@ impl ViewportController {
         if !self.session.set_section(section) {
             return;
         }
+        crate::breadcrumbs::note(&format!("tab: {section:?}"));
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
         }
@@ -889,7 +890,7 @@ impl ViewportController {
         let Some(prepared) = self.session.loader().take_finished_load() else {
             return;
         };
-        crate::breadcrumbs::note("load: finished");
+        crate::breadcrumbs::finished("load", "ok");
         let PreparedScene {
             spatial,
             gpu_scene,
@@ -1571,6 +1572,13 @@ impl ViewportController {
     /// no longer applies.
     pub(crate) fn on_tab_tools_changed(&self) {
         self.set_preview_overlay(None);
+        if let Some(ui) = self.ui.upgrade() {
+            crate::breadcrumbs::note(&format!(
+                "tools: support tool {}, drain tool {}",
+                ui.get_support_tool(),
+                ui.get_hollow_drain_tool()
+            ));
+        }
     }
 
     /// Clears the dispatcher's cached hover cursor when the cursor leaves the

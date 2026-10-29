@@ -51,7 +51,8 @@ use crate::profile_transfer::{
 use crate::viewport::{ProbeResult, ProbeUpdate, ViewportController};
 use crate::window_prefs::WindowPreferences;
 use crate::{
-    ExtendDialog, ForkDialog, PillKind, PreferencesWindow, ProfileViewDialog, ResinPill, ResinRow,
+    ExtendDialog, ForkDialog, MessageAnswer, PillKind, PreferencesWindow, ProfileViewDialog,
+    ResinPill, ResinRow,
 };
 
 use extend_dialog::open_extend_dialog;
@@ -332,11 +333,21 @@ pub(crate) fn build_preferences_window(
 
     prefs.on_diagnostic_log_changed({
         let bus = bus.clone();
+        let window = prefs.as_weak();
         move |on| {
-            bus.update(move |snap| {
-                snap.diagnostic_log = on;
-                PreferencesChange::DiagnosticLog
-            });
+            if let Some(window) = window.upgrade() {
+                diagnostic_log_toggled(&window, &bus, on);
+            }
+        }
+    });
+
+    prefs.on_log_question_answered({
+        let bus = bus.clone();
+        let window = prefs.as_weak();
+        move |answer| {
+            if let Some(window) = window.upgrade() {
+                log_question_answered(&window, &bus, answer);
+            }
         }
     });
 
@@ -684,6 +695,33 @@ pub(crate) fn build_preferences_window(
         _subscription: subscription,
         _thumbnail_timer: thumbnail_timer,
     })
+}
+
+/// The diagnostic log was ticked (`on`) or unticked in Preferences > Privacy.
+/// Ticking only asks: the box stays clear and the log off until the person
+/// confirms (#74). Unticking stops it at once.
+fn diagnostic_log_toggled(window: &PreferencesWindow, bus: &PreferencesBus, on: bool) {
+    if on {
+        window.set_diagnostic_log(false);
+        window.set_log_question_serial(window.get_log_question_serial().wrapping_add(1));
+        window.set_log_question_open(true);
+    } else {
+        bus.update(|snap| {
+            snap.diagnostic_log = false;
+            PreferencesChange::DiagnosticLog
+        });
+    }
+}
+
+/// Closes the question before the diagnostic log; Turn on starts the log.
+fn log_question_answered(window: &PreferencesWindow, bus: &PreferencesBus, answer: MessageAnswer) {
+    window.set_log_question_open(false);
+    if answer == MessageAnswer::Confirm {
+        bus.update(|snap| {
+            snap.diagnostic_log = true;
+            PreferencesChange::DiagnosticLog
+        });
+    }
 }
 
 fn string_model(values: &[String]) -> ModelRc<SharedString> {
@@ -1836,5 +1874,70 @@ mod silenced_messages_tests {
             )
         });
         assert_eq!((before, after, left), (2, 0, 0));
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_log_tests {
+    use super::*;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    /// Ticks the log in a fresh window, answers the question with `answer`
+    /// (none leaves it open) and returns: the log in the preferences, the
+    /// box, and whether the question is open.
+    fn tick_then(answer: Option<MessageAnswer>) -> (bool, bool, bool) {
+        on_fresh_slint_thread(move || {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let window =
+                PreferencesWindow::new().expect("the headless platform creates components");
+            window.set_diagnostic_log(true);
+            diagnostic_log_toggled(&window, &bus, true);
+            if let Some(answer) = answer {
+                log_question_answered(&window, &bus, answer);
+            }
+            (
+                bus.snapshot().diagnostic_log,
+                window.get_diagnostic_log(),
+                window.get_log_question_open(),
+            )
+        })
+    }
+
+    #[test]
+    fn ticking_the_log_only_asks() {
+        assert_eq!(tick_then(None), (false, false, true));
+    }
+
+    #[test]
+    fn the_log_starts_once_the_person_turns_it_on() {
+        // The box follows the preferences through the window's subscription,
+        // which this bare window has not.
+        let (on, _, asking) = tick_then(Some(MessageAnswer::Confirm));
+        assert!(on && !asking);
+    }
+
+    #[test]
+    fn cancel_escape_or_a_click_outside_leave_it_off() {
+        assert_eq!(
+            tick_then(Some(MessageAnswer::Cancel)),
+            (false, false, false)
+        );
+    }
+
+    #[test]
+    fn unticking_stops_it_at_once() {
+        let on = on_fresh_slint_thread(|| {
+            let mut snapshot = PreferencesSnapshot::for_tests();
+            snapshot.diagnostic_log = true;
+            let bus = PreferencesBus::new(snapshot);
+            let window =
+                PreferencesWindow::new().expect("the headless platform creates components");
+            diagnostic_log_toggled(&window, &bus, false);
+            (
+                bus.snapshot().diagnostic_log,
+                window.get_log_question_open(),
+            )
+        });
+        assert_eq!(on, (false, false));
     }
 }

@@ -726,6 +726,7 @@ impl HollowRun {
                     options,
                 });
                 ui.set_hollow_running(true);
+                crate::breadcrumbs::started("hollow");
                 ui.set_hollow_progress(0.0);
                 ui.set_hollow_phase(slint::SharedString::default());
                 self.start_poll();
@@ -782,7 +783,12 @@ impl HollowRun {
     }
 
     fn finish(&self, job: Job, outcome: Result<HollowOutcome, JobError>) {
-        crate::breadcrumbs::note(&format!("hollow: finished ok={}", outcome.is_ok()));
+        let ended = match &outcome {
+            Ok(_) => "ok".to_owned(),
+            Err(JobError::Cancelled) => "cancelled".to_owned(),
+            Err(err) => format!("failed: {err}"),
+        };
+        crate::breadcrumbs::finished("hollow", &ended);
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(JobError::Cancelled) => return,

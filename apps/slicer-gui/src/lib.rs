@@ -21,6 +21,7 @@ pub mod camera;
 mod clipboard;
 mod default_envelope;
 mod df_support_run;
+mod diagnostics;
 mod error_dialog;
 mod export_print_file;
 mod export_progress;
@@ -215,6 +216,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             trace: wgpu::Trace::Off,
         },
     )?;
+    diagnostics::system::record_graphics(&adapter.get_info());
     mesh_render::install_device_error_logger(&device);
     let device_loss = mesh_render::DeviceLoss::default();
     {
@@ -235,7 +237,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // policy ranks below what the machine carries. That can be a real refusal
     // (unsupported limits) or a transient driver failure; either way the reason
     // has to reach a bug report, since the only user-visible symptom is a
-    // slower viewport.
+    // slower viewport. A release build has no console, so the events carry it.
     for refusal in &skipped {
         let attempts = refusal
             .errors
@@ -243,25 +245,29 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; on retry: ");
-        match &refusal.shortfall {
-            Some(shortfall) => eprintln!(
+        let report = match &refusal.shortfall {
+            Some(shortfall) => format!(
                 "Graphics adapter {} cannot satisfy the device profile ({}); refused: {}",
                 refusal.name, shortfall, attempts
             ),
-            None => eprintln!(
+            None => format!(
                 "Graphics adapter {} refused a device request: {}",
                 refusal.name, attempts
             ),
-        }
+        };
+        eprintln!("{report}");
+        breadcrumbs::note(&format!("gpu: {report}"));
     }
     // A recovered refusal leaves the session on the right adapter but is still
     // the trace of a transient failure; keep it visible.
     if let Some(recovered) = &recovery {
-        eprintln!(
+        let report = format!(
             "Graphics adapter {} refused its first device request and accepted the retry: {}",
             adapter.get_info().name,
             recovered.error
         );
+        eprintln!("{report}");
+        breadcrumbs::note(&format!("gpu: {report}"));
     }
 
     // Pin wgpu-core's SNATCH_LOCK_TRACE thread-local on the main thread before
@@ -326,9 +332,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(not(target_os = "macos"))]
     let _ = empty_window;
 
+    breadcrumbs::note("app: running");
     let Err(err) = slint::run_event_loop() else {
+        breadcrumbs::note("app: closed normally");
         return Ok(());
     };
+    breadcrumbs::note(&format!("app: event loop failed: {err}"));
     // A lost device that nothing polled since the loss has not fired its
     // callback yet (wgpu fires it from a poll); a real loss has, and polling a
     // device whose hardware is gone is a wgpu fatal path.
@@ -336,7 +345,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         let _ = device_for_post_mortem.poll(wgpu::PollType::Poll);
     }
     match device_loss.reason() {
-        Some(reason) => Err(report_lost_device(&reason).into()),
+        Some(reason) => {
+            breadcrumbs::note(&format!("gpu: device lost: {reason}"));
+            Err(report_lost_device(&reason).into())
+        }
         None => Err(err.into()),
     }
 }

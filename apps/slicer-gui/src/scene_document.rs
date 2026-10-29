@@ -875,6 +875,7 @@ impl SceneDocument {
         if edit.is_noop() {
             return;
         }
+        crate::breadcrumbs::note(&format!("edit: {}", edit_label(&edit)));
         let carried = self
             .undo_stack
             .borrow()
@@ -1332,6 +1333,7 @@ impl SceneDocument {
                 };
             }
         }
+        crate::breadcrumbs::note(&format!("edit: undo {}", edit_label(&entry.edit)));
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
             redo.pop_front();
@@ -1364,6 +1366,7 @@ impl SceneDocument {
                 };
             }
         }
+        crate::breadcrumbs::note(&format!("edit: redo {}", edit_label(&entry.edit)));
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP {
             undo.pop_front();
@@ -1492,6 +1495,25 @@ fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> b
         }
     }
     touches(edit, selected)
+}
+
+/// What `edit` does, in a few words for the events: its kind and how many
+/// steps, never what it carries.
+fn edit_label(edit: &SceneEdit) -> String {
+    match edit {
+        SceneEdit::SetLocalTransform { .. } => "transform".to_owned(),
+        SceneEdit::AddLeaf { .. } => "add object".to_owned(),
+        SceneEdit::RemoveLeaf { .. } => "remove object".to_owned(),
+        SceneEdit::AddMeshResource { .. } => "add mesh".to_owned(),
+        SceneEdit::RemoveMeshResource { .. } => "remove mesh".to_owned(),
+        SceneEdit::ReplaceMeshResource { .. } => "replace mesh".to_owned(),
+        SceneEdit::ReplaceLeafMesh { .. } => "replace object mesh".to_owned(),
+        SceneEdit::Compound(edits) => {
+            let mut kinds: Vec<String> = edits.iter().map(edit_label).collect();
+            kinds.dedup();
+            format!("{} step(s): {}", edits.len(), kinds.join(", "))
+        }
+    }
 }
 
 /// RAII handle to a `SceneDocument` subscription. Drop to unsubscribe.

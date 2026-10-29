@@ -378,16 +378,6 @@ fn is_default_frame_rate(cap: &FrameRateCap) -> bool {
     *cap == FrameRateCap::default()
 }
 
-/// The diagnostic log is off by default: people turn it on to report a
-/// problem.
-fn default_diagnostic_log() -> bool {
-    false
-}
-
-fn is_default_diagnostic_log(on: &bool) -> bool {
-    !*on
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -445,13 +435,6 @@ pub(crate) struct AppSettings {
     /// default (`Automatic`).
     #[serde(default, skip_serializing_if = "is_default_frame_rate")]
     frame_rate: FrameRateCap,
-    /// Whether the diagnostic log writes the session's events to disk.
-    /// Omitted in TOML while off (the default).
-    #[serde(
-        default = "default_diagnostic_log",
-        skip_serializing_if = "is_default_diagnostic_log"
-    )]
-    diagnostic_log: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -489,7 +472,6 @@ impl Default for AppSettings {
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
             frame_rate: FrameRateCap::default(),
-            diagnostic_log: default_diagnostic_log(),
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -616,14 +598,6 @@ impl AppSettings {
 
     pub(crate) fn set_frame_rate(&mut self, cap: FrameRateCap) {
         self.frame_rate = cap;
-    }
-
-    pub(crate) fn diagnostic_log(&self) -> bool {
-        self.diagnostic_log
-    }
-
-    pub(crate) fn set_diagnostic_log(&mut self, on: bool) {
-        self.diagnostic_log = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {
@@ -831,6 +805,15 @@ mod app_settings_tests {
         // platform-specific extra variants we don't construct here.
         assert!(matches!(s.theme(), ThemePreference::System));
         assert_eq!(s.language(), LanguagePreference::System);
+    }
+
+    #[test]
+    fn a_diagnostic_log_left_on_by_an_older_build_is_dropped() {
+        // The log is no longer stored (#74): every launch starts with it off.
+        let text = "version = 1\ndiagnostic_log = true\n";
+        let settings: AppSettings = toml::from_str(text).expect("an older file still loads");
+        let saved = toml::to_string(&settings).unwrap();
+        assert!(!saved.contains("diagnostic_log"), "{saved}");
     }
 
     #[test]

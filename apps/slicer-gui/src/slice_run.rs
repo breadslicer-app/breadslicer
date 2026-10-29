@@ -284,7 +284,7 @@ impl SliceRun {
         let slot = self.slot.clone();
         let progress = self.progress.clone();
         let ui = self.ui.clone();
-        crate::breadcrumbs::note("slice: started");
+        crate::breadcrumbs::started("slice");
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_slice(&scene, &inputs, &cancel, &progress)
@@ -387,7 +387,15 @@ impl SliceRun {
         let Some(result) = taken else {
             return;
         };
-        crate::breadcrumbs::note(&format!("slice: finished ok={}", result.is_ok()));
+        let ended = match &result {
+            Ok(SliceRunOutcome::Completed(completed)) => format!(
+                "ok, {} layers",
+                completed.contours.schedule().total_layers()
+            ),
+            Ok(SliceRunOutcome::Cancelled) => "cancelled".to_owned(),
+            Err(err) => format!("failed: {err}"),
+        };
+        crate::breadcrumbs::finished("slice", &ended);
         match result {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {

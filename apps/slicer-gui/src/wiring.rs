@@ -580,6 +580,11 @@ async fn save_to_target(
     };
 
     let supports_as_mesh = bundle.supports_as_mesh();
+    crate::breadcrumbs::started("save");
+    crate::breadcrumbs::note(&format!(
+        "save: a {} file",
+        mesh_loader::extension_of(target)
+    ));
     save_progress.begin();
     let sink = save_progress.sink();
     let (tx, rx) = oneshot::channel();
@@ -598,6 +603,11 @@ async fn save_to_target(
 
     let outcome = rx.await;
     save_progress.end();
+    let ended = match &outcome {
+        Ok(result) => crate::breadcrumbs::outcome(result),
+        Err(_canceled) => "stopped: the app is closing".to_owned(),
+    };
+    crate::breadcrumbs::finished("save", &ended);
     match outcome {
         Ok(Ok(())) => {
             if let Some(why) = supports_as_mesh {

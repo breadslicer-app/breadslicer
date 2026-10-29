@@ -57,7 +57,9 @@ pub(crate) struct PreferencesSnapshot {
     pub smooth_models: bool,
     /// The viewport's frame-rate cap (`frame_rate`).
     pub frame_rate: FrameRateCap,
-    /// Whether the diagnostic log writes the session's events to disk.
+    /// Whether the diagnostic log writes the session's events to disk. Not
+    /// stored in the settings: it stays on until the app closes, and every
+    /// launch starts with it off.
     pub diagnostic_log: bool,
     /// The app messages silenced with "Don't show again", by key. Cleared by
     /// Preferences > "Show all messages again".

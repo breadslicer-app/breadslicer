@@ -33,6 +33,11 @@ impl SettingsFile {
         })
     }
 
+    /// Where the file is.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Returns the settings file at `path`.
     #[cfg(test)]
     pub(crate) fn at(path: PathBuf) -> Self {
