@@ -4,9 +4,10 @@
 //! Every mesh leaf of the scene (CSG refused, as the slicer refuses it) is one
 //! model, baked to world space. A mesh this crate produced earlier carries
 //! [`DF_SUPPORT_MESH_NAME`] and is skipped, so a second run does not support
-//! the previous supports. The result is the slicer's tessellation of the
-//! supports and the raft (`buildSupportAndRaftWorldTriangles`), welded by
-//! exact position into one [`IndexedMesh`].
+//! the previous supports. The result is one support set per model (#197):
+//! the slicer's tessellation of that model's supports and of a raft drawn
+//! from its own roots (`buildSupportAndRaftWorldTriangles`), welded by exact
+//! position into one [`IndexedMesh`], and the session that edits them.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,7 +35,7 @@ mod options;
 mod session;
 mod shift;
 
-pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError};
+pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
 pub use session::{DfSupportSession, EditError, EditPreview};
 pub use support_gen_df::pipeline::ScanCache;
@@ -78,6 +79,9 @@ pub struct DfSupportRequest {
     pub options: DfSupportOptions,
     /// Everything else DragonFruit reads from its panels and stores.
     pub settings: Option<PipelineSettings>,
+    /// The models to support, by leaf, in any order; `None` for every model
+    /// of the scene. Leaves that are not models are skipped.
+    pub models: Option<Vec<NodeId>>,
 }
 
 impl Default for DfSupportRequest {
@@ -88,16 +92,29 @@ impl Default for DfSupportRequest {
             prescanned: None,
             options: DfSupportOptions::default(),
             settings: None,
+            models: None,
         }
     }
+}
+
+/// One model's supports from a run (#197).
+#[derive(Debug, Clone)]
+pub struct DfSupportSet {
+    /// The model's leaf.
+    pub model: NodeId,
+    /// Its supports and raft as one welded mesh, `None` when nothing was
+    /// placed on it.
+    pub mesh: Option<IndexedMesh>,
+    /// Its supports, kept for editing by hand.
+    pub session: DfSupportSession,
 }
 
 /// What a finished run hands back.
 #[derive(Debug, Clone)]
 pub struct DfSupportOutcome {
-    /// The supports and raft as one welded mesh, `None` when nothing was placed.
-    pub mesh: Option<IndexedMesh>,
-    /// The support state the plans left.
+    /// One set per model the run covered, in scene order.
+    pub sets: Vec<DfSupportSet>,
+    /// The support state the plans left, every model's.
     pub support: SupportState,
     /// Models the run covered, and the islands it found on them.
     pub models: usize,
@@ -107,8 +124,27 @@ pub struct DfSupportOutcome {
     pub triangles: usize,
     /// Where the run spent its time.
     pub timings: PerfFrame,
-    /// The run's supports, kept for editing by hand.
-    pub session: DfSupportSession,
+}
+
+impl DfSupportOutcome {
+    /// Every set's mesh in one, `None` when nothing was placed: for a caller
+    /// that keeps the supports as a single object (the CLI).
+    pub fn merged_mesh(&self) -> Option<IndexedMesh> {
+        let meshes: Vec<&IndexedMesh> = self.sets.iter().filter_map(|s| s.mesh.as_ref()).collect();
+        if meshes.is_empty() {
+            return None;
+        }
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for mesh in &meshes {
+            let offset = vertices.len() as u32;
+            vertices.extend_from_slice(mesh.vertices());
+            faces.extend(mesh.faces().iter().map(|f| {
+                IndexedTriangle::from_raw_indices(f.vertices.map(|v| u32::from(v) + offset))
+            }));
+        }
+        Some(IndexedMesh::new(meshes[0].meta().clone(), vertices, faces))
+    }
 }
 
 /// Whether a run takes the mesh of a leaf as a model: it is not supports
@@ -120,13 +156,28 @@ fn is_model_mesh(mesh: &IndexedMesh) -> bool {
 /// One model per mesh leaf, baked to world space; previous DragonFruit
 /// support meshes are left out.
 pub fn scene_models(scene: &Scene) -> Result<Vec<ModelInput>, SceneError> {
+    Ok(scene_model_leaves(scene, None)?
+        .into_iter()
+        .map(|(_, model)| model)
+        .collect())
+}
+
+/// [`scene_models`] with the leaf of each, only the leaves `only` names
+/// when given.
+pub fn scene_model_leaves(
+    scene: &Scene,
+    only: Option<&[NodeId]>,
+) -> Result<Vec<(NodeId, ModelInput)>, SceneError> {
     let mut models = Vec::new();
     scene.for_each_expanded_leaf(CsgPolicy::Refuse, |id, world, mesh| {
-        if !is_model_mesh(mesh) {
+        if !is_model_mesh(mesh) || only.is_some_and(|only| !only.contains(&id)) {
             return Ok::<(), SceneError>(());
         }
         let baked = bake_mesh_to_world(mesh, world)?;
-        models.push(model_from_world_mesh(format!("node-{}", id.get()), &baked));
+        models.push((
+            id,
+            model_from_world_mesh(format!("node-{}", id.get()), &baked),
+        ));
         Ok(())
     })?;
     Ok(models)
@@ -320,7 +371,8 @@ pub fn start_df_supports(
         .map_or(0, |d| d.as_millis());
     Ok(JobHandle::spawn(
         move |worker: &JobWorker<DfSupportOutcome>| {
-            let models = scene_models(&scene).map_err(|e| JobError::Failed(e.to_string()))?;
+            let models = scene_model_leaves(&scene, request.models.as_deref())
+                .map_err(|e| JobError::Failed(e.to_string()))?;
             run_df_supports(&models, &request, worker, format!("df{stamp}-{run}"))
         },
     ))
@@ -434,12 +486,14 @@ pub fn start_df_prescan(scene: &Scene, request: DfSupportRequest) -> JobHandle<D
 }
 
 fn run_df_supports(
-    models: &[ModelInput],
+    leaves: &[(NodeId, ModelInput)],
     request: &DfSupportRequest,
     worker: &JobWorker<DfSupportOutcome>,
     id_prefix: String,
 ) -> Result<DfSupportOutcome, JobError> {
     let settings = settings_for(request);
+    let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
+    let models = &models[..];
     let n = models.len();
     // Reports: geometry per model, three per model, rafts, tessellation.
     let total = (4 * n + 2) as u32;
@@ -495,7 +549,6 @@ fn run_df_supports(
             }
         }
     }
-    let mesh = weld_parts(&out.support_soup, &out.support_parts, DF_SUPPORT_MESH_NAME);
     let session = DfSupportSession::new(
         models.to_vec(),
         settings.clone(),
@@ -518,10 +571,33 @@ fn run_df_supports(
                 .collect(),
         );
     }
+    // Each model's supports and raft are drawn on their own; the pipeline's
+    // soup (one raft under every model) is not used.
+    let mut sets = Vec::with_capacity(n);
+    for ((model, _), session) in leaves.iter().zip(session.split_by_model()) {
+        if worker.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        let mesh = if session.is_empty() {
+            None
+        } else {
+            session
+                .mesh()
+                .map_err(|e| JobError::Failed(e.to_string()))?
+        };
+        sets.push(DfSupportSet {
+            model: *model,
+            mesh,
+            session,
+        });
+    }
     Ok(DfSupportOutcome {
-        triangles: mesh.as_ref().map_or(0, |m| m.faces().len()),
-        mesh,
-        session,
+        triangles: sets
+            .iter()
+            .filter_map(|s| s.mesh.as_ref())
+            .map(|m| m.faces().len())
+            .sum(),
+        sets,
         support: out.support,
         timings: out.timings,
         models: n,

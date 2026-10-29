@@ -70,7 +70,7 @@ fn a_lifted_cube_gets_supports_and_a_raft() {
         !outcome.support.collections.roots.is_empty(),
         "supports reach the plate"
     );
-    let mesh = outcome.mesh.expect("a support mesh");
+    let mesh = outcome.merged_mesh().expect("a support mesh");
     assert_eq!(
         mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
         Some(DF_SUPPORT_MESH_NAME)
@@ -145,7 +145,9 @@ fn support_meshes_of_real_scenes_are_edge_manifold() {
             .unwrap()
             .join()
             .unwrap();
-        let Some(mesh) = outcome.mesh else { continue };
+        let Some(mesh) = outcome.merged_mesh() else {
+            continue;
+        };
         let mut edges: std::collections::HashMap<(u32, u32), u32> = Default::default();
         for f in mesh.faces() {
             let v = f.vertices.map(u32::from);
@@ -194,7 +196,7 @@ fn a_prescan_is_reused_and_gives_the_same_supports() {
         Some(2),
         "both models were served from the prescan"
     );
-    let (a, b) = (plain.mesh.unwrap(), reused.mesh.unwrap());
+    let (a, b) = (plain.merged_mesh().unwrap(), reused.merged_mesh().unwrap());
     assert_eq!(a.vertices(), b.vertices());
     assert_eq!(a.faces(), b.faces());
 }
@@ -262,7 +264,7 @@ fn supports_are_added_and_removed_by_hand() {
         .unwrap()
         .join()
         .unwrap();
-    let mut session = outcome.session;
+    let mut session = outcome.sets.into_iter().next().unwrap().session;
     let count = |s: &support_gen_df_sc::DfSupportSession| {
         let c = &s.state().collections;
         c.roots.len() + c.trunks.len() + c.branches.len() + c.leaves.len() + c.knots.len()
@@ -356,6 +358,8 @@ fn manual_edit_on_real_scenes() {
             .unwrap()
             .join()
             .unwrap()
+            .sets
+            .remove(0)
             .session;
         let (mut tried, mut held, mut slowest) = (0, 0, 0.0f64);
         let started = std::time::Instant::now();
@@ -434,6 +438,8 @@ fn hand_edits_on_a_real_model() {
         .unwrap()
         .join()
         .unwrap()
+        .sets
+        .remove(0)
         .session;
     println!("generate {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
     let step = (points.len() / 30).max(1);

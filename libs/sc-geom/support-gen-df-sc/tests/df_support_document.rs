@@ -64,6 +64,8 @@ fn run_on(scene: &Scene) -> DfSupportSession {
         .unwrap()
         .join()
         .unwrap()
+        .sets
+        .remove(0)
         .session
 }
 
@@ -127,13 +129,91 @@ fn a_session_fits_its_models_however_the_scene_holds_them() {
     let mesh = session.mesh().unwrap().expect("a support mesh");
     assert!(session.fits_models_of(&scene));
     // The support leaf is not a model, and node ids do not matter.
-    let with_supports = scene_with(vec![
-        (mesh, [0.0, 0.0, 0.0]),
-        (cube(), [0.0, 0.0, 8.0]),
-    ]);
+    let with_supports = scene_with(vec![(mesh, [0.0, 0.0, 0.0]), (cube(), [0.0, 0.0, 8.0])]);
     assert!(session.fits_models_of(&with_supports));
     assert!(!session.fits_models_of(&scene_with(vec![(cube(), [5.0, 0.0, 8.0])])));
     assert!(!session.fits_models_of(&Scene::new()));
+}
+
+/// One model's set among other models: they are no business of its document.
+#[test]
+fn a_set_rebuilds_among_other_models() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let session = run_on(&scene);
+    let document = session.to_document().unwrap();
+    let more = scene_with(vec![(cube(), [40.0, 0.0, 8.0]), (cube(), [0.0, 0.0, 8.0])]);
+    assert!(session.fits_models_of(&more));
+    let rebuilt = DfSupportSession::from_document(&more, DF_SUPPORT_DOCUMENT_VERSION, &document)
+        .expect("its model is there");
+    assert_eq!(rebuilt.state(), session.state());
+}
+
+/// A project saved before #197 keeps every model's supports in one version
+/// 1 document: it opens as one set per model, the first in the file's leaf.
+#[test]
+fn a_version_1_document_of_two_models_opens_as_two_sets() {
+    let two = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 8.0])]);
+    let outcome = start_df_supports(&two, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    let docs: Vec<serde_json::Value> = outcome
+        .sets
+        .iter()
+        .map(|s| serde_json::from_slice(&s.session.to_document().unwrap()).unwrap())
+        .collect();
+    // The one document a run made then: both models, both models' supports.
+    let mut shared = docs[0].clone();
+    let models = docs[1]["models"].as_array().unwrap().clone();
+    shared["models"].as_array_mut().unwrap().extend(models);
+    for (kind, entities) in docs[1]["state"].as_object().unwrap() {
+        if let (Some(into), Some(from)) = (
+            shared["state"]
+                .get_mut(kind)
+                .and_then(|v| v.as_object_mut()),
+            entities.as_object(),
+        ) {
+            into.extend(from.clone());
+        }
+    }
+    let bytes = serde_json::to_vec(&shared).unwrap();
+
+    let mut reopened = Scene::new();
+    let leaf = reopened
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
+        )
+        .unwrap();
+    reopened.add_root(leaf).unwrap();
+    let mut models = Vec::new();
+    for offset in [[0.0, 0.0, 8.0], [40.0, 0.0, 8.0]] {
+        let id = reopened
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation(offset)),
+                LeafPayload::Mesh(Arc::new(cube())),
+            )
+            .unwrap();
+        reopened.add_root(id).unwrap();
+        models.push(id);
+    }
+    let sets = DfSupportSession::restore_sets_into(&mut reopened, leaf, 1, &bytes)
+        .expect("a version 1 document opens");
+    assert_eq!(sets.len(), 2);
+    assert_eq!(sets[0].leaf, leaf);
+    assert_ne!(sets[1].leaf, leaf);
+    for (set, (model, original)) in sets.iter().zip(models.iter().zip(&outcome.sets)) {
+        assert_eq!(set.model, *model);
+        assert_eq!(
+            set.session.state().collections.roots.len(),
+            original.session.state().collections.roots.len()
+        );
+        let shown = reopened.leaf_mesh_arc(set.leaf).expect("a support leaf");
+        let drawn = original.mesh.as_ref().unwrap();
+        assert_eq!(shown.faces().len(), drawn.faces().len());
+    }
 }
 
 #[test]

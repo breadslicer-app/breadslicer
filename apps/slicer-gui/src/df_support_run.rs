@@ -52,10 +52,13 @@ use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
 use crate::raft_clash::{RaftClash, lift_edit, lowest_model_mm, raft_clash};
 use crate::scene_document::{
-    SceneDocument, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
+    SceneDocument, SceneEdit, SceneEvent, SceneRevision, SceneSubscription, leaf_mesh_swap,
 };
 use crate::slice_projection::load_selected_profiles;
-use crate::support_persist::{SupportSessions, current_session, support_leaf, support_leaves};
+use crate::support_persist::{
+    DrawnSet, SupportSessions, in_force, model_of, record, sets_in_force, sets_of_model,
+    support_leaf, support_leaves,
+};
 use crate::viewport::ViewportController;
 use crate::{MainWindow, WorkspaceSection};
 
@@ -93,8 +96,8 @@ struct Ahead {
 /// What tells two requests apart for [`Ahead`].
 fn ahead_key(request: &DfSupportRequest) -> String {
     format!(
-        "{:?}|{:?}|{:?}",
-        request.layer_height_mm, request.pixel_pitch_mm, request.options
+        "{:?}|{:?}|{:?}|{:?}",
+        request.layer_height_mm, request.pixel_pitch_mm, request.options, request.models
     )
 }
 
@@ -194,6 +197,25 @@ pub(crate) type Refusals = Vec<(usize, slint::SharedString)>;
 /// often a fraction of a millimetre across: the tip has to stay on it.
 const REVIEW_NUDGE_MM: f64 = 0.3;
 
+/// How far outside a set's box (its model's for Add, its supports' for
+/// Remove) a hand tool's point may land and still be asked to that set: past
+/// the engine's own reaches (2 mm to add, 3 mm to remove).
+const SET_REACH_MM: f64 = 3.5;
+
+/// How far `p` is from `aabb`: 0 inside it.
+fn box_distance(aabb: &sc_mesh_core::Aabb, p: [f64; 3]) -> f64 {
+    let (lo, hi) = (aabb.min(), aabb.max());
+    let (lo, hi) = (lo.as_array(), hi.as_array());
+    (0..3)
+        .map(|k| {
+            let (a, b) = (f64::from(lo[k]), f64::from(hi[k]));
+            (a - p[k]).max(p[k] - b).max(0.0)
+        })
+        .map(|d| d * d)
+        .sum::<f64>()
+        .sqrt()
+}
+
 /// What a hand edit does at each of its points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HandTool {
@@ -243,16 +265,24 @@ struct HoverAsk {
     /// Shared, not copied: a copy of a busy model's supports costs ~8 ms,
     /// paid on the worker instead of on every mouse move.
     base: Arc<DfSupportSession>,
-    /// Which session (its index and the scene it was drawn on) `base` is.
-    from: (usize, SceneRevision),
+    /// Which set and session `base` is ([`session_key`]).
+    from: (NodeId, usize),
     point: [f32; 3],
     tool: i32,
+    /// For a warm-up (`tool` 0): the other sets' sessions, warmed with it.
+    others: Vec<Arc<DfSupportSession>>,
+}
+
+/// What tells a drawing's session apart for the hover preview: its leaf
+/// and the session itself.
+fn session_key(drawn: &DrawnSet) -> (NodeId, usize) {
+    (drawn.leaf, Arc::as_ptr(&drawn.session) as usize)
 }
 
 /// A computed preview.
 struct HoverAnswer {
     generation: u64,
-    from: (usize, SceneRevision),
+    from: (NodeId, usize),
     point: [f32; 3],
     tool: i32,
     preview: Option<EditPreview>,
@@ -283,8 +313,10 @@ impl HoverWorker {
                     }
                     if ask.tool == 0 {
                         // Warm-up after an edit: no answer to draw.
-                        let base = ask.base.clone();
-                        let _ = std::panic::catch_unwind(move || base.warm_removal());
+                        for base in std::iter::once(&ask.base).chain(&ask.others) {
+                            let base = base.clone();
+                            let _ = std::panic::catch_unwind(move || base.warm_removal());
+                        }
                         continue;
                     }
                     let p = ask.point.map(f64::from);
@@ -836,7 +868,30 @@ impl DfSupportRun {
     fn request_for_selection(&self) -> DfSupportRequest {
         let mut request = self.request_for_printer();
         request.options = self.options.borrow().clone();
+        request.models = self.target_models();
         request
+    }
+
+    /// The models a Generate press supports (#197): the selected model, or
+    /// the model the selected supports stand on. `None`, for every model,
+    /// when nothing of that kind is selected or the scene holds only the one
+    /// model.
+    fn target_models(&self) -> Option<Vec<NodeId>> {
+        let selected = self.document.selection_primary_node_id()?;
+        self.document
+            .with_scene(|spatial| {
+                let models: Vec<NodeId> = crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect();
+                let model = if models.contains(&selected) {
+                    selected
+                } else {
+                    model_of(&self.sessions, selected)?
+                };
+                (models.len() > 1).then(|| vec![model])
+            })
+            .flatten()
     }
 
     /// The layer height and pixel pitch of the printer and resin in force.
@@ -921,7 +976,11 @@ impl DfSupportRun {
     /// first layers, and by how much, for the layer height of the last
     /// Generate press.
     fn raft_clash(&self) -> Option<RaftClash> {
-        let lowest = self.document.with_scene(lowest_model_mm).flatten();
+        let targets = self.target_models();
+        let lowest = self
+            .document
+            .with_scene(|spatial| lowest_model_mm(spatial, targets.as_deref()))
+            .flatten();
         raft_clash(
             &self.options.borrow(),
             self.raft_layer_height_mm.get(),
@@ -953,11 +1012,15 @@ impl DfSupportRun {
         ui.set_support_raft_lift_label(label);
     }
 
-    /// The warning's lift button: the models in the raft rise clear of it,
-    /// then the Generate press it held back runs.
+    /// The warning's lift button: the models to support that stand in the
+    /// raft rise clear of it, then the Generate press it held back runs.
     fn lift_for_warning(self: &Rc<Self>) {
         if let Some(clash) = self.raft_clash()
-            && self.lift_models(clash.raft_top_mm, clash.lift_to_mm)
+            && self.lift_models(
+                clash.raft_top_mm,
+                clash.lift_to_mm,
+                self.target_models().as_deref(),
+            )
         {
             self.start();
         }
@@ -986,15 +1049,16 @@ impl DfSupportRun {
             .raft_top_mm()
             .or_else(|| self.options.borrow().raft_top_mm())
             .unwrap_or(lift_to_mm);
-        self.lift_models(raft_top, lift_to_mm)
+        self.lift_models(raft_top, lift_to_mm, None)
     }
 
-    /// Lifts every model lower than `below_mm` so its lowest point stands at
-    /// `lift_to_mm`, as one undoable edit. Returns whether a model moved.
-    fn lift_models(&self, below_mm: f64, lift_to_mm: f64) -> bool {
+    /// Lifts every model (only those `only` names, when given) lower than
+    /// `below_mm` so its lowest point stands at `lift_to_mm`, as one
+    /// undoable edit. Returns whether a model moved.
+    fn lift_models(&self, below_mm: f64, lift_to_mm: f64, only: Option<&[NodeId]>) -> bool {
         let Some(edit) = self
             .document
-            .with_scene(|spatial| lift_edit(spatial, below_mm, lift_to_mm))
+            .with_scene(|spatial| lift_edit(spatial, below_mm, lift_to_mm, only))
             .flatten()
         else {
             return false;
@@ -1128,13 +1192,48 @@ impl DfSupportRun {
         self.document.with_scene(support_leaf).flatten()
     }
 
-    /// A click in the viewport with the Add (1) or Delete (2) support tool
-    /// of the Supports tab, at the world point it hit. The edit redraws the
-    /// supports and swaps the support mesh as one undoable edit.
-    /// The editable session for the scene as it stands: the last run or hand
-    /// edit drawn into it (Undo and Redo land on earlier ones).
-    fn current_session(&self) -> Option<usize> {
-        current_session(&self.document, &self.sessions)
+    /// Every support set of the scene in force.
+    fn sets_in_force(&self) -> Vec<DrawnSet> {
+        self.document
+            .with_scene(|spatial| sets_in_force(spatial, &self.sessions))
+            .unwrap_or_default()
+    }
+
+    /// The support set a hand tool at `point` (world mm) acts on, among the
+    /// sets in force: for Add, the one whose model is nearest; for Remove,
+    /// the one whose support is. Sets whose box is out of reach are not
+    /// asked, so a hover over a busy scene asks one set at most, as a rule.
+    fn set_at(&self, point: [f32; 3], tool: HandTool) -> Option<DrawnSet> {
+        let p = point.map(f64::from);
+        let mut near: Vec<DrawnSet> = self
+            .document
+            .with_scene(|spatial| {
+                sets_in_force(spatial, &self.sessions)
+                    .into_iter()
+                    .filter(|drawn| {
+                        let boxed = match tool {
+                            HandTool::Remove => drawn.leaf,
+                            HandTool::Add | HandTool::AddNear => drawn.model,
+                        };
+                        spatial
+                            .leaf(boxed)
+                            .and_then(|q| q.transformed_aabb(q.world_transform()))
+                            .is_some_and(|aabb| box_distance(&aabb, p) <= SET_REACH_MM)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if near.len() <= 1 {
+            return near.pop();
+        }
+        let distance = |drawn: &DrawnSet| match tool {
+            HandTool::Remove => drawn.session.remove_distance(p),
+            HandTool::Add | HandTool::AddNear => drawn.session.add_distance(p),
+        };
+        near.into_iter()
+            .filter_map(|drawn| Some((distance(&drawn)?, drawn)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, drawn)| drawn)
     }
 
     /// The cursor moved over the model (`Some`) or off it with a hand tool
@@ -1149,15 +1248,19 @@ impl DfSupportRun {
             if tool == 0 || self.handle.borrow().is_some() {
                 return None;
             }
-            let current = self.current_session()?;
-            let sessions = self.sessions.borrow();
-            let (base, drawn_on) = &sessions[current];
+            let hand = if tool == 1 {
+                HandTool::Add
+            } else {
+                HandTool::Remove
+            };
+            let drawn = self.set_at(point, hand)?;
             Some(HoverAsk {
                 generation,
-                base: base.clone(),
-                from: (current, *drawn_on),
+                base: drawn.session.clone(),
+                from: session_key(&drawn),
                 point,
                 tool,
+                others: Vec::new(),
             })
         });
         let Some(ask) = ask else {
@@ -1221,20 +1324,20 @@ impl DfSupportRun {
             .set_preview_overlay((!pieces.is_empty()).then(|| pieces.into()));
     }
 
-    /// Has the worker build the removal index of the session now in force,
-    /// so the first removal hover on it answers quickly.
+    /// Has the worker build the removal index of every set's session now in
+    /// force, so the first removal hover on one answers quickly.
     fn warm_worker(&self) {
-        let Some(current) = self.current_session() else {
+        let mut sets = self.sets_in_force().into_iter();
+        let Some(first) = sets.next() else {
             return;
         };
-        let sessions = self.sessions.borrow();
-        let (base, drawn_on) = &sessions[current];
         let _ = self.hover_worker.asks.send(HoverAsk {
             generation: 0,
-            base: base.clone(),
-            from: (current, *drawn_on),
+            base: first.session.clone(),
+            from: session_key(&first),
             point: [0.0; 3],
             tool: 0,
+            others: sets.map(|drawn| drawn.session).collect(),
         });
     }
 
@@ -1323,127 +1426,146 @@ impl DfSupportRun {
         };
         // No borrow of the sessions is held across the edit: the scene events
         // it fires, and the hover preview, read them.
-        if self.sessions.borrow().is_empty() {
-            // Supports in the scene with no session came in as a mesh: from
-            // a 3MF, or a project that could not keep them as data. That says
-            // something the person needs to know, so it is never silenced.
-            let (key, message) = if self.support_leaf().is_some() {
-                (
-                    None,
-                    ctr!(
-                        "DfSupportDialog",
-                        "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
-                    ),
-                )
-            } else {
-                (
-                    Some(MessageKey::SupportsEditNeedsSupports),
-                    ctr!(
-                        "DfSupportDialog",
-                        "Generate supports first; then add or remove them by hand."
-                    ),
-                )
-            };
-            notice(
-                key,
-                ctr!("DfSupportDialog", "No supports to edit"),
-                message.to_string(),
-            );
-            return HandEdit::Notified;
-        }
-        let Some(current) = self.current_session() else {
-            notice(
-                None,
-                ctr!("DfSupportDialog", "Supports out of date"),
-                ctr!(
-                    "DfSupportDialog",
-                    "The scene changed since the supports were made; generate them again to edit them."
-                )
-                .to_string(),
-            );
-            return HandEdit::Notified;
-        };
         crate::breadcrumbs::note(&format!(
             "supports: click tool={tool:?} points={}",
             points.len()
         ));
+        // Each point goes to the set it acts on.
+        let mut groups: Vec<(DrawnSet, Vec<(usize, [f32; 3])>)> = Vec::new();
+        let mut unset = Vec::new();
+        for (i, point) in points.iter().enumerate() {
+            let Some(drawn) = self.set_at(*point, tool) else {
+                unset.push(i);
+                continue;
+            };
+            match groups.iter_mut().find(|(d, _)| d.leaf == drawn.leaf) {
+                Some((_, group)) => group.push((i, *point)),
+                None => groups.push((drawn, vec![(i, *point)])),
+            }
+        }
+        if groups.is_empty() {
+            let (key, heading, message) = self.no_set_notice(tool, points[0]);
+            match heading {
+                Some(heading) => notice(key, heading, message.to_string()),
+                None => return failed(message),
+            }
+            return HandEdit::Notified;
+        }
+        for i in unset {
+            refused.push((i, refusal(&EditError::NothingThere)));
+        }
         // The preview of this very point already placed it: take that.
         let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
-            let drawn_on = self.sessions.borrow()[current].1;
             (points == [answer.point]
                 && tool.click() == Some(answer.tool)
-                && answer.from == (current, drawn_on))
-                .then_some(answer.edited)
-                .flatten()
+                && answer.from == session_key(&groups[0].0))
+            .then_some(answer.edited)
+            .flatten()
         });
         let reused = previewed.is_some();
-        let mut edited = previewed
-            .unwrap_or_else(|| DfSupportSession::clone(&self.sessions.borrow()[current].0));
-        // The port is DragonFruit's code on hand-picked input: a panic in it
-        // is an edit that failed, not a reason to lose the person's work.
-        let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if !reused {
-                let mut last = None;
-                for (i, point) in points.iter().enumerate() {
-                    let p = point.map(f64::from);
-                    let edit = match tool {
-                        HandTool::Add => edited.add_trunk_at(p),
-                        HandTool::AddNear => edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ()),
-                        HandTool::Remove => edited.remove_near(p).map(|_| ()),
-                    };
-                    if let Err(err) = edit {
-                        crate::breadcrumbs::note(&format!("supports: point {i} refused: {err}"));
-                        refused.push((i, refusal(&err)));
-                        last = Some(err);
+        let mut previewed = previewed;
+        let mut edits = Vec::with_capacity(groups.len());
+        let mut last = None;
+        for (drawn, group) in &groups {
+            let reuse = previewed.take();
+            let from_preview = reuse.is_some();
+            let mut edited = reuse.unwrap_or_else(|| DfSupportSession::clone(&drawn.session));
+            // The port is DragonFruit's code on hand-picked input: a panic in
+            // it is an edit that failed, not a reason to lose the person's
+            // work.
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut took = from_preview;
+                if !from_preview {
+                    for (i, point) in group {
+                        let p = point.map(f64::from);
+                        let edit = match tool {
+                            HandTool::Add => edited.add_trunk_at(p),
+                            HandTool::AddNear => {
+                                edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ())
+                            }
+                            HandTool::Remove => edited.remove_near(p).map(|_| ()),
+                        };
+                        match edit {
+                            Ok(()) => took = true,
+                            Err(err) => {
+                                crate::breadcrumbs::note(&format!(
+                                    "supports: point {i} refused: {err}"
+                                ));
+                                refused.push((*i, refusal(&err)));
+                                last = Some(err);
+                            }
+                        }
                     }
                 }
-                if refused.len() == points.len()
-                    && let Some(err) = last
-                {
-                    return Err(err);
+                if !took {
+                    return Ok(None);
                 }
-            }
-            edited.mesh()
-        }));
-        let mesh = match done {
-            Err(_) => {
-                return failed(ctr!(
-                    "DfSupportDialog",
-                    "That edit failed inside the support engine; nothing was changed."
-                ));
-            }
-            Ok(Err(err)) => return failed(refusal(&err)),
-            Ok(Ok(Some(mesh))) => mesh,
-            Ok(Ok(None)) => {
-                return failed(ctr!(
-                    "DfSupportDialog",
-                    "That was the last support; use Undo to bring it back."
-                ));
-            }
-        };
+                edited.mesh().map(Some)
+            }));
+            let mesh = match done {
+                Err(_) => {
+                    return failed(ctr!(
+                        "DfSupportDialog",
+                        "That edit failed inside the support engine; nothing was changed."
+                    ));
+                }
+                Ok(Err(err)) => return failed(refusal(&err)),
+                // Nothing of this set took.
+                Ok(Ok(None)) => continue,
+                Ok(Ok(Some(Some(mesh)))) => mesh,
+                Ok(Ok(Some(None))) => {
+                    return failed(ctr!(
+                        "DfSupportDialog",
+                        "That was the last support; use Undo to bring it back."
+                    ));
+                }
+            };
+            edits.push((drawn.clone(), edited, mesh));
+        }
+        if edits.is_empty() {
+            return failed(refusal(&last.unwrap_or(EditError::NothingThere)));
+        }
         crate::breadcrumbs::note(&format!(
             "supports: edit drawn ({} triangles, reused preview {reused})",
-            mesh.faces().len()
+            edits.iter().map(|(_, _, m)| m.faces().len()).sum::<usize>()
         ));
-        let swap = self.support_leaf().and_then(|(node_id, _)| {
-            self.document
-                .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), node_id, Arc::new(mesh)))
-                .flatten()
-        });
-        let Some(swap) = swap else {
+        let swaps: Option<Vec<SceneEdit>> = edits
+            .iter()
+            .map(|(drawn, _, mesh)| {
+                self.document
+                    .with_scene(|spatial| {
+                        leaf_mesh_swap(spatial.graph(), drawn.leaf, Arc::new(mesh.clone()))
+                    })
+                    .flatten()
+            })
+            .collect();
+        let Some(mut swaps) = swaps else {
             return failed(ctr!(
                 "DfSupportDialog",
                 "The support mesh is not in the scene; generate supports again."
             ));
         };
+        let swap = if swaps.len() == 1 {
+            swaps.pop().expect("len == 1")
+        } else {
+            SceneEdit::Compound(swaps)
+        };
         match self.document.apply_edit(swap.clone()) {
             Ok(_) => {
                 crate::breadcrumbs::note("supports: edit applied");
                 self.document.push_edit(swap);
-                let roots = edited.state().collections.roots.len();
-                let mut sessions = self.sessions.borrow_mut();
-                sessions.truncate(current + 1);
-                sessions.push((Arc::new(edited), self.document.scene_revision()));
+                let mut roots = 0;
+                for (drawn, edited, _) in edits {
+                    roots += edited.state().collections.roots.len();
+                    record(
+                        &self.document,
+                        &self.sessions,
+                        drawn.leaf,
+                        drawn.model,
+                        Arc::new(edited),
+                    );
+                }
+                refused.sort_by_key(|(i, _)| *i);
                 let line = match refused.first() {
                     None => format!("{roots} support root(s), edited by hand."),
                     Some((_, why)) => format!(
@@ -1452,11 +1574,106 @@ impl DfSupportRun {
                     ),
                 };
                 ui.set_supports_last_run(line.into());
-                drop(sessions);
                 self.warm_worker();
                 HandEdit::Applied
             }
             Err(err) => failed(format!("The edit was refused: {err:?}").into()),
+        }
+    }
+
+    /// Why no support set in force takes a hand tool at `point`, as a
+    /// notice (its "Don't show again" key and heading) or, with no heading,
+    /// as the reason the edit failed: the model's supports are out of date,
+    /// the model has none, or the supports there came in as a mesh.
+    fn no_set_notice(
+        &self,
+        tool: HandTool,
+        point: [f32; 3],
+    ) -> (
+        Option<MessageKey>,
+        Option<slint::SharedString>,
+        slint::SharedString,
+    ) {
+        let p = point.map(f64::from);
+        let near = |spatial: &sc_mesh_spatial::SceneSpatial, id: NodeId| {
+            spatial
+                .leaf(id)
+                .and_then(|q| q.transformed_aabb(q.world_transform()))
+                .map(|aabb| box_distance(&aabb, p))
+                .filter(|d| *d <= SET_REACH_MM)
+        };
+        // The supports there, or the supports of the model there.
+        let (model, supports) = self
+            .document
+            .with_scene(|spatial| {
+                let nearest = |ids: Vec<NodeId>| {
+                    ids.into_iter()
+                        .filter_map(|id| Some((near(spatial, id)?, id)))
+                        .min_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, id)| id)
+                };
+                let support_ids: Vec<NodeId> = support_leaves(spatial).map(|(id, _)| id).collect();
+                let model_ids: Vec<NodeId> = crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect();
+                let model = match tool {
+                    HandTool::Remove => None,
+                    HandTool::Add | HandTool::AddNear => nearest(model_ids),
+                };
+                let supports = match (tool, model) {
+                    (HandTool::Remove, _) => nearest(support_ids),
+                    (_, Some(model)) => sets_of_model(spatial, &self.sessions, model)
+                        .into_iter()
+                        .next(),
+                    (_, None) => None,
+                };
+                (model, supports)
+            })
+            .unwrap_or_default();
+        let out_of_date = || {
+            (
+                None,
+                Some(ctr!("DfSupportDialog", "Supports out of date")),
+                ctr!(
+                    "DfSupportDialog",
+                    "The scene changed since the supports were made; generate them again to edit them."
+                ),
+            )
+        };
+        let no_supports = || {
+            (
+                Some(MessageKey::SupportsEditNeedsSupports),
+                Some(ctr!("DfSupportDialog", "No supports to edit")),
+                ctr!(
+                    "DfSupportDialog",
+                    "Generate supports first; then add or remove them by hand."
+                ),
+            )
+        };
+        let editable = |leaf: NodeId| {
+            self.document
+                .with_scene(|spatial| in_force(spatial, &self.sessions, leaf).is_some())
+                .unwrap_or(false)
+        };
+        match supports {
+            // In force, only out of reach of the point.
+            Some(leaf) if editable(leaf) => (None, None, refusal(&EditError::NothingThere)),
+            Some(leaf) if model_of(&self.sessions, leaf).is_some() => out_of_date(),
+            // Supports in the scene with no session came in as a mesh: from
+            // a 3MF, or a project that could not keep them as data. That says
+            // something the person needs to know, so it is never silenced.
+            Some(_) => (
+                None,
+                Some(ctr!("DfSupportDialog", "No supports to edit")),
+                ctr!(
+                    "DfSupportDialog",
+                    "These supports were opened as a mesh, so they cannot be edited by hand. Generate supports again to edit them."
+                ),
+            ),
+            None if model.is_some() => no_supports(),
+            None if self.support_leaf().is_none() => no_supports(),
+            None => (None, None, refusal(&EditError::NothingThere)),
         }
     }
 
@@ -1537,7 +1754,14 @@ impl DfSupportRun {
         if let Some(path) = append_timing_log(&summary, &outcome.timings.report()) {
             details.push_str(&format!("\n\nFull timings: {}", path.display()));
         }
-        let Some(mesh) = outcome.mesh else {
+        let covered: Vec<NodeId> = outcome.sets.iter().map(|set| set.model).collect();
+        // One set per model it placed supports on (#197).
+        let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)> = outcome
+            .sets
+            .into_iter()
+            .filter_map(|set| Some((set.model, Arc::new(set.mesh?), set.session)))
+            .collect();
+        if sets.is_empty() {
             self.dialogs
                 .show_notice(MessageKey::SupportsNotNeeded, move || InfoTexts {
                     heading: ctr!("DfSupportDialog", "No supports needed"),
@@ -1545,29 +1769,44 @@ impl DfSupportRun {
                     details: details.as_str().into(),
                 });
             return;
-        };
-        let fragment = SceneFragment::from_leaf_snapshot(Arc::new(mesh), Transform3D::Identity);
-        let session = outcome.session;
+        }
+        let fragment = SceneFragment::from_leaf_snapshots(
+            sets.iter()
+                .map(|(_, mesh, _)| (mesh.clone(), Transform3D::Identity)),
+        );
         // Generating again replaces the supports already there (#152), in the
-        // same undoable step as the paste.
+        // same undoable step as the paste: the sets of the models the run
+        // covered, and, from a run over every model, supports no session drew.
         let replaced: Vec<NodeId> = self
             .document
-            .with_scene(|spatial| support_leaves(spatial).map(|(id, _)| id).collect())
+            .with_scene(|spatial| {
+                let every = crate::raft_clash::model_bottoms(spatial)
+                    .iter()
+                    .all(|(id, _)| covered.contains(id));
+                support_leaves(spatial)
+                    .map(|(id, _)| id)
+                    .filter(|id| match model_of(&self.sessions, *id) {
+                        Some(model) => covered.contains(&model),
+                        None => every,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
-        let current = self.current_session();
-        let pasted = self
-            .document
-            .paste_fragment_replacing(&fragment, [0.0, 0.0, 0.0], &replaced);
-        if pasted.is_ok() {
-            // The run follows the session it replaces, so Undo lands back on
-            // an editable set.
-            let mut sessions = self.sessions.borrow_mut();
-            match current {
-                Some(current) => sessions.truncate(current + 1),
-                None => sessions.clear(),
+        let pasted =
+            self.document
+                .paste_fragment_replacing_all(&fragment, [0.0, 0.0, 0.0], &replaced);
+        if let Ok(leaves) = &pasted
+            && leaves.len() == sets.len()
+        {
+            for (leaf, (model, _, session)) in leaves.iter().zip(sets) {
+                record(
+                    &self.document,
+                    &self.sessions,
+                    *leaf,
+                    model,
+                    Arc::new(session),
+                );
             }
-            sessions.push((Arc::new(session), self.document.scene_revision()));
-            drop(sessions);
             self.generated_raft_top
                 .set(Some(self.options.borrow().raft_top_mm()));
             self.warm_worker();
@@ -1826,7 +2065,7 @@ mod hand_edit_tests {
                 let sessions = run.sessions.borrow();
                 sessions
                     .last()
-                    .map_or(0, |s| s.0.state().collections.roots.len())
+                    .map_or(0, |s| s.session.state().collections.roots.len())
             };
             let generated = roots(&run);
             let mesh = |document: &SceneDocument| {
@@ -1917,7 +2156,7 @@ mod hand_edit_tests {
             let undone_is_plain = undone.0 == plain.0
                 && undone.1.len() == 1
                 && Arc::ptr_eq(&undone.1[0], &plain.1[0]);
-            let editable = run.current_session().is_some();
+            let editable = !run.sets_in_force().is_empty();
             (
                 (plain.0, plain.1.len()),
                 (anyway.0, anyway.1.len()),
@@ -2139,7 +2378,7 @@ mod hand_edit_tests {
             // Up: a move in X/Y takes the supports along (#119).
             let away = Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 10.0]));
             let move_model = |before, after| {
-                let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+                let edit = SceneEdit::SetLocalTransform {
                     node_id: model,
                     before,
                     after,
@@ -2214,7 +2453,7 @@ mod hand_edit_tests {
 
     fn move_live(document: &SceneDocument, leaf: NodeId, before: [f64; 3], after: [f64; 3]) {
         document
-            .apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+            .apply_edit(SceneEdit::SetLocalTransform {
                 node_id: leaf,
                 before: translation(before),
                 after: translation(after),
@@ -2223,7 +2462,7 @@ mod hand_edit_tests {
     }
 
     fn commit_move(document: &SceneDocument, leaf: NodeId, before: [f64; 3], after: [f64; 3]) {
-        document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+        document.push_edit(SceneEdit::SetLocalTransform {
             node_id: leaf,
             before: translation(before),
             after: translation(after),
@@ -2260,6 +2499,7 @@ mod hand_edit_tests {
             let (supports, generated) = run.support_leaf().expect("the supports were pasted");
             let start = leaf_transform(&document, supports);
             let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
+            let first = in_force_session(&run).expect("the run's session");
 
             // Live, the support leaf rides along on its transform.
             move_live(&document, model, at, [23.0, 18.0, 8.0]);
@@ -2281,7 +2521,11 @@ mod hand_edit_tests {
                 is_moved(&moved, &generated, [7.0, -5.0]),
                 "the same supports, moved"
             );
-            assert_eq!(run.current_session(), Some(1), "editable");
+            let moved_session = in_force_session(&run).expect("editable");
+            assert!(
+                !Arc::ptr_eq(&moved_session, &first),
+                "a session moved along"
+            );
             let kept = document
                 .with_scene(|spatial| support_documents(&document, spatial).documents.len())
                 .unwrap();
@@ -2300,12 +2544,12 @@ mod hand_edit_tests {
             assert_eq!(leaf_transform(&document, model), translation(at));
             let (_, back) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&back, &generated), "the supports as generated");
-            assert_eq!(run.current_session(), Some(0));
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &first)));
             assert!(document.redo().unwrap());
             assert_eq!(leaf_transform(&document, model), translation(there));
             let (_, again) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&again, &moved));
-            assert_eq!(run.current_session(), Some(1));
+            assert!(in_force_session(&run).is_some_and(|s| Arc::ptr_eq(&s, &moved_session)));
 
             // Up in Z, they stay as they were and go out of date.
             let up = [27.0, 15.0, 10.0];
@@ -2314,54 +2558,210 @@ mod hand_edit_tests {
             commit_move(&document, model, there, up);
             let (_, after_z) = run.support_leaf().unwrap();
             assert!(Arc::ptr_eq(&after_z, &moved));
-            assert_eq!(run.current_session(), None);
+            assert!(in_force_session(&run).is_none(), "out of date");
         });
     }
 
-    /// With two models, the supports of the one moved follow it when the
-    /// move is committed; the support leaf, which holds both models'
-    /// supports, does not ride along live.
+    /// The session in force of the scene's first support set.
+    fn in_force_session(run: &DfSupportRun) -> Option<Arc<DfSupportSession>> {
+        run.sets_in_force()
+            .first()
+            .map(|drawn| drawn.session.clone())
+    }
+
+    /// Every support leaf of the scene with its mesh, in row order.
+    fn support_sets(document: &SceneDocument) -> Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
+        document
+            .with_scene(|spatial| support_leaves(spatial).collect())
+            .unwrap_or_default()
+    }
+
+    /// The support leaf of `model`, and its mesh.
+    fn set_of(
+        document: &SceneDocument,
+        run: &DfSupportRun,
+        model: NodeId,
+    ) -> (NodeId, Arc<sc_mesh_core::IndexedMesh>) {
+        let leaf = document
+            .with_scene(|spatial| sets_of_model(spatial, &run.sessions, model))
+            .unwrap_or_default()
+            .first()
+            .copied()
+            .expect("the model has a support set");
+        let mesh = support_sets(document)
+            .into_iter()
+            .find(|(id, _)| *id == leaf)
+            .map(|(_, mesh)| mesh)
+            .expect("its mesh");
+        (leaf, mesh)
+    }
+
+    /// #197: with two models, each has a set of its own. The one moved
+    /// carries its set along live and redrawn on commit; the other set is
+    /// left as it was and stays editable.
     #[test]
-    fn supports_of_one_of_two_models_follow_it() {
+    fn each_of_two_models_carries_its_own_set() {
         on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let (document, run, leaves) =
                 supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
-            let (supports, generated) = run.support_leaf().expect("the supports were pasted");
-            let start = leaf_transform(&document, supports);
+            assert_eq!(support_sets(&document).len(), 2, "one set per model");
+            assert_eq!(run.sets_in_force().len(), 2);
+            let (first_leaf, first_mesh) = set_of(&document, &run, leaves[0]);
+            let (second_leaf, second_mesh) = set_of(&document, &run, leaves[1]);
+            assert_ne!(first_leaf, second_leaf);
+            let start = leaf_transform(&document, second_leaf);
             let (at, there) = ([50.0, 20.0, 8.0], [50.0, 40.0, 8.0]);
+
+            // Live, only the moved model's set rides along.
             move_live(&document, leaves[1], at, there);
-            assert_eq!(leaf_transform(&document, supports), start);
+            assert_eq!(
+                leaf_transform(&document, second_leaf),
+                translation([0.0, 20.0, 0.0])
+            );
+            assert_eq!(
+                leaf_transform(&document, first_leaf),
+                leaf_transform(&document, first_leaf)
+            );
             commit_move(&document, leaves[1], at, there);
-            let (_, moved) = run.support_leaf().unwrap();
-            assert!(!Arc::ptr_eq(&moved, &generated), "redrawn");
-            assert_eq!(run.current_session(), Some(1));
-            // The first model's supports stand where they were: every vertex
-            // left of the gap is unchanged.
-            let left = |m: &sc_mesh_core::IndexedMesh| {
-                let mut v: Vec<[f32; 3]> = m
-                    .vertices()
-                    .iter()
-                    .map(|v| *v.as_array())
-                    .filter(|p| p[0] < 35.0)
-                    .collect();
-                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                v
-            };
-            assert_eq!(left(&moved), left(&generated));
-            let right = |m: &sc_mesh_core::IndexedMesh| {
-                m.vertices()
-                    .iter()
-                    .filter(|v| v.as_array()[0] >= 35.0)
-                    .count()
-            };
-            assert_eq!(right(&moved), right(&generated));
+            assert_eq!(leaf_transform(&document, second_leaf), start);
+            let (_, moved) = set_of(&document, &run, leaves[1]);
             assert!(
-                moved
-                    .vertices()
-                    .iter()
-                    .filter(|v| v.as_array()[0] >= 35.0)
-                    .all(|v| v.as_array()[1] > 25.0)
+                is_moved(&moved, &second_mesh, [0.0, 20.0]),
+                "the same set, moved"
+            );
+            let (_, first_after) = set_of(&document, &run, leaves[0]);
+            assert!(
+                Arc::ptr_eq(&first_after, &first_mesh),
+                "the other set is untouched"
+            );
+            assert_eq!(run.sets_in_force().len(), 2, "both still editable");
+
+            // A hand edit on the first model edits its set alone.
+            window.set_support_tool(1);
+            run.on_tool_click([20.2, 20.2, 7.5]);
+            assert!(
+                window.get_supports_last_run().contains("edited by hand"),
+                "{}",
+                window.get_supports_last_run()
+            );
+            let (_, first_edited) = set_of(&document, &run, leaves[0]);
+            assert!(!Arc::ptr_eq(&first_edited, &first_mesh));
+            let (_, second_now) = set_of(&document, &run, leaves[1]);
+            assert!(Arc::ptr_eq(&second_now, &moved));
+            assert_eq!(run.sets_in_force().len(), 2);
+
+            // Undo takes the hand edit back, then the move: each set as it was.
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[0]).1,
+                &first_mesh
+            ));
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_mesh
+            ));
+            assert_eq!(run.sets_in_force().len(), 2);
+        });
+    }
+
+    /// #197: Generate with one model selected regenerates that model's set
+    /// alone, in one undoable step; with nothing selected, every set.
+    #[test]
+    fn generate_with_a_model_selected_replaces_its_set_alone() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let (first_leaf, first_mesh) = set_of(&document, &run, leaves[0]);
+            let (_, second_mesh) = set_of(&document, &run, leaves[1]);
+            let finish_run = |run: &Rc<DfSupportRun>| {
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                leaves[1],
+            )));
+            assert_eq!(run.target_models(), Some(vec![leaves[1]]));
+            run.start();
+            finish_run(&run);
+            assert_eq!(support_sets(&document).len(), 2, "still one set per model");
+            let (still_first, first_now) = set_of(&document, &run, leaves[0]);
+            assert_eq!(still_first, first_leaf);
+            assert!(Arc::ptr_eq(&first_now, &first_mesh), "the other set stays");
+            let (_, second_now) = set_of(&document, &run, leaves[1]);
+            assert!(!Arc::ptr_eq(&second_now, &second_mesh), "its set is new");
+            assert_eq!(run.sets_in_force().len(), 2);
+
+            // Selecting the new supports aims at their model too.
+            let (second_leaf, _) = set_of(&document, &run, leaves[1]);
+            document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                second_leaf,
+            )));
+            assert_eq!(run.target_models(), Some(vec![leaves[1]]));
+
+            // One undo brings the set before back.
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_mesh
+            ));
+            assert_eq!(support_sets(&document).len(), 2);
+
+            // Nothing selected: every set is new.
+            document.set_selection(crate::selection::Selection::None);
+            assert_eq!(run.target_models(), None);
+            run.start();
+            finish_run(&run);
+            let sets = support_sets(&document);
+            assert_eq!(sets.len(), 2);
+            assert!(
+                sets.iter()
+                    .all(|(_, m)| !Arc::ptr_eq(m, &first_mesh) && !Arc::ptr_eq(m, &second_mesh))
+            );
+        });
+    }
+
+    /// #197: two sets save as two documents and reopen as two editable sets.
+    #[test]
+    fn two_sets_save_and_reopen_editable() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _) = supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let saved: Vec<usize> = support_sets(&document)
+                .iter()
+                .map(|(_, m)| m.faces().len())
+                .collect();
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("cubes.bread");
+            crate::scene_save::save_project_to(&document, &target, &PrintDefaults::default())
+                .expect("the project saves");
+            let loaded = sc_project_formats::load_scene(&target, None, |_| {}).unwrap();
+            let sc_project_formats::LoadedContent::Project(project) = loaded.content else {
+                panic!("a .bread opens as a project");
+            };
+            assert_eq!(project.supports.len(), 2, "one document per set");
+            let mut scene = project.scene;
+            let restored = crate::support_persist::restore_supports(&mut scene, project.supports);
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            assert_eq!(restored.sets.len(), 2);
+            document.install_project_graph(scene, target.clone(), project.payload);
+            crate::support_persist::install_sets(&document, restored.sets);
+            let reopened: Vec<usize> = support_sets(&document)
+                .iter()
+                .map(|(_, m)| m.faces().len())
+                .collect();
+            assert_eq!(reopened, saved);
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+            window.set_support_tool(1);
+            run.on_tool_click([50.2, 20.2, 7.5]);
+            assert!(
+                window.get_supports_last_run().contains("edited by hand"),
+                "{}",
+                window.get_supports_last_run()
             );
         });
     }
@@ -2436,7 +2836,8 @@ mod hand_edit_tests {
                     crate::support_persist::restore_supports(&mut scene, project.supports);
                 assert!(restored.failures.is_empty(), "{:?}", restored.failures);
                 document.install_project_graph(scene, target.clone(), project.payload);
-                crate::support_persist::install_session(&document, restored.session);
+                crate::support_persist::install_sets(&document, restored.sets);
+                let reopened_session = in_force_session(&run).expect("editable");
                 let (_, mesh) = run.support_leaf().expect("the supports are back");
                 let reopened = mesh.faces() == saved_mesh.faces()
                     && mesh.vertices() == saved_mesh.vertices()
@@ -2446,7 +2847,8 @@ mod hand_edit_tests {
                 run.on_tool_click([20.2, 20.2, 7.5]);
                 let after_add = window.get_supports_last_run().to_string();
                 assert!(document.undo().unwrap(), "the hand edit undoes");
-                let after_undo = run.current_session();
+                let after_undo = in_force_session(&run)
+                    .is_some_and(|session| Arc::ptr_eq(&session, &reopened_session));
                 // The reopened session edits again after Undo: the support
                 // added anew, then taken away.
                 run.on_tool_click([20.2, 20.2, 7.5]);
@@ -2464,7 +2866,7 @@ mod hand_edit_tests {
         assert!(saved_triangles > 0);
         assert!(reopened, "the same supports and poses come back");
         assert!(after_add.contains("edited by hand"), "{after_add}");
-        assert_eq!(after_undo, Some(0), "Undo lands on the reopened session");
+        assert!(after_undo, "Undo lands on the reopened session");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
     }
 }

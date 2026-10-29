@@ -1,6 +1,7 @@
 //! Supports that move with their model in X/Y (#119): the session moved in
 //! the plane draws the same supports moved, saves and reopens on the moved
-//! scene, edits by hand there, and leaves the other models' supports alone.
+//! scene, edits by hand there. Each model has a set of its own (#197), which
+//! moves alone.
 
 use std::sync::Arc;
 
@@ -66,6 +67,8 @@ fn run_on(scene: &Scene) -> DfSupportSession {
         .unwrap()
         .join()
         .unwrap()
+        .sets
+        .remove(0)
         .session
 }
 
@@ -178,37 +181,54 @@ fn supports_move_with_their_model_in_the_plane() {
 }
 
 #[test]
-fn only_the_moved_model_s_supports_move() {
+fn each_model_gets_a_set_of_its_own_that_moves_alone() {
     let (scene, leaves) = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 8.0])]);
-    let session = run_on(&scene);
-    assert_eq!(session.model_count(), 2);
-    assert!(!session.supports_only_on(0) && !session.supports_only_on(1));
-    let index = model_index(&scene, leaves[1]).expect("a model");
-    let d = [0.0, 25.0];
-    let moved = session.moved_in_plane(index, d);
-    let (before, after) = (&session.state().collections, &moved.state().collections);
-    assert_eq!(before.roots.len(), after.roots.len());
-    let mut shifted = 0;
-    for (id, root) in &before.roots {
-        let now = after.roots[id].transform.pos;
-        if root.transform.pos.x > 30.0 {
-            assert_eq!(
-                (now.x, now.y),
-                (root.transform.pos.x, root.transform.pos.y + 25.0)
-            );
-            shifted += 1;
-        } else {
-            assert_eq!(now, root.transform.pos, "the other model's supports stay");
-        }
+    let outcome = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(outcome.sets.len(), 2);
+    let mut roots = 0;
+    for (set, (leaf, (lo, hi))) in outcome
+        .sets
+        .iter()
+        .zip(leaves.iter().zip([(-20.0, 20.0), (20.0, 60.0)]))
+    {
+        assert_eq!(set.model, *leaf);
+        assert_eq!(set.session.model_count(), 1);
+        assert!(set.session.supports_only_on(0));
+        roots += set.session.state().collections.roots.len();
+        // Its supports and raft stand under its own model only.
+        let mesh = set.mesh.as_ref().expect("supports for a lifted cube");
+        assert!(
+            mesh.vertices()
+                .iter()
+                .all(|v| (lo..hi).contains(&v.as_array()[0])),
+            "set of {leaf:?} reaches past its model"
+        );
     }
-    assert!(shifted > 0 && shifted < before.roots.len());
-    for (id, trunk) in &before.trunks {
-        if before.roots[&trunk.root_id].transform.pos.x <= 30.0 {
-            assert_eq!(&after.trunks[id], trunk, "the other model's supports stay");
-        }
-    }
+    assert_eq!(roots, outcome.support.collections.roots.len());
+    // The second set moves; the first, a session of its own, does not care.
+    let moved = outcome.sets[1].session.moved_in_plane(0, [0.0, 25.0]);
     let (there, _) = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 25.0, 8.0])]);
     assert!(moved.fits_models_of(&there));
+    assert!(outcome.sets[0].session.fits_models_of(&there));
+    assert!(!outcome.sets[1].session.fits_models_of(&there));
+}
+
+#[test]
+fn a_run_supports_only_the_models_it_is_asked_for() {
+    let (scene, leaves) = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [40.0, 0.0, 8.0])]);
+    let request = DfSupportRequest {
+        models: Some(vec![leaves[1]]),
+        ..Default::default()
+    };
+    let outcome = start_df_supports(&scene, request).unwrap().join().unwrap();
+    assert_eq!(outcome.models, 1);
+    assert_eq!(outcome.sets.len(), 1);
+    assert_eq!(outcome.sets[0].model, leaves[1]);
+    let mesh = outcome.sets[0].mesh.as_ref().expect("supports");
+    assert!(mesh.vertices().iter().all(|v| v.as_array()[0] > 20.0));
 }
 
 #[test]

@@ -560,11 +560,13 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
         scene.add_root(leaf).unwrap();
         scene
     };
-    let outcome = start_df_supports(&cube_at([20.0, 20.0, 8.0]), DfSupportRequest::default())
+    let set = start_df_supports(&cube_at([20.0, 20.0, 8.0]), DfSupportRequest::default())
         .unwrap()
         .join()
-        .unwrap();
-    let mesh = outcome.mesh.expect("supports for a lifted cube");
+        .unwrap()
+        .sets
+        .remove(0);
+    let mesh = set.mesh.expect("supports for a lifted cube");
     let triangles = mesh.faces().len();
     let mut scene = cube_at(support_offset);
     let leaf = scene
@@ -579,7 +581,7 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
         leaf,
         generator: DF_SUPPORT_GENERATOR.to_owned(),
         version: DF_SUPPORT_DOCUMENT_VERSION,
-        document: outcome.session.to_document().unwrap(),
+        document: set.session.to_document().unwrap(),
     }];
     let mut bytes = Vec::new();
     write_bread_project_with_progress(
@@ -621,7 +623,7 @@ fn a_loaded_bread_redraws_its_supports_and_hands_back_their_session() {
         "a .bread opens as a project"
     );
     assert!(prepared.restored_supports.failures.is_empty());
-    assert!(prepared.restored_supports.session.is_some());
+    assert_eq!(prepared.restored_supports.sets.len(), 1);
     assert_eq!(support_mesh_faces(prepared.spatial.graph()), [triangles]);
 }
 
@@ -635,7 +637,7 @@ fn a_loaded_bread_whose_supports_do_not_fit_opens_without_them() {
         return;
     };
     assert_eq!(prepared.restored_supports.failures.len(), 1);
-    assert!(prepared.restored_supports.session.is_none());
+    assert!(prepared.restored_supports.sets.is_empty());
     let scene = prepared.spatial.graph();
     assert_eq!(
         support_mesh_faces(scene),

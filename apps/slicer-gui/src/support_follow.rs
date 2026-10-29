@@ -7,27 +7,27 @@
 //!
 //! The document calls in here for every transform edit of a leaf, however it
 //! was made (the gizmo, `G`, the arrow keys, the Transform inspector,
-//! Center). While a move is live the support leaf rides along on its own
-//! transform, when the supports in it are that model's alone. When the move
-//! is committed in the plate plane, the session in force is moved with the
+//! Center). Each model has a support set of its own (#197): while a move is
+//! live, the model's support leaf rides along on its own transform. When the
+//! move is committed in the plate plane, the set's session is moved with the
 //! model ([`DfSupportSession::moved_in_plane`]) and redrawn, the redrawn mesh
 //! takes the old one's place in the same undo entry as the move, and the
 //! support leaf is back where it was. Nothing is placed again, so the
 //! supports stay the ones the person made, editable by hand and saved as
-//! data. A move in Z, a rotation or a scale leaves the supports as they
-//! were.
+//! data. The other models' sets are left alone. A move in Z, a rotation or a
+//! scale leaves the supports as they were.
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::{DfSupportSession, is_support_mesh, model_index};
+use sc_geom::df_supports::{DfSupportSession, is_support_mesh};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
 
 use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, leaf_mesh_swap};
-use crate::support_persist::{current_session, support_leaves};
+use crate::support_persist::{in_force, in_force_at, sets_of_model};
 
-/// Where a model and the supports stood when it started to move: the scene as
-/// last committed.
+/// Where a model and its supports stood when it started to move: the scene
+/// as last committed.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Anchor {
     revision: SceneRevision,
@@ -35,8 +35,6 @@ pub(crate) struct Anchor {
     model_start: Transform3D,
     supports: NodeId,
     supports_start: Transform3D,
-    /// The supports are the model's alone, so they can ride along live.
-    rides: bool,
 }
 
 /// The leaf a transform edit moves; `None` for any other edit.
@@ -71,40 +69,35 @@ fn plane_move(from: &Transform3D, to: &Transform3D) -> Option<[f64; 2]> {
     (same_linear && (bz - az).abs() <= 1e-6 && d != [0.0, 0.0]).then_some(d)
 }
 
-/// The scene's one support leaf and its transform, when it is a root (its
-/// mesh is in world space, as the session draws it).
-fn support_root(doc: &SceneDocument) -> Option<(NodeId, Transform3D)> {
+/// The support set of the model `model` whose session is in force, with the
+/// model standing at `model_world`: its leaf and transform, when the leaf is
+/// a root (its mesh is in world space, as the session draws it).
+fn model_set(
+    doc: &SceneDocument,
+    model: NodeId,
+    model_world: Option<&Transform3D>,
+) -> Option<(NodeId, Arc<DfSupportSession>, Transform3D)> {
+    let sessions = doc.support_sessions();
     doc.with_scene(|spatial| {
-        let mut leaves = support_leaves(spatial);
-        let (Some((id, _)), None) = (leaves.next(), leaves.next()) else {
-            return None;
-        };
-        let query = spatial.leaf(id)?;
-        query
-            .parent_world()
-            .is_identity()
-            .then(|| (id, query.local_transform()))
+        sets_of_model(spatial, &sessions, model)
+            .into_iter()
+            .find_map(|leaf| {
+                let drawn = match model_world {
+                    Some(world) => in_force_at(spatial, &sessions, leaf, world),
+                    None => in_force(spatial, &sessions, leaf),
+                }?;
+                let query = spatial.leaf(leaf)?;
+                query
+                    .parent_world()
+                    .is_identity()
+                    .then(|| (leaf, drawn.session, query.local_transform()))
+            })
     })
     .flatten()
 }
 
-/// The session in force and the index of `model` among its models, when it
-/// is one of them.
-fn session_for(
-    doc: &SceneDocument,
-    model: NodeId,
-) -> Option<(usize, Arc<DfSupportSession>, usize)> {
-    let sessions = doc.support_sessions();
-    let current = current_session(doc, &sessions)?;
-    let session = sessions.borrow()[current].0.clone();
-    let index = doc
-        .with_scene(|spatial| model_index(spatial.graph(), model))
-        .flatten()?;
-    (index < session.model_count()).then_some((current, session, index))
-}
-
 /// Before a live edit of `leaf`'s transform: the first one since the last
-/// commit remembers where the model and the supports stand.
+/// commit remembers where the model and its supports stand.
 pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
     let revision = doc.scene_revision();
     let slot = doc.support_follow();
@@ -114,7 +107,7 @@ pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
     {
         return;
     }
-    // A live move of another model may have left the supports moved.
+    // A live move of another model may have left its supports moved.
     settle(doc);
     if doc.support_sessions().borrow().is_empty() {
         return;
@@ -125,22 +118,21 @@ pub(crate) fn anchor(doc: &SceneDocument, leaf: NodeId) {
             (!is_support_mesh(query.mesh())).then(|| query.local_transform())
         })
         .flatten();
-    let (Some(model_start), Some((supports, supports_start))) = (model, support_root(doc)) else {
+    let (Some(model_start), Some((supports, _, supports_start))) =
+        (model, model_set(doc, leaf, None))
+    else {
         return;
     };
-    let rides =
-        session_for(doc, leaf).is_some_and(|(_, session, index)| session.supports_only_on(index));
     slot.set(Some(Anchor {
         revision,
         model: leaf,
         model_start,
         supports,
         supports_start,
-        rides,
     }));
 }
 
-/// After a live edit of `leaf`'s transform: the support leaf rides along by
+/// After a live edit of `leaf`'s transform: its support leaf rides along by
 /// the model's move in the plate plane, or stands where it was.
 pub(crate) fn follow_live(doc: &SceneDocument, leaf: NodeId) {
     let Some(anchor) = doc.support_follow().get() else {
@@ -160,11 +152,9 @@ pub(crate) fn follow_live(doc: &SceneDocument, leaf: NodeId) {
         })
         .flatten();
     let target = match moved {
-        Some([dx, dy]) if anchor.rides => {
-            Transform3D::Affine(AffineTransform3D::from_translation([dx, dy, 0.0]))
-                .compose(&anchor.supports_start)
-        }
-        _ => anchor.supports_start,
+        Some([dx, dy]) => Transform3D::Affine(AffineTransform3D::from_translation([dx, dy, 0.0]))
+            .compose(&anchor.supports_start),
+        None => anchor.supports_start,
     };
     set_supports_transform(doc, anchor.supports, target);
 }
@@ -198,19 +188,19 @@ fn set_supports_transform(doc: &SceneDocument, supports: NodeId, target: Transfo
     }
 }
 
-/// The supports session a committed edit leaves in force, after the session
-/// at `after` in the list, once the edit is recorded.
-pub(crate) struct MovedSession {
-    pub(crate) after: usize,
+/// The support set a committed move redrew, once the edit is recorded: its
+/// leaf, its model and the session that drew it.
+pub(crate) struct MovedSet {
+    pub(crate) leaf: NodeId,
+    pub(crate) model: NodeId,
     pub(crate) session: Arc<DfSupportSession>,
 }
 
 /// An edit about to be recorded. Supports a live move left moved go back
 /// first, whatever the edit. A move of a model in the plate plane comes back
-/// with the supports redrawn where the model now is, applied and in the same
-/// entry, and the session that drew them; any other edit comes back as it
-/// was.
-pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> (SceneEdit, Option<MovedSession>) {
+/// with its supports redrawn where the model now is, applied and in the same
+/// entry, and the set it redrew; any other edit comes back as it was.
+pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> (SceneEdit, Option<MovedSet>) {
     settle(doc);
     match follow_commit(doc, &edit) {
         Some((swap, moved)) => (SceneEdit::Compound(vec![edit, swap]), Some(moved)),
@@ -218,7 +208,7 @@ pub(crate) fn commit(doc: &SceneDocument, edit: SceneEdit) -> (SceneEdit, Option
     }
 }
 
-fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, MovedSession)> {
+fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, MovedSet)> {
     let SceneEdit::SetLocalTransform {
         node_id,
         before,
@@ -230,19 +220,21 @@ fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Mo
     if doc.support_sessions().borrow().is_empty() {
         return None;
     }
-    let delta = doc
+    let (delta, from) = doc
         .with_scene(|spatial| {
             let query = spatial.leaf(*node_id)?;
             if is_support_mesh(query.mesh()) {
                 return None;
             }
             let parent = query.parent_world();
-            plane_move(&parent.compose(before), &parent.compose(after))
+            let from = parent.compose(before);
+            Some((plane_move(&from, &parent.compose(after))?, from))
         })
         .flatten()?;
-    let (supports, _) = support_root(doc)?;
-    let (current, session, index) = session_for(doc, *node_id)?;
-    let moved = session.moved_in_plane(index, delta);
+    // The edit is already live: the set was in force where the model came
+    // from.
+    let (supports, session, _) = model_set(doc, *node_id, Some(&from))?;
+    let moved = session.moved_in_plane(0, delta);
     // The port is DragonFruit's code: a panic in it leaves the supports
     // where they were, as before, not a failed move.
     let mesh = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| moved.mesh()))
@@ -258,8 +250,9 @@ fn follow_commit(doc: &SceneDocument, edit: &SceneEdit) -> Option<(SceneEdit, Mo
     doc.apply_edit_unfollowed(swap.clone()).ok()?;
     Some((
         swap,
-        MovedSession {
-            after: current,
+        MovedSet {
+            leaf: supports,
+            model: *node_id,
             session: Arc::new(moved),
         },
     ))

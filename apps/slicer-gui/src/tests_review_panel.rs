@@ -851,7 +851,7 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(project.scene, path.clone());
-            crate::support_persist::install_session(&document, restored.session);
+            crate::support_persist::install_sets(&document, restored.sets);
             let supports =
                 DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
             let hollow =
