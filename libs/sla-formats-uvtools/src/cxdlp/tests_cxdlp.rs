@@ -203,6 +203,29 @@ fn the_model_code_comes_from_the_name_or_the_panel() {
     assert_eq!(printer_model("Some Printer", (1000, 1000)), None);
 }
 
+/// The Halot Sky, Halot Lite and CT-005 Pro share a panel, as do the Halot Max
+/// and CT-133 Pro, and the Halot Ray and Sky Plus, so the panel cannot tell
+/// their files apart: each profile's name gives the code UVtools writes for
+/// the machine from its own printer profile.
+#[test]
+fn machines_sharing_a_panel_get_their_own_model_code() {
+    for (name, code) in [
+        ("Halot Sky", "CL-89"),
+        ("Halot Lite", "CL-89L"),
+        ("CT-005 Pro", "CT-005"),
+        ("Halot Max", "CL-133"),
+        ("CT-133 Pro", "CT-133"),
+        ("Halot Ray", "CL925"),
+        ("Halot Sky Plus", "CL-92"),
+    ] {
+        assert_eq!(
+            printer_model(name, (3840, 2400)).as_deref(),
+            Some(code),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn a_machine_with_no_model_code_is_refused() {
     let program = program("Mystery", raster(AaLevel::Off, Mirror::default()), 2);

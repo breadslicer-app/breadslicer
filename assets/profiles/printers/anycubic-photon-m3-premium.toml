@@ -12,15 +12,15 @@ y_mm = 123.12
 z_mm = 250.0
 
 [hardware.pixel_resolution]
-x = 5760
-y = 3240
+x = 7680
+y = 4320
 
 [hardware.pixel_size_microns]
-x = 38.0
-y = 38.0
+x = 28.5
+y = 28.5
 
 [hardware.mirror]
-x = false
+x = true
 y = false
 
 [capabilities]

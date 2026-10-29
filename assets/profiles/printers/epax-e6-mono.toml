@@ -1,0 +1,38 @@
+[identity]
+id = "epax-e6-mono"
+manufacturer = "EPAX"
+family = "E6"
+name = "E6 Mono"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 81.0
+y_mm = 128.0
+z_mm = 155.0
+
+[hardware.pixel_resolution]
+x = 1620
+y = 2560
+
+[hardware.pixel_size_microns]
+x = 50.0
+y = 50.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v3"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

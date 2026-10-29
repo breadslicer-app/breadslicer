@@ -1,0 +1,37 @@
+[identity]
+id = "concepts3d-athena-12k"
+manufacturer = "Concepts3D"
+family = "Athena"
+name = "Athena 12K"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 218.88
+y_mm = 122.88
+z_mm = 245.0
+
+[hardware.pixel_resolution]
+x = 11520
+y = 5120
+
+[hardware.pixel_size_microns]
+x = 19.0
+y = 24.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "nanodlp"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

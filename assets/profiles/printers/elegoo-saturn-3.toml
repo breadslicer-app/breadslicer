@@ -9,7 +9,7 @@ image_asset_path = "images/elegoo-saturn-3.png"
 [hardware.build_volume]
 x_mm = 218.88
 y_mm = 122.88
-z_mm = 249.7
+z_mm = 250.0
 
 [hardware.pixel_resolution]
 x = 11520
@@ -27,6 +27,10 @@ y = false
 supports_grayscale = true
 two_stage_lift = true
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "goo"
+version = "v3.0"
 
 [[capabilities.output_formats]]
 format = "ctb"

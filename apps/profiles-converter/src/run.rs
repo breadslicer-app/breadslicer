@@ -26,6 +26,7 @@ use crate::profile::ConvertedProfile;
 use crate::reader::ProfileReader;
 use crate::request::ConversionRequest;
 use crate::source_note::SourceNote;
+use crate::uvtools_catalog::{UvtoolsCatalogError, UvtoolsCatalogReader};
 use crate::writer::{WriteError, WriteReport, write_profiles};
 
 /// Returned by [`run`] when reading a source, opening one of our own
@@ -36,6 +37,7 @@ pub enum RunError {
     ElegooSettings(ElegooSettingsError),
     AnycubicWiki(AnycubicWikiError),
     CrealityBlog(CrealityBlogError),
+    UvtoolsCatalog(UvtoolsCatalogError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
     Fold(FoldError),
@@ -49,6 +51,7 @@ impl fmt::Display for RunError {
             Self::ElegooSettings(err) => write!(f, "{err}"),
             Self::AnycubicWiki(err) => write!(f, "{err}"),
             Self::CrealityBlog(err) => write!(f, "{err}"),
+            Self::UvtoolsCatalog(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
             Self::Fold(err) => write!(f, "{err}"),
@@ -64,6 +67,7 @@ impl std::error::Error for RunError {
             Self::ElegooSettings(err) => Some(err),
             Self::AnycubicWiki(err) => Some(err),
             Self::CrealityBlog(err) => Some(err),
+            Self::UvtoolsCatalog(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
             Self::Fold(err) => Some(err),
@@ -111,6 +115,13 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         SourceFormat::CrealityBlogPost => CrealityBlogReader
             .read(&paths)
             .map_err(RunError::CrealityBlog)?,
+        SourceFormat::UvtoolsCatalog => {
+            let reader = match printers {
+                Some(printers) => UvtoolsCatalogReader::consulting(printers),
+                None => UvtoolsCatalogReader::without_a_library(),
+            };
+            reader.read(&paths).map_err(RunError::UvtoolsCatalog)?
+        }
     };
     let mut notes = reading.notes;
     // Folding comes first, so the resin a profile joins decides whether

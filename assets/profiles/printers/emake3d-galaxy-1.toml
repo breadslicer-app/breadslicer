@@ -1,0 +1,37 @@
+[identity]
+id = "emake3d-galaxy-1"
+manufacturer = "Emake3D"
+family = "Galaxy"
+name = "Galaxy 1"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 400.0
+y_mm = 200.0
+z_mm = 400.0
+
+[hardware.pixel_resolution]
+x = 8000
+y = 4000
+
+[hardware.pixel_size_microns]
+x = 50.0
+y = 50.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "qdt"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

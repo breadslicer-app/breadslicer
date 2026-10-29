@@ -12,13 +12,16 @@ the source as their licenses require:
 
 - DragonFruit (Open Resin Alliance and contributors; MIT): parts of the
   support and hollowing engines. See libs/sc-geom/support-gen-df/NOTICE and
-  libs/sc-geom/hollow-df/NOTICE. The bundled printer profiles and product
-  images are converted from its printer plugins; see assets/profiles/README.md
-  and assets/profiles/images/README.md.
+  libs/sc-geom/hollow-df/NOTICE. The bundled Anycubic and ELEGOO printer
+  profiles were first converted from its printer plugins, and their product
+  images come from them; see assets/profiles/README.md and
+  assets/profiles/images/README.md.
 
 - UVtools (Copyright 2020-2026 PTRTECH, Tiago Conceição (sn4k3) and UVtools
   contributors; AGPL-3.0-or-later): the Creality CXDLP printer-file writer,
   the ChiTuBox CTB writer for versions 2 to 4, and the Anycubic ZIP (.pwsz, .pm7, .pm7m, .pm4u, .pp1, .pp1m) and binary
   (.pwmx, .pwma, .pm3, .pws and the rest) printer-file writers, ported to
-  Rust from UVtools v7.1.1. See libs/sla-formats-uvtools/NOTICE.
+  Rust from UVtools v7.1.1. See libs/sla-formats-uvtools/NOTICE. The bundled
+  printer profiles are converted from the PrusaSlicer printer profiles UVtools
+  v7.1.1 bundles (PrusaSlicer/printer/*.ini); see assets/profiles/README.md.
   https://github.com/sn4k3/UVtools

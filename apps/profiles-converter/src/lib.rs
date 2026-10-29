@@ -28,4 +28,5 @@ pub mod reader;
 pub mod request;
 pub mod run;
 pub mod source_note;
+pub mod uvtools_catalog;
 pub mod writer;
