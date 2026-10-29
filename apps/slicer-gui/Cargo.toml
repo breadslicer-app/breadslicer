@@ -35,6 +35,7 @@ sc-sla-formats-uvtools = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
+chrono = { workspace = true }
 futures-channel = "0.3"
 glam = "0.32.1"
 ico = "0.5"

@@ -431,12 +431,11 @@ impl ViewportController {
     /// moves the document to a new path.
     fn mirror_title_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let name = self
-                .session
-                .document()
-                .source_file_name()
-                .unwrap_or_default();
+            let document = self.session.document();
+            let name = document.source_file_name().unwrap_or_default();
             ui.set_document_name(name.into());
+            // The project behind the title may have earlier versions (#18).
+            ui.set_has_versions(crate::autosave::versions_dir_of(document).is_some());
         }
     }
 
@@ -725,6 +724,13 @@ impl ViewportController {
         crate::workspace_section::allows_transform_gizmo(self.session.section())
     }
 
+    /// Whether a gizmo drag or a keyboard transform is under way: the scene
+    /// then shows a pose no edit has committed yet.
+    pub(crate) fn is_mid_gesture(&self) -> bool {
+        self.input.modal.get().is_some()
+            || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
+    }
+
     /// Returns whether the active section permits undo and redo. Wider than the
     /// layout gate: history stays reachable in Prepare (mesh repair is undoable
     /// there) and is blocked only in Slice.
@@ -917,6 +923,10 @@ impl ViewportController {
             .map(|r| r.install_scene(gpu_scene))
             .unwrap_or(false);
 
+        // A scene read from an autosave or an earlier version stands for the
+        // file it came from (#18).
+        let recovered = crate::autosave::recovered_identity(&source_path);
+
         // Fires `SceneEvent::Installed`; the listener resets the camera to
         // `None` (so the bounds-based framing below sees a fresh slot), pushes
         // the new object list, and refreshes the other UI mirrors.
@@ -932,6 +942,10 @@ impl ViewportController {
             crate::breadcrumbs::note(&format!("load: hollow not restored: {why}"));
         }
         install_hollows(self.session.document(), restored_hollows.hollows);
+        if let Some((source, origin)) = recovered {
+            self.session.document().restore_identity(source, origin);
+            self.mirror_title_to_ui();
+        }
 
         // A reopened project's revalidated slices become the held result now,
         // after install has cleared any previous one, so the viewer opens on

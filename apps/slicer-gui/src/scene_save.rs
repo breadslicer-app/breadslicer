@@ -521,6 +521,63 @@ mod scene_save_tests {
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
         }
 
+        // A scene read from an autosave or an earlier version (#18) stands
+        // for its project: Save goes there, never to the copy it was read
+        // from, and only once the scene reads as unsaved.
+        #[test]
+        fn a_recovered_project_saves_back_to_its_project() {
+            use crate::scene_document::DocumentOrigin;
+
+            let doc = SceneDocument::new();
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/data/autosave/run/window-0-3.bread"),
+                ProjectPayload::default(),
+            );
+            assert!(!doc.is_dirty());
+            doc.restore_identity(PathBuf::from("/tmp/hueco.bread"), DocumentOrigin::Project);
+            assert!(doc.is_dirty());
+            assert_eq!(
+                decide_save_dispatch(&doc),
+                SaveDispatch::OverwriteProject(PathBuf::from("/tmp/hueco.bread")),
+            );
+        }
+
+        #[test]
+        fn a_recovered_mesh_scene_still_routes_to_save_as() {
+            use crate::scene_document::DocumentOrigin;
+
+            let doc = SceneDocument::new();
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/data/autosave/run/window-0-3.bread"),
+                ProjectPayload::default(),
+            );
+            doc.restore_identity(PathBuf::from("/tmp/widget.stl"), DocumentOrigin::PlainMesh);
+            assert!(doc.is_dirty());
+            assert_eq!(doc.source_path(), Some(PathBuf::from("/tmp/widget.stl")));
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+        }
+
+        #[test]
+        fn a_recovered_scene_reads_clean_once_saved() {
+            use crate::scene_document::DocumentOrigin;
+
+            let dir = tempfile::tempdir().unwrap();
+            let project = dir.path().join("hueco.bread");
+            let doc = SceneDocument::new();
+            doc.install_project_graph(
+                one_object_graph(),
+                dir.path().join("window-0-3.bread"),
+                ProjectPayload::default(),
+            );
+            doc.restore_identity(project.clone(), DocumentOrigin::Project);
+            save_project_to(&doc, &project, &PrintDefaults::default()).expect("saved");
+            assert!(!doc.is_dirty());
+            assert!(project.exists());
+            assert!(!dir.path().join("window-0-3.bread").exists());
+        }
+
         #[test]
         fn a_clean_plain_mesh_source_still_routes_to_save_as() {
             // No project file exists yet, so "Save" on a clean mesh-sourced

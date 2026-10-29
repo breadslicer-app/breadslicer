@@ -42,6 +42,17 @@ pub(crate) enum ReplaceSceneChoice {
     Cancel,
 }
 
+/// The answer to "recover the scenes a run left unsaved?" (#18).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecoveryChoice {
+    /// Open them again, with their changes unsaved.
+    Recover,
+    /// Delete them.
+    Discard,
+    /// Neither (Escape or Enter): keep them for the next start.
+    Later,
+}
+
 /// Which "keep your work" buttons the "replace current scene?" dialog offers,
 /// decided from the document's dirty state and from whether it is backed by a
 /// project file.
@@ -162,6 +173,11 @@ enum Entry {
     SliceOverwrite {
         on_confirm: Box<dyn FnOnce()>,
     },
+    Recovery {
+        /// 1 line per scene.
+        scenes: SharedString,
+        on_choice: Box<dyn FnOnce(RecoveryChoice)>,
+    },
     /// Help > Export Diagnostics (#74): what the file holds, and whether the
     /// scene's models go in.
     Diagnostics {
@@ -176,9 +192,10 @@ impl Entry {
             // Asked for from the menu and changes nothing: a click outside
             // only closes it.
             Self::Info { .. } | Self::Diagnostics { .. } => MessageClass::Notice,
-            Self::Error(_) | Self::SceneChange { .. } | Self::SliceOverwrite { .. } => {
-                MessageClass::MustAnswer
-            }
+            Self::Error(_)
+            | Self::SceneChange { .. }
+            | Self::SliceOverwrite { .. }
+            | Self::Recovery { .. } => MessageClass::MustAnswer,
         }
     }
 
@@ -237,6 +254,15 @@ impl Entry {
                 message.kind = MessageKind::Diagnostics;
                 message.has_scene = *has_scene;
             }
+            Self::Recovery { scenes, .. } => {
+                message.kind = MessageKind::Recovery;
+                message.heading = ctr!("RecoveryDialog", "Breadslicer closed without saving");
+                message.text = ctr!(
+                    "RecoveryDialog",
+                    "These scenes had unsaved changes. Recover them to keep working on them, or discard them."
+                );
+                message.context = scenes.clone();
+            }
         }
         message
     }
@@ -267,6 +293,12 @@ impl Entry {
                     on_save(has_scene && include_models);
                 }
             }
+            Self::Recovery { on_choice, .. } => on_choice(match answer {
+                MessageAnswer::Confirm => RecoveryChoice::Recover,
+                MessageAnswer::Discard => RecoveryChoice::Discard,
+                // Nothing is deleted without an explicit Discard.
+                _ => RecoveryChoice::Later,
+            }),
         }
     }
 }
@@ -562,6 +594,20 @@ impl DialogManager {
         });
     }
 
+    /// Asks whether to recover the scenes that a run left with unsaved
+    /// changes, 1 per line of `scenes` (#18). Calls `on_choice` once with the
+    /// answer. Must run on the Slint UI thread.
+    pub(crate) fn show_recovery(
+        self: &Rc<Self>,
+        scenes: Vec<String>,
+        on_choice: impl FnOnce(RecoveryChoice) + 'static,
+    ) {
+        self.enqueue(Entry::Recovery {
+            scenes: scenes.join("\n").into(),
+            on_choice: Box::new(on_choice),
+        });
+    }
+
     /// A native file dialog over this manager's window (see
     /// [`file_dialog_over`]).
     pub(crate) fn file_dialog(&self) -> rfd::AsyncFileDialog {
@@ -823,6 +869,48 @@ mod message_policy_tests {
             assert_eq!(choice.get(), Some(expected), "{answer:?}");
             assert!(manager.queued_for_test().is_empty());
         }
+    }
+
+    #[test]
+    fn only_an_explicit_answer_recovers_or_discards_the_unsaved_scenes() {
+        let answers = [
+            (MessageAnswer::Confirm, RecoveryChoice::Recover),
+            (MessageAnswer::Discard, RecoveryChoice::Discard),
+            (MessageAnswer::Cancel, RecoveryChoice::Later),
+            (MessageAnswer::Close, RecoveryChoice::Later),
+        ];
+        for (answer, expected) in answers {
+            let (_bus, manager) = manager();
+            let choice = Rc::new(Cell::new(None));
+            let sink = choice.clone();
+            manager.show_recovery(vec!["hueco.bread — 14:32".to_owned()], move |c| {
+                sink.set(Some(c));
+            });
+            assert_eq!(
+                manager.queued_for_test(),
+                [(MessageKind::Recovery, MessageClass::MustAnswer)]
+            );
+            manager.click_outside(false);
+            assert_eq!(choice.get(), None, "a click outside answers nothing");
+            manager.answer(answer, false);
+            assert_eq!(choice.get(), Some(expected), "{answer:?}");
+            assert!(manager.queued_for_test().is_empty());
+        }
+    }
+
+    #[test]
+    fn the_recovery_question_lists_each_scene_on_its_line() {
+        let (_bus, manager) = manager();
+        manager.show_recovery(
+            vec![
+                "hueco.bread — 14:32".to_owned(),
+                "cubo.stl — 14:35".to_owned(),
+            ],
+            |_| {},
+        );
+        let message = manager.queue.borrow().front().map(Entry::message).unwrap();
+        assert_eq!(message.context, "hueco.bread — 14:32\ncubo.stl — 14:35");
+        assert_eq!(message.heading, "Breadslicer closed without saving");
     }
 
     #[test]
