@@ -153,6 +153,7 @@ pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> 
 /// every reachable leaf misses (whether by AABB pre-pass or triangle test).
 /// Leaves are visited in the pre-order of [`SceneSpatial::leaf_id_at_index`];
 /// on equal `t` the first leaf visited wins.
+#[cfg(test)]
 pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
     pick_object_where(ray, spatial, |_| true).map(|(node_id, _)| node_id)
 }

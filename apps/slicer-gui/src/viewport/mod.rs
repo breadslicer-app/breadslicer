@@ -28,6 +28,8 @@ mod tests_controller_lifecycle;
 mod tests_controller_numeric;
 #[cfg(test)]
 mod tests_controller_section_gating;
+#[cfg(test)]
+mod tests_controller_supports_selection;
 mod translation_clamp;
 mod types;
 

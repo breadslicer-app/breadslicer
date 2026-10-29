@@ -28,6 +28,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
 
 use super::gizmo_fsm::{
@@ -272,18 +273,20 @@ impl InputDispatch {
         PointerUpOutcome::Nothing
     }
 
-    /// Builds the ray at `(x, y)` and runs `pick_object` against the
-    /// scene. Returns:
+    /// Builds the ray at `(x, y)` and finds the leaf a click there
+    /// selects ([`selected_by`]: without `supports_selectable`, a click on
+    /// the supports selects their model). Returns:
     /// - `None`: the picker bailed (no camera, no viewport, or no scene).
     /// - `Some(None)`: ray hit empty space (caller clears the selection).
-    /// - `Some(Some(node_id))`: ray hit the leaf identified by `node_id`
-    ///   (caller selects it).
+    /// - `Some(Some(node_id))`: the click selects the leaf identified by
+    ///   `node_id`.
     pub(super) fn pick_at(
         &self,
         document: &Rc<SceneDocument>,
         camera: &RefCell<Option<OrbitCamera>>,
         viewport: Option<ViewportSize>,
         cursor: ScreenPoint,
+        supports_selectable: bool,
     ) -> Option<Option<NodeId>> {
         let vp = viewport?;
         let camera_slot = camera.borrow();
@@ -296,7 +299,7 @@ impl InputDispatch {
             cursor.x,
             cursor.y,
         );
-        document.with_scene(|spatial| picking::pick_object(&ray, spatial))
+        document.with_scene(|spatial| selected_by(&ray, spatial, supports_selectable))
     }
 
     /// Aborts any in-progress drag (reverts the affected object's
@@ -377,6 +380,55 @@ impl InputDispatch {
     }
 }
 
+/// Whether leaf `id` of `spatial` shows the generated supports.
+pub(super) fn shows_supports(spatial: &SceneSpatial, id: NodeId) -> bool {
+    spatial
+        .graph()
+        .leaf_mesh_arc(id)
+        .is_some_and(|mesh| sc_geom::df_supports::is_support_mesh(mesh))
+}
+
+/// The leaf a click along `ray` selects. The supports are selected only
+/// in the Supports tab, which edits them (#120): anywhere else they follow
+/// their model, and a click on them selects the model whose footprint on
+/// the plate is nearest the point hit. A pillar seen from the side stands
+/// under its model, not in front of it, so the ray need not reach the
+/// model.
+fn selected_by(
+    ray: &picking::Ray,
+    spatial: &SceneSpatial,
+    supports_selectable: bool,
+) -> Option<NodeId> {
+    let (hit, t) = picking::pick_object_where(ray, spatial, |_| true)?;
+    if supports_selectable || !shows_supports(spatial, hit) {
+        return Some(hit);
+    }
+    let at = ray.origin + ray.direction * t;
+    nearest_model(spatial, at.x, at.y)
+}
+
+/// The model whose footprint on the plate is nearest `(x, y)`; between
+/// footprints that both hold the point, the one whose centre is nearer.
+fn nearest_model(spatial: &SceneSpatial, x: f32, y: f32) -> Option<NodeId> {
+    let distances = |id: NodeId| {
+        let query = spatial.leaf(id)?;
+        let aabb = query.transformed_aabb(query.world_transform())?;
+        let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
+        let outside = |p: f32, k: usize| (lo[k] - p).max(p - hi[k]).max(0.0);
+        let off_centre = |p: f32, k: usize| p - (lo[k] + hi[k]) * 0.5;
+        Some((
+            outside(x, 0).hypot(outside(y, 1)),
+            off_centre(x, 0).hypot(off_centre(y, 1)),
+        ))
+    };
+    (0..)
+        .map_while(|i| spatial.leaf_id_at_index(i))
+        .filter(|&id| !shows_supports(spatial, id))
+        .filter_map(|id| Some((distances(id)?, id)))
+        .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, id)| id)
+}
+
 #[cfg(test)]
 mod input_dispatch_tests {
     use super::*;
@@ -406,7 +458,7 @@ mod input_dispatch_tests {
         let doc = SceneDocument::new();
         let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
         let cursor = ScreenPoint { x: 100.0, y: 100.0 };
-        assert!(id.pick_at(&doc, &camera, None, cursor).is_none());
+        assert!(id.pick_at(&doc, &camera, None, cursor, true).is_none());
     }
 
     #[test]
@@ -416,7 +468,7 @@ mod input_dispatch_tests {
         let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
         let vp = ViewportSize::new(1920.0, 1080.0);
         let cursor = ScreenPoint { x: 100.0, y: 100.0 };
-        assert!(id.pick_at(&doc, &camera, vp, cursor).is_none());
+        assert!(id.pick_at(&doc, &camera, vp, cursor, true).is_none());
     }
 
     #[test]
