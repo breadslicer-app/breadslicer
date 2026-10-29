@@ -2978,3 +2978,8 @@ msgstr "Tu computadora dibuja una escena pesada a unos {} FPS y tu monitor muest
 msgctxt "AppearancePreferences"
 msgid "Your computer draws a heavy scene at about {} FPS. Recommended: {} FPS."
 msgstr "Tu computadora dibuja una escena pesada a unos {} FPS. Recomendado: {} FPS."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Select these supports, or their model, to remove them."
+msgstr "Seleccioná estos soportes, o su modelo, para quitarlos."

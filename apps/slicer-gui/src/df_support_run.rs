@@ -1199,17 +1199,40 @@ impl DfSupportRun {
             .unwrap_or_default()
     }
 
+    /// The support set Remove may take from: the selected supports, or the
+    /// selected model's. A safeguard: another model's supports are never
+    /// taken by a click meant for these. `None` with neither selected.
+    fn selected_set(&self) -> Option<NodeId> {
+        let selected = self.document.selection_primary_node_id()?;
+        self.document
+            .with_scene(|spatial| {
+                if support_leaves(spatial).any(|(id, _)| id == selected) {
+                    return Some(selected);
+                }
+                sets_of_model(spatial, &self.sessions, selected)
+                    .into_iter()
+                    .next()
+            })
+            .flatten()
+    }
+
     /// The support set a hand tool at `point` (world mm) acts on, among the
     /// sets in force: for Add, the one whose model is nearest; for Remove,
-    /// the one whose support is. Sets whose box is out of reach are not
-    /// asked, so a hover over a busy scene asks one set at most, as a rule.
+    /// the selected set ([`Self::selected_set`]) when its support is there.
+    /// Sets whose box is out of reach are not asked, so a hover over a busy
+    /// scene asks one set at most, as a rule.
     fn set_at(&self, point: [f32; 3], tool: HandTool) -> Option<DrawnSet> {
         let p = point.map(f64::from);
+        let only = match tool {
+            HandTool::Remove => Some(self.selected_set()?),
+            HandTool::Add | HandTool::AddNear => None,
+        };
         let mut near: Vec<DrawnSet> = self
             .document
             .with_scene(|spatial| {
                 sets_in_force(spatial, &self.sessions)
                     .into_iter()
+                    .filter(|drawn| only.is_none_or(|leaf| drawn.leaf == leaf))
                     .filter(|drawn| {
                         let boxed = match tool {
                             HandTool::Remove => drawn.leaf,
@@ -1583,8 +1606,9 @@ impl DfSupportRun {
 
     /// Why no support set in force takes a hand tool at `point`, as a
     /// notice (its "Don't show again" key and heading) or, with no heading,
-    /// as the reason the edit failed: the model's supports are out of date,
-    /// the model has none, or the supports there came in as a mesh.
+    /// as the reason the edit failed: the supports there are not the ones
+    /// selected (Remove), the model's supports are out of date, the model has
+    /// none, or the supports there came in as a mesh.
     fn no_set_notice(
         &self,
         tool: HandTool,
@@ -1656,7 +1680,17 @@ impl DfSupportRun {
                 .with_scene(|spatial| in_force(spatial, &self.sessions, leaf).is_some())
                 .unwrap_or(false)
         };
+        let selected = || self.selected_set() == supports;
         match supports {
+            // Another set than the one selected: Remove leaves it alone.
+            Some(leaf) if tool == HandTool::Remove && editable(leaf) && !selected() => (
+                None,
+                None,
+                ctr!(
+                    "DfSupportDialog",
+                    "Select these supports, or their model, to remove them."
+                ),
+            ),
             // In force, only out of reach of the point.
             Some(leaf) if editable(leaf) => (None, None, refusal(&EditError::NothingThere)),
             Some(leaf) if model_of(&self.sessions, leaf).is_some() => out_of_date(),
@@ -2725,6 +2759,73 @@ mod hand_edit_tests {
         });
     }
 
+    /// #197: Remove takes only from the selected set, or the selected
+    /// model's: another model's supports neither preview red nor go.
+    #[test]
+    fn remove_takes_only_from_the_selected_set() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let select = |id: NodeId| {
+                document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                    id,
+                )));
+            };
+            let last_run = || window.get_supports_last_run().to_string();
+            // A support by hand under each model, so neither set is down to
+            // its last one (which Remove leaves to Undo).
+            window.set_support_tool(1);
+            for at in [[20.2, 20.2, 7.5], [50.2, 20.2, 7.5]] {
+                run.on_tool_click(at);
+                assert!(last_run().contains("edited by hand"), "{}", last_run());
+            }
+            let (first_leaf, first_mesh) = set_of(&document, &run, leaves[0]);
+            let (_, second_mesh) = set_of(&document, &run, leaves[1]);
+            window.set_support_tool(2);
+            let (here, there) = ([20.2, 20.2, 7.4], [50.2, 20.2, 7.4]);
+
+            // The first set selected: the second model's supports stay.
+            select(first_leaf);
+            assert!(
+                run.set_at(there, HandTool::Remove).is_none(),
+                "no red there"
+            );
+            run.on_tool_click(there);
+            assert!(
+                last_run().contains("Select these supports"),
+                "{}",
+                last_run()
+            );
+            assert!(Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_mesh
+            ));
+            // Its own supports go.
+            assert!(run.set_at(here, HandTool::Remove).is_some());
+            run.on_tool_click(here);
+            assert!(last_run().contains("edited by hand"), "{}", last_run());
+            assert!(!Arc::ptr_eq(
+                &set_of(&document, &run, leaves[0]).1,
+                &first_mesh
+            ));
+
+            // The second model selected: its supports go.
+            select(leaves[1]);
+            run.on_tool_click(there);
+            assert!(last_run().contains("edited by hand"), "{}", last_run());
+            assert!(!Arc::ptr_eq(
+                &set_of(&document, &run, leaves[1]).1,
+                &second_mesh
+            ));
+
+            // Nothing selected: nothing is offered.
+            document.set_selection(crate::selection::Selection::None);
+            assert!(run.set_at(here, HandTool::Remove).is_none());
+            assert!(run.set_at(there, HandTool::Remove).is_none());
+        });
+    }
+
     /// #197: two sets save as two documents and reopen as two editable sets.
     #[test]
     fn two_sets_save_and_reopen_editable() {
@@ -2850,9 +2951,13 @@ mod hand_edit_tests {
                 let after_undo = in_force_session(&run)
                     .is_some_and(|session| Arc::ptr_eq(&session, &reopened_session));
                 // The reopened session edits again after Undo: the support
-                // added anew, then taken away.
+                // added anew, then taken away, from the supports selected.
                 run.on_tool_click([20.2, 20.2, 7.5]);
                 window.set_support_tool(2);
+                let (supports, _) = run.support_leaf().expect("the supports");
+                document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
+                    supports,
+                )));
                 run.on_tool_click([20.2, 20.2, 7.4]);
                 let after_remove = window.get_supports_last_run().to_string();
                 (
