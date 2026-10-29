@@ -13,9 +13,7 @@
 //! them.
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
-use sc_sla_formats::{
-    AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, PrinterFileFormat, UnwritableBinding,
-};
+use sc_sla_formats::{CtbVariant, CxdlpVersion, GooVersion, PrinterFileFormat, UnwritableBinding};
 
 use crate::i18n::ctr;
 
@@ -150,7 +148,9 @@ fn automatic_label(format: PrinterFileFormat) -> String {
         PrinterFileFormat::Goo(_) => ctr!("SlicePanel", ".goo (automatic)"),
         PrinterFileFormat::Ctb(_) => ctr!("SlicePanel", ".ctb (automatic)"),
         PrinterFileFormat::Cxdlp(_) => ctr!("SlicePanel", ".cxdlp (automatic)"),
-        PrinterFileFormat::AnycubicZip(_) => ctr!("SlicePanel", "Anycubic (automatic)"),
+        PrinterFileFormat::AnycubicZip(_) | PrinterFileFormat::AnycubicBinary(_) => {
+            ctr!("SlicePanel", "Anycubic (automatic)")
+        }
     }
     .to_string()
 }
@@ -168,9 +168,10 @@ fn format_label(format: PrinterFileFormat) -> String {
         }
         PrinterFileFormat::Cxdlp(CxdlpVersion::V2) => ctr!("SlicePanel", ".cxdlp (v2)"),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V3) => ctr!("SlicePanel", ".cxdlp (v3)"),
-        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz) => ctr!("SlicePanel", ".pwsz"),
-        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pm7) => ctr!("SlicePanel", ".pm7"),
-        PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pm7m) => ctr!("SlicePanel", ".pm7m"),
+        // Each Anycubic variant has an extension of its own, which says it all.
+        PrinterFileFormat::AnycubicZip(_) | PrinterFileFormat::AnycubicBinary(_) => {
+            return format!(".{}", format.extension());
+        }
     }
     .to_string()
 }
@@ -184,6 +185,7 @@ fn refusal(binding: &OutputFormatBinding, reason: &str) -> String {
 #[cfg(test)]
 mod print_format_tests {
     use sc_print_primitives::{FormatKind, NonEmptyString};
+    use sc_sla_formats::{AnycubicBinaryVariant, AnycubicZipVariant};
 
     use super::*;
 
@@ -337,6 +339,12 @@ mod print_format_tests {
         assert_eq!(
             format_label(PrinterFileFormat::AnycubicZip(AnycubicZipVariant::Pwsz)),
             ".pwsz",
+        );
+        assert_eq!(
+            format_label(PrinterFileFormat::AnycubicBinary(
+                AnycubicBinaryVariant::Pwmx
+            )),
+            ".pwmx",
         );
     }
 

@@ -54,7 +54,10 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::layer_stats::{ContourStats, LayerStats, PixelRect};
-use crate::program::{ProgramSummary, StageSettings, mm_per_sec, slabs};
+use crate::program::{
+    ProgramSummary, StageSettings, mm_per_sec, round_away, round_display, round_height, slabs,
+    uses_per_layer_settings,
+};
 use crate::pw0;
 use crate::resample::{downscale, png_bytes};
 
@@ -125,28 +128,6 @@ impl Serialize for Num {
 
 fn nums<const N: usize>(values: [f32; N]) -> Vec<Num> {
     values.into_iter().map(Num).collect()
-}
-
-/// Rounds to `digits` decimals, halves away from zero.
-fn round_away(value: f32, digits: i32) -> f32 {
-    let scale = 10_f64.powi(digits);
-    ((f64::from(value) * scale).round() / scale) as f32
-}
-
-/// Rounds to `digits` decimals, halves to even.
-fn round_even(value: f32, digits: i32) -> f32 {
-    let scale = 10_f64.powi(digits);
-    ((f64::from(value) * scale).round_ties_even() / scale) as f32
-}
-
-/// Rounds a height as UVtools does: 3 decimals, halves away from zero.
-fn round_height(value: f32) -> f32 {
-    round_away(value, 3)
-}
-
-/// Rounds a panel size or position as UVtools does: 3 decimals, halves to even.
-fn round_display(value: f32) -> f32 {
-    round_even(value, 3)
 }
 
 #[derive(Serialize)]
@@ -555,22 +536,6 @@ fn second_stage(stage: &StageSettings) -> MultiStateParas {
         Some((height, lift, retract)) => stage_paras(height, lift, retract),
         None => MultiStateParas::new(0.0, 0.0, 0.0),
     }
-}
-
-/// Reports whether any layer departs from the settings of its group, which
-/// the file flags so the machine reads the per-layer list.
-fn uses_per_layer_settings(program: &PrintProgram, summary: &ProgramSummary) -> bool {
-    program.layers.iter().enumerate().any(|(index, layer)| {
-        let group = if (index as u32) < program.bottom_layer_count {
-            &summary.bottom
-        } else {
-            &summary.normal
-        };
-        let this = StageSettings::of(Some(layer));
-        this.exposure_sec != group.exposure_sec
-            || this.lift_mm != group.lift_mm
-            || this.lift_mm_min != group.lift_mm_min
-    })
 }
 
 /// The print's own resin: the bottom and normal settings and both stages.

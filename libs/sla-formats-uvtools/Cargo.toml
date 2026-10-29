@@ -8,7 +8,7 @@ authors = [
     "Tiago Conceição (sn4k3) and UVtools contributors",
     "SynrgStudio",
 ]
-description = "SLA printer-file writers ported from UVtools: Creality CXDLP and the Anycubic ZIP family."
+description = "SLA printer-file writers ported from UVtools: Creality CXDLP and the Anycubic ZIP and binary families."
 categories = ["rendering::data-formats"]
 keywords = ["3d", "slicer", "resin", "sla"]
 repository.workspace = true

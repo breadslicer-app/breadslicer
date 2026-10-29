@@ -19,13 +19,14 @@ use std::str::FromStr;
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{
-    AnycubicZipVariant, Format, PrinterFileFormat, UnwritableFamily, printer_file_family_from_path,
+    AnycubicBinaryVariant, AnycubicZipVariant, Format, PrinterFileFormat, UnwritableFamily,
+    printer_file_family_from_path,
 };
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
 pub(crate) const ACCEPTED_TARGET_FORMATS: &str =
-    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf";
+    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff";
 
 /// A `--target-format` flag value: a slice output, a printer file, or the
 /// family of one whose revision the printer still has to name.
@@ -40,11 +41,12 @@ impl TargetFormat {
     /// Names the target format an output path's extension asks for.
     ///
     /// A printer file's extension names only its family, since 1 extension
-    /// covers every revision of a container, except in Anycubic's ZIP family,
-    /// where each variant has its own extension and the extension names it.
+    /// covers every revision of a container, except in Anycubic's ZIP and
+    /// binary families, where each variant has its own extension and the
+    /// extension names it.
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
-        if let Some(variant) = anycubic_zip_variant_from_path(path) {
-            return Some(Self::PrinterFile(PrinterFileFormat::AnycubicZip(variant)));
+        if let Some(format) = anycubic_format_from_path(path) {
+            return Some(Self::PrinterFile(format));
         }
         format_from_path(path)
             .map(Self::Slices)
@@ -60,16 +62,14 @@ impl TargetFormat {
     }
 }
 
-/// Names the Anycubic ZIP variant an output path's extension is.
-fn anycubic_zip_variant_from_path(path: &Path) -> Option<AnycubicZipVariant> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    [
-        AnycubicZipVariant::Pwsz,
-        AnycubicZipVariant::Pm7,
-        AnycubicZipVariant::Pm7m,
-    ]
-    .into_iter()
-    .find(|variant| variant.extension() == extension)
+/// Names the Anycubic ZIP or binary variant an output path's extension is.
+fn anycubic_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
+    let extension = path.extension()?.to_str()?;
+    AnycubicZipVariant::from_extension(extension)
+        .map(PrinterFileFormat::AnycubicZip)
+        .or_else(|| {
+            AnycubicBinaryVariant::from_extension(extension).map(PrinterFileFormat::AnycubicBinary)
+        })
 }
 
 impl fmt::Display for TargetFormat {
@@ -201,7 +201,11 @@ impl FromStr for TargetFormat {
                 .map_err(|_| unknown()),
             None if matches!(
                 binding.format,
-                FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf
+                FormatKind::Goo
+                    | FormatKind::Ctb
+                    | FormatKind::Cxdlp
+                    | FormatKind::Azf
+                    | FormatKind::Aff
             ) =>
             {
                 Ok(Self::PrinterFamily(binding.format))
@@ -274,6 +278,10 @@ mod target_format_tests {
             TargetFormat::from_str("azf"),
             Ok(TargetFormat::PrinterFamily(FormatKind::Azf)),
         );
+        assert_eq!(
+            TargetFormat::from_str("aff"),
+            Ok(TargetFormat::PrinterFamily(FormatKind::Aff)),
+        );
     }
 
     #[test]
@@ -299,6 +307,13 @@ mod target_format_tests {
                 AnycubicZipVariant::Pwsz
             ))),
         );
+        let mono_x = declared(&[binding("aff", Some("pwmx"))]);
+        assert_eq!(
+            settle_for_printer(TargetFormat::from_str("aff").unwrap(), &mono_x),
+            Ok(SettledTarget::PrinterFile(
+                PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::Pwmx)
+            )),
+        );
     }
 
     #[test]
@@ -313,6 +328,10 @@ mod target_format_tests {
             "azf@pwsz",
             "azf@pm7",
             "azf@pm7m",
+            "azf@pp1",
+            "aff@pwmx",
+            "aff@pws",
+            "aff@m5sp",
         ] {
             assert!(
                 matches!(
@@ -500,6 +519,22 @@ mod target_format_tests {
             Some(TargetFormat::PrinterFile(PrinterFileFormat::AnycubicZip(
                 AnycubicZipVariant::Pm7m
             ))),
+        );
+    }
+
+    #[test]
+    fn an_anycubic_binary_extension_names_its_variant() {
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.pwmx")),
+            Some(TargetFormat::PrinterFile(
+                PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::Pwmx)
+            )),
+        );
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("plate.M5SP")),
+            Some(TargetFormat::PrinterFile(
+                PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::M5sp)
+            )),
         );
     }
 

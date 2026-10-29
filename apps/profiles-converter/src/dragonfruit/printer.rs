@@ -419,6 +419,7 @@ fn map_output_format(output_format: &str, version: Option<String>) -> Option<Out
         "pwmx" => FormatKind::Pwmx,
         "cxdlp" => FormatKind::Cxdlp,
         "azf" => FormatKind::Azf,
+        "aff" => FormatKind::Aff,
         other => FormatKind::Unknown(other.to_owned()),
     };
     let version = version.and_then(|value| NonEmptyString::new(&value).ok());

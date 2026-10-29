@@ -36,9 +36,12 @@ pub enum FormatKind {
     Pwmx,
     /// Creality's CXDLP container (Halot printers).
     Cxdlp,
-    /// Anycubic's ZIP container family (`.pwsz`, `.pm7`, `.pm7m`): the version
-    /// names the variant, which is also the file extension.
+    /// Anycubic's ZIP container family (`.pwsz`, `.pm7`, `.pm7m`, ...): the
+    /// version names the variant, which is also the file extension.
     Azf,
+    /// Anycubic's binary file family (`.pwmx`, `.pwma`, `.pm3`, `.pws`, ...):
+    /// the version names the variant, which is also the file extension.
+    Aff,
     PngPerLayer,
     SvgPerLayer,
     SvgCombined,
@@ -55,6 +58,7 @@ impl FormatKind {
             Self::Pwmx => "pwmx",
             Self::Cxdlp => "cxdlp",
             Self::Azf => "azf",
+            Self::Aff => "aff",
             Self::PngPerLayer => "png_per_layer",
             Self::SvgPerLayer => "svg_per_layer",
             Self::SvgCombined => "svg_combined",
@@ -72,6 +76,7 @@ impl FormatKind {
             "pwmx" => Self::Pwmx,
             "cxdlp" => Self::Cxdlp,
             "azf" => Self::Azf,
+            "aff" => Self::Aff,
             "png_per_layer" => Self::PngPerLayer,
             "svg_per_layer" => Self::SvgPerLayer,
             "svg_combined" => Self::SvgCombined,

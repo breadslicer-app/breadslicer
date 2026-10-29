@@ -117,3 +117,79 @@ pub(crate) fn slabs(program: &PrintProgram) -> Vec<(f32, f32)> {
         })
         .collect()
 }
+
+/// Reports whether any layer departs from the settings of its group, which
+/// the file flags so the machine reads the per-layer list.
+pub(crate) fn uses_per_layer_settings(program: &PrintProgram, summary: &ProgramSummary) -> bool {
+    program.layers.iter().enumerate().any(|(index, layer)| {
+        let group = if (index as u32) < program.bottom_layer_count {
+            &summary.bottom
+        } else {
+            &summary.normal
+        };
+        let this = StageSettings::of(Some(layer));
+        this.exposure_sec != group.exposure_sec
+            || this.lift_mm != group.lift_mm
+            || this.lift_mm_min != group.lift_mm_min
+    })
+}
+
+/// Above this, .NET leaves a float as it is when asked to round it.
+const SINGLE_ROUND_LIMIT: f32 = 1.0e8;
+
+/// Rounds to `digits` decimals, halves away from zero, as .NET's
+/// `MathF.Round` does for UVtools: the value is scaled in single precision, so
+/// a product such as 1733 x 0.035 rounds as the float it is.
+pub(crate) fn round_away(value: f32, digits: i32) -> f32 {
+    if value.abs() >= SINGLE_ROUND_LIMIT {
+        return value;
+    }
+    let power = 10_f32.powi(digits);
+    let scaled = value * power;
+    let whole = scaled.trunc();
+    let fraction = scaled - whole;
+    let rounded = if fraction.abs() >= 0.5 {
+        whole + fraction.signum()
+    } else {
+        whole
+    };
+    rounded / power
+}
+
+/// Rounds to `digits` decimals, halves to even, as .NET's `MathF.Round`
+/// does for UVtools: the value is scaled in single precision.
+pub(crate) fn round_even(value: f32, digits: i32) -> f32 {
+    if value.abs() >= SINGLE_ROUND_LIMIT {
+        return value;
+    }
+    let power = 10_f32.powi(digits);
+    (value * power).round_ties_even() / power
+}
+
+/// Rounds a height as UVtools does: 3 decimals, halves away from zero.
+pub(crate) fn round_height(value: f32) -> f32 {
+    round_away(value, 3)
+}
+
+/// Rounds a panel size or position as UVtools does: 3 decimals, halves to even.
+pub(crate) fn round_display(value: f32) -> f32 {
+    round_even(value, 3)
+}
+
+#[cfg(test)]
+mod program_tests {
+    use super::*;
+
+    #[test]
+    fn rounding_scales_in_single_precision_as_dotnet_does() {
+        // 1733 x 0.035 is 60.655 as a float, a hair over the half: UVtools
+        // rounds it up, where rounding in double precision would not.
+        assert_eq!(round_even(1733.0 * 0.035, 2), 60.66);
+        assert_eq!(round_even(3865.0 * 0.017, 2), 65.70);
+        assert_eq!(round_even(0.125, 2), 0.12);
+        assert_eq!(round_away(0.125, 2), 0.13);
+        assert_eq!(round_away(-0.125, 2), -0.13);
+        assert_eq!(round_height(0.0499999), 0.05);
+        assert_eq!(round_away(1.0e9, 2), 1.0e9);
+    }
+}
