@@ -27,7 +27,7 @@ use super::camera_controller::CameraController;
 use super::gizmo_drag::DragOp;
 use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
-use super::input_dispatch::{InputDispatch, PointerUpOutcome};
+use super::input_dispatch::{InputDispatch, PointerUpOutcome, shows_supports};
 use super::keyboard_drive::KbdFocus;
 use super::modal_transform::{ModalGesture, ModalOp};
 use super::numeric_transform::{
@@ -253,6 +253,11 @@ impl ViewportController {
     pub(crate) fn frame_camera_for_test(&self) {
         self.camera
             .replace_with_framing(None, self.session.build_volume());
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_camera_for_test(&self, camera: crate::camera::OrbitCamera) {
+        *self.camera.camera_cell().borrow_mut() = Some(camera);
     }
 
     #[cfg(test)]
@@ -680,6 +685,8 @@ impl ViewportController {
     /// switcher and by the load pipeline, which picks the initial section from
     /// mesh health. Entering Slice cancels any in-flight gizmo gesture so a
     /// half-finished transform cannot linger in a section that forbids editing.
+    /// Leaving Supports with the supports selected selects nothing: they are
+    /// selected only there (#120).
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
         self.on_modal_transform_finish(false);
         if !self.session.set_section(section) {
@@ -687,6 +694,18 @@ impl ViewportController {
         }
         if !self.allows_transform_gizmo() {
             self.cancel_transform_gestures();
+        }
+        if !self.supports_selectable() {
+            let document = self.session.document();
+            let on_supports = document.selection_primary_node_id().is_some_and(|id| {
+                document
+                    .with_scene(|spatial| shows_supports(spatial, id))
+                    .unwrap_or(false)
+            });
+            if on_supports {
+                self.input.gizmo_fsm().clear_hover();
+                document.set_selection(Selection::None);
+            }
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_workspace_section(section);
@@ -968,20 +987,37 @@ impl ViewportController {
 
     /// Handles the Slint selection-changed callback. An out-of-bounds index
     /// maps to `None`: the UI should not hand one over, but a stale callback
-    /// can race with a scene reload.
+    /// can race with a scene reload. The supports' row selects nothing
+    /// outside the Supports tab (#120), and the list shows the selection it
+    /// had again.
     pub(crate) fn on_select_by_index(&self, idx: usize) {
         self.on_modal_transform_finish(false);
+        let supports_selectable = self.supports_selectable();
+        let document = self.session.document();
         // `leaf_id_at_index` returns `None` past the last reachable leaf.
-        let new_sel = self
-            .session
-            .document()
-            .with_scene(|spatial| spatial.leaf_id_at_index(idx).map(LeafId))
-            .flatten()
-            .map_or(Selection::None, Selection::One);
+        let new_sel = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(idx);
+                if !supports_selectable && id.is_some_and(|id| shows_supports(spatial, id)) {
+                    return None;
+                }
+                Some(id.map_or(Selection::None, |id| Selection::One(LeafId(id))))
+            })
+            .unwrap_or(Some(Selection::None));
+        let Some(new_sel) = new_sel else {
+            self.mirror_selection_to_ui();
+            return;
+        };
         // `set_selection` short-circuits on no-change and fires
         // `SceneEvent::SelectionChanged` only on actual transitions; the
         // listener mirrors the selection to the UI and calls `mark_dirty`.
-        self.session.document().set_selection(new_sel);
+        document.set_selection(new_sel);
+    }
+
+    /// Whether the supports can be selected: only in the Supports tab, which
+    /// edits them. Anywhere else they follow their model (#120).
+    fn supports_selectable(&self) -> bool {
+        self.session.section() == WorkspaceSection::Supports
     }
 
     /// Cycles the selection for Tab and Shift+Tab.
@@ -993,6 +1029,7 @@ impl ViewportController {
     /// - With no selection, either direction selects the first leaf, so the
     ///   same key serves "select the first thing" and "advance to the next".
     /// - With a selection, the index wraps modulo the leaf count.
+    /// - Outside the Supports tab the supports are skipped (#120).
     /// - On an empty or missing scene, nothing happens.
     ///
     /// Tab does not abort an in-progress drag.
@@ -1010,14 +1047,27 @@ impl ViewportController {
         let cur_idx = document
             .selection_primary_node_id()
             .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten());
-        let next = match cur_idx {
-            None => 0,
-            Some(cur) => {
-                let len_i = scene_len as i32;
-                ((cur as i32 + step).rem_euclid(len_i)) as usize
-            }
+        let len_i = scene_len as i32;
+        let (first, step) = match cur_idx {
+            None => (0, if step == 0 { 1 } else { step }),
+            Some(cur) => ((cur as i32 + step).rem_euclid(len_i), step),
         };
-        self.on_select_by_index(next);
+        let supports_selectable = self.supports_selectable();
+        let next = document
+            .with_scene(|spatial| {
+                (0..len_i)
+                    .map(|k| (first + k * step).rem_euclid(len_i) as usize)
+                    .find(|&i| {
+                        supports_selectable
+                            || spatial
+                                .leaf_id_at_index(i)
+                                .is_none_or(|id| !shows_supports(spatial, id))
+                    })
+            })
+            .flatten();
+        if let Some(next) = next {
+            self.on_select_by_index(next);
+        }
     }
 
     /// Handles Edit -> Undo. An empty stack is a no-op: the menu's `can-undo`
@@ -1461,14 +1511,8 @@ impl ViewportController {
         self.session
             .document()
             .with_scene(|spatial| {
-                let is_supports = |id: sc_scene::NodeId| {
-                    spatial
-                        .graph()
-                        .leaf_mesh_arc(id)
-                        .is_some_and(|m| sc_geom::df_supports::is_support_mesh(&m))
-                };
                 let (id, t) = picking::pick_object_where(&ray, spatial, |id| {
-                    is_supports(id) == (tool == TabTool::RemoveSupport)
+                    shows_supports(spatial, id) == (tool == TabTool::RemoveSupport)
                 })?;
                 let normal = picking::ray_hit_normal(&ray, &spatial.leaf(id)?)
                     .map_or(glam::Vec3::Z, |(_, n)| n);
@@ -1557,8 +1601,9 @@ impl ViewportController {
     }
 
     /// Runs the picker at `(x, y)` without changing the document's selection.
-    /// Returns the hit leaf's `NodeId`, or `None` on a miss, with no scene
-    /// loaded, or with no camera ready.
+    /// Returns the `NodeId` of the leaf a click there selects (outside the
+    /// Supports tab, the model of the supports hit), or `None` on a miss,
+    /// with no scene loaded, or with no camera ready.
     pub(crate) fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_scene::NodeId> {
         self.input
             .pick_at(
@@ -1566,19 +1611,22 @@ impl ViewportController {
                 self.camera.camera_cell(),
                 self.render.viewport(),
                 ScreenPoint { x, y },
+                self.supports_selectable(),
             )
             .flatten()
     }
 
     /// Runs the picker at `cursor` through InputDispatch (which builds the ray
-    /// and runs `pick_object`) and applies the result through the document's
-    /// selection setters: a hit selects its leaf, a miss runs the Esc cascade.
+    /// and finds the leaf a click selects) and applies the result through the
+    /// document's selection setters: a hit selects its leaf, a miss runs the
+    /// Esc cascade.
     fn run_pick_at(&self, cursor: ScreenPoint) {
         let Some(pick) = self.input.pick_at(
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
             cursor,
+            self.supports_selectable(),
         ) else {
             return;
         };
