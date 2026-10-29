@@ -435,7 +435,7 @@ mod target_format_tests {
 
     #[test]
     fn a_declared_revision_this_build_cannot_name_is_refused() {
-        let declared = declared(&[binding("ctb", Some("v2"))]);
+        let declared = declared(&[binding("ctb", Some("v9"))]);
 
         assert!(settle_for_printer(TargetFormat::from_str("ctb").unwrap(), &declared).is_err(),);
     }

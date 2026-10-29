@@ -219,12 +219,19 @@ pub enum GooVersion {
     V5_1 = 1,
 }
 
-/// A revision of the ChiTuBox CTB container. Version 5 comes in 2 dialects; the
-/// encrypted one compares greater than the plain one.
+/// A revision of the ChiTuBox CTB container. A later revision compares
+/// greater. Version 5 comes in 2 dialects; the encrypted one compares greater
+/// than the plain one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CtbVariant {
-    PlainV5 = 0,
-    EncryptedV5 = 1,
+    /// Version 2: one motion for the whole file.
+    V2 = 0,
+    /// Version 3: a motion record before each layer image.
+    V3 = 1,
+    /// Version 4: the 2-stage motion and the waits, under a new magic.
+    V4 = 2,
+    PlainV5 = 3,
+    EncryptedV5 = 4,
 }
 
 impl PartialOrd for PrinterFileFormat {
@@ -355,6 +362,9 @@ impl PrinterFileFormat {
         match (&binding.format, version.as_deref()) {
             (FormatKind::Goo, Some("v3.0")) => Ok(Self::Goo(GooVersion::V3_0)),
             (FormatKind::Goo, Some("v5.1")) => Ok(Self::Goo(GooVersion::V5_1)),
+            (FormatKind::Ctb, Some("v2")) => Ok(Self::Ctb(CtbVariant::V2)),
+            (FormatKind::Ctb, Some("v3")) => Ok(Self::Ctb(CtbVariant::V3)),
+            (FormatKind::Ctb, Some("v4")) => Ok(Self::Ctb(CtbVariant::V4)),
             (FormatKind::Ctb, Some("v5")) => Ok(Self::Ctb(CtbVariant::PlainV5)),
             (FormatKind::Ctb, Some("v5enc")) => Ok(Self::Ctb(CtbVariant::EncryptedV5)),
             (FormatKind::Cxdlp, Some("v2")) => Ok(Self::Cxdlp(CxdlpVersion::V2)),
@@ -381,6 +391,9 @@ impl PrinterFileFormat {
         let (format, version) = match self {
             Self::Goo(GooVersion::V3_0) => (FormatKind::Goo, "v3.0"),
             Self::Goo(GooVersion::V5_1) => (FormatKind::Goo, "v5.1"),
+            Self::Ctb(CtbVariant::V2) => (FormatKind::Ctb, "v2"),
+            Self::Ctb(CtbVariant::V3) => (FormatKind::Ctb, "v3"),
+            Self::Ctb(CtbVariant::V4) => (FormatKind::Ctb, "v4"),
             Self::Ctb(CtbVariant::PlainV5) => (FormatKind::Ctb, "v5"),
             Self::Ctb(CtbVariant::EncryptedV5) => (FormatKind::Ctb, "v5enc"),
             Self::Cxdlp(CxdlpVersion::V2) => (FormatKind::Cxdlp, "v2"),
@@ -465,6 +478,7 @@ impl PrinterFileFormat {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
             Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
             Self::Goo(GooVersion::V5_1)
+            | Self::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
             | Self::Cxdlp(_)
             | Self::AnycubicZip(_)
             | Self::AnycubicBinary(_) => {
@@ -794,7 +808,7 @@ mod printer_file_format_tests {
     fn each_unwritable_binding_carries_its_own_reason() {
         let listed = [
             binding(FormatKind::Goo, Some("v5.1")),
-            binding(FormatKind::Ctb, Some("v2")),
+            binding(FormatKind::Ctb, Some("v9")),
         ];
         let reasons: Vec<_> = listed
             .iter()
@@ -978,6 +992,28 @@ mod printer_file_format_tests {
         assert!(
             PrinterFileFormat::Goo(GooVersion::V5_1) > PrinterFileFormat::Goo(GooVersion::V3_0)
         );
+    }
+
+    #[test]
+    fn ctb_names_versions_2_to_4_and_orders_them_before_5() {
+        for (version, variant) in [
+            ("v2", CtbVariant::V2),
+            ("V3", CtbVariant::V3),
+            ("v4", CtbVariant::V4),
+        ] {
+            let format = PrinterFileFormat::Ctb(variant);
+            assert_eq!(resolve(FormatKind::Ctb, Some(version)), Ok(format));
+            assert_eq!(
+                PrinterFileFormat::from_binding(&format.binding()),
+                Ok(format)
+            );
+            assert_eq!(format.extension(), "ctb");
+        }
+        assert!(PrinterFileFormat::Ctb(CtbVariant::V2) < PrinterFileFormat::Ctb(CtbVariant::V3));
+        assert!(
+            PrinterFileFormat::Ctb(CtbVariant::V4) < PrinterFileFormat::Ctb(CtbVariant::PlainV5)
+        );
+        assert!(!PrinterFileFormat::Ctb(CtbVariant::V4).has_builtin_writer());
     }
 
     #[test]

@@ -19,8 +19,16 @@ from these files, each named again in the header of the module that ports it:
                                                     src/pw0.rs (PW0 codec),
                                                     src/pws.rs (PWS codec)
   UVtools.Core/FileFormats/BitPlaneRle.cs        -> src/pws.rs (PWS bit planes)
+  UVtools.Core/FileFormats/ChituboxFile.cs       -> src/ctb_legacy.rs, src/read.rs
+                                                    (CTB versions 2 to 4)
+  UVtools.Core/FileFormats/CtbRleCodec.cs        -> src/read.rs (CTB layer decoder)
+  UVtools.Core/FileFormats/FileFormat.cs and
+  UVtools.Core/Operations/OperationCalculator.cs -> src/ctb_legacy.rs (light-off
+                                                    delay of CTB 2 and 3)
 
-The ported code was modified for Breadslicer: layers are encoded from the
+The CTB writer reuses the CTB layer and preview codecs, the layer XOR and
+the disclaimer of sc-sla-formats (Apache-2.0), which writes CTB version 5
+itself. The ported code was modified for Breadslicer: layers are encoded from the
 slicer's run-length rows in parallel, the per-layer figures are measured on
 those rows and on the sliced contours, and the print settings come from a
 Breadslicer print program. The rounding in src/program.rs follows .NET's

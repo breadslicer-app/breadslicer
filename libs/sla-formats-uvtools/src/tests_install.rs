@@ -5,15 +5,18 @@
 
 use sc_print_primitives::{AaLevel, Mirror};
 use sc_sla_formats::{
-    AnycubicBinaryVariant, AnycubicZipVariant, CxdlpVersion, GooVersion, PrinterFileFormat,
-    write_printer_file,
+    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
+    PrinterFileFormat, write_printer_file,
 };
 
-use crate::read::{read_anycubic_binary, read_anycubic_zip, read_cxdlp};
+use crate::read::{read_anycubic_binary, read_anycubic_zip, read_ctb, read_cxdlp};
 use crate::test_fixture::{program, raster, stack};
 
 fn ported() -> Vec<PrinterFileFormat> {
     let mut formats = vec![
+        PrinterFileFormat::Ctb(CtbVariant::V2),
+        PrinterFileFormat::Ctb(CtbVariant::V3),
+        PrinterFileFormat::Ctb(CtbVariant::V4),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V2),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V3),
     ];
@@ -57,6 +60,7 @@ fn the_dispatcher_writes_every_ported_format_to_disk() {
                 .unwrap()
                 .layers
                 .len(),
+            PrinterFileFormat::Ctb(_) => read_ctb(&bytes).unwrap().layers.len(),
             PrinterFileFormat::AnycubicBinary(variant) => {
                 read_anycubic_binary(&bytes, variant).unwrap().layers.len()
             }

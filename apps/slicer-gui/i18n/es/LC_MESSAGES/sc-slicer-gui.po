@@ -1966,6 +1966,18 @@ msgstr ".goo (V5.1)"
 
 #: src/print_format.rs:161
 msgctxt "SlicePanel"
+msgid ".ctb (v2)"
+msgstr ".ctb (v2)"
+
+msgctxt "SlicePanel"
+msgid ".ctb (v3)"
+msgstr ".ctb (v3)"
+
+msgctxt "SlicePanel"
+msgid ".ctb (v4)"
+msgstr ".ctb (v4)"
+
+msgctxt "SlicePanel"
 msgid ".ctb (v5)"
 msgstr ".ctb (v5)"
 

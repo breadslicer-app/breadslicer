@@ -112,6 +112,7 @@ pub fn write_printer_file(
             ctb_v5enc::file::write_file(program, previews, stack, &mut out)?;
         }
         PrinterFileFormat::Goo(GooVersion::V5_1)
+        | PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
         | PrinterFileFormat::Cxdlp(_)
         | PrinterFileFormat::AnycubicZip(_)
         | PrinterFileFormat::AnycubicBinary(_) => {
