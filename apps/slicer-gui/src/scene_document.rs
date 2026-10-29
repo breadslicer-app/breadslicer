@@ -249,6 +249,9 @@ pub(crate) struct SceneDocument {
     /// driver: a save keeps the one in force as data, and opening a `.bread`
     /// puts the rebuilt one here.
     support_sessions: Rc<RefCell<SupportSessions>>,
+    /// Where a model that is moving and its supports stood, so the supports
+    /// follow it (#119).
+    support_follow: Cell<Option<crate::support_follow::Anchor>>,
     hollows: Rc<RefCell<Vec<Hollowed>>>,
 }
 
@@ -302,6 +305,7 @@ impl SceneDocument {
             scene_generation: Cell::new(0),
             project_state_generation: Cell::new(0),
             support_sessions: Rc::default(),
+            support_follow: Cell::new(None),
             hollows: Rc::default(),
         })
     }
@@ -309,6 +313,12 @@ impl SceneDocument {
     /// The editable support sessions (see [`crate::support_persist`]).
     pub(crate) fn support_sessions(&self) -> Rc<RefCell<SupportSessions>> {
         self.support_sessions.clone()
+    }
+
+    /// Where a moving model and its supports stood (see
+    /// [`crate::support_follow`]).
+    pub(crate) fn support_follow(&self) -> &Cell<Option<crate::support_follow::Anchor>> {
+        &self.support_follow
     }
 
     /// The models hollowed in the Hollow tab, each by the hollow mesh it put
@@ -765,7 +775,25 @@ impl SceneDocument {
     /// live-drag ticks can mutate the scene without flooding the history.
     /// Callers that mean "apply and record" invoke `apply_edit` followed by
     /// `push_edit` at gesture-end.
+    ///
+    /// A model's transform edit moves its supports along while it is live
+    /// ([`crate::support_follow`]).
     pub(crate) fn apply_edit(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
+        let moved = crate::support_follow::moved_leaf(&edit);
+        if let Some(leaf) = moved {
+            crate::support_follow::anchor(self, leaf);
+        }
+        self.apply_edit_unfollowed(edit)?;
+        if let Some(leaf) = moved {
+            crate::support_follow::follow_live(self, leaf);
+        }
+        Ok(())
+    }
+
+    /// [`Self::apply_edit`] without the supports following a moved model: for
+    /// Undo and Redo, whose entries already hold the supports' part, and for
+    /// the following itself.
+    pub(crate) fn apply_edit_unfollowed(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
         let mut slot = self.spatial.borrow_mut();
         let Some(spatial) = slot.as_mut() else {
             return Err(EditNotApplied::NoSceneLoaded);
@@ -803,7 +831,11 @@ impl SceneDocument {
     /// after`) are dropped silently so a gesture that began and ended in the
     /// same place doesn't clutter history. A successful push clears the redo
     /// stack: a fresh edit invalidates the previously-rolled-back trail.
+    ///
+    /// A model moved in X/Y takes its supports with it, redrawn in the same
+    /// entry ([`crate::support_follow::commit`]).
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
+        let (edit, moved) = crate::support_follow::commit(self, edit);
         if edit.is_noop() {
             return;
         }
@@ -820,6 +852,13 @@ impl SceneDocument {
             undo.push_back(HistoryEntry { id, edit });
         }
         self.redo_stack.borrow_mut().clear();
+        if let Some(moved) = moved {
+            // As a hand edit does: the moved supports follow the session they
+            // came from, drawn into the scene as it now stands.
+            let mut sessions = self.support_sessions.borrow_mut();
+            sessions.truncate(moved.after + 1);
+            sessions.push((moved.session, self.scene_revision()));
+        }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
     }
@@ -1074,10 +1113,12 @@ impl SceneDocument {
     /// left as they were.
     pub(crate) fn undo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
+        // Before the pop: it moves the revision a live move is anchored to.
+        crate::support_follow::settle(self);
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
             return Ok(false);
         };
-        match self.apply_edit(entry.edit.inverse()) {
+        match self.apply_edit_unfollowed(entry.edit.inverse()) {
             Ok(()) => {}
             Err(reason) => {
                 // Restore the popped entry so the stack stays consistent with
@@ -1107,10 +1148,11 @@ impl SceneDocument {
     /// `Ok(true)` the stacks are left as they were.
     pub(crate) fn redo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
+        crate::support_follow::settle(self);
         let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {
             return Ok(false);
         };
-        match self.apply_edit(entry.edit.clone()) {
+        match self.apply_edit_unfollowed(entry.edit.clone()) {
             Ok(()) => {}
             Err(reason) => {
                 self.redo_stack.borrow_mut().push_back(entry);

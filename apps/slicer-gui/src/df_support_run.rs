@@ -2136,7 +2136,8 @@ mod hand_edit_tests {
                 .join();
             *run.started_on.borrow_mut() = Some(document.scene_revision());
             run.finish(outcome);
-            let away = Transform3D::Affine(AffineTransform3D::from_translation([25.0, 20.0, 8.0]));
+            // Up: a move in X/Y takes the supports along (#119).
+            let away = Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 10.0]));
             let move_model = |before, after| {
                 let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
                     node_id: model,
@@ -2164,6 +2165,205 @@ mod hand_edit_tests {
         });
         assert_eq!(put_back, (1, None));
         assert_eq!(moved, (0, Some(SupportsAsMesh::NoSession)));
+    }
+
+    /// The scene of `cubes` (each a unit cube at its translation) with
+    /// supports generated on it, the driver that pasted them, and the cubes'
+    /// leaves.
+    fn supported(
+        window: &MainWindow,
+        cubes: &[[f64; 3]],
+    ) -> (Rc<SceneDocument>, Rc<DfSupportRun>, Vec<NodeId>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let mut leaves = Vec::new();
+        for &at in cubes {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            leaves.push(leaf);
+        }
+        document.install_graph(graph.clone(), PathBuf::from("cubes.stl"));
+        let run =
+            DfSupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        (document, run, leaves)
+    }
+
+    fn translation(t: [f64; 3]) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation(t))
+    }
+
+    fn leaf_transform(document: &SceneDocument, leaf: NodeId) -> Transform3D {
+        document
+            .with_scene(|s| s.leaf(leaf).map(|q| q.local_transform()))
+            .flatten()
+            .expect("a leaf")
+    }
+
+    fn move_live(document: &SceneDocument, leaf: NodeId, before: [f64; 3], after: [f64; 3]) {
+        document
+            .apply_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before: translation(before),
+                after: translation(after),
+            })
+            .unwrap();
+    }
+
+    fn commit_move(document: &SceneDocument, leaf: NodeId, before: [f64; 3], after: [f64; 3]) {
+        document.push_edit(sc_scene_edit::SceneEdit::SetLocalTransform {
+            node_id: leaf,
+            before: translation(before),
+            after: translation(after),
+        });
+    }
+
+    /// Whether `moved` is `mesh` moved by `d` in X/Y, vertex for vertex.
+    fn is_moved(
+        moved: &sc_mesh_core::IndexedMesh,
+        mesh: &sc_mesh_core::IndexedMesh,
+        d: [f32; 2],
+    ) -> bool {
+        moved.faces() == mesh.faces()
+            && moved.vertices().len() == mesh.vertices().len()
+            && moved.vertices().iter().zip(mesh.vertices()).all(|(a, b)| {
+                let (a, b) = (a.as_array(), b.as_array());
+                (a[0] - b[0] - d[0]).abs() < 1e-3
+                    && (a[1] - b[1] - d[1]).abs() < 1e-3
+                    && a[2] == b[2]
+            })
+    }
+
+    /// #119: a model moved in X/Y carries its supports along live and keeps
+    /// them when the move is committed, redrawn in the same undo entry and
+    /// still editable; Undo and Redo take both together. A move in Z leaves
+    /// them behind (#153 regenerates those).
+    #[test]
+    fn supports_move_with_their_model_in_x_and_y() {
+        use crate::support_persist::support_documents;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (supports, generated) = run.support_leaf().expect("the supports were pasted");
+            let start = leaf_transform(&document, supports);
+            let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
+
+            // Live, the support leaf rides along on its transform.
+            move_live(&document, model, at, [23.0, 18.0, 8.0]);
+            move_live(&document, model, at, there);
+            assert_eq!(
+                leaf_transform(&document, supports),
+                translation([7.0, -5.0, 0.0])
+            );
+            // A move put back puts them back.
+            move_live(&document, model, there, at);
+            assert_eq!(leaf_transform(&document, supports), start);
+            move_live(&document, model, at, there);
+
+            // Committed: drawn where the model is, the leaf where it was.
+            commit_move(&document, model, at, there);
+            let (_, moved) = run.support_leaf().expect("the supports stay");
+            assert_eq!(leaf_transform(&document, supports), start);
+            assert!(
+                is_moved(&moved, &generated, [7.0, -5.0]),
+                "the same supports, moved"
+            );
+            assert_eq!(run.current_session(), Some(1), "editable");
+            let kept = document
+                .with_scene(|spatial| support_documents(&document, spatial).documents.len())
+                .unwrap();
+            assert_eq!(kept, 1, "kept as data");
+            window.set_support_tool(1);
+            run.on_tool_click([27.2, 15.2, 7.5]);
+            assert!(
+                window.get_supports_last_run().contains("edited by hand"),
+                "{}",
+                window.get_supports_last_run()
+            );
+            assert!(document.undo().unwrap(), "the hand edit undoes");
+
+            // One Undo takes the model and its supports back; Redo again.
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, model), translation(at));
+            let (_, back) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&back, &generated), "the supports as generated");
+            assert_eq!(run.current_session(), Some(0));
+            assert!(document.redo().unwrap());
+            assert_eq!(leaf_transform(&document, model), translation(there));
+            let (_, again) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&again, &moved));
+            assert_eq!(run.current_session(), Some(1));
+
+            // Up in Z, they stay as they were and go out of date.
+            let up = [27.0, 15.0, 10.0];
+            move_live(&document, model, there, up);
+            assert_eq!(leaf_transform(&document, supports), start);
+            commit_move(&document, model, there, up);
+            let (_, after_z) = run.support_leaf().unwrap();
+            assert!(Arc::ptr_eq(&after_z, &moved));
+            assert_eq!(run.current_session(), None);
+        });
+    }
+
+    /// With two models, the supports of the one moved follow it when the
+    /// move is committed; the support leaf, which holds both models'
+    /// supports, does not ride along live.
+    #[test]
+    fn supports_of_one_of_two_models_follow_it() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let (supports, generated) = run.support_leaf().expect("the supports were pasted");
+            let start = leaf_transform(&document, supports);
+            let (at, there) = ([50.0, 20.0, 8.0], [50.0, 40.0, 8.0]);
+            move_live(&document, leaves[1], at, there);
+            assert_eq!(leaf_transform(&document, supports), start);
+            commit_move(&document, leaves[1], at, there);
+            let (_, moved) = run.support_leaf().unwrap();
+            assert!(!Arc::ptr_eq(&moved, &generated), "redrawn");
+            assert_eq!(run.current_session(), Some(1));
+            // The first model's supports stand where they were: every vertex
+            // left of the gap is unchanged.
+            let left = |m: &sc_mesh_core::IndexedMesh| {
+                let mut v: Vec<[f32; 3]> = m
+                    .vertices()
+                    .iter()
+                    .map(|v| *v.as_array())
+                    .filter(|p| p[0] < 35.0)
+                    .collect();
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                v
+            };
+            assert_eq!(left(&moved), left(&generated));
+            let right = |m: &sc_mesh_core::IndexedMesh| {
+                m.vertices()
+                    .iter()
+                    .filter(|v| v.as_array()[0] >= 35.0)
+                    .count()
+            };
+            assert_eq!(right(&moved), right(&generated));
+            assert!(
+                moved
+                    .vertices()
+                    .iter()
+                    .filter(|v| v.as_array()[0] >= 35.0)
+                    .all(|v| v.as_array()[1] > 25.0)
+            );
+        });
     }
 
     #[test]

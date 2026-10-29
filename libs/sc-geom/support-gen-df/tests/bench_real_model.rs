@@ -80,10 +80,10 @@ fn real_model_timings() {
     let half_height = ((max[2] - min[2]) / 2.0) as f64;
     let model = ModelInput {
         id: "bench".into(),
-        geometry: BufferGeometry {
+        geometry: std::sync::Arc::new(BufferGeometry {
             position: Some(soup.clone()),
             ..Default::default()
-        },
+        }),
         transform: ModelTransform {
             position: Vec3::new(0.0, 0.0, half_height + 5.0),
             rotation: Vec3::new(rot[0], rot[1], rot[2]),

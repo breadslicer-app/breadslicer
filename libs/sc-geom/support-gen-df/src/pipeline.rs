@@ -60,10 +60,11 @@ use crate::volume_analysis::islands::use_islands::{
 };
 
 /// A model of the scene: its loaded geometry (model space) and placement.
+/// The geometry is shared, so a copy that only moves the model is cheap.
 #[derive(Debug, Clone)]
 pub struct ModelInput {
     pub id: String,
-    pub geometry: BufferGeometry,
+    pub geometry: Arc<BufferGeometry>,
     pub transform: ModelTransform,
     pub visible: bool,
 }
@@ -256,7 +257,7 @@ fn model_matrix(t: &ModelTransform) -> Matrix4 {
 
 /// `prepareWorldGeom`: re-centred, transformed, non-indexed, as stored floats.
 pub fn world_soup(model: &ModelInput) -> Vec<f32> {
-    let mut g = model.geometry.clone();
+    let mut g = BufferGeometry::clone(&model.geometry);
     g.normal = None;
     g.uv = None;
     let c = bounding_box_center(&g);

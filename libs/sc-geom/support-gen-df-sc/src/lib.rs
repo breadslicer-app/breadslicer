@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
-use sc_scene::{CsgPolicy, Scene, SceneError, bake_mesh_to_world};
+use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
 use support_gen_df::perf::PerfFrame;
@@ -32,6 +32,7 @@ use support_gen_df::three::buffer_geometry::BufferGeometry;
 mod document;
 mod options;
 mod session;
+mod shift;
 
 pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};
@@ -110,17 +111,18 @@ pub struct DfSupportOutcome {
     pub session: DfSupportSession,
 }
 
+/// Whether a run takes the mesh of a leaf as a model: it is not supports
+/// this crate made, and not empty.
+fn is_model_mesh(mesh: &IndexedMesh) -> bool {
+    !is_support_mesh(mesh) && !mesh.faces().is_empty()
+}
+
 /// One model per mesh leaf, baked to world space; previous DragonFruit
 /// support meshes are left out.
 pub fn scene_models(scene: &Scene) -> Result<Vec<ModelInput>, SceneError> {
     let mut models = Vec::new();
     scene.for_each_expanded_leaf(CsgPolicy::Refuse, |id, world, mesh| {
-        let is_ours = mesh
-            .meta()
-            .as_ref()
-            .and_then(|m| m.name.as_deref())
-            .is_some_and(is_support_mesh_name);
-        if is_ours || mesh.faces().is_empty() {
+        if !is_model_mesh(mesh) {
             return Ok::<(), SceneError>(());
         }
         let baked = bake_mesh_to_world(mesh, world)?;
@@ -128,6 +130,30 @@ pub fn scene_models(scene: &Scene) -> Result<Vec<ModelInput>, SceneError> {
         Ok(())
     })?;
     Ok(models)
+}
+
+/// Where the leaf `leaf` stands among the models of `scene`, in the order
+/// [`scene_models`] lists them: the index a session made on the scene knows
+/// it by. `None` when it is not a model, or stands in the scene more than
+/// once.
+pub fn model_index(scene: &Scene, leaf: NodeId) -> Option<usize> {
+    let mut count = 0;
+    let mut found = Vec::new();
+    scene
+        .for_each_expanded_leaf(CsgPolicy::Refuse, |id, _, mesh| {
+            if is_model_mesh(mesh) {
+                if id == leaf {
+                    found.push(count);
+                }
+                count += 1;
+            }
+            Ok::<(), SceneError>(())
+        })
+        .ok()?;
+    match found[..] {
+        [index] => Some(index),
+        _ => None,
+    }
 }
 
 /// A world-space mesh as a model: the pipeline re-centres a model on its
@@ -155,11 +181,11 @@ pub fn model_from_world_mesh(id: String, mesh: &IndexedMesh) -> ModelInput {
     );
     ModelInput {
         id,
-        geometry: BufferGeometry {
+        geometry: Arc::new(BufferGeometry {
             position: Some(position),
             index: Some(index),
             ..Default::default()
-        },
+        }),
         transform: ModelTransform {
             position: center,
             rotation: Vec3::ZERO,
