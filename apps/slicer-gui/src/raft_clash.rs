@@ -76,25 +76,30 @@ pub(crate) fn model_bottoms(spatial: &SceneSpatial) -> Vec<(NodeId, f64)> {
         .collect()
 }
 
-/// The lowest point of every model of `spatial`, or `None` without a model.
-pub(crate) fn lowest_model_mm(spatial: &SceneSpatial) -> Option<f64> {
+/// The lowest point of every model of `spatial` (only those `only` names,
+/// when given), or `None` without a model.
+pub(crate) fn lowest_model_mm(spatial: &SceneSpatial, only: Option<&[NodeId]>) -> Option<f64> {
     model_bottoms(spatial)
         .into_iter()
+        .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
         .map(|(_, z)| z)
         .reduce(f64::min)
 }
 
-/// The edit that lifts every model of `spatial` lower than `below_mm` (in
-/// the raft) so its lowest point stands at `lift_to_mm`, as one undoable
-/// step; `None` when no model is that low.
+/// The edit that lifts every model of `spatial` (only those `only` names,
+/// when given) lower than `below_mm` (in the raft) so its lowest point
+/// stands at `lift_to_mm`, as one undoable step; `None` when no model is
+/// that low.
 pub(crate) fn lift_edit(
     spatial: &SceneSpatial,
     below_mm: f64,
     lift_to_mm: f64,
+    only: Option<&[NodeId]>,
 ) -> Option<SceneEdit> {
     let below_mm = below_mm.min(lift_to_mm);
     let mut edits: Vec<SceneEdit> = model_bottoms(spatial)
         .into_iter()
+        .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
         .filter(|(_, z)| *z < below_mm - TOLERANCE_MM)
         .filter_map(|(id, _)| {
             let query = spatial.leaf(id)?;
@@ -186,9 +191,9 @@ mod raft_clash_tests {
         add_cube(&mut scene, "Lower", 3.0, 0.2);
         add_cube(&mut scene, "High", 6.0, 4.0);
         let mut spatial = SceneSpatial::from_graph(scene);
-        let lowest = lowest_model_mm(&spatial).expect("three models");
+        let lowest = lowest_model_mm(&spatial, None).expect("three models");
         assert!(lowest.abs() < 1e-6, "{lowest}");
-        let edit = lift_edit(&spatial, 0.85, 5.0).expect("models to lift");
+        let edit = lift_edit(&spatial, 0.85, 5.0, None).expect("models to lift");
         let SceneEdit::Compound(edits) = &edit else {
             panic!("two models lifted in one step: {edit:?}");
         };
@@ -204,7 +209,7 @@ mod raft_clash_tests {
         assert!((bottoms[1] - 5.0).abs() < 1e-5, "{bottoms:?}");
         assert!((bottoms[2] - 4.0).abs() < 1e-5, "{bottoms:?}");
         assert!(
-            lift_edit(&spatial, 0.85, 5.0).is_none(),
+            lift_edit(&spatial, 0.85, 5.0, None).is_none(),
             "nothing left to lift"
         );
     }

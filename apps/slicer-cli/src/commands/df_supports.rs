@@ -58,7 +58,7 @@ pub(crate) fn restore_df_supports(
 ) {
     for document in documents {
         let restored = if document.generator == DF_SUPPORT_GENERATOR {
-            DfSupportSession::restore_into(
+            DfSupportSession::restore_sets_into(
                 scene,
                 document.leaf,
                 document.version,
@@ -86,8 +86,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Generates supports for every model of `scene`, the island scan banded by
 /// `layer_height_mm`, the contact tips sunk for a printer of `pixel_pitch_mm`
-/// (X, Y), and adds them as a root leaf. Reports the run on stderr; a scene
-/// that needs no support is left as it is.
+/// (X, Y), and adds each model's supports as a root leaf. Reports the run on
+/// stderr; a scene that needs no support is left as it is.
 pub(crate) fn add_df_supports(
     scene: &mut Scene,
     layer_height_mm: f64,
@@ -122,18 +122,17 @@ pub(crate) fn add_df_supports(
         outcome.triangles,
         outcome.timings.total.as_secs_f64() * 1e3,
     );
-    let Some(mesh) = outcome.mesh else {
-        return Ok(());
-    };
-    let meta = Some(SceneMetadata {
-        name: Some(DF_SUPPORT_MESH_NAME.to_string()),
-        ..Default::default()
-    });
-    let leaf = scene.add_leaf(
-        meta,
-        Transform3D::Identity,
-        LeafPayload::Mesh(Arc::new(mesh)),
-    )?;
-    scene.add_root(leaf)?;
+    for mesh in outcome.sets.into_iter().filter_map(|set| set.mesh) {
+        let meta = Some(SceneMetadata {
+            name: Some(DF_SUPPORT_MESH_NAME.to_string()),
+            ..Default::default()
+        });
+        let leaf = scene.add_leaf(
+            meta,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(mesh)),
+        )?;
+        scene.add_root(leaf)?;
+    }
     Ok(())
 }

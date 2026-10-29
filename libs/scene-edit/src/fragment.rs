@@ -54,6 +54,25 @@ impl SceneFragment {
         Self { inner }
     }
 
+    /// Builds a fragment of one root leaf per entry of `leaves`, in order,
+    /// each wrapping its mesh as a mesh resource of its own under its local
+    /// transform: several objects pasted as one gesture.
+    pub fn from_leaf_snapshots(
+        leaves: impl IntoIterator<Item = (Arc<IndexedMesh>, Transform3D)>,
+    ) -> Self {
+        let mut inner = Scene::new();
+        for (mesh, local_transform) in leaves {
+            let rid = inner.add_mesh_resource_arc(mesh);
+            let leaf = inner
+                .add_leaf(None, local_transform, LeafPayload::MeshResource(rid))
+                .expect("freshly registered resource id is live");
+            inner
+                .add_root(leaf)
+                .expect("freshly allocated leaf has no parent and is not a root");
+        }
+        Self { inner }
+    }
+
     /// Borrows the wrapped scene. Paste reads roots, nodes and mesh resources
     /// through it.
     pub fn scene(&self) -> &Scene {

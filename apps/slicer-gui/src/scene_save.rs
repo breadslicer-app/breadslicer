@@ -261,10 +261,6 @@ impl SaveBundle {
 /// The notice for a save whose supports went in as a mesh.
 pub(crate) fn supports_as_mesh_texts(why: SupportsAsMesh) -> InfoTexts {
     let message = match why {
-        SupportsAsMesh::SeveralSets => ctr!(
-            "DfSupportDialog",
-            "The scene has more than one set of supports, so they were saved as a mesh: they will open, but cannot be edited by hand. Keep one set and save again to keep them editable."
-        ),
         SupportsAsMesh::NoSession => ctr!(
             "DfSupportDialog",
             "These supports no longer match the models (or were opened as a mesh), so they were saved as a mesh: they will open, but cannot be edited by hand. Generate them again and save to keep them editable."

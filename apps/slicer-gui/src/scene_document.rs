@@ -245,9 +245,9 @@ pub(crate) struct SceneDocument {
     /// Bumped by every project-level change, giving those the same comparable
     /// identity committed edits get from their ids.
     project_state_generation: Cell<u64>,
-    /// The editable DragonFruit support sessions, shared with the support
-    /// driver: a save keeps the one in force as data, and opening a `.bread`
-    /// puts the rebuilt one here.
+    /// The editable DragonFruit support sessions, one set per model, shared
+    /// with the support driver: a save keeps each set's session in force as
+    /// data, and opening a `.bread` puts the rebuilt ones here.
     support_sessions: Rc<RefCell<SupportSessions>>,
     /// Where a model that is moving and its supports stood, so the supports
     /// follow it (#119).
@@ -853,11 +853,15 @@ impl SceneDocument {
         }
         self.redo_stack.borrow_mut().clear();
         if let Some(moved) = moved {
-            // As a hand edit does: the moved supports follow the session they
-            // came from, drawn into the scene as it now stands.
-            let mut sessions = self.support_sessions.borrow_mut();
-            sessions.truncate(moved.after + 1);
-            sessions.push((moved.session, self.scene_revision()));
+            // As a hand edit does: the moved set's session is the one that
+            // drew it as the scene now stands.
+            crate::support_persist::record(
+                self,
+                &self.support_sessions,
+                moved.leaf,
+                moved.model,
+                moved.session,
+            );
         }
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
@@ -976,15 +980,30 @@ impl SceneDocument {
         placement_translation: [f64; 3],
         replaced: &[NodeId],
     ) -> Result<Option<NodeId>, SceneError> {
-        let Some((paste, new_root)) = self.paste_fragment_compound(fragment, placement_translation)
+        self.paste_fragment_replacing_all(fragment, placement_translation, replaced)
+            .map(|roots| roots.first().copied())
+    }
+
+    /// [`Self::paste_fragment_replacing`], returning every new root leaf, in
+    /// the fragment's order (empty when nothing was pasted): a run's support
+    /// sets, one per model (#197). The first is selected.
+    pub(crate) fn paste_fragment_replacing_all(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+        replaced: &[NodeId],
+    ) -> Result<Vec<NodeId>, SceneError> {
+        let Some((paste, new_roots)) =
+            self.paste_fragment_compound(fragment, placement_translation)
         else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
+        let new_root = new_roots[0];
         let compound = if replaced.is_empty() {
             paste
         } else {
             let Some(mut graph) = self.with_scene(|spatial| spatial.graph().clone()) else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
             paste.apply_to_scene(&mut graph)?;
             let mut edits = vec![paste];
@@ -1007,9 +1026,9 @@ impl SceneDocument {
             Ok(()) => {
                 self.push_edit(compound);
                 self.set_selection(Selection::One(crate::selection::LeafId(new_root)));
-                Ok(Some(new_root))
+                Ok(new_roots)
             }
-            Err(EditNotApplied::NoSceneLoaded) => Ok(None),
+            Err(EditNotApplied::NoSceneLoaded) => Ok(Vec::new()),
             Err(EditNotApplied::Rejected(error)) => Err(error),
         }
     }
@@ -1018,7 +1037,7 @@ impl SceneDocument {
         &self,
         fragment: &SceneFragment,
         placement_translation: [f64; 3],
-    ) -> Option<(SceneEdit, NodeId)> {
+    ) -> Option<(SceneEdit, Vec<NodeId>)> {
         let mut slot = self.spatial.borrow_mut();
         let spatial = slot.as_mut()?;
         let frag_scene = fragment.scene();
@@ -1053,7 +1072,7 @@ impl SceneDocument {
 
         // Step 2: walk the fragment's roots, allocate target node ids, emit
         // AddLeaf for each mesh-resource leaf root.
-        let mut first_new_root: Option<NodeId> = None;
+        let mut new_roots: Vec<NodeId> = Vec::new();
         // Pasted leaves land after the roots already there, one after another,
         // and none of the edits before them adds a root.
         let mut position = spatial.graph().roots().len();
@@ -1074,9 +1093,7 @@ impl SceneDocument {
             };
             let target_rid = rid_map[&frag_rid];
             let target_node_id = spatial.allocate_unbound_node_id();
-            if first_new_root.is_none() {
-                first_new_root = Some(target_node_id);
-            }
+            new_roots.push(target_node_id);
             let final_xform =
                 substitute_translation(frag_node.local_transform, placement_translation);
             edits.push(SceneEdit::AddLeaf {
@@ -1089,13 +1106,15 @@ impl SceneDocument {
             position += 1;
         }
 
-        let new_root = first_new_root?;
+        if new_roots.is_empty() {
+            return None;
+        }
         let compound = if edits.len() == 1 {
             edits.into_iter().next().expect("len == 1")
         } else {
             SceneEdit::Compound(edits)
         };
-        Some((compound, new_root))
+        Some((compound, new_roots))
     }
 
     pub(crate) fn can_undo(&self) -> bool {

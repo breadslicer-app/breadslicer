@@ -64,7 +64,7 @@ use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
-use crate::support_persist::install_session;
+use crate::support_persist::install_sets;
 use sc_scene::SceneError;
 use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
@@ -923,9 +923,9 @@ impl ViewportController {
             .document()
             .install_spatial(spatial, source_path, project_payload);
 
-        // A reopened `.bread`'s rebuilt supports are the editable session of
+        // A reopened `.bread`'s rebuilt supports are the editable sets of
         // the fresh scene; any other load leaves no session in force.
-        install_session(self.session.document(), restored_supports.session);
+        install_sets(self.session.document(), restored_supports.sets);
         // And the models it remembers hollowing; any other load, none.
         for why in &restored_hollows.failures {
             crate::breadcrumbs::note(&format!("load: hollow not restored: {why}"));

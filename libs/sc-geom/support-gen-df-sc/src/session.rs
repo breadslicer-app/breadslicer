@@ -31,7 +31,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
-use crate::shift::{bases, shift_model_supports};
+use crate::shift::{bases, model_collections, shift_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
 /// How far from the model surface a click may land and still place a support.
@@ -430,6 +430,62 @@ impl DfSupportSession {
         }
     }
 
+    /// One session per model, in model order, each holding only the supports
+    /// that stand on its model (#197). DragonFruit keeps each model's
+    /// supports to themselves, so nothing is placed again; each session's
+    /// raft is drawn from its own roots. The models' geometry, BVHs and
+    /// distance fields carry over. Hand-placed ids stay apart: each session
+    /// names new supports under its own prefix.
+    pub fn split_by_model(&self) -> Vec<Self> {
+        if self.models.len() == 1 {
+            return vec![self.clone()];
+        }
+        (0..self.models.len())
+            .map(|i| {
+                let model = self.models[i].clone();
+                let collections = model_collections(&self.state.collections, &model.id);
+                let bvh = self.bvhs[i]
+                    .get()
+                    .map_or_else(OnceLock::new, |bvh| OnceLock::from(bvh.clone()));
+                let sdf = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
+                DfSupportSession {
+                    models: vec![model].into(),
+                    settings: self.settings.clone(),
+                    recipe: self.recipe.clone(),
+                    state: SupportState {
+                        collections,
+                        ..SupportState::default()
+                    },
+                    bvhs: vec![bvh].into(),
+                    removal_index: Arc::default(),
+                    sdfs: vec![SdfSlot(std::sync::Mutex::new(sdf))].into(),
+                    id_prefix: format!("{}.{i}", self.id_prefix),
+                    next_id: self.next_id,
+                }
+            })
+            .collect()
+    }
+
+    /// Whether the session holds no support at all.
+    pub fn is_empty(&self) -> bool {
+        bases(&self.state.collections).next().is_none()
+    }
+
+    /// How far `point` (world mm) is from the nearest model surface an Add
+    /// click there would hold; `None` beyond reach.
+    pub fn add_distance(&self, point: [f64; 3]) -> Option<f64> {
+        let (_, tip, _) = self.contact(point)?;
+        Some(dist(point, [tip.x, tip.y, tip.z]))
+    }
+
+    /// How far `point` (world mm) is from the support a Remove click there
+    /// would take; `None` beyond reach.
+    pub fn remove_distance(&self, point: [f64; 3]) -> Option<f64> {
+        self.nearest_support(point)
+            .map(|(d, _)| d)
+            .filter(|d| *d <= REMOVE_REACH_MM)
+    }
+
     /// Builds every model's BVH now (they are shared by every copy).
     pub fn warm(&self) {
         for i in 0..self.models.len() {
@@ -682,11 +738,16 @@ impl DfSupportSession {
     /// The entities a click at `point` removes: the nearest one within reach
     /// and everything that hangs from it (members on its shafts and the
     /// knots carrying them, braces to it, a root left with nothing on it).
-    fn removal(&self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
-        let index = self
-            .removal_index
+    fn removal_index(&self) -> Arc<RemovalIndex> {
+        self.removal_index
             .get_or_init(|| Arc::new(RemovalIndex::of(&self.state.collections)))
-            .clone();
+            .clone()
+    }
+
+    /// The support nearest `point`, knots left out: its distance and its
+    /// place in the removal index.
+    fn nearest_support(&self, point: [f64; 3]) -> Option<(f64, usize)> {
+        let index = self.removal_index();
         let c = &self.state.collections;
         let mut best: Option<(f64, usize)> = None;
         for (k, pts) in index.points.iter().enumerate() {
@@ -702,7 +763,13 @@ impl DfSupportSession {
                 best = Some((d, k));
             }
         }
-        let Some((d, start)) = best else {
+        best
+    }
+
+    fn removal(&self, point: [f64; 3]) -> Result<HashSet<String>, EditError> {
+        let index = self.removal_index();
+        let c = &self.state.collections;
+        let Some((d, start)) = self.nearest_support(point) else {
             return Err(EditError::NothingThere);
         };
         if d > REMOVE_REACH_MM {
@@ -761,8 +828,7 @@ impl DfSupportSession {
     /// Builds the removal index now (a worker does it right after an edit,
     /// so the first removal preview on the new state is quick).
     pub fn warm_removal(&self) {
-        self.removal_index
-            .get_or_init(|| Arc::new(RemovalIndex::of(&self.state.collections)));
+        self.removal_index();
     }
 
     /// Removes the support nearest `point` (world mm) and everything that

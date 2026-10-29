@@ -133,17 +133,49 @@ fn knots_named(c: &SupportCollections, keep: impl Fn(&SupportEntity) -> bool) ->
     ids
 }
 
-/// Moves every support of the model `model_id` by `d`, knots included: a
-/// knot goes with the shaft it sits on or, when no support holds that shaft,
-/// with the supports that name it.
-pub(crate) fn shift_model_supports(c: &mut SupportCollections, model_id: &str, d: Vec3) {
+/// The knots that belong to the supports of the model `model_id`: a knot
+/// goes with the shaft it sits on or, when no support holds that shaft, with
+/// the supports that name it.
+fn model_knots(c: &SupportCollections, model_id: &str) -> HashSet<String> {
     let on = |base: &SupportEntity| base.model_id == model_id;
     let own_shafts = shaft_ids(c, on);
     let all_shafts = shaft_ids(c, |_| true);
     let own_knots = knots_named(c, on);
+    c.knots
+        .iter()
+        .filter(|(id, knot)| {
+            let host = knot.parent_shaft_id.as_str();
+            own_shafts.contains(host) || (!all_shafts.contains(host) && own_knots.contains(*id))
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+/// The supports of the model `model_id` alone, knots included (#197).
+pub(crate) fn model_collections(c: &SupportCollections, model_id: &str) -> SupportCollections {
+    let knots = model_knots(c, model_id);
+    let mut out = c.clone();
+    let on = |base: &SupportEntity| base.model_id == model_id;
+    out.roots.retain(|_, e| on(&e.base));
+    out.trunks.retain(|_, e| on(&e.base));
+    out.branches.retain(|_, e| on(&e.base));
+    out.leaves.retain(|_, e| on(&e.base));
+    out.twigs.retain(|_, e| on(&e.base));
+    out.sticks.retain(|_, e| on(&e.base));
+    out.braces.retain(|_, e| on(&e.base));
+    out.stumps.retain(|_, e| on(&e.base));
+    out.kickstands.retain(|_, e| on(&e.base));
+    out.knots.retain(|id, _| knots.contains(id));
+    out
+}
+
+/// Moves every support of the model `model_id` by `d`, knots included
+/// ([`model_knots`]).
+pub(crate) fn shift_model_supports(c: &mut SupportCollections, model_id: &str, d: Vec3) {
+    let on = |base: &SupportEntity| base.model_id == model_id;
+    let own_knots = model_knots(c, model_id);
     for (id, knot) in &mut c.knots {
-        let host = knot.parent_shaft_id.as_str();
-        if own_shafts.contains(host) || (!all_shafts.contains(host) && own_knots.contains(id)) {
+        if own_knots.contains(id) {
             shift(&mut knot.pos, d);
         }
     }
