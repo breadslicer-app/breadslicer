@@ -162,6 +162,9 @@ fn format_label(format: PrinterFileFormat) -> String {
     match format {
         PrinterFileFormat::Goo(GooVersion::V3_0) => ctr!("SlicePanel", ".goo (V3.0)"),
         PrinterFileFormat::Goo(GooVersion::V5_1) => ctr!("SlicePanel", ".goo (V5.1)"),
+        PrinterFileFormat::Ctb(CtbVariant::V2) => ctr!("SlicePanel", ".ctb (v2)"),
+        PrinterFileFormat::Ctb(CtbVariant::V3) => ctr!("SlicePanel", ".ctb (v3)"),
+        PrinterFileFormat::Ctb(CtbVariant::V4) => ctr!("SlicePanel", ".ctb (v4)"),
         PrinterFileFormat::Ctb(CtbVariant::PlainV5) => ctr!("SlicePanel", ".ctb (v5)"),
         PrinterFileFormat::Ctb(CtbVariant::EncryptedV5) => {
             ctr!("SlicePanel", ".ctb (v5 encrypted)")
@@ -323,6 +326,10 @@ mod print_format_tests {
         assert_eq!(
             format_label(PrinterFileFormat::Goo(GooVersion::V5_1)),
             ".goo (V5.1)",
+        );
+        assert_eq!(
+            format_label(PrinterFileFormat::Ctb(CtbVariant::V2)),
+            ".ctb (v2)",
         );
         assert_eq!(
             format_label(PrinterFileFormat::Ctb(CtbVariant::PlainV5)),

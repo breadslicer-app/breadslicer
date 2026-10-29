@@ -7,7 +7,8 @@
  * UVtools.Core/FileFormats/CrealityCXDLPFile.cs,
  * UVtools.Core/FileFormats/AnycubicZipFile.cs and
  * UVtools.Core/FileFormats/AnycubicFile.cs (with BitPlaneRle.cs for its PWS
- * layers), UVtools v7.1.1, commit
+ * layers) and UVtools.Core/FileFormats/ChituboxFile.cs (with CtbRleCodec.cs
+ * for its layers), UVtools v7.1.1, commit
  * 8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8, modified for Breadslicer: they
  * read only what the writers here produce, for tests and file checks.
  *
@@ -29,6 +30,7 @@ use sc_sla_formats::AnycubicBinaryVariant;
 
 use crate::anycubic_binary::{FILE_MARK, VERSION_516, VERSION_517, VERSION_518, uses_bit_planes};
 use crate::anycubic_zip::{LAYERS_FILE, SCENE_FILE, SCENE_MAGIC, SETTINGS_FILE, layer_entry};
+use crate::ctb_legacy::{MAGIC_CTB, MAGIC_CTB_V4};
 use crate::cxdlp::{LINE_BYTES, MAGIC, PAGE_BREAK, PREVIEW_SIZES, crc32_zero_start};
 use crate::{pw0, pws};
 
@@ -784,6 +786,351 @@ pub fn read_anycubic_binary(
         layer_definitions,
         sub_layers,
         preview2,
+        layers,
+    })
+}
+
+/// The header of a CTB file, the fields a check looks at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CtbHeader {
+    pub magic: u32,
+    pub version: u32,
+    pub display_width_mm: f32,
+    pub display_height_mm: f32,
+    pub machine_z_mm: f32,
+    pub print_height_mm: f32,
+    pub layer_height_mm: f32,
+    pub exposure_sec: f32,
+    pub bottom_exposure_sec: f32,
+    pub light_off_sec: f32,
+    pub bottom_layer_count: u32,
+    pub resolution_x: u32,
+    pub resolution_y: u32,
+    pub layer_count: u32,
+    pub print_time_sec: u32,
+    pub projector_mirrored: u32,
+    pub light_pwm: u16,
+    pub bottom_light_pwm: u16,
+    pub layer_key: u32,
+}
+
+/// The print parameters of a CTB file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CtbPrintParameters {
+    pub bottom_lift_mm: f32,
+    pub bottom_lift_mm_min: f32,
+    pub lift_mm: f32,
+    pub lift_mm_min: f32,
+    pub retract_mm_min: f32,
+    pub volume_ml: f32,
+    pub weight_g: f32,
+    pub bottom_light_off_sec: f32,
+    pub light_off_sec: f32,
+    pub bottom_layer_count: u32,
+    /// The last padding word, which version 2 marks.
+    pub last_padding: u32,
+}
+
+/// The slicer info of a CTB file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CtbSlicerInfo {
+    pub bottom_second_lift_mm: f32,
+    pub second_lift_mm: f32,
+    pub second_retract_mm: f32,
+    pub wait_after_lift_sec: f32,
+    pub machine_name: String,
+    pub anti_alias_flag: u8,
+    pub per_layer_settings: u8,
+    pub anti_alias_level: u32,
+    pub software_version: u32,
+    pub wait_before_cure_sec: f32,
+    pub transition_layer_count: u32,
+    pub print_parameters_v4_address: u32,
+}
+
+/// The version 4 block of a CTB file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CtbPrintParametersV4 {
+    pub bottom_retract_mm_min: f32,
+    pub wait_before_cure_sec: f32,
+    pub wait_after_lift_sec: f32,
+    pub wait_after_cure_sec: f32,
+    pub last_layer_index: u32,
+    pub disclaimer: String,
+}
+
+/// A layer's table record, and its motion record from version 3.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CtbLayer {
+    pub position_z_mm: f32,
+    pub exposure_sec: f32,
+    pub light_off_sec: f32,
+    pub address: u64,
+    pub length: u32,
+    pub table_size: u32,
+    /// From version 3: lift (both stages), lift speed, second lift, second
+    /// lift speed, retract speed, second retract, second retract speed, wait
+    /// after cure, wait after lift, wait before cure, light.
+    pub motion: Option<[f32; 11]>,
+}
+
+/// A CTB file of versions 2 to 4, decoded.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CtbFile {
+    pub header: CtbHeader,
+    pub previews: [(u32, u32); 2],
+    pub print_parameters: CtbPrintParameters,
+    pub slicer_info: CtbSlicerInfo,
+    pub print_parameters_v4: Option<CtbPrintParametersV4>,
+    pub layer_definitions: Vec<CtbLayer>,
+    /// Each layer image, `resolution_x * resolution_y` greys, rows first.
+    pub layers: Vec<Vec<u8>>,
+}
+
+/// Decodes a CTB layer image, already XORed back, to 8-bit greys: a 7-bit
+/// grey `g` other than 0 reads `g * 2 + 1`, as UVtools reads it.
+pub(crate) fn decode_ctb_layer(encoded: &[u8], pixel_count: usize) -> Result<Vec<u8>, ReadError> {
+    let mut pixels = vec![0_u8; pixel_count];
+    let mut pixel = 0_usize;
+    let mut at = 0_usize;
+    while at < encoded.len() {
+        let mut code = encoded[at];
+        at += 1;
+        let mut stride = 1_usize;
+        if code & 0x80 != 0 {
+            code &= 0x7f;
+            let &first = encoded
+                .get(at)
+                .ok_or_else(|| error("a layer run is cut short"))?;
+            let (extra, lead) = match first {
+                b if b & 0x80 == 0 => (0, u32::from(b)),
+                b if b & 0xc0 == 0x80 => (1, u32::from(b & 0x3f)),
+                b if b & 0xe0 == 0xc0 => (2, u32::from(b & 0x1f)),
+                b if b & 0xf0 == 0xe0 => (3, u32::from(b & 0x0f)),
+                _ => return Err(error("a layer run's count is malformed")),
+            };
+            let tail = encoded
+                .get(at + 1..at + 1 + extra)
+                .ok_or_else(|| error("a layer run is cut short"))?;
+            stride = tail
+                .iter()
+                .fold(lead, |count, &byte| (count << 8) | u32::from(byte))
+                as usize;
+            at += 1 + extra;
+        }
+        if code != 0 {
+            let end = pixel
+                .checked_add(stride)
+                .filter(|&end| end <= pixel_count)
+                .ok_or_else(|| error("a layer image runs off the frame"))?;
+            pixels[pixel..end].fill((code << 1) | 1);
+        }
+        pixel += stride;
+    }
+    Ok(pixels)
+}
+
+/// Decodes a CTB file of versions 2 to 4.
+///
+/// # Errors
+///
+/// [`ReadError`] when the file is not one this crate could have written.
+pub fn read_ctb(bytes: &[u8]) -> Result<CtbFile, ReadError> {
+    let mut cursor = Cursor { bytes, at: 0 };
+    let header = CtbHeader {
+        magic: cursor.u32_le()?,
+        version: cursor.u32_le()?,
+        display_width_mm: cursor.f32_le()?,
+        display_height_mm: cursor.f32_le()?,
+        machine_z_mm: cursor.f32_le()?,
+        print_height_mm: {
+            cursor.take(8)?;
+            cursor.f32_le()?
+        },
+        layer_height_mm: cursor.f32_le()?,
+        exposure_sec: cursor.f32_le()?,
+        bottom_exposure_sec: cursor.f32_le()?,
+        light_off_sec: cursor.f32_le()?,
+        bottom_layer_count: cursor.u32_le()?,
+        resolution_x: cursor.u32_le()?,
+        resolution_y: cursor.u32_le()?,
+        layer_count: 0,
+        print_time_sec: 0,
+        projector_mirrored: 0,
+        light_pwm: 0,
+        bottom_light_pwm: 0,
+        layer_key: 0,
+    };
+    if header.magic != MAGIC_CTB && header.magic != MAGIC_CTB_V4 {
+        return Err(error(format!("0x{:08x} is not a CTB magic", header.magic)));
+    }
+    let large_preview = cursor.u32_le()?;
+    let layer_table = cursor.u32_le()?;
+    let mut header = CtbHeader {
+        layer_count: cursor.u32_le()?,
+        ..header
+    };
+    let small_preview = cursor.u32_le()?;
+    header.print_time_sec = cursor.u32_le()?;
+    header.projector_mirrored = cursor.u32_le()?;
+    let print_parameters_address = cursor.u32_le()?;
+    cursor.take(8)?; // their size and the level count
+    header.light_pwm = cursor.u16_le()?;
+    header.bottom_light_pwm = cursor.u16_le()?;
+    header.layer_key = cursor.u32_le()?;
+    let slicer_address = cursor.u32_le()?;
+
+    let preview = |address: u32| -> Result<(u32, u32), ReadError> {
+        let mut cursor = Cursor::at(bytes, address)?;
+        Ok((cursor.u32_le()?, cursor.u32_le()?))
+    };
+    let previews = [preview(large_preview)?, preview(small_preview)?];
+
+    let mut cursor = Cursor::at(bytes, print_parameters_address)?;
+    let print_parameters = CtbPrintParameters {
+        bottom_lift_mm: cursor.f32_le()?,
+        bottom_lift_mm_min: cursor.f32_le()?,
+        lift_mm: cursor.f32_le()?,
+        lift_mm_min: cursor.f32_le()?,
+        retract_mm_min: cursor.f32_le()?,
+        volume_ml: cursor.f32_le()?,
+        weight_g: cursor.f32_le()?,
+        bottom_light_off_sec: {
+            cursor.take(4)?; // cost
+            cursor.f32_le()?
+        },
+        light_off_sec: cursor.f32_le()?,
+        bottom_layer_count: cursor.u32_le()?,
+        last_padding: {
+            cursor.take(12)?;
+            cursor.u32_le()?
+        },
+    };
+
+    let mut cursor = Cursor::at(bytes, slicer_address)?;
+    let bottom_second_lift_mm = cursor.f32_le()?;
+    cursor.take(4)?;
+    let second_lift_mm = cursor.f32_le()?;
+    cursor.take(4)?;
+    let second_retract_mm = cursor.f32_le()?;
+    cursor.take(4)?;
+    let wait_after_lift_sec = cursor.f32_le()?;
+    let name_address = cursor.u32_le()?;
+    let name_length = cursor.u32_le()?;
+    let anti_alias_flag = cursor.u8()?;
+    cursor.take(2)?;
+    let per_layer_settings = cursor.u8()?;
+    cursor.take(4)?; // modified
+    let anti_alias_level = cursor.u32_le()?;
+    let software_version = cursor.u32_le()?;
+    let wait_before_cure_sec = cursor.f32_le()?;
+    cursor.take(4)?;
+    let transition_layer_count = cursor.u32_le()?;
+    let print_parameters_v4_address = cursor.u32_le()?;
+    let machine_name = {
+        let mut cursor = Cursor::at(bytes, name_address)?;
+        String::from_utf8_lossy(cursor.take(name_length as usize)?).into_owned()
+    };
+    let slicer_info = CtbSlicerInfo {
+        bottom_second_lift_mm,
+        second_lift_mm,
+        second_retract_mm,
+        wait_after_lift_sec,
+        machine_name,
+        anti_alias_flag,
+        per_layer_settings,
+        anti_alias_level,
+        software_version,
+        wait_before_cure_sec,
+        transition_layer_count,
+        print_parameters_v4_address,
+    };
+
+    let print_parameters_v4 = if header.version >= 4 {
+        let mut cursor = Cursor::at(bytes, print_parameters_v4_address)?;
+        let bottom_retract_mm_min = cursor.f32_le()?;
+        cursor.take(20)?;
+        let wait_before_cure_sec = cursor.f32_le()?;
+        let wait_after_lift_sec = cursor.f32_le()?;
+        let wait_after_cure_sec = cursor.f32_le()?;
+        cursor.take(16)?;
+        let last_layer_index = cursor.u32_le()?;
+        cursor.take(16)?;
+        let disclaimer_address = cursor.u32_le()?;
+        let disclaimer_length = cursor.u32_le()?;
+        let disclaimer = {
+            let mut cursor = Cursor::at(bytes, disclaimer_address)?;
+            String::from_utf8_lossy(cursor.take(disclaimer_length as usize)?).into_owned()
+        };
+        Some(CtbPrintParametersV4 {
+            bottom_retract_mm_min,
+            wait_before_cure_sec,
+            wait_after_lift_sec,
+            wait_after_cure_sec,
+            last_layer_index,
+            disclaimer,
+        })
+    } else {
+        None
+    };
+
+    let pixel_count = header.resolution_x as usize * header.resolution_y as usize;
+    let mut cursor = Cursor::at(bytes, layer_table)?;
+    let mut layer_definitions = Vec::with_capacity(header.layer_count as usize);
+    let mut layers = Vec::with_capacity(header.layer_count as usize);
+    for index in 0..header.layer_count {
+        let position_z_mm = cursor.f32_le()?;
+        let exposure_sec = cursor.f32_le()?;
+        let light_off_sec = cursor.f32_le()?;
+        let offset = cursor.u32_le()?;
+        let length = cursor.u32_le()?;
+        let page = cursor.u32_le()?;
+        let table_size = cursor.u32_le()?;
+        cursor.take(8)?;
+        let address = (u64::from(page) << 32) | u64::from(offset);
+        let at = usize::try_from(address).map_err(|_| error("an image lies past the end"))?;
+
+        let motion = if header.version >= 3 {
+            let record = at
+                .checked_sub(48)
+                .ok_or_else(|| error("a motion record lies before the file"))?;
+            let mut motion_cursor = Cursor::at(bytes, record as u32)?;
+            motion_cursor.take(4)?; // total size
+            let mut values = [0.0; 11];
+            for value in &mut values {
+                *value = motion_cursor.f32_le()?;
+            }
+            Some(values)
+        } else {
+            None
+        };
+
+        let mut encoded = bytes
+            .get(at..at + length as usize)
+            .ok_or_else(|| error(format!("layer {index}'s image lies past the end")))?
+            .to_vec();
+        if let Some(key) = std::num::NonZeroU32::new(header.layer_key) {
+            sc_sla_formats::ctb::layer_xor::apply(key, index, &mut encoded);
+        }
+        layers.push(decode_ctb_layer(&encoded, pixel_count)?);
+        layer_definitions.push(CtbLayer {
+            position_z_mm,
+            exposure_sec,
+            light_off_sec,
+            address,
+            length,
+            table_size,
+            motion,
+        });
+    }
+
+    Ok(CtbFile {
+        header,
+        previews,
+        print_parameters,
+        slicer_info,
+        print_parameters_v4,
+        layer_definitions,
         layers,
     })
 }

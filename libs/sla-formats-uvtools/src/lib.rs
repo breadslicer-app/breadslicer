@@ -30,11 +30,14 @@
 //!   `.pp1m`).
 //! - [`anycubic_binary`]: the Anycubic binary family (`.pwmx`, `.pwma`, `.pm3`,
 //!   `.pws` and the rest Photon Workshop wrote before the ZIP).
+//! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
+//!   `sc-sla-formats` itself).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
 pub mod anycubic_binary;
 pub mod anycubic_zip;
+pub mod ctb_legacy;
 pub mod cxdlp;
 mod layer_stats;
 mod program;
@@ -45,7 +48,7 @@ mod resample;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
-    PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat, PrinterFileSink,
+    CtbVariant, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat, PrinterFileSink,
     PrinterFileWriter, WriteFailure,
 };
 
@@ -59,7 +62,8 @@ impl PrinterFileWriter for UvtoolsWriters {
     fn writes(&self, format: PrinterFileFormat) -> bool {
         matches!(
             format,
-            PrinterFileFormat::Cxdlp(_)
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+                | PrinterFileFormat::Cxdlp(_)
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
         )
@@ -67,6 +71,9 @@ impl PrinterFileWriter for UvtoolsWriters {
 
     fn preview_sizes(&self, format: PrinterFileFormat) -> Option<PreviewSizes> {
         match format {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+                Some(sc_sla_formats::ctb::PREVIEW_SIZES)
+            }
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
@@ -83,6 +90,9 @@ impl PrinterFileWriter for UvtoolsWriters {
         out: &mut dyn PrinterFileSink,
     ) -> Result<(), WriteFailure> {
         match format {
+            PrinterFileFormat::Ctb(
+                variant @ (CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4),
+            ) => ctb_legacy::write_file(variant, program, previews, stack, out),
             PrinterFileFormat::Cxdlp(version) => {
                 cxdlp::write_file(version, program, previews, stack, out)
             }
