@@ -26,15 +26,20 @@
 //! - [`cxdlp`]: Creality CXDLP, versions 2 and 3 (Halot One, One Pro, One
 //!   Plus, ...).
 //! - [`anycubic_zip`]: the Anycubic ZIP family (`.pwsz` for the Photon Mono M7
-//!   Pro, `.pm7` for the M7, `.pm7m` for the M7 Max).
+//!   Pro, `.pm7` for the M7, `.pm7m` for the M7 Max, `.pm4u`, `.pp1`,
+//!   `.pp1m`).
+//! - [`anycubic_binary`]: the Anycubic binary family (`.pwmx`, `.pwma`, `.pm3`,
+//!   `.pws` and the rest Photon Workshop wrote before the ZIP).
 //!
-//! [`read`] decodes both back, for tests and for checking a written file.
+//! [`read`] decodes them back, for tests and for checking a written file.
 
+pub mod anycubic_binary;
 pub mod anycubic_zip;
 pub mod cxdlp;
 mod layer_stats;
 mod program;
 mod pw0;
+mod pws;
 pub mod read;
 mod resample;
 
@@ -54,7 +59,9 @@ impl PrinterFileWriter for UvtoolsWriters {
     fn writes(&self, format: PrinterFileFormat) -> bool {
         matches!(
             format,
-            PrinterFileFormat::Cxdlp(_) | PrinterFileFormat::AnycubicZip(_)
+            PrinterFileFormat::Cxdlp(_)
+                | PrinterFileFormat::AnycubicZip(_)
+                | PrinterFileFormat::AnycubicBinary(_)
         )
     }
 
@@ -62,6 +69,7 @@ impl PrinterFileWriter for UvtoolsWriters {
         match format {
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
+            PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -80,6 +88,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::AnycubicZip(variant) => {
                 anycubic_zip::write_file(variant, program, previews, stack, out)
+            }
+            PrinterFileFormat::AnycubicBinary(variant) => {
+                anycubic_binary::write_file(variant, program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

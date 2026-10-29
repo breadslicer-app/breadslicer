@@ -36,6 +36,9 @@ pub enum PrinterFileFormat {
     Cxdlp(CxdlpVersion),
     /// Anycubic's ZIP container.
     AnycubicZip(AnycubicZipVariant),
+    /// Anycubic's binary container, the one Photon Workshop wrote before the
+    /// ZIP.
+    AnycubicBinary(AnycubicBinaryVariant),
 }
 
 /// A revision of Creality's CXDLP container. The machine's firmware decides
@@ -59,16 +62,153 @@ pub enum AnycubicZipVariant {
     Pm7,
     /// `.pm7m`, the Photon Mono M7 Max.
     Pm7m,
+    /// `.pm4u`, the Photon Mono 4 Ultra.
+    Pm4u,
+    /// `.pp1`, the Photon P1.
+    Pp1,
+    /// `.pp1m`, the Photon P1 Max.
+    Pp1m,
 }
 
 impl AnycubicZipVariant {
+    /// Every variant.
+    pub const ALL: [Self; 6] = [
+        Self::Pwsz,
+        Self::Pm7,
+        Self::Pm7m,
+        Self::Pm4u,
+        Self::Pp1,
+        Self::Pp1m,
+    ];
+
     /// Reports the extension, which is also the binding's version string.
     pub fn extension(self) -> &'static str {
         match self {
             Self::Pwsz => "pwsz",
             Self::Pm7 => "pm7",
             Self::Pm7m => "pm7m",
+            Self::Pm4u => "pm4u",
+            Self::Pp1 => "pp1",
+            Self::Pp1m => "pp1m",
         }
+    }
+
+    /// Names the variant an extension is, ignoring case.
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.extension().eq_ignore_ascii_case(extension))
+    }
+}
+
+/// A variant of Anycubic's binary container. Each machine reads its own
+/// extension, and the variants differ in which revision of the layout the
+/// machine reads and how its layers are encoded, so 2 different variants are
+/// incomparable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnycubicBinaryVariant {
+    /// `.pws`, the Photon and Photon S.
+    Pws,
+    /// `.pw0`, the Photon Zero.
+    Pw0,
+    /// `.pwx`, the Photon X.
+    Pwx,
+    /// `.dlp`, the Photon Ultra.
+    Dlp,
+    /// `.dl2p`, the Photon D2.
+    Dl2p,
+    /// `.pwmx`, the Photon Mono X.
+    Pwmx,
+    /// `.pmx2`, the Photon Mono X2.
+    Pmx2,
+    /// `.pwmb`, the Photon Mono X 6K and Photon M3 Plus.
+    Pwmb,
+    /// `.px6s`, the Photon Mono X 6Ks.
+    Px6s,
+    /// `.pwmo`, the Photon Mono.
+    Pwmo,
+    /// `.pm3n`, the Photon Mono 2.
+    Pm3n,
+    /// `.pm4n`, the Photon Mono 4.
+    Pm4n,
+    /// `.pwms`, the Photon Mono SE.
+    Pwms,
+    /// `.pwma`, the Photon Mono 4K.
+    Pwma,
+    /// `.pmsq`, the Photon Mono SQ.
+    Pmsq,
+    /// `.pm3`, the Photon M3.
+    Pm3,
+    /// `.pm3m`, the Photon M3 Max.
+    Pm3m,
+    /// `.pm3r`, the Photon M3 Premium.
+    Pm3r,
+    /// `.pm5`, the Photon Mono M5.
+    Pm5,
+    /// `.pm5s`, the Photon Mono M5s.
+    Pm5s,
+    /// `.m5sp`, the Photon Mono M5s Pro.
+    M5sp,
+}
+
+impl AnycubicBinaryVariant {
+    /// Every variant, in the order UVtools lists them.
+    pub const ALL: [Self; 21] = [
+        Self::Pws,
+        Self::Pw0,
+        Self::Pwx,
+        Self::Dlp,
+        Self::Dl2p,
+        Self::Pwmx,
+        Self::Pmx2,
+        Self::Pwmb,
+        Self::Px6s,
+        Self::Pwmo,
+        Self::Pm3n,
+        Self::Pm4n,
+        Self::Pwms,
+        Self::Pwma,
+        Self::Pmsq,
+        Self::Pm3,
+        Self::Pm3m,
+        Self::Pm3r,
+        Self::Pm5,
+        Self::Pm5s,
+        Self::M5sp,
+    ];
+
+    /// Reports the extension, which is also the binding's version string.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Pws => "pws",
+            Self::Pw0 => "pw0",
+            Self::Pwx => "pwx",
+            Self::Dlp => "dlp",
+            Self::Dl2p => "dl2p",
+            Self::Pwmx => "pwmx",
+            Self::Pmx2 => "pmx2",
+            Self::Pwmb => "pwmb",
+            Self::Px6s => "px6s",
+            Self::Pwmo => "pwmo",
+            Self::Pm3n => "pm3n",
+            Self::Pm4n => "pm4n",
+            Self::Pwms => "pwms",
+            Self::Pwma => "pwma",
+            Self::Pmsq => "pmsq",
+            Self::Pm3 => "pm3",
+            Self::Pm3m => "pm3m",
+            Self::Pm3r => "pm3r",
+            Self::Pm5 => "pm5",
+            Self::Pm5s => "pm5s",
+            Self::M5sp => "m5sp",
+        }
+    }
+
+    /// Names the variant an extension is, ignoring case.
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.extension().eq_ignore_ascii_case(extension))
     }
 }
 
@@ -100,6 +240,9 @@ impl PartialOrd for PrinterFileFormat {
             (Self::AnycubicZip(variant), Self::AnycubicZip(other)) => {
                 (variant == other).then_some(Ordering::Equal)
             }
+            (Self::AnycubicBinary(variant), Self::AnycubicBinary(other)) => {
+                (variant == other).then_some(Ordering::Equal)
+            }
             _ => None,
         }
     }
@@ -123,12 +266,23 @@ impl fmt::Display for UnresolvedBinding {
         let family = self.binding.format.as_canonical();
         match (&self.binding.format, &self.binding.version) {
             (
-                FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf,
+                FormatKind::Goo
+                | FormatKind::Ctb
+                | FormatKind::Cxdlp
+                | FormatKind::Azf
+                | FormatKind::Aff,
                 Some(version),
             ) => {
                 write!(f, "unknown version \"{version}\" for format \"{family}\"",)
             }
-            (FormatKind::Goo | FormatKind::Ctb | FormatKind::Cxdlp | FormatKind::Azf, None) => {
+            (
+                FormatKind::Goo
+                | FormatKind::Ctb
+                | FormatKind::Cxdlp
+                | FormatKind::Azf
+                | FormatKind::Aff,
+                None,
+            ) => {
                 write!(
                     f,
                     "format \"{family}\" needs a version to name a revision, and the binding carries none",
@@ -205,9 +359,16 @@ impl PrinterFileFormat {
             (FormatKind::Ctb, Some("v5enc")) => Ok(Self::Ctb(CtbVariant::EncryptedV5)),
             (FormatKind::Cxdlp, Some("v2")) => Ok(Self::Cxdlp(CxdlpVersion::V2)),
             (FormatKind::Cxdlp, Some("v3")) => Ok(Self::Cxdlp(CxdlpVersion::V3)),
-            (FormatKind::Azf, Some("pwsz")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pwsz)),
-            (FormatKind::Azf, Some("pm7")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pm7)),
-            (FormatKind::Azf, Some("pm7m")) => Ok(Self::AnycubicZip(AnycubicZipVariant::Pm7m)),
+            (FormatKind::Azf, Some(extension)) => AnycubicZipVariant::from_extension(extension)
+                .map(Self::AnycubicZip)
+                .ok_or_else(|| UnresolvedBinding {
+                    binding: binding.clone(),
+                }),
+            (FormatKind::Aff, Some(extension)) => AnycubicBinaryVariant::from_extension(extension)
+                .map(Self::AnycubicBinary)
+                .ok_or_else(|| UnresolvedBinding {
+                    binding: binding.clone(),
+                }),
             _ => Err(UnresolvedBinding {
                 binding: binding.clone(),
             }),
@@ -225,6 +386,7 @@ impl PrinterFileFormat {
             Self::Cxdlp(CxdlpVersion::V2) => (FormatKind::Cxdlp, "v2"),
             Self::Cxdlp(CxdlpVersion::V3) => (FormatKind::Cxdlp, "v3"),
             Self::AnycubicZip(variant) => (FormatKind::Azf, variant.extension()),
+            Self::AnycubicBinary(variant) => (FormatKind::Aff, variant.extension()),
         };
         OutputFormatBinding {
             format,
@@ -245,7 +407,8 @@ impl PrinterFileFormat {
     /// Picks the format a family name means for a printer: the highest revision
     /// of `family` that `declared` lists and this build writes. Any order of
     /// `declared` gives the same format, except among incomparable variants
-    /// (CXDLP, Anycubic ZIP), where the first one listed wins.
+    /// (CXDLP, the Anycubic ZIP and binary families), where the first one
+    /// listed wins.
     pub fn highest_writable(
         family: &FormatKind,
         declared: &OutputFormatBindings,
@@ -301,7 +464,10 @@ impl PrinterFileFormat {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
             Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
-            Self::Goo(GooVersion::V5_1) | Self::Cxdlp(_) | Self::AnycubicZip(_) => {
+            Self::Goo(GooVersion::V5_1)
+            | Self::Cxdlp(_)
+            | Self::AnycubicZip(_)
+            | Self::AnycubicBinary(_) => {
                 external::writer_for(self).and_then(|writer| writer.preview_sizes(self))
             }
         }
@@ -318,6 +484,7 @@ impl PrinterFileFormat {
             Self::Ctb(_) => "ctb",
             Self::Cxdlp(_) => "cxdlp",
             Self::AnycubicZip(variant) => variant.extension(),
+            Self::AnycubicBinary(variant) => variant.extension(),
         }
     }
 }
@@ -327,15 +494,16 @@ impl PrinterFileFormat {
 /// An extension never names a revision: `.goo` is shared by V3.0 and V5.1, and
 /// `.ctb` by the plain and the encrypted variant. The revision comes from a
 /// binding's version string, which a printer declares and a file name does not
-/// carry. Anycubic's ZIP container gives each variant its own extension, and
-/// every one of them names the family.
+/// carry. Anycubic's ZIP and binary containers give each variant its own
+/// extension, and every one of them names its family.
 pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "goo" => Some(FormatKind::Goo),
         "ctb" => Some(FormatKind::Ctb),
         "cxdlp" => Some(FormatKind::Cxdlp),
-        "pwsz" | "pm7" | "pm7m" => Some(FormatKind::Azf),
+        other if AnycubicZipVariant::from_extension(other).is_some() => Some(FormatKind::Azf),
+        other if AnycubicBinaryVariant::from_extension(other).is_some() => Some(FormatKind::Aff),
         _ => None,
     }
 }
@@ -717,11 +885,7 @@ mod printer_file_format_tests {
 
     #[test]
     fn every_anycubic_zip_variant_resolves_back_and_is_its_own_extension() {
-        for variant in [
-            AnycubicZipVariant::Pwsz,
-            AnycubicZipVariant::Pm7,
-            AnycubicZipVariant::Pm7m,
-        ] {
+        for variant in AnycubicZipVariant::ALL {
             let format = PrinterFileFormat::AnycubicZip(variant);
             let binding = format.binding();
 
@@ -737,6 +901,44 @@ mod printer_file_format_tests {
                 Some(FormatKind::Azf),
             );
         }
+    }
+
+    #[test]
+    fn every_anycubic_binary_variant_resolves_back_and_is_its_own_extension() {
+        for variant in AnycubicBinaryVariant::ALL {
+            let format = PrinterFileFormat::AnycubicBinary(variant);
+            let binding = format.binding();
+
+            assert_eq!(binding.format, FormatKind::Aff);
+            assert_eq!(
+                binding.version.as_ref().unwrap().as_str(),
+                format.extension()
+            );
+            assert_eq!(PrinterFileFormat::from_binding(&binding), Ok(format));
+            let path = format!("plate.{}", format.extension().to_uppercase());
+            assert_eq!(
+                printer_file_family_from_path(Path::new(&path)),
+                Some(FormatKind::Aff),
+            );
+        }
+    }
+
+    #[test]
+    fn each_anycubic_family_names_only_its_own_extensions() {
+        assert!(resolve(FormatKind::Aff, Some("pwsz")).is_err());
+        assert!(resolve(FormatKind::Azf, Some("pwmx")).is_err());
+        assert_eq!(
+            resolve(FormatKind::Aff, Some("PWMX")),
+            Ok(PrinterFileFormat::AnycubicBinary(
+                AnycubicBinaryVariant::Pwmx
+            )),
+        );
+        let (pwmx, pm3) = (
+            PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::Pwmx),
+            PrinterFileFormat::AnycubicBinary(AnycubicBinaryVariant::Pm3),
+        );
+        assert_eq!(pwmx.partial_cmp(&pm3), None);
+        assert_eq!(pwmx.partial_cmp(&pwmx), Some(Ordering::Equal));
     }
 
     #[test]

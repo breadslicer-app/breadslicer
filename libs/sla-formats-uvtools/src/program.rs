@@ -117,3 +117,41 @@ pub(crate) fn slabs(program: &PrintProgram) -> Vec<(f32, f32)> {
         })
         .collect()
 }
+
+/// Reports whether any layer departs from the settings of its group, which
+/// the file flags so the machine reads the per-layer list.
+pub(crate) fn uses_per_layer_settings(program: &PrintProgram, summary: &ProgramSummary) -> bool {
+    program.layers.iter().enumerate().any(|(index, layer)| {
+        let group = if (index as u32) < program.bottom_layer_count {
+            &summary.bottom
+        } else {
+            &summary.normal
+        };
+        let this = StageSettings::of(Some(layer));
+        this.exposure_sec != group.exposure_sec
+            || this.lift_mm != group.lift_mm
+            || this.lift_mm_min != group.lift_mm_min
+    })
+}
+
+/// Rounds to `digits` decimals, halves away from zero.
+pub(crate) fn round_away(value: f32, digits: i32) -> f32 {
+    let scale = 10_f64.powi(digits);
+    ((f64::from(value) * scale).round() / scale) as f32
+}
+
+/// Rounds to `digits` decimals, halves to even.
+pub(crate) fn round_even(value: f32, digits: i32) -> f32 {
+    let scale = 10_f64.powi(digits);
+    ((f64::from(value) * scale).round_ties_even() / scale) as f32
+}
+
+/// Rounds a height as UVtools does: 3 decimals, halves away from zero.
+pub(crate) fn round_height(value: f32) -> f32 {
+    round_away(value, 3)
+}
+
+/// Rounds a panel size or position as UVtools does: 3 decimals, halves to even.
+pub(crate) fn round_display(value: f32) -> f32 {
+    round_even(value, 3)
+}

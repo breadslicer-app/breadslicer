@@ -113,7 +113,8 @@ pub fn write_printer_file(
         }
         PrinterFileFormat::Goo(GooVersion::V5_1)
         | PrinterFileFormat::Cxdlp(_)
-        | PrinterFileFormat::AnycubicZip(_) => {
+        | PrinterFileFormat::AnycubicZip(_)
+        | PrinterFileFormat::AnycubicBinary(_) => {
             let writer = external::writer_for(format)
                 .ok_or(WriterError::PrinterFormatNotImplemented { format })?;
             writer.write(format, program, previews, stack, &mut out)?;

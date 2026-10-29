@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Ported to Rust from the decoders of UVtools
- * UVtools.Core/FileFormats/CrealityCXDLPFile.cs and
- * UVtools.Core/FileFormats/AnycubicZipFile.cs (with DecodePW0 of
- * UVtools.Core/FileFormats/AnycubicFile.cs), UVtools v7.1.1, commit
+ * UVtools.Core/FileFormats/CrealityCXDLPFile.cs,
+ * UVtools.Core/FileFormats/AnycubicZipFile.cs and
+ * UVtools.Core/FileFormats/AnycubicFile.cs (with BitPlaneRle.cs for its PWS
+ * layers), UVtools v7.1.1, commit
  * 8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8, modified for Breadslicer: they
  * read only what the writers here produce, for tests and file checks.
  *
@@ -24,9 +25,12 @@
 use std::fmt;
 use std::io::{Read, Seek};
 
+use sc_sla_formats::AnycubicBinaryVariant;
+
+use crate::anycubic_binary::{FILE_MARK, VERSION_516, VERSION_517, VERSION_518, uses_bit_planes};
 use crate::anycubic_zip::{LAYERS_FILE, SCENE_FILE, SCENE_MAGIC, SETTINGS_FILE, layer_entry};
 use crate::cxdlp::{LINE_BYTES, MAGIC, PAGE_BREAK, PREVIEW_SIZES, crc32_zero_start};
-use crate::pw0;
+use crate::{pw0, pws};
 
 /// Why a file could not be read back.
 #[derive(Debug)]
@@ -417,5 +421,369 @@ pub fn read_anycubic_zip(reader: impl Read + Seek) -> Result<AnycubicZipFile, Re
         scene_layers,
         layers,
         entries,
+    })
+}
+
+/// The header of an Anycubic binary file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnycubicBinaryHeader {
+    /// The bytes the header's fields take, as its table length says.
+    pub table_length: u32,
+    pub pixel_size_um: f32,
+    pub layer_height_mm: f32,
+    pub exposure_sec: f32,
+    pub wait_before_cure_sec: f32,
+    pub bottom_exposure_sec: f32,
+    pub bottom_layer_count: f32,
+    pub lift_mm: f32,
+    pub lift_mm_s: f32,
+    pub retract_mm_s: f32,
+    pub volume_ml: f32,
+    pub anti_aliasing: u32,
+    pub resolution_x: u32,
+    pub resolution_y: u32,
+    pub weight_g: f32,
+    pub per_layer_settings: u32,
+    pub print_time_sec: u32,
+    pub transition_layer_count: u32,
+    /// Present from revision 516.
+    pub advanced_mode: Option<u32>,
+}
+
+/// One set of the 2-stage motion: the stretch next to the vat, then the rest,
+/// speeds in mm/s.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnycubicBinaryStages {
+    pub lift_mm: f32,
+    pub lift_mm_s: f32,
+    pub retract_near_mm_s: f32,
+    pub second_lift_mm: f32,
+    pub second_lift_mm_s: f32,
+    pub retract_far_mm_s: f32,
+}
+
+/// The machine table of an Anycubic binary file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnycubicBinaryMachine {
+    pub table_length: u32,
+    pub name: String,
+    pub layer_image_format: String,
+    pub property_fields: u32,
+    pub display_width_mm: f32,
+    pub display_height_mm: f32,
+    pub machine_z_mm: f32,
+    pub max_file_version: u32,
+    /// Present from revision 518: the pixel's size in microns and the panel's
+    /// resolution.
+    pub pixel_um: Option<(f32, f32)>,
+    pub resolution: Option<(u16, u16)>,
+}
+
+/// One record of an Anycubic binary file's layer table.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnycubicBinaryLayer {
+    pub address: u32,
+    pub length: u32,
+    pub lift_mm: f32,
+    pub lift_mm_s: f32,
+    pub exposure_sec: f32,
+    pub layer_height_mm: f32,
+    pub lit_pixels: u32,
+}
+
+/// An Anycubic binary file, decoded.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnycubicBinaryFile {
+    pub version: u32,
+    pub table_count: u32,
+    pub header: AnycubicBinaryHeader,
+    /// The preview's width and height.
+    pub preview: (u32, u32),
+    /// The greys each anti-aliasing level lights, from revision 515.
+    pub grey_table: Option<Vec<u8>>,
+    /// The bottom and the normal motion, from revision 516.
+    pub stages: Option<[AnycubicBinaryStages; 2]>,
+    pub machine: Option<AnycubicBinaryMachine>,
+    /// The software's name and version, from revision 517.
+    pub software: Option<(String, String)>,
+    /// The model's bounds and height: min x, min y, min z, max x, max y,
+    /// max z, from revision 517.
+    pub model: Option<[f32; 6]>,
+    pub layer_definitions: Vec<AnycubicBinaryLayer>,
+    /// The second layer table's records (address, length, lit pixels), from
+    /// revision 518.
+    pub sub_layers: Option<Vec<(u32, u32, u32)>>,
+    /// The second preview's width and height, from revision 518.
+    pub preview2: Option<(u32, u32)>,
+    /// Each layer image, `resolution_x * resolution_y` greys, rows first.
+    pub layers: Vec<Vec<u8>>,
+}
+
+impl<'a> Cursor<'a> {
+    fn at(bytes: &'a [u8], address: u32) -> Result<Self, ReadError> {
+        let at = address as usize;
+        if at > bytes.len() {
+            return Err(error(format!("a table at byte {at} lies past the end")));
+        }
+        Ok(Self { bytes, at })
+    }
+
+    fn fixed(&mut self, length: usize) -> Result<String, ReadError> {
+        let bytes = self.take(length)?;
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(length);
+        Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+    }
+
+    /// Reads a named table's name and length, refusing another table.
+    fn table(&mut self, name: &str) -> Result<u32, ReadError> {
+        let found = self.fixed(12)?;
+        if found != name {
+            return Err(error(format!("table {name} expected, {found} found")));
+        }
+        self.u32_le()
+    }
+
+    fn stages(&mut self) -> Result<AnycubicBinaryStages, ReadError> {
+        self.u32_le()?; // lift count
+        Ok(AnycubicBinaryStages {
+            lift_mm: self.f32_le()?,
+            lift_mm_s: self.f32_le()?,
+            retract_near_mm_s: self.f32_le()?,
+            second_lift_mm: self.f32_le()?,
+            second_lift_mm_s: self.f32_le()?,
+            retract_far_mm_s: self.f32_le()?,
+        })
+    }
+}
+
+/// Decodes an Anycubic binary file written for `variant`, whose extension
+/// says how its layers are encoded.
+///
+/// # Errors
+///
+/// [`ReadError`] when the file is not one this crate could have written.
+pub fn read_anycubic_binary(
+    bytes: &[u8],
+    variant: AnycubicBinaryVariant,
+) -> Result<AnycubicBinaryFile, ReadError> {
+    let mut mark = Cursor { bytes, at: 0 };
+    if mark.fixed(12)? != FILE_MARK {
+        return Err(error("the file mark is missing"));
+    }
+    let version = mark.u32_le()?;
+    let table_count = mark.u32_le()?;
+    let header_address = mark.u32_le()?;
+    let software_address = mark.u32_le()?;
+    let preview_address = mark.u32_le()?;
+    let grey_table_address = mark.u32_le()?;
+    let layer_definition_address = mark.u32_le()?;
+    let extra_address = mark.u32_le()?;
+    let machine_address = if version >= VERSION_516 {
+        mark.u32_le()?
+    } else {
+        0
+    };
+    let _layer_image_address = mark.u32_le()?;
+    let model_address = if version >= VERSION_517 {
+        mark.u32_le()?
+    } else {
+        0
+    };
+    let (sub_layer_address, preview2_address) = if version >= VERSION_518 {
+        (mark.u32_le()?, mark.u32_le()?)
+    } else {
+        (0, 0)
+    };
+
+    let mut cursor = Cursor::at(bytes, header_address)?;
+    let table_length = cursor.table("HEADER")?;
+    let mut header = AnycubicBinaryHeader {
+        table_length,
+        pixel_size_um: cursor.f32_le()?,
+        layer_height_mm: cursor.f32_le()?,
+        exposure_sec: cursor.f32_le()?,
+        wait_before_cure_sec: cursor.f32_le()?,
+        bottom_exposure_sec: cursor.f32_le()?,
+        bottom_layer_count: cursor.f32_le()?,
+        lift_mm: cursor.f32_le()?,
+        lift_mm_s: cursor.f32_le()?,
+        retract_mm_s: cursor.f32_le()?,
+        volume_ml: cursor.f32_le()?,
+        anti_aliasing: cursor.u32_le()?,
+        resolution_x: cursor.u32_le()?,
+        resolution_y: cursor.u32_le()?,
+        weight_g: cursor.f32_le()?,
+        per_layer_settings: 0,
+        print_time_sec: 0,
+        transition_layer_count: 0,
+        advanced_mode: None,
+    };
+    cursor.take(8)?; // price and its currency
+    header.per_layer_settings = cursor.u32_le()?;
+    header.print_time_sec = cursor.u32_le()?;
+    header.transition_layer_count = cursor.u32_le()?;
+    cursor.u32_le()?; // transition type
+    if table_length >= 84 {
+        header.advanced_mode = Some(cursor.u32_le()?);
+    }
+
+    let mut cursor = Cursor::at(bytes, preview_address)?;
+    let preview_length = cursor.table("PREVIEW")?;
+    let preview_width = cursor.u32_le()?;
+    cursor.take(4)?;
+    let preview_height = cursor.u32_le()?;
+    if preview_length != 28 + preview_width * preview_height * 2 {
+        return Err(error("the preview's length disagrees with its size"));
+    }
+    cursor.take((preview_width * preview_height * 2) as usize)?;
+
+    let grey_table = if grey_table_address > 0 {
+        let mut cursor = Cursor::at(bytes, grey_table_address)?;
+        cursor.u32_le()?;
+        let count = cursor.u32_le()? as usize;
+        Some(cursor.take(count)?.to_vec())
+    } else {
+        None
+    };
+
+    let (stages, machine) = if machine_address > 0 {
+        let mut cursor = Cursor::at(bytes, extra_address)?;
+        cursor.table("EXTRA")?;
+        let stages = [cursor.stages()?, cursor.stages()?];
+        let mut cursor = Cursor::at(bytes, machine_address)?;
+        let table_length = cursor.table("MACHINE")?;
+        let mut machine = AnycubicBinaryMachine {
+            table_length,
+            name: cursor.fixed(96)?,
+            layer_image_format: cursor.fixed(16)?,
+            property_fields: {
+                cursor.u32_le()?; // the most anti-aliasing levels
+                cursor.u32_le()?
+            },
+            display_width_mm: cursor.f32_le()?,
+            display_height_mm: cursor.f32_le()?,
+            machine_z_mm: cursor.f32_le()?,
+            max_file_version: cursor.u32_le()?,
+            pixel_um: None,
+            resolution: None,
+        };
+        cursor.u32_le()?; // background
+        if table_length >= 224 {
+            machine.pixel_um = Some((cursor.f32_le()?, cursor.f32_le()?));
+            cursor.take(8 * 4 + 8)?;
+            machine.resolution = Some((cursor.u16_le()?, cursor.u16_le()?));
+        }
+        (Some(stages), Some(machine))
+    } else {
+        (None, None)
+    };
+
+    let software = if software_address > 0 {
+        let mut cursor = Cursor::at(bytes, software_address)?;
+        let name = cursor.fixed(32)?;
+        cursor.u32_le()?;
+        Some((name, cursor.fixed(32)?))
+    } else {
+        None
+    };
+
+    let model = if model_address > 0 {
+        let mut cursor = Cursor::at(bytes, model_address)?;
+        cursor.table("MODEL")?;
+        let mut values = [0.0; 6];
+        for value in &mut values {
+            *value = cursor.f32_le()?;
+        }
+        Some(values)
+    } else {
+        None
+    };
+
+    let mut cursor = Cursor::at(bytes, layer_definition_address)?;
+    let length = cursor.table("LAYERDEF")?;
+    let count = cursor.u32_le()?;
+    if length != 4 + 32 * count {
+        return Err(error("the layer table's length disagrees with its count"));
+    }
+    let mut layer_definitions = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let record = AnycubicBinaryLayer {
+            address: cursor.u32_le()?,
+            length: cursor.u32_le()?,
+            lift_mm: cursor.f32_le()?,
+            lift_mm_s: cursor.f32_le()?,
+            exposure_sec: cursor.f32_le()?,
+            layer_height_mm: cursor.f32_le()?,
+            lit_pixels: cursor.u32_le()?,
+        };
+        cursor.u32_le()?;
+        layer_definitions.push(record);
+    }
+
+    let sub_layers = if sub_layer_address > 0 {
+        let mut cursor = Cursor::at(bytes, sub_layer_address)?;
+        cursor.table("SUBIMGS")?;
+        let count = cursor.u32_le()?;
+        cursor.u32_le()?; // index
+        let mut records = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            records.push((cursor.u32_le()?, cursor.u32_le()?, cursor.u32_le()?));
+            cursor.take(8 * 4)?;
+        }
+        Some(records)
+    } else {
+        None
+    };
+
+    let preview2 = if preview2_address > 0 {
+        let mut cursor = Cursor::at(bytes, preview2_address)?;
+        cursor.table("PREVIEW2")?;
+        let width = cursor.u32_le()?;
+        cursor.take(4)?;
+        let height = cursor.u32_le()?;
+        cursor.take((width * height * 2) as usize)?;
+        Some((width, height))
+    } else {
+        None
+    };
+
+    let pixel_count = header.resolution_x as usize * header.resolution_y as usize;
+    let levels = u8::try_from(header.anti_aliasing).unwrap_or(1);
+    let mut layers = Vec::with_capacity(layer_definitions.len());
+    for (index, record) in layer_definitions.iter().enumerate() {
+        let mut cursor = Cursor::at(bytes, record.address)?;
+        let encoded = cursor.take(record.length as usize)?;
+        let image = if uses_bit_planes(variant) {
+            pws::decode(encoded, pixel_count, levels).map_err(|mismatch| {
+                error(format!(
+                    "layer {index}'s plane {} does not cover the frame",
+                    mismatch.plane
+                ))
+            })?
+        } else {
+            pw0::decode(encoded, pixel_count).map_err(|mismatch| {
+                error(format!(
+                    "layer {index} decodes to {} pixels, not {}",
+                    mismatch.decoded, mismatch.expected
+                ))
+            })?
+        };
+        layers.push(image);
+    }
+
+    Ok(AnycubicBinaryFile {
+        version,
+        table_count,
+        header,
+        preview: (preview_width, preview_height),
+        grey_table,
+        stages,
+        machine,
+        software,
+        model,
+        layer_definitions,
+        sub_layers,
+        preview2,
+        layers,
     })
 }

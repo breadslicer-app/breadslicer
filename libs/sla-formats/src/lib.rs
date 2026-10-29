@@ -56,8 +56,9 @@ pub use preview::{
 };
 pub use print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
-    AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, PrinterFileFormat, UnresolvedBinding,
-    UnwritableBinding, UnwritableFamily, printer_file_family_from_path,
+    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
+    PrinterFileFormat, UnresolvedBinding, UnwritableBinding, UnwritableFamily,
+    printer_file_family_from_path,
 };
 pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;

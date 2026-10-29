@@ -15,6 +15,7 @@ fn format_kind_canonical_roundtrips_for_known_variants() {
         ("pwmx", FormatKind::Pwmx),
         ("cxdlp", FormatKind::Cxdlp),
         ("azf", FormatKind::Azf),
+        ("aff", FormatKind::Aff),
         ("png_per_layer", FormatKind::PngPerLayer),
         ("svg_per_layer", FormatKind::SvgPerLayer),
         ("svg_combined", FormatKind::SvgCombined),
@@ -106,9 +107,9 @@ fn output_format_binding_parse_keeps_the_version_case() {
 
 #[test]
 fn output_format_binding_parse_passes_an_unknown_family_through() {
-    let parsed = "aff@dl2p".parse::<OutputFormatBinding>().unwrap();
-    assert_eq!(parsed.format, FormatKind::Unknown("aff".to_owned()));
-    assert_eq!(parsed.version, Some(NonEmptyString::new("dl2p").unwrap()));
+    let parsed = "lumen@v1".parse::<OutputFormatBinding>().unwrap();
+    assert_eq!(parsed.format, FormatKind::Unknown("lumen".to_owned()));
+    assert_eq!(parsed.version, Some(NonEmptyString::new("v1").unwrap()));
 }
 
 #[test]
@@ -146,8 +147,12 @@ fn output_format_binding_parses_back_what_it_displays() {
             version: None,
         },
         OutputFormatBinding {
-            format: FormatKind::Unknown("aff".to_owned()),
+            format: FormatKind::Aff,
             version: Some(NonEmptyString::new("dl2p").unwrap()),
+        },
+        OutputFormatBinding {
+            format: FormatKind::Unknown("lumen".to_owned()),
+            version: Some(NonEmptyString::new("v1").unwrap()),
         },
     ] {
         assert_eq!(
