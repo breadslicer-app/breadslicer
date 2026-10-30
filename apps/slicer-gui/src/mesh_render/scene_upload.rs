@@ -524,15 +524,24 @@ pub(super) fn build_model_entries(
     graph: &Scene,
     selection: Option<NodeId>,
     build_volume: BuildVolume,
+    boxes: &mut WorldBoxes,
 ) -> Result<Vec<ModelEntry>> {
     let mut entries: Vec<ModelEntry> = Vec::new();
     graph.for_each_expanded_leaf::<SceneError, _>(
         CsgPolicy::Descend,
         |node_id, world_transform, mesh| {
             let selected = selection == Some(node_id);
-            let breaches = leaf_breaches_envelope(mesh, world_transform, &build_volume);
+            let transform_mat = transform_to_mat4(world_transform);
+            // The envelope is an axis-aligned box, so it contains the world
+            // box if and only if it contains every vertex, and therefore every
+            // triangle.
+            let breaches = !build_volume.volume().contains(&boxes.world_box(
+                entries.len(),
+                mesh,
+                &transform_mat,
+            ));
             entries.push(ModelEntry {
-                model: transform_to_mat4(world_transform).to_cols_array_2d(),
+                model: transform_mat.to_cols_array_2d(),
                 flags: [u32::from(selected), u32::from(breaches), 0, 0],
             });
             Ok(())
@@ -541,24 +550,77 @@ pub(super) fn build_model_entries(
     Ok(entries)
 }
 
-/// Returns `true` if `mesh`, after `world_transform` is applied, has any part
-/// outside `build_volume`'s envelope. Uses the transformed AABB of the mesh
-/// vertices: the envelope is an axis-aligned box, so it contains the AABB if
-/// and only if it contains every vertex, and therefore every triangle.
-fn leaf_breaches_envelope(
-    mesh: &IndexedMesh,
-    world_transform: &Transform3D,
-    build_volume: &BuildVolume,
-) -> bool {
-    !build_volume
-        .volume()
-        .contains(&leaf_world_box(mesh, world_transform))
+/// The world box of each leaf occurrence, remembered between frames so that a
+/// frame walks the vertices of a leaf only when its mesh or its matrix changed.
+/// Walking every vertex of every leaf twice per frame cost 5 ms for a single
+/// 1.9 M-triangle model.
+///
+/// Slot `i` holds the `i`-th leaf occurrence of
+/// [`Scene::for_each_expanded_leaf`], and a slot is reused only when the mesh
+/// at the same address, with the same vertex buffer, is drawn with the
+/// bit-identical matrix, so a hit returns exactly the box a fresh walk would.
+/// A mesh's vertices can only change in place through `&mut`, which makes the
+/// scene owe a GPU upload; the renderer empties the cache on every scene
+/// install, so a slot never outlives the geometry it was computed from.
+#[derive(Debug, Default)]
+pub(super) struct WorldBoxes {
+    slots: Vec<Option<WorldBoxSlot>>,
 }
 
-/// Returns the box of `mesh`'s vertices after `world_transform`, computed in
-/// f32 with the matrix that the GPU draws them with.
-fn leaf_world_box(mesh: &IndexedMesh, world_transform: &Transform3D) -> Aabb {
-    let transform_mat = transform_to_mat4(world_transform);
+#[derive(Debug)]
+struct WorldBoxSlot {
+    key: WorldBoxKey,
+    aabb: Aabb,
+}
+
+/// What a leaf's world box depends on: its mesh (by address, vertex buffer
+/// address and vertex count) and the bits of the f32 matrix it is drawn with.
+#[derive(Debug, PartialEq, Eq)]
+struct WorldBoxKey {
+    mesh: usize,
+    vertices: usize,
+    vertex_count: usize,
+    matrix: [u32; 16],
+}
+
+impl WorldBoxKey {
+    fn new(mesh: &IndexedMesh, transform_mat: &Mat4) -> Self {
+        Self {
+            mesh: std::ptr::from_ref(mesh) as usize,
+            vertices: mesh.vertices().as_ptr() as usize,
+            vertex_count: mesh.vertices().len(),
+            matrix: transform_mat.to_cols_array().map(f32::to_bits),
+        }
+    }
+}
+
+impl WorldBoxes {
+    /// Forgets every box. Called whenever the renderer installs or drops a
+    /// scene.
+    pub(super) fn clear(&mut self) {
+        self.slots.clear();
+    }
+
+    /// Returns the box of `mesh`'s vertices after `transform_mat` for the
+    /// `index`-th leaf occurrence, walking the vertices only on a miss.
+    fn world_box(&mut self, index: usize, mesh: &IndexedMesh, transform_mat: &Mat4) -> Aabb {
+        if self.slots.len() <= index {
+            self.slots.resize_with(index + 1, || None);
+        }
+        let key = WorldBoxKey::new(mesh, transform_mat);
+        let slot = &mut self.slots[index];
+        if let Some(hit) = slot.as_ref().filter(|s| s.key == key) {
+            return hit.aabb;
+        }
+        let aabb = leaf_world_box(mesh, transform_mat);
+        *slot = Some(WorldBoxSlot { key, aabb });
+        aabb
+    }
+}
+
+/// Returns the box of `mesh`'s vertices after `transform_mat`, computed in f32
+/// with the matrix that the GPU draws them with.
+fn leaf_world_box(mesh: &IndexedMesh, transform_mat: &Mat4) -> Aabb {
     let mut aabb = Aabb::empty();
     for v in mesh.vertices() {
         let p = transform_mat.transform_point3(Vec3::from(v.coords()));
@@ -582,13 +644,20 @@ pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 /// in the shader's bit layout (the `FACE_BIT_*` constants). A leaf crosses a
 /// wall when the box of its world-transformed vertices reaches strictly past
 /// it, which is when some vertex does.
-pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> Result<u32> {
+pub(super) fn build_envelope_warning_mask(
+    graph: &Scene,
+    build_volume: BuildVolume,
+    boxes: &mut WorldBoxes,
+) -> Result<u32> {
     let volume = build_volume.volume();
     let mut crossed = Walls::default();
+    let mut index = 0;
     graph.for_each_expanded_leaf::<SceneError, _>(
         CsgPolicy::Descend,
         |_node_id, world_transform, mesh| {
-            crossed |= volume.walls_crossed_by(&leaf_world_box(mesh, world_transform));
+            let world_box = boxes.world_box(index, mesh, &transform_to_mat4(world_transform));
+            crossed |= volume.walls_crossed_by(&world_box);
+            index += 1;
             Ok(())
         },
     )?;
@@ -1102,7 +1171,9 @@ mod transform_to_mat4_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([7.0, 0.0, 0.0])),
         );
-        let entries = build_model_entries(&g, None, permissive_volume()).expect("clean graph");
+        let entries =
+            build_model_entries(&g, None, permissive_volume(), &mut WorldBoxes::default())
+                .expect("clean graph");
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -1130,7 +1201,13 @@ mod transform_to_mat4_tests {
     #[test]
     fn no_selection_leaves_every_flags_x_zero() {
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, None, permissive_volume()).expect("clean graph");
+        let entries = build_model_entries(
+            &graph,
+            None,
+            permissive_volume(),
+            &mut WorldBoxes::default(),
+        )
+        .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -1138,8 +1215,13 @@ mod transform_to_mat4_tests {
     #[test]
     fn selected_node_id_sets_only_that_entrys_flags_x() {
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(nth_leaf(&graph, 1)), permissive_volume())
-            .expect("clean graph");
+        let entries = build_model_entries(
+            &graph,
+            Some(nth_leaf(&graph, 1)),
+            permissive_volume(),
+            &mut WorldBoxes::default(),
+        )
+        .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 1);
     }
@@ -1150,8 +1232,13 @@ mod transform_to_mat4_tests {
         // a leaf itself, so the iterator never visits it; flags.x stays 0 on
         // every entry when the selection points at the root.
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume())
-            .expect("clean graph");
+        let entries = build_model_entries(
+            &graph,
+            Some(graph.roots()[0]),
+            permissive_volume(),
+            &mut WorldBoxes::default(),
+        )
+        .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -1188,7 +1275,8 @@ mod transform_to_mat4_tests {
     #[test]
     fn flags_y_is_zero_for_fully_inside_leaf() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
-        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
+        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
 
@@ -1197,7 +1285,8 @@ mod transform_to_mat4_tests {
         // Translation +60 mm on X puts the unit triangle's vertices at
         // [60,0,0], [61,0,0] and [60,1,0], all 3 past the +X wall at x = 50.
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
+        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -1205,7 +1294,8 @@ mod transform_to_mat4_tests {
     fn flags_y_is_one_when_any_vertex_dips_below_the_floor() {
         // Translation in Z by -0.5 puts every vertex below z = 0.
         let graph = unit_triangle_graph_at([0.0, 0.0, -0.5]);
-        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
+        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -1215,7 +1305,8 @@ mod transform_to_mat4_tests {
         // [1,0,0] at x = 50.5 (outside +X wall), so the leaf breaches through
         // the second vertex.
         let graph = unit_triangle_graph_at([49.5, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
+        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -1224,7 +1315,8 @@ mod transform_to_mat4_tests {
         // Every vertex has z = 0 (the floor). The breach test uses a strict
         // comparison, so resting on the plate is "inside".
         let graph = unit_triangle_graph_at([0.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
+        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
 
@@ -1232,7 +1324,8 @@ mod transform_to_mat4_tests {
     fn warning_mask_is_zero_when_every_leaf_fits() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
         assert_eq!(
-            build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph"),
+            build_envelope_warning_mask(&graph, snug_volume(), &mut WorldBoxes::default())
+                .expect("clean graph"),
             0
         );
     }
@@ -1242,7 +1335,8 @@ mod transform_to_mat4_tests {
         // Translation +60 on X puts every vertex past the +X wall (x = 50);
         // vertex [1,0,0] lands at [61,0,0].
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
+        let mask = build_envelope_warning_mask(&graph, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_X_NEG, 0);
     }
@@ -1252,7 +1346,8 @@ mod transform_to_mat4_tests {
         // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0], and
         // [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
         let graph = unit_triangle_graph_at([0.0, -40.0, 0.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
+        let mask = build_envelope_warning_mask(&graph, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
         assert_eq!(mask & FACE_BIT_Y_POS, 0);
     }
@@ -1261,7 +1356,8 @@ mod transform_to_mat4_tests {
     fn warning_mask_sets_plus_z_when_a_vertex_passes_the_ceiling() {
         // Every vertex lands at z = 90, past the +Z ceiling (80).
         let graph = unit_triangle_graph_at([0.0, 0.0, 90.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
+        let mask = build_envelope_warning_mask(&graph, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_POS, FACE_BIT_Z_POS);
     }
 
@@ -1271,7 +1367,8 @@ mod transform_to_mat4_tests {
         // FACE_BIT_Z_NEG); the plate shader consumes it through the
         // floor-overlay path rather than a dedicated wall quad.
         let graph = unit_triangle_graph_at([0.0, 0.0, -1.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
+        let mask = build_envelope_warning_mask(&graph, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_NEG, FACE_BIT_Z_NEG);
         // None of the lateral bits fire for a purely-vertical breach.
         assert_eq!(
@@ -1307,9 +1404,116 @@ mod transform_to_mat4_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, -40.0, 0.0])),
         );
-        let mask = build_envelope_warning_mask(&g, snug_volume()).expect("clean graph");
+        let mask = build_envelope_warning_mask(&g, snug_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
+    }
+
+    fn unit_triangle() -> IndexedMesh {
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+        }
+    }
+
+    /// Replaces the box remembered in slot `index` with a box no walk can
+    /// produce, so a later hit is told apart from a fresh walk.
+    fn plant_marker(boxes: &mut WorldBoxes, index: usize) -> Aabb {
+        let marker = Aabb::from_min_max(
+            Vertex::new([-123.0, -123.0, -123.0]),
+            Vertex::new([123.0, 123.0, 123.0]),
+        );
+        boxes.slots[index].as_mut().expect("a remembered box").aabb = marker;
+        marker
+    }
+
+    #[test]
+    fn world_box_is_reused_only_for_the_same_mesh_and_matrix() {
+        let mesh = unit_triangle();
+        let other_mesh = unit_triangle();
+        let a = transform_to_mat4(&Transform3D::Affine(
+            AffineTransform3D::from_translation([1.0, 2.0, 3.0])
+                .compose(&AffineTransform3D::from_rotation_z(0.3)),
+        ));
+        let b = transform_to_mat4(&Transform3D::Affine(AffineTransform3D::from_translation([
+            1.0, 2.0, 3.5,
+        ])));
+        let mut boxes = WorldBoxes::default();
+
+        assert_eq!(boxes.world_box(0, &mesh, &a), leaf_world_box(&mesh, &a));
+        let marker = plant_marker(&mut boxes, 0);
+        assert_eq!(
+            boxes.world_box(0, &mesh, &a),
+            marker,
+            "same mesh and matrix"
+        );
+
+        assert_eq!(boxes.world_box(0, &mesh, &b), leaf_world_box(&mesh, &b));
+        plant_marker(&mut boxes, 0);
+        assert_eq!(
+            boxes.world_box(0, &other_mesh, &b),
+            leaf_world_box(&other_mesh, &b),
+            "an equal mesh elsewhere is another mesh"
+        );
+
+        plant_marker(&mut boxes, 0);
+        boxes.clear();
+        assert_eq!(
+            boxes.world_box(0, &other_mesh, &b),
+            leaf_world_box(&other_mesh, &b)
+        );
+    }
+
+    #[test]
+    fn world_boxes_keep_each_occurrence_of_a_shared_mesh_apart() {
+        let mesh = unit_triangle();
+        let near = transform_to_mat4(&Transform3D::Identity);
+        let far = transform_to_mat4(&Transform3D::Affine(AffineTransform3D::from_translation([
+            60.0, 0.0, 0.0,
+        ])));
+        let mut boxes = WorldBoxes::default();
+        for _ in 0..2 {
+            assert_eq!(
+                boxes.world_box(0, &mesh, &near),
+                leaf_world_box(&mesh, &near)
+            );
+            assert_eq!(boxes.world_box(1, &mesh, &far), leaf_world_box(&mesh, &far));
+        }
+    }
+
+    #[test]
+    fn moving_a_leaf_updates_its_warning_across_frames() {
+        // One cache across the frames, as the renderer keeps it.
+        let mut graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
+        let leaf = nth_leaf(&graph, 0);
+        let mut boxes = WorldBoxes::default();
+        let frame = |graph: &Scene, boxes: &mut WorldBoxes| {
+            let entries =
+                build_model_entries(graph, None, snug_volume(), boxes).expect("clean graph");
+            let mask =
+                build_envelope_warning_mask(graph, snug_volume(), boxes).expect("clean graph");
+            (entries[0].flags[1], mask)
+        };
+        assert_eq!(frame(&graph, &mut boxes), (0, 0));
+        assert_eq!(frame(&graph, &mut boxes), (0, 0));
+
+        let past_plus_x =
+            Transform3D::Affine(AffineTransform3D::from_translation([60.0, 0.0, 0.0]));
+        graph
+            .set_local_transform(leaf, past_plus_x)
+            .expect("live leaf");
+        assert_eq!(frame(&graph, &mut boxes), (1, FACE_BIT_X_POS));
+
+        let inside = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 1.0]));
+        graph.set_local_transform(leaf, inside).expect("live leaf");
+        assert_eq!(frame(&graph, &mut boxes), (0, 0));
     }
 }
 
