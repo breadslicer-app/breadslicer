@@ -759,6 +759,23 @@ pub(crate) fn describe_scene_warning(warning: &SceneLoadWarning) -> String {
                 labels.join(", "),
             )
         }
+        SceneLoadWarning::DuplicateFacesDropped { leaves } => {
+            let total: usize = leaves.iter().map(|leaf| leaf.faces).sum();
+            let labels: Vec<String> = leaves
+                .iter()
+                .map(|leaf| {
+                    let label = match &leaf.object_name {
+                        Some(name) => format!("'{name}'"),
+                        None => format!("node {}", leaf.node_id.get()),
+                    };
+                    format!("{label} ({})", leaf.faces)
+                })
+                .collect();
+            format!(
+                "removed {total} duplicate face(s), exact copies of other faces: {}",
+                labels.join(", "),
+            )
+        }
     }
 }
 

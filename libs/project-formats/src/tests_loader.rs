@@ -362,6 +362,90 @@ fn shared_vertices_warn_on_the_project_route() {
     );
 }
 
+/// A cube whose faces are all stored twice, the way some pre-supported files
+/// store a support twice.
+fn doubled_cube_scene() -> Scene {
+    let mut mesh = unit_cube_mesh();
+    let faces = mesh.faces.clone();
+    mesh.faces.extend(faces);
+    let mut scene = Scene::new();
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(mesh)),
+        )
+        .expect("inline-mesh leaf");
+    scene.add_root(leaf).expect("fresh leaf becomes a root");
+    scene
+}
+
+fn face_count(scene: &Scene) -> usize {
+    scene
+        .mesh_targets()
+        .into_iter()
+        .filter_map(|target| scene.target_mesh(target))
+        .map(|mesh| mesh.faces().len())
+        .sum()
+}
+
+fn duplicate_face_warnings(opened: &LoadedScene) -> Vec<usize> {
+    opened
+        .mesh_warnings
+        .iter()
+        .filter_map(|w| match w {
+            LoadMeshWarning::Scene(SceneLoadWarning::DuplicateFacesDropped { leaves }) => {
+                Some(leaves.iter().map(|leaf| leaf.faces).sum())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_imported_mesh_loses_its_duplicate_faces_and_says_so() {
+    let cube_faces = unit_cube_mesh().faces().len();
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, format) in [
+        ("doubled.stl", WriteFormat::StlBin),
+        ("doubled.obj", WriteFormat::Obj),
+        ("doubled.3mf", WriteFormat::ThreeMf),
+    ] {
+        let path = dir.path().join(name);
+        write_scene(&doubled_cube_scene(), &path, format).expect("mesh writes");
+        let opened = open(&path).expect("the mesh opens");
+        let LoadedContent::Mesh(scene) = &opened.content else {
+            panic!("{name}: a plain mesh file opens as a mesh");
+        };
+        assert_eq!(face_count(scene), cube_faces, "{name}");
+        assert_eq!(duplicate_face_warnings(&opened), vec![cube_faces], "{name}");
+    }
+}
+
+#[test]
+fn a_clean_import_has_no_duplicate_face_warning() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_mesh_fixture(dir.path(), "trio.stl", WriteFormat::StlBin);
+    let opened = open(&path).expect("the mesh opens");
+    assert!(duplicate_face_warnings(&opened).is_empty());
+}
+
+#[test]
+fn a_project_reopens_with_its_faces_as_saved() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let scene = doubled_cube_scene();
+    let path = write_project_fixture(dir.path(), "doubled.3mf", &scene);
+    let opened = open(&path).expect("the project opens");
+    let LoadedContent::Project(ProjectContent {
+        scene: reopened, ..
+    }) = &opened.content
+    else {
+        panic!("a project opens as a project");
+    };
+    assert_eq!(face_count(reopened), face_count(&scene));
+    assert!(duplicate_face_warnings(&opened).is_empty());
+}
+
 fn last_tick(path: &Path) -> LoadProgress {
     let mut ticks: Vec<LoadProgress> = Vec::new();
     load_scene(path, None, |p| ticks.push(p)).expect("the file opens");

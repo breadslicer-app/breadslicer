@@ -26,6 +26,12 @@ impl CanonicalCoords {
         });
         Some(Self([x?, y?, z?]))
     }
+
+    /// Returns the bit patterns of the canonical coordinates.
+    #[inline]
+    pub(crate) fn bits(self) -> [u32; 3] {
+        self.0
+    }
 }
 
 // Prints the coordinates instead of their bits.
