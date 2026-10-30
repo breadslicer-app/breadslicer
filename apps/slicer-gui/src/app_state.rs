@@ -2299,7 +2299,7 @@ mod subscribe_window_preferences_tests {
     /// the question before the diagnostic log still holds its buttons (#74).
     #[test]
     fn the_log_question_holds_its_buttons_in_a_narrow_window() {
-        let below = on_fresh_slint_thread(|| {
+        let around = on_fresh_slint_thread(|| {
             let subscribed = subscribed_window();
             pick_language(&subscribed.bus, "es");
             let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
@@ -2314,12 +2314,9 @@ mod subscribe_window_preferences_tests {
                 .set_size(slint::PhysicalSize::new(520, 360));
             prefs.window.show().expect("the headless platform shows it");
             prefs.window.invoke_diagnostic_log_changed(true);
-            crate::test_support::message_cards::card_below_primary_button(
-                prefs.window.window(),
-                520,
-            )
+            crate::test_support::message_cards::card_around_primary_button(prefs.window.window())
         });
-        assert!(below >= 10, "the card ends {below} px below its buttons");
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
     }
 
     /// The whole way of Preferences > Privacy (#74): the box ticked, the

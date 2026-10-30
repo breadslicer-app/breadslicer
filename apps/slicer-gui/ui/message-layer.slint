@@ -112,7 +112,13 @@ export component MessageLayer inherits Rectangle {
         }
 
         card := Rectangle {
-            width: Math.min(parent.width - 32px, root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px);
+            // Wider than its kind's width when the buttons need it (Spanish
+            // runs longer), as long as the window has room.
+            width: Math.min(
+                parent.width - 32px,
+                Math.max(
+                    root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px,
+                    foot.preferred-width + 2 * self.inset));
             // Down to the buttons as the layout placed them. The layout's
             // preferred height can't serve: Slint measures a wrapping text in
             // an `if` element as 1 line, so with long texts the buttons hung

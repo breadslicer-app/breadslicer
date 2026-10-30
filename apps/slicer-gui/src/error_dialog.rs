@@ -1119,18 +1119,45 @@ mod message_layer_tests {
         assert_eq!((silenced, open), (1, false));
     }
 
-    /// The card with the most text in the main window holds its buttons.
-    #[test]
-    fn the_diagnostics_card_holds_its_buttons() {
-        let below = on_fresh_slint_thread(|| {
+    /// Opens `show` in a main window of the main window's least size, in
+    /// `language`, and tells whether the card goes on past its primary
+    /// button: (to its right, below it).
+    fn card_around_primary_button(
+        language: &'static str,
+        show: impl FnOnce(&Rc<DialogManager>) + Send,
+    ) -> (bool, bool) {
+        on_fresh_slint_thread(move || {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let (_l, ui, manager) = attached(&bus);
-            ui.window().set_size(slint::PhysicalSize::new(680, 540));
+            pick_language(&bus, language);
+            ui.window().set_size(slint::PhysicalSize::new(960, 560));
             ui.show().expect("the headless platform shows the window");
+            show(&manager);
+            crate::test_support::message_cards::card_around_primary_button(ui.window())
+        })
+    }
+
+    /// The card with the most text holds its buttons.
+    #[test]
+    fn the_diagnostics_card_holds_its_buttons() {
+        let around = card_around_primary_button("en", |manager| {
             manager.show_diagnostics_export(true, |_| {});
-            crate::test_support::message_cards::card_below_primary_button(ui.window(), 520)
         });
-        assert!(below >= 10, "the card ends {below} px below its buttons");
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
+    }
+
+    /// The card with the most buttons holds them in Spanish, whose labels
+    /// run longer.
+    #[test]
+    fn the_scene_change_card_holds_its_buttons_in_spanish() {
+        let around = card_around_primary_button("es", |manager| {
+            manager.show_replace_scene_confirm(
+                "dragon.stl".to_owned(),
+                KeepChangesOffer::SaveAsNew,
+                |_| {},
+            );
+        });
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
     }
 
     #[test]

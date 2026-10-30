@@ -8,11 +8,14 @@ use crate::test_support::slint_thread::render_frames;
 /// The fill of a primary button (`Theme.accent`).
 const ACCENT: [u8; 3] = [0xd7, 0xa7, 0x5a];
 
-/// How many pixels the open message card of `window` reaches below the
-/// bottom of its primary button: negative when the button hangs out of the
-/// card. The card is centred and at most `card_width` wide, as
-/// `MessageLayer` draws it.
-pub(crate) fn card_below_primary_button(window: &slint::Window, card_width: u32) -> i64 {
+/// The fill of a card (`Theme.card`), dark and light: what tells the card
+/// from the dimmed window around it.
+const CARD: [[u8; 3]; 2] = [[0x20, 0x23, 0x26], [0xff, 0xff, 0xff]];
+
+/// Whether the card goes on past the primary button of the message open in
+/// `window`: (to its right, below it), by a few pixels of margin. A button
+/// that hangs out of its card has the dimmed window there instead.
+pub(crate) fn card_around_primary_button(window: &slint::Window) -> (bool, bool) {
     render_frames();
     let shot = window
         .take_snapshot()
@@ -22,18 +25,17 @@ pub(crate) fn card_below_primary_button(window: &slint::Window, card_width: u32)
         let p = shot.as_slice()[(y * width + x) as usize];
         [p.r, p.g, p.b]
     };
-    let card = card_width.min(width - 32);
-    let (left, right) = ((width - card) / 2, (width + card) / 2);
-    // The card's right margin holds nothing: down it runs the card's fill.
-    let margin = right - 6;
-    let fill = pixel(margin, height / 2);
-    let mut card_bottom = height / 2;
-    while card_bottom + 1 < height && pixel(margin, card_bottom + 1) == fill {
-        card_bottom += 1;
-    }
-    let button_bottom = (0..height)
-        .rev()
-        .find(|&y| (left..right).any(|x| pixel(x, y) == ACCENT))
-        .expect("the card shows a primary button");
-    i64::from(card_bottom) - i64::from(button_bottom)
+    let accent: Vec<(u32, u32)> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(x, y) == ACCENT)
+        .collect();
+    assert!(!accent.is_empty(), "the message shows a primary button");
+    let left = accent.iter().map(|p| p.0).min().unwrap_or(0);
+    let right = accent.iter().map(|p| p.0).max().unwrap_or(0);
+    let bottom = accent.iter().map(|p| p.1).max().unwrap_or(0);
+    let top = accent.iter().map(|p| p.1).min().unwrap_or(0);
+    let (mid_x, mid_y) = ((left + right) / 2, (top + bottom) / 2);
+    let card = |x: u32, y: u32| x < width && y < height && CARD.contains(&pixel(x, y));
+    let margin = 6;
+    (card(right + margin, mid_y), card(mid_x, bottom + margin))
 }
