@@ -70,8 +70,8 @@ pub enum PackageReadError {
     /// have relationships: `/a/_rels/.rels` (source `/a/`) and
     /// `/_rels/_rels/.rels.rels` (source `/_rels/.rels`) are such names.
     RelationshipsPartWithoutSource { part: String },
-    /// A stored part has no content type, neither by extension default nor by
-    /// override.
+    /// The start part has no content type, neither by extension default nor
+    /// by override. Other parts without one are skipped instead.
     PartWithoutContentType { part: String },
     /// No root relationship of the StartPart type exists, so the primary 3D
     /// Model part cannot be located.
@@ -331,9 +331,10 @@ pub enum ModelParseError {
     UnsupportedRequiredExtension { namespace: String },
     /// A `requiredextensions` prefix has no matching xmlns declaration.
     UnknownRequiredExtensionPrefix { prefix: String },
-    /// The document uses production-extension part references (`p:path`);
-    /// loading it without that extension would silently produce an incomplete
-    /// scene, so it is refused.
+    /// A production-extension `p:path` sits on an element other than
+    /// `<component>` or `<item>`, where this crate does not know what it
+    /// references; ignoring it would silently load an incomplete scene, so it
+    /// is refused.
     ProductionPathUnsupported,
     /// A slice stack contains both inline slices and slicerefs, which the slice
     /// extension forbids.
@@ -430,7 +431,7 @@ impl fmt::Display for ModelParseError {
             ),
             Self::ProductionPathUnsupported => write!(
                 f,
-                "model splits objects across parts via the production extension (p:path), which is not yet supported",
+                "model uses the production extension's p:path outside a component or build item, which is not supported",
             ),
             Self::SliceStackMixesSlicesAndRefs { id } => write!(
                 f,

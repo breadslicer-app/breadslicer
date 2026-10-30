@@ -5,7 +5,7 @@
 
 //! Preparation of a scene's slice profile for a chosen printer + material: the
 //! resolved layer height, the first layer on the printer's Z step, and the
-//! layer count that covers the scene.
+//! layer count that reaches the scene's top.
 
 use std::fmt;
 
@@ -144,8 +144,8 @@ pub(crate) fn slice_profile_for_selection(
 /// 2. Slicing runs upward from the build plate at z = 0, so the scene's top
 ///    must sit above it ([`UnsliceableScene::TopAtOrBelowPlate`]).
 /// 3. An absent first-layer height falls back to the layer height.
-/// 4. The layer count is the smallest count whose slab layout covers the
-///    scene's top, its highest vertex (see [`total_layers_for_height`]).
+/// 4. The layer count holds every layer cut below the scene's top, its
+///    highest vertex, and no layer above it (see [`total_layers_for_height`]).
 ///
 /// The layer height is taken as given; resolving it against the printer and
 /// material profiles is the caller's responsibility.

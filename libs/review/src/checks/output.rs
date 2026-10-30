@@ -44,10 +44,9 @@
 //!   first solid layer (error: nothing is cured on the plate, so the first
 //!   solid layer has nothing to stick to); between solid layers (error: a
 //!   gap, so everything above it rests on nothing); after the last solid
-//!   layer (info: they cost print time and print nothing). A last layer
-//!   without any contour, alone above the solid, is the layer schedule's
-//!   doing (the plate's top falls inside its slab, below the height it is
-//!   cut at) and is not reported: no change to the plate removes it.
+//!   layer (info: they cost print time and print nothing). The layer
+//!   count stops at the last layer cut below the plate's top (#226), so a
+//!   plate sliced now never ends in one; slices saved before can.
 //! - **Nothing to print** (error). Contours on the plate, yet no layer has
 //!   a single lit pixel: the printer file would print nothing.
 //! - **Floating part** (error). A printed body whose lowest region is on
@@ -144,7 +143,7 @@ pub fn run_with_erasures(
         return (findings, Vec::new());
     };
     findings.extend(too_tall(ctx, extent, options));
-    findings.extend(empty_layers(ctx, extent, &contours));
+    findings.extend(empty_layers(ctx, extent));
     let (floating, erasures) = floating_parts(ctx, &bodies, &edge.held_past, options);
     findings.extend(floating);
     (findings, erasures)
@@ -214,8 +213,6 @@ fn pixel_centre(pixel: [u32; 2]) -> [f64; 2] {
 /// them.
 #[derive(Clone, Debug, Default)]
 struct LayerContours {
-    /// Whether any leaf has a polygon on the layer.
-    any: bool,
     /// The centre of the first polygon that stays within the plate.
     inside: Option<Point2D>,
     /// Whether a model polygon stays within the plate.
@@ -286,7 +283,6 @@ fn scan_contours(input: &ReviewInput<'_>, tolerance_mm: f64) -> Vec<LayerContour
                     let Some([min_x, max_x, min_y, max_y]) = extremes(shape.outer()) else {
                         continue;
                     };
-                    contours.any = true;
                     let (past_mm, vertex) = [
                         (-half_x - min_x.x, min_x),
                         (max_x.x - half_x, max_x),
@@ -1060,13 +1056,8 @@ fn too_tall(
 // ---------------------------------------------------------------------------
 
 /// One finding per run of consecutive empty layers: before the first solid
-/// layer, between solid layers, and after the last one, unless that is only
-/// the layer schedule's contour-less last layer.
-fn empty_layers(
-    ctx: &ReviewContext<'_>,
-    extent: SolidExtent,
-    contours: &[LayerContours],
-) -> Vec<Finding> {
+/// layer, between solid layers, and after the last one.
+fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
     let (input, regions) = (ctx.input, ctx.regions);
     let layers = input.layers();
     // Focus on the solid next to the empty layers, at the first empty
@@ -1120,11 +1111,7 @@ fn empty_layers(
     }
     let top = input.layer_count() - 1;
     let count = top - extent.last;
-    // The layer count is the plate's height in layers rounded up, and each
-    // layer is cut at the middle of its slab: when the top falls in the
-    // lower half of the last slab, that layer has no contour at all.
-    let schedule_slack = count == 1 && !contours[top].any;
-    if count > 0 && !schedule_slack {
+    if count > 0 {
         let first = extent.last + 1;
         let height_mm = layers[top].top_mm - layers[first].bottom_mm;
         findings.push(Finding::new(

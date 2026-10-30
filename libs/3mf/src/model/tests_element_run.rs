@@ -515,6 +515,7 @@ mod parser_equality_tests {
                 object_id: id,
                 transform: None,
                 partnumber: None,
+                path: None,
             }],
             ..ModelDocument::default()
         }
@@ -907,6 +908,7 @@ mod slice_run_tests {
                 object_id,
                 transform: None,
                 partnumber: None,
+                path: None,
             }],
             ..ModelDocument::default()
         };

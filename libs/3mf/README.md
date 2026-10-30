@@ -15,7 +15,9 @@ used on its own.
   [Open Packaging Conventions](https://www.ecma-international.org/publications-and-standards/standards/ecma-376/)
   (ECMA-376 Part 2) ZIP archive: named parts, content types declared by
   extension or per part, and relationship parts. Relative relationship
-  targets resolve against the source part's directory.
+  targets resolve against the source part's directory. Reading skips parts
+  that have no content type, as FDM slicers store their settings and
+  pictures, and lists their names.
 - Read and write the 3D model part defined by the
   [3MF Core Specification](https://github.com/3MFConsortium/spec_core):
   objects with mesh or component payloads, build items with transforms, base
@@ -26,6 +28,11 @@ used on its own.
   objects, inline slices with their polygons, slice references into other
   model parts, and the `meshresolution` marker that says whether an object's
   mesh is authoritative or a stand-in for the slice data.
+- Read and write the `p:path` of components and build items from the
+  [3MF Production Extension](https://github.com/3MFConsortium/spec_production),
+  which names the model part that defines the referenced object, as Bambu
+  Studio and Orca write every object. Resolving it against the package is
+  yours to do.
 - Progress callbacks on both reading and writing, which on a large package is
   mostly time spent compressing.
 - Parts above a size threshold are compressed across threads and spliced into
@@ -128,10 +135,9 @@ and 4 GiB for the package.
 ## Not supported
 
 Interleaved packages and ZIP64 writing (ZIP64 reading comes from the
-underlying `zip` crate). The
-[3MF Production Extension](https://github.com/3MFConsortium/spec_production),
-which splits a model across several parts, is detected but not implemented,
-so such a document is refused rather than partially read.
+underlying `zip` crate). Of the Production Extension, only `p:path` is read;
+a `p:path` anywhere but on a component or build item is refused rather than
+partially read.
 
 ## Testing
 

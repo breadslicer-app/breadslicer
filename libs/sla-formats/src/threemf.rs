@@ -127,6 +127,7 @@ pub fn write_scene_slices(
             object_id,
             transform: None,
             partnumber: None,
+            path: None,
         });
 
         let slice_document = slice_part_document(leaf_slices.stack().layers(), &slab_tops);

@@ -136,12 +136,79 @@ mod conformance_tests {
 
     #[test]
     fn unsupported_required_extension_is_refused_by_namespace() {
+        let xml = r#"<model unit="millimeter" requiredextensions="q" xmlns:q="urn:example:extension" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#;
+        let err = parse(xml).unwrap_err();
+        assert!(
+            matches!(&err, ModelParseError::UnsupportedRequiredExtension { namespace } if namespace == "urn:example:extension"),
+            "err: {err:?}",
+        );
+    }
+
+    #[test]
+    fn required_production_extension_is_accepted() {
         let xml = format!(
             r#"<model unit="millimeter" requiredextensions="p" xmlns:p="{PRODUCTION_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#,
         );
+        parse(&xml).expect("production-required document parses");
+    }
+
+    #[test]
+    fn production_paths_on_components_and_items_are_read() {
+        // As Bambu Studio writes it: the root document holds only an assembly
+        // whose component lives in another part, under an id this document
+        // never declares.
+        let xml = format!(
+            r#"<model unit="millimeter" requiredextensions="p" xmlns:p="{PRODUCTION_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="2" p:UUID="00000001-61cb-4c03-9d28-80fed5dfa1dc" type="model"><components><component p:path="/3D/Objects/object_1.model" objectid="1" p:UUID="00010000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 1"/></components></object></resources><build p:UUID="2c7c17d8-22b5-4d84-8835-1976022ea369"><item objectid="2" printable="1"/><item objectid="7" p:path="/3D/Objects/object_7.model"/></build></model>"#,
+        );
+        let document = parse(&xml).expect("parse");
+        let ObjectPayload::Components(components) = &document.objects[0].payload else {
+            panic!("object 2 is an assembly");
+        };
+        assert_eq!(components[0].object_id, id(1));
+        assert_eq!(
+            components[0].path.as_deref(),
+            Some("/3D/Objects/object_1.model")
+        );
+        assert_eq!(document.build[0].path, None);
+        assert_eq!(document.build[1].object_id, id(7));
+        assert_eq!(
+            document.build[1].path.as_deref(),
+            Some("/3D/Objects/object_7.model")
+        );
+    }
+
+    #[test]
+    fn production_paths_round_trip_through_the_writer() {
+        let xml = format!(
+            r#"<model xmlns:p="{PRODUCTION_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="2"><components><component objectid="1" p:path="/3D/Objects/a.model"/></components></object></resources><build><item objectid="2"/><item objectid="3" p:path="/3D/Objects/b.model"/></build></model>"#,
+        );
+        let document = parse(&xml).expect("parse");
+        let mut bytes = Vec::new();
+        write_model(&document, &mut bytes).expect("document writes");
+        let written = String::from_utf8(bytes).expect("UTF-8");
+        assert!(written.contains(r#"requiredextensions="p""#), "{written}");
+        assert_eq!(parse(&written).expect("written document parses"), document);
+    }
+
+    #[test]
+    fn a_document_without_production_paths_does_not_require_the_extension() {
+        let document = parse(&minimal_model(TETRA_BODY)).expect("parse");
+        let mut bytes = Vec::new();
+        write_model(&document, &mut bytes).expect("document writes");
+        let written = String::from_utf8(bytes).expect("UTF-8");
+        assert!(!written.contains("requiredextensions"), "{written}");
+        assert!(!written.contains(PRODUCTION_NS), "{written}");
+    }
+
+    #[test]
+    fn a_reference_without_a_path_is_still_checked() {
+        let xml = format!(
+            r#"<model xmlns:p="{PRODUCTION_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="2"><components><component objectid="1"/></components></object></resources><build/></model>"#,
+        );
         let err = parse(&xml).unwrap_err();
         assert!(
-            matches!(err, ModelParseError::UnsupportedRequiredExtension { namespace } if namespace == PRODUCTION_NS),
+            matches!(err, ModelParseError::UnknownObjectReference { id: 1 }),
+            "err: {err:?}",
         );
     }
 
@@ -171,7 +238,7 @@ mod conformance_tests {
     }
 
     #[test]
-    fn production_path_attributes_are_refused() {
+    fn production_paths_outside_components_and_items_are_refused() {
         let xml = r#"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="1" p:path="/3D/other.model"><components/></object></resources><build/></model>"#;
         let err = parse(xml).unwrap_err();
         assert!(
@@ -937,6 +1004,7 @@ mod numeric_round_trip_tests {
                 object_id: id(1),
                 transform: None,
                 partnumber: None,
+                path: None,
             }],
             ..ModelDocument::default()
         };
@@ -999,6 +1067,7 @@ mod numeric_round_trip_tests {
                 object_id: id(1),
                 transform: None,
                 partnumber: None,
+                path: None,
             }],
             ..ModelDocument::default()
         };

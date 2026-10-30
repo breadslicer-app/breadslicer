@@ -829,16 +829,19 @@ fn an_unlit_layer_at_the_top_is_info() {
 }
 
 #[test]
-fn the_last_layer_left_empty_by_the_layer_schedule_is_quiet() {
-    // The model ends inside the last slab, below the height it is cut at:
-    // the last layer has no contour at all. Every plate whose height is not
-    // a whole number of layers ends like this, and nothing can be done
-    // about it.
+fn a_last_layer_without_contours_is_info() {
+    // The model ends below the height the last layer is cut at, as in
+    // slices saved before the layer count stopped at the top (#226): that
+    // layer prints nothing, and slicing again leaves it out.
     let fixture = FixtureBuilder::new(8)
         .model(0..7, Shape::rect(40.0, 30.0, 80.0, 60.0))
         .build();
     let findings = output(&fixture);
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(
+        summary(&findings),
+        vec![(CheckKind::EmptyLayer, Severity::Info, 7, 7)]
+    );
+    assert_eq!(findings[0].title, "Empty layer at the top");
 }
 
 #[test]
