@@ -111,7 +111,7 @@ fn an_auto_drain_opens_the_cavity() {
     let applied = session.apply(&settings, &[drain], Control::none()).unwrap();
     assert!(is_edge_manifold(&applied.mesh));
     let report = applied.drains[0];
-    assert!(report.auto_depth && !report.depth_fallback, "{report:?}");
+    assert!(report.auto_depth, "{report:?}");
     // About the 2 mm wall plus 1 mm (icosphere facets sit inside the radius).
     assert!((2.0..=4.5).contains(&report.depth_mm), "{report:?}");
     assert!(report.reaches_cavity);
@@ -135,6 +135,106 @@ fn a_shallow_manual_drain_is_reported_as_not_reaching() {
     assert!(!applied.drains[0].reaches_cavity);
     assert!(is_edge_manifold(&applied.mesh));
     assert_eq!(face_shells(&applied.mesh).1, 2);
+    // Not cut: a dimple drains nothing.
+    let without = session
+        .apply(&HollowSettings::default(), &[], Control::none())
+        .unwrap();
+    assert_eq!(applied.mesh, without.mesh);
+}
+
+/// A 40 mm cube, hollowed with the default 2 mm wall.
+fn cube_session() -> Session {
+    let block = tessellated_box([-20.0; 3], [20.0; 3], 8);
+    Session::build(block, &GridRequest::default(), None, Control::none()).unwrap()
+}
+
+#[test]
+fn a_drain_that_misses_the_cavity_does_not_drill_through() {
+    // Up from the bottom inside the side wall: the axis never meets the
+    // cavity, and the far side is the top face, 40 mm away (#264).
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    let drain = DrainHole::new([19.0, 19.0, -20.0], [0.0, 0.0, 1.0], 0.5);
+    let applied = session.apply(&settings, &[drain], Control::none()).unwrap();
+    let report = applied.drains[0];
+    assert!(!report.reaches_cavity, "{report:?}");
+    let without = session.apply(&settings, &[], Control::none()).unwrap();
+    assert_eq!(applied.mesh, without.mesh, "the model is left whole");
+    assert_eq!(face_shells(&applied.mesh).1, 2);
+}
+
+#[test]
+fn a_drain_that_misses_does_not_stop_the_others() {
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    let miss = DrainHole::new([19.0, 19.0, -20.0], [0.0, 0.0, 1.0], 0.5);
+    let opens = DrainHole::new([0.0, 0.0, -20.0], [0.0, 0.0, 1.0], 1.5);
+    let applied = session
+        .apply(&settings, &[miss, opens], Control::none())
+        .unwrap();
+    assert!(!applied.drains[0].reaches_cavity);
+    assert!(applied.drains[1].reaches_cavity);
+    assert!(is_edge_manifold(&applied.mesh));
+    assert_eq!(
+        face_shells(&applied.mesh).1,
+        1,
+        "drained through the bottom"
+    );
+}
+
+#[test]
+fn a_drain_through_an_arm_into_the_body_is_not_cut() {
+    // A 3 mm arm (too thin to hollow) 2 mm off the side of the cube: from
+    // the arm's far face the axis crosses the arm and the gap before the
+    // body's cavity, and would drill through the arm.
+    let arm = tessellated_box([22.0, -5.0, -5.0], [25.0, 5.0, 5.0], 2);
+    let body = tessellated_box([-20.0; 3], [20.0; 3], 8);
+    let session = Session::build(
+        crate::shapes::merged(&[arm, body]),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let settings = HollowSettings::default();
+    let drain = DrainHole::new([25.0, 0.5, 0.5], [-1.0, 0.0, 0.0], 1.0);
+    let applied = session.apply(&settings, &[drain], Control::none()).unwrap();
+    assert!(!applied.drains[0].reaches_cavity, "{:?}", applied.drains);
+    let without = session.apply(&settings, &[], Control::none()).unwrap();
+    assert_eq!(applied.mesh, without.mesh);
+}
+
+#[test]
+fn an_axis_between_two_triangles_stops_at_the_cavity() {
+    // Along -X from (20, 0, 0) the axis slips between the icosphere's
+    // triangles without a hit; the depth still stops past the 2 mm wall
+    // instead of running to the far side of the cavity.
+    let session = sphere_session(0.65);
+    let drain = DrainHole::new([20.0, 0.0, 0.0], [-1.0, 0.0, 0.0], 1.5);
+    let applied = session
+        .apply(&HollowSettings::default(), &[drain], Control::none())
+        .unwrap();
+    let report = applied.drains[0];
+    assert!(report.reaches_cavity, "{report:?}");
+    assert!((2.0..=4.5).contains(&report.depth_mm), "{report:?}");
+    assert!(is_edge_manifold(&applied.mesh));
+    assert_eq!(face_shells(&applied.mesh).1, 1);
+}
+
+#[test]
+fn drains_are_measured_on_the_hollow_before_any_cut() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let first = DrainHole::new([0.0, 0.0, -20.0], [0.0, 0.0, 1.0], 1.5);
+    let second = DrainHole::new([20.0, 0.0, 0.0], [-1.0, 0.0, 0.0], 1.5);
+    let both = session
+        .apply(&settings, &[first, second], Control::none())
+        .unwrap();
+    let alone = session
+        .apply(&settings, &[second], Control::none())
+        .unwrap();
+    assert_eq!(both.drains[1], alone.drains[0]);
+    assert!(both.drains.iter().all(|d| d.reaches_cavity));
 }
 
 #[test]

@@ -3280,3 +3280,19 @@ msgstr "Recuperar"
 msgctxt "PrivacyPreferences"
 msgid "The diagnostic log could not start: {}"
 msgstr "El registro de diagnóstico no pudo empezar: {}"
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "Drain not drilled"
+msgid_plural "{n} drains not drilled"
+msgstr[0] "Drenaje sin perforar"
+msgstr[1] "{n} drenajes sin perforar"
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "This drain does not reach the cavity, so it was left out: drilled, it would only bore into the model, or through it. Place it where the cavity preview shows behind the wall."
+msgid_plural "These drains do not reach the cavity, so they were left out: drilled, they would only bore into the model, or through it. Place them where the cavity preview shows behind the wall."
+msgstr[0] "Este drenaje no llega a la cavidad, así que se quitó: perforado, solo entraría en el modelo o lo atravesaría. Ponelo donde la vista previa de la cavidad se ve detrás de la pared."
+msgstr[1] "Estos drenajes no llegan a la cavidad, así que se quitaron: perforados, solo entrarían en el modelo o lo atravesarían. Ponelos donde la vista previa de la cavidad se ve detrás de la pared."
