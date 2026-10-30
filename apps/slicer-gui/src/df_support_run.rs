@@ -298,6 +298,26 @@ fn session_key(drawn: &DrawnSet) -> (NodeId, usize) {
     (drawn.leaf, Arc::as_ptr(&drawn.session) as usize)
 }
 
+/// Whether `kept` and `fresh` save as the same data (#287): the documents a
+/// save writes as `SUPP` match once `fresh`'s ids carry `kept`'s prefix.
+/// Every run names its supports under a prefix of its own, so two runs of
+/// the same settings on the same model differ only there.
+fn same_session_data(kept: &DfSupportSession, fresh: &DfSupportSession) -> bool {
+    let document = |session: &DfSupportSession| {
+        let text = String::from_utf8(session.to_document()?).ok()?;
+        let key = "\"idPrefix\":\"";
+        let start = text.find(key)? + key.len();
+        let prefix = text[start..].split('"').next()?.to_owned();
+        (!prefix.is_empty()).then_some((prefix, text))
+    };
+    let (Some((kept_prefix, kept)), Some((fresh_prefix, fresh))) =
+        (document(kept), document(fresh))
+    else {
+        return false;
+    };
+    fresh.replace(&fresh_prefix, &kept_prefix) == kept
+}
+
 /// A computed preview.
 struct HoverAnswer {
     generation: u64,
@@ -1935,40 +1955,47 @@ impl DfSupportRun {
                 ReplacedNote::Replaced
             }
         });
-        let pasted =
-            self.document
-                .paste_fragment_replacing_all(&fragment, [0.0, 0.0, 0.0], &replaced);
-        if let Ok(leaves) = &pasted
-            && leaves.len() == sets.len()
-        {
-            for (leaf, (model, _, session)) in leaves.iter().zip(sets) {
-                record(
-                    &self.document,
-                    &self.sessions,
-                    *leaf,
-                    model,
-                    Arc::new(session),
-                );
+        // The very sets the scene already shows, down to their session data
+        // (#287): the scene keeps them, so the press adds no undo step and
+        // leaves the slice and the saved state as they were.
+        let unchanged = matches!(replaced_note, Some(ReplacedNote::Same))
+            && self.already_shown(&replaced, &sets);
+        if !unchanged {
+            let pasted =
+                self.document
+                    .paste_fragment_replacing_all(&fragment, [0.0, 0.0, 0.0], &replaced);
+            if let Ok(leaves) = &pasted
+                && leaves.len() == sets.len()
+            {
+                for (leaf, (model, _, session)) in leaves.iter().zip(sets) {
+                    record(
+                        &self.document,
+                        &self.sessions,
+                        *leaf,
+                        model,
+                        Arc::new(session),
+                    );
+                }
+                self.generated_raft_top
+                    .set(Some(self.options.borrow().raft_top_mm()));
+                self.warm_worker();
+                // Models left waiting for supports have them now.
+                self.document
+                    .settle_supports_wanted(self.document.scene_revision(), &covered);
             }
-            self.generated_raft_top
-                .set(Some(self.options.borrow().raft_top_mm()));
-            self.warm_worker();
-            // Models left waiting for supports have them now.
-            self.document
-                .settle_supports_wanted(self.document.scene_revision(), &covered);
-        }
-        if let Err(error) = pasted {
-            let details = error.to_string();
-            self.dialogs.show_error(move || ErrorTexts {
-                heading: ctr!("DfSupportDialog", "Support generation failed"),
-                context: None,
-                message: ctr!(
-                    "DfSupportDialog",
-                    "The scene rejected the generated supports; nothing was changed."
-                ),
-                details: details.as_str().into(),
-            });
-            return;
+            if let Err(error) = pasted {
+                let details = error.to_string();
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("DfSupportDialog", "Support generation failed"),
+                    context: None,
+                    message: ctr!(
+                        "DfSupportDialog",
+                        "The scene rejected the generated supports; nothing was changed."
+                    ),
+                    details: details.as_str().into(),
+                });
+                return;
+            }
         }
         match replaced_note {
             Some(ReplacedNote::Same) => self.show_status(ctr!(
@@ -2014,6 +2041,43 @@ impl DfSupportRun {
                         }
                         None => false,
                     }
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Whether the new `sets` are the ones the leaves `replaced` already
+    /// show (#287): each leaf shows, untransformed, the mesh of the set on
+    /// its model, drawn by a session in force, with no hand edits, that
+    /// keeps the same data (what a save writes as `SUPP`). Pasting them would
+    /// change nothing.
+    fn already_shown(
+        &self,
+        replaced: &[NodeId],
+        sets: &[(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)],
+    ) -> bool {
+        if replaced.len() != sets.len() {
+            return false;
+        }
+        self.document
+            .with_scene(|spatial| {
+                let mut unmatched: Vec<_> = sets.iter().collect();
+                replaced.iter().all(|id| {
+                    let (Some(leaf), Some(drawn)) =
+                        (spatial.leaf(*id), in_force(spatial, &self.sessions, *id))
+                    else {
+                        return false;
+                    };
+                    if !untransformed(&leaf.world_transform()) || drawn.session.hand_edited() {
+                        return false;
+                    }
+                    let Some(at) = unmatched.iter().position(|(model, mesh, _)| {
+                        *model == drawn.model && mesh.as_ref() == leaf.mesh()
+                    }) else {
+                        return false;
+                    };
+                    let (_, _, session) = unmatched.swap_remove(at);
+                    same_session_data(&drawn.session, session)
                 })
             })
             .unwrap_or(false)
@@ -2425,7 +2489,9 @@ mod hand_edit_tests {
     /// Generate press and by the raft warning's "Generate anyway"; one undo
     /// brings back the set before, still editable by hand. The status bar
     /// says nothing of the first set, and of a set replaced whether the new
-    /// one is the same (#188).
+    /// one is the same (#188). The second plain press changes nothing
+    /// (#287); the thicker raft draws the same mesh on this cube, but under
+    /// other settings, so it still replaces the set in an undo step.
     #[test]
     fn generating_again_replaces_the_supports() {
         let (plain, anyway, undone, editable, notices) = on_fresh_slint_thread(|| {
@@ -2522,6 +2588,60 @@ mod hand_edit_tests {
         assert_eq!(anyway, (2, 1), "the model and one support set");
         assert!(undone, "one undo brings back the set before");
         assert!(editable, "the set before is editable again");
+    }
+
+    /// Generating again with nothing changed leaves the scene as it was
+    /// (#287): no undo step, no new revision, so a slice taken before stays
+    /// current and a saved scene stays saved; the status bar still says the
+    /// result is the same (#188). One undo takes the supports away.
+    #[test]
+    fn generating_the_same_supports_again_changes_nothing() {
+        let (same_revision, dirty, stale, notice, editable, undone) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 3.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, PathBuf::from("cube.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let generate = |run: &Rc<DfSupportRun>| {
+                run.start();
+                let handle = run.handle.borrow_mut().take().expect("a run started");
+                window.set_support_gen_in_progress(false);
+                run.finish(handle.join());
+            };
+            run.set_options(DfSupportOptions::default());
+            generate(&run);
+            document.mark_saved();
+            let revision = document.scene_revision();
+            generate(&run);
+            let same_revision = document.scene_revision() == revision;
+            let dirty = document.is_dirty();
+            let stale = document.slice_geometry_changed(revision);
+            let notice = window.get_status_notice().to_string();
+            let editable = !run.sets_in_force().is_empty();
+            document.undo().expect("one undo");
+            let undone = document
+                .with_scene(|spatial| support_leaves(spatial).count() == 0)
+                .expect("a scene")
+                && !document.can_undo();
+            (same_revision, dirty, stale, notice, editable, undone)
+        });
+        assert!(same_revision, "no new revision");
+        assert!(!dirty, "the saved scene stays saved");
+        assert!(!stale, "a slice taken before stays current");
+        assert_eq!(notice, "Supports regenerated: same result as before.");
+        assert!(editable, "the supports stay editable by hand");
+        assert!(undone, "one undo step in total takes the supports away");
     }
 
     /// Generate with the model on the plate raises the raft warning (#131);
