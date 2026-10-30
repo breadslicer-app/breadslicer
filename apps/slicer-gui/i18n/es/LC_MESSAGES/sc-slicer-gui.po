@@ -2987,6 +2987,18 @@ msgctxt "DfSupportDialog"
 msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
 msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
 
+msgctxt "Workspace"
+msgid "Supports regenerated: same result as before."
+msgstr "Soportes regenerados: mismo resultado que antes."
+
+msgctxt "Workspace"
+msgid "Supports regenerated: replaced the previous set."
+msgstr "Soportes regenerados: reemplazaron a los anteriores."
+
+msgctxt "Workspace"
+msgid "Supports regenerated for the model's new pose."
+msgstr "Soportes regenerados para la pose nueva del modelo."
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "ARRANGE"
