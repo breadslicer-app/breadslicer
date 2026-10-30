@@ -13,11 +13,28 @@ use sc_mesh_core::primitives::{FaceIndex, Vertex, VertexIndex};
 
 use crate::geom2d::{EdgeId, EndpointTag, Point2D, Segment};
 
-/// Sub-micron tolerance (in mm) for the on-plane vertex
-/// classification. Sized two orders of magnitude below typical
-/// resin-printer XY pixel size and well below f32 vertex-coordinate
-/// precision for build-volume-scale values.
+/// Floor (in mm) of the on-plane vertex classification band, see
+/// [`on_plane_band_mm`]. Far below typical resin-printer XY pixel
+/// size; it is the whole band up to about 8 mm above the plate.
 pub const Z_CLASSIFY_EPS_MM: f64 = 1e-6;
+
+/// The half-width (in mm) of the band around the plane at `z_plane_mm`
+/// within which a vertex counts as `On`.
+///
+/// Vertex heights are f32: a vertex modelled exactly at the plane's
+/// height lands up to half an f32 step away from it, `|z| * 2^-24`,
+/// which passes the [`Z_CLASSIFY_EPS_MM`] floor from about 17 mm up
+/// (at 100.275 mm it is 1.5e-6 mm). The band keeps twice that, one
+/// f32 step at `z_plane_mm`, so a face at a cutting height is on the
+/// plane at any height on the plate.
+///
+/// The band grows continuously with `|z|` and more slowly than the
+/// plane, so the classification of a fixed vertex stays monotone
+/// across ascending planes (the face buckets in `z_bins` rely on it).
+#[inline]
+pub fn on_plane_band_mm(z_plane_mm: f64) -> f64 {
+    Z_CLASSIFY_EPS_MM.max(z_plane_mm.abs() * f64::from(f32::EPSILON))
+}
 
 /// Position of a vertex relative to a horizontal slicing plane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,6 +328,36 @@ mod plane_intersect_tests {
         // Outside band classifies away.
         assert_eq!(classify_vertex_z(2e-6, z_plane, eps), VertexClass::Above);
         assert_eq!(classify_vertex_z(-2e-6, z_plane, eps), VertexClass::Below);
+    }
+
+    #[test]
+    fn the_on_plane_band_holds_an_f32_vertex_at_the_plane_at_any_height() {
+        // Near the plate the band is its floor.
+        assert_eq!(on_plane_band_mm(0.275), Z_CLASSIFY_EPS_MM);
+        assert_eq!(on_plane_band_mm(-0.275), Z_CLASSIFY_EPS_MM);
+        // Every 50 um cutting height up to 400 mm: the f32 nearest to it
+        // is On, and the band stays far below a micron.
+        for k in 0..8000 {
+            let z_plane = (f64::from(k) + 0.5) * 0.05;
+            let band = on_plane_band_mm(z_plane);
+            let nearest = z_plane as f32;
+            assert_eq!(
+                classify_vertex_z(nearest, z_plane, band),
+                VertexClass::On,
+                "{z_plane}",
+            );
+            assert!(band < 1e-4, "{z_plane}: {band}");
+        }
+        // 100.275 mm: the f32 is 1.5e-6 mm high, past the floor.
+        let z_plane = 100.275;
+        assert_eq!(
+            classify_vertex_z(z_plane as f32, z_plane, Z_CLASSIFY_EPS_MM),
+            VertexClass::Above,
+        );
+        assert_eq!(
+            classify_vertex_z(z_plane as f32, z_plane, on_plane_band_mm(z_plane)),
+            VertexClass::On,
+        );
     }
 
     #[test]

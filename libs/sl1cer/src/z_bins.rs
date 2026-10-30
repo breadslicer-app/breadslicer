@@ -26,7 +26,7 @@ use sc_mesh_core::indexed_mesh::ValidatedEdgeManifoldMesh;
 
 use rayon::prelude::*;
 
-use crate::plane_intersect::{VertexClass, Z_CLASSIFY_EPS_MM, classify_vertex_z};
+use crate::plane_intersect::{VertexClass, classify_vertex_z, on_plane_band_mm};
 
 /// CSR table of candidate faces per schedule plane.
 ///
@@ -59,8 +59,8 @@ impl LayerBuckets {
         // Leading planes the face floats entirely above (the plane
         // sits below the lowest vertex), and the first plane the face
         // sits entirely below (the plane clears the highest vertex).
-        // classify_vertex_z is monotone in the plane for a fixed
-        // vertex, so both predicates split the ascending planes in
+        // classify_vertex_z with the plane's own band is monotone in
+        // the plane for a fixed vertex, so both predicates split the ascending planes in
         // two and partition_point finds the boundary.
         let ranges: Vec<(u32, u32)> = faces
             .par_iter()
@@ -72,10 +72,10 @@ impl LayerBuckets {
                 let z_min = z0.min(z1).min(z2);
                 let z_max = z0.max(z1).max(z2);
                 let lo = planes.partition_point(|&z_mm| {
-                    classify_vertex_z(z_min, z_mm, Z_CLASSIFY_EPS_MM) == VertexClass::Above
+                    classify_vertex_z(z_min, z_mm, on_plane_band_mm(z_mm)) == VertexClass::Above
                 });
                 let hi = planes.partition_point(|&z_mm| {
-                    classify_vertex_z(z_max, z_mm, Z_CLASSIFY_EPS_MM) != VertexClass::Below
+                    classify_vertex_z(z_max, z_mm, on_plane_band_mm(z_mm)) != VertexClass::Below
                 });
                 (lo as u32, hi as u32)
             })
@@ -119,6 +119,7 @@ mod z_bins_tests {
     };
 
     use super::*;
+    use crate::plane_intersect::Z_CLASSIFY_EPS_MM;
 
     fn witness(mesh: &IndexedMesh) -> ValidatedEdgeManifoldMesh<'_> {
         mesh.validated_faces()
@@ -141,8 +142,9 @@ mod z_bins_tests {
                 let z2 = vertices[usize::from(i2)][2];
                 let z_min = z0.min(z1).min(z2);
                 let z_max = z0.max(z1).max(z2);
-                classify_vertex_z(z_min, z_mm, Z_CLASSIFY_EPS_MM) != VertexClass::Above
-                    && classify_vertex_z(z_max, z_mm, Z_CLASSIFY_EPS_MM) != VertexClass::Below
+                let band = on_plane_band_mm(z_mm);
+                classify_vertex_z(z_min, z_mm, band) != VertexClass::Above
+                    && classify_vertex_z(z_max, z_mm, band) != VertexClass::Below
             })
             .map(|(idx, _)| idx as u32)
             .collect()
@@ -176,6 +178,29 @@ mod z_bins_tests {
         assert_buckets_match_brute_force(&cuboid_with_z_tunnel(), &planes);
         assert_buckets_match_brute_force(&cuboid_with_y_tunnel(), &planes);
         assert_buckets_match_brute_force(&aob_saddle_tetrahedron(), &planes);
+    }
+
+    /// High on the plate the band is wider than its floor: the buckets
+    /// still match the scan, plane by plane, on each side of it.
+    #[test]
+    fn buckets_match_the_scan_classification_high_on_the_plate() {
+        let mut mesh = unit_cube_mesh();
+        for v in &mut mesh.vertices {
+            *v = sc_mesh_core::Vertex::new([v[0], v[1], v[2] + 100.775]);
+        }
+        let mut planes: Vec<f64> = (0..41).map(|k| 100.0 + 0.05 * f64::from(k)).collect();
+        for anchor in [100.275, 101.275] {
+            let band = on_plane_band_mm(anchor);
+            planes.extend([
+                anchor - 2.0 * band,
+                anchor - 0.5 * band,
+                anchor + 0.5 * band,
+            ]);
+            planes.extend([anchor + 2.0 * band]);
+        }
+        planes.sort_by(f64::total_cmp);
+        planes.dedup();
+        assert_buckets_match_brute_force(&mesh, &planes);
     }
 
     #[test]
