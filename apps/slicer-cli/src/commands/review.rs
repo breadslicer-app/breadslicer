@@ -66,8 +66,13 @@ pub(crate) fn review(args: ReviewArgs, libraries: &ProfileLibraries) -> Result<(
         .iter()
         .map(|slices| ReviewLeaf::from_slices(slices, role_of(slices.leaf_name())))
         .collect();
-    // Generated supports stand on the raft their options build.
-    let raft_top_mm = options.df_supports.then(df_raft_top_mm).flatten();
+    // Generated supports stand on the raft their options build, scaled in Z
+    // with them (#227).
+    let raft_top_mm = options
+        .df_supports
+        .then(df_raft_top_mm)
+        .flatten()
+        .map(|top| plate.compensated_height_mm(top));
     // A model in the raft is pointed at the support lift: the default, or a
     // higher --df-lift.
     let support_lift_mm = raft_top_mm.map(|_| recommended_lift_mm(Some(options.df_lift)));
