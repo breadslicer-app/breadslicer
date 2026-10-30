@@ -13,7 +13,8 @@ use support_gen_df::native::mesh_minima::scan_islands;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, build_rafts,
-    generate_supports, generate_supports_with, prescan_models, support_soup, world_soup,
+    generate_supports, generate_supports_with, plan_supports_with, prescan_models, support_soup,
+    world_soup,
 };
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -409,6 +410,66 @@ fn a_prescan_gives_the_same_run_and_misses_a_moved_model() {
             run_digest(&run_moved(None)),
             "scene {k}: moved"
         );
+    }
+}
+
+#[test]
+fn planning_alone_gives_the_same_plans_without_drawing_them() {
+    for (k, (models, settings)) in scenes().iter().enumerate() {
+        let cache = prescan_models(models, settings, None, &CancelToken::new()).unwrap();
+        for prescanned in [None, Some(&cache)] {
+            let mut new_id = id_gen();
+            let full = generate_supports_with(
+                models,
+                &SupportState::default(),
+                settings,
+                prescanned,
+                &mut new_id,
+                &mut |_| {},
+                &CancelToken::new(),
+            )
+            .unwrap();
+            let mut new_id = id_gen();
+            let mut stages = Vec::new();
+            let planned = plan_supports_with(
+                models,
+                &SupportState::default(),
+                settings,
+                prescanned,
+                &mut new_id,
+                &mut |p| stages.push(p.stage),
+                &CancelToken::new(),
+            )
+            .unwrap();
+            let without_drawing = |out: &support_gen_df::pipeline::PipelineOutput| {
+                let mut digest = run_digest(out);
+                digest["rafts"] = Value::Null;
+                digest["soup"] = Value::Null;
+                digest["parts"] = Value::Null;
+                digest
+            };
+            assert_eq!(
+                without_drawing(&planned),
+                without_drawing(&full),
+                "scene {k}: same plans"
+            );
+            assert!(
+                planned.rafts.is_empty()
+                    && planned.support_soup.is_empty()
+                    && planned.support_parts.is_empty(),
+                "scene {k}: nothing drawn"
+            );
+            assert!(
+                !stages.contains(&Stage::BuildRafts) && !stages.contains(&Stage::Tessellate),
+                "scene {k}: no drawing stage reported"
+            );
+            // The BVHs handed back are the ones the world soups build.
+            assert_eq!(planned.bvhs.len(), models.len());
+            for (m, bvh) in models.iter().zip(&planned.bvhs) {
+                let fresh = MeshBvh::new(triples(&world_soup(m)), None);
+                assert_eq!(format!("{bvh:?}"), format!("{fresh:?}"), "scene {k}: BVH");
+            }
+        }
     }
 }
 
