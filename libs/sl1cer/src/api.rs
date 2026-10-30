@@ -23,7 +23,7 @@ use sc_scene::{CsgPolicy, ReferencePolicy, Scene, SceneError};
 
 use crate::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
-use crate::grouping::{group_into_polygons, point_in_ring};
+use crate::grouping::{group_by_facing, point_in_ring};
 use crate::mesh_slice::segments_at_z_for_faces;
 use crate::profile::SliceProfile;
 use crate::shells::FaceShells;
@@ -494,11 +494,20 @@ where
 /// rely on this producing the same bytes no matter which thread or order runs
 /// them.
 ///
+/// Each ring is an outer or a hole by its facing: the side its faces put the
+/// solid on (see [`crate::grouping`]), so rings of one shell that overlap,
+/// as where a posed mesh runs through itself, both stay solid and the
+/// non-zero raster unites them. A void shell (a sealed cavity, facing inward)
+/// counts its facing reversed, as do the rings of a mesh turned inside out,
+/// which still slices solid.
+///
 /// Outers and holes are grouped per shell (`shells`), in order of each
 /// shell's first ring, so shells that overlap do not read as holes of each
-/// other. A void shell (a sealed cavity, facing inward) is grouped the same
-/// way and then subtracted: each of its outers becomes a hole of the solid
-/// polygon that encloses it, and each of its holes (solid inside the void)
+/// other. A void shell is grouped the same way and then subtracted: each of
+/// its outers becomes a hole of the solid polygon that encloses it, and each
+/// of its holes (solid inside the void) a polygon of its own. A hole of a
+/// solid shell that no outer of its shell contains is subtracted the same
+/// way, and a solid ring of a void shell that none of its outers contains is
 /// a polygon of its own.
 pub(crate) fn slice_layer(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
@@ -508,32 +517,68 @@ pub(crate) fn slice_layer(
     candidates: &[u32],
 ) -> Result<ContourLayer, SliceError> {
     let segments = segments_at_z_for_faces(mesh, z_mm, topology, candidates);
-    let tagged = stitch_layer_with_faces(&segments, z_mm, topology)?;
-    let mut by_shell: Vec<(u32, Vec<ClosedRing>)> = Vec::new();
-    for (ring, face) in tagged {
+    let vertices = mesh.vertices();
+    let faces = mesh.faces();
+    // How far a segment runs with its face's solid on its left: the face
+    // normal's XY part against the segment's right-hand side.
+    let facing = |i: usize| {
+        let seg = &segments[i];
+        let [p0, p1, p2] = faces[seg.source_face.get()]
+            .vertices
+            .map(|v| vertices[v.get() as usize].coords());
+        let e1 = [0, 1, 2].map(|k| f64::from(p1[k]) - f64::from(p0[k]));
+        let e2 = [0, 1, 2].map(|k| f64::from(p2[k]) - f64::from(p0[k]));
+        let nx = e1[1] * e2[2] - e1[2] * e2[1];
+        let ny = e1[2] * e2[0] - e1[0] * e2[2];
+        nx * (seg.b.y - seg.a.y) - ny * (seg.b.x - seg.a.x)
+    };
+    let tagged = stitch_layer_with_faces(&segments, z_mm, topology, facing)?;
+    let mut by_shell: Vec<(u32, Vec<ClosedRing>, Vec<f64>)> = Vec::new();
+    for stitched in tagged {
         let shell = if shells.count() > 1 {
-            shells.of(face)
+            shells.of(stitched.face)
         } else {
             0
         };
-        match by_shell.iter_mut().find(|(s, _)| *s == shell) {
-            Some((_, rings)) => rings.push(ring),
-            None => by_shell.push((shell, vec![ring])),
+        // Measured along the ring's vertex order, which `normalise_to_ccw`
+        // reverses when the ring runs clockwise.
+        let mut facing = if stitched.ring.signed_area() < 0.0 {
+            -stitched.facing
+        } else {
+            stitched.facing
+        };
+        if shells.is_void(shell) {
+            facing = -facing;
+        }
+        match by_shell.iter_mut().find(|(s, _, _)| *s == shell) {
+            Some((_, rings, facings)) => {
+                rings.push(stitched.ring);
+                facings.push(facing);
+            }
+            None => by_shell.push((shell, vec![stitched.ring], vec![facing])),
         }
     }
     let mut polygons = Vec::new();
     let mut voids = Vec::new();
-    for (shell, mut rings) in by_shell {
+    let mut loose = Vec::new();
+    for (shell, mut rings, facing) in by_shell {
         normalise_to_ccw(&mut rings);
+        let (grouped, orphans) = group_by_facing(rings, &facing);
+        let orphans = orphans
+            .into_iter()
+            .map(|ring| Polygon::new_unchecked(ring, Vec::new()));
         if shells.count() > 1 && shells.is_void(shell) {
-            voids.extend(group_into_polygons(rings));
+            voids.extend(grouped);
+            loose.extend(orphans);
         } else {
-            polygons.extend(group_into_polygons(rings));
+            polygons.extend(grouped);
+            voids.extend(orphans);
         }
     }
     if !voids.is_empty() {
         polygons = subtract_voids(polygons, voids);
     }
+    polygons.extend(loose);
     Ok(ContourLayer::new(z_mm, polygons))
 }
 

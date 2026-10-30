@@ -118,19 +118,33 @@ pub fn stitch_layer(
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Result<Vec<ClosedRing>, SliceError> {
-    Ok(stitch_layer_with_faces(segments, z_mm, topology)?
+    Ok(stitch_layer_with_faces(segments, z_mm, topology, |_| 0.0)?
         .into_iter()
-        .map(|(ring, _)| ring)
+        .map(|stitched| stitched.ring)
         .collect())
 }
 
-/// [`stitch_layer`], with each ring's first source face: the rings of a layer
-/// are told apart by the shell they cut (see [`crate::shells`]).
+/// A ring from [`stitch_layer_with_faces`], with what the mesh says about it.
+pub(crate) struct StitchedRing {
+    pub ring: ClosedRing,
+    /// The source face of the ring's first segment: the rings of a layer are
+    /// told apart by the shell they cut (see [`crate::shells`]).
+    pub face: FaceIndex,
+    /// The sum of `facing` over the ring's segments, each negated when the
+    /// ring runs it from `b` to `a`. With `facing` positive for a segment whose
+    /// solid lies to the left of `a` to `b`, positive means the ring runs with
+    /// its solid on the left.
+    pub facing: f64,
+}
+
+/// [`stitch_layer`], with each ring's first source face and facing (see
+/// [`StitchedRing`]); `facing` gives each segment's, by index.
 pub(crate) fn stitch_layer_with_faces(
     segments: &[Segment],
     z_mm: f64,
     topology: &MeshTopology,
-) -> Result<Vec<(ClosedRing, FaceIndex)>, SliceError> {
+    facing: impl Fn(usize) -> f64,
+) -> Result<Vec<StitchedRing>, SliceError> {
     // 1 record per segment endpoint, stably sorted by tag: equal tags form
     // contiguous runs in push order (ascending segment index, side A before
     // side B).
@@ -159,6 +173,7 @@ pub(crate) fn stitch_layer_with_faces(
             continue;
         }
         let mut ring_points = Vec::new();
+        let mut ring_facing = 0.0;
         let mut current_idx = start;
         let mut entry_side = Side::A;
         loop {
@@ -168,12 +183,20 @@ pub(crate) fn stitch_layer_with_faces(
             visited[current_idx] = true;
             let seg = &segments[current_idx];
             ring_points.push(point_at(seg, entry_side));
+            match entry_side {
+                Side::A => ring_facing += facing(current_idx),
+                Side::B => ring_facing -= facing(current_idx),
+            }
             let exit_side = entry_side.opposite();
             let (next_idx, next_entry_side) = pairings.mate((current_idx, exit_side));
             current_idx = next_idx;
             entry_side = next_entry_side;
         }
-        rings.push((ClosedRing::new(ring_points), segments[start].source_face));
+        rings.push(StitchedRing {
+            ring: ClosedRing::new(ring_points),
+            face: segments[start].source_face,
+            facing: ring_facing,
+        });
     }
 
     Ok(rings)
@@ -279,7 +302,9 @@ fn pair_vertex_hub(
 ///
 /// This is a pure orientation pass. Outer-vs-hole classification is the job of
 /// the grouping step and assumes CCW input, so downstream code can read "CCW
-/// means traversal direction" from any ring this function has touched.
+/// means traversal direction" from any ring this function has touched. A ring's
+/// facing ([`StitchedRing::facing`]) is measured along its vertex order, so it
+/// changes sign with every ring this pass reverses.
 pub fn normalise_to_ccw(rings: &mut [ClosedRing]) {
     for ring in rings.iter_mut() {
         if ring.signed_area() < 0.0 {
