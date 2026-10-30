@@ -15,6 +15,7 @@ sc-app-paths.workspace = true
 sc-geom.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
+sc-orient.workspace = true
 sc-print-glue.workspace = true
 sc-print-primitives.workspace = true
 sc-print-profiles.workspace = true
@@ -26,6 +27,7 @@ sc-sla-formats.workspace = true
 sc-sla-formats-uvtools.workspace = true
 
 anyhow.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 
 bpaf = "0.9.24"
