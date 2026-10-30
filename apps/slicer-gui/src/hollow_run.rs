@@ -200,7 +200,7 @@ impl LocalDrain {
 }
 
 /// A hollow this driver installed: the mesh it put on the leaf, what it was
-/// made from, with which drains and settings.
+/// made from, with which drains (the ones drilled) and settings.
 #[derive(Debug, Clone)]
 pub(crate) struct Hollowed {
     pub(crate) hollow: Arc<IndexedMesh>,
@@ -827,6 +827,46 @@ impl HollowRun {
         let HollowResult::Apply { mesh, drains } = outcome.result else {
             return;
         };
+        // The engine leaves out a drain that does not reach the cavity
+        // (#264): the hollow keeps the drains it has, and the person hears
+        // which were left out.
+        let kept: Vec<LocalDrain> = job
+            .drains
+            .iter()
+            .zip(&drains)
+            .filter(|(_, report)| report.reaches_cavity)
+            .map(|(drain, _)| *drain)
+            .collect();
+        let missed = job.drains.len() - kept.len();
+        if missed > 0 {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!(
+                    "HollowRun",
+                    "Drain not drilled",
+                    "{n} drains not drilled",
+                    missed
+                ),
+                message: ctr!(
+                    "HollowRun",
+                    "This drain does not reach the cavity, so it was left out: drilled, it would only bore into the model, or through it. Place it where the cavity preview shows behind the wall.",
+                    "These drains do not reach the cavity, so they were left out: drilled, they would only bore into the model, or through it. Place them where the cavity preview shows behind the wall.",
+                    missed
+                ),
+                details: Default::default(),
+            });
+        }
+        // A new drain that was left out changes nothing: no undo step.
+        let unchanged = self.hollowed.borrow().iter().any(|h| {
+            Arc::ptr_eq(&h.hollow, &job.before)
+                && Arc::ptr_eq(&h.original, &job.original)
+                && h.options == job.options
+                && h.drains == kept
+        });
+        if unchanged {
+            self.refresh_ui();
+            self.tick_preview();
+            return;
+        }
         let hollow = Arc::new(mesh);
         if !self.swap_mesh(job.leaf, job.before, hollow.clone()) {
             return;
@@ -840,15 +880,14 @@ impl HollowRun {
         } else {
             0.0
         };
-        let blind = drains.iter().filter(|d| !d.reaches_cavity).count();
         let mut summary = format!(
             "Saves {saved:.1} of {source:.1} ml ({percent:.0} %). Wall {:.1} mm, voxel {:.2} mm.",
             stats.wall_thickness_mm, stats.grid.voxel_mm,
         );
         if !drains.is_empty() {
-            summary.push_str(&format!(" {} drain(s)", drains.len()));
-            if blind > 0 {
-                summary.push_str(&format!(", {blind} not reaching the cavity"));
+            summary.push_str(&format!(" {} drain(s)", kept.len()));
+            if missed > 0 {
+                summary.push_str(&format!(", {missed} left out: not reaching the cavity"));
             }
             summary.push('.');
         }
@@ -865,7 +904,7 @@ impl HollowRun {
         self.hollowed.borrow_mut().push(Hollowed {
             hollow,
             original: job.original,
-            drains: job.drains,
+            drains: kept,
             options: job.options,
         });
         self.refresh_ui();
@@ -1379,5 +1418,95 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert!(shown.iter().all(|&s| s), "{shown:?}");
+    }
+
+    /// Waits for the hollow job and lands it, as the poll timer would.
+    fn land_job(run: &Rc<HollowRun>) {
+        let waited = std::time::Instant::now();
+        loop {
+            let outcome = run.job.borrow().as_ref().and_then(|j| j.handle.try_poll());
+            if let Some(outcome) = outcome {
+                let job = run.job.borrow_mut().take().expect("the job");
+                run.finish(job, outcome);
+                return;
+            }
+            assert!(
+                waited.elapsed() < Duration::from_secs(60),
+                "the hollow ends"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A 30 mm cube at (50, 50, 15) on the plate, hollowed with a 2 mm wall:
+    /// a drain up from the bottom 14 mm off the centre runs inside the side
+    /// walls to the top, and is left out instead of going through (#264).
+    #[test]
+    fn a_drain_that_misses_the_cavity_is_left_out() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        let (kept, notices, undo_steps, after_click) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(
+                        sc_mesh_core::transform::AffineTransform3D::from_translation([
+                            50.0, 50.0, 15.0,
+                        ]),
+                    ),
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let dialogs = ctrl.dialogs();
+            let run = HollowRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
+            run.on_option(0, 2.0);
+            let down = [0.0, 0.0, -1.0];
+            // Placed on the solid model: a miss and one under the cavity.
+            run.on_drain_click([64.0, 64.0, 0.0], down);
+            run.on_drain_click([50.0, 50.0, 0.0], down);
+            run.on_apply();
+            land_job(&run);
+            let kept = document
+                .hollows()
+                .borrow()
+                .last()
+                .map(|h| h.drains.iter().map(|d| d.center).collect::<Vec<_>>());
+            let notices = dialogs.info_headings_for_test();
+            let mut undo_steps = 0;
+            while document.can_undo() {
+                document.undo().unwrap();
+                undo_steps += 1;
+            }
+            document.redo().unwrap();
+            // On the hollow, another miss: nothing to drill, nothing to undo.
+            run.on_drain_click([36.0, 64.0, 0.0], down);
+            land_job(&run);
+            let mut after_click = 0;
+            while document.can_undo() {
+                document.undo().unwrap();
+                after_click += 1;
+            }
+            (kept, notices, undo_steps, after_click)
+        });
+        assert_eq!(
+            kept,
+            Some(vec![[0.0, 0.0, -15.0]]),
+            "only the drain that opens"
+        );
+        assert_eq!(notices, vec!["Drain not drilled".to_owned()]);
+        assert_eq!(undo_steps, 1);
+        assert_eq!(after_click, 1, "the left-out drain added no step");
     }
 }

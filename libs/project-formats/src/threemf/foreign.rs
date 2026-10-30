@@ -27,10 +27,12 @@ pub(crate) const BAMBU_ORCA_MARKER_PART: &str = "/Metadata/project_settings.conf
 pub(crate) const CURA_FOLDER_PREFIX: &str = "/Cura/";
 
 /// Returns the foreign dialects whose marker parts appear in the
-/// package, each reported once, in part order.
+/// package, each reported once, in part order. Parts that reading skipped for
+/// having no content type count, after the others: Bambu Studio and Orca store
+/// their marker part that way.
 pub(crate) fn detect_foreign_dialects(package: &Package) -> Vec<ForeignDialect> {
     let mut dialects = Vec::new();
-    for name in package.part_names() {
+    for name in package.part_names().chain(package.untyped_parts()) {
         let detected = match name.as_str() {
             PRUSA_MARKER_PART => Some(ForeignDialect::PrusaSlicer),
             BAMBU_ORCA_MARKER_PART => Some(ForeignDialect::BambuStudioOrca),

@@ -215,6 +215,7 @@ impl<'graph> DocumentBuilder<'graph> {
             object_id,
             transform,
             partnumber: None,
+            path: None,
         });
         Ok(())
     }
@@ -263,6 +264,7 @@ impl<'graph> DocumentBuilder<'graph> {
                     components.push(Component {
                         object_id: child_id,
                         transform: child_transform,
+                        path: None,
                     });
                 }
                 let id = self.alloc_id();

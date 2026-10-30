@@ -14,8 +14,9 @@ pub const CORE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/core/201
 /// XML namespace of the 3MF slice extension.
 pub const SLICE_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/slice/2015/07";
 
-/// XML namespace of the 3MF production extension. Only detected (to refuse
-/// split-part documents cleanly); not implemented.
+/// XML namespace of the 3MF production extension. Only its `p:path` on
+/// components and build items is read: it points at the model part that
+/// defines the referenced object.
 pub const PRODUCTION_NS: &str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
 
 /// XML namespace of OPC relationship documents.

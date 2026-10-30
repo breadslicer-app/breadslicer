@@ -128,6 +128,7 @@ fn write_clean_3mf(path: &Path) {
             object_id: ResourceId::new(1).expect("valid id"),
             transform: None,
             partnumber: None,
+            path: None,
         }],
         ..ModelDocument::default()
     };

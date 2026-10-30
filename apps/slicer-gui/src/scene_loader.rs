@@ -736,6 +736,11 @@ pub(crate) fn describe_threemf_warning(warning: &LoadThreeMfWarning) -> String {
         LoadThreeMfWarning::DeclaredFacetNormalsMalformed { part } => {
             format!("ignored the malformed declared-facet-normals part '{part}'")
         }
+        LoadThreeMfWarning::UntypedPartsSkipped { parts } => format!(
+            "skipped {} package part(s) with no content type: {}",
+            parts.len(),
+            parts.join(", "),
+        ),
     }
 }
 
@@ -843,6 +848,20 @@ mod scene_loader_tests {
             }),
             "ignored the malformed declared-facet-normals part \
              '/Metadata/declared-facet-normals/x.bin'",
+        );
+    }
+
+    #[test]
+    fn the_untyped_parts_warning_lists_the_parts() {
+        assert_eq!(
+            describe_threemf_warning(&LoadThreeMfWarning::UntypedPartsSkipped {
+                parts: vec![
+                    "/Metadata/project_settings.config".to_string(),
+                    "/Auxiliaries/Model Pictures/a.webp".to_string(),
+                ],
+            }),
+            "skipped 2 package part(s) with no content type: \
+             /Metadata/project_settings.config, /Auxiliaries/Model Pictures/a.webp",
         );
     }
 

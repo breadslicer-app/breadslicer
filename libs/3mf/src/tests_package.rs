@@ -1181,25 +1181,102 @@ mod error_tests {
     }
 
     #[test]
-    fn part_without_content_type_is_rejected() {
-        // Hand-build an archive whose content-types map does not cover the
-        // stored part.
-        let mut cursor = Cursor::new(Vec::new());
-        let mut archive = zip::write::ZipWriter::new(&mut cursor);
-        let options = zip::write::SimpleFileOptions::default();
-        archive.start_file("[Content_Types].xml", options).unwrap();
-        archive
-            .write_all(
-                br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#,
-            )
-            .unwrap();
-        archive.start_file("3D/3dmodel.model", options).unwrap();
-        archive.write_all(b"<model/>").unwrap();
-        archive.finish().unwrap();
-        let err = Package::read_from(Cursor::new(cursor.into_inner())).unwrap_err();
-        assert!(
-            matches!(err, PackageReadError::PartWithoutContentType { part } if part == "/3D/3dmodel.model"),
+    fn an_untyped_start_part_is_rejected() {
+        // The content-types map covers the relationships but not the model.
+        let content_types = content_types_part(
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
         );
+        let bytes = opc_package_bytes(&content_types, MINIMAL_RELS, Default::default());
+        let package = Package::read_from(Cursor::new(bytes)).expect("the package reads");
+        assert_eq!(package.untyped_parts(), [part("/3D/3dmodel.model")]);
+        let err = package.start_part().unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::PartWithoutContentType { part } if part == "/3D/3dmodel.model"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn an_untyped_start_part_is_named_as_the_archive_spells_it() {
+        let content_types = content_types_part(
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
+        );
+        let rels = MINIMAL_RELS.replace("/3D/3dmodel.model", "/3d/3DMODEL.model");
+        let bytes = opc_package_bytes(&content_types, &rels, Default::default());
+        let package = Package::read_from(Cursor::new(bytes)).expect("the package reads");
+        let err = package.start_part().unwrap_err();
+        assert!(
+            matches!(&err, PackageReadError::PartWithoutContentType { part } if part == "/3D/3dmodel.model"),
+            "{err:?}",
+        );
+    }
+
+    #[test]
+    fn untyped_parts_are_skipped_and_named_in_archive_order() {
+        // As an FDM slicer writes it: settings and pictures with no type next
+        // to a typed model.
+        let content_types = content_types_part(
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/>"#,
+        );
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", MINIMAL_RELS.as_bytes()),
+            ("Metadata/project_settings.config", b"{}"),
+            ("3D/3dmodel.model", b"<model/>"),
+            ("Metadata/plate_1.png", b"png"),
+            ("Auxiliaries/Model Pictures/photo.webp", b"webp"),
+            ("Metadata/model_settings.config", b"<config/>"),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("the package reads");
+        assert_eq!(
+            package.untyped_parts(),
+            [
+                part("/Metadata/project_settings.config"),
+                part("/Auxiliaries/Model Pictures/photo.webp"),
+                part("/Metadata/model_settings.config"),
+            ],
+        );
+        let names: Vec<_> = package.part_names().cloned().collect();
+        assert_eq!(
+            names,
+            [part("/3D/3dmodel.model"), part("/Metadata/plate_1.png")]
+        );
+        let start = package.start_part().expect("the start part resolves");
+        assert_eq!(package.part_data(&start), Some(&b"<model/>"[..]));
+        assert_eq!(
+            package.part_data(&part("/Metadata/project_settings.config")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_relationship_from_an_untyped_part_is_kept() {
+        let content_types = content_types_part(
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>"#,
+        );
+        let bytes = stored_archive(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", MINIMAL_RELS.as_bytes()),
+            ("3D/3dmodel.model", b"<model/>"),
+            ("Metadata/notes.config", b"notes"),
+            ("Metadata/_rels/notes.config.rels", MINIMAL_RELS.as_bytes()),
+        ]);
+        let package = Package::read_from(Cursor::new(bytes)).expect("the package reads");
+        assert_eq!(package.untyped_parts(), [part("/Metadata/notes.config")]);
+        assert_eq!(
+            package
+                .part_relationships(&part("/Metadata/notes.config"))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_package_built_in_memory_has_no_untyped_parts() {
+        assert!(sample_package().untyped_parts().is_empty());
+        let reread = Package::read_from(Cursor::new(write_to_bytes(&sample_package())))
+            .expect("the written package reads");
+        assert!(reread.untyped_parts().is_empty());
     }
 
     #[test]
@@ -1363,18 +1440,18 @@ mod error_tests {
     }
 
     #[test]
-    fn a_part_without_an_extension_or_an_override_is_rejected() {
+    fn a_part_without_an_extension_or_an_override_is_skipped() {
         let content_types =
             content_types_part(r#"<Default Extension="txt" ContentType="text/plain"/>"#);
         let bytes = stored_archive(&[
             ("[Content_Types].xml", content_types.as_bytes()),
             ("LICENSE", b"text"),
+            ("README.txt", b"text"),
         ]);
-        let err = Package::read_from(Cursor::new(bytes)).unwrap_err();
-        assert!(
-            matches!(&err, PackageReadError::PartWithoutContentType { part } if part == "/LICENSE"),
-            "{err:?}",
-        );
+        let package = Package::read_from(Cursor::new(bytes)).expect("the package reads");
+        assert_eq!(package.untyped_parts(), [part("/LICENSE")]);
+        let names: Vec<_> = package.part_names().cloned().collect();
+        assert_eq!(names, [part("/README.txt")]);
     }
 
     #[test]

@@ -168,6 +168,10 @@ pub struct MeshData {
 pub struct Component {
     pub object_id: ResourceId,
     pub transform: Option<Matrix3D>,
+    /// The production extension's `p:path`: the absolute name of the model
+    /// part that defines `object_id`, as written. `None` when the object is in
+    /// this document.
+    pub path: Option<String>,
 }
 
 /// The function of an object in the model.
@@ -235,6 +239,10 @@ pub struct BuildItem {
     pub object_id: ResourceId,
     pub transform: Option<Matrix3D>,
     pub partnumber: Option<String>,
+    /// The production extension's `p:path`: the absolute name of the model
+    /// part that defines `object_id`, as written. `None` when the object is in
+    /// this document.
+    pub path: Option<String>,
 }
 
 /// A parsed 3D Model part.

@@ -4,16 +4,16 @@
  */
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-use std::path::{Component, PathBuf};
+use std::path::Component;
 
 use tempfile::tempdir;
 
 use super::{
-    APP_ID, all_app_dirs, bundled_data_dirs, bundled_data_dirs_from, home_dir, migrate_dir,
-    project_dirs,
+    APP_ID, all_app_dirs, bundled_data_dirs, bundled_data_dirs_from, dev_assets_dir, home_dir,
+    migrate_dir, project_dirs,
 };
 
 #[cfg(target_os = "linux")]
@@ -94,7 +94,7 @@ fn bundled_data_dirs_from_put_the_source_tree_root_last() {
     let dev = tempdir().unwrap();
     let roots = vec![first.path().to_path_buf(), second.path().to_path_buf()];
     assert_eq!(
-        bundled_data_dirs_from(roots, dev.path().to_path_buf()),
+        bundled_data_dirs_from(roots, Some(dev.path().to_path_buf())),
         [first.path(), second.path(), dev.path()],
     );
 }
@@ -103,8 +103,45 @@ fn bundled_data_dirs_from_put_the_source_tree_root_last() {
 fn bundled_data_dirs_from_leave_out_a_missing_source_tree_root() {
     let installed = tempdir().unwrap();
     let roots = vec![installed.path().to_path_buf()];
-    let missing = installed.path().join("assets");
-    assert_eq!(bundled_data_dirs_from(roots, missing), [installed.path()]);
+    assert_eq!(bundled_data_dirs_from(roots, None), [installed.path()]);
+}
+
+#[test]
+fn dev_assets_dir_walks_up_to_the_tree_with_profiles() {
+    let tree = tempdir().unwrap();
+    fs::create_dir_all(tree.path().join("assets/profiles")).unwrap();
+    let nested = tree.path().join("libs/sc-geom/support-gen-df");
+    fs::create_dir_all(&nested).unwrap();
+    assert_eq!(
+        dev_assets_dir(Some(nested)),
+        Some(tree.path().join("assets"))
+    );
+}
+
+#[test]
+fn dev_assets_dir_skips_an_assets_folder_without_profiles() {
+    let tree = tempdir().unwrap();
+    fs::create_dir_all(tree.path().join("assets/profiles")).unwrap();
+    let app = tree.path().join("apps/icon-gen");
+    fs::create_dir_all(app.join("assets")).unwrap();
+    assert_eq!(dev_assets_dir(Some(app)), Some(tree.path().join("assets")));
+}
+
+#[test]
+fn dev_assets_dir_is_none_outside_cargo() {
+    assert_eq!(dev_assets_dir(None), None);
+}
+
+#[test]
+fn dev_assets_dir_is_none_for_a_deleted_tree() {
+    let tree = tempdir().unwrap();
+    let gone = tree.path().join("worktrees/deleted/apps/slicer-gui");
+    assert_eq!(dev_assets_dir(Some(gone)), None);
+}
+
+#[test]
+fn dev_assets_dir_ignores_a_relative_manifest_dir() {
+    assert_eq!(dev_assets_dir(Some(PathBuf::from("libs/app-paths"))), None);
 }
 
 #[test]
