@@ -123,6 +123,9 @@ impl ViewportController {
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
+        // A new window starts with the projection that the user last chose.
+        let orthographic = bus.snapshot().orthographic_view;
+        ui.set_orthographic_view(orthographic);
         Self {
             ui: ui.as_weak(),
             session: SessionState::new(
@@ -133,7 +136,7 @@ impl ViewportController {
                 pending_load,
                 dialogs,
             ),
-            camera: CameraController::new(),
+            camera: CameraController::new(orthographic),
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
@@ -168,7 +171,7 @@ impl ViewportController {
                 pending_load,
                 dialogs,
             ),
-            camera: CameraController::new(),
+            camera: CameraController::new(false),
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
             slice_view_key: Cell::new(None),
@@ -571,9 +574,6 @@ impl ViewportController {
         self.mirror_modal_to_ui();
         self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_orthographic_view(false);
-        }
-        if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
             self.refresh_object_list_on(&ui);
             ui.set_selected_object_index(-1);
@@ -605,9 +605,6 @@ impl ViewportController {
     /// and held-arrow bitset.
     fn on_scene_cleared(&self) {
         self.camera.reset();
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_orthographic_view(false);
-        }
         self.render.set_frame(FrameState::default());
         self.input.reset();
         self.mirror_modal_to_ui();
@@ -816,14 +813,22 @@ impl ViewportController {
         }
     }
 
-    pub(crate) fn on_toggle_projection(&self) {
-        if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
-            cam.orthographic = !cam.orthographic;
-            if let Some(ui) = self.ui.upgrade() {
-                ui.set_orthographic_view(cam.orthographic);
-            }
-            self.mark_dirty();
+    /// Switches between the perspective and the orthographic view. The
+    /// projection outlives the scene: loading or closing one keeps it. Returns
+    /// whether the view is now orthographic, for the caller to store.
+    pub(crate) fn on_toggle_projection(&self) -> bool {
+        let orthographic = self.camera.toggle_projection();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_orthographic_view(orthographic);
         }
+        self.mark_dirty();
+        orthographic
+    }
+
+    /// Returns whether the view is orthographic.
+    #[cfg(test)]
+    pub(crate) fn orthographic_view(&self) -> bool {
+        self.camera.orthographic()
     }
 
     pub(crate) fn on_frame_selected(&self) {
@@ -2432,6 +2437,24 @@ mod selection_tests {
             g.add_child(root, leaf).expect("attach leaf");
         }
         g
+    }
+
+    #[test]
+    fn the_projection_survives_opening_and_closing_a_scene() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.frame_camera_for_test();
+        assert!(ctrl.on_toggle_projection());
+        for event in [SceneEvent::Installed, SceneEvent::Cleared] {
+            ctrl.handle_scene_event(event);
+            ctrl.frame_camera_for_test();
+            assert!(ctrl.orthographic_view(), "{event:?}");
+            let camera = ctrl.camera.camera_cell().borrow().clone().unwrap();
+            assert!(camera.orthographic, "{event:?}");
+        }
+        assert!(!ctrl.on_toggle_projection());
+        ctrl.handle_scene_event(SceneEvent::Installed);
+        ctrl.frame_camera_for_test();
+        assert!(!ctrl.orthographic_view());
     }
 
     #[test]

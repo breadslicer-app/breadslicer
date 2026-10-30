@@ -7,17 +7,20 @@
 //! which rings are outer contours and which are holes nested inside
 //! them.
 //!
-//! Inputs are assumed to be geometrically valid in the sense a
-//! manifold-mesh slice guarantees: every pair of rings either nests
-//! cleanly (one strictly contains the other) or is disjoint. Rings
-//! that overlap but neither contain the other would break the
-//! containment-tree assumption; the slicer's upstream contract rules
-//! that case out.
+//! A ring's facing says which side of it is solid: the slicer measures
+//! it from the faces the ring cuts (a validated mesh is consistently
+//! oriented). A ring with its solid inside is an outer, one with its
+//! solid outside a hole, attached to the smallest outer that contains
+//! it. Rings of one shell can overlap without either containing the
+//! other, as where a posed mesh runs through itself: both stay outers,
+//! and the non-zero raster unites them.
 //!
-//! Depth is the number of other rings that contain a representative
-//! point of the ring being measured. Even depth means outer; odd
-//! depth means hole. The convention falls out of the even-odd
-//! point-in-polygon rule applied to nested rings.
+//! A ring whose facing is unknown (zero) falls back to containment
+//! parity, which assumes the rings nest cleanly or are disjoint: depth
+//! is the number of other rings that contain a representative point of
+//! the ring, even depth means outer and odd depth means hole. For
+//! cleanly nested rings of an outward-facing shell, facing and parity
+//! agree.
 
 use crate::contour::{ClosedRing, Polygon};
 use crate::geom2d::Point2D;
@@ -91,33 +94,39 @@ pub(crate) struct RingGroup {
     pub hole_indices: Vec<usize>,
 }
 
-/// Cluster `rings` into outer/hole groups by containment depth. Rings
-/// at even depth are outer contours; rings at odd depth are holes
-/// attached to the deepest enclosing outer (which, for cleanly nested
-/// input, is the outer at depth `depth - 1`).
+/// Cluster CCW `rings` into outer/hole groups. `facing[i]` is positive
+/// when ring `i`'s solid lies inside it (an outer), negative when it
+/// lies outside (a hole), and zero when unknown, which falls back to
+/// containment parity (see the module docs). Each hole attaches to the
+/// smallest outer whose ring contains it.
 ///
-/// The returned vector lists one [`RingGroup`] per outer ring in the
-/// order outers appear in `rings`. Hole indices within a group keep
-/// the order they appear in `rings`.
-pub(crate) fn group_rings(rings: &[ClosedRing]) -> Vec<RingGroup> {
+/// Returns 1 [`RingGroup`] per outer ring, in the order outers appear
+/// in `rings`, with hole indices in the order they appear in `rings`;
+/// then the holes no outer contains, in order.
+pub(crate) fn group_rings(rings: &[ClosedRing], facing: &[f64]) -> (Vec<RingGroup>, Vec<usize>) {
     let n = rings.len();
+    debug_assert_eq!(facing.len(), n, "1 facing per ring");
     if n == 0 {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let reps: Vec<Point2D> = rings.iter().map(ring_representative).collect();
-    let depths: Vec<usize> = (0..n)
+    let is_outer: Vec<bool> = (0..n)
         .map(|i| {
-            (0..n)
+            if facing[i] != 0.0 {
+                return facing[i] > 0.0;
+            }
+            let depth = (0..n)
                 .filter(|&j| j != i && point_in_ring(reps[i], &rings[j]))
-                .count()
+                .count();
+            depth.is_multiple_of(2)
         })
         .collect();
 
     let mut groups: Vec<RingGroup> = Vec::new();
     let mut outer_to_group: Vec<Option<usize>> = vec![None; n];
     for i in 0..n {
-        if depths[i].is_multiple_of(2) {
+        if is_outer[i] {
             outer_to_group[i] = Some(groups.len());
             groups.push(RingGroup {
                 outer_idx: i,
@@ -125,24 +134,28 @@ pub(crate) fn group_rings(rings: &[ClosedRing]) -> Vec<RingGroup> {
             });
         }
     }
+    let mut orphans = Vec::new();
     for i in 0..n {
-        if !depths[i].is_multiple_of(2) {
+        if !is_outer[i] {
             let parent = (0..n)
-                .filter(|&j| {
-                    j != i && depths[j].is_multiple_of(2) && point_in_ring(reps[i], &rings[j])
-                })
-                .max_by_key(|&j| depths[j]);
-            if let Some(p) = parent
-                && let Some(g) = outer_to_group[p]
-            {
-                groups[g].hole_indices.push(i);
+                .filter(|&j| is_outer[j] && point_in_ring(reps[i], &rings[j]))
+                .min_by(|&a, &b| {
+                    rings[a]
+                        .signed_area()
+                        .abs()
+                        .total_cmp(&rings[b].signed_area().abs())
+                });
+            match parent.and_then(|p| outer_to_group[p]) {
+                Some(g) => groups[g].hole_indices.push(i),
+                None => orphans.push(i),
             }
         }
     }
-    groups
+    (groups, orphans)
 }
 
-/// Assemble closed CCW rings into outer-CCW + holes-CW polygons.
+/// Assemble closed CCW rings into outer-CCW + holes-CW polygons by
+/// containment parity: [`group_by_facing`] with every facing unknown.
 /// Outer rings keep their CCW vertex order; hole rings have their
 /// vertex order reversed so they end up CW, matching the [`Polygon`]
 /// invariant established at construction by
@@ -151,10 +164,21 @@ pub(crate) fn group_rings(rings: &[ClosedRing]) -> Vec<RingGroup> {
 /// Precondition: every input ring has strictly positive signed area
 /// (CCW), as produced by the stitcher's `normalise_to_ccw` pass.
 /// Rings whose containment chain has no parent at the expected even
-/// depth (a case ruled out for manifold-mesh input) are silently
+/// depth (a case ruled out for cleanly nested input) are silently
 /// dropped.
 pub fn group_into_polygons(rings: Vec<ClosedRing>) -> Vec<Polygon> {
-    let groups = group_rings(&rings);
+    let facing = vec![0.0; rings.len()];
+    group_by_facing(rings, &facing).0
+}
+
+/// Assemble closed CCW rings into outer-CCW + holes-CW polygons, each
+/// ring an outer or a hole by its facing (see [`group_rings`]). Returns
+/// the polygons, then the holes no outer contains, still CCW.
+pub(crate) fn group_by_facing(
+    rings: Vec<ClosedRing>,
+    facing: &[f64],
+) -> (Vec<Polygon>, Vec<ClosedRing>) {
+    let (groups, orphans) = group_rings(&rings, facing);
     let mut taken: Vec<Option<ClosedRing>> = rings.into_iter().map(Some).collect();
     let mut polygons = Vec::with_capacity(groups.len());
     for group in groups {
@@ -170,7 +194,11 @@ pub fn group_into_polygons(rings: Vec<ClosedRing>) -> Vec<Polygon> {
             .collect();
         polygons.push(Polygon::new_unchecked(outer, holes));
     }
-    polygons
+    let orphans = orphans
+        .into_iter()
+        .map(|idx| taken[idx].take().unwrap())
+        .collect();
+    (polygons, orphans)
 }
 
 #[cfg(test)]
@@ -179,6 +207,11 @@ mod grouping_tests {
 
     fn p(x: f64, y: f64) -> Point2D {
         Point2D::new(x, y)
+    }
+
+    /// [`group_rings`] by containment parity alone, without orphans.
+    fn parity_groups(rings: &[ClosedRing]) -> Vec<RingGroup> {
+        group_rings(rings, &vec![0.0; rings.len()]).0
     }
 
     fn ccw_square(cx: f64, cy: f64, half: f64) -> ClosedRing {
@@ -252,14 +285,14 @@ mod grouping_tests {
 
     #[test]
     fn group_rings_returns_empty_for_empty_input() {
-        let groups = group_rings(&[]);
+        let groups = parity_groups(&[]);
         assert!(groups.is_empty());
     }
 
     #[test]
     fn group_rings_single_ring_is_one_outer_with_no_holes() {
         let rings = vec![ccw_square(0.0, 0.0, 1.0)];
-        let groups = group_rings(&rings);
+        let groups = parity_groups(&rings);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].outer_idx, 0);
         assert!(groups[0].hole_indices.is_empty());
@@ -268,7 +301,7 @@ mod grouping_tests {
     #[test]
     fn group_rings_two_disjoint_rings_become_two_outers() {
         let rings = vec![ccw_square(0.0, 0.0, 1.0), ccw_square(5.0, 5.0, 1.0)];
-        let groups = group_rings(&rings);
+        let groups = parity_groups(&rings);
         assert_eq!(groups.len(), 2);
         assert!(groups.iter().all(|g| g.hole_indices.is_empty()));
         let outer_indices: Vec<_> = groups.iter().map(|g| g.outer_idx).collect();
@@ -278,7 +311,7 @@ mod grouping_tests {
     #[test]
     fn group_rings_nested_pair_yields_one_outer_with_one_hole() {
         let rings = vec![ccw_square(0.0, 0.0, 2.0), ccw_square(0.0, 0.0, 0.5)];
-        let groups = group_rings(&rings);
+        let groups = parity_groups(&rings);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].outer_idx, 0);
         assert_eq!(groups[0].hole_indices, vec![1]);
@@ -294,7 +327,7 @@ mod grouping_tests {
             ccw_square(0.0, 0.0, 2.0),
             ccw_square(0.0, 0.0, 0.5),
         ];
-        let groups = group_rings(&rings);
+        let groups = parity_groups(&rings);
         assert_eq!(groups.len(), 2);
         let group_for_outer = |outer_idx: usize| {
             groups
@@ -316,7 +349,7 @@ mod grouping_tests {
         let b = ccw_square(0.0, 0.0, 5.0);
         let h = ccw_square(0.0, 0.0, 1.0);
         let rings = vec![a, a_hole, b, h];
-        let groups = group_rings(&rings);
+        let groups = parity_groups(&rings);
         assert_eq!(groups.len(), 2);
         let group_a = groups
             .iter()
@@ -328,6 +361,60 @@ mod grouping_tests {
             .expect("group for outer B");
         assert_eq!(group_a.hole_indices, vec![1]);
         assert_eq!(group_b.hole_indices, vec![3]);
+    }
+
+    #[test]
+    fn facing_keeps_overlapping_solids_as_outers() {
+        // Two solid squares of one shell that cross: parity makes the
+        // second a hole of the first, facing keeps both solid.
+        let rings = vec![ccw_square(0.0, 0.0, 1.0), ccw_square(0.5, 0.5, 1.0)];
+        assert_eq!(parity_groups(&rings).len(), 1);
+        let (groups, orphans) = group_rings(&rings, &[1.0, 1.0]);
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().all(|g| g.hole_indices.is_empty()));
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn facing_keeps_a_solid_inside_a_solid_as_an_outer() {
+        let rings = vec![ccw_square(0.0, 0.0, 2.0), ccw_square(0.0, 0.0, 0.5)];
+        let (groups, _) = group_rings(&rings, &[1.0, 1.0]);
+        let outers: Vec<_> = groups.iter().map(|g| g.outer_idx).collect();
+        assert_eq!(outers, vec![0, 1]);
+    }
+
+    #[test]
+    fn a_hole_attaches_to_the_smallest_outer_containing_it() {
+        // A big solid, a smaller solid overlapping it, and a hole inside
+        // both: the hole belongs to the smaller one.
+        let rings = vec![
+            ccw_square(0.0, 0.0, 4.0),
+            ccw_square(1.0, 0.0, 2.0),
+            ccw_square(1.0, 0.0, 0.5),
+        ];
+        let (groups, orphans) = group_rings(&rings, &[1.0, 1.0, -1.0]);
+        assert_eq!(groups[0].hole_indices, Vec::<usize>::new());
+        assert_eq!(groups[1].hole_indices, vec![2]);
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn a_hole_no_outer_contains_is_an_orphan() {
+        let rings = vec![ccw_square(0.0, 0.0, 1.0), ccw_square(5.0, 0.0, 1.0)];
+        let (groups, orphans) = group_rings(&rings, &[1.0, -1.0]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(orphans, vec![1]);
+        let (polygons, orphan_rings) = group_by_facing(rings.clone(), &[1.0, -1.0]);
+        assert_eq!(polygons.len(), 1);
+        assert_eq!(orphan_rings, vec![rings[1].clone()], "orphans stay CCW");
+    }
+
+    #[test]
+    fn unknown_facing_falls_back_to_parity() {
+        let rings = vec![ccw_square(0.0, 0.0, 2.0), ccw_square(0.0, 0.0, 0.5)];
+        let (groups, _) = group_rings(&rings, &[1.0, 0.0]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].hole_indices, vec![1]);
     }
 
     #[test]

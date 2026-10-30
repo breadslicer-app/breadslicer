@@ -216,6 +216,7 @@ mod default_envelope_tests {
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
             PreferencesChange::FrameRate,
+            PreferencesChange::Projection,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,
