@@ -24,7 +24,7 @@ use quick_xml::writer::Writer;
 use rayon::prelude::*;
 
 use crate::error::ModelWriteError;
-use crate::names::{CORE_NS, SLICE_NS};
+use crate::names::{CORE_NS, PRODUCTION_NS, SLICE_NS};
 
 use super::slice::{MeshResolution, Slice, SliceStack, SliceStackContent};
 use super::types::{
@@ -47,9 +47,16 @@ pub fn write_model(
     let mut writer = Writer::new(output);
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
 
+    let has_production_paths = document.build.iter().any(|i| i.path.is_some())
+        || document.objects.iter().any(|o| match &o.payload {
+            ObjectPayload::Components(components) => components.iter().any(|c| c.path.is_some()),
+            ObjectPayload::Mesh(_) => false,
+        });
+
     let mut model = BytesStart::new("model");
     model.push_attribute(("unit", document.unit.as_str()));
     model.push_attribute(("xmlns", CORE_NS));
+    let mut required = Vec::new();
     if has_slice_content {
         model.push_attribute(("xmlns:s", SLICE_NS));
         let any_lowres = document
@@ -60,10 +67,18 @@ pub fn write_model(
         // core-only consumers, so the extension is only recommended;
         // a lowres stand-in makes slice support mandatory.
         if any_lowres {
-            model.push_attribute(("requiredextensions", "s"));
+            required.push("s");
         } else {
             model.push_attribute(("recommendedextensions", "s"));
         }
+    }
+    // Without the production extension the referenced objects are missing.
+    if has_production_paths {
+        model.push_attribute(("xmlns:p", PRODUCTION_NS));
+        required.push("p");
+    }
+    if !required.is_empty() {
+        model.push_attribute(("requiredextensions", required.join(" ").as_str()));
     }
     writer.write_event(Event::Start(model))?;
 
@@ -459,6 +474,9 @@ fn write_object<W: Write>(
                         transform_attribute(transform, target_sliced).as_str(),
                     ));
                 }
+                if let Some(path) = &component.path {
+                    c.push_attribute(("p:path", path.as_str()));
+                }
                 writer.write_event(Event::Empty(c))?;
             }
             writer.write_event(Event::End(BytesEnd::new("components")))?;
@@ -499,6 +517,9 @@ fn write_item<W: Write>(
     }
     if let Some(partnumber) = &item.partnumber {
         e.push_attribute(("partnumber", partnumber.as_str()));
+    }
+    if let Some(path) = &item.path {
+        e.push_attribute(("p:path", path.as_str()));
     }
     writer.write_event(Event::Empty(e))?;
     Ok(())

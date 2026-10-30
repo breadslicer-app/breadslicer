@@ -57,11 +57,15 @@ are `3mf`, `svg-combined`, `svg-per-layer` and `png-per-layer`.
 
 The layer height comes from the resolved material profile. `--layer-height`
 and `--first-layer-height` override it in millimetres. `--aa` sets per-pixel
-anti-aliasing to 0 (off), 2, 4 or 8; it only affects raster output.
+anti-aliasing to `off` (the default), `x2`, `x4` or `x8`; it only affects
+raster output. The layer count stops at the last layer cut below the scene's
+top, so no empty layer is left at the end.
 
 By default the scene is auto-placed: centred on the build plate with its
 lowest point at Z = 0. `--no-auto-place` slices at the file's own coordinates
-instead. A multi-model scene keeps its relative layout either way.
+instead. A multi-model scene keeps its relative layout either way. What lies
+past the plate's edges or under it is not printed: `slice` warns about it, and
+`review` tells which part and on which layers.
 
 Slicing refuses a mesh that is not a closed manifold. `--repair` runs the same
 repairs as `fix` first; `--verbose` lists every offending face instead of a

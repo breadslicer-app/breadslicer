@@ -12,9 +12,13 @@
 //! - Slice-extension content (slicestack resources, the object attributes) is
 //!   parsed into the document model.
 //! - Elements and attributes from namespaces this crate does not know are
-//!   ignored, as the spec instructs consumers to do, with 1 exception:
-//!   production-extension `path` attributes are refused, because ignoring them
-//!   would silently load an incomplete scene.
+//!   ignored, as the spec instructs consumers to do.
+//! - The production extension's `p:path` is read on `<component>` and `<item>`,
+//!   where it names the model part that defines the referenced object; such a
+//!   reference is not checked against this document. Resolving it is the
+//!   caller's job. On any other element `p:path` is refused, because ignoring it
+//!   would silently load an incomplete scene. Its other attributes (`p:UUID`)
+//!   are ignored.
 //! - `requiredextensions` prefixes are resolved against the xmlns declarations
 //!   on `<model>` and checked against the crate's supported set; unsupported
 //!   ones are refused by namespace name.
@@ -53,7 +57,7 @@ use super::types::{
 
 /// Extension namespaces this parser fully understands. The core namespace is
 /// implied and never listed in `requiredextensions`.
-const SUPPORTED_EXTENSION_NAMESPACES: &[&str] = &[SLICE_NS];
+const SUPPORTED_EXTENSION_NAMESPACES: &[&str] = &[SLICE_NS, PRODUCTION_NS];
 
 type Reader<'a> = NsReader<&'a [u8]>;
 
@@ -106,12 +110,13 @@ fn is_slice_ns(result: &ResolveResult<'_>) -> bool {
 }
 
 /// The attributes of one element, split into locally-relevant ones
-/// (unprefixed), slice-extension ones, and the xmlns declarations. Attributes
-/// from other foreign namespaces are dropped here, after the production-path
-/// guard.
+/// (unprefixed), slice-extension ones, the production extension's `p:path`,
+/// and the xmlns declarations. Attributes from other foreign namespaces are
+/// dropped here.
 struct ElementAttributes {
     local: BTreeMap<Vec<u8>, String>,
     slice: BTreeMap<Vec<u8>, String>,
+    production_path: Option<String>,
     xmlns: BTreeMap<String, String>,
 }
 
@@ -133,12 +138,28 @@ impl ElementAttributes {
     }
 }
 
+/// Collects the attributes of an element on which `p:path` has no meaning, and
+/// refuses one.
 fn collect_attributes(
+    reader: &Reader<'_>,
+    e: &BytesStart<'_>,
+) -> Result<ElementAttributes, ModelParseError> {
+    let attributes = collect_reference_attributes(reader, e)?;
+    if attributes.production_path.is_some() {
+        return Err(ModelParseError::ProductionPathUnsupported);
+    }
+    Ok(attributes)
+}
+
+/// Collects the attributes of a `<component>` or `<item>`, the elements on
+/// which the production extension allows `p:path`.
+fn collect_reference_attributes(
     reader: &Reader<'_>,
     e: &BytesStart<'_>,
 ) -> Result<ElementAttributes, ModelParseError> {
     let mut local = BTreeMap::new();
     let mut slice = BTreeMap::new();
+    let mut production_path = None;
     let mut xmlns = BTreeMap::new();
     for attr in e.attributes() {
         let attr = attr?;
@@ -168,7 +189,8 @@ fn collect_attributes(
                 );
             }
             _ if is_production_ns(&ns) && local_name.as_ref() == b"path" => {
-                return Err(ModelParseError::ProductionPathUnsupported);
+                production_path =
+                    Some(attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned());
             }
             _ => {}
         }
@@ -176,6 +198,7 @@ fn collect_attributes(
     Ok(ElementAttributes {
         local,
         slice,
+        production_path,
         xmlns,
     })
 }
@@ -1148,20 +1171,23 @@ fn parse_component_attributes(
     if !(is_core_ns(&ns) && local.as_ref() == b"component") {
         return Ok(None);
     }
-    let attributes = collect_attributes(reader, e)?;
+    let attributes = collect_reference_attributes(reader, e)?;
     let object_id = parse_resource_id(attributes.require("component", "objectid")?)?;
-    if declared.object_type(object_id).is_none() {
-        return Err(ModelParseError::UnknownObjectReference {
-            id: object_id.get(),
-        });
-    }
     let transform = attributes
         .get("transform")
         .map(parse_transform)
         .transpose()?;
+    let path = attributes.production_path;
+    // An object in another part is checked by whoever resolves the path.
+    if path.is_none() && declared.object_type(object_id).is_none() {
+        return Err(ModelParseError::UnknownObjectReference {
+            id: object_id.get(),
+        });
+    }
     Ok(Some(Component {
         object_id,
         transform,
+        path,
     }))
 }
 
@@ -1206,17 +1232,20 @@ fn parse_item_attributes(
     if !(is_core_ns(&ns) && local.as_ref() == b"item") {
         return Ok(None);
     }
-    let attributes = collect_attributes(reader, e)?;
+    let attributes = collect_reference_attributes(reader, e)?;
     let object_id = parse_resource_id(attributes.require("item", "objectid")?)?;
-    let Some(object_type) = declared.object_type(object_id) else {
-        return Err(ModelParseError::UnknownObjectReference {
-            id: object_id.get(),
-        });
-    };
-    if object_type == ObjectType::Other {
-        return Err(ModelParseError::BuildItemReferencesOtherType {
-            id: object_id.get(),
-        });
+    // An object in another part is checked by whoever resolves the path.
+    if attributes.production_path.is_none() {
+        let Some(object_type) = declared.object_type(object_id) else {
+            return Err(ModelParseError::UnknownObjectReference {
+                id: object_id.get(),
+            });
+        };
+        if object_type == ObjectType::Other {
+            return Err(ModelParseError::BuildItemReferencesOtherType {
+                id: object_id.get(),
+            });
+        }
     }
     let transform = attributes
         .get("transform")
@@ -1226,5 +1255,6 @@ fn parse_item_attributes(
         object_id,
         transform,
         partnumber: attributes.get("partnumber").map(str::to_string),
+        path: attributes.production_path,
     }))
 }
