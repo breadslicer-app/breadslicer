@@ -656,6 +656,7 @@ mod fix_all {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
             },
+            layers: None,
         });
         panel.fills_landed(patches.ids);
         panel.show(outcome);
@@ -819,6 +820,7 @@ mod fix_all {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
             },
+            layers: crate::slice_result::LayerValues::resolve(&printer_profile, &material, None),
         });
         panel.fills_landed(patches.ids);
         panel.show(outcome);

@@ -38,7 +38,9 @@ use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
-use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
+use crate::slice_result::{
+    LayerValues, ReSliceDecision, SliceParams, SliceResult, decide_re_slice, layers_changed,
+};
 use crate::viewport::ViewportController;
 
 /// Why an export produced no file. Its text is in the language in force each
@@ -112,7 +114,9 @@ impl From<UnexportableSlice> for ExportFailure {
 /// `current` is absent while no printer or resin is chosen. The comparison is
 /// the one a Slice press makes, so anything that would re-slice also blocks the
 /// export: the contours on hand would otherwise be written under a program
-/// describing a different print.
+/// describing a different print. The one exception is a profile edited in
+/// place, which the gate does not read from disk: the export itself refuses
+/// layers cut with values the profiles no longer hold (#280).
 pub(crate) fn export_button_enabled(
     held: Option<&SliceParams>,
     current: Option<&SliceParams>,
@@ -121,7 +125,7 @@ pub(crate) fn export_button_enabled(
 ) -> bool {
     format_selected
         && current.is_some_and(|current| {
-            decide_re_slice(held, current, geometry_changed) == ReSliceDecision::Unchanged
+            decide_re_slice(held, current, geometry_changed, false) == ReSliceDecision::Unchanged
         })
 }
 
@@ -175,7 +179,8 @@ fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> 
 }
 
 /// Check that `scene` and the profiles the held slice was cut under still give
-/// its schedule, then prepare its export under those profiles.
+/// its schedule and the values its layers were cut with, then prepare its
+/// export under those profiles.
 fn export_job(
     held: SliceResult,
     scene: &Scene,
@@ -190,6 +195,12 @@ fn export_job(
     let schedule = schedule_for_selection(scene, printer, material, &params)
         .map_err(|err| ExportFailure::Prepare(SliceFailure::from(err)))?;
     if &schedule != held.contours.schedule() {
+        return Err(ExportFailure::Stale);
+    }
+    // A resin edited in place keeps its id; its scale compensation reaches
+    // the layers without moving the schedule.
+    let current = LayerValues::resolve(printer, material, held.params.first_layer_height);
+    if layers_changed(held.layers, current) {
         return Err(ExportFailure::Stale);
     }
     sc_print_glue::export::prepare_export(
@@ -430,7 +441,7 @@ mod export_button_enabled_tests {
 #[cfg(test)]
 mod export_job_tests {
     use sc_print_glue::PlateContours;
-    use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+    use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
     use sc_print_profiles::MaterialProfile;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
     use sc_sl1cer::profile::LayerSchedule;
@@ -527,12 +538,24 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         schedule_for_selection(scene, printer, material, &params).expect("the cube schedules")
     }
 
-    fn held_slice(schedule: LayerSchedule) -> SliceResult {
-        let layers: Vec<ContourLayer> = (0..schedule.total_layers())
+    /// The values these profiles cut a slice's layers with.
+    fn layer_values(printer: &PrinterProfile, material: &EffectiveMaterial) -> LayerValues {
+        LayerValues::resolve(printer, material, None).expect("the layer height resolves")
+    }
+
+    /// The same resin as `MATERIAL_TOML`, with `from` replaced by `to`: a
+    /// resin edited in place, under the same id.
+    fn edited(from: &str, to: &str) -> String {
+        assert!(MATERIAL_TOML.contains(from), "{from}");
+        MATERIAL_TOML.replace(from, to)
+    }
+
+    fn held_slice(schedule: LayerSchedule, layers: Option<LayerValues>) -> SliceResult {
+        let stack: Vec<ContourLayer> = (0..schedule.total_layers())
             .map(|_| ContourLayer::new(0.05, vec![]))
             .collect();
         SliceResult {
-            contours: PlateContours::new(ContourStack::new_unchecked(layers), schedule)
+            contours: PlateContours::new(ContourStack::new_unchecked(stack), schedule)
                 .expect("1 layer for each scheduled layer"),
             token: String::new(),
             params: SliceParams {
@@ -542,6 +565,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
                 aa_level: AaLevel::Off,
                 geometry: SceneRevision::from_top_edit_id(None),
             },
+            layers,
         }
     }
 
@@ -549,11 +573,109 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
     fn a_held_slice_its_profiles_still_give_prepares_a_job() {
         let (printer, material) = profiles(MATERIAL_TOML);
         let scene = cube_scene();
-        let held = held_slice(derived_schedule(&scene, &printer, &material));
+        let held = held_slice(
+            derived_schedule(&scene, &printer, &material),
+            Some(layer_values(&printer, &material)),
+        );
 
         let job = export_job(held, &scene, &printer, &material).expect("the export prepares");
 
         assert_eq!(job.config().printer.identity.name.as_str(), "Mars 5");
+    }
+
+    #[test]
+    fn a_resin_whose_scale_compensation_was_edited_since_the_slice_is_refused() {
+        // 1 % in X and Y moves no layer boundary, so the schedule alone
+        // cannot tell (#280).
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = cube_scene();
+        let held = held_slice(
+            derived_schedule(&scene, &printer, &material),
+            Some(layer_values(&printer, &material)),
+        );
+        let (printer, edited) = profiles(&edited(
+            "scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }",
+            "scale_compensation_pct = { x = 1.0, y = 1.0, z = 0.0 }",
+        ));
+
+        let err = export_job(held, &scene, &printer, &edited)
+            .expect_err("layers cut at the old scale cannot be written");
+
+        assert!(matches!(err, ExportFailure::Stale), "{err}");
+    }
+
+    #[test]
+    fn a_resin_edit_that_does_not_reach_the_layers_keeps_the_slice_exportable() {
+        // Exposures are read at export time; the layers stay as they were cut.
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = cube_scene();
+        let held = held_slice(
+            derived_schedule(&scene, &printer, &material),
+            Some(layer_values(&printer, &material)),
+        );
+        let (printer, edited) = profiles(&edited(
+            "normal_exposure_sec = 2.5",
+            "normal_exposure_sec = 3.1",
+        ));
+
+        export_job(held, &scene, &printer, &edited).expect("the export prepares");
+    }
+
+    #[test]
+    fn a_slice_whose_layer_values_are_unknown_is_refused() {
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = cube_scene();
+        let held = held_slice(derived_schedule(&scene, &printer, &material), None);
+
+        let err = export_job(held, &scene, &printer, &material)
+            .expect_err("a slice that cannot be shown current is not written");
+
+        assert!(matches!(err, ExportFailure::Stale), "{err}");
+    }
+
+    #[test]
+    fn layer_values_match_the_schedule_a_slice_runs_on() {
+        // A thicker first layer off the 0.01 mm z step snaps onto it, as
+        // `slice_plate` snaps it.
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let first = PositiveFiniteMm::new(0.123).expect("valid length");
+        let params = SlicingParams {
+            layer_height_request: None,
+            first_layer_height: Some(first),
+            aa_level: AaLevel::Off,
+        };
+        let schedule = schedule_for_selection(&cube_scene(), &printer, &material, &params)
+            .expect("the cube schedules");
+        let LayerSchedule::Uniform(uniform) = schedule;
+
+        let values =
+            LayerValues::resolve(&printer, &material, Some(first)).expect("the values resolve");
+
+        assert_eq!(values.layer_height, uniform.layer_height());
+        assert_eq!(values.first_layer_height, uniform.first_layer_height());
+        assert_ne!(values.first_layer_height, first);
+    }
+
+    #[test]
+    fn a_layer_height_or_scale_edit_changes_the_layer_values() {
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let before = layer_values(&printer, &material);
+        let (_, thicker) = profiles(&edited(
+            "target_layer_height_mm = 0.05",
+            "target_layer_height_mm = 0.1",
+        ));
+        let (_, scaled) = profiles(&edited(
+            "scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }",
+            "scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.5 }",
+        ));
+        let (_, exposed) = profiles(&edited(
+            "bottom_exposure_sec = 30.0",
+            "bottom_exposure_sec = 25.0",
+        ));
+
+        assert_ne!(layer_values(&printer, &thicker), before);
+        assert_ne!(layer_values(&printer, &scaled), before);
+        assert_eq!(layer_values(&printer, &exposed), before);
     }
 
     #[test]
@@ -564,7 +686,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         let scene = cube_scene();
         let stale = LayerSchedule::uniform(0.1, 0.1, 5).expect("a positive, non-empty schedule");
 
-        let err = export_job(held_slice(stale), &scene, &printer, &material)
+        let err = export_job(held_slice(stale, None), &scene, &printer, &material)
             .expect_err("a mismatched schedule cannot be written");
 
         assert!(matches!(err, ExportFailure::Stale), "{err}");
@@ -576,7 +698,10 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
         // exposures, which this resin carries for no printer.
         let (printer, material) = profiles(UNCALIBRATED_MATERIAL_TOML);
         let scene = cube_scene();
-        let held = held_slice(derived_schedule(&scene, &printer, &material));
+        let held = held_slice(
+            derived_schedule(&scene, &printer, &material),
+            Some(layer_values(&printer, &material)),
+        );
 
         let err = export_job(held, &scene, &printer, &material)
             .expect_err("an unresolvable configuration cannot be written");
@@ -770,6 +895,7 @@ mod prepare_export_tests {
                 aa_level: AaLevel::Off,
                 geometry: document.scene_revision(),
             },
+            layers: None,
         });
     }
 
