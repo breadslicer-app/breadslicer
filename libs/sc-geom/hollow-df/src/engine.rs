@@ -17,6 +17,13 @@
 //!
 //! Differences from DragonFruit's front end, all on purpose:
 //!
+//! - the wall is cut from each voxel's exact distance to the source's
+//!   triangles, measured within the wall plus [`WALL_BAND_MARGIN_VOXELS`] of
+//!   the surface; DragonFruit cuts it from a chamfer distance that runs up to
+//!   12.8 % long and starts half a voxel off the surface, so its wall comes
+//!   out thicker than asked on average and thinner in places; the result's
+//!   smoothing may only add material to that wall, and never seals part of
+//!   the cavity off;
 //! - the voxel size it actually used is reported ([`GridInfo`]), including when
 //!   the resolution bound changed it (DragonFruit clamps to 24..=192 silently);
 //!   the upper bound is a setting ([`GridRequest::max_resolution`]);
@@ -32,6 +39,8 @@
 //!   model;
 //! - the result reports volumes in mm³ from the meshes themselves.
 
+use std::sync::{Arc, Mutex, PoisonError};
+
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
 use crate::drain::{ConvexCutter, CutError, subtract_convex_closed};
@@ -41,6 +50,7 @@ use crate::hollowing::{
 };
 use crate::mesh::{IndexedMesh, Vec3};
 use crate::topology::{EdgeManifoldDefects, edge_manifold_defects};
+use crate::wall::WallDistances;
 
 /// DragonFruit's default voxel size in its Hollow panel.
 pub const DEFAULT_VOXEL_SIZE_MM: f32 = 0.65;
@@ -48,9 +58,13 @@ pub const DEFAULT_VOXEL_SIZE_MM: f32 = 0.65;
 pub const DEFAULT_WALL_THICKNESS_MM: f32 = 2.0;
 /// The finest grid a request may ask for along the model's largest extent.
 pub const RESOLUTION_LIMIT: u16 = 512;
-/// Bytes per grid cell a session holds at its peak (masks, distances, void
-/// labels, the cavity scalar field and its scratch copy).
-pub const BYTES_PER_CELL: usize = 24;
+/// Bytes per grid cell a session holds at its peak (masks, chamfer and exact
+/// distances and the copy a run reads, void labels, the cavity scalar field
+/// and its scratch copy).
+pub const BYTES_PER_CELL: usize = 32;
+/// How far past the wall, in voxels, distances are exact: the cavity
+/// smoothing reads 4.5 voxels on the cavity side of the wall.
+pub const WALL_BAND_MARGIN_VOXELS: f32 = 5.0;
 
 /// How fine a grid to build.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -325,11 +339,26 @@ impl From<Cancelled> for HollowError {
 }
 
 /// A voxelized mesh, ready for any number of previews and applies.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Session {
     inner: HollowSession,
     grid: GridInfo,
     source_volume_mm3: f64,
+    /// The exact wall distances measured so far: the widest band a preview
+    /// or an apply has needed. It only grows; a narrower wall reads it
+    /// clamped, so the result does not depend on what was measured before.
+    wall: Mutex<Option<Arc<WallDistances>>>,
+}
+
+impl Clone for Session {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            grid: self.grid,
+            source_volume_mm3: self.source_volume_mm3,
+            wall: Mutex::new(self.measured_wall()),
+        }
+    }
 }
 
 impl Session {
@@ -384,7 +413,45 @@ impl Session {
             grid: GridInfo::of(&inner.grid(), requested, resolution, bound),
             inner,
             source_volume_mm3,
+            wall: Mutex::new(None),
         })
+    }
+
+    fn measured_wall(&self) -> Option<Arc<WallDistances>> {
+        self.wall
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The wall distances a wall of `wall_mm` reads, in voxels: exact within
+    /// the wall plus [`WALL_BAND_MARGIN_VOXELS`] of the surface. Measured
+    /// once per session and kept: a thinner wall reuses them, a thicker one
+    /// measures only the voxels it adds.
+    fn wall_distances(&self, wall_mm: f32, ctl: Control<'_>) -> Result<Vec<f32>, Cancelled> {
+        ctl.stage(Stage::WallDistance)?;
+        let band = wall_mm.max(0.2) / self.grid.voxel_mm + WALL_BAND_MARGIN_VOXELS;
+        let measured = match self.measured_wall() {
+            Some(known) if known.band() >= band => known,
+            previous => {
+                // Whole voxels, so dragging the wall measures in fewer steps.
+                let measured = Arc::new(WallDistances::measure(
+                    &self.inner,
+                    band.ceil(),
+                    previous.as_deref(),
+                    ctl,
+                )?);
+                let mut slot = self.wall.lock().unwrap_or_else(PoisonError::into_inner);
+                if slot
+                    .as_ref()
+                    .is_none_or(|kept| kept.band() < measured.band())
+                {
+                    *slot = Some(measured.clone());
+                }
+                measured
+            }
+        };
+        Ok(measured.clamped(band))
     }
 
     pub fn grid(&self) -> &GridInfo {
@@ -468,6 +535,7 @@ impl Session {
             preview_voxel_spheres: false,
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
+            exact_wall: true,
         }
     }
 
@@ -505,7 +573,10 @@ impl Session {
         options.preview_cavity_only = true;
         options.preview_surface_only = true;
         let shell_voxels_f = options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm;
-        let outcome = self.inner.run_with(&options, shell_voxels_f, ctl)?;
+        let dist = self.wall_distances(settings.wall_thickness_mm, ctl)?;
+        let outcome = self
+            .inner
+            .run_with_distances(&options, shell_voxels_f, &dist, ctl)?;
         let stats = self.stats(
             settings,
             outcome.report.removed_voxels,
@@ -531,7 +602,9 @@ impl Session {
         ctl: Control<'_>,
     ) -> Result<HollowApplied, HollowError> {
         let options = self.options(settings);
-        let fin = self.inner.final_mesh(&options, ctl)?;
+        let dist = self.wall_distances(settings.wall_thickness_mm, ctl)?;
+        let fin = self.inner.final_mesh_with_distances(&options, &dist, ctl)?;
+        drop(dist);
         if !fin.stabilized {
             return Err(HollowError::NotClosed(edge_manifold_defects(&fin.mesh)));
         }
@@ -540,7 +613,7 @@ impl Session {
         if !drains.is_empty() {
             ctl.stage(Stage::Drains)?;
             let source = self.source_mesh();
-            let source_bvh = Bvh::build(source);
+            let source_bvh = self.inner.source_bvh();
             let cavity_bvh = Bvh::build(&fin.cavity);
             // Every drain is measured before any is cut, so drains do not
             // depend on their order.
@@ -550,7 +623,7 @@ impl Session {
                 let (cutter, report) = drain_cutter(
                     hole,
                     settings.wall_thickness_mm,
-                    (source, &source_bvh),
+                    (source, source_bvh),
                     (&fin.cavity, &cavity_bvh),
                 );
                 cutters.push(report.reaches_cavity.then_some(cutter));
