@@ -56,6 +56,8 @@ fn main() -> Result<()> {
             fix_zero_length_edges,
             fix_flipped_faces,
             fix_collinear_faces,
+            fix_non_manifold_edges,
+            fix_holes,
         } => fix(
             source,
             source_format,
@@ -65,6 +67,8 @@ fn main() -> Result<()> {
                 zero_length_edges: fix_zero_length_edges,
                 flipped_faces: fix_flipped_faces,
                 collinear_faces: fix_collinear_faces,
+                non_manifold_edges: fix_non_manifold_edges,
+                holes: fix_holes,
             },
             &mut std::io::stderr(),
         ),

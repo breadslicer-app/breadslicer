@@ -30,6 +30,8 @@ mod tests_repair;
 mod tests_validated_faces;
 #[cfg(test)]
 mod tests_volume;
+#[cfg(test)]
+mod tests_watertight;
 
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};

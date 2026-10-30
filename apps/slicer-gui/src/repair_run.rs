@@ -400,13 +400,67 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
             let mut removed = 0usize;
             let mut reoriented = 0usize;
             let mut collinear = 0usize;
+            let mut welded = 0usize;
+            let mut separated = 0usize;
+            let mut filled = 0usize;
+            let mut turned_outward = 0usize;
             for fix in &outcome.report.fixes {
                 match fix {
                     MeshFix::RemovedZeroLengthEdgeFace { .. } => removed += 1,
                     MeshFix::FlippedFaceOrientation { .. } => reoriented += 1,
                     MeshFix::RemovedCollinearFaceByMerge { .. }
                     | MeshFix::RemovedCollinearFaceBySplit { .. } => collinear += 1,
+                    MeshFix::WeldedBoundaryVertices { vertices, .. } => welded += vertices,
+                    MeshFix::SplitNonManifoldEdges { edges, .. } => separated += edges,
+                    MeshFix::RemovedUnpairedFaces { faces } => removed += faces,
+                    MeshFix::ReorientedFaces { faces } => reoriented += faces,
+                    MeshFix::FilledHoles { holes, .. } => filled += holes,
+                    MeshFix::TurnedShellsOutward { shells, .. } => turned_outward += shells,
                 }
+            }
+            if filled > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "filled {n} hole",
+                        "filled {n} holes",
+                        filled
+                    )
+                    .to_string(),
+                );
+            }
+            if separated > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "separated parts that touched at {n} edge",
+                        "separated parts that touched at {n} edges",
+                        separated
+                    )
+                    .to_string(),
+                );
+            }
+            if welded > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "welded {n} vertex of a crack",
+                        "welded {n} vertices of cracks",
+                        welded
+                    )
+                    .to_string(),
+                );
+            }
+            if turned_outward > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "turned {n} inside-out part outward",
+                        "turned {n} inside-out parts outward",
+                        turned_outward
+                    )
+                    .to_string(),
+                );
             }
             if removed > 0 {
                 notes.push(
@@ -456,6 +510,17 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
                                 "{n} zero-area face remains",
                                 "{n} zero-area faces remain",
                                 state.zero_area_face_count
+                            )
+                            .to_string(),
+                        );
+                    }
+                    if state.holes_left_open > 0 {
+                        notes.push(
+                            ctr!(
+                                "RepairDialog",
+                                "{n} hole left open: too large to fill on its own",
+                                "{n} holes left open: too large to fill on their own",
+                                state.holes_left_open
                             )
                             .to_string(),
                         );
@@ -583,6 +648,7 @@ mod repair_run_tests {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         };
         assert!(completed.outcomes.iter().all(|o| o.report == clean));
@@ -620,6 +686,7 @@ mod repair_run_tests {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             })
         );
         let names = target_names(&completed.outcomes, &graph);
@@ -803,6 +870,7 @@ mod repair_run_tests {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         )
     }
@@ -844,6 +912,7 @@ mod repair_run_tests {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         )
     }
@@ -884,6 +953,7 @@ mod repair_run_tests {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: false,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         )
     }
@@ -897,6 +967,7 @@ mod repair_run_tests {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: count,
+                holes_left_open: 0,
             }),
         )
     }

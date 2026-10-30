@@ -1832,6 +1832,41 @@ msgid_plural "{n} meshes still have zero-area faces"
 msgstr[0] "{n} malla todavía tiene caras de área cero"
 msgstr[1] "{n} mallas todavía tienen caras de área cero"
 
+#, rust-format
+msgctxt "RepairDialog"
+msgid "filled {n} hole"
+msgid_plural "filled {n} holes"
+msgstr[0] "se tapó {n} agujero"
+msgstr[1] "se taparon {n} agujeros"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "separated parts that touched at {n} edge"
+msgid_plural "separated parts that touched at {n} edges"
+msgstr[0] "se separaron piezas que se tocaban en {n} arista"
+msgstr[1] "se separaron piezas que se tocaban en {n} aristas"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "welded {n} vertex of a crack"
+msgid_plural "welded {n} vertices of cracks"
+msgstr[0] "se soldó {n} vértice de una grieta"
+msgstr[1] "se soldaron {n} vértices de grietas"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "turned {n} inside-out part outward"
+msgid_plural "turned {n} inside-out parts outward"
+msgstr[0] "se dio vuelta {n} pieza que estaba al revés"
+msgstr[1] "se dieron vuelta {n} piezas que estaban al revés"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} hole left open: too large to fill on its own"
+msgid_plural "{n} holes left open: too large to fill on their own"
+msgstr[0] "{n} agujero quedó abierto: es demasiado grande para taparlo solo"
+msgstr[1] "{n} agujeros quedaron abiertos: son demasiado grandes para taparlos solos"
+
 #: src/repair_run.rs:406
 #, rust-format
 msgctxt "RepairDialog"

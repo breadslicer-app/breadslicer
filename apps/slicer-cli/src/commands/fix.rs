@@ -129,7 +129,8 @@ pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut d
 
 /// Renders 1 warning line per target of a
 /// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes) run whose mesh has
-/// faces with zero area after a completed run. Names the target as
+/// faces with zero area after a completed run, and 1 per target with holes
+/// left open because they are too large to fill. Names the target as
 /// [`show_refusal_warnings`] does. Shared between the `fix` subcommand and the
 /// `slice --repair` path.
 pub(crate) fn show_zero_area_warnings(outcomes: &[SceneRepairOutcome], out: &mut dyn Write) {
@@ -139,9 +140,19 @@ pub(crate) fn show_zero_area_warnings(outcomes: &[SceneRepairOutcome], out: &mut
             continue;
         };
         let message = match state.zero_area_face_count {
+            0 => None,
+            1 => Some("1 face with zero area remains".to_string()),
+            count => Some(format!("{count} faces with zero area remain")),
+        };
+        if let Some(message) = message {
+            write_target_warning(out, idx, total, &message);
+        }
+        let message = match state.holes_left_open {
             0 => continue,
-            1 => "1 face with zero area remains".to_string(),
-            count => format!("{count} faces with zero area remain"),
+            1 => "1 hole was left open: it is too large to fill on its own".to_string(),
+            count => {
+                format!("{count} holes were left open: they are too large to fill on their own")
+            }
         };
         write_target_warning(out, idx, total, &message);
     }
@@ -228,6 +239,46 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
                     format_triangle(opposite),
                     format_triangle(first),
                     format_triangle(second)
+                );
+            }
+            MeshFix::WeldedBoundaryVertices {
+                vertices,
+                collapsed_faces,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Welded {vertices} open-boundary vertices (removed {collapsed_faces} collapsed faces)"
+                );
+            }
+            MeshFix::SplitNonManifoldEdges {
+                edges,
+                split_vertices,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Resolved {edges} edges shared by more than 2 faces (added {split_vertices} vertices)"
+                );
+            }
+            MeshFix::RemovedUnpairedFaces { faces } => {
+                let _ = writeln!(out, "\t- Removed {faces} faces left without a partner");
+            }
+            MeshFix::ReorientedFaces { faces } => {
+                let _ = writeln!(out, "\t- Flipped {faces} faces to orient each piece");
+            }
+            MeshFix::FilledHoles {
+                holes,
+                added_faces,
+                largest_hole_edges,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Filled {holes} holes with {added_faces} faces (largest: {largest_hole_edges} edges)"
+                );
+            }
+            MeshFix::TurnedShellsOutward { shells, faces } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Turned {shells} inside-out shells outward ({faces} faces)"
                 );
             }
         }
@@ -337,6 +388,7 @@ mod show_zero_area_warnings_tests {
         outcome(RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count,
+            holes_left_open: 0,
         }))
     }
 

@@ -1246,15 +1246,17 @@ mod fix_tests {
             .assert()
             .success()
             .stderr(predicate::str::contains("Applied fixes"))
-            .stderr(predicate::str::contains("Flipped orientation"))
+            .stderr(predicate::str::contains(
+                "Flipped 1 faces to orient each piece",
+            ))
             .stderr(predicate::str::contains("Sliceable: yes (was no)"));
         assert!(target.exists());
     }
 
     #[test]
-    fn fix_reports_a_mesh_repair_cannot_make_sliceable() {
-        // 2 cubes sharing an edge, from the synthetic repair corpus: no
-        // current pass resolves an edge shared by 4 faces.
+    fn fix_separates_cubes_that_share_an_edge() {
+        // 2 cubes sharing an edge, from the synthetic repair corpus: the edge
+        // has 4 faces until its ends are split.
         let corpus = sc_mesh_fixtures::repair_corpus::repair_corpus();
         let fixture = corpus
             .iter()
@@ -1276,6 +1278,51 @@ mod fix_tests {
             ])
             .assert()
             .success()
+            .stderr(predicate::str::contains(
+                "Resolved 1 edges shared by more than 2 faces (added 2 vertices)",
+            ))
+            .stderr(predicate::str::contains("Sliceable: yes (was no)"));
+    }
+
+    #[test]
+    fn fix_reports_a_mesh_repair_cannot_make_sliceable() {
+        // A flat plate of 2 triangles: closing it would double it, over the
+        // size cap, so its hole is left open.
+        let plate = IndexedMesh::new(
+            None,
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ]
+            .into_iter()
+            .map(Vertex::new)
+            .collect(),
+            [[0, 1, 2], [2, 1, 3]]
+                .into_iter()
+                .map(IndexedTriangle::from_raw_indices)
+                .collect(),
+        );
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("plate.stla");
+        let target = tmp.path().join("fixed.stla");
+        write_stla_to(&source, &plate);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains(
+                "warning: 1 hole was left open: it is too large to fill on its own",
+            ))
             .stderr(predicate::str::contains("Sliceable: no (was no)"));
     }
 
@@ -1327,7 +1374,7 @@ mod fix_tests {
     fn fix_that_repairs_a_face_writes_the_normals_of_the_geometry() {
         let normals = fix_to_binary_stl_normals(
             "tetrahedron_declared_normals_flipped.stla",
-            "Flipped orientation",
+            "Flipped 1 faces to orient each piece",
         );
         // The outward normals of the 4 facets, each component +-1 / sqrt(3).
         let s = 0.577_350_26_f32;
@@ -1592,6 +1639,8 @@ mod fix_partial_repair_tests {
                 source.to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
+                "--fix-non-manifold-edges=false",
+                "--fix-holes=false",
             ])
             .assert()
             .failure()
@@ -1644,6 +1693,8 @@ mod fix_partial_repair_tests {
                 source.to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
+                "--fix-non-manifold-edges=false",
+                "--fix-holes=false",
             ])
             .assert()
             .failure()
@@ -1971,7 +2022,9 @@ mod slice_repair_tests {
         run_slice(&source, &output, &["--repair"])
             .success()
             .stderr(predicate::str::contains("Applied fixes"))
-            .stderr(predicate::str::contains("Flipped orientation"));
+            .stderr(predicate::str::contains(
+                "Flipped 1 faces to orient each piece",
+            ));
     }
 
     /// Pins that a repair refusal does not abort the slice: it becomes a
@@ -1980,10 +2033,14 @@ mod slice_repair_tests {
     #[test]
     fn slice_with_repair_proceeds_past_a_refused_mesh_to_the_validation_gate() {
         let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("insideout.stla");
+        let source = tmp.path().join("fin.stla");
         let output = tmp.path().join("layers");
         fs::create_dir(&output).unwrap();
-        write_stla_to(&source, &two_flipped_faces_tetrahedron_mesh());
+        // A lone upright open triangle: the hole pass leaves it (its fill
+        // would double it), and the flip pass refuses a 1-face mesh.
+        let mut fin = single_triangle_mesh();
+        fin.vertices[2] = Vertex::new([0.0, 0.0, 1.0]);
+        write_stla_to(&source, &fin);
 
         run_slice(&source, &output, &["--repair"])
             .failure()
@@ -2121,7 +2178,8 @@ mod repair_pipeline_trio_tests {
             .failure()
             .stderr(predicate::str::contains("windings disagree"));
 
-        // 2 cube + 3 Z-tunnel + 3 Y-tunnel inside-out faces.
+        // 2 cube + 3 Z-tunnel + 3 Y-tunnel inside-out faces, 1 record per
+        // mesh.
         Command::cargo_bin(BIN)
             .unwrap()
             .args([
@@ -2133,8 +2191,13 @@ mod repair_pipeline_trio_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("Applied fixes (8):"))
-            .stderr(predicate::str::contains("Flipped orientation"));
+            .stderr(predicate::str::contains("Applied fixes (3):"))
+            .stderr(predicate::str::contains(
+                "Flipped 2 faces to orient each piece",
+            ))
+            .stderr(predicate::str::contains(
+                "Flipped 3 faces to orient each piece",
+            ));
 
         Command::cargo_bin(BIN)
             .unwrap()
