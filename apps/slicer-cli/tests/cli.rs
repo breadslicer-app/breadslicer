@@ -1217,7 +1217,8 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("No fixes were applied"));
+            .stderr(predicate::str::contains("No fixes were applied"))
+            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
         assert!(target.exists());
     }
 
@@ -1245,8 +1246,37 @@ mod fix_tests {
             .assert()
             .success()
             .stderr(predicate::str::contains("Applied fixes"))
-            .stderr(predicate::str::contains("Flipped orientation"));
+            .stderr(predicate::str::contains("Flipped orientation"))
+            .stderr(predicate::str::contains("Sliceable: yes (was no)"));
         assert!(target.exists());
+    }
+
+    #[test]
+    fn fix_reports_a_mesh_repair_cannot_make_sliceable() {
+        // 2 cubes sharing an edge, from the synthetic repair corpus: no
+        // current pass resolves an edge shared by 4 faces.
+        let corpus = sc_mesh_fixtures::repair_corpus::repair_corpus();
+        let fixture = corpus
+            .iter()
+            .find(|f| f.name == "s09-cubes-sharing-edge")
+            .expect("corpus fixture");
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("cubes.stla");
+        let target = tmp.path().join("fixed.stla");
+        write_stla_to(&source, &fixture.mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("Sliceable: no (was no)"));
     }
 
     // The bits of the normals the `tetrahedron_declared_normals` fixtures
