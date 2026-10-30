@@ -1119,6 +1119,20 @@ mod message_layer_tests {
         assert_eq!((silenced, open), (1, false));
     }
 
+    /// The card with the most text in the main window holds its buttons.
+    #[test]
+    fn the_diagnostics_card_holds_its_buttons() {
+        let below = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            ui.window().set_size(slint::PhysicalSize::new(680, 540));
+            ui.show().expect("the headless platform shows the window");
+            manager.show_diagnostics_export(true, |_| {});
+            crate::test_support::message_cards::card_below_primary_button(ui.window(), 520)
+        });
+        assert!(below >= 10, "the card ends {below} px below its buttons");
+    }
+
     #[test]
     fn the_models_go_in_only_when_ticked_and_there_is_a_scene() {
         let got = on_fresh_slint_thread(|| {

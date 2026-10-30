@@ -10,6 +10,7 @@ pub(crate) mod documents;
 pub(crate) mod gpu_devices;
 pub(crate) mod language_pick;
 pub(crate) mod material_profiles;
+pub(crate) mod message_cards;
 pub(crate) mod projects;
 pub(crate) mod scenes;
 pub(crate) mod slint_thread;

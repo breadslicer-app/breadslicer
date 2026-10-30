@@ -113,7 +113,11 @@ export component MessageLayer inherits Rectangle {
 
         card := Rectangle {
             width: Math.min(parent.width - 32px, root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px);
-            height: body.preferred-height;
+            // Down to the buttons as the layout placed them. The layout's
+            // preferred height can't serve: Slint measures a wrapping text in
+            // an `if` element as 1 line, so with long texts the buttons hung
+            // below the card's edge.
+            height: foot.y + foot.height + self.inset;
             x: (parent.width - self.width) / 2;
             y: Math.max(16px, (parent.height - self.height) / 2);
             background: Theme.card;
@@ -123,6 +127,9 @@ export component MessageLayer inherits Rectangle {
             drop-shadow-blur: 24px;
             drop-shadow-color: #00000066;
 
+            // Space between the card's edge and what it holds.
+            property <length> inset: 18px;
+
             // A click on the card itself is not a click outside.
             TouchArea {
                 scroll-event(event) => {
@@ -131,7 +138,12 @@ export component MessageLayer inherits Rectangle {
             }
 
             body := VerticalLayout {
-                padding: 18px;
+                // Its own height, not the card's: the card's height comes
+                // from where this layout puts the buttons. At the top: with a
+                // height of its own it would be centred.
+                y: 0;
+                height: self.preferred-height;
+                padding: card.inset;
                 spacing: 16px;
 
                 if root.notice: HorizontalLayout {
@@ -394,7 +406,7 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
-                HorizontalLayout {
+                foot := HorizontalLayout {
                     spacing: 8px;
 
                     if root.message.can-silence: CheckBox {
