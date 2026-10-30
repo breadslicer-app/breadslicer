@@ -63,7 +63,8 @@ use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{
-    MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries, renderable_leaf_count,
+    MODEL_ENTRY_SIZE, WorldBoxes, build_envelope_warning_mask, build_model_entries,
+    renderable_leaf_count,
 };
 use targets::{MsaaTargets, TargetPool};
 
@@ -259,6 +260,9 @@ pub struct Renderer {
     core: RendererCore,
     pipelines: Pipelines,
     scene: Option<InstalledScene>,
+    /// The world box of each leaf, for the out-of-volume warning; emptied on
+    /// every scene install.
+    world_boxes: WorldBoxes,
     overlay: overlay::OverlaySlot,
     target_manager: TargetManager,
 }
@@ -323,6 +327,7 @@ impl Renderer {
                 plate_buffers: None,
             },
             scene: None,
+            world_boxes: WorldBoxes::default(),
             overlay: overlay::OverlaySlot::default(),
             target_manager: TargetManager {
                 msaa: None,
@@ -341,6 +346,7 @@ impl Renderer {
 
     pub fn clear_scene(&mut self) {
         self.scene = None;
+        self.world_boxes.clear();
         self.target_manager.msaa = None;
         self.target_manager.targets = None;
     }
@@ -373,6 +379,7 @@ impl Renderer {
         // Released before the build so the old and the new scene never occupy
         // device memory at the same time.
         self.scene = None;
+        self.world_boxes.clear();
         // An empty model uniform buffer would fail bind-group validation, so a
         // leafless graph gets no scene at all.
         if renderable_leaf_count(graph)? == 0 {
@@ -425,6 +432,7 @@ impl Renderer {
             gpu,
             models_bind_group,
         });
+        self.world_boxes.clear();
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) -> Result<(), RenderError> {
@@ -804,7 +812,7 @@ impl Renderer {
         // slots holding stale matrices that the draw loop would render against
         // the current frame's geometry.
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            match build_model_entries(graph_data, selection, build_volume) {
+            match build_model_entries(graph_data, selection, build_volume, &mut self.world_boxes) {
                 Ok(entries) if entries.len() == inst.gpu.object_count() => {
                     // Each entry lives at `i * model_stride`. The stride is at
                     // least `MODEL_ENTRY_SIZE` and a multiple of the device's
@@ -850,15 +858,15 @@ impl Renderer {
         );
 
         // Per-frame envelope-wall warning mask: which side walls (and the top)
-        // some leaf breaches. Recomputed each frame from the CPU `Scene`; cheap
-        // (a single per-vertex scan) and keeps the breach signal in lockstep
-        // with the per-leaf `flags.y` bit. `None` for an empty graph leaves the
-        // mask at 0 so all wall fragments are discarded. A leaf-walk failure on
-        // the same graph already caused `scene_for_draws` to fall to false
-        // above, so falling back to 0 here keeps the wall-warning state
-        // consistent with the skipped mesh draws.
+        // some leaf breaches. Recomputed each frame from the CPU `Scene`, from
+        // the same cached world boxes as the per-leaf `flags.y` bit above, so
+        // the two signals stay in lockstep and no vertex is walked twice. `None`
+        // for an empty graph leaves the mask at 0 so all wall fragments are
+        // discarded. A leaf-walk failure on the same graph already caused
+        // `scene_for_draws` to fall to false above, so falling back to 0 here
+        // keeps the wall-warning state consistent with the skipped mesh draws.
         let face_breach_mask = graph
-            .and_then(|g| build_envelope_warning_mask(g, build_volume).ok())
+            .and_then(|g| build_envelope_warning_mask(g, build_volume, &mut self.world_boxes).ok())
             .unwrap_or(0);
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
