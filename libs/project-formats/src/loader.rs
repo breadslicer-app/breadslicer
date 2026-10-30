@@ -6,8 +6,9 @@
 //! Loading a scene from a file, whatever its format.
 //!
 //! - [`load_scene`] reads a mesh or project file into a [`LoadedScene`]; it
-//!   owns the extension dispatch, the size cap, the byte progress and the
-//!   shared-vertex post-check.
+//!   owns the extension dispatch, the size cap, the byte progress, the
+//!   shared-vertex post-check and, for an imported file, the removal of exact
+//!   duplicate faces.
 //! - [`SUPPORTED_SCENE_FILE_EXTENSIONS`] is the list the dispatch accepts; file
 //!   dialogs and drop handlers filter on it.
 
@@ -19,7 +20,9 @@ use sc_bread_format::{HollowDocument, SupportDocument};
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
-use sc_mesh_formats::loader::{load_mesh_from_reader, scene_shared_vertices_warning};
+use sc_mesh_formats::loader::{
+    drop_scene_duplicate_faces, load_mesh_from_reader, scene_shared_vertices_warning,
+};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
@@ -178,10 +181,18 @@ pub fn load_scene(
             limit_bytes: cap,
         });
     }
-    match infer_project_file_type_from_extension(path) {
-        Ok(file_type) => open_project(path, file_type, max_file_size, &mut on_progress),
-        Err(_) => open_mesh(path, max_file_size, &mut on_progress),
+    let mut loaded = match infer_project_file_type_from_extension(path) {
+        Ok(file_type) => open_project(path, file_type, max_file_size, &mut on_progress)?,
+        Err(_) => open_mesh(path, max_file_size, &mut on_progress)?,
+    };
+    // An imported file can store a body twice, which keeps it from slicing; a
+    // project is reopened as saved.
+    if let LoadedContent::Mesh(scene) = &mut loaded.content
+        && let Some(warning) = drop_scene_duplicate_faces(scene)
+    {
+        loaded.mesh_warnings.push(LoadMeshWarning::Scene(warning));
     }
+    Ok(loaded)
 }
 
 fn open_mesh<F: FnMut(LoadProgress)>(

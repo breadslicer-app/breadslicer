@@ -150,6 +150,24 @@ fn display_scene_warning(warning: &SceneLoadWarning, out: &mut dyn Write) {
                 labels.join(", ")
             );
         }
+        SceneLoadWarning::DuplicateFacesDropped { leaves } => {
+            let total: usize = leaves.iter().map(|leaf| leaf.faces).sum();
+            let labels: Vec<String> = leaves
+                .iter()
+                .map(|leaf| {
+                    let label = match &leaf.object_name {
+                        Some(name) => format!("'{name}'"),
+                        None => format!("node {}", leaf.node_id.get()),
+                    };
+                    format!("{label} ({})", leaf.faces)
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "WARNING: Removed {total} duplicate face(s), exact copies of other faces: {}",
+                labels.join(", ")
+            );
+        }
     }
 }
 
@@ -159,7 +177,8 @@ mod display_warnings_tests {
     use sc_3mf::model::ObjectType;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_formats::messages::{
-        LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning, SharedVertexLeaf,
+        DuplicateFacesLeaf, LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
+        SharedVertexLeaf,
     };
     use sc_scene::{NodeId, Scene};
 
@@ -341,5 +360,32 @@ mod display_warnings_tests {
         let out = render(&[warning]);
         assert!(out.contains(&format!("node {}", nameless.get())), "{out}");
         assert!(out.contains("'ObjB'"), "{out}");
+    }
+
+    #[test]
+    fn scene_duplicate_faces_gives_the_total_and_each_mesh() {
+        let ids = fresh_node_ids(2);
+        let warning = LoadMeshWarning::Scene(SceneLoadWarning::DuplicateFacesDropped {
+            leaves: vec![
+                DuplicateFacesLeaf {
+                    node_id: ids[0],
+                    object_name: Some("Werewolf".to_string()),
+                    faces: 2160,
+                },
+                DuplicateFacesLeaf {
+                    node_id: ids[1],
+                    object_name: None,
+                    faces: 12,
+                },
+            ],
+        });
+        assert_eq!(
+            render(&[warning]),
+            format!(
+                "WARNING: Removed 2172 duplicate face(s), exact copies of other faces: \
+                 'Werewolf' (2160), node {} (12)\n",
+                ids[1].get()
+            )
+        );
     }
 }
