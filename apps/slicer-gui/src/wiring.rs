@@ -84,14 +84,14 @@ pub(crate) fn wire_main_window(
     wire_open_file(ui, ctrl.clone(), prefs.clone(), confirm_open.clone());
     wire_save(ui, ctrl.clone(), prefs.clone());
     wire_save_as(ui, ctrl.clone(), prefs.clone());
-    wire_save_as_3mf(ui, ctrl.clone(), prefs);
+    wire_save_as_3mf(ui, ctrl.clone(), prefs.clone());
     wire_previous_versions(ui, ctrl.clone(), confirm_open);
     wire_export_as(ui, ctrl.clone());
     wire_edit_menu(ui, ctrl.clone());
     wire_workspace_section(ui, ctrl.clone());
     wire_selected_layer(ui, ctrl.clone());
     wire_viewport_resized(ui, ctrl.clone());
-    wire_viewport_input(ui, ctrl);
+    wire_viewport_input(ui, ctrl, prefs);
     Ok(())
 }
 
@@ -156,7 +156,9 @@ fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     });
 }
 
-fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+/// Installs the camera and selection callbacks of the viewport. A projection
+/// switch is stored in `prefs`, so later windows and launches start with it.
+fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     {
         let ctrl = ctrl.clone();
         ui.on_rotate_drag(move |dx, dy| ctrl.on_rotate(ScreenDelta::new(dx, dy)));
@@ -175,7 +177,9 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_toggle_projection_requested(move || ctrl.on_toggle_projection());
+        ui.on_toggle_projection_requested(move || {
+            remember_projection(&prefs, ctrl.on_toggle_projection())
+        });
     }
     {
         let ctrl = ctrl.clone();
@@ -365,6 +369,53 @@ fn route_picked_open(
 }
 
 #[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::mesh_render::DeviceLoss;
+    use crate::pending_load::PendingLoad;
+    use crate::preferences_bus::PreferencesSnapshot;
+    use crate::scene_document::SceneDocument;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    fn window_on(bus: &Rc<PreferencesBus>) -> (MainWindow, Rc<ViewportController>) {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = Rc::new(ViewportController::new(
+            &window,
+            SceneDocument::new(),
+            Rc::new(PendingLoad::new()),
+            DeviceLoss::default(),
+            bus,
+        ));
+        wire_viewport_input(&window, ctrl.clone(), bus.clone());
+        (window, ctrl)
+    }
+
+    #[test]
+    fn a_projection_switch_is_stored_and_starts_the_next_window() {
+        on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (first, _first_ctrl) = window_on(&bus);
+            assert!(!first.get_orthographic_view());
+
+            first.invoke_toggle_projection_requested();
+            assert!(first.get_orthographic_view());
+            assert!(bus.snapshot().orthographic_view);
+
+            let (second, second_ctrl) = window_on(&bus);
+            assert!(second.get_orthographic_view());
+            assert!(second_ctrl.orthographic_view());
+
+            // Switching back is stored too, and the other open window keeps
+            // its own view.
+            first.invoke_toggle_projection_requested();
+            assert!(!first.get_orthographic_view());
+            assert!(!bus.snapshot().orthographic_view);
+            assert!(second.get_orthographic_view());
+        });
+    }
+}
+
+#[cfg(test)]
 mod guarded_open_tests {
     use super::*;
     use crate::preferences_bus::PreferencesSnapshot;
@@ -438,6 +489,14 @@ fn remember_open_directory(prefs: &Rc<PreferencesBus>, opened_file: &Path) {
     prefs.update(move |snap| {
         snap.last_open_dir = Some(dir);
         PreferencesChange::LastOpenDir
+    });
+}
+
+/// Stores the projection that the viewport switched to.
+fn remember_projection(prefs: &PreferencesBus, orthographic: bool) {
+    prefs.update(move |snap| {
+        snap.orthographic_view = orthographic;
+        PreferencesChange::Projection
     });
 }
 

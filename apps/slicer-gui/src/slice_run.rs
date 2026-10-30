@@ -38,7 +38,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_print_glue::{PlateContours, SlicingParams, slice_input_fingerprint, slice_plate};
+use sc_print_glue::{
+    PlateContours, SlicingParams, SupportOwners, slice_input_fingerprint, slice_plate,
+};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_review::{CavityFill, fill_stack};
 use sc_scene::Scene;
@@ -56,6 +58,7 @@ use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
+use crate::support_persist;
 
 /// Cadence of the UI-side progress poll while a slice is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -236,7 +239,13 @@ impl SliceRun {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+        let sessions = self.document.support_sessions();
+        let Some((scene, supports)) = self.document.with_scene(|spatial| {
+            (
+                spatial.graph().clone(),
+                support_persist::support_owners(spatial, &sessions),
+            )
+        }) else {
             return;
         };
         // A real slice supersedes the "up to date" hint.
@@ -270,6 +279,7 @@ impl SliceRun {
                 first_layer_height: current.first_layer_height,
                 aa_level: current.aa_level,
                 raft_top_mm,
+                supports,
                 fills: patches.fills,
                 erasures: patches.erasures,
             },
@@ -459,6 +469,9 @@ struct SliceInputs {
     /// The top of the raft the scene's supports stand on, for the review
     /// (#131).
     raft_top_mm: Option<f64>,
+    /// The support leaves and the model each stands on, which the scale
+    /// compensation scales them with (#227).
+    supports: SupportOwners,
     /// The cavities to fill (#132) and the thin features to thicken (#156).
     fills: Vec<Arc<CavityFill>>,
     /// The specks to erase (#156).
@@ -486,6 +499,7 @@ fn run_slice(
         &printer_profile,
         &resin_profile,
         &params,
+        &inputs.supports,
         cancel,
         |p: SliceProgress| {
             progress
@@ -511,7 +525,10 @@ fn run_slice(
                 filled.as_ref(),
                 erased.as_ref(),
                 plate.profile(),
-                inputs.raft_top_mm,
+                // The raft is scaled in Z with its supports.
+                inputs
+                    .raft_top_mm
+                    .map(|top| plate.compensated_height_mm(top)),
             );
             crate::breadcrumbs::note(&format!(
                 "slice: reviewed ok={}",

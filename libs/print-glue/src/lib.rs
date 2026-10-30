@@ -26,6 +26,8 @@
 //! - [`fallback_report`] lists the resolved values no profile supplied, for a
 //!   frontend to show before it writes a file.
 //! - [`placement`] drops a scene onto the build plate of a build volume.
+//! - [`scale_compensation`] scales each model and its supports by the
+//!   material's scale compensation before slicing.
 
 pub mod export;
 pub mod fallback_report;
@@ -34,6 +36,7 @@ pub mod placement;
 pub mod prepare;
 pub mod print_program;
 pub mod projection;
+pub mod scale_compensation;
 pub mod slice_plate;
 
 pub use export::{ExportJob, UnexportableSlice, prepare_export};
@@ -49,6 +52,7 @@ pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,
 };
+pub use scale_compensation::{SupportOwners, scale_factors};
 pub use slice_plate::{
     MismatchedLayerCount, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
     schedule_for_selection, slice_plate,
@@ -68,5 +72,7 @@ mod tests_prepare;
 mod tests_print_program;
 #[cfg(test)]
 mod tests_projection;
+#[cfg(test)]
+mod tests_scale_compensation;
 #[cfg(test)]
 mod tests_slice_plate;

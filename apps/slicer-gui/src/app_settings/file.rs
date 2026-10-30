@@ -934,6 +934,62 @@ mod settings_file_tests {
     }
 
     #[test]
+    fn orthographic_view_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        s.set_orthographic_view(true);
+        file.save(&s).unwrap();
+
+        assert!(file.load().settings().orthographic_view());
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("orthographic_view = true"),
+            "got:
+{written}"
+        );
+
+        s.set_orthographic_view(false);
+        file.save(&s).unwrap();
+        assert!(!file.load().settings().orthographic_view());
+    }
+
+    #[test]
+    fn saved_toml_omits_the_perspective_view() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        file.save(&AppSettings::default()).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            !written.contains("orthographic_view"),
+            "got:
+{written}"
+        );
+    }
+
+    #[test]
+    fn a_file_without_the_projection_loads_in_perspective() {
+        // A settings file from before the projection was stored keeps its
+        // other values and opens in perspective.
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        fs::write(
+            &file.path,
+            "version = 1
+smooth_models = true
+
+[appearance]
+theme = \"dark\"
+",
+        )
+        .unwrap();
+        let loaded = file.load().settings();
+        assert!(!loaded.orthographic_view());
+        assert!(loaded.smooth_models());
+        assert!(matches!(loaded.theme(), ThemePreference::Dark));
+    }
+
+    #[test]
     fn saved_toml_omits_unset_last_open_dir() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

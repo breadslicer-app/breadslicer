@@ -13,7 +13,7 @@
 //! `gizmo_fsm::on_move` / `keyboard_drive::integrate`): `true` means the caller
 //! (the coordinator) should mark the frame dirty.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use glam::Vec3;
 
@@ -35,12 +35,19 @@ const ZOOM_FACTOR_MAX_STEP: f32 = 10.0;
 
 pub(super) struct CameraController {
     camera: RefCell<Option<OrbitCamera>>,
+    /// Whether the view is orthographic. Kept apart from the camera, which a
+    /// scene install or clear drops, so every new framing keeps the projection
+    /// that the user chose.
+    orthographic: Cell<bool>,
 }
 
 impl CameraController {
-    pub(super) fn new() -> Self {
+    /// Starts without a camera; the first framing gets the `orthographic`
+    /// projection.
+    pub(super) fn new(orthographic: bool) -> Self {
         Self {
             camera: RefCell::new(None),
+            orthographic: Cell::new(orthographic),
         }
     }
 
@@ -79,11 +86,27 @@ impl CameraController {
     ) {
         let (centre, view_radius) = build_volume.framing(scene_bounds);
         let detail_radius = scene_only_radius(scene_bounds).unwrap_or(view_radius);
-        *self.camera.borrow_mut() = Some(OrbitCamera::with_detail_radius(
-            centre,
-            view_radius,
-            detail_radius,
-        ));
+        let mut camera = OrbitCamera::with_detail_radius(centre, view_radius, detail_radius);
+        camera.orthographic = self.orthographic.get();
+        *self.camera.borrow_mut() = Some(camera);
+    }
+
+    /// Returns whether the view is orthographic.
+    #[cfg(test)]
+    pub(super) fn orthographic(&self) -> bool {
+        self.orthographic.get()
+    }
+
+    /// Switches between the perspective and the orthographic view, on the
+    /// camera when there is one and on every later framing. Returns whether
+    /// the view is now orthographic.
+    pub(super) fn toggle_projection(&self) -> bool {
+        let orthographic = !self.orthographic.get();
+        self.orthographic.set(orthographic);
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.orthographic = orthographic;
+        }
+        orthographic
     }
 
     /// Orbits the camera around its target. Returns `true` if a camera and
@@ -197,20 +220,20 @@ mod camera_controller_tests {
 
     #[test]
     fn new_is_uninitialised() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.is_initialised());
     }
 
     #[test]
     fn replace_with_framing_initialises() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         cc.replace_with_framing(None, no_printer_volume());
         assert!(cc.is_initialised());
     }
 
     #[test]
     fn reset_drops_the_camera() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         cc.reset();
         assert!(!cc.is_initialised());
@@ -218,7 +241,7 @@ mod camera_controller_tests {
 
     #[test]
     fn framing_with_no_scene_anchors_on_envelope() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         cc.replace_with_framing(None, no_printer_volume());
         let centre = cc.camera_cell().borrow().as_ref().unwrap().target;
         // Plate is centred on world XY, so the framing centre's X / Y are at
@@ -230,7 +253,7 @@ mod camera_controller_tests {
 
     #[test]
     fn framing_with_scene_outside_envelope_extends() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         let far = Vec3::new(1000.0, 1000.0, 1000.0);
         cc.replace_with_framing(Some((Vec3::ZERO, far)), no_printer_volume());
         // The view target sits at the union centre; the union grows in the
@@ -244,20 +267,20 @@ mod camera_controller_tests {
 
     #[test]
     fn on_rotate_without_viewport_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         assert!(!cc.on_rotate(ScreenDelta::new(10.0, 5.0), None));
     }
 
     #[test]
     fn on_rotate_without_camera_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.on_rotate(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
     }
 
     #[test]
     fn on_rotate_with_camera_and_viewport_returns_true_and_mutates_yaw() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         let yaw_before = cc.camera_cell().borrow().as_ref().unwrap().yaw;
         assert!(cc.on_rotate(ScreenDelta::new(50.0, 0.0), fhd_viewport()));
@@ -267,20 +290,20 @@ mod camera_controller_tests {
 
     #[test]
     fn on_pan_without_viewport_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         assert!(!cc.on_pan(ScreenDelta::new(10.0, 5.0), None));
     }
 
     #[test]
     fn on_pan_without_camera_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.on_pan(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
     }
 
     #[test]
     fn on_pan_with_camera_and_viewport_returns_true_and_mutates_target() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         let target_before = cc.camera_cell().borrow().as_ref().unwrap().target;
         assert!(cc.on_pan(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
@@ -290,20 +313,20 @@ mod camera_controller_tests {
 
     #[test]
     fn on_zoom_without_viewport_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         assert!(!cc.on_zoom(120.0, ScreenPoint::new(100.0, 100.0), None));
     }
 
     #[test]
     fn on_zoom_without_camera_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.on_zoom(120.0, ScreenPoint::new(100.0, 100.0), fhd_viewport()));
     }
 
     #[test]
     fn on_zoom_with_camera_and_viewport_returns_true_and_mutates_distance() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
         // Positive wheel_delta is a wheel-down step; the controller maps it
@@ -319,7 +342,7 @@ mod camera_controller_tests {
         // round to 0 without the outer clamp; the camera's distance would then
         // collapse to its lower bound in 1 event. The clamp caps the per-event
         // ratio at `1 / ZOOM_FACTOR_MAX_STEP`.
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
         assert!(cc.on_zoom(1.0e6, ScreenPoint::new(960.0, 540.0), fhd_viewport()));
@@ -334,7 +357,7 @@ mod camera_controller_tests {
 
     #[test]
     fn on_zoom_clamps_pathological_negative_delta_to_finite_step() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
         assert!(cc.on_zoom(-1.0e6, ScreenPoint::new(960.0, 540.0), fhd_viewport()));
@@ -345,13 +368,13 @@ mod camera_controller_tests {
 
     #[test]
     fn on_frame_view_without_camera_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.on_frame_view());
     }
 
     #[test]
     fn on_frame_view_resets_to_defaults() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         cc.on_rotate(ScreenDelta::new(120.0, 60.0), fhd_viewport());
         let before = cc.camera_cell().borrow().as_ref().unwrap().clone();
@@ -362,18 +385,51 @@ mod camera_controller_tests {
 
     #[test]
     fn on_axis_view_without_camera_returns_false() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         assert!(!cc.on_axis_view(AxisView::Top));
     }
 
     #[test]
     fn on_axis_view_with_camera_snaps_orientation() {
-        let cc = CameraController::new();
+        let cc = CameraController::new(false);
         frame(&cc);
         assert!(cc.on_axis_view(AxisView::Top));
         let cam = cc.camera_cell().borrow().as_ref().unwrap().clone();
         // Top view points along -Z with the pitch latched at +pi/2 (modulo the
         // camera's pitch clamp).
         assert!(cam.pitch > 0.0);
+    }
+
+    fn camera_is_orthographic(cc: &CameraController) -> bool {
+        cc.camera_cell().borrow().as_ref().unwrap().orthographic
+    }
+
+    #[test]
+    fn framing_takes_the_starting_projection() {
+        let cc = CameraController::new(true);
+        frame(&cc);
+        assert!(camera_is_orthographic(&cc));
+    }
+
+    #[test]
+    fn a_projection_switch_outlives_the_camera() {
+        let cc = CameraController::new(false);
+        frame(&cc);
+        assert!(cc.toggle_projection());
+        assert!(camera_is_orthographic(&cc));
+        cc.reset();
+        frame(&cc);
+        assert!(camera_is_orthographic(&cc));
+        assert!(!cc.toggle_projection());
+        assert!(!camera_is_orthographic(&cc));
+    }
+
+    #[test]
+    fn a_projection_switch_without_a_camera_reaches_the_next_framing() {
+        let cc = CameraController::new(false);
+        assert!(cc.toggle_projection());
+        frame(&cc);
+        assert!(cc.orthographic());
+        assert!(camera_is_orthographic(&cc));
     }
 }

@@ -38,10 +38,11 @@ pub const MESH_TAG: ChunkTag = ChunkTag(*b"MESH");
 pub const MESH_VERSION: u16 = 1;
 
 /// Bounds on what a damaged count may ask for, from the codecs' densest
-/// output: meshoptimizer spends at least a byte on each triangle and well
-/// over a byte on each 256 vertex bytes.
+/// output: meshoptimizer spends at least a byte on each triangle, and at
+/// least 3 control bytes on each block of 256 vertices (3072 vertex bytes)
+/// when every vertex repeats the one before it.
 const MAX_TRIANGLES_PER_BYTE: usize = 2;
-const MAX_VERTEX_BYTES_PER_BYTE: usize = 256;
+const MAX_VERTEX_BYTES_PER_BYTE: usize = 1024;
 
 /// Why a mesh payload could not be decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
