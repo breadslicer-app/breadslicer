@@ -70,8 +70,8 @@ pub enum PackageReadError {
     /// have relationships: `/a/_rels/.rels` (source `/a/`) and
     /// `/_rels/_rels/.rels.rels` (source `/_rels/.rels`) are such names.
     RelationshipsPartWithoutSource { part: String },
-    /// A stored part has no content type, neither by extension default nor by
-    /// override.
+    /// The start part has no content type, neither by extension default nor
+    /// by override. Other parts without one are skipped instead.
     PartWithoutContentType { part: String },
     /// No root relationship of the StartPart type exists, so the primary 3D
     /// Model part cannot be located.
