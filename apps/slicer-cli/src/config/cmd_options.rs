@@ -102,6 +102,7 @@ pub(crate) enum CmdOptions {
     },
     Help,
     Inspect {},
+    Orient(crate::commands::orient::OrientArgs),
     ProfilesExport {
         output: OsString,
         printers: bool,
@@ -529,6 +530,10 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .to_options()
         .descr("Prints help information")
         .command("help");
+    let orient = crate::commands::orient::get_orient_options()
+        .to_options()
+        .descr("Find the best orientation of a 3d model for printing, with three options and their physical breakdown")
+        .command("orient");
     let profiles = get_profiles_options()
         .to_options()
         .descr("List, export, and import profiles in the user library")
@@ -558,6 +563,7 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         fix,
         help,
         inspect,
+        orient,
         profiles,
         review,
         slice,

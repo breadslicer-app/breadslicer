@@ -5091,6 +5091,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-orient"
+version = "0.1.0"
+dependencies = [
+ "meshopt",
+ "rayon",
+ "sc-mesh-core",
+ "sc-mesh-fixtures",
+]
+
+[[package]]
 name = "sc-print-glue"
 version = "0.2.0"
 dependencies = [
@@ -5267,12 +5277,14 @@ dependencies = [
  "bpaf",
  "png 0.18.1",
  "predicates",
+ "rayon",
  "sc-3mf",
  "sc-app-paths",
  "sc-geom",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
+ "sc-orient",
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
