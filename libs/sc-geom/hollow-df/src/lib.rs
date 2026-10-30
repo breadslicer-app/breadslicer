@@ -9,7 +9,8 @@
 //!   construction (DragonFruit uses manifold3d here);
 //! - [`punch`]: DragonFruit's `punch_cylinders` on that cut;
 //! - [`engine`]: SoulCrafted's interface: grid request with the effective
-//!   voxel reported, preview and apply, solid areas, drains, volumes;
+//!   voxel reported, exact wall distance, preview and apply, solid areas,
+//!   drains, volumes;
 //! - [`mesh`], [`bvh`], [`topology`], [`smoothing`]: the parts of
 //!   DragonFruit's mesh core the engine uses.
 //!
@@ -25,6 +26,7 @@ pub mod punch;
 pub mod shapes;
 mod smoothing;
 pub mod topology;
+mod wall;
 
 pub use control::{CancelToken, Cancelled, Control, Stage};
 pub use engine::{

@@ -89,6 +89,13 @@ pub struct HollowOptions {
     /// Unit quaternion `[x, y, z, w]` to rotate the source mesh before
     /// voxelizing; outputs are rotated back. Identity is a model-local grid.
     pub rotation_quat: [f32; 4],
+    /// The wall distances are exact (`engine::Session`'s). A voxel whose
+    /// mask agrees with its distance keeps that distance in the cavity
+    /// field, so the cavity wall sits at the requested wall (DragonFruit,
+    /// `false`, pushes every voxel at least 5 % of the wall away from it,
+    /// which moves the wall by up to that much either way). The smoothing
+    /// may then only add material, and leaves a single cavity.
+    pub exact_wall: bool,
 }
 
 impl Default for HollowOptions {
@@ -109,6 +116,7 @@ impl Default for HollowOptions {
             preview_voxel_spheres: false,
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
+            exact_wall: false,
         }
     }
 }
@@ -225,9 +233,13 @@ impl GridSpec {
 #[derive(Debug, Clone)]
 pub struct HollowSession {
     source_mesh: IndexedMesh,
+    /// Ray and closest-point queries on `source_mesh` (built for the parity
+    /// test, kept for the exact wall distance and the drains).
+    source_bvh: Bvh,
     source_bbox: Aabb,
     grid: GridSpec,
     solid: Vec<bool>,
+    /// Chamfer distance to the surface, in voxels (see `build`).
     dist: Vec<f32>,
     source_void_components: Vec<i32>,
     source_triangle_count: usize,
@@ -526,13 +538,25 @@ impl HollowSession {
         // shells as "solid". Classify only the non-surface components with
         // parity so nested shells preserve their existing cavities.
         ctl.stage(Stage::ParityRefine)?;
-        refine_non_surface_solid_components_with_parity(&grid, &surface, &mut solid, &mesh, ctl)?;
+        let source_bvh = Bvh::build(&mesh);
+        refine_non_surface_solid_components_with_parity(
+            &grid,
+            &surface,
+            &mut solid,
+            &mesh,
+            &source_bvh,
+            ctl,
+        )?;
         let source_void_components = label_void_components(&grid, &solid);
         let occupied_voxels = solid.iter().filter(|v| **v).count();
 
         // Two-pass 26-neighbour chamfer distance transform (face 1, edge √2,
-        // corner √3), within ~2 % of Euclidean, seeded at every surface voxel
-        // so thickness holds to the outside and to pre-existing cavities.
+        // corner √3), seeded at every surface voxel so thickness holds to the
+        // outside and to pre-existing cavities. It never under-measures the
+        // distance between voxel centres, but over-measures it by up to
+        // 12.8 % (direction ≈ (280, 116, 89)), and the seeds sit up to half a
+        // voxel diagonal off the surface. DragonFruit's wall comes from it;
+        // `engine::Session` measures exact distances near the wall instead.
         ctl.stage(Stage::DistanceField)?;
         let mut dist = vec![f32::INFINITY; nx * ny * nz];
         for i in 0..dist.len() {
@@ -604,6 +628,7 @@ impl HollowSession {
 
         Ok(Self {
             source_mesh: mesh,
+            source_bvh,
             source_bbox,
             grid,
             solid,
@@ -635,6 +660,22 @@ impl HollowSession {
         &self.source_mesh
     }
 
+    /// The BVH of [`HollowSession::source_mesh`].
+    pub fn source_bvh(&self) -> &Bvh {
+        &self.source_bvh
+    }
+
+    /// Which voxels are inside the source (surface layer included).
+    pub(crate) fn solid_mask(&self) -> &[bool] {
+        &self.solid
+    }
+
+    /// The chamfer distance of every voxel to the surface, in voxels: 0 on
+    /// the surface layer, infinite outside the source.
+    pub(crate) fn chamfer_distances(&self) -> &[f32] {
+        &self.dist
+    }
+
     pub fn source_bbox(&self) -> Aabb {
         self.source_bbox
     }
@@ -654,6 +695,16 @@ impl HollowSession {
     /// single source of truth for the mask: output meshes and voxel selection
     /// read the same cavity (`removed = solid && !keep`).
     pub(crate) fn compute_keep_mask(&self, options: &HollowOptions) -> (Vec<bool>, usize) {
+        self.compute_keep_mask_with(options, &self.dist)
+    }
+
+    /// [`HollowSession::compute_keep_mask`] over the wall distances `dist`
+    /// (in voxels, one per cell) instead of the chamfer distances.
+    pub(crate) fn compute_keep_mask_with(
+        &self,
+        options: &HollowOptions,
+        dist: &[f32],
+    ) -> (Vec<bool>, usize) {
         let shell_voxels = (options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm).ceil() as i32;
         let shell_voxels = shell_voxels.max(1);
         let shell_voxels_f = options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm;
@@ -661,7 +712,7 @@ impl HollowSession {
         let mut keep = vec![false; self.solid.len()];
         let mut kept_shell = 0usize;
         for i in 0..keep.len() {
-            if self.solid[i] && self.dist[i] <= shell_voxels_f {
+            if self.solid[i] && dist[i] <= shell_voxels_f {
                 keep[i] = true;
                 kept_shell += 1;
             }
@@ -718,7 +769,7 @@ impl HollowSession {
                 options.internal_chamfer_passes,
             );
             for _ in 0..passes {
-                apply_internal_cavity_chamfer_pass(&self.grid, &self.solid, &mut keep, &self.dist);
+                apply_internal_cavity_chamfer_pass(&self.grid, &self.solid, &mut keep, dist);
             }
             if passes > 0 {
                 preserve_source_void_separators(
@@ -787,6 +838,18 @@ impl HollowSession {
         smoothing_shell_voxels: f32,
         ctl: Control<'_>,
     ) -> Result<HollowOutcome, Cancelled> {
+        self.run_with_distances(options, smoothing_shell_voxels, &self.dist, ctl)
+    }
+
+    /// [`HollowSession::run_with`] over the wall distances `dist` (in
+    /// voxels, one per cell) instead of the chamfer distances.
+    pub(crate) fn run_with_distances(
+        &self,
+        options: &HollowOptions,
+        smoothing_shell_voxels: f32,
+        dist: &[f32],
+        ctl: Control<'_>,
+    ) -> Result<HollowOutcome, Cancelled> {
         let shell_voxels_f = options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm;
         let smoothing_profile = effective_internal_cavity_smoothing_profile(
             options.shell_thickness_mm,
@@ -795,7 +858,7 @@ impl HollowSession {
         );
 
         ctl.stage(Stage::KeepMask)?;
-        let (keep, kept_shell) = self.compute_keep_mask(options);
+        let (keep, kept_shell) = self.compute_keep_mask_with(options, dist);
 
         let removed_voxels = self
             .occupied_voxels
@@ -806,9 +869,10 @@ impl HollowSession {
                 build_visual_cavity_mesh(
                     &self.grid,
                     &self.solid,
-                    &self.dist,
+                    dist,
                     &keep,
                     shell_voxels_f,
+                    options.exact_wall,
                 ),
                 IndexedMesh::default(),
             )
@@ -821,7 +885,7 @@ impl HollowSession {
                 &self.source_bbox,
                 &self.grid,
                 &self.solid,
-                &self.dist,
+                dist,
                 &keep,
                 options,
                 shell_voxels_f,
@@ -914,9 +978,21 @@ impl HollowSession {
     /// through [`finalize_hollow_output_mesh`]. Ignores the preview flags and
     /// the voxel drain corridors of `options` (drains are exact cuts
     /// afterwards). In the session frame; rotation is not undone.
+    #[cfg(test)]
     pub(crate) fn final_mesh(
         &self,
         options: &HollowOptions,
+        ctl: Control<'_>,
+    ) -> Result<FinalHollow, Cancelled> {
+        self.final_mesh_with_distances(options, &self.dist, ctl)
+    }
+
+    /// [`HollowSession::final_mesh`] over the wall distances `dist` (in
+    /// voxels, one per cell) instead of the chamfer distances.
+    pub(crate) fn final_mesh_with_distances(
+        &self,
+        options: &HollowOptions,
+        dist: &[f32],
         ctl: Control<'_>,
     ) -> Result<FinalHollow, Cancelled> {
         let mut options = options.clone();
@@ -931,7 +1007,7 @@ impl HollowSession {
             shell_voxels_f,
         );
         ctl.stage(Stage::KeepMask)?;
-        let (keep, _kept_shell) = self.compute_keep_mask(&options);
+        let (keep, _kept_shell) = self.compute_keep_mask_with(&options, dist);
         let kept = keep.iter().filter(|v| **v).count();
         ctl.stage(Stage::CavitySurface)?;
         let (out, cavity, cavity_wall_score) = build_hollow_output_mesh(
@@ -939,7 +1015,7 @@ impl HollowSession {
             &self.source_bbox,
             &self.grid,
             &self.solid,
-            &self.dist,
+            dist,
             &keep,
             &options,
             shell_voxels_f,
@@ -951,7 +1027,7 @@ impl HollowSession {
             &self.source_bbox,
             &self.grid,
             &self.solid,
-            &self.dist,
+            dist,
             &keep,
             &options,
             shell_voxels_f,
@@ -1246,6 +1322,11 @@ fn organic_boundary_mesh(
     IndexedMesh::from_triangle_soup(&soup, 1e-6)
 }
 
+/// How far, in voxels, an exact cavity field keeps its values from 0 (see
+/// `build_smoothed_cavity_scalar_field`): the wall moves by at most this
+/// much, 0.03 mm at DragonFruit's voxel.
+const EXACT_WALL_SAMPLE_MARGIN: f32 = 0.05;
+
 fn build_smoothed_cavity_scalar_field(
     grid: &GridSpec,
     solid: &[bool],
@@ -1253,6 +1334,7 @@ fn build_smoothed_cavity_scalar_field(
     dist: &[f32],
     shell_voxels_f: f32,
     smoothing_iterations: usize,
+    exact_wall: bool,
 ) -> Vec<f32> {
     let exterior_value = -2.5f32;
     let active_band_voxels = 4.5f32;
@@ -1261,7 +1343,15 @@ fn build_smoothed_cavity_scalar_field(
     for i in 0..solid.len() {
         if solid[i] {
             let shell_signed = shell_voxels_f - dist[i];
-            if keep[i] {
+            if exact_wall && keep[i] == (shell_signed >= 0.0) {
+                // Off the sample by a hair: a value of 0 puts the wall on
+                // the voxel centre, where its triangles collapse.
+                field[i] = if keep[i] {
+                    shell_signed.max(EXACT_WALL_SAMPLE_MARGIN)
+                } else {
+                    shell_signed.min(-EXACT_WALL_SAMPLE_MARGIN)
+                };
+            } else if keep[i] {
                 // Blocked voxels deep in the cavity get a small epsilon so the
                 // zero-crossing sits just inside the blocked region.
                 field[i] = shell_signed.max(0.05 * shell_voxels_f.max(0.2));
@@ -1313,6 +1403,10 @@ fn build_smoothed_cavity_scalar_field(
         }
     }
 
+    // Over exact distances the blur may only add material: a voxel stays
+    // material if either field says so, so the smoothed wall is never
+    // thinner than the exact one (the guard #266 builds on).
+    let unblurred = (exact_wall && smoothing_iterations > 0).then(|| field.clone());
     let mut scratch = field.clone();
     for _ in 0..smoothing_iterations {
         for z in 0..grid.nz {
@@ -1361,7 +1455,6 @@ fn build_smoothed_cavity_scalar_field(
         }
         std::mem::swap(&mut field, &mut scratch);
     }
-
     // Outer-skin guard: blur must never flip a kept voxel on the model's outer
     // surface negative, or the cavity exits through the skin at thin features.
     let skin_floor = 0.05 * shell_voxels_f.max(0.2);
@@ -1394,6 +1487,22 @@ fn build_smoothed_cavity_scalar_field(
         }
     }
 
+    if let Some(unblurred) = unblurred {
+        for (value, exact) in field.iter_mut().zip(unblurred) {
+            *value = value.max(exact);
+        }
+        // Material the blur adds can pinch a narrow channel shut and seal
+        // part of the cavity off, a pocket no drain reaches: as the keep
+        // mask does, only the largest cavity stays.
+        let mut material: Vec<bool> = field.iter().map(|&value| value >= 0.0).collect();
+        retain_largest_connected_cavity_component(grid, solid, &mut material);
+        for (value, material) in field.iter_mut().zip(material) {
+            if material && *value < 0.0 {
+                *value = EXACT_WALL_SAMPLE_MARGIN;
+            }
+        }
+    }
+
     field
 }
 
@@ -1405,13 +1514,15 @@ pub(crate) fn build_visual_cavity_mesh(
     dist: &[f32],
     keep: &[bool],
     shell_voxels_f: f32,
+    exact_wall: bool,
 ) -> IndexedMesh {
     let negative: Vec<bool> = solid
         .iter()
         .zip(keep)
         .map(|(solid, kept)| *solid && !*kept)
         .collect();
-    let scalar = build_smoothed_cavity_scalar_field(grid, solid, keep, dist, shell_voxels_f, 0);
+    let scalar =
+        build_smoothed_cavity_scalar_field(grid, solid, keep, dist, shell_voxels_f, 0, exact_wall);
     organic_boundary_mesh(grid, keep, &negative, &scalar)
 }
 
@@ -1478,6 +1589,7 @@ fn build_cavity_inner_mesh(
         dist,
         shell_voxels_f,
         smoothing_profile.scalar_field_blur_iterations,
+        options.exact_wall,
     );
     let (cavity_mesh, wall_defect_score) =
         drop_open_cavity_fragments(stabilize_cavity_mesh_for_boolean(
@@ -2665,10 +2777,10 @@ fn refine_non_surface_solid_components_with_parity(
     surface: &[bool],
     solid: &mut [bool],
     mesh: &IndexedMesh,
+    bvh: &Bvh,
     ctl: Control<'_>,
 ) -> Result<(), Cancelled> {
     let mut visited = vec![false; solid.len()];
-    let bvh = Bvh::build(mesh);
     let mut component = Vec::<usize>::new();
     let mut queue = VecDeque::<usize>::new();
 
@@ -2707,7 +2819,7 @@ fn refine_non_surface_solid_components_with_parity(
         let (x, y, z) = grid.coords(component[0]);
         let sample_p = grid.center_world(x, y, z);
 
-        if !point_inside_mesh_parity(mesh, &bvh, sample_p, grid.voxel_mm) {
+        if !point_inside_mesh_parity(mesh, bvh, sample_p, grid.voxel_mm) {
             for &i in &component {
                 solid[i] = false;
             }
@@ -2871,7 +2983,7 @@ pub(crate) fn vec3_normalize(v: Vec3) -> Option<Vec3> {
 }
 
 #[inline]
-fn point_triangle_distance(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
+pub(crate) fn point_triangle_distance(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
     // Real-Time Collision Detection (Christer Ericson), closest point on triangle.
     let ab = b.sub(a);
     let ac = c.sub(a);

@@ -37,6 +37,9 @@ pub enum Stage {
     ParityRefine,
     /// Two-pass chamfer distance to the surface.
     DistanceField,
+    /// Exact distance to the surface near the wall (measured once per
+    /// session and wall band, then reused).
+    WallDistance,
     /// Deciding which voxels stay material.
     KeepMask,
     /// Contouring (and smoothing) the cavity wall.
@@ -58,6 +61,7 @@ impl Stage {
             Stage::FloodFill => "Filling outside",
             Stage::ParityRefine => "Restoring sealed voids",
             Stage::DistanceField => "Measuring wall distance",
+            Stage::WallDistance => "Measuring exact wall distance",
             Stage::KeepMask => "Choosing wall voxels",
             Stage::CavitySurface => "Building cavity surface",
             Stage::Infill => "Building infill",
