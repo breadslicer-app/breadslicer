@@ -123,6 +123,14 @@ pub(crate) fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dy
                 "WARNING: Ignored the malformed declared-facet-normals part '{part}'"
             );
         }
+        LoadThreeMfWarning::UntypedPartsSkipped { parts } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Skipped {} package part(s) with no content type: {}",
+                parts.len(),
+                parts.join(", ")
+            );
+        }
     }
 }
 
@@ -256,6 +264,12 @@ mod display_warnings_tests {
             LoadThreeMfWarning::DeclaredFacetNormalsMalformed {
                 part: "/Metadata/declared-facet-normals/x.bin".to_string(),
             },
+            LoadThreeMfWarning::UntypedPartsSkipped {
+                parts: vec![
+                    "/Metadata/project_settings.config".to_string(),
+                    "/Metadata/model_settings.config".to_string(),
+                ],
+            },
         ]
         .into_iter()
         .map(LoadMeshWarning::ThreeMf)
@@ -263,7 +277,7 @@ mod display_warnings_tests {
 
         let out = render(&warnings);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 8, "one line per warning, got: {out}");
+        assert_eq!(lines.len(), 9, "one line per warning, got: {out}");
         assert!(lines[0].contains("2 material group"));
         assert!(lines[1].contains("'Spare'") && lines[1].contains("id 7"));
         assert!(lines[2].contains("id 8"));
@@ -279,6 +293,11 @@ mod display_warnings_tests {
             lines[7],
             "WARNING: Ignored the malformed declared-facet-normals part \
              '/Metadata/declared-facet-normals/x.bin'"
+        );
+        assert_eq!(
+            lines[8],
+            "WARNING: Skipped 2 package part(s) with no content type: \
+             /Metadata/project_settings.config, /Metadata/model_settings.config"
         );
     }
 

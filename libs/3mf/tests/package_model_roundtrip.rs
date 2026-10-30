@@ -109,6 +109,7 @@ fn sample_document() -> ModelDocument {
                     Component {
                         object_id: id(1),
                         transform: None,
+                        path: None,
                     },
                     Component {
                         object_id: id(1),
@@ -118,6 +119,7 @@ fn sample_document() -> ModelDocument {
                             0.0, 0.0, 1.0, //
                             15.0, 0.0, 0.0,
                         ])),
+                        path: None,
                     },
                 ]),
             },
@@ -131,6 +133,7 @@ fn sample_document() -> ModelDocument {
                 -5.0, 2.5, 0.0,
             ])),
             partnumber: Some("rt-001".to_string()),
+            path: None,
         }],
     }
 }

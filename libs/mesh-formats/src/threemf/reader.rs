@@ -9,13 +9,14 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Read, Seek};
 
+use sc_3mf::error::{ModelParseError, PackageReadError};
 use sc_3mf::model::resource_ids::ResourceId;
 use sc_3mf::model::{
     Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
     parse_model,
 };
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
-use sc_3mf::package::Package;
+use sc_3mf::package::{Package, PartName};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::Scene;
@@ -49,6 +50,11 @@ pub const MAX_COMPONENT_DEPTH: usize = 64;
 /// resource; each referencing item (or component) contributes a
 /// [`LeafPayload::MeshResource`] leaf. Objects made of components become Group
 /// nodes. All lengths are converted from the document unit to millimetres.
+///
+/// Objects that the start part references in other model parts, through the
+/// production extension's `p:path` (as Bambu Studio and Orca write every
+/// object), are read from those parts, each in its own unit. Parts without a
+/// content type are skipped with a warning.
 pub fn read_threemf<R>(read: &mut R) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError>
 where
     R: Read + Seek,
@@ -75,26 +81,186 @@ pub fn read_threemf_from_package(
         .part_data(&start_part)
         .expect("start_part only resolves to parts present in the package");
     let document = parse_model(bytes)?;
-    let (declared, mut warnings) = read_declared_facet_normals_parts(package);
-    let (scene, conversion_warnings) = convert_document(&document, declared)?;
+    let referenced = read_referenced_models(package, &document)?;
+    let mut warnings = Vec::new();
+    if !package.untyped_parts().is_empty() {
+        warnings.push(LoadThreeMfWarning::UntypedPartsSkipped {
+            parts: package
+                .untyped_parts()
+                .iter()
+                .map(|part| part.as_str().to_string())
+                .collect(),
+        });
+    }
+    let (declared, declared_warnings) = read_declared_facet_normals_parts(package);
+    warnings.extend(declared_warnings);
+    let (scene, conversion_warnings) = convert_document(&document, &referenced, declared)?;
     warnings.extend(conversion_warnings);
     Ok((scene, warnings))
 }
 
+/// A model part that the start part references through the production
+/// extension's `p:path`, parsed.
+struct ReferencedModel {
+    /// The path as the start part first writes it, ASCII-lowercased, which is
+    /// how OPC compares part names.
+    key: String,
+    /// The path as the start part first writes it, for messages.
+    path: String,
+    document: ModelDocument,
+}
+
+/// Returns the `p:path` of every reference in `document`: its build items and
+/// its components.
+fn production_paths(document: &ModelDocument) -> impl Iterator<Item = &str> {
+    let items = document
+        .build
+        .iter()
+        .filter_map(|item| item.path.as_deref());
+    let components = document
+        .objects
+        .iter()
+        .filter_map(|object| match &object.payload {
+            ObjectPayload::Components(components) => Some(components),
+            ObjectPayload::Mesh(_) => None,
+        })
+        .flatten()
+        .filter_map(|component| component.path.as_deref());
+    items.chain(components)
+}
+
+/// Parses every model part that `root` references through `p:path`, once
+/// each, and checks that every reference finds its object: once these parts
+/// pass, every reference resolves during conversion.
+fn read_referenced_models(
+    package: &Package,
+    root: &ModelDocument,
+) -> Result<Vec<ReferencedModel>, LoadThreeMfError> {
+    let mut models: Vec<ReferencedModel> = Vec::new();
+    for path in production_paths(root) {
+        let key = path.to_ascii_lowercase();
+        if models.iter().any(|model| model.key == key) {
+            continue;
+        }
+        let not_found = || LoadThreeMfError::ReferencedPartNotFound {
+            path: path.to_string(),
+        };
+        let name = PartName::new(path).map_err(|_| not_found())?;
+        let Some(content_type) = package.part_content_type(&name) else {
+            if let Some(untyped) = package
+                .untyped_parts()
+                .iter()
+                .find(|part| part.as_str().eq_ignore_ascii_case(path))
+            {
+                return Err(PackageReadError::PartWithoutContentType {
+                    part: untyped.as_str().to_string(),
+                }
+                .into());
+            }
+            return Err(not_found());
+        };
+        if content_type != MODEL_PART_CONTENT_TYPE {
+            return Err(LoadThreeMfError::ReferencedPartNotAModel {
+                path: path.to_string(),
+                content_type: content_type.to_string(),
+            });
+        }
+        let bytes = package
+            .part_data(&name)
+            .expect("a part with a content type has data");
+        let document = parse_model(bytes).map_err(|source| LoadThreeMfError::ReferencedModel {
+            path: path.to_string(),
+            source,
+        })?;
+        if production_paths(&document).next().is_some() {
+            return Err(LoadThreeMfError::NestedProductionPath {
+                path: path.to_string(),
+            });
+        }
+        models.push(ReferencedModel {
+            key,
+            path: path.to_string(),
+            document,
+        });
+    }
+    check_references(root, &models)?;
+    Ok(models)
+}
+
+/// Checks that every `p:path` reference of `root` names an object of its part,
+/// and that no build item names an object of type "other", as `parse_model`
+/// checks for the references inside 1 document.
+fn check_references(
+    root: &ModelDocument,
+    models: &[ReferencedModel],
+) -> Result<(), LoadThreeMfError> {
+    let find = |path: &str, id: ResourceId| {
+        let model = models
+            .iter()
+            .find(|model| model.key == path.to_ascii_lowercase())
+            .expect("every path was read");
+        let object = model.document.objects.iter().find(|object| object.id == id);
+        (model, object)
+    };
+    let unknown = |model: &ReferencedModel, id: ResourceId| LoadThreeMfError::ReferencedModel {
+        path: model.path.clone(),
+        source: ModelParseError::UnknownObjectReference { id: id.get() },
+    };
+    for item in &root.build {
+        let Some(path) = &item.path else { continue };
+        let (model, object) = find(path, item.object_id);
+        let object = object.ok_or_else(|| unknown(model, item.object_id))?;
+        if object.object_type == ObjectType::Other {
+            return Err(LoadThreeMfError::ReferencedModel {
+                path: model.path.clone(),
+                source: ModelParseError::BuildItemReferencesOtherType {
+                    id: item.object_id.get(),
+                },
+            });
+        }
+    }
+    for object in &root.objects {
+        let ObjectPayload::Components(components) = &object.payload else {
+            continue;
+        };
+        for component in components {
+            let Some(path) = &component.path else {
+                continue;
+            };
+            let (model, object) = find(path, component.object_id);
+            object.ok_or_else(|| unknown(model, component.object_id))?;
+        }
+    }
+    Ok(())
+}
+
+/// Index of a model part among the parts being converted: [`ROOT_PART`] for
+/// the start part, then the parts it references, in [`ReferencedModel`] order.
+type PartIndex = usize;
+
+const ROOT_PART: PartIndex = 0;
+
+/// An object of 1 of the model parts being converted, by part and id.
+type ObjectKey = (PartIndex, ResourceId);
+
 struct Converter<'doc> {
-    /// Every object in the document, keyed by id, so resolving a build item or
-    /// a component does not rescan the object list.
-    objects: HashMap<ResourceId, &'doc ObjectResource>,
-    scale: f64,
+    /// Every object of every part, keyed by part and id, so resolving a build
+    /// item or a component does not rescan the object lists.
+    objects: HashMap<ObjectKey, &'doc ObjectResource>,
+    /// Each part's unit as a millimetre factor, by [`PartIndex`].
+    scales: Vec<f64>,
+    /// Lowercased `p:path` -> part, for the parts the start part references.
+    parts_by_path: HashMap<String, PartIndex>,
     scene: Scene,
-    /// Object id -> registered mesh resource, so N references to the same
-    /// object share 1 resource.
-    resources: HashMap<u32, MeshResourceId>,
-    /// Object ids reached from the build, for the unbuilt-object warning and
-    /// the once-per-object type warning.
-    reached: HashSet<u32>,
-    /// Declared facet normals read from the package, by object id, until the
-    /// mesh of their object is converted.
+    /// Object -> registered mesh resource, so N references to the same object
+    /// share 1 resource.
+    resources: HashMap<ObjectKey, MeshResourceId>,
+    /// Objects reached from the build, for the unbuilt-object warning and the
+    /// once-per-object type warning.
+    reached: HashSet<ObjectKey>,
+    /// Declared facet normals read from the package, by object id of the start
+    /// part, until the mesh of their object is converted. Breadslicer writes
+    /// them only for single-part documents.
     declared: HashMap<u32, StoredFacetNormals>,
     warnings: Vec<LoadThreeMfWarning>,
 }
@@ -102,7 +268,32 @@ struct Converter<'doc> {
 /// Counts the leaves the build section would expand to, without building
 /// anything. The count saturates instead of overflowing; a saturated total
 /// still compares correctly against the cap.
-fn expanded_leaf_count(document: &ModelDocument) -> usize {
+fn expanded_leaf_count(document: &ModelDocument, referenced: &[ReferencedModel]) -> usize {
+    // Referenced parts reference nothing outside themselves, so they count
+    // first, and the start part then reads their counts.
+    let referenced_counts: Vec<HashMap<u32, usize>> = referenced
+        .iter()
+        .map(|model| object_leaf_counts(&model.document, &[], &[]))
+        .collect();
+    let counts = object_leaf_counts(document, referenced, &referenced_counts);
+    document
+        .build
+        .iter()
+        .map(|item| match &item.path {
+            None => counts.get(&item.object_id.get()),
+            Some(path) => referenced_count(referenced, &referenced_counts, path, item.object_id),
+        })
+        .map(|count| count.expect("every build item reference was verified"))
+        .fold(0_usize, |total, count| total.saturating_add(*count))
+}
+
+/// Returns how many leaves each object of `document` expands to, by object id.
+/// `referenced` and `referenced_counts` resolve its `p:path` components.
+fn object_leaf_counts(
+    document: &ModelDocument,
+    referenced: &[ReferencedModel],
+    referenced_counts: &[HashMap<u32, usize>],
+) -> HashMap<u32, usize> {
     // A single forward pass suffices: components only reference earlier
     // objects, so each object's count is ready when a later object needs it.
     let mut counts: HashMap<u32, usize> = HashMap::new();
@@ -111,39 +302,60 @@ fn expanded_leaf_count(document: &ModelDocument) -> usize {
             ObjectPayload::Mesh(_) => 1,
             ObjectPayload::Components(components) => components
                 .iter()
-                .map(|component| {
-                    counts
+                .map(|component| match &component.path {
+                    None => *counts
                         .get(&component.object_id.get())
-                        .expect("parse_model enforces definition before use")
+                        .expect("parse_model enforces definition before use"),
+                    Some(path) => {
+                        *referenced_count(referenced, referenced_counts, path, component.object_id)
+                            .expect("every component reference was verified")
+                    }
                 })
-                .fold(0_usize, |total, child| total.saturating_add(*child)),
+                .fold(0_usize, |total, child| total.saturating_add(child)),
         };
         counts.insert(object.id.get(), count);
     }
-    document
-        .build
-        .iter()
-        .map(|item| {
-            counts
-                .get(&item.object_id.get())
-                .expect("parse_model verified every build item reference")
-        })
-        .fold(0_usize, |total, count| total.saturating_add(*count))
+    counts
+}
+
+/// Returns the leaf count of object `id` of the referenced part `path`.
+fn referenced_count<'a>(
+    referenced: &[ReferencedModel],
+    referenced_counts: &'a [HashMap<u32, usize>],
+    path: &str,
+    id: ResourceId,
+) -> Option<&'a usize> {
+    let key = path.to_ascii_lowercase();
+    let index = referenced.iter().position(|model| model.key == key)?;
+    referenced_counts[index].get(&id.get())
 }
 
 fn convert_document(
     document: &ModelDocument,
+    referenced: &[ReferencedModel],
     declared: HashMap<u32, StoredFacetNormals>,
 ) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError> {
-    if expanded_leaf_count(document) > MAX_EXPANDED_LEAF_COUNT {
+    if expanded_leaf_count(document, referenced) > MAX_EXPANDED_LEAF_COUNT {
         return Err(LoadThreeMfError::LeafBudgetExceeded {
             limit: MAX_EXPANDED_LEAF_COUNT,
         });
     }
 
+    let documents: Vec<&ModelDocument> = std::iter::once(document)
+        .chain(referenced.iter().map(|model| &model.document))
+        .collect();
     let mut converter = Converter {
-        objects: document.objects.iter().map(|o| (o.id, o)).collect(),
-        scale: document.unit.scale_to_mm(),
+        objects: documents
+            .iter()
+            .enumerate()
+            .flat_map(|(part, document)| document.objects.iter().map(move |o| ((part, o.id), o)))
+            .collect(),
+        scales: documents.iter().map(|d| d.unit.scale_to_mm()).collect(),
+        parts_by_path: referenced
+            .iter()
+            .enumerate()
+            .map(|(index, model)| (model.key.clone(), ROOT_PART + 1 + index))
+            .collect(),
         scene: Scene::new(),
         resources: HashMap::new(),
         reached: HashSet::new(),
@@ -151,19 +363,17 @@ fn convert_document(
         warnings: Vec::new(),
     };
 
-    if !document.base_materials.is_empty() {
+    let group_count: usize = documents.iter().map(|d| d.base_materials.len()).sum();
+    if group_count > 0 {
         converter
             .warnings
-            .push(LoadThreeMfWarning::MaterialsDropped {
-                group_count: document.base_materials.len(),
-            });
+            .push(LoadThreeMfWarning::MaterialsDropped { group_count });
     }
-    if !document.slice_stacks.is_empty() {
+    let stack_count: usize = documents.iter().map(|d| d.slice_stacks.len()).sum();
+    if stack_count > 0 {
         converter
             .warnings
-            .push(LoadThreeMfWarning::SliceDataIgnored {
-                stack_count: document.slice_stacks.len(),
-            });
+            .push(LoadThreeMfWarning::SliceDataIgnored { stack_count });
     }
     if document.build.is_empty() {
         converter.warnings.push(LoadThreeMfWarning::EmptyBuild);
@@ -176,21 +386,24 @@ fn convert_document(
         .expect("freshly allocated group is not yet a root");
 
     for item in &document.build {
+        let part = converter.part_of(ROOT_PART, item.path.as_deref());
         let object = converter
             .objects
-            .get(&item.object_id)
+            .get(&(part, item.object_id))
             .copied()
-            .expect("parse_model verified every build item reference");
-        let transform = convert_transform(item.transform, converter.scale);
-        let node = converter.convert_object(object, transform, 0)?;
+            .expect("every build item reference was verified");
+        let transform = convert_transform(item.transform, converter.scales[ROOT_PART]);
+        let node = converter.convert_object(part, object, transform, 0)?;
         converter
             .scene
             .add_child(root, node)
             .expect("freshly converted node has no parent and is not a root");
     }
 
+    // Objects of referenced parts that nothing reaches are not reported: those
+    // parts hold the objects of the start part's assemblies.
     for object in &document.objects {
-        if !converter.reached.contains(&object.id.get()) {
+        if !converter.reached.contains(&(ROOT_PART, object.id)) {
             converter
                 .warnings
                 .push(LoadThreeMfWarning::UnbuiltObjectSkipped {
@@ -220,11 +433,25 @@ fn convert_document(
 }
 
 impl Converter<'_> {
+    /// Returns the part that a reference from part `from` with `p:path` `path`
+    /// points into.
+    fn part_of(&self, from: PartIndex, path: Option<&str>) -> PartIndex {
+        match path {
+            None => from,
+            Some(path) => *self
+                .parts_by_path
+                .get(&path.to_ascii_lowercase())
+                .expect("every path was read"),
+        }
+    }
+
     /// Converts an object reference into a scene node carrying
     /// `local_transform`: a mesh object becomes a resource-backed leaf, a
     /// components object becomes a Group with 1 converted child per component.
+    /// `part` is the model part that defines `object`.
     fn convert_object(
         &mut self,
+        part: PartIndex,
         object: &ObjectResource,
         local_transform: Transform3D,
         depth: usize,
@@ -239,7 +466,7 @@ impl Converter<'_> {
                 object_id: object.id.get(),
             });
         }
-        if self.reached.insert(object.id.get()) && object.object_type != ObjectType::Model {
+        if self.reached.insert((part, object.id)) && object.object_type != ObjectType::Model {
             self.warnings
                 .push(LoadThreeMfWarning::NonModelObjectTypeFlattened {
                     id: object.id.get(),
@@ -248,7 +475,7 @@ impl Converter<'_> {
         }
         match &object.payload {
             ObjectPayload::Mesh(data) => {
-                let resource = self.mesh_resource_for(object, data)?;
+                let resource = self.mesh_resource_for(part, object, data)?;
                 let leaf = self
                     .scene
                     .add_leaf(None, local_transform, LeafPayload::MeshResource(resource))
@@ -258,13 +485,17 @@ impl Converter<'_> {
             ObjectPayload::Components(components) => {
                 let group = self.scene.add_group(None, local_transform);
                 for component in components {
+                    let child_part = self.part_of(part, component.path.as_deref());
                     let child_object = self
                         .objects
-                        .get(&component.object_id)
+                        .get(&(child_part, component.object_id))
                         .copied()
-                        .expect("parse_model verified every component reference");
-                    let child_transform = convert_transform(component.transform, self.scale);
-                    let child = self.convert_object(child_object, child_transform, depth + 1)?;
+                        .expect("every component reference was verified");
+                    // The transform is written in the units of the part that
+                    // holds the component.
+                    let child_transform = convert_transform(component.transform, self.scales[part]);
+                    let child =
+                        self.convert_object(child_part, child_object, child_transform, depth + 1)?;
                     self.scene
                         .add_child(group, child)
                         .expect("freshly converted node has no parent and is not a root");
@@ -278,20 +509,22 @@ impl Converter<'_> {
     /// mesh on first use.
     fn mesh_resource_for(
         &mut self,
+        part: PartIndex,
         object: &ObjectResource,
         data: &MeshData,
     ) -> Result<MeshResourceId, LoadThreeMfError> {
-        if let Some(&resource) = self.resources.get(&object.id.get()) {
+        if let Some(&resource) = self.resources.get(&(part, object.id)) {
             return Ok(resource);
         }
-        let mut mesh = convert_mesh(object, data, self.scale)?;
-        if let Some(stored) = self.declared.remove(&object.id.get())
+        let mut mesh = convert_mesh(object, data, self.scales[part])?;
+        if part == ROOT_PART
+            && let Some(stored) = self.declared.remove(&object.id.get())
             && let Err(warning) = restore(&mut mesh, object.id.get(), stored)
         {
             self.warnings.push(warning);
         }
         let resource = self.scene.add_mesh_resource(mesh);
-        self.resources.insert(object.id.get(), resource);
+        self.resources.insert((part, object.id), resource);
         Ok(resource)
     }
 }

@@ -206,6 +206,7 @@ fn prism_scene_document(unit: Unit) -> ModelDocument {
             object_id: id,
             transform: Some(translation_matrix(PRISM_PLACEMENTS[index])),
             partnumber: None,
+            path: None,
         });
     }
     document
