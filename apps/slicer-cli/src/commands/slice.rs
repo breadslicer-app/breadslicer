@@ -11,11 +11,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use sc_geom::df_supports::is_support_mesh_name;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
-    PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene,
-    UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export, slice_plate,
+    PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, SupportOwners,
+    UnsliceableScene, UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export,
+    slice_plate,
 };
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
@@ -27,8 +29,9 @@ use sc_project_formats::{
     LoadedContent, LoadedScene, ProjectContent, ReadProjectWarning, load_scene,
 };
 use sc_scene::Scene;
+use sc_scene::node::NodeId;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
-use sc_sl1cer::{CancelToken, VERSION};
+use sc_sl1cer::{CancelToken, VERSION, sliceable_leaves};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
 use crate::commands::df_supports::{add_df_supports, lift_scene, restore_df_supports};
@@ -219,6 +222,7 @@ pub(crate) fn load_and_slice(
         printer,
         material,
         &params,
+        &support_owners(&scene),
         &CancelToken::new(),
         |_| {},
     ) {
@@ -234,6 +238,32 @@ pub(crate) fn load_and_slice(
     };
 
     Ok(SlicedScene { scene, plate })
+}
+
+/// The scene's support leaves, told apart by their name. The scale
+/// compensation scales each with the model it stands under (#227).
+fn support_owners(scene: &Scene) -> SupportOwners {
+    sliceable_leaves(scene)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|&leaf| is_support_leaf(scene, leaf))
+        .map(|leaf| (leaf, None))
+        .collect()
+}
+
+/// Whether `leaf` carries generated supports: its node or its mesh has their
+/// name.
+fn is_support_leaf(scene: &Scene, leaf: NodeId) -> bool {
+    let node_name = scene
+        .node(leaf)
+        .and_then(|node| node.meta.as_ref())
+        .and_then(|meta| meta.name.as_deref());
+    let mesh_name = scene
+        .mesh_at_leaf(leaf)
+        .ok()
+        .and_then(|mesh| mesh.meta.as_ref())
+        .and_then(|meta| meta.name.as_deref());
+    node_name.or(mesh_name).is_some_and(is_support_mesh_name)
 }
 
 /// Merges the plate's per-leaf stacks into the contours a file target is

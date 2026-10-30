@@ -22,6 +22,7 @@ use sc_sla_formats::RasterSetup;
 use super::export::{ExportJob, UnexportableSlice, prepare_export};
 use super::fallback_report::fallbacks_used;
 use super::print_program::{SlabTopOutOfRange, UnprojectablePrint};
+use super::scale_compensation::SupportOwners;
 use super::slice_plate::{PlateContours, SliceRun, SlicedPlate, SlicingParams, slice_plate};
 
 const PRINTER_TOML: &str = r#"
@@ -131,6 +132,7 @@ fn slice(scene: &Scene, material: &EffectiveMaterial, params: &SlicingParams) ->
         &printer(),
         material,
         params,
+        &SupportOwners::new(),
         &CancelToken::new(),
         |_| {},
     )

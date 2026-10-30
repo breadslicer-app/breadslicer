@@ -18,6 +18,7 @@ use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
 
 use super::prepare::UnsliceableSelection;
+use super::scale_compensation::SupportOwners;
 use super::slice_plate::{
     MismatchedLayerCount, PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams,
     schedule_for_selection, slice_plate,
@@ -116,6 +117,7 @@ fn completed(scene: &Scene) -> SlicedPlate {
         &printer(),
         &material(),
         &params(),
+        &SupportOwners::new(),
         &CancelToken::new(),
         |_| {},
     )
@@ -204,6 +206,7 @@ fn a_pre_cancelled_token_yields_cancelled() {
         &printer(),
         &material(),
         &params(),
+        &SupportOwners::new(),
         &cancel,
         |_| {},
     )
@@ -220,6 +223,7 @@ fn progress_ends_complete() {
         &printer(),
         &material(),
         &params(),
+        &SupportOwners::new(),
         &CancelToken::new(),
         |progress| {
             last_completed.fetch_max(progress.completed as u32, Ordering::Relaxed);
@@ -244,6 +248,7 @@ fn an_unresolvable_layer_height_is_a_prepare_error() {
         &printer(),
         &heightless_material(),
         &no_request,
+        &SupportOwners::new(),
         &CancelToken::new(),
         |_| {},
     )
@@ -261,6 +266,7 @@ fn an_empty_scene_is_a_prepare_error() {
         &printer(),
         &material(),
         &params(),
+        &SupportOwners::new(),
         &CancelToken::new(),
         |_| {},
     )
@@ -287,6 +293,7 @@ fn an_invalid_leaf_is_an_engine_error() {
         &printer(),
         &material(),
         &params(),
+        &SupportOwners::new(),
         &CancelToken::new(),
         |_| {},
     )
@@ -308,6 +315,7 @@ fn stacks_from_different_schedules_refuse_to_merge() {
     let mixed = SlicedPlate {
         leaves,
         profile: cube.profile,
+        scale: cube.scale,
     };
     assert!(mixed.merge().is_err());
 }

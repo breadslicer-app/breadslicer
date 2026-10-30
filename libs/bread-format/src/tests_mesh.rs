@@ -99,6 +99,41 @@ fn an_empty_mesh_round_trips() {
 }
 
 #[test]
+fn a_long_run_of_identical_vertices_round_trips() {
+    // Identical vertices in a row are the codec's densest output (BS-206):
+    // 100,000 of them take about 1.2 KB, under the old bound's reach.
+    let mut mesh = grid(3);
+    let repeated = mesh.vertices()[5];
+    let mut vertices = mesh.vertices().to_vec();
+    vertices.extend(std::iter::repeat_n(repeated, 100_000));
+    let last = vertices.len() as u32 - 1;
+    let mut faces = mesh.faces().to_vec();
+    faces.push(IndexedTriangle::from_raw_indices([0, 1, last]));
+    mesh = IndexedMesh::new(mesh.meta().clone(), vertices, faces);
+
+    let payload = encode_mesh(&mesh);
+    assert!(
+        payload.len() * 256 < 100_000 * 12,
+        "the old bound rejects it"
+    );
+    assert_identical(&decode_mesh(&payload).unwrap(), &mesh);
+}
+
+#[test]
+fn a_count_past_the_densest_vertex_stream_is_malformed() {
+    // One more vertex than the densest stream can hold is still rejected.
+    let mesh = IndexedMesh::new(None, vec![Vertex::new([1.0, 2.0, 3.0]); 100_000], vec![]);
+    let mut payload = encode_mesh(&mesh);
+    let length = u32::from_le_bytes(payload[5..9].try_into().unwrap()) as usize;
+    let too_many = (length * 1024 / 12 + 1) as u32;
+    payload[1..5].copy_from_slice(&too_many.to_le_bytes());
+    assert_eq!(
+        decode_mesh(&payload).unwrap_err(),
+        DecodeMeshError::Malformed
+    );
+}
+
+#[test]
 fn a_cut_or_padded_payload_is_malformed() {
     let payload = encode_mesh(&grid(5));
     for cut in [0, 1, 10, payload.len() / 2, payload.len() - 1] {
