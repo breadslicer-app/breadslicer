@@ -1834,6 +1834,20 @@ msgstr[1] "{n} mallas todavía tienen caras de área cero"
 
 #, rust-format
 msgctxt "RepairDialog"
+msgid "removed {n} leftover face"
+msgid_plural "removed {n} leftover faces"
+msgstr[0] "se quitó {n} cara sobrante"
+msgstr[1] "se quitaron {n} caras sobrantes"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} zero-area face kept; the mesh slices fine"
+msgid_plural "{n} zero-area faces kept; the mesh slices fine"
+msgstr[0] "quedó {n} cara de área cero; la malla se lamina bien"
+msgstr[1] "quedaron {n} caras de área cero; la malla se lamina bien"
+
+#, rust-format
+msgctxt "RepairDialog"
 msgid "filled {n} hole"
 msgid_plural "filled {n} holes"
 msgstr[0] "se tapó {n} agujero"
