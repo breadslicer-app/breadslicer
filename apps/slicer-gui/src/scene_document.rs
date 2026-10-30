@@ -38,7 +38,7 @@ pub(crate) use sc_scene_edit::SceneEdit;
 use crate::hollow_run::Hollowed;
 use crate::print_selection::{PrintDefaults, PrintSelection};
 use crate::selection::{Selection, SelectionState};
-use crate::slice_result::{SliceParams, SliceResult};
+use crate::slice_result::{LayerValues, SliceParams, SliceResult};
 use crate::support_persist::SupportSessions;
 
 /// An opaque marker of which scene is installed and of its committed-edit
@@ -681,6 +681,15 @@ impl SceneDocument {
             .borrow()
             .as_ref()
             .map(|result| result.params.clone())
+    }
+
+    /// Returns the values the held slice's layers were cut with, or `None`
+    /// when no slice is held or they are unknown.
+    pub(crate) fn slice_layer_values(&self) -> Option<LayerValues> {
+        self.slice_result
+            .borrow()
+            .as_ref()
+            .and_then(|result| result.layers)
     }
 
     /// Returns how many layers the held slice has, or `None` when no slice is

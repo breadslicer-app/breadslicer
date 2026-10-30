@@ -1055,6 +1055,7 @@ mod scene_save_tests {
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                 },
+                layers: None,
             });
 
             save_project_to(&doc, &target, &defaults(printer, resin)).expect("the save succeeds");
@@ -1113,6 +1114,7 @@ mod scene_save_tests {
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                 },
+                layers: None,
             });
 
             save_project_to(
@@ -1180,6 +1182,7 @@ mod scene_save_tests {
                     aa_level: AaLevel::Off,
                     geometry: doc.scene_revision(),
                 },
+                layers: None,
             });
 
             save_project_to(&doc, &target, &defaults(printer, resin)).expect("the save succeeds");
