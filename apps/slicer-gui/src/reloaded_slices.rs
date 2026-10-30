@@ -24,8 +24,8 @@ use sc_scene::Scene;
 use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::SceneRevision;
-use crate::slice_projection::resolve_current_schedule;
-use crate::slice_result::{SliceParams, SliceResult};
+use crate::slice_projection::{load_selected_profiles, schedule_for_profiles};
+use crate::slice_result::{LayerValues, SliceParams, SliceResult};
 
 /// A project's persisted slices that passed revalidation on load: the reloaded
 /// contour stack paired with its schedule, plus the inputs they were validated
@@ -37,6 +37,7 @@ pub(crate) struct ReloadedSlices {
     printer: PrinterId,
     resin: MaterialId,
     first_layer_height: Option<PositiveFiniteMm>,
+    layers: Option<LayerValues>,
 }
 
 impl ReloadedSlices {
@@ -55,6 +56,7 @@ impl ReloadedSlices {
                 aa_level: AaLevel::Off,
                 geometry,
             },
+            layers: self.layers,
         }
     }
 }
@@ -79,7 +81,9 @@ pub(crate) fn revalidate_persisted_slices(
     let resin = payload.resin.clone()?;
     let first_layer_height = payload.first_layer_height;
 
-    let schedule = resolve_current_schedule(&printer, &resin, first_layer_height, scene).ok()?;
+    let (printer_profile, resin_profile) = load_selected_profiles(&printer, &resin).ok()?;
+    let schedule =
+        schedule_for_profiles(&printer_profile, &resin_profile, first_layer_height, scene).ok()?;
     let contours = PlateContours::new(stack, schedule).ok()?;
     if !slices_in_sync(&token, scene, contours.schedule()) {
         return None;
@@ -90,6 +94,9 @@ pub(crate) fn revalidate_persisted_slices(
         printer,
         resin,
         first_layer_height,
+        // The token pins the schedule, not the scale compensation: the slices
+        // are taken as cut with what the profiles hold at load.
+        layers: LayerValues::resolve(&printer_profile, &resin_profile, first_layer_height),
     })
 }
 
@@ -115,6 +122,7 @@ mod reloaded_slices_tests {
     use sc_scene::node::LeafPayload;
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
+    use crate::slice_projection::resolve_current_schedule;
     use crate::test_support::projects::{cube_mesh, project_with_in_sync_slices, three_mf};
 
     fn cube_scene() -> Scene {
@@ -222,6 +230,7 @@ mod reloaded_slices_tests {
             printer: printer.clone(),
             resin: resin.clone(),
             first_layer_height,
+            layers: None,
         };
         let geometry = SceneRevision::from_top_edit_id(None);
         let result = reloaded.into_slice_result(geometry);

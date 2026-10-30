@@ -26,6 +26,8 @@ use sc_mesh_core::indexed_mesh::DeclaredFacetNormals;
 use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
+pub mod repair_corpus;
+
 #[cfg(test)]
 mod tests_collinear;
 #[cfg(test)]
@@ -34,6 +36,8 @@ mod tests_declared;
 mod tests_flipped;
 #[cfg(test)]
 mod tests_pinch;
+#[cfg(test)]
+mod tests_repair_corpus;
 
 /// Returns a closed unit cube centred at the origin (side 1), manifold by
 /// construction.

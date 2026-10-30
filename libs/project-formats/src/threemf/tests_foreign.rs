@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::io::{Cursor, Write};
+
 use sc_3mf::package::{Package, PartName};
 
 use crate::messages::ForeignDialect;
@@ -82,6 +84,31 @@ mod detection_tests {
                 ForeignDialect::Cura,
                 ForeignDialect::PrusaSlicer,
             ],
+        );
+    }
+
+    #[test]
+    fn a_marker_part_with_no_content_type_counts() {
+        // Bambu Studio and Orca do not declare the type of their marker part.
+        let mut cursor = Cursor::new(Vec::new());
+        let mut archive = zip::write::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("[Content_Types].xml", options).unwrap();
+        archive
+            .write_all(
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#,
+            )
+            .unwrap();
+        archive
+            .start_file(&BAMBU_ORCA_MARKER_PART[1..], options)
+            .unwrap();
+        archive.write_all(b"{}").unwrap();
+        archive.finish().unwrap();
+        let package =
+            Package::read_from(Cursor::new(cursor.into_inner())).expect("the package reads");
+        assert_eq!(
+            detect_foreign_dialects(&package),
+            vec![ForeignDialect::BambuStudioOrca],
         );
     }
 }

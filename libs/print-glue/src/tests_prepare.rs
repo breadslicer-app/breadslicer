@@ -219,8 +219,9 @@ fn a_scene_topping_exactly_at_the_plate_is_rejected() {
 
 #[test]
 fn absent_first_layer_height_falls_back_to_the_layer_height() {
-    // z_max 0.97, layer height 0.05, first layer 0.05 (fallback): beyond 0.92,
-    // ceil(0.92/0.05) = 19, total 20.
+    // z_max 0.97, layer height 0.05, first layer 0.05 (fallback): 19 layers
+    // are cut below the top, the last at 0.925; a 20th would be cut at 0.975,
+    // above it.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_scene(
         &scene,
@@ -231,13 +232,13 @@ fn absent_first_layer_height_falls_back_to_the_layer_height() {
         PackingMode::None,
     )
     .expect("valid derivation");
-    assert_eq!(uniform_schedule(&profile), (0.05, 0.05, 20));
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.05, 19));
 }
 
 #[test]
 fn an_explicit_first_layer_height_overrides_the_fallback() {
-    // z_max 0.97, layer height 0.05, first layer 0.15: beyond 0.82,
-    // ceil(0.82/0.05) = 17, total 18.
+    // z_max 0.97, layer height 0.05, first layer 0.15: the first layer and 16
+    // more are cut below the top, the last at 0.925.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_scene(
         &scene,
@@ -248,7 +249,7 @@ fn an_explicit_first_layer_height_overrides_the_fallback() {
         PackingMode::None,
     )
     .expect("valid derivation");
-    assert_eq!(uniform_schedule(&profile), (0.05, 0.15, 18));
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.15, 17));
 }
 
 #[test]
@@ -362,7 +363,7 @@ fn a_selection_without_print_calibration_still_slices() {
         PackingMode::None,
     )
     .expect("a selection without print calibration must still slice");
-    assert_eq!(uniform_schedule(&profile), (0.05, 0.05, 20));
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.05, 19));
     assert_eq!(profile.build_volume().x_mm(), 153.36);
 }
 
@@ -388,8 +389,8 @@ fn a_layer_height_request_reaches_the_schedule() {
 #[test]
 fn a_first_layer_off_the_z_step_grid_is_quantised() {
     // First layer 0.08 on a 0.05 z step snaps to 0.1; the layer height itself
-    // (0.05 from intent) is already on the grid. z_max 0.97, first 0.1: beyond
-    // 0.87, ceil(0.87/0.05) = 18, total 19.
+    // (0.05 from intent) is already on the grid. z_max 0.97, first 0.1: the
+    // first layer and 17 more are cut below the top, the last at 0.925.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_selection(
         &scene,
@@ -401,15 +402,15 @@ fn a_first_layer_off_the_z_step_grid_is_quantised() {
         PackingMode::None,
     )
     .expect("valid derivation");
-    assert_eq!(uniform_schedule(&profile), (0.05, 0.1, 19));
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.1, 18));
 }
 
 #[test]
 fn the_layer_height_range_does_not_bind_the_first_layer() {
     // 0.2 sits outside the declared [0.03, 0.1] range but on the 0.05 grid: it
     // passes unchanged. First layers can run thicker than the curing range of
-    // normal layers. z_max 0.97, first 0.2: beyond 0.77, ceil(0.77/0.05) = 16,
-    // total 17.
+    // normal layers. z_max 0.97, first 0.2: the first layer and 15 more are
+    // cut below the top, the last at 0.925.
     let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
     let profile = slice_profile_for_selection(
         &scene,
@@ -421,7 +422,7 @@ fn the_layer_height_range_does_not_bind_the_first_layer() {
         PackingMode::None,
     )
     .expect("valid derivation");
-    assert_eq!(uniform_schedule(&profile), (0.05, 0.2, 17));
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.2, 16));
 }
 
 #[test]
@@ -492,8 +493,8 @@ fn a_rotated_model_gets_layers_up_to_its_highest_vertex() {
     use sc_mesh_core::transform::AffineTransform3D;
     // An octahedron (vertices on the axes at distance 1) turned 45 degrees
     // about X and raised by 1: its top vertex is at 1 + sin 45 = 1.707, so
-    // 18 layers of 0.1 mm. Its transformed local box reaches 1 + sqrt 2,
-    // which would schedule 25.
+    // 17 layers of 0.1 mm, the last cut at 1.65. Its transformed local box
+    // reaches 1 + sqrt 2, which would schedule 24.
     let v = |p: [f32; 3]| Vertex::new(p);
     let octahedron = IndexedMesh {
         meta: None,
@@ -526,5 +527,5 @@ fn a_rotated_model_gets_layers_up_to_its_highest_vertex() {
         PackingMode::None,
     )
     .expect("valid derivation");
-    assert_eq!(uniform_schedule(&profile), (0.1, 0.1, 18));
+    assert_eq!(uniform_schedule(&profile), (0.1, 0.1, 17));
 }

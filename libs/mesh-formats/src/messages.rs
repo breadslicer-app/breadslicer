@@ -81,6 +81,10 @@ pub enum LoadThreeMfWarning {
     /// The package part `part` is in the declared-facet-normals directory but
     /// is not a valid part of that kind; it is ignored.
     DeclaredFacetNormalsMalformed { part: String },
+    /// The package stores parts with no content type, which FDM slicers use
+    /// for their settings and pictures; they are skipped. `parts` holds their
+    /// names in archive order.
+    UntypedPartsSkipped { parts: Vec<String> },
 }
 
 /// An entry in a scene-level `SharedVertices` warning. Pairs the offending

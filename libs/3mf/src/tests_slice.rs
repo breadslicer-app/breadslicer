@@ -137,6 +137,7 @@ fn document(stacks: Vec<SliceStack>, objects: Vec<ObjectResource>) -> ModelDocum
             object_id: o.id,
             transform: None,
             partnumber: None,
+            path: None,
         })
         .collect();
     ModelDocument {
@@ -862,6 +863,7 @@ mod planar_transform_tests {
             payload: ObjectPayload::Components(vec![crate::model::Component {
                 object_id: id(2),
                 transform: Some(non_planar()),
+                path: None,
             }]),
         };
         let mut source = document(
@@ -873,6 +875,7 @@ mod planar_transform_tests {
             object_id: id(3),
             transform: None,
             partnumber: None,
+            path: None,
         });
         let err = write_err(&source);
         assert!(matches!(
@@ -894,6 +897,7 @@ mod planar_transform_tests {
             payload: ObjectPayload::Components(vec![crate::model::Component {
                 object_id: id(2),
                 transform: None,
+                path: None,
             }]),
         };
         let mut source = document(
@@ -905,6 +909,7 @@ mod planar_transform_tests {
             object_id: id(3),
             transform: Some(non_planar()),
             partnumber: None,
+            path: None,
         });
         let err = write_err(&source);
         assert!(matches!(

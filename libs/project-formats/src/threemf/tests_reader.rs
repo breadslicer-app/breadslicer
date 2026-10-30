@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
+use sc_3mf::error::PackageReadError;
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
+use sc_mesh_formats::error::LoadThreeMfError;
+use sc_mesh_formats::messages::LoadThreeMfWarning;
 use sc_print_primitives::{MaterialId, PrinterId};
 
 use crate::error::ReadThreeMfProjectError;
@@ -338,6 +341,115 @@ mod foreign_data_tests {
             vec![ReadProjectWarning::ForeignProjectData {
                 dialect: ForeignDialect::Cura,
             }],
+        );
+    }
+}
+
+/// Packages shaped as Bambu Studio and Orca write them: the object in its own
+/// model part, referenced from the start part with the production extension's
+/// `p:path`, and settings and pictures that the content-type map does not
+/// cover.
+mod bambu_tests {
+    use super::*;
+
+    const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+ <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+ <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+ <Default Extension="png" ContentType="image/png"/>
+</Types>"#;
+
+    const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>"#;
+
+    const MODEL_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Target="/3D/Objects/object_1.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>"#;
+
+    const START_PART: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">
+ <metadata name="Application">BambuStudio-02.07.01.62</metadata>
+ <resources>
+  <object id="2" p:UUID="00000001-61cb-4c03-9d28-80fed5dfa1dc" type="model">
+   <components>
+    <component p:path="/3D/Objects/object_1.model" objectid="1" p:UUID="00010000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
+   </components>
+  </object>
+ </resources>
+ <build p:UUID="2c7c17d8-22b5-4d84-8835-1976022ea369">
+  <item objectid="2" p:UUID="00000002-b1ec-4553-aec9-835e5b724bb4" transform="1 0 0 0 1 0 0 0 1 128 128 0" printable="1"/>
+ </build>
+</model>"#;
+
+    /// Returns the archive with `content_types`, the start part, the object
+    /// part, and the parts with no content type.
+    fn bambu_archive(content_types: &str) -> Vec<u8> {
+        let items: [(&str, &[u8]); 9] = [
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("Metadata/plate_1.png", b"png"),
+            ("3D/3dmodel.model", START_PART.as_bytes()),
+            ("3D/_rels/3dmodel.model.rels", MODEL_RELS.as_bytes()),
+            ("3D/Objects/object_1.model", TETRAHEDRON_MODEL.as_bytes()),
+            ("Metadata/project_settings.config", b"{}"),
+            ("Metadata/model_settings.config", b"<config/>"),
+            ("Auxiliaries/Model Pictures/photo.webp", b"webp"),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+        ];
+        let mut cursor = Cursor::new(Vec::new());
+        let mut archive = zip::write::ZipWriter::new(&mut cursor);
+        for (name, bytes) in items {
+            archive
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .expect("the entry starts");
+            archive.write_all(bytes).expect("the entry writes");
+        }
+        archive.finish().expect("the archive finishes");
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn a_bambu_project_opens_and_names_the_parts_it_skips() {
+        let mut bytes = Cursor::new(bambu_archive(CONTENT_TYPES));
+        let loaded = read_threemf_project(&mut bytes).expect("the project opens");
+        assert_eq!(loaded.scene.mesh_resources_len(), 1);
+        assert!(loaded.payload.is_none());
+        assert_eq!(
+            loaded.warnings,
+            vec![
+                ReadProjectWarning::ThreeMf(LoadThreeMfWarning::UntypedPartsSkipped {
+                    parts: vec![
+                        "/Metadata/project_settings.config".to_string(),
+                        "/Metadata/model_settings.config".to_string(),
+                        "/Auxiliaries/Model Pictures/photo.webp".to_string(),
+                    ],
+                }),
+                ReadProjectWarning::ForeignProjectData {
+                    dialect: ForeignDialect::BambuStudioOrca,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn an_object_part_with_no_content_type_is_refused_by_name() {
+        // Only the start part has a type, by override.
+        let content_types = CONTENT_TYPES.replace(
+            r#"<Default Extension="model" "#,
+            r#"<Override PartName="/3D/3dmodel.model" "#,
+        );
+        let mut bytes = Cursor::new(bambu_archive(&content_types));
+        let err = read_threemf_project(&mut bytes).expect_err("the project is refused");
+        assert!(
+            matches!(
+                &err,
+                ReadThreeMfProjectError::Scene(LoadThreeMfError::Package(
+                    PackageReadError::PartWithoutContentType { part }
+                )) if part == "/3D/Objects/object_1.model"
+            ),
+            "{err:?}",
         );
     }
 }
