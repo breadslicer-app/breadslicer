@@ -56,8 +56,10 @@ use crate::print_selection::PrintDefaults;
 use crate::review::{ReviewOutcome, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
-use crate::slice_projection::{SliceFailure, load_selected_profiles};
-use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
+use crate::slice_projection::{SliceFailure, current_layer_values, load_selected_profiles};
+use crate::slice_result::{
+    LayerValues, ReSliceDecision, SliceParams, SliceResult, decide_re_slice, layers_changed,
+};
 use crate::support_persist;
 
 /// Cadence of the UI-side progress poll while a slice is in flight.
@@ -84,6 +86,8 @@ struct CompletedSlice {
     contours: PlateContours,
     token: String,
     review: ReviewOutcome,
+    /// The values the run's profiles resolved to (#280).
+    layers: Option<LayerValues>,
 }
 
 /// The worker's finished payload, past the engine's raw per-leaf output: a
@@ -209,7 +213,13 @@ impl SliceRun {
         let geometry_changed = held
             .as_ref()
             .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
-        match decide_re_slice(held.as_ref(), &current, geometry_changed) {
+        // A profile edited in place keeps its id: read what it resolves to now.
+        let layers_changed = held.is_some()
+            && layers_changed(
+                self.document.slice_layer_values(),
+                current_layer_values(&current),
+            );
+        match decide_re_slice(held.as_ref(), &current, geometry_changed, layers_changed) {
             ReSliceDecision::FirstSlice => self.launch(current, by_fix_all),
             // Fills to add or drop: the scene is the same, the slice is not.
             ReSliceDecision::Unchanged if self.review.fills_pending() => {
@@ -414,6 +424,7 @@ impl SliceRun {
                         contours: completed.contours,
                         token: completed.token,
                         params,
+                        layers: completed.layers,
                     });
                     // Size and enable the height slider, parking the selected
                     // layer at the top.
@@ -489,6 +500,7 @@ fn run_slice(
     progress: &SliceProgressCell,
 ) -> Result<SliceRunOutcome, SliceFailure> {
     let (printer_profile, resin_profile) = load_selected_profiles(&inputs.printer, &inputs.resin)?;
+    let layers = LayerValues::resolve(&printer_profile, &resin_profile, inputs.first_layer_height);
     let params = SlicingParams {
         layer_height_request: None,
         first_layer_height: inputs.first_layer_height,
@@ -540,7 +552,7 @@ fn run_slice(
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
-            capture(scene, contours, review).map(SliceRunOutcome::Completed)
+            capture(scene, contours, review, layers).map(SliceRunOutcome::Completed)
         }
     }
 }
@@ -552,6 +564,7 @@ fn capture(
     scene: &Scene,
     contours: PlateContours,
     review: ReviewOutcome,
+    layers: Option<LayerValues>,
 ) -> Result<CompletedSlice, SliceFailure> {
     let token = slice_input_fingerprint(scene, contours.schedule())
         .map_err(SliceFailure::Fingerprint)?
@@ -560,6 +573,7 @@ fn capture(
         contours,
         token,
         review,
+        layers,
     })
 }
 
@@ -610,7 +624,7 @@ mod capture_tests {
     #[test]
     fn capture_carries_the_stack_and_fingerprints_the_scene() {
         let scene = cube_scene();
-        let completed = capture(&scene, contours(), clean_review()).expect("capture");
+        let completed = capture(&scene, contours(), clean_review(), None).expect("capture");
         assert_eq!(completed.contours.stack().layers().len(), 2);
         assert_eq!(completed.contours.schedule(), &schedule());
         assert_eq!(
@@ -624,8 +638,8 @@ mod capture_tests {
     #[test]
     fn capture_is_deterministic() {
         let scene = cube_scene();
-        let first = capture(&scene, contours(), clean_review()).expect("first capture");
-        let second = capture(&scene, contours(), clean_review()).expect("second capture");
+        let first = capture(&scene, contours(), clean_review(), None).expect("first capture");
+        let second = capture(&scene, contours(), clean_review(), None).expect("second capture");
         assert_eq!(first.token, second.token);
     }
 
@@ -633,7 +647,7 @@ mod capture_tests {
     fn capture_fails_when_the_scene_has_no_geometry() {
         // An empty scene has no sliceable leaf, so the fingerprint, and thus
         // the capture, cannot be computed.
-        let result = capture(&Scene::new(), contours(), clean_review());
+        let result = capture(&Scene::new(), contours(), clean_review(), None);
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
     }
 
@@ -641,12 +655,12 @@ mod capture_tests {
     fn a_failed_review_still_completes_the_slice() {
         let scene = cube_scene();
         let failed = ReviewOutcome::Failed("the checks fell over".to_owned());
-        let completed = capture(&scene, contours(), failed.clone()).expect("the slice lands");
+        let completed = capture(&scene, contours(), failed.clone(), None).expect("the slice lands");
         assert_eq!(completed.contours.stack().layers().len(), 2);
         assert_eq!(completed.review, failed);
         assert_eq!(
             completed.token,
-            capture(&scene, contours(), clean_review())
+            capture(&scene, contours(), clean_review(), None)
                 .expect("a reviewed capture")
                 .token,
         );
