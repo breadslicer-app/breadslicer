@@ -338,7 +338,7 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
         .optional();
 
     let aa = long("aa")
-        .help("Per-pixel anti-aliasing: 0 (off), 2, 4, or 8")
+        .help("Per-pixel anti-aliasing: off, x2, x4 or x8 (default: off)")
         .argument::<AaLevel>("AA")
         .fallback(AaLevel::Off);
 
@@ -351,7 +351,7 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
 
     let no_auto_place = long("no-auto-place")
         .help(
-            "Skip auto-placement: slice the scene at its file coordinates instead of centring it on the build plate with its lowest point at z = 0. Multi-model scenes keep their relative layout either way.",
+            "Skip auto-placement: slice the scene at its file coordinates instead of centring it on the build plate with its lowest point at z = 0. Multi-model scenes keep their relative layout either way. What then lies past the plate's edges or under it is not printed, and is warned about.",
         )
         .switch();
 

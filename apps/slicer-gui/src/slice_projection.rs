@@ -11,6 +11,8 @@
 //! - [`resolve_current_schedule`] derives the layer schedule the current
 //!   selection would slice with, for save-time comparisons against a held
 //!   slice.
+//! - [`current_layer_values`] resolves the values that shape the layers, which
+//!   a Slice press compares against the held slice's (#280).
 //! - The slice run itself goes through sc-print-glue's `slice_plate`.
 
 use std::fmt;
@@ -30,6 +32,7 @@ use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
 
 use crate::i18n::ctr;
+use crate::slice_result::{LayerValues, SliceParams};
 
 /// Why a slice run could not be prepared or completed. Carries the specific
 /// failure so the UI can surface a meaningful message. Its text is in the
@@ -177,6 +180,13 @@ pub(crate) fn load_selected_profiles(
     Ok((printer_profile, material))
 }
 
+/// Resolve the [`LayerValues`] a slice with `params` would be cut with, from
+/// the profiles on disk now, or `None` when they do not load or resolve.
+pub(crate) fn current_layer_values(params: &SliceParams) -> Option<LayerValues> {
+    let (printer, resin) = load_selected_profiles(&params.printer, &params.resin).ok()?;
+    LayerValues::resolve(&printer, &resin, params.first_layer_height)
+}
+
 /// Resolve the layer schedule that slicing `scene` with `printer`, `resin`, and
 /// `first_layer_height` would use.
 pub(crate) fn resolve_current_schedule(
@@ -186,14 +196,23 @@ pub(crate) fn resolve_current_schedule(
     scene: &Scene,
 ) -> Result<LayerSchedule, SliceFailure> {
     let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
+    schedule_for_profiles(&printer_profile, &resin_profile, first_layer_height, scene)
+}
+
+/// [`resolve_current_schedule`] for profiles already loaded.
+pub(crate) fn schedule_for_profiles(
+    printer: &PrinterProfile,
+    resin: &EffectiveMaterial,
+    first_layer_height: Option<PositiveFiniteMm>,
+    scene: &Scene,
+) -> Result<LayerSchedule, SliceFailure> {
     let params = SlicingParams {
         layer_height_request: None,
         first_layer_height,
         // AA does not affect the schedule; any value serves.
         aa_level: AaLevel::Off,
     };
-    schedule_for_selection(scene, &printer_profile, &resin_profile, &params)
-        .map_err(SliceFailure::from)
+    schedule_for_selection(scene, printer, resin, &params).map_err(SliceFailure::from)
 }
 
 #[cfg(test)]

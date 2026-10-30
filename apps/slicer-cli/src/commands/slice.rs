@@ -13,13 +13,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use sc_geom::df_supports::is_support_mesh_name;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
+use sc_mesh_core::primitives::CoordAxis;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     PlateContours, SlicePlateError, SliceRun, SlicedPlate, SlicingParams, SupportOwners,
     UnsliceableScene, UnsliceableSelection, fallback_report_lines, place_on_plate, prepare_export,
     slice_plate,
 };
-use sc_print_primitives::PositiveFiniteMm;
+use sc_print_primitives::{BuildVolume, PositiveFiniteMm, Side, Wall};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
@@ -101,6 +102,11 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
     }
 
     let SlicedScene { scene, plate } = load_and_slice(&source_path, &printer, &material, options)?;
+    report_plate_overflow(
+        &scene,
+        &printer.hardware.build_volume(),
+        &mut std::io::stderr(),
+    );
     let model_count = plate.leaves().len();
     // Every stack shares the schedule's layer grid, and merging only
     // concatenates polygons per layer, so the totals are the same whichever
@@ -264,6 +270,69 @@ fn is_support_leaf(scene: &Scene, leaf: NodeId) -> bool {
         .and_then(|mesh| mesh.meta.as_ref())
         .and_then(|meta| meta.name.as_deref());
     node_name.or(mesh_name).is_some_and(is_support_mesh_name)
+}
+
+/// Warns, on `out`, about what of `scene` lies outside `volume` and so does not
+/// print: past an edge of the plate or under it, both cut off, or above the
+/// printer's height. Auto-placement keeps a model that fits off every wall;
+/// `--no-auto-place` and projects keep their own coordinates (#226). The
+/// `review` subcommand tells which part and on which layers.
+fn report_plate_overflow(scene: &Scene, volume: &BuildVolume, out: &mut dyn Write) {
+    let Ok(Some(aabb)) = scene.tight_aabb() else {
+        return;
+    };
+    let walls = volume.walls_crossed_by(&aabb);
+    let [min, max] = [aabb.min().coords(), aabb.max().coords()].map(|c| c.map(f64::from));
+    let [env_min, env_max] = [volume.envelope_min_mm(), volume.envelope_max_mm()];
+    let past_mm = |wall: Wall| {
+        let i = wall.axis.as_index();
+        match wall.side {
+            Side::Min => env_min[i] - min[i],
+            Side::Max => max[i] - env_max[i],
+        }
+    };
+    let edges: Vec<String> = [
+        (CoordAxis::X, Side::Min, "left"),
+        (CoordAxis::X, Side::Max, "right"),
+        (CoordAxis::Y, Side::Min, "front"),
+        (CoordAxis::Y, Side::Max, "back"),
+    ]
+    .into_iter()
+    .map(|(axis, side, name)| (Wall { axis, side }, name))
+    .filter(|&(wall, _)| walls.contains(wall))
+    .map(|(wall, name)| format!("{:.2} mm past the {name} edge", past_mm(wall)))
+    .collect();
+    if !edges.is_empty() {
+        let _ = writeln!(
+            out,
+            "warning: the scene reaches {} of the build plate; what lies beyond the screen is not printed (run `review` for the parts and layers)",
+            edges.join(", "),
+        );
+    }
+    let floor = Wall {
+        axis: CoordAxis::Z,
+        side: Side::Min,
+    };
+    if walls.contains(floor) {
+        let _ = writeln!(
+            out,
+            "warning: the scene reaches {:.2} mm below the build plate; what lies under it is not printed (auto-placement, without --no-auto-place, sets the lowest point on the plate)",
+            past_mm(floor),
+        );
+    }
+    let ceiling = Wall {
+        axis: CoordAxis::Z,
+        side: Side::Max,
+    };
+    if walls.contains(ceiling) {
+        let _ = writeln!(
+            out,
+            "warning: the scene reaches {:.2} mm, {:.2} mm above the printer's maximum height of {:.2} mm",
+            max[2],
+            past_mm(ceiling),
+            env_max[2],
+        );
+    }
 }
 
 /// Merges the plate's per-leaf stacks into the contours a file target is
