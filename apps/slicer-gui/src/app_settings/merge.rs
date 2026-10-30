@@ -29,6 +29,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         prescan_supports,
         smooth_models,
         frame_rate,
+        orthographic_view,
         silenced_messages,
         object_list,
         slice_panel,
@@ -67,6 +68,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         ),
         smooth_models: pick(&base.smooth_models, &ours.smooth_models, smooth_models),
         frame_rate: pick(&base.frame_rate, &ours.frame_rate, frame_rate),
+        orthographic_view: pick(
+            &base.orthographic_view,
+            &ours.orthographic_view,
+            orthographic_view,
+        ),
         silenced_messages: merge_set(
             &base.silenced_messages,
             &ours.silenced_messages,

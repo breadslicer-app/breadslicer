@@ -435,6 +435,10 @@ pub(crate) struct AppSettings {
     /// default (`Automatic`).
     #[serde(default, skip_serializing_if = "is_default_frame_rate")]
     frame_rate: FrameRateCap,
+    /// Whether the viewport shows an orthographic view instead of a
+    /// perspective one. Omitted in TOML while off (the default, perspective).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    orthographic_view: bool,
     /// The app messages the user silenced with "Don't show again", by key
     /// (see `error_dialog::MessageKey`). Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -472,6 +476,7 @@ impl Default for AppSettings {
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
             frame_rate: FrameRateCap::default(),
+            orthographic_view: false,
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -598,6 +603,14 @@ impl AppSettings {
 
     pub(crate) fn set_frame_rate(&mut self, cap: FrameRateCap) {
         self.frame_rate = cap;
+    }
+
+    pub(crate) fn orthographic_view(&self) -> bool {
+        self.orthographic_view
+    }
+
+    pub(crate) fn set_orthographic_view(&mut self, on: bool) {
+        self.orthographic_view = on;
     }
 
     pub(crate) fn silenced_messages(&self) -> BTreeSet<String> {

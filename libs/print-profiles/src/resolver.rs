@@ -1224,6 +1224,21 @@ pub fn resolve_layer_height(
         })
 }
 
+/// Resolve the scale compensation a slice of this printer + material
+/// pairing applies, picked as [`resolve`] picks it: the material's
+/// calibration for the printer, then its defaults, then
+/// [`ScaleCompensation::NONE`]. Like [`resolve_layer_height`], it does
+/// not need the print parameters to resolve.
+pub fn resolve_scale_compensation(
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+) -> ScaleCompensation {
+    let (picked, _warnings, _records) = pick_and_derive_material(printer, material);
+    picked
+        .scale_compensation_pct
+        .unwrap_or(ScaleCompensation::NONE)
+}
+
 /// Quantise `value` onto the printer's z-step grid, when the printer
 /// declares one. Total: without a declared z step the value passes
 /// through unchanged, and a value below half a step snaps up to one

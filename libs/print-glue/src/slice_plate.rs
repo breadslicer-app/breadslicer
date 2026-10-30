@@ -6,14 +6,15 @@
 //! The scene-slicing application service.
 //!
 //! - [`slice_plate`] slices a scene for a printer + material pairing and yields
-//!   a [`SlicedPlate`].
+//!   a [`SlicedPlate`], with the material's scale compensation applied to each
+//!   model and its supports (#227).
 //! - [`schedule_for_selection`] resolves the layer schedule such a slice would
 //!   use, without slicing.
 
 use std::fmt;
 
-use sc_print_primitives::{AaLevel, PositiveFiniteMm};
-use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
+use sc_print_primitives::{AaLevel, PositiveFiniteMm, ScaleCompensation};
+use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
 use sc_scene::Scene;
 use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
@@ -21,6 +22,9 @@ use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
+use crate::scale_compensation::{
+    SupportOwners, compensated_heights, compensated_scene, scale_factors,
+};
 
 /// The per-print slicing inputs that come from neither profile.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -76,6 +80,7 @@ pub enum SliceRun {
 pub struct SlicedPlate {
     pub(crate) leaves: Vec<LeafSlices>,
     pub(crate) profile: SliceProfile,
+    pub(crate) scale: ScaleCompensation,
 }
 
 impl SlicedPlate {
@@ -92,6 +97,17 @@ impl SlicedPlate {
     /// Return the engine input the run was sliced with.
     pub fn profile(&self) -> &SliceProfile {
         &self.profile
+    }
+
+    /// Return the scale compensation the leaves were sliced with.
+    pub fn scale_compensation(&self) -> ScaleCompensation {
+        self.scale
+    }
+
+    /// Return where a height of `height_mm` above the plate in the scene
+    /// lands in the sliced leaves, once scaled in Z about the plate.
+    pub fn compensated_height_mm(&self, height_mm: f64) -> f64 {
+        height_mm * scale_factors(self.scale)[2]
     }
 
     /// Merge the per-leaf stacks into the whole plate's contours.
@@ -182,37 +198,53 @@ impl fmt::Display for MismatchedLayerCount {
 impl std::error::Error for MismatchedLayerCount {}
 
 /// Slice every mesh leaf of `scene` for the chosen printer and material:
+/// scale each model and its supports by the material's scale compensation,
 /// resolve the layer schedule from the profiles and `params`, then run the
 /// engine under `cancel`, reporting per-layer progress through `on_progress`.
+///
+/// `supports` names the support leaves and the model each stands on; every
+/// other leaf is a model. With no compensation the scene is sliced as it is.
 pub fn slice_plate<F>(
     scene: &Scene,
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
     params: &SlicingParams,
+    supports: &SupportOwners,
     cancel: &CancelToken,
     on_progress: F,
 ) -> Result<SliceRun, SlicePlateError>
 where
     F: Fn(SliceProgress) + Sync,
 {
+    let scale = resolve_scale_compensation(printer, material);
+    let compensated = compensated_scene(scene, scale, supports);
+    let scene = compensated.as_ref().unwrap_or(scene);
     let profile =
         profile_for(scene, printer, material, params).map_err(SlicePlateError::Prepare)?;
     match slice_scene_with_progress(scene, &profile, cancel, on_progress)
         .map_err(SlicePlateError::Engine)?
     {
         SliceOutcome::Cancelled => Ok(SliceRun::Cancelled),
-        SliceOutcome::Completed(leaves) => Ok(SliceRun::Completed(SlicedPlate { leaves, profile })),
+        SliceOutcome::Completed(leaves) => Ok(SliceRun::Completed(SlicedPlate {
+            leaves,
+            profile,
+            scale,
+        })),
     }
 }
 
 /// Resolve the layer schedule that slicing `scene` with this selection would
-/// use, without slicing.
+/// use, without slicing: the scene's height once scaled in Z by the
+/// material's scale compensation, as [`slice_plate`] scales it.
 pub fn schedule_for_selection(
     scene: &Scene,
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
     params: &SlicingParams,
 ) -> Result<LayerSchedule, UnsliceableSelection> {
+    let scale = resolve_scale_compensation(printer, material);
+    let compensated = compensated_heights(scene, scale);
+    let scene = compensated.as_ref().unwrap_or(scene);
     Ok(*profile_for(scene, printer, material, params)?.layer_schedule())
 }
 

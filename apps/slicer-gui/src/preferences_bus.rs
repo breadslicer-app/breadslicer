@@ -57,6 +57,11 @@ pub(crate) struct PreferencesSnapshot {
     pub smooth_models: bool,
     /// The viewport's frame-rate cap (`frame_rate`).
     pub frame_rate: FrameRateCap,
+    /// Whether the viewport shows an orthographic view (the 5 key or the
+    /// viewport button). A new window starts with it; a window keeps its own
+    /// projection while it is open, so a switch in 1 window is written to disk
+    /// and left out of the other open windows.
+    pub orthographic_view: bool,
     /// Whether the diagnostic log writes the session's events to disk, for
     /// the box in Preferences > Privacy, which starts and stops the log
     /// itself. Not stored in the settings: it stays on until the app closes,
@@ -147,6 +152,7 @@ impl PreferencesSnapshot {
             prescan_supports: false,
             smooth_models: false,
             frame_rate: FrameRateCap::Automatic,
+            orthographic_view: false,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
             object_list_visible: true,
@@ -190,6 +196,7 @@ pub(crate) enum PreferencesChange {
     PrescanSupports,
     SmoothModels,
     FrameRate,
+    Projection,
     DiagnosticLog,
     SilencedMessages,
     ObjectListPanel,

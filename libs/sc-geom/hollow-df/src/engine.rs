@@ -22,9 +22,14 @@
 //!   the upper bound is a setting ([`GridRequest::max_resolution`]);
 //! - solid areas can be given as spheres or boxes in millimetres, which survive
 //!   a change of voxel size, besides DragonFruit's voxel indices;
-//! - automatic drain depth measures the wall along the drain axis on the
-//!   final hollow mesh; DragonFruit measures it on whatever preview mesh is
-//!   shown, which since its surface-only preview is the cavity alone;
+//! - automatic drain depth measures the wall along the drain axis from the
+//!   model's surface to the cavity wall itself; DragonFruit takes the first
+//!   two surfaces the axis crosses on whatever preview mesh is shown, which
+//!   runs to the far side of the model when the axis misses the cavity or
+//!   slips between two triangles of the surface;
+//! - a drain whose axis does not open into the cavity is not cut (#264): it
+//!   would drain nothing, and at the automatic depth it drills through the
+//!   model;
 //! - the result reports volumes in mm³ from the meshes themselves.
 
 use crate::bvh::Bvh;
@@ -162,7 +167,8 @@ impl Default for HollowSettings {
 /// How deep a drain goes past the surface.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrainDepth {
-    /// Through the wall along the axis, plus 1 mm (DragonFruit's auto depth).
+    /// Through the wall along the axis, plus 1 mm (DragonFruit's auto depth),
+    /// the wall measured up to the cavity.
     Auto,
     Mm(f32),
 }
@@ -205,18 +211,20 @@ const DRAIN_RAY_START_MM: f32 = 0.3;
 const DRAIN_MIN_INSIDE_MM: f32 = 1.0;
 /// DragonFruit's cap on any punch depth.
 const DRAIN_MAX_DEPTH_MM: f32 = 120.0;
+/// Hits along a drain axis closer than this are one surface (DragonFruit's
+/// tolerance for a ray through a shared edge or vertex).
+const DRAIN_SAME_SURFACE_MM: f32 = 0.05;
 
 /// What one drain did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrainReport {
-    /// The depth used past the surface.
+    /// The depth past the surface: the one cut, or the one a drain that does
+    /// not reach the cavity would have had.
     pub depth_mm: f32,
     /// Depth came from the wall measurement.
     pub auto_depth: bool,
-    /// The automatic measurement found no wall along the axis and fell back to
-    /// the wall thickness plus 1 mm.
-    pub depth_fallback: bool,
-    /// The drain opens into the cavity.
+    /// The drain opens into the cavity, and was cut. One that does not is
+    /// left uncut: it would drain nothing, and could go through the model.
     pub reaches_cavity: bool,
     /// Sides of the prism the cylinder was cut as.
     pub segments: usize,
@@ -531,22 +539,31 @@ impl Session {
         let mut reports = Vec::with_capacity(drains.len());
         if !drains.is_empty() {
             ctl.stage(Stage::Drains)?;
-            let hollow_bvh = Bvh::build(&mesh);
+            let source = self.source_mesh();
+            let source_bvh = Bvh::build(source);
             let cavity_bvh = Bvh::build(&fin.cavity);
-            for (index, hole) in drains.iter().enumerate() {
+            // Every drain is measured before any is cut, so drains do not
+            // depend on their order.
+            let mut cutters = Vec::with_capacity(drains.len());
+            for hole in drains {
                 ctl.check()?;
                 let (cutter, report) = drain_cutter(
                     hole,
                     settings.wall_thickness_mm,
-                    (&mesh, &hollow_bvh),
+                    (source, &source_bvh),
                     (&fin.cavity, &cavity_bvh),
                 );
-                // Auto depth is measured on the hollow before any drain, so
-                // drains do not depend on their order.
-                // Closed: proven by the stabilization or by the previous cut.
-                mesh = subtract_convex_closed(&mesh, &cutter)
-                    .map_err(|error| HollowError::Drain { index, error })?;
+                cutters.push(report.reaches_cavity.then_some(cutter));
                 reports.push(report);
+            }
+            for (index, cutter) in cutters.iter().enumerate() {
+                let Some(cutter) = cutter else {
+                    continue;
+                };
+                ctl.check()?;
+                // Closed: proven by the stabilization or by the previous cut.
+                mesh = subtract_convex_closed(&mesh, cutter)
+                    .map_err(|error| HollowError::Drain { index, error })?;
             }
         }
         // Every step that produced `mesh` checked it edge-manifold (the
@@ -572,12 +589,13 @@ impl Session {
     }
 }
 
-/// The prism a drain cuts, and what it will do. `hollow` is measured for the
-/// automatic depth, `cavity` for whether the drain opens into it.
+/// The prism a drain cuts, and what it will do. `source` (the model before
+/// hollowing) and `cavity` (the cavity wall) say where the axis opens into
+/// the cavity, if it does.
 fn drain_cutter(
     hole: &DrainHole,
     wall_thickness_mm: f32,
-    hollow: (&IndexedMesh, &Bvh),
+    source: (&IndexedMesh, &Bvh),
     cavity: (&IndexedMesh, &Bvh),
 ) -> (ConvexCutter, DrainReport) {
     let axis = vec3_normalize(Vec3::new(
@@ -587,20 +605,21 @@ fn drain_cutter(
     ))
     .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
     let center = Vec3::new(hole.center[0], hole.center[1], hole.center[2]);
-    let fallback_depth =
-        (wall_thickness_mm + DRAIN_DEPTH_PAST_WALL_MM).clamp(1.0, DRAIN_MAX_DEPTH_MM);
-    let (depth_mm, auto_depth, depth_fallback) = match hole.depth {
-        DrainDepth::Mm(mm) => (mm.clamp(0.01, DRAIN_MAX_DEPTH_MM), false, false),
-        DrainDepth::Auto => match auto_drain_depth_mm(hollow.0, hollow.1, center, axis) {
-            Some(depth) => (depth, true, false),
-            None => (fallback_depth, true, true),
-        },
+    let opening = drain_opening(source, cavity, center, axis);
+    let (depth_mm, auto_depth) = match hole.depth {
+        DrainDepth::Mm(mm) => (mm.clamp(0.01, DRAIN_MAX_DEPTH_MM), false),
+        DrainDepth::Auto => {
+            let depth = match opening {
+                Some(opening) => opening.auto_depth_mm(),
+                // Reported only: a drain that misses is not cut.
+                None => {
+                    (wall_thickness_mm + DRAIN_DEPTH_PAST_WALL_MM).clamp(1.0, DRAIN_MAX_DEPTH_MM)
+                }
+            };
+            (depth, true)
+        }
     };
-    let reaches_cavity = cavity
-        .1
-        .ray_hit_distances(cavity.0, center, axis)
-        .first()
-        .is_some_and(|&t| t < depth_mm);
+    let reaches_cavity = opening.is_some_and(|o| o.cavity_mm < depth_mm);
     let radius_x = hole.radius_mm.max(0.02);
     let radius_y = hole.radius_y_mm.unwrap_or(hole.radius_mm).max(0.02);
     let segments =
@@ -612,41 +631,66 @@ fn drain_cutter(
         DrainReport {
             depth_mm,
             auto_depth,
-            depth_fallback,
             reaches_cavity,
             segments,
         },
     )
 }
 
-/// DragonFruit's `computeAutoHolePunchDepthMmForGeometry`: along the axis
-/// from just outside the surface, the first two distinct hits are the outer
-/// skin and the cavity wall; the depth is the wall between them plus 1 mm.
-pub fn auto_drain_depth_mm(mesh: &IndexedMesh, bvh: &Bvh, center: Vec3, axis: Vec3) -> Option<f32> {
+/// Where a drain axis opens into the cavity, in mm from the drain's center.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DrainOpening {
+    /// The model's surface (0 when the axis slips between its triangles:
+    /// the center is on the surface).
+    skin_mm: f32,
+    /// The cavity wall.
+    cavity_mm: f32,
+}
+
+impl DrainOpening {
+    /// DragonFruit's `computeAutoHolePunchDepthMmForGeometry`: the wall
+    /// along the axis, at least 1 mm, plus 1 mm, to 0.1 mm (its panel value).
+    fn auto_depth_mm(self) -> f32 {
+        let depth = (self.cavity_mm.max(self.skin_mm + DRAIN_MIN_INSIDE_MM)
+            + DRAIN_DEPTH_PAST_WALL_MM)
+            .min(DRAIN_MAX_DEPTH_MM);
+        (depth * 10.0).round() / 10.0
+    }
+}
+
+/// Where the axis from `center` (on the model's surface) first meets the
+/// cavity wall, if it stays inside the model until then: an axis that
+/// leaves the model and enters it again (a gap between an arm and the
+/// body, a sealed pocket) would drill through what it crosses.
+fn drain_opening(
+    source: (&IndexedMesh, &Bvh),
+    cavity: (&IndexedMesh, &Bvh),
+    center: Vec3,
+    axis: Vec3,
+) -> Option<DrainOpening> {
+    // From just outside the surface, as DragonFruit measures.
     let origin = center.sub(axis.scale(DRAIN_RAY_START_MM));
-    let mut distinct: Vec<f32> = Vec::new();
-    for t in bvh.ray_hit_distances(mesh, origin, axis) {
-        if t > 240.0 {
+    let to_cavity = *cavity.1.ray_hit_distances(cavity.0, origin, axis).first()?;
+    let mut crossings: Vec<f32> = Vec::new();
+    for t in source.1.ray_hit_distances(source.0, origin, axis) {
+        if t >= to_cavity - DRAIN_SAME_SURFACE_MM {
             break;
         }
-        if distinct
+        if crossings
             .last()
-            .is_some_and(|&last| (t - last).abs() <= 0.05)
+            .is_none_or(|&last| t - last > DRAIN_SAME_SURFACE_MM)
         {
-            continue;
-        }
-        distinct.push(t);
-        if distinct.len() >= 2 {
-            break;
+            crossings.push(t);
         }
     }
-    if distinct.len() < 2 {
+    if crossings.len() > 1 {
         return None;
     }
-    let wall = (distinct[1] - distinct[0]).max(DRAIN_MIN_INSIDE_MM);
-    let depth = (wall + DRAIN_DEPTH_PAST_WALL_MM).min(DRAIN_MAX_DEPTH_MM);
-    // DragonFruit rounds the panel value to 0.1 mm.
-    Some((depth * 10.0).round() / 10.0)
+    let skin = crossings.first().copied().unwrap_or(DRAIN_RAY_START_MM);
+    Some(DrainOpening {
+        skin_mm: (skin - DRAIN_RAY_START_MM).max(0.0),
+        cavity_mm: to_cavity - DRAIN_RAY_START_MM,
+    })
 }
 
 #[cfg(test)]

@@ -328,6 +328,7 @@ impl PanelUpdate {
             | PreferencesChange::PrescanSupports
             | PreferencesChange::SmoothModels
             | PreferencesChange::FrameRate
+            | PreferencesChange::Projection
             | PreferencesChange::DiagnosticLog
             | PreferencesChange::SilencedMessages => None,
         }
@@ -391,6 +392,7 @@ mod panel_update_tests {
             (PreferencesChange::PrescanSupports, None),
             (PreferencesChange::SmoothModels, None),
             (PreferencesChange::FrameRate, None),
+            (PreferencesChange::Projection, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),
         ];
