@@ -31,6 +31,7 @@ use sc_geom::df_supports::{
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
+use sc_print_glue::SupportOwners;
 use sc_project_formats::SupportDocument;
 use sc_scene::{NodeId, Scene};
 
@@ -180,6 +181,17 @@ pub(crate) fn sets_in_force(
 ) -> Vec<DrawnSet> {
     support_leaves(spatial)
         .filter_map(|(id, _)| in_force(spatial, sessions, id))
+        .collect()
+}
+
+/// Every support leaf of the scene with the model it stands on, when a
+/// session drew it, for the slice's scale compensation (#227).
+pub(crate) fn support_owners(
+    spatial: &SceneSpatial,
+    sessions: &RefCell<SupportSessions>,
+) -> SupportOwners {
+    support_leaves(spatial)
+        .map(|(id, _)| (id, model_of(sessions, id)))
         .collect()
 }
 

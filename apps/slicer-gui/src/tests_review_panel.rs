@@ -784,6 +784,7 @@ mod fix_all {
             &printer_profile,
             &material,
             &params,
+            &sc_print_glue::SupportOwners::new(),
             &sc_sl1cer::CancelToken::default(),
             |_| {},
         )

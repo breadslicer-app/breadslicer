@@ -5,13 +5,12 @@
 
 //! Connected shells of a leaf mesh.
 //!
-//! Outer/hole grouping ([`crate::grouping`]) assumes the rings of a layer
-//! nest cleanly or are disjoint, which holds for 1 closed manifold shell. A
-//! leaf can hold several shells that overlap without sharing a vertex (a
-//! support tree's tubes and joints, a pre-supported STL): their rings then
-//! cross, and a ring inside another shell's ring would be taken for a hole.
-//! Rings are therefore grouped shell by shell; overlapping shells' polygons
-//! stay separate and the non-zero raster unites them.
+//! A leaf can hold several shells that overlap without sharing a vertex (a
+//! support tree's tubes and joints, a pre-supported STL). Each ring is an
+//! outer or a hole by its own facing ([`crate::grouping`]), and rings are
+//! grouped shell by shell, so a hole only ever attaches to an outer of its
+//! own shell; overlapping shells' polygons stay separate and the non-zero
+//! raster unites them.
 //!
 //! A shell with negative signed volume faces inward: it is a void, such as
 //! the sealed cavity of a hollow without a drain. Its rings are holes of
