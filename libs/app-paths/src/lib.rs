@@ -119,21 +119,21 @@ pub fn home_dir() -> Option<PathBuf> {
 /// the installed roots (each existing `<base>/<application>` across the system
 /// data directories on Linux, the bundle's `Contents/Resources` or an
 /// executable-relative directory on macOS, executable-relative on Windows)
-/// followed by the source-tree `assets/` root when it exists.
+/// followed by the source-tree `assets/` root when cargo started the run (see
+/// [`dev_assets_dir`]).
 ///
 /// The user's writable library (`XDG_DATA_HOME`, resolved via [`project_dirs`])
 /// is deliberately absent here: it is a distinct, user-owned layer the profile
 /// loader merges on top of these roots. Keeping it out is what stops a bundled
 /// lookup from resolving to the user's own library.
 pub fn bundled_data_dirs() -> Vec<PathBuf> {
-    bundled_data_dirs_from(installed_data_dirs(), dev_assets_dir())
+    let dev = dev_assets_dir(std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from));
+    bundled_data_dirs_from(installed_data_dirs(), dev)
 }
 
 /// [`bundled_data_dirs`] for the given installed roots and source-tree root.
-fn bundled_data_dirs_from(mut roots: Vec<PathBuf>, dev: PathBuf) -> Vec<PathBuf> {
-    if dev.is_dir() {
-        roots.push(dev);
-    }
+fn bundled_data_dirs_from(mut roots: Vec<PathBuf>, dev: Option<PathBuf>) -> Vec<PathBuf> {
+    roots.extend(dev);
     roots
 }
 
@@ -205,10 +205,20 @@ fn all_app_dirs(bases: &[PathBuf], app: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The source-tree data root. `CARGO_MANIFEST_DIR` is
-/// `<workspace>/libs/app-paths`; the `assets/` root sits two levels up.
-fn dev_assets_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+/// The source-tree data root: the `assets/` folder of the nearest ancestor of
+/// `manifest_dir` that holds `assets/profiles`.
+///
+/// `manifest_dir` is `CARGO_MANIFEST_DIR` read at run time, which cargo sets
+/// for `cargo run`, `cargo test` and the processes they start. Reading it at
+/// compile time instead would bake in the tree that compiled this crate, and
+/// worktrees sharing one target dir reuse that build. An executable started
+/// outside cargo has no source tree and reads only its installed roots.
+fn dev_assets_dir(manifest_dir: Option<PathBuf>) -> Option<PathBuf> {
+    let manifest_dir = manifest_dir.filter(|dir| dir.is_absolute())?;
+    manifest_dir
+        .ancestors()
+        .map(|dir| dir.join("assets"))
+        .find(|assets| assets.join("profiles").is_dir())
 }
 
 #[cfg(test)]
