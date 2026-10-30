@@ -1836,7 +1836,8 @@ mod slice_auto_place_tests {
 
         run_slice(&source, &output, &[])
             .success()
-            .stdout(predicate::str::contains("Sliced 1 model: 10 layers"));
+            .stdout(predicate::str::contains("Sliced 1 model: 10 layers"))
+            .stderr(predicate::str::contains("warning").not());
     }
 
     #[test]
@@ -1849,7 +1850,33 @@ mod slice_auto_place_tests {
 
         run_slice(&source, &output, &["--no-auto-place"])
             .success()
-            .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
+            .stdout(predicate::str::contains("Sliced 1 model: 5 layers"))
+            // The lower half, under the plate, is cut off (#226).
+            .stderr(predicate::str::contains(
+                "warning: the scene reaches 1.00 mm below the build plate; what lies under it is not printed",
+            ));
+    }
+
+    #[test]
+    fn slice_with_no_auto_place_warns_about_what_lies_past_the_plate_edge() {
+        // The 5 x 5 mm test plate spans [-2.5, 2.5]; moved 2 mm right and 3
+        // up, the tetrahedron spans x [1, 3] and y [2, 4].
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        let mut mesh = tetrahedron_mesh(None);
+        for v in &mut mesh.vertices {
+            *v = Vertex::new([v[0] + 2.0, v[1] + 3.0, v[2] + 1.0]);
+        }
+        write_stla_to(&source, &mesh);
+
+        run_slice(&source, &output, &["--no-auto-place"])
+            .success()
+            .stderr(predicate::str::contains(
+                "warning: the scene reaches 0.50 mm past the right edge, 1.50 mm past the back edge of the build plate; what lies beyond the screen is not printed",
+            ))
+            .stderr(predicate::str::contains("below the build plate").not());
     }
 }
 
