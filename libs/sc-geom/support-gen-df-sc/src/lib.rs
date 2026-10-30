@@ -19,9 +19,9 @@ use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use support_gen_df::features::slicing::tip_offset::default_tip_offset_mm;
-use support_gen_df::perf::PerfFrame;
+use support_gen_df::perf::{PerfEntry, PerfFrame};
 use support_gen_df::pipeline::{
-    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports_with,
+    CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with,
     prescan_models,
 };
 use support_gen_df::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
@@ -495,8 +495,8 @@ fn run_df_supports(
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
     let models = &models[..];
     let n = models.len();
-    // Reports: geometry per model, three per model, rafts, tessellation.
-    let total = (4 * n + 2) as u32;
+    // Reports: geometry per model, three per model, then each set drawn.
+    let total = (5 * n) as u32;
     let mut completed = 0u32;
     let cancel = CancelToken::new();
     let mut next = 0u64;
@@ -504,7 +504,9 @@ fn run_df_supports(
         next += 1;
         format!("{id_prefix}-{next}")
     };
-    let result = generate_supports_with(
+    // Each model's supports and raft are drawn below, set by set: the
+    // pipeline's scene-wide rafts and tessellation would go unused.
+    let result = plan_supports_with(
         models,
         &SupportState::default(),
         &settings,
@@ -514,12 +516,8 @@ fn run_df_supports(
             if worker.is_cancelled() {
                 cancel.cancel();
             }
-            let phase = match p.stage {
-                Stage::BuildRafts | Stage::Tessellate => stage_label(p.stage).to_owned(),
-                stage => format!("{} ({}/{})", stage_label(stage), p.model + 1, p.models),
-            };
             worker.report_progress(JobProgress {
-                phase,
+                phase: format!("{} ({}/{})", stage_label(p.stage), p.model + 1, p.models),
                 completed,
                 total,
             });
@@ -527,7 +525,7 @@ fn run_df_supports(
         },
         &cancel,
     );
-    let out = match result {
+    let mut out = match result {
         Ok(out) => out,
         Err(PipelineError::Cancelled) => return Err(JobError::Cancelled),
         Err(e) => return Err(JobError::Failed(e.to_string())),
@@ -549,6 +547,7 @@ fn run_df_supports(
             }
         }
     }
+    let drawing = Instant::now();
     let session = DfSupportSession::new(
         models.to_vec(),
         settings.clone(),
@@ -559,8 +558,9 @@ fn run_df_supports(
         out.support.clone(),
         id_prefix.clone(),
     );
-    // Built here, off the UI thread, so the first hover preview is quick;
-    // the run's distance fields come along already filled.
+    // The plans' BVHs and distance fields (filled where they routed), so the
+    // first hover preview is quick without building them again.
+    session.adopt_bvhs(out.bvhs);
     session.warm();
     if let Ok(mut fields) = out.distance_fields.lock() {
         session.adopt_sdfs(
@@ -571,13 +571,18 @@ fn run_df_supports(
                 .collect(),
         );
     }
-    // Each model's supports and raft are drawn on their own; the pipeline's
-    // soup (one raft under every model) is not used.
+    // Each model's supports and raft are drawn on their own.
     let mut sets = Vec::with_capacity(n);
-    for ((model, _), session) in leaves.iter().zip(session.split_by_model()) {
+    for (i, ((model, _), session)) in leaves.iter().zip(session.split_by_model()).enumerate() {
         if worker.is_cancelled() {
             return Err(JobError::Cancelled);
         }
+        worker.report_progress(JobProgress {
+            phase: format!("{} ({}/{n})", stage_label(Stage::Tessellate), i + 1),
+            completed,
+            total,
+        });
+        completed += 1;
         let mesh = if session.is_empty() {
             None
         } else {
@@ -591,6 +596,14 @@ fn run_df_supports(
             session,
         });
     }
+    // The sets are part of the run's time, as the pipeline's own drawing was.
+    let drawn = drawing.elapsed();
+    out.timings.total += drawn;
+    out.timings.entries.push(PerfEntry {
+        label: "stage:draw-sets".to_owned(),
+        total: drawn,
+        count: 1,
+    });
     Ok(DfSupportOutcome {
         triangles: sets
             .iter()

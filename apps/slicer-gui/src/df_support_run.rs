@@ -184,7 +184,12 @@ pub(crate) struct DfSupportRun {
     /// The raft top of the supports this driver pasted last, `Some(None)`
     /// for supports without a raft.
     generated_raft_top: Cell<Option<Option<f64>>>,
+    /// Clears the status bar's note of the last run.
+    status_timer: slint::Timer,
 }
+
+/// How long the status bar keeps the note of a run that replaced supports.
+const STATUS_NOTICE_DURATION: Duration = Duration::from_secs(6);
 
 /// How often the UI looks for a finished preview.
 const HOVER_POLL: Duration = Duration::from_millis(16);
@@ -509,6 +514,7 @@ impl DfSupportRun {
             raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
             raft_checked_at: Cell::new(Instant::now()),
             generated_raft_top: Cell::new(None),
+            status_timer: slint::Timer::default(),
         });
         {
             let weak = Rc::downgrade(&run);
@@ -1917,6 +1923,18 @@ impl DfSupportRun {
                     .collect()
             })
             .unwrap_or_default();
+        // Generating again over the same models and settings draws the same
+        // supports in the same place (#188): the status bar says so, or else
+        // that the previous set was replaced, as nothing seems to happen.
+        let replaced_note = (!replaced.is_empty()).then(|| {
+            let fresh: Vec<&sc_mesh_core::IndexedMesh> =
+                sets.iter().map(|(_, mesh, _)| mesh.as_ref()).collect();
+            if self.same_supports(&replaced, &fresh) {
+                ReplacedNote::Same
+            } else {
+                ReplacedNote::Replaced
+            }
+        });
         let pasted =
             self.document
                 .paste_fragment_replacing_all(&fragment, [0.0, 0.0, 0.0], &replaced);
@@ -1952,6 +1970,17 @@ impl DfSupportRun {
             });
             return;
         }
+        match replaced_note {
+            Some(ReplacedNote::Same) => self.show_status(ctr!(
+                "Workspace",
+                "Supports regenerated: same result as before."
+            )),
+            Some(ReplacedNote::Replaced) => self.show_status(ctr!(
+                "Workspace",
+                "Supports regenerated: replaced the previous set."
+            )),
+            None => {}
+        }
         self.dialogs
             .show_notice(MessageKey::SupportsGenerated, move || InfoTexts {
                 heading: ctr!("DfSupportDialog", "Supports generated"),
@@ -1962,6 +1991,53 @@ impl DfSupportRun {
 }
 
 impl DfSupportRun {
+    /// Whether the support leaves `replaced` show exactly the meshes `fresh`,
+    /// in any order, where a new set is pasted: untransformed.
+    fn same_supports(&self, replaced: &[NodeId], fresh: &[&sc_mesh_core::IndexedMesh]) -> bool {
+        if replaced.len() != fresh.len() {
+            return false;
+        }
+        self.document
+            .with_scene(|spatial| {
+                let mut unmatched: Vec<&sc_mesh_core::IndexedMesh> = fresh.to_vec();
+                replaced.iter().all(|id| {
+                    let Some(leaf) = spatial.leaf(*id) else {
+                        return false;
+                    };
+                    if !untransformed(&leaf.world_transform()) {
+                        return false;
+                    }
+                    match unmatched.iter().position(|mesh| *mesh == leaf.mesh()) {
+                        Some(at) => {
+                            unmatched.swap_remove(at);
+                            true
+                        }
+                        None => false,
+                    }
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// Shows `text` in the status bar in place of its hint for a few
+    /// seconds; a newer note restarts the time.
+    fn show_status(&self, text: slint::SharedString) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        ui.set_status_notice(text);
+        let ui_weak = self.ui.clone();
+        self.status_timer.start(
+            slint::TimerMode::SingleShot,
+            STATUS_NOTICE_DURATION,
+            move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_status_notice(Default::default());
+                }
+            },
+        );
+    }
+
     /// Ends a run that regenerated the supports of `wanted`, which the scene
     /// at `revision` left waiting (#153): the new sets join that entry. A
     /// scene that moved on drops the result quietly; the watcher starts again
@@ -2029,6 +2105,12 @@ impl DfSupportRun {
                 self.generated_raft_top
                     .set(Some(self.options.borrow().raft_top_mm()));
                 self.warm_worker();
+                // The edit took the old sets away when it was let go: say
+                // where the new ones came from, as no button was pressed.
+                self.show_status(ctr!(
+                    "Workspace",
+                    "Supports regenerated for the model's new pose."
+                ));
                 if wanted.hand_edits_lost {
                     self.dialogs
                         .show_notice(MessageKey::SupportsRegeneratedHandEdits, || InfoTexts {
@@ -2057,6 +2139,26 @@ impl DfSupportRun {
             }
         }
     }
+}
+
+/// Whether `transform` leaves every point where it is, as the paste of a
+/// new set does (an affine identity, or the identity variant).
+fn untransformed(transform: &Transform3D) -> bool {
+    match transform {
+        Transform3D::Identity => true,
+        Transform3D::Affine(affine) => {
+            transform.is_translation() && *affine.translation() == [0.0; 3]
+        }
+    }
+}
+
+/// What the status bar says of a Generate press that replaced supports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplacedNote {
+    /// The new sets are the ones they replaced, in the same place.
+    Same,
+    /// The new sets differ from the ones they replaced.
+    Replaced,
 }
 
 /// The Supports tab's raft warning for a raft of `layers` layers, the
@@ -2321,10 +2423,12 @@ mod hand_edit_tests {
 
     /// Generating again replaces the supports already there (#152), by a
     /// Generate press and by the raft warning's "Generate anyway"; one undo
-    /// brings back the set before, still editable by hand.
+    /// brings back the set before, still editable by hand. The status bar
+    /// says nothing of the first set, and of a set replaced whether the new
+    /// one is the same (#188).
     #[test]
     fn generating_again_replaces_the_supports() {
-        let (plain, anyway, undone, editable) = on_fresh_slint_thread(|| {
+        let (plain, anyway, undone, editable, notices) = on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let ctrl = Rc::new(ViewportController::new_for_test());
@@ -2362,10 +2466,12 @@ mod hand_edit_tests {
             finish_run(&run);
             let first = sets();
             assert_eq!(first.1.len(), 1, "one set");
+            let mut notices = vec![window.get_status_notice().to_string()];
             // Again, the same way.
             run.start();
             finish_run(&run);
             let plain = sets();
+            notices.push(window.get_status_notice().to_string());
             // A raft that takes the model's first layers: the warning holds
             // the press back, and "Generate anyway" runs it.
             run.set_options(DfSupportOptions {
@@ -2377,6 +2483,17 @@ mod hand_edit_tests {
             run.generate_ignoring_raft();
             finish_run(&run);
             let anyway = sets();
+            notices.push(window.get_status_notice().to_string());
+            // A support added by hand, then Generate: a different set.
+            run.set_options(DfSupportOptions::default());
+            let (added, _) = run.add_supports_at(&[[20.2, 20.2, 2.5]]);
+            assert_eq!(added, HandEdit::Applied, "a support added by hand");
+            run.start();
+            finish_run(&run);
+            notices.push(window.get_status_notice().to_string());
+            // Back to the scene the test checks below.
+            document.undo().expect("undo that Generate press");
+            document.undo().expect("undo the support added by hand");
             document.undo().expect("one undo");
             let undone = sets();
             let undone_is_plain = undone.0 == plain.0
@@ -2388,8 +2505,19 @@ mod hand_edit_tests {
                 (anyway.0, anyway.1.len()),
                 undone_is_plain,
                 editable,
+                notices,
             )
         });
+        assert_eq!(
+            notices,
+            [
+                "",
+                "Supports regenerated: same result as before.",
+                "Supports regenerated: same result as before.",
+                "Supports regenerated: replaced the previous set.",
+            ],
+            "the status bar after each Generate press"
+        );
         assert_eq!(plain, (2, 1), "the model and one support set");
         assert_eq!(anyway, (2, 1), "the model and one support set");
         assert!(undone, "one undo brings back the set before");
@@ -2933,6 +3061,11 @@ mod hand_edit_tests {
             finish_running(&run);
             let (_, regenerated) = run.support_leaf().expect("new supports");
             assert!(!Arc::ptr_eq(&regenerated, &generated));
+            assert_eq!(
+                window.get_status_notice(),
+                "Supports regenerated for the model's new pose.",
+                "the status bar says why the supports changed (#188)"
+            );
             let session = in_force_session(&run).expect("editable");
             assert!(!Arc::ptr_eq(&session, &first));
             assert!(document.supports_wanted().is_none(), "nothing waits");

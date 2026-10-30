@@ -220,9 +220,11 @@ pub struct PipelineOutput {
     pub models: Vec<ModelSupports>,
     /// The support state after every model's plan.
     pub support: SupportState,
+    /// Empty from [`plan_supports_with`].
     pub rafts: Vec<RaftGroup>,
     /// What the slicer rasterises (`buildSupportAndRaftWorldTriangles`): every
-    /// support and the global-settings raft, nine floats per triangle.
+    /// support and the global-settings raft, nine floats per triangle. Empty
+    /// from [`plan_supports_with`].
     pub support_soup: Vec<f32>,
     /// `support_soup.len()` at the end of each closed piece of it (see
     /// `TriangleSink`): weld piece by piece to keep the mesh edge-manifold.
@@ -233,6 +235,10 @@ pub struct PipelineOutput {
     /// left it: filled where supports were routed, so later placements on
     /// the same model (hand edits) start warm. Not part of the result.
     pub distance_fields: Arc<std::sync::Mutex<Vec<Option<SdfCache>>>>,
+    /// Per model (in input order), the BVH of its world soup the plans read
+    /// (a prescan's when it had one): later edits on the same model can
+    /// take it instead of building it again.
+    pub bvhs: Vec<Arc<MeshBvh>>,
 }
 
 /// `Box3.getCenter` of the geometry's bounding box.
@@ -495,14 +501,46 @@ pub fn generate_supports_with(
     progress: &mut dyn FnMut(Progress<'_>),
     cancel: &CancelToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    timed(|| {
+        run_pipeline(
+            models, state, settings, prescanned, new_id, progress, cancel, true,
+        )
+    })
+}
+
+/// [`generate_supports_with`] up to the plans, for a caller that draws each
+/// model's supports and raft itself: the scene-wide rafts and tessellation
+/// are skipped (`rafts`, `support_soup` and `support_parts` come back empty,
+/// and their stages are not reported). Everything else is the same.
+pub fn plan_supports_with(
+    models: &[ModelInput],
+    state: &SupportState,
+    settings: &PipelineSettings,
+    prescanned: Option<&ScanCache>,
+    new_id: &mut dyn FnMut() -> String,
+    progress: &mut dyn FnMut(Progress<'_>),
+    cancel: &CancelToken,
+) -> Result<PipelineOutput, PipelineError> {
+    timed(|| {
+        run_pipeline(
+            models, state, settings, prescanned, new_id, progress, cancel, false,
+        )
+    })
+}
+
+/// `run` in a timing frame, whose report goes into its output.
+fn timed(
+    run: impl FnOnce() -> Result<PipelineOutput, PipelineError>,
+) -> Result<PipelineOutput, PipelineError> {
     perf::begin_frame();
-    let result = run_pipeline(
-        models, state, settings, prescanned, new_id, progress, cancel,
-    );
+    let result = run();
     let timings = perf::end_frame().unwrap_or_default();
     result.map(|out| PipelineOutput { timings, ..out })
 }
 
+/// The run; `draw` builds the scene-wide rafts and tessellation after the
+/// plans.
+#[allow(clippy::too_many_arguments)]
 fn run_pipeline(
     models: &[ModelInput],
     state: &SupportState,
@@ -511,6 +549,7 @@ fn run_pipeline(
     new_id: &mut dyn FnMut() -> String,
     progress: &mut dyn FnMut(Progress<'_>),
     cancel: &CancelToken,
+    draw: bool,
 ) -> Result<PipelineOutput, PipelineError> {
     let n = models.len();
     let check = || {
@@ -636,19 +675,25 @@ fn run_pipeline(
         });
     }
 
-    check()?;
-    step(progress, Stage::BuildRafts, n);
-    let rafts = {
-        let _perf = perf::scope("stage:export-rafts");
-        build_rafts(&current, models, &settings.rafts)?
+    let (rafts, support) = if draw {
+        check()?;
+        step(progress, Stage::BuildRafts, n);
+        let rafts = {
+            let _perf = perf::scope("stage:export-rafts");
+            build_rafts(&current, models, &settings.rafts)?
+        };
+        check()?;
+        step(progress, Stage::Tessellate, n);
+        let support = {
+            let _perf = perf::scope("stage:tessellate");
+            support_soup(&current, models, settings)?
+        };
+        (rafts, support)
+    } else {
+        (Vec::new(), TriangleSink::default())
     };
     check()?;
-    step(progress, Stage::Tessellate, n);
-    let support = {
-        let _perf = perf::scope("stage:tessellate");
-        support_soup(&current, models, settings)?
-    };
-    check()?;
+    drop(brace_meshes);
     Ok(PipelineOutput {
         models: outputs,
         support: current,
@@ -657,6 +702,7 @@ fn run_pipeline(
         support_parts: support.parts,
         timings: PerfFrame::default(),
         distance_fields: Arc::new(std::sync::Mutex::new(distance_fields)),
+        bvhs,
     })
 }
 

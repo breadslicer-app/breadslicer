@@ -548,6 +548,15 @@ impl DfSupportSession {
         }
     }
 
+    /// Hands the run's BVHs to the session, one per model in model order:
+    /// the plans built them on the same world soup the session would.
+    pub(crate) fn adopt_bvhs(&self, bvhs: Vec<Arc<MeshBvh>>) {
+        for (slot, bvh) in self.bvhs.iter().zip(bvhs) {
+            // One already built stays: it is the same tree.
+            let _ = slot.set(bvh);
+        }
+    }
+
     fn bvh(&self, i: usize) -> Arc<MeshBvh> {
         self.bvhs[i]
             .get_or_init(|| {
