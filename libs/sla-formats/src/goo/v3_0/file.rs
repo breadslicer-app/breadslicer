@@ -26,12 +26,11 @@ const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
 /// Write `stack` as a GOO V3.0 file running the schedule in
 /// `program`, whose records pair with the stack's layers in order.
 ///
-/// The first row of every layer image is the plate's maximum Y edge,
-/// the order this container stores its previews in. The raster
-/// setup's mirror flags, which the header declares, are what turns an
-/// image around; its panel rotation turns it as
+/// Every layer image is the plate's image that
 /// [`write_layer_images`](crate::layer_images::write_layer_images)
-/// describes.
+/// describes, its first row the plate's minimum Y edge. The raster
+/// setup's mirror flags, which the header declares, turn it around and
+/// its panel rotation turns it a quarter.
 ///
 /// Without `previews` the machine displays an empty thumbnail for the
 /// file.

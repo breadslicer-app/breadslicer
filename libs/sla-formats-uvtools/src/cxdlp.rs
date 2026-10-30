@@ -398,9 +398,9 @@ pub(crate) fn encode_layer(runs: &[RleRun], width: u32, largest_outline: u32) ->
 /// Writes `stack` as a CXDLP file of `version` running the settings in
 /// `program`.
 ///
-/// The first row of every layer image is the plate's maximum Y edge, as in the
-/// GOO and CTB files; the raster setup's mirror flags turn the image around,
-/// and its panel rotation turns it as [`write_layer_images`] describes.
+/// Every layer image is the plate's image that [`write_layer_images`]
+/// describes, as in the GOO and CTB files; the raster setup's mirror flags turn
+/// it around and its panel rotation turns it a quarter.
 /// Without `previews` the machine shows black thumbnails.
 ///
 /// # Errors

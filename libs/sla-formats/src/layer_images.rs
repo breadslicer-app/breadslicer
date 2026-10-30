@@ -6,7 +6,7 @@
 //! The layer images of a printer file, made on every core.
 //!
 //! A layer's image depends on that layer alone: its rasterisation,
-//! row order, turn, compression and (for the encrypted container) its
+//! turn, compression and (for the encrypted container) its
 //! obfuscation. Only where it lands in the file depends on the layers
 //! before it, so images are made in parallel, a batch at a time, and
 //! handed to the writer strictly in layer order. A batch is a few
@@ -14,31 +14,34 @@
 //! the images waiting to be written stay small.
 
 use rayon::prelude::*;
-use sc_print_primitives::PanelRotation;
+use sc_print_primitives::{Mirror, PanelRotation};
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 use sc_sl1cer::raster::rle::RleRun;
 
 use crate::raster_setup::RasterSetup;
-use crate::row_order::{reverse_rows, turn_ccw};
+use crate::row_order::turn_ccw;
 
 /// Layers made per core before the batch is written.
 const LAYERS_PER_CORE: usize = 4;
 
 /// Rasterises every layer of `stack` with `raster`'s settings, turns
-/// its rows into the container's order and passes them to `encode`
+/// it the way the panel stores it and passes its rows to `encode`
 /// (with the layer's index), on every core; then hands each encoded
 /// image to `write`, in layer order. The first error `write` returns
 /// stops the run.
 ///
 /// The rows reach `encode` as one run-length list over the whole
 /// frame, `panel_resolution().x()` pixels per row. On an unturned panel
-/// the first row is the plate's maximum Y edge: the order GOO and CTB
-/// store, and the top-down order of an image whose first row is that
-/// edge. On a panel turned [`PanelRotation::Ccw90`] that image comes
-/// turned a quarter turn counter-clockwise: the first row is the
-/// plate's maximum X edge and the first column its maximum Y edge.
+/// that is the plate's image, unmirrored: the plate seen from above
+/// from behind, its first row the plate's minimum Y (front) edge and
+/// its first column the maximum X edge. That is how the printers lay a
+/// file out, checked against files of the same scene from a slicer
+/// that prints right on the M7 Pro (#277). On a panel turned
+/// [`PanelRotation::Ccw90`] that image comes turned a quarter turn
+/// counter-clockwise: the first row is the plate's minimum X edge and
+/// the first column its minimum Y edge.
 pub fn write_layer_images<T: Send, E>(
     stack: &ContourStack,
     raster: &RasterSetup,
@@ -46,11 +49,18 @@ pub fn write_layer_images<T: Send, E>(
     mut write: impl FnMut(usize, T) -> Result<(), E>,
 ) -> Result<(), E> {
     let plate = raster.build_volume();
+    // The raster tier numbers rows from the plate's minimum Y and
+    // columns from its minimum X; the plate's image runs its columns the
+    // other way, so its X mirror is the raster's X mirror inverted.
+    let mirror = raster.mirror();
     let pixel_map = PixelMap::new(
         plate.x(),
         plate.y(),
         *raster.pixel_resolution(),
-        raster.mirror(),
+        Mirror {
+            x: !mirror.x,
+            y: mirror.y,
+        },
     );
     let (width, height) = (raster.pixel_resolution().x(), raster.pixel_resolution().y());
     let rotation = raster.panel_rotation();
@@ -69,12 +79,11 @@ pub fn write_layer_images<T: Send, E>(
                     raster.aa(),
                     raster.min_alpha_pct(),
                 );
-                reverse_rows(pixels.runs(), width, &mut scratch.rows);
                 match rotation {
-                    PanelRotation::None => encode(index, &scratch.rows),
+                    PanelRotation::None => encode(index, pixels.runs()),
                     PanelRotation::Ccw90 => {
                         turn_ccw(
-                            &scratch.rows,
+                            pixels.runs(),
                             width,
                             height,
                             &mut scratch.lit,
@@ -96,7 +105,6 @@ pub fn write_layer_images<T: Send, E>(
 /// The buffers one core reuses from layer to layer.
 #[derive(Debug, Default)]
 struct Scratch {
-    rows: Vec<RleRun>,
     lit: Vec<u8>,
     turned: Vec<RleRun>,
 }

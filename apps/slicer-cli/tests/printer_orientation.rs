@@ -6,26 +6,25 @@
  */
 
 //! Pins which way the bundled Photon Mono M7 Pro and Halot One profiles turn a
-//! part in the files they write, so a mirrored print cannot come back silently.
+//! part in the files they write, so a mirrored or turned print cannot come
+//! back silently.
 //!
-//! The orientation was established against files that print correctly
-//! (2026-10-27, PR #142): Breadslicer's `.pwsz` of a whale model matched
-//! Anycubic Photon Workshop's `.pwsz` of the same model with no mirror
-//! (silhouette correlation 0.95 against at most 0.61 for any flip, and the 3D
-//! principal frames of both stacks have the same handedness), and the relation
-//! between Breadslicer's `.pwsz` and `.cxdlp` of one model has the handedness
-//! of the relation between Lychee's `.pwsz` and `.cxdlp` of one scene, both of
-//! which print unmirrored on the owner's machines.
+//! The layout is the one of Lychee, whose files print right on the owner's
+//! machines (#277, 2026-10-30). Breadslicer's and Lychee's `.pwsz` of one
+//! Wolverine scene for the M7 Pro match on 99.8 % of the lit pixels, the rest
+//! being edge pixels. Until then Breadslicer laid the plate out half a turn
+//! round: unmirrored, which PR #142 confirmed against Photon Workshop, but a
+//! part at the plate's front left landed at its back right.
 //!
 //! Lychee's `.cxdlp` is its `.pwsz` of the same scene transposed: it lays the
 //! Halot One's plate out 128 mm wide and 81 mm deep, as the machine stands,
 //! and its file's 2560-pixel axis runs along the plate's X. Since #134 the
 //! Halot One's profile does the same (its panel stores the plate turned a
 //! quarter turn counter-clockwise), and Breadslicer's pair relates the way
-//! Lychee's does. A part on the plate's +X, +Y side therefore sits at the first
-//! rows and first columns of both files: in the `.pwsz` the rows follow the
-//! plate's Y and the columns its X, mirrored; in the `.cxdlp` the rows follow
-//! the plate's X and the columns its Y.
+//! Lychee's does. A part on the plate's +X, +Y side therefore sits at the last
+//! rows and last columns of both files: in the `.pwsz` the rows follow the
+//! plate's Y and the columns its X; in the `.cxdlp` the rows follow the
+//! plate's X and the columns its Y.
 
 use std::fs::{self, File};
 use std::io::BufReader;
@@ -144,7 +143,7 @@ fn block_and_marker(image: &[u8], width: usize) -> ((f64, f64), (f64, f64)) {
 }
 
 #[test]
-fn the_m7_pro_pwsz_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
+fn the_m7_pro_pwsz_puts_the_plates_plus_x_plus_y_corner_at_the_bottom_right() {
     let dir = tempdir().unwrap();
     let source = write_marked_plate(dir.path());
     let target = dir.path().join("marked.pwsz");
@@ -159,17 +158,17 @@ fn the_m7_pro_pwsz_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
     assert_eq!(file.settings["machine_type"]["res_x"], 13312);
     let (block, marker) = block_and_marker(&file.layers[0], 13312);
     assert!(
-        marker.0 < block.0,
-        "+X must land on the lower columns (mirror X), marker {marker:?} block {block:?}",
+        marker.0 > block.0,
+        "+X must land on the last columns, marker {marker:?} block {block:?}",
     );
     assert!(
-        marker.1 < block.1,
-        "+Y must land on the first rows, marker {marker:?} block {block:?}",
+        marker.1 > block.1,
+        "+Y must land on the last rows, marker {marker:?} block {block:?}",
     );
 }
 
 #[test]
-fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
+fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_bottom_right() {
     let dir = tempdir().unwrap();
     let source = write_marked_plate(dir.path());
     let target = dir.path().join("marked.cxdlp");
@@ -190,11 +189,11 @@ fn the_halot_one_cxdlp_puts_the_plates_plus_x_plus_y_corner_at_the_top_left() {
     );
     let (block, marker) = block_and_marker(&file.layers[0], usize::from(file.resolution_x));
     assert!(
-        marker.1 < block.1,
-        "+X must land on the first rows, marker {marker:?} block {block:?}",
+        marker.1 > block.1,
+        "+X must land on the last rows, marker {marker:?} block {block:?}",
     );
     assert!(
-        marker.0 < block.0,
-        "+Y must land on the first columns, marker {marker:?} block {block:?}",
+        marker.0 > block.0,
+        "+Y must land on the last columns, marker {marker:?} block {block:?}",
     );
 }
