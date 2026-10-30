@@ -1203,7 +1203,7 @@ mod repair_run_tests {
               • removed 12 leftover faces\n\
               • 2 zero-area faces kept; the mesh slices fine"]
         );
-        repaired.report.fixes.truncate(0);
+        repaired.report.fixes.clear();
         assert_eq!(
             dialog_lines(&[repaired], &names),
             ["Siraya:\n• 2 zero-area faces kept; the mesh slices fine"]
