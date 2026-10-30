@@ -12,6 +12,7 @@ export component PrivacyPreferences inherits PreferencesPage {
     // The diagnostic log (#74): off at every launch. Ticking it only asks
     // (`preferences_window`): it starts once the person confirms.
     in-out property <bool> diagnostic-log: false;
+    in property <string> diagnostic-log-error;
     callback diagnostic-log-changed(bool);
     callback open-logs-folder();
 
@@ -27,6 +28,11 @@ export component PrivacyPreferences inherits PreferencesPage {
         toggled => {
             root.diagnostic-log-changed(self.checked);
         }
+    }
+
+    if root.diagnostic-log-error != "": Text {
+        text: root.diagnostic-log-error;
+        wrap: word-wrap;
     }
 
     Text {

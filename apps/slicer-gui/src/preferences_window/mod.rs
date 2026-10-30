@@ -701,11 +701,15 @@ pub(crate) fn build_preferences_window(
 /// Ticking only asks: the box stays clear and the log off until the person
 /// confirms (#74). Unticking stops it at once.
 fn diagnostic_log_toggled(window: &PreferencesWindow, bus: &PreferencesBus, on: bool) {
+    window.set_diagnostic_log_error(SharedString::new());
     if on {
         window.set_diagnostic_log(false);
         window.set_log_question_serial(window.get_log_question_serial().wrapping_add(1));
         window.set_log_question_open(true);
     } else {
+        crate::breadcrumbs::note("diagnostic log: off");
+        // Off can't fail in a way worth telling: the log stops either way.
+        let _ = crate::breadcrumbs::set_enabled(false);
         bus.update(|snap| {
             snap.diagnostic_log = false;
             PreferencesChange::DiagnosticLog
@@ -713,14 +717,30 @@ fn diagnostic_log_toggled(window: &PreferencesWindow, bus: &PreferencesBus, on: 
     }
 }
 
-/// Closes the question before the diagnostic log; Turn on starts the log.
+/// Closes the question before the diagnostic log. Turn on starts the log
+/// here, and the box shows it on only once `session.log` has started; when it
+/// can't, the box stays clear and the page says why, never failing quietly.
 fn log_question_answered(window: &PreferencesWindow, bus: &PreferencesBus, answer: MessageAnswer) {
     window.set_log_question_open(false);
-    if answer == MessageAnswer::Confirm {
-        bus.update(|snap| {
-            snap.diagnostic_log = true;
-            PreferencesChange::DiagnosticLog
-        });
+    if answer != MessageAnswer::Confirm {
+        return;
+    }
+    match crate::breadcrumbs::set_enabled(true) {
+        Ok(()) => {
+            crate::breadcrumbs::note("diagnostic log: on");
+            bus.update(|snap| {
+                snap.diagnostic_log = true;
+                PreferencesChange::DiagnosticLog
+            });
+        }
+        Err(err) => {
+            crate::breadcrumbs::note(&format!("diagnostic log: could not start: {err}"));
+            window.set_diagnostic_log_error(ctr!(
+                "PrivacyPreferences",
+                "The diagnostic log could not start: {}",
+                err
+            ));
+        }
     }
 }
 
@@ -1879,14 +1899,30 @@ mod silenced_messages_tests {
 
 #[cfg(test)]
 mod diagnostic_log_tests {
+    use std::path::Path;
+
     use super::*;
     use crate::test_support::slint_thread::on_fresh_slint_thread;
 
-    /// Ticks the log in a fresh window, answers the question with `answer`
-    /// (none leaves it open) and returns: the log in the preferences, the
-    /// box, and whether the question is open.
-    fn tick_then(answer: Option<MessageAnswer>) -> (bool, bool, bool) {
+    /// What the Privacy page shows after a tick of the log, and whether the
+    /// log writes.
+    #[derive(Debug, PartialEq)]
+    struct Shown {
+        /// The log in the preferences: the box follows it.
+        on: bool,
+        writing: bool,
+        asking: bool,
+        error: String,
+    }
+
+    /// Ticks the log in a fresh window, with the log going into `logs`,
+    /// answers the question with `answer` (none leaves it open) and reads the
+    /// page. Restarts the shared trail, so the other tests that do wait.
+    fn tick_then(logs: &Path, answer: Option<MessageAnswer>) -> Shown {
+        let _serial = crate::breadcrumbs::serial();
         on_fresh_slint_thread(move || {
+            crate::breadcrumbs::write_log_into(logs);
+            crate::breadcrumbs::start();
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let window =
                 PreferencesWindow::new().expect("the headless platform creates components");
@@ -1895,49 +1931,96 @@ mod diagnostic_log_tests {
             if let Some(answer) = answer {
                 log_question_answered(&window, &bus, answer);
             }
-            (
-                bus.snapshot().diagnostic_log,
-                window.get_diagnostic_log(),
-                window.get_log_question_open(),
-            )
+            let shown = Shown {
+                on: bus.snapshot().diagnostic_log,
+                writing: crate::breadcrumbs::enabled(),
+                asking: window.get_log_question_open(),
+                error: window.get_diagnostic_log_error().to_string(),
+            };
+            // Closes the file, so the folder can go.
+            let _ = crate::breadcrumbs::set_enabled(false);
+            shown
         })
+    }
+
+    fn off(asking: bool) -> Shown {
+        Shown {
+            on: false,
+            writing: false,
+            asking,
+            error: String::new(),
+        }
     }
 
     #[test]
     fn ticking_the_log_only_asks() {
-        assert_eq!(tick_then(None), (false, false, true));
+        let logs = tempfile::tempdir().expect("a temporary folder");
+        assert_eq!(tick_then(logs.path(), None), off(true));
     }
 
     #[test]
     fn the_log_starts_once_the_person_turns_it_on() {
-        // The box follows the preferences through the window's subscription,
-        // which this bare window has not.
-        let (on, _, asking) = tick_then(Some(MessageAnswer::Confirm));
-        assert!(on && !asking);
+        let logs = tempfile::tempdir().expect("a temporary folder");
+        let shown = tick_then(logs.path(), Some(MessageAnswer::Confirm));
+        assert_eq!(
+            shown,
+            Shown {
+                on: true,
+                writing: true,
+                asking: false,
+                error: String::new(),
+            }
+        );
+        assert!(logs.path().join("session.log").is_file());
     }
 
     #[test]
     fn cancel_escape_or_a_click_outside_leave_it_off() {
+        let logs = tempfile::tempdir().expect("a temporary folder");
         assert_eq!(
-            tick_then(Some(MessageAnswer::Cancel)),
-            (false, false, false)
+            tick_then(logs.path(), Some(MessageAnswer::Cancel)),
+            off(false)
+        );
+    }
+
+    /// The box stays clear and the page says why: a log that seems on but
+    /// writes nothing would fail the bug report it was turned on for.
+    #[test]
+    fn a_log_that_cannot_start_stays_off_and_says_why() {
+        let dir = tempfile::tempdir().expect("a temporary folder");
+        let not_a_folder = dir.path().join("logs");
+        std::fs::write(&not_a_folder, "").expect("a file where the logs folder should be");
+        let shown = tick_then(&not_a_folder, Some(MessageAnswer::Confirm));
+        assert!(!shown.on && !shown.writing && !shown.asking, "{shown:?}");
+        assert!(
+            shown
+                .error
+                .starts_with("The diagnostic log could not start: "),
+            "{shown:?}"
         );
     }
 
     #[test]
     fn unticking_stops_it_at_once() {
-        let on = on_fresh_slint_thread(|| {
+        let logs = tempfile::tempdir().expect("a temporary folder");
+        let _serial = crate::breadcrumbs::serial();
+        let shown = on_fresh_slint_thread(|| {
+            crate::breadcrumbs::write_log_into(logs.path());
+            crate::breadcrumbs::start();
+            crate::breadcrumbs::set_enabled(true).expect("the log starts");
             let mut snapshot = PreferencesSnapshot::for_tests();
             snapshot.diagnostic_log = true;
             let bus = PreferencesBus::new(snapshot);
             let window =
                 PreferencesWindow::new().expect("the headless platform creates components");
             diagnostic_log_toggled(&window, &bus, false);
-            (
-                bus.snapshot().diagnostic_log,
-                window.get_log_question_open(),
-            )
+            Shown {
+                on: bus.snapshot().diagnostic_log,
+                writing: crate::breadcrumbs::enabled(),
+                asking: window.get_log_question_open(),
+                error: window.get_diagnostic_log_error().to_string(),
+            }
         });
-        assert_eq!(on, (false, false));
+        assert_eq!(shown, off(false));
     }
 }

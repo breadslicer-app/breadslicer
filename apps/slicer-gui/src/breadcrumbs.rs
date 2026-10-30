@@ -114,31 +114,27 @@ pub(crate) fn enabled() -> bool {
 
 /// Turns the diagnostic log on or off. Turning it on starts a new
 /// `session.log` (keeping the last one aside) holding the events already in
-/// memory, so the session so far is not lost.
-pub(crate) fn set_enabled(on: bool) {
-    ENABLED.store(on, Ordering::Relaxed);
-    let Ok(mut trail) = TRAIL.lock() else {
-        return;
-    };
-    let Some(trail) = trail.as_mut() else {
-        return;
-    };
+/// memory, so the session so far is not lost. Fails, with the log left off,
+/// when that file can't start.
+pub(crate) fn set_enabled(on: bool) -> std::io::Result<()> {
+    let mut trail = TRAIL
+        .lock()
+        .map_err(|_| std::io::Error::other("the event trail is unusable"))?;
+    let trail = trail
+        .as_mut()
+        .ok_or_else(|| std::io::Error::other("the event trail has not started"))?;
     if !on {
         trail.file = None;
-        return;
-    }
-    if trail.file.is_some() || cfg!(test) {
-        return;
-    }
-    let Some(dir) = logs_dir() else {
-        return;
-    };
-    if let Ok(mut file) = LogFile::start(&dir, MAX_LOG_BYTES) {
+    } else if trail.file.is_none() {
+        let dir = log_dir().ok_or_else(|| std::io::Error::other("there is no logs folder"))?;
+        let mut file = LogFile::start(&dir, MAX_LOG_BYTES)?;
         for line in &trail.recent {
             file.append(line);
         }
         trail.file = Some(file);
     }
+    ENABLED.store(on, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Records one event; with the diagnostic log on, also appends it to disk.
@@ -217,18 +213,48 @@ pub(crate) fn logs_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
+/// Where [`set_enabled`] starts the log: [`logs_dir`].
+#[cfg(not(test))]
+fn log_dir() -> Option<PathBuf> {
+    logs_dir()
+}
+
+/// In a test, the folder it gave to [`write_log_into`], never the person's
+/// logs folder; none is a system without one.
+#[cfg(test)]
+fn log_dir() -> Option<PathBuf> {
+    TEST_LOG_DIR.with_borrow(Clone::clone)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_LOG_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Makes the diagnostic log that this thread turns on write into `dir`.
+#[cfg(test)]
+pub(crate) fn write_log_into(dir: &Path) {
+    TEST_LOG_DIR.with_borrow_mut(|to| *to = Some(dir.to_owned()));
+}
+
+/// Held by the tests that restart the shared trail, so they run one at a
+/// time.
+#[cfg(test)]
+pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The tests that restart the shared trail run one at a time.
-    static SERIAL: Mutex<()> = Mutex::new(());
-
     #[test]
     fn the_trail_keeps_only_the_last_events_and_nothing_reaches_disk_by_default() {
-        let _serial = SERIAL
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _serial = serial();
         start();
         for i in 0..(KEPT + 5) {
             note(&format!("event {i}"));
@@ -273,9 +299,7 @@ mod tests {
 
     #[test]
     fn a_finished_task_says_how_it_ended_and_how_long_it_took() {
-        let _serial = SERIAL
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _serial = serial();
         start();
         started("unit-test-task");
         finished("unit-test-task", "ok");

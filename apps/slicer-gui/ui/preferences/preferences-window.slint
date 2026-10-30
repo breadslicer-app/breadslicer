@@ -38,6 +38,8 @@ export component PreferencesWindow inherits Window {
     in property <string> probe-message;
     in property <int> probe-recommended-fps: 0;
     in-out property <bool> diagnostic-log: false;
+    // Why the diagnostic log could not start; empty when it could.
+    in property <string> diagnostic-log-error;
     // The question before the diagnostic log starts (#74), drawn over the
     // window like the main window's messages. Rust opens it and reads the
     // answer.
@@ -235,6 +237,7 @@ export component PreferencesWindow inherits Window {
             }
             if(side-bar.current-item == 4) : PrivacyPreferences {
                 diagnostic-log <=> root.diagnostic-log;
+                diagnostic-log-error: root.diagnostic-log-error;
                 diagnostic-log-changed(on) => {
                     root.diagnostic-log-changed(on);
                 }

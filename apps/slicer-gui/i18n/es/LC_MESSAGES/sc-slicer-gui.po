@@ -3167,3 +3167,9 @@ msgstr "Descartar"
 msgctxt "RecoveryDialog"
 msgid "Recover"
 msgstr "Recuperar"
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "PrivacyPreferences"
+msgid "The diagnostic log could not start: {}"
+msgstr "El registro de diagnóstico no pudo empezar: {}"

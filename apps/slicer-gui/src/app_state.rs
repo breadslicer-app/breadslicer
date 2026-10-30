@@ -439,9 +439,6 @@ fn subscribe_window_preferences(
         if matches!(change, PreferencesChange::Language) {
             controller.refresh_texts();
         }
-        if matches!(change, PreferencesChange::DiagnosticLog) {
-            crate::breadcrumbs::set_enabled(snap.diagnostic_log);
-        }
         if matches!(change, PreferencesChange::SmoothModels) {
             crate::mesh_render::set_smooth_models(snap.smooth_models);
             controller.upload_scene_again();
@@ -2323,6 +2320,50 @@ mod subscribe_window_preferences_tests {
             )
         });
         assert!(below >= 10, "the card ends {below} px below its buttons");
+    }
+
+    /// The whole way of Preferences > Privacy (#74): the box ticked, the
+    /// question answered with Enter in the window, `session.log` started with
+    /// the session so far, and the box shown on.
+    #[test]
+    fn turning_the_log_on_in_preferences_writes_session_log() {
+        let _serial = crate::breadcrumbs::serial();
+        let dir = tempfile::tempdir().expect("a temporary folder");
+        let log = on_fresh_slint_thread(|| {
+            crate::breadcrumbs::write_log_into(dir.path());
+            crate::breadcrumbs::start();
+            let subscribed = subscribed_window();
+            let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
+                Vec::new(),
+                Vec::new(),
+            ))));
+            let prefs = build_preferences_window(&subscribed.bus, catalog)
+                .expect("the headless platform creates the Preferences window");
+            prefs.window.show().expect("the headless platform shows it");
+            prefs.window.invoke_diagnostic_log_changed(true);
+            let window = prefs.window.window();
+            for event in [
+                slint::platform::WindowEvent::KeyPressed {
+                    text: slint::platform::Key::Return.into(),
+                },
+                slint::platform::WindowEvent::KeyReleased {
+                    text: slint::platform::Key::Return.into(),
+                },
+            ] {
+                window.dispatch_event(event);
+            }
+            crate::breadcrumbs::note("test: after turning it on");
+            let log = std::fs::read_to_string(dir.path().join("session.log"));
+            let shown_on = prefs.window.get_diagnostic_log();
+            // Closes the file, so the folder can go.
+            crate::breadcrumbs::set_enabled(false).expect("the trail has started");
+            (log, shown_on)
+        });
+        let (log, shown_on) = log;
+        assert!(shown_on);
+        let log = log.expect("turning the log on starts session.log");
+        assert!(log.contains(" start v"), "{log}");
+        assert!(log.contains("test: after turning it on"), "{log}");
     }
 }
 
