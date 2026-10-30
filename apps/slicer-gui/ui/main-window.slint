@@ -463,6 +463,19 @@ export component MainWindow inherits Window {
     callback redo-requested();
     callback repair-requested();
     callback repair-finished();
+    // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
+    // the last one did, and the card's settings (Rust keeps them).
+    in property <bool> arranging: false;
+    in property <string> arrange-last-run;
+    in property <float> arrange-gap: 1;
+    in property <float> arrange-margin: 5;
+    in property <bool> arrange-turns: true;
+    in property <bool> arrange-shadow-only: false;
+    // Arrange all (false) or the selection (true).
+    callback arrange-requested(bool);
+    callback arrange-finished();
+    callback arrange-cancel();
+    callback arrange-option-changed(int, float);
     // Tools > Generate Support (trivial): runs `sc-geom`'s
     // support-generation trivial (stub) algorithm end to end against the loaded scene.
     // Each generated component (mesh) is pasted into the scene as a real object (see
@@ -1127,6 +1140,12 @@ export component MainWindow inherits Window {
                                 return true;
                             }
                         }
+                        if root.workspace-section == WorkspaceSection.Transform && root.has-scene
+                            && !root.loading && !root.slicing-in-progress && !root.repairing-in-progress
+                            && !root.arranging && (key == "a" || key == "A") {
+                            root.arrange-requested(false);
+                            return true;
+                        }
                         if root.workspace-section == WorkspaceSection.Slice && root.slice-layer-count > 0
                             && (key == "l" || key == "L") {
                             root.slice-split = !root.slice-split;
@@ -1414,6 +1433,23 @@ export component MainWindow inherits Window {
                             scale: root.selection-scale;
                             numeric-edit(code, value) => {
                                 root.numeric-edit(code, value);
+                            }
+                            arrange-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
+                                && !root.repairing-in-progress && !root.arranging;
+                            arranging: root.arranging;
+                            arrange-last-run: root.arrange-last-run;
+                            arrange-gap: root.arrange-gap;
+                            arrange-margin: root.arrange-margin;
+                            arrange-turns: root.arrange-turns;
+                            arrange-shadow-only: root.arrange-shadow-only;
+                            arrange-requested(selection) => {
+                                root.arrange-requested(selection);
+                            }
+                            arrange-cancel => {
+                                root.arrange-cancel();
+                            }
+                            arrange-option-changed(code, value) => {
+                                root.arrange-option-changed(code, value);
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {

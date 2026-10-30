@@ -285,6 +285,20 @@ export component TransformInspector inherits VerticalLayout {
     callback repair-requested();
     // A typed value: the field code (NumericEdit::from_ui) and the value.
     callback numeric-edit(int, float);
+    // Arrange (#180): the card's settings, whether a run is going, and what
+    // the last one did.
+    in property <bool> arrange-enabled;
+    in property <bool> arranging;
+    in property <string> arrange-last-run;
+    in property <float> arrange-gap;
+    in property <float> arrange-margin;
+    in property <bool> arrange-turns;
+    in property <bool> arrange-shadow-only;
+    // Arrange all (false) or the selection (true).
+    callback arrange-requested(bool);
+    callback arrange-cancel();
+    // 0 gap, 1 edge margin, 2 turns (0/1), 3 shadow only (0/1).
+    callback arrange-option-changed(int, float);
 
     spacing: 12px;
 
@@ -325,6 +339,84 @@ export component TransformInspector inherits VerticalLayout {
                     root.object-picked(i);
                 }
             }
+        }
+    }
+
+    if root.objects.length > 0: Card {
+        title: @tr("Inspector" => "ARRANGE");
+        note: "A";
+
+        Note {
+            text: root.arrange-shadow-only
+                ? @tr("Inspector" => "Packs the objects with their supports by their whole shadow: nothing reaches over another object.")
+                : @tr("Inspector" => "Packs the objects with their supports by their real shape: a part may reach over a shorter object, never closer than the gap.");
+        }
+        NumberField {
+            label: @tr("Inspector" => "Gap");
+            unit: "mm";
+            decimals: 1;
+            value: root.arrange-gap;
+            enabled: !root.arranging;
+            committed(v) => {
+                root.arrange-option-changed(0, v);
+            }
+        }
+        NumberField {
+            label: @tr("Inspector" => "Edge margin");
+            unit: "mm";
+            decimals: 1;
+            value: root.arrange-margin;
+            enabled: !root.arranging;
+            committed(v) => {
+                root.arrange-option-changed(1, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Turn objects to fit");
+            checked: root.arrange-turns;
+            enabled: !root.arranging;
+            toggled => {
+                root.arrange-option-changed(2, self.checked ? 1 : 0);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Shadow only");
+            checked: root.arrange-shadow-only;
+            enabled: !root.arranging;
+            toggled => {
+                root.arrange-option-changed(3, self.checked ? 1 : 0);
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: root.arranging ? @tr("Inspector" => "Cancel") : @tr("Inspector" => "Arrange all");
+                kind: ButtonKind.primary;
+                horizontal-stretch: 1;
+                enabled: root.arrange-enabled || root.arranging;
+                clicked => {
+                    if root.arranging {
+                        root.arrange-cancel();
+                    } else {
+                        root.arrange-requested(false);
+                    }
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Arrange selection");
+                horizontal-stretch: 1;
+                enabled: root.arrange-enabled && root.selection-valid && !root.arranging;
+                clicked => {
+                    root.arrange-requested(true);
+                }
+            }
+        }
+        if root.arranging: Note {
+            text: @tr("Inspector" => "Arranging…");
+        }
+        if !root.arranging && root.arrange-last-run != "": Note {
+            text: root.arrange-last-run;
         }
     }
 

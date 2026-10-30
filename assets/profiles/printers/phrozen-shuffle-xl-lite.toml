@@ -1,0 +1,37 @@
+[identity]
+id = "phrozen-shuffle-xl-lite"
+manufacturer = "Phrozen"
+family = "Shuffle"
+name = "Shuffle XL Lite"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 192.0
+y_mm = 120.0
+z_mm = 200.0
+
+[hardware.pixel_resolution]
+x = 2560
+y = 1600
+
+[hardware.pixel_size_microns]
+x = 75.0
+y = 75.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "zip"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

@@ -27,7 +27,7 @@ use crate::i18n::ctr;
 ///
 /// The traversal order matches `SceneSpatial::leaf_id_at_index`: row
 /// `i` in the returned list maps to the leaf at pre-order index `i`.
-pub(super) fn build_object_list_names(graph: &Scene) -> Vec<String> {
+pub(crate) fn build_object_list_names(graph: &Scene) -> Vec<String> {
     let raw: Vec<String> = graph
         .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
         .expect("a (Descend, Skip) structural walk has no error source")

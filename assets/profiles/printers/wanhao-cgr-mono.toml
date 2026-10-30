@@ -1,0 +1,37 @@
+[identity]
+id = "wanhao-cgr-mono"
+manufacturer = "Wanhao"
+family = "CGR"
+name = "CGR Mono"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 192.0
+y_mm = 120.0
+z_mm = 200.0
+
+[hardware.pixel_resolution]
+x = 1620
+y = 2560
+
+[hardware.pixel_size_microns]
+x = 118.51851851851852
+y = 46.875
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "zip"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

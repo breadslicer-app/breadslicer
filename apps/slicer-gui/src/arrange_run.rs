@@ -1,0 +1,488 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+//! Arrange all and Arrange selection (#180).
+//!
+//! The Transform tab's Arrange card packs the plate's objects by their real
+//! footprints ([`sc_arrange`]): each model with its supports and raft, kept
+//! a gap apart at every height (a part may reach over a shorter neighbour),
+//! or by their whole shadow. Arrange selection finds a spot for the selected
+//! model and leaves the others where they are.
+//!
+//! The footprints and the search run on a worker. The result lands as one
+//! undoable edit that moves each model in the plate plane, maybe turned
+//! about the vertical axis: its supports go along without being generated
+//! again ([`crate::support_follow`]). A result worked out for a scene that
+//! has changed since is dropped. Objects that do not fit go beside the
+//! plate, and are named.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
+
+use sc_arrange::{Body, Outcome, Part, Plate, Settings};
+use sc_geom::df_supports::is_support_mesh;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_scene::NodeId;
+use sc_scene_edit::SceneEdit;
+use slint::ComponentHandle;
+
+use crate::MainWindow;
+use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
+use crate::i18n::ctr;
+use crate::mesh_loader::panic_message;
+use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
+use crate::support_persist::{in_force, model_of};
+use crate::viewport::ViewportController;
+
+/// What the Arrange card sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ArrangeOptions {
+    /// The smallest distance between two objects, at any height (mm).
+    pub(crate) gap_mm: f32,
+    /// The room kept clear along the plate's edges (mm).
+    pub(crate) margin_mm: f32,
+    /// Whether objects may turn about the vertical axis.
+    pub(crate) turns: bool,
+    /// Keep each object's whole shadow clear of the others.
+    pub(crate) shadow_only: bool,
+}
+
+impl Default for ArrangeOptions {
+    fn default() -> Self {
+        Self {
+            gap_mm: 1.0,
+            margin_mm: 5.0,
+            turns: true,
+            shadow_only: false,
+        }
+    }
+}
+
+impl ArrangeOptions {
+    fn settings(self) -> Settings {
+        Settings {
+            gap: f64::from(self.gap_mm),
+            margin: f64::from(self.margin_mm),
+            shadow_only: self.shadow_only,
+            turns: if self.turns { 8 } else { 1 },
+            ..Settings::default()
+        }
+    }
+}
+
+/// The plate's objects as the arrangement sees them.
+struct Gathered {
+    bodies: Vec<Body>,
+    /// Per body, the leaves its move moves: the model, and supports that
+    /// do not follow it by themselves. A set in force follows its model.
+    leaves: Vec<Vec<NodeId>>,
+    names: Vec<String>,
+}
+
+/// A run in flight.
+struct Pending {
+    revision: SceneRevision,
+    leaves: Vec<Vec<NodeId>>,
+    names: Vec<String>,
+    started: Instant,
+}
+
+type ArrangeSlot = Arc<Mutex<Option<Result<Option<Outcome>, String>>>>;
+
+pub(crate) struct ArrangeRun {
+    ui: slint::Weak<MainWindow>,
+    document: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    ctrl: Rc<ViewportController>,
+    options: Cell<ArrangeOptions>,
+    slot: ArrangeSlot,
+    pending: RefCell<Option<Pending>>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl ArrangeRun {
+    /// Wires the Arrange card's callbacks and returns the driver, which the
+    /// caller keeps alive for the window's lifetime.
+    pub(crate) fn install(
+        ui: &MainWindow,
+        document: Rc<SceneDocument>,
+        dialogs: Rc<DialogManager>,
+        ctrl: Rc<ViewportController>,
+    ) -> Rc<Self> {
+        let run = Rc::new(Self {
+            ui: ui.as_weak(),
+            document,
+            dialogs,
+            ctrl,
+            options: Cell::new(ArrangeOptions::default()),
+            slot: Arc::new(Mutex::new(None)),
+            pending: RefCell::new(None),
+            cancel: Arc::new(AtomicBool::new(false)),
+        });
+        run.push_options(ui);
+        {
+            let run = run.clone();
+            ui.on_arrange_requested(move |selection| run.start(selection));
+        }
+        {
+            let run = run.clone();
+            ui.on_arrange_finished(move || run.finish());
+        }
+        {
+            let run = run.clone();
+            ui.on_arrange_option_changed(move |code, value| run.on_option(code, value));
+        }
+        {
+            let run = run.clone();
+            ui.on_arrange_cancel(move || run.cancel());
+        }
+        run
+    }
+
+    fn push_options(&self, ui: &MainWindow) {
+        let o = self.options.get();
+        ui.set_arrange_gap(o.gap_mm);
+        ui.set_arrange_margin(o.margin_mm);
+        ui.set_arrange_turns(o.turns);
+        ui.set_arrange_shadow_only(o.shadow_only);
+    }
+
+    fn on_option(&self, code: i32, value: f32) {
+        let mut o = self.options.get();
+        match code {
+            0 => o.gap_mm = value.clamp(0.0, 20.0),
+            1 => o.margin_mm = value.clamp(0.0, 50.0),
+            2 => o.turns = value != 0.0,
+            3 => o.shadow_only = value != 0.0,
+            _ => return,
+        }
+        self.options.set(o);
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+    }
+
+    /// Arrange all, or (`selection`) the selected model alone.
+    pub(crate) fn start(self: &Rc<Self>, selection: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if ui.get_loading()
+            || ui.get_slicing_in_progress()
+            || ui.get_repairing_in_progress()
+            || ui.get_arranging()
+            || !self.ctrl.allows_layout_tools()
+        {
+            return;
+        }
+        let Some(gathered) = gather(&self.document, selection) else {
+            return;
+        };
+        let volume = self.ctrl.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        let plate = Plate {
+            min: [f64::from(lo.x), f64::from(lo.y)],
+            max: [f64::from(hi.x), f64::from(hi.y)],
+            floor: f64::from(lo.z),
+        };
+        let settings = self.options.get().settings();
+        *self.pending.borrow_mut() = Some(Pending {
+            revision: self.document.scene_revision(),
+            leaves: gathered.leaves,
+            names: gathered.names,
+            started: Instant::now(),
+        });
+        self.cancel.store(false, Ordering::Relaxed);
+        ui.set_arranging(true);
+        crate::breadcrumbs::note(&format!(
+            "arrange: {} object(s), selection {selection}",
+            gathered.bodies.len()
+        ));
+        let slot = self.slot.clone();
+        let cancel = self.cancel.clone();
+        let ui_weak = self.ui.clone();
+        let bodies = gathered.bodies;
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sc_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
+            }))
+            .map_err(|payload| panic_message(&payload));
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
+            let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_arrange_finished());
+        });
+    }
+
+    /// Takes the worker's result on the UI thread and applies it, when the
+    /// scene is still the one it was worked out for.
+    fn finish(&self) {
+        let taken = self
+            .slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let pending = self.pending.borrow_mut().take();
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        ui.set_arranging(false);
+        let (Some(result), Some(pending)) = (taken, pending) else {
+            return;
+        };
+        let outcome = match result {
+            Ok(Some(outcome)) => outcome,
+            // Cancelled.
+            Ok(None) => return,
+            Err(panic) => {
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("ArrangeDialog", "Arrange failed"),
+                    context: None,
+                    message: ctr!("ArrangeDialog", "The arrangement stopped unexpectedly."),
+                    details: panic.as_str().into(),
+                });
+                return;
+            }
+        };
+        if self.document.scene_revision() != pending.revision {
+            ui.set_arrange_last_run(
+                ctr!(
+                    "Inspector",
+                    "The scene changed while arranging; nothing was moved."
+                )
+                .into(),
+            );
+            return;
+        }
+        crate::breadcrumbs::note(&format!(
+            "arrange: footprints {:?}, search {:?}",
+            outcome.timings.footprints, outcome.timings.search
+        ));
+        let Some(edit) = arrangement_edit(&self.document, &outcome, &pending.leaves) else {
+            ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place.").into());
+            return;
+        };
+        match self.document.apply_edit(edit.clone()) {
+            Ok(()) => self.document.push_edit(edit),
+            Err(EditNotApplied::Rejected(error)) => {
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("ArrangeDialog", "Arrange failed"),
+                    context: None,
+                    message: ctr!(
+                        "ArrangeDialog",
+                        "The scene rejected the arrangement; nothing was moved."
+                    ),
+                    details: error.to_string().into(),
+                });
+                return;
+            }
+            Err(EditNotApplied::NoSceneLoaded) => return,
+        }
+        let moved = outcome.placements.iter().flatten().count();
+        let left_off: Vec<String> = outcome
+            .left_off()
+            .into_iter()
+            .filter_map(|i| pending.names.get(i).cloned())
+            .collect();
+        let seconds = pending.started.elapsed().as_secs_f64();
+        ui.set_arrange_last_run(last_run_text(moved, left_off.len(), seconds).into());
+        if !left_off.is_empty() {
+            let count = left_off.len();
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!("ArrangeDialog", "Not everything fits"),
+                message: ctr!(
+                    "ArrangeDialog",
+                    "{n} object does not fit on the plate. It is beside the plate, on the right.",
+                    "{n} objects do not fit on the plate. They are beside the plate, on the right.",
+                    count
+                )
+                .into(),
+                details: left_off.join("\n").into(),
+            });
+        }
+    }
+
+    /// Stops a run in flight; its result is dropped.
+    pub(crate) fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The card's line after a run.
+fn last_run_text(moved: usize, left_off: usize, seconds: f64) -> String {
+    let time = format!("{seconds:.1}");
+    if left_off == 0 {
+        ctr!(
+            "Inspector",
+            "Arranged {n} object in {} s.",
+            "Arranged {n} objects in {} s.",
+            moved,
+            time
+        )
+        .to_string()
+    } else {
+        ctr!(
+            "Inspector",
+            "{} of {} objects fit; the rest are beside the plate.",
+            moved - left_off,
+            moved
+        )
+        .to_string()
+    }
+}
+
+fn affine(t: &Transform3D) -> AffineTransform3D {
+    match t {
+        Transform3D::Identity => AffineTransform3D::identity(),
+        Transform3D::Affine(a) => *a,
+    }
+}
+
+/// The plate's objects: one body per model, with its supports. Supports
+/// whose model is unknown stay where they are, and so does everything but
+/// the selected model when arranging the selection. `None` when nothing
+/// would move.
+fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
+    let sessions = document.support_sessions();
+    let selected = document.selection_primary_node_id();
+    document
+        .with_scene(|spatial| {
+            let names = crate::viewport::object_names(spatial.graph());
+            let rows: Vec<NodeId> = (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+            let mut gathered = Gathered {
+                bodies: Vec::new(),
+                leaves: Vec::new(),
+                names: Vec::new(),
+            };
+            let mut body_of: HashMap<NodeId, usize> = HashMap::new();
+            let part = |leaf: NodeId| {
+                let query = spatial.leaf(leaf)?;
+                Some(Part {
+                    mesh: spatial.graph().leaf_mesh_arc(leaf)?.clone(),
+                    world: affine(&query.world_transform()),
+                })
+            };
+            let name = |row: usize| names.get(row).cloned().unwrap_or_default();
+            for (row, &leaf) in rows.iter().enumerate() {
+                let Some(query) = spatial.leaf(leaf) else {
+                    continue;
+                };
+                if is_support_mesh(query.mesh()) {
+                    continue;
+                }
+                let Some(part) = part(leaf) else {
+                    continue;
+                };
+                body_of.insert(leaf, gathered.bodies.len());
+                gathered.bodies.push(Body {
+                    parts: vec![part],
+                    fixed: selection && selected != Some(leaf),
+                });
+                gathered.leaves.push(vec![leaf]);
+                gathered.names.push(name(row));
+            }
+            for (row, &leaf) in rows.iter().enumerate() {
+                let Some(query) = spatial.leaf(leaf) else {
+                    continue;
+                };
+                if !is_support_mesh(query.mesh()) {
+                    continue;
+                }
+                let Some(support) = part(leaf) else {
+                    continue;
+                };
+                let model = model_of(&sessions, leaf);
+                match model.and_then(|m| body_of.get(&m).copied()) {
+                    Some(i) => {
+                        gathered.bodies[i].parts.push(support);
+                        // A set in force is redrawn where its model goes;
+                        // any other moves with it as it is.
+                        let follows = in_force(spatial, &sessions, leaf)
+                            .is_some_and(|drawn| Some(drawn.model) == model);
+                        if !follows {
+                            gathered.leaves[i].push(leaf);
+                        }
+                    }
+                    None => {
+                        gathered.bodies.push(Body {
+                            parts: vec![support],
+                            fixed: true,
+                        });
+                        gathered.leaves.push(Vec::new());
+                        gathered.names.push(name(row));
+                    }
+                }
+            }
+            gathered
+        })
+        .filter(|g| g.bodies.iter().any(|b| !b.fixed))
+}
+
+/// Arranges on this thread and applies the result, as a run does: for
+/// tests.
+#[cfg(test)]
+pub(crate) fn arrange_now(
+    document: &SceneDocument,
+    plate: &Plate,
+    options: ArrangeOptions,
+    selection: bool,
+) -> Option<Outcome> {
+    let gathered = gather(document, selection)?;
+    let outcome = sc_arrange::arrange(
+        &gathered.bodies,
+        plate,
+        &options.settings(),
+        &AtomicBool::new(false),
+    )
+    .ok()?;
+    let edit = arrangement_edit(document, &outcome, &gathered.leaves)?;
+    document.apply_edit(edit.clone()).ok()?;
+    document.push_edit(edit);
+    Some(outcome)
+}
+
+/// One edit that moves every placed body's leaves: one undo step.
+fn arrangement_edit(
+    document: &SceneDocument,
+    outcome: &Outcome,
+    leaves: &[Vec<NodeId>],
+) -> Option<SceneEdit> {
+    let mut edits: Vec<SceneEdit> = document
+        .with_scene(|spatial| {
+            let mut edits = Vec::new();
+            for (placement, leaves) in outcome.placements.iter().zip(leaves) {
+                let Some(placement) = placement else {
+                    continue;
+                };
+                let motion = Transform3D::Affine(placement.motion());
+                for &leaf in leaves {
+                    let Some(query) = spatial.leaf(leaf) else {
+                        continue;
+                    };
+                    let before = query.local_transform();
+                    let Ok(up) = query.parent_world().inverse() else {
+                        continue;
+                    };
+                    let after = up.compose(&motion.compose(&query.world_transform()));
+                    if after != before {
+                        edits.push(SceneEdit::SetLocalTransform {
+                            node_id: leaf,
+                            before,
+                            after,
+                        });
+                    }
+                }
+            }
+            edits
+        })
+        .unwrap_or_default();
+    match edits.len() {
+        0 => None,
+        1 => edits.pop(),
+        _ => Some(SceneEdit::Compound(edits)),
+    }
+}

@@ -1,0 +1,38 @@
+[identity]
+id = "phrozen-sonic-mini-8k"
+manufacturer = "Phrozen"
+family = "Sonic"
+name = "Sonic Mini 8K"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 165.0
+y_mm = 71.28
+z_mm = 180.0
+
+[hardware.pixel_resolution]
+x = 7500
+y = 3240
+
+[hardware.pixel_size_microns]
+x = 22.0
+y = 22.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

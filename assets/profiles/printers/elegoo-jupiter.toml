@@ -30,6 +30,10 @@ has_camera = false
 
 [[capabilities.output_formats]]
 format = "ctb"
+version = "v5enc"
+
+[[capabilities.output_formats]]
+format = "ctb"
 version = "v5"
 
 [constraints]

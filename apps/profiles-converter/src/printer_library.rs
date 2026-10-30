@@ -17,13 +17,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use sc_print_primitives::PrinterId;
-use sc_print_profiles::{LoadPrinterProfileError, load_printer_profile_from_path};
+use sc_print_profiles::{LoadPrinterProfileError, PrinterProfile, load_printer_profile_from_path};
 
 /// What the printer profiles under a library root say about each
 /// machine.
 #[derive(Clone, Debug, Default)]
 pub struct PrinterLibrary {
-    splits_travel: BTreeMap<PrinterId, bool>,
+    profiles: BTreeMap<PrinterId, PrinterProfile>,
 }
 
 /// Returned by [`PrinterLibrary::open`] when the library cannot be read.
@@ -75,7 +75,7 @@ impl PrinterLibrary {
             path: dir.clone(),
             source,
         })?;
-        let mut splits_travel = BTreeMap::new();
+        let mut profiles = BTreeMap::new();
         for entry in entries {
             let entry = entry.map_err(|source| PrinterLibraryError::ReadDir {
                 path: dir.clone(),
@@ -94,15 +94,27 @@ impl PrinterLibrary {
                     source: Box::new(source),
                 }
             })?;
-            splits_travel.insert(profile.identity.id, profile.capabilities.two_stage_lift);
+            profiles.insert(profile.identity.id.clone(), profile);
         }
-        Ok(Self { splits_travel })
+        Ok(Self { profiles })
     }
 
     /// Find whether the machine `id` names splits its travel into 2
     /// stages, or `None` when the library holds no profile for it.
     pub fn splits_travel(&self, id: &PrinterId) -> Option<bool> {
-        self.splits_travel.get(id).copied()
+        self.profiles
+            .get(id)
+            .map(|profile| profile.capabilities.two_stage_lift)
+    }
+
+    /// Find the profile the library holds for the machine `id` names.
+    pub fn profile(&self, id: &PrinterId) -> Option<&PrinterProfile> {
+        self.profiles.get(id)
+    }
+
+    /// Every profile the library holds, by id.
+    pub fn profiles(&self) -> impl Iterator<Item = &PrinterProfile> {
+        self.profiles.values()
     }
 }
 

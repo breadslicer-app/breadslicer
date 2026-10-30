@@ -1,0 +1,37 @@
+[identity]
+id = "nova3d-elfin2"
+manufacturer = "Nova3D"
+family = "Elfin"
+name = "Elfin2"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 70.0
+y_mm = 130.0
+z_mm = 150.0
+
+[hardware.pixel_resolution]
+x = 1352
+y = 2512
+
+[hardware.pixel_size_microns]
+x = 51.77514792899408
+y = 51.7515923566879
+
+[hardware.mirror]
+x = false
+y = true
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "cws"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

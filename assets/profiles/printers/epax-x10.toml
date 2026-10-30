@@ -1,0 +1,38 @@
+[identity]
+id = "epax-x10"
+manufacturer = "EPAX"
+family = "X10"
+name = "X10"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 135.36
+y_mm = 216.57
+z_mm = 250.0
+
+[hardware.pixel_resolution]
+x = 1600
+y = 2560
+
+[hardware.pixel_size_microns]
+x = 84.6
+y = 84.59765625
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v3"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]

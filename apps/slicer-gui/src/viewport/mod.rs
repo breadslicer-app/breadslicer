@@ -34,6 +34,7 @@ mod translation_clamp;
 mod types;
 
 pub(crate) use controller::ViewportController;
+pub(crate) use object_list::build_object_list_names as object_names;
 pub(crate) use performance_probe::{ProbeResult, ProbeUpdate};
 pub(crate) use render_scheduler::RESIZE_SETTLE;
 pub(crate) use types::{ScreenDelta, ScreenPoint};

@@ -1,0 +1,38 @@
+[identity]
+id = "phrozen-sonic-mighty-revo"
+manufacturer = "Phrozen"
+family = "Sonic"
+name = "Sonic Mighty Revo"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 223.776
+y_mm = 126.976
+z_mm = 235.0
+
+[hardware.pixel_resolution]
+x = 13320
+y = 5120
+
+[hardware.pixel_size_microns]
+x = 16.8
+y = 24.8
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
+
+[constraints]
+
+[defaults]
+
+[time_calibration]
