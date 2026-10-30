@@ -338,6 +338,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
     settings.set_frame_rate(snap.frame_rate);
+    settings.set_orthographic_view(snap.orthographic_view);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -476,6 +477,7 @@ impl AppState {
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
             frame_rate: settings.frame_rate(),
+            orthographic_view: settings.orthographic_view(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
             diagnostic_log: false,
@@ -1960,6 +1962,15 @@ mod settings_saver_tests {
     }
 
     #[test]
+    fn saver_mapping_carries_the_projection() {
+        let mut settings = AppSettings::default();
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.orthographic_view = true;
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(settings.orthographic_view());
+    }
+
+    #[test]
     fn saver_mapping_carries_last_open_dir() {
         // The mapping must copy the remembered open directory so it survives a
         // save.
@@ -2246,6 +2257,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
             PreferencesChange::FrameRate,
+            PreferencesChange::Projection,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
             PreferencesChange::ObjectListPanel,
