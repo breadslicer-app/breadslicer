@@ -234,3 +234,31 @@ fn diagnosis_equals_the_validators_for_every_fixture_class() {
         );
     }
 }
+
+#[test]
+fn only_a_closed_consistent_mesh_with_finite_vertices_is_sliceable() {
+    assert!(tetrahedron().is_sliceable());
+    // A zero-area face does not block slicing.
+    assert!(tetrahedron_with_a_zero_area_face().is_sliceable());
+
+    let mut nan_vertex = tetrahedron();
+    nan_vertex.vertices[0] = Vertex::new([f32::NAN, 1.0, 1.0]);
+    let mut out_of_range = tetrahedron();
+    out_of_range.faces[0] = IndexedTriangle::from_raw_indices([0, 1, 99]);
+    let mut flipped = tetrahedron();
+    flipped.faces[0] = IndexedTriangle::from_raw_indices([0, 2, 1]);
+    let empty = IndexedMesh {
+        meta: None,
+        vertices: vec![],
+        faces: vec![],
+    };
+    for (name, mesh) in [
+        ("nan vertex", nan_vertex),
+        ("out-of-range face", out_of_range),
+        ("open strip", open_strip()),
+        ("flipped face", flipped),
+        ("empty", empty),
+    ] {
+        assert!(!mesh.is_sliceable(), "{name} must not be sliceable");
+    }
+}
