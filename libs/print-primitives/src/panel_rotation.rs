@@ -14,8 +14,9 @@
 //! first, to the plate's image; the turn comes after them.
 
 /// The turn between the plate's image and the image a printer file
-/// stores. The plate's image is the plate seen from above: its first
-/// row is the plate's +Y edge, its last column the +X edge.
+/// stores. The plate's image is the plate seen from above, from behind:
+/// its first row is the plate's -Y (front) edge, its first column the
+/// +X edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub enum PanelRotation {
@@ -24,8 +25,8 @@ pub enum PanelRotation {
     #[cfg_attr(feature = "serde", serde(rename = "none"))]
     None,
     /// The file stores the plate's image turned a quarter turn
-    /// counter-clockwise: the plate's +X edge is the stored image's
-    /// first row and its +Y edge the stored image's first column.
+    /// counter-clockwise: the plate's -X edge is the stored image's
+    /// first row and its -Y edge the stored image's first column.
     #[cfg_attr(feature = "serde", serde(rename = "ccw90"))]
     Ccw90,
 }

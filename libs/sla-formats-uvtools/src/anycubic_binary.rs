@@ -624,9 +624,9 @@ fn position(out: &mut dyn PrinterFileSink) -> Result<u32, WriteFailure> {
 /// Writes `stack` as an Anycubic binary file of `variant` running the settings
 /// in `program`.
 ///
-/// The first row of every layer image is the plate's maximum Y edge, as in the
-/// GOO and CTB files; the raster setup's mirror flags turn the image around,
-/// and its panel rotation turns it as [`write_layer_images`] describes. Without
+/// Every layer image is the plate's image that [`write_layer_images`]
+/// describes, as in the GOO and CTB files; the raster setup's mirror flags turn
+/// it around and its panel rotation turns it a quarter. Without
 /// `previews` the machine shows black thumbnails.
 ///
 /// The layers are written as they are made, and the tables that point at them

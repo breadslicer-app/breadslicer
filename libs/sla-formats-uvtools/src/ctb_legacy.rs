@@ -503,9 +503,9 @@ fn layer_record(version: u32, slab_top_mm: f32, motion: &Motion, image: ImageLoc
 /// Writes `stack` as a CTB file of `variant` (versions 2 to 4) running the
 /// settings in `program`.
 ///
-/// The first row of every layer image is the plate's maximum Y edge, as in the
-/// other CTB revisions; the raster setup's mirror flags turn the image around,
-/// and its panel rotation turns it as [`write_layer_images`] describes. Without
+/// Every layer image is the plate's image that [`write_layer_images`]
+/// describes, as in the other CTB revisions; the raster setup's mirror flags
+/// turn it around and its panel rotation turns it a quarter. Without
 /// `previews` the machine shows black thumbnails.
 ///
 /// # Errors
