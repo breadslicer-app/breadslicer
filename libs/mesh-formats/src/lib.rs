@@ -32,6 +32,8 @@ mod tests_scene_writer_shared_subtrees;
 #[cfg(test)]
 mod tests_threemf;
 #[cfg(test)]
+mod tests_threemf_production;
+#[cfg(test)]
 mod tests_write_obj_error;
 #[cfg(test)]
 mod tests_write_scene_error;

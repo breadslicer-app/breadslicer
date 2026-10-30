@@ -14,7 +14,9 @@
 //!
 //! Reading refuses archives whose decompressed size exceeds fixed ceilings (2
 //! GiB per part, 4 GiB per package) instead of exhausting memory on a crafted
-//! or corrupt file; see `PackageReadLimits`.
+//! or corrupt file; see `PackageReadLimits`. Reading skips parts that have no
+//! content type, which FDM slicers store for their own settings and pictures,
+//! and keeps their names; see [`Package::untyped_parts`].
 
 mod fused_writer;
 pub mod static_part_name;
@@ -203,6 +205,9 @@ pub struct Package {
     /// Per-part relationships, keyed by source part name; equivalent names
     /// share 1 key.
     part_relationships: BTreeMap<PartName, Vec<Relationship>>,
+    /// Names of the parts that reading skipped because the content-type map
+    /// gives them no type, in archive order. Their bytes are not kept.
+    untyped_parts: Vec<PartName>,
 }
 
 impl Package {
@@ -291,6 +296,14 @@ impl Package {
         self.find_part(name).map(|p| p.data.as_slice())
     }
 
+    /// Returns the names of the parts that reading skipped because they have
+    /// no content type, neither by extension default nor by override, in
+    /// archive order. Such parts are not in [`Package::part_names`]; a package
+    /// built in memory has none.
+    pub fn untyped_parts(&self) -> &[PartName] {
+        &self.untyped_parts
+    }
+
     pub fn root_relationships(&self) -> &[Relationship] {
         &self.root_relationships
     }
@@ -304,7 +317,8 @@ impl Package {
     }
 
     /// Resolves the StartPart relationship to the name of the primary 3D Model
-    /// part, as the part spells it.
+    /// part, as the part spells it. A start part that reading skipped for
+    /// having no content type gives [`PackageReadError::PartWithoutContentType`].
     pub fn start_part(&self) -> Result<PartName, PackageReadError> {
         let rel = self
             .root_relationships
@@ -317,8 +331,13 @@ impl Package {
                 name: target.clone(),
                 source,
             })?;
-        match self.find_part(&name) {
-            Some(part) => Ok(part.name.clone()),
+        if let Some(part) = self.find_part(&name) {
+            return Ok(part.name.clone());
+        }
+        match self.untyped_parts.iter().find(|p| p.is_equivalent(&name)) {
+            Some(untyped) => Err(PackageReadError::PartWithoutContentType {
+                part: untyped.as_str().to_string(),
+            }),
             None => Err(PackageReadError::StartPartNotFound { target }),
         }
     }
@@ -518,11 +537,13 @@ impl Package {
                 }
                 continue;
             }
-            let content_type = content_types.lookup(&part_name).ok_or_else(|| {
-                PackageReadError::PartWithoutContentType {
-                    part: part_name.as_str().to_string(),
-                }
-            })?;
+            // A part without a content type cannot be interpreted, but it does
+            // not stop the parts that can: FDM slicers store their settings and
+            // pictures this way. Its name is kept so readers can report it.
+            let Some(content_type) = content_types.lookup(&part_name) else {
+                package.untyped_parts.push(part_name);
+                continue;
+            };
             package.parts.push(Part {
                 content_type: content_type.to_string(),
                 name: part_name,

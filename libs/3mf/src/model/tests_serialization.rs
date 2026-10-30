@@ -153,6 +153,7 @@ mod estimate_tests {
         let component = Component {
             object_id: id(1),
             transform: None,
+            path: None,
         };
         document
             .objects

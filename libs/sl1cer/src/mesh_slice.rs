@@ -21,7 +21,7 @@ use sc_mesh_core::primitives::FaceIndex;
 
 use crate::geom2d::{EdgeId, Segment};
 use crate::plane_intersect::{
-    TriangleSlice, VertexClass, Z_CLASSIFY_EPS_MM, classify_vertex_z, intersect_triangle_z,
+    TriangleSlice, VertexClass, classify_vertex_z, intersect_triangle_z, on_plane_band_mm,
 };
 use crate::profile::LayerSchedule;
 
@@ -83,6 +83,7 @@ fn collect_segments_at_z(
 ) {
     let vertices = mesh.vertices();
     let faces = mesh.faces();
+    let band = on_plane_band_mm(z_mm);
     for idx in face_indices {
         let face_idx = FaceIndex::from(idx);
         let [i0, i1, i2] = faces[idx].vertices;
@@ -92,9 +93,9 @@ fn collect_segments_at_z(
             vertices[usize::from(i2)],
         ];
         let classes = [
-            classify_vertex_z(v[0][2], z_mm, Z_CLASSIFY_EPS_MM),
-            classify_vertex_z(v[1][2], z_mm, Z_CLASSIFY_EPS_MM),
-            classify_vertex_z(v[2][2], z_mm, Z_CLASSIFY_EPS_MM),
+            classify_vertex_z(v[0][2], z_mm, band),
+            classify_vertex_z(v[1][2], z_mm, band),
+            classify_vertex_z(v[2][2], z_mm, band),
         ];
         let edge_ids = [
             EdgeId::new(i0, i1),
@@ -173,12 +174,9 @@ fn resolve_on_edge_contour_segment(
         .copied()
         .find(|&v| v != edge_id.lo() && v != edge_id.hi())?;
 
-    let our_class = classify_vertex_z(vertices[usize::from(our_third)][2], z_mm, Z_CLASSIFY_EPS_MM);
-    let other_class = classify_vertex_z(
-        vertices[usize::from(other_third)][2],
-        z_mm,
-        Z_CLASSIFY_EPS_MM,
-    );
+    let band = on_plane_band_mm(z_mm);
+    let our_class = classify_vertex_z(vertices[usize::from(our_third)][2], z_mm, band);
+    let other_class = classify_vertex_z(vertices[usize::from(other_third)][2], z_mm, band);
 
     let other_is_coplanar = other_class == VertexClass::On;
     let other_side = if other_is_coplanar {

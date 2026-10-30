@@ -510,6 +510,21 @@ pub enum LoadThreeMfError {
     /// The start-part relationship points at a part whose declared content type
     /// is not the 3D Model type.
     StartPartNotAModel { content_type: String },
+    /// A production-extension `p:path` names a part that is not in the
+    /// package.
+    ReferencedPartNotFound { path: String },
+    /// A production-extension `p:path` names a part whose declared content
+    /// type is not the 3D Model type.
+    ReferencedPartNotAModel { path: String, content_type: String },
+    /// The model part that a production-extension `p:path` names violates the
+    /// core specification, or lacks the object referenced from the start part.
+    ReferencedModel {
+        path: String,
+        source: ModelParseError,
+    },
+    /// The model part that a production-extension `p:path` names uses
+    /// `p:path` itself, which the extension allows only in the start part.
+    NestedProductionPath { path: String },
     /// A vertex coordinate overflowed to infinity when the millimetre-scaled
     /// f64 value was downcast to f32.
     NonFiniteVertex { object_id: u32 },
@@ -535,6 +550,23 @@ impl fmt::Display for LoadThreeMfError {
                 f,
                 "the package's start part declares content type \"{content_type}\", not a 3D Model",
             ),
+            Self::ReferencedPartNotFound { path } => {
+                write!(
+                    f,
+                    "the model references part \"{path}\", which the package lacks"
+                )
+            }
+            Self::ReferencedPartNotAModel { path, content_type } => write!(
+                f,
+                "the model references part \"{path}\", which declares content type \"{content_type}\", not a 3D Model",
+            ),
+            Self::ReferencedModel { path, source } => {
+                write!(f, "3MF model error in part \"{path}\": {source}")
+            }
+            Self::NestedProductionPath { path } => write!(
+                f,
+                "part \"{path}\" references another part with p:path, which only the start part may do",
+            ),
             Self::NonFiniteVertex { object_id } => write!(
                 f,
                 "object {object_id} has a vertex coordinate too large for 32-bit floats after unit conversion",
@@ -558,7 +590,11 @@ impl std::error::Error for LoadThreeMfError {
         match self {
             Self::Package(e) => Some(e),
             Self::Model(e) => Some(e),
+            Self::ReferencedModel { source, .. } => Some(source),
             Self::StartPartNotAModel { .. }
+            | Self::ReferencedPartNotFound { .. }
+            | Self::ReferencedPartNotAModel { .. }
+            | Self::NestedProductionPath { .. }
             | Self::NonFiniteVertex { .. }
             | Self::LeafBudgetExceeded { .. }
             | Self::ComponentDepthExceeded { .. }
