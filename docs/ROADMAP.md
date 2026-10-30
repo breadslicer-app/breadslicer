@@ -2,6 +2,14 @@
 
 Tasks live in the [issues](https://github.com/breadslicer-app/breadslicer/issues), and the current order of work lives in the pinned "Work order" issue. This file holds only the decisions that guide development.
 
+## The main goal (Damian, 2026-10-30)
+
+**Breadslicer's main milestone is to be the best slicer there is**: in ease of use, speed, optimization and responsiveness, in everything.
+
+- **Everything that can be optimized gets optimized, even if it only saves milliseconds.** A faster frame, a shorter wait, one less step: each one counts.
+- **The one limit is the user's file.** No optimization may risk what gets printed: the layers, the supports, the hollow and the saved project come out the same or better, and that is proven (byte-identical output or a measured comparison) before it lands.
+- When there is a choice between "good enough" and "the best", we pick the best and log it as an issue if it cannot be done right away.
+
 ## Decisions (Damian, 2026-10-26)
 
 - **The best slicing experience there is**, not "yet another slicer".
