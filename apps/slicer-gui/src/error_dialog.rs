@@ -628,6 +628,17 @@ impl DialogManager {
             .collect()
     }
 
+    /// The headings of the queued notices, in order.
+    #[cfg(test)]
+    pub(crate) fn info_headings_for_test(&self) -> Vec<String> {
+        self.queue
+            .borrow()
+            .iter()
+            .filter(|e| matches!(e, Entry::Info { .. }))
+            .map(|e| e.message().heading.to_string())
+            .collect()
+    }
+
     /// The kind and the class of each queued message, in order.
     #[cfg(test)]
     fn queued_for_test(&self) -> Vec<(MessageKind, MessageClass)> {
