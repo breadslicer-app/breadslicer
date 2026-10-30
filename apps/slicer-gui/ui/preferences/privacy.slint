@@ -1,0 +1,60 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, CheckBox, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+
+export component PrivacyPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Privacy");
+
+    // The diagnostic log (#74): off at every launch. Ticking it only asks
+    // (`preferences_window`): it starts once the person confirms.
+    in-out property <bool> diagnostic-log: false;
+    in property <string> diagnostic-log-error;
+    callback diagnostic-log-changed(bool);
+    callback open-logs-folder();
+
+    Text {
+        text: @tr("PrivacyPreferences" => "Breadslicer never sends us anything: no logs, no models, no data about you or about how you use it. Nothing reaches us unless you send it yourself.");
+        wrap: word-wrap;
+        font-weight: 600;
+    }
+
+    CheckBox {
+        text: @tr("PrivacyPreferences" => "Save a diagnostic log until Breadslicer closes");
+        checked <=> root.diagnostic-log;
+        toggled => {
+            root.diagnostic-log-changed(self.checked);
+        }
+    }
+
+    if root.diagnostic-log-error != "": Text {
+        text: root.diagnostic-log-error;
+        wrap: word-wrap;
+    }
+
+    Text {
+        text: @tr("PrivacyPreferences" => "For a bug report: it writes what the app does (steps, times and errors, without models, file names or anything you type) to the logs folder on this computer. It turns off by itself the next time you open Breadslicer.");
+        wrap: word-wrap;
+        color: Palette.foreground.transparentize(0.4);
+    }
+
+    HorizontalLayout {
+        alignment: start;
+
+        Button {
+            text: @tr("PrivacyPreferences" => "Open logs folder");
+            clicked => {
+                root.open-logs-folder();
+            }
+        }
+    }
+
+    Text {
+        text: @tr("PrivacyPreferences" => "To report a problem, use Help > Export Diagnostics: it saves a file on your computer that you can attach to the report.");
+        wrap: word-wrap;
+        color: Palette.foreground.transparentize(0.4);
+    }
+}

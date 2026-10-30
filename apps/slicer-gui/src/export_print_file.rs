@@ -271,7 +271,7 @@ async fn run_export_flow(
     let previews = previews_for(format);
 
     export_progress.begin();
-    crate::breadcrumbs::note("export: started");
+    crate::breadcrumbs::started("export");
     let sink = export_progress.sink();
     let (tx, rx) = oneshot::channel();
     let worker_target = target.clone();
@@ -295,10 +295,12 @@ async fn run_export_flow(
 
     let outcome = rx.await;
     export_progress.end();
-    crate::breadcrumbs::note(&format!(
-        "export: finished ok={}",
-        matches!(outcome, Ok(Ok(())))
-    ));
+    let ended = match &outcome {
+        Ok(Ok(())) => "ok".to_owned(),
+        Ok(Err(err)) => format!("failed: {err}"),
+        Err(_canceled) => "stopped: the app is closing".to_owned(),
+    };
+    crate::breadcrumbs::finished("export", &ended);
     match outcome {
         Ok(Ok(())) => {}
         Ok(Err(err)) => show_export_failure(&dialogs, Some(&target), err),

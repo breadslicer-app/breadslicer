@@ -284,6 +284,19 @@ pub(crate) fn write_bundle(
     bundle: &SaveBundle,
     mut progress: impl FnMut(SavePhase, u64, u64),
 ) -> Result<()> {
+    let bytes = encode_bundle(bundle, &mut progress)?;
+    progress(SavePhase::Writing, 0, 1);
+    write_bytes_atomically(&bundle.target, &bytes)?;
+    progress(SavePhase::Writing, 1, 1);
+    Ok(())
+}
+
+/// The bytes of a prepared bundle in its format, as [`write_bundle`] writes
+/// them; also what a diagnostics file carries as the scene's models.
+pub(crate) fn encode_bundle(
+    bundle: &SaveBundle,
+    mut progress: impl FnMut(SavePhase, u64, u64),
+) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let report = |report| match report {
         WriteProgress::Serialize { done, total } => progress(SavePhase::Serialize, done, total),
@@ -310,10 +323,7 @@ pub(crate) fn write_bundle(
             report,
         )?,
     }
-    progress(SavePhase::Writing, 0, 1);
-    write_bytes_atomically(&bundle.target, &bytes)?;
-    progress(SavePhase::Writing, 1, 1);
-    Ok(())
+    Ok(bytes)
 }
 
 /// Returns the held slices to persist with the project, or `None` when the

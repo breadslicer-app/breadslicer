@@ -645,7 +645,7 @@ impl DfSupportRun {
     /// Starts the run of `request`, from the last prescan when it still
     /// matches.
     fn launch(self: &Rc<Self>, ui: &MainWindow, mut request: DfSupportRequest) {
-        crate::breadcrumbs::note("supports: run started");
+        crate::breadcrumbs::started("supports");
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             ui.set_support_gen_in_progress(false);
             ui.set_support_gen_cancelable(false);
@@ -1827,7 +1827,12 @@ impl DfSupportRun {
     }
 
     fn finish(&self, outcome: Result<DfSupportOutcome, JobError>) {
-        crate::breadcrumbs::note(&format!("supports: run finished ok={}", outcome.is_ok()));
+        let ended = match &outcome {
+            Ok(_) => "ok".to_owned(),
+            Err(JobError::Cancelled) => "cancelled".to_owned(),
+            Err(err) => format!("failed: {err}"),
+        };
+        crate::breadcrumbs::finished("supports", &ended);
         let started_on = self.started_on.borrow_mut().take();
         let regenerating = self.regenerating.borrow_mut().take();
         let outcome = match outcome {

@@ -79,6 +79,8 @@ export component MainWindow inherits Window {
     in property <bool> message-open: false;
     in property <int> message-serial: 0;
     in-out property <bool> message-silence: false;
+    // Help > Export Diagnostics: whether the scene's models go in the file.
+    in-out property <bool> message-include-models: false;
     // Heading of an error message that brings none of its own.
     out property <string> message-default-heading: @tr("ErrorDialog" => "An error occurred");
     callback message-answered(MessageAnswer);
@@ -390,6 +392,8 @@ export component MainWindow inherits Window {
     callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
+    // Help > Export Diagnostics (#74).
+    callback export-diagnostics-requested();
     // The top bar's links to support the project; Rust opens the page.
     callback support-page-requested(SupportPage);
     callback show-preferences-requested();
@@ -740,6 +744,13 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Report Issue");
                 enabled: false;
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Export Diagnostics…");
+                activated => {
+                    root.export-diagnostics-requested();
+                }
             }
 
             MenuSeparator { }
@@ -1806,6 +1817,13 @@ export component MainWindow inherits Window {
                     enabled: false;
                 }
 
+                MenuItem {
+                    title: @tr("MenuBar" => "Export Diagnostics…");
+                    activated => {
+                        root.export-diagnostics-requested();
+                    }
+                }
+
                 MenuSeparator { }
 
                 MenuItem {
@@ -2057,6 +2075,7 @@ export component MainWindow inherits Window {
         serial: root.message-serial;
         default-heading: root.message-default-heading;
         silence <=> root.message-silence;
+        include-models <=> root.message-include-models;
         answered(answer) => {
             root.message-answered(answer);
         }

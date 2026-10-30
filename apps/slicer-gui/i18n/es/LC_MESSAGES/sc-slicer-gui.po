@@ -2331,16 +2331,6 @@ msgctxt "AboutWindow"
 msgid "About Breadslicer"
 msgstr "Acerca de Breadslicer"
 
-#: ui/preferences/appearance.slint
-msgctxt "AppearancePreferences"
-msgid "Diagnostic log (for bug reports)"
-msgstr "Registro de diagnóstico (para reportar errores)"
-
-#: ui/preferences/appearance.slint
-msgctxt "AppearancePreferences"
-msgid "Open logs folder"
-msgstr "Abrir carpeta de registros"
-
 #: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "Checking the layers..."
@@ -3106,6 +3096,157 @@ msgstr "Entran {} de {} objetos; el resto quedó al lado de la plataforma."
 
 #: ui/main-window.slint
 msgctxt "MenuBar"
+msgid "Export Diagnostics…"
+msgstr "Exportar diagnóstico…"
+
+#: ui/preferences/preferences-window.slint
+msgctxt "PreferencesMenu"
+msgid "Privacy"
+msgstr "Privacidad"
+
+#: ui/preferences/privacy.slint
+msgctxt "PreferencesPage"
+msgid "Privacy"
+msgstr "Privacidad"
+
+#: ui/preferences/privacy.slint
+msgctxt "PrivacyPreferences"
+msgid "Breadslicer never sends us anything: no logs, no models, no data about you or about how you use it. Nothing reaches us unless you send it yourself."
+msgstr "Breadslicer nunca nos envía nada: ni registros, ni modelos, ni datos tuyos o de cómo la usás. Nada nos llega si no nos lo mandás vos."
+
+#: ui/preferences/privacy.slint
+msgctxt "PrivacyPreferences"
+msgid "Save a diagnostic log until Breadslicer closes"
+msgstr "Guardar un registro de diagnóstico hasta cerrar Breadslicer"
+
+#: ui/preferences/privacy.slint
+msgctxt "PrivacyPreferences"
+msgid "For a bug report: it writes what the app does (steps, times and errors, without models, file names or anything you type) to the logs folder on this computer. It turns off by itself the next time you open Breadslicer."
+msgstr "Para reportar un error: anota lo que hace la app (pasos, tiempos y errores, sin modelos, nombres de archivo ni nada de lo que escribas) en la carpeta de registros de esta computadora. Se apaga solo la próxima vez que abras Breadslicer."
+
+#: ui/preferences/privacy.slint
+msgctxt "PrivacyPreferences"
+msgid "Open logs folder"
+msgstr "Abrir carpeta de registros"
+
+#: ui/preferences/privacy.slint
+msgctxt "PrivacyPreferences"
+msgid "To report a problem, use Help > Export Diagnostics: it saves a file on your computer that you can attach to the report."
+msgstr "Para reportar un problema, usá Ayuda > Exportar diagnóstico: guarda en tu computadora un archivo que podés adjuntar al reporte."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Export diagnostics"
+msgstr "Exportar diagnóstico"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Saves a .zip file to attach to a bug report. It holds:"
+msgstr "Guarda un archivo .zip para adjuntar a un reporte de error. Contiene:"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "What the app did in this session: steps, times and errors, without models, file names or anything you typed."
+msgstr "Lo que hizo la app en esta sesión: pasos, tiempos y errores, sin modelos, nombres de archivo ni nada de lo que escribiste."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "The logs saved on this computer: crash reports, and the diagnostic log if you turned it on."
+msgstr "Los registros guardados en esta computadora: los reportes de cierres inesperados y, si lo activaste, el registro de diagnóstico."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "The app version, the system, the graphics card and the screens."
+msgstr "La versión de la app, el sistema, la placa de video y las pantallas."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Your preferences, without folders."
+msgstr "Tus preferencias, sin carpetas."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "The scene in numbers: models, triangles, supports and hollowing."
+msgstr "La escena en números: modelos, triángulos, soportes y ahuecado."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Your user name and your user folder are replaced in every file."
+msgstr "Tu nombre de usuario y tu carpeta de usuario se reemplazan en todos los archivos."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Include the scene's models (.bread)"
+msgstr "Incluir los modelos de la escena (.bread)"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Breadslicer never sends us anything. The file stays on your computer, and only reaches us if you send it yourself."
+msgstr "Breadslicer nunca nos envía nada. El archivo queda en tu computadora y solo nos llega si nos lo mandás vos."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticsDialog"
+msgid "Save…"
+msgstr "Guardar…"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "Save a diagnostic log?"
+msgstr "¿Guardar un registro de diagnóstico?"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "Until you close Breadslicer, closing included, it writes what it does to the logs folder on this computer: steps, times and errors, without models, file names or anything you type."
+msgstr "Hasta que cierres Breadslicer, cierre incluido, anota lo que hace en la carpeta de registros de esta computadora: pasos, tiempos y errores, sin modelos, nombres de archivo ni nada de lo que escribas."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "The next time you open Breadslicer, the log turns off by itself."
+msgstr "La próxima vez que abras Breadslicer, el registro se apaga solo."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "Breadslicer never sends us anything. The log stays on your computer, and only reaches us if you send it yourself."
+msgstr "Breadslicer nunca nos envía nada. El registro queda en tu computadora y solo nos llega si nos lo mandás vos."
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: ui/message-layer.slint
+msgctxt "DiagnosticLogDialog"
+msgid "Turn on"
+msgstr "Activar"
+
+#: src/diagnostics/mod.rs
+msgctxt "FileDialog"
+msgid "ZIP files"
+msgstr "Archivos ZIP"
+
+#: src/diagnostics/mod.rs
+msgctxt "DiagnosticsDialog"
+msgid "Could not export the diagnostics"
+msgstr "No se pudo exportar el diagnóstico"
+
+#: src/diagnostics/mod.rs
+msgctxt "DiagnosticsDialog"
+msgid "Diagnostics saved"
+msgstr "Diagnóstico guardado"
+
+#: src/diagnostics/mod.rs
+#, rust-format
+msgctxt "DiagnosticsDialog"
+msgid "Attach {} to your bug report. Nothing was sent: Breadslicer never sends us anything by itself."
+msgstr "Adjuntá {} a tu reporte de error. No se envió nada: Breadslicer nunca nos envía nada por su cuenta."
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
 msgid "Previous Versions…"
 msgstr "Versiones anteriores…"
 
@@ -3133,3 +3274,9 @@ msgstr "Descartar"
 msgctxt "RecoveryDialog"
 msgid "Recover"
 msgstr "Recuperar"
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "PrivacyPreferences"
+msgid "The diagnostic log could not start: {}"
+msgstr "El registro de diagnóstico no pudo empezar: {}"

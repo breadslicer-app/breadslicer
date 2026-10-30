@@ -14,7 +14,9 @@ import { CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "kit/theme.slint";
 import { ButtonKind, ScButton } from "kit/controls.slint";
 
-export enum MessageKind { info, error, scene-change, slice-overwrite, recovery }
+// `diagnostics` is Help > Export Diagnostics (#74); `diagnostic-log` asks
+// before the diagnostic log starts (Preferences > Privacy).
+export enum MessageKind { info, error, scene-change, slice-overwrite, recovery, diagnostics, diagnostic-log }
 
 // What the person did with the message. `cancel` is also Escape and Enter;
 // Rust reads it as "close" for a message with nothing to decide.
@@ -38,6 +40,8 @@ export struct AppMessage {
     has-unsaved-changes: bool,
     // Scene change only: the scene has no project file yet ("Save As").
     save-as-mode: bool,
+    // Diagnostics only: there is a scene, so its models can go in.
+    has-scene: bool,
 }
 
 export component MessageLayer inherits Rectangle {
@@ -47,6 +51,8 @@ export component MessageLayer inherits Rectangle {
     // starts with its details folded.
     in property <int> serial: 0;
     in-out property <bool> silence: false;
+    // Diagnostics only: whether the scene's models go in the file.
+    in-out property <bool> include-models: false;
     // Shown when the message brings no heading of its own.
     in property <string> default-heading;
 
@@ -61,6 +67,10 @@ export component MessageLayer inherits Rectangle {
     property <length> font-secondary: 0.85rem;
     property <length> font-footnote: 0.8rem;
     property <bool> notice: root.message.kind == MessageKind.info || root.message.kind == MessageKind.error;
+    // The questions whose main answer is to go ahead: Enter gives it.
+    property <MessageAnswer> go-ahead: root.message.kind == MessageKind.diagnostics ? MessageAnswer.export
+        : root.message.kind == MessageKind.diagnostic-log ? MessageAnswer.confirm
+        : MessageAnswer.cancel;
 
     changed serial => {
         root.details-visible = false;
@@ -74,16 +84,19 @@ export component MessageLayer inherits Rectangle {
         }
     }
 
-    // Owns the keyboard while a message is open: Escape and Enter give the
-    // safe answer, other keys are swallowed so no shortcut acts under it.
+    // Owns the keyboard while a message is open: Escape gives the safe
+    // answer, and so does Enter unless the message's main answer is to go
+    // ahead. Other keys are swallowed so no shortcut acts under it.
     fs := FocusScope {
         width: 100%;
         height: 100%;
         enabled: root.open;
 
         key-pressed(event) => {
-            if (event.text == Key.Escape || event.text == Key.Return) {
+            if (event.text == Key.Escape) {
                 root.answered(MessageAnswer.cancel);
+            } else if (event.text == Key.Return) {
+                root.answered(root.go-ahead);
             }
             return accept;
         }
@@ -99,8 +112,18 @@ export component MessageLayer inherits Rectangle {
         }
 
         card := Rectangle {
-            width: Math.min(parent.width - 32px, root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px);
-            height: body.preferred-height;
+            // Wider than its kind's width when the buttons need it (Spanish
+            // runs longer), as long as the window has room.
+            width: Math.min(
+                parent.width - 32px,
+                Math.max(
+                    root.message.kind == MessageKind.scene-change ? 500px : root.message.kind == MessageKind.slice-overwrite ? 440px : 520px,
+                    foot.preferred-width + 2 * self.inset));
+            // Down to the buttons as the layout placed them. The layout's
+            // preferred height can't serve: Slint measures a wrapping text in
+            // an `if` element as 1 line, so with long texts the buttons hung
+            // below the card's edge.
+            height: foot.y + foot.height + self.inset;
             x: (parent.width - self.width) / 2;
             y: Math.max(16px, (parent.height - self.height) / 2);
             background: Theme.card;
@@ -110,6 +133,9 @@ export component MessageLayer inherits Rectangle {
             drop-shadow-blur: 24px;
             drop-shadow-color: #00000066;
 
+            // Space between the card's edge and what it holds.
+            property <length> inset: 18px;
+
             // A click on the card itself is not a click outside.
             TouchArea {
                 scroll-event(event) => {
@@ -118,7 +144,12 @@ export component MessageLayer inherits Rectangle {
             }
 
             body := VerticalLayout {
-                padding: 18px;
+                // Its own height, not the card's: the card's height comes
+                // from where this layout puts the buttons. At the top: with a
+                // height of its own it would be centred.
+                y: 0;
+                height: self.preferred-height;
+                padding: card.inset;
                 spacing: 16px;
 
                 if root.notice: HorizontalLayout {
@@ -292,7 +323,96 @@ export component MessageLayer inherits Rectangle {
                     }
                 }
 
-                HorizontalLayout {
+                if root.message.kind == MessageKind.diagnostics: VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: @tr("DiagnosticsDialog" => "Export diagnostics");
+                        font-weight: 700;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr("DiagnosticsDialog" => "Saves a .zip file to attach to a bug report. It holds:");
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    // The glyph is kept out of the translatable strings so
+                    // translators can't drop it.
+                    for item in [
+                        @tr("DiagnosticsDialog" => "What the app did in this session: steps, times and errors, without models, file names or anything you typed."),
+                        @tr("DiagnosticsDialog" => "The logs saved on this computer: crash reports, and the diagnostic log if you turned it on."),
+                        @tr("DiagnosticsDialog" => "The app version, the system, the graphics card and the screens."),
+                        @tr("DiagnosticsDialog" => "Your preferences, without folders."),
+                        @tr("DiagnosticsDialog" => "The scene in numbers: models, triangles, supports and hollowing."),
+                    ]: Text {
+                        text: "•  " + item;
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr("DiagnosticsDialog" => "Your user name and your user folder are replaced in every file.");
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    if root.message.has-scene: CheckBox {
+                        text: @tr("DiagnosticsDialog" => "Include the scene's models (.bread)");
+                        checked <=> root.include-models;
+                    }
+
+                    Text {
+                        text: @tr("DiagnosticsDialog" => "Breadslicer never sends us anything. The file stays on your computer, and only reaches us if you send it yourself.");
+                        font-size: root.font-secondary;
+                        font-weight: 600;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.message.kind == MessageKind.diagnostic-log: VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: @tr("DiagnosticLogDialog" => "Save a diagnostic log?");
+                        font-weight: 700;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr(
+                            "DiagnosticLogDialog"
+                            => "Until you close Breadslicer, closing included, it writes what it does to the logs folder on this computer: steps, times and errors, without models, file names or anything you type."
+                        );
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr("DiagnosticLogDialog" => "The next time you open Breadslicer, the log turns off by itself.");
+                        font-size: root.font-secondary;
+                        color: Theme.text-soft;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: @tr("DiagnosticLogDialog" => "Breadslicer never sends us anything. The log stays on your computer, and only reaches us if you send it yourself.");
+                        font-size: root.font-secondary;
+                        font-weight: 600;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+                }
+
+                foot := HorizontalLayout {
                     spacing: 8px;
 
                     if root.message.can-silence: CheckBox {
@@ -370,6 +490,36 @@ export component MessageLayer inherits Rectangle {
                         kind: ButtonKind.primary;
                         clicked => {
                             root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.diagnostics: ScButton {
+                        text: @tr("DiagnosticsDialog" => "Cancel");
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.diagnostics: ScButton {
+                        text: @tr("DiagnosticsDialog" => "Save…");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.export);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.diagnostic-log: ScButton {
+                        text: @tr("DiagnosticLogDialog" => "Cancel");
+                        clicked => {
+                            root.answered(MessageAnswer.cancel);
+                        }
+                    }
+
+                    if root.message.kind == MessageKind.diagnostic-log: ScButton {
+                        text: @tr("DiagnosticLogDialog" => "Turn on");
+                        kind: ButtonKind.primary;
+                        clicked => {
+                            root.answered(MessageAnswer.confirm);
                         }
                     }
                 }

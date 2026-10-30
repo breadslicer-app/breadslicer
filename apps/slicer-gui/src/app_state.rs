@@ -338,7 +338,6 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
     settings.set_frame_rate(snap.frame_rate);
-    settings.set_diagnostic_log(snap.diagnostic_log);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -442,9 +441,6 @@ fn subscribe_window_preferences(
         if matches!(change, PreferencesChange::Language) {
             controller.refresh_texts();
         }
-        if matches!(change, PreferencesChange::DiagnosticLog) {
-            crate::breadcrumbs::set_enabled(snap.diagnostic_log);
-        }
         if matches!(change, PreferencesChange::SmoothModels) {
             crate::mesh_render::set_smooth_models(snap.smooth_models);
             controller.upload_scene_again();
@@ -467,7 +463,6 @@ impl AppState {
         ))));
         crate::mesh_render::set_smooth_models(settings.smooth_models());
         crate::frame_rate::set_frame_rate_cap(settings.frame_rate());
-        crate::breadcrumbs::set_enabled(settings.diagnostic_log());
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             menu_layout: settings.menu_layout(),
@@ -481,7 +476,9 @@ impl AppState {
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
             frame_rate: settings.frame_rate(),
-            diagnostic_log: settings.diagnostic_log(),
+            // Never stored: the log runs until the app closes and every launch
+            // starts with it off (#74).
+            diagnostic_log: false,
             silenced_messages: settings.silenced_messages(),
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
@@ -574,6 +571,7 @@ impl AppState {
     /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        crate::breadcrumbs::note("window: opened");
         self.on_first_window(&ui);
         // Static platform flag consumed by the View menu to show the correct
         // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
@@ -1107,6 +1105,7 @@ impl AppState {
     /// the window closes with nothing left to recover.
     fn remove_window(&self, window_id: u64) -> Option<WiredMainWindow> {
         let window = self.main_windows.borrow_mut().remove(&window_id)?;
+        crate::breadcrumbs::note("window: closed");
         if let Some(autosaver) = &window.autosaver {
             autosaver.close();
         }
@@ -1337,6 +1336,16 @@ impl AppState {
             ui.on_show_about_requested(move || {
                 if let (Some(app), Some(ui)) = (app.upgrade(), ui_weak.upgrade()) {
                     app.show_about(&ui);
+                }
+            });
+        }
+        {
+            let ui_weak = ui.as_weak();
+            let viewport = Rc::downgrade(ctrl);
+            let bus = self.prefs.clone();
+            ui.on_export_diagnostics_requested(move || {
+                if let (Some(ui), Some(ctrl)) = (ui_weak.upgrade(), viewport.upgrade()) {
+                    crate::diagnostics::export(&ui, ctrl.document(), ctrl.dialogs(), bus.clone());
                 }
             });
         }
@@ -2288,6 +2297,74 @@ mod subscribe_window_preferences_tests {
             subscribed.controller.redraw_owed_for_test()
         });
         assert!(owed);
+    }
+
+    /// Spanish runs longer than English, and a narrow window wraps it more:
+    /// the question before the diagnostic log still holds its buttons (#74).
+    #[test]
+    fn the_log_question_holds_its_buttons_in_a_narrow_window() {
+        let around = on_fresh_slint_thread(|| {
+            let subscribed = subscribed_window();
+            pick_language(&subscribed.bus, "es");
+            let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
+                Vec::new(),
+                Vec::new(),
+            ))));
+            let prefs = build_preferences_window(&subscribed.bus, catalog)
+                .expect("the headless platform creates the Preferences window");
+            prefs
+                .window
+                .window()
+                .set_size(slint::PhysicalSize::new(520, 360));
+            prefs.window.show().expect("the headless platform shows it");
+            prefs.window.invoke_diagnostic_log_changed(true);
+            crate::test_support::message_cards::card_around_primary_button(prefs.window.window())
+        });
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
+    }
+
+    /// The whole way of Preferences > Privacy (#74): the box ticked, the
+    /// question answered with Enter in the window, `session.log` started with
+    /// the session so far, and the box shown on.
+    #[test]
+    fn turning_the_log_on_in_preferences_writes_session_log() {
+        let _serial = crate::breadcrumbs::serial();
+        let dir = tempfile::tempdir().expect("a temporary folder");
+        let log = on_fresh_slint_thread(|| {
+            crate::breadcrumbs::write_log_into(dir.path());
+            crate::breadcrumbs::start();
+            let subscribed = subscribed_window();
+            let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
+                Vec::new(),
+                Vec::new(),
+            ))));
+            let prefs = build_preferences_window(&subscribed.bus, catalog)
+                .expect("the headless platform creates the Preferences window");
+            prefs.window.show().expect("the headless platform shows it");
+            prefs.window.invoke_diagnostic_log_changed(true);
+            let window = prefs.window.window();
+            for event in [
+                slint::platform::WindowEvent::KeyPressed {
+                    text: slint::platform::Key::Return.into(),
+                },
+                slint::platform::WindowEvent::KeyReleased {
+                    text: slint::platform::Key::Return.into(),
+                },
+            ] {
+                window.dispatch_event(event);
+            }
+            crate::breadcrumbs::note("test: after turning it on");
+            let log = std::fs::read_to_string(dir.path().join("session.log"));
+            let shown_on = prefs.window.get_diagnostic_log();
+            // Closes the file, so the folder can go.
+            crate::breadcrumbs::set_enabled(false).expect("the trail has started");
+            (log, shown_on)
+        });
+        let (log, shown_on) = log;
+        assert!(shown_on);
+        let log = log.expect("turning the log on starts session.log");
+        assert!(log.contains(" start v"), "{log}");
+        assert!(log.contains("test: after turning it on"), "{log}");
     }
 }
 

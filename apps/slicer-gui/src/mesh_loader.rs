@@ -118,6 +118,14 @@ pub(crate) fn decide_load_dispatch(unavailable: Option<GraphicsUnavailable>) -> 
     }
 }
 
+/// The extension of `path`, lowercased, for the events: never its name.
+pub(crate) fn extension_of(path: &Path) -> String {
+    path.extension().and_then(|ext| ext.to_str()).map_or_else(
+        || "(no extension)".to_owned(),
+        |ext| format!(".{}", ext.to_ascii_lowercase()),
+    )
+}
+
 /// Starts the load of a picked path on the background worker, after it checks
 /// the file size and takes the window's GPU device. Each bailout deposits an
 /// error against the ticket, so the UI sees a single load completion event.
@@ -131,7 +139,8 @@ pub(crate) fn start_load_with_ticket(
     loader: &SceneLoader,
     build_volume: BuildVolume,
 ) {
-    crate::breadcrumbs::note("load: started");
+    crate::breadcrumbs::started("load");
+    crate::breadcrumbs::note(&format!("load: a {} file", extension_of(&path)));
     if let Err(err) = check_file_size(&path) {
         ticket.deposit(path, Err(err));
         return;

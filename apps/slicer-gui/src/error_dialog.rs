@@ -178,12 +178,20 @@ enum Entry {
         scenes: SharedString,
         on_choice: Box<dyn FnOnce(RecoveryChoice)>,
     },
+    /// Help > Export Diagnostics (#74): what the file holds, and whether the
+    /// scene's models go in.
+    Diagnostics {
+        has_scene: bool,
+        on_save: Box<dyn FnOnce(bool)>,
+    },
 }
 
 impl Entry {
     fn class(&self) -> MessageClass {
         match self {
-            Self::Info { .. } => MessageClass::Notice,
+            // Asked for from the menu and changes nothing: a click outside
+            // only closes it.
+            Self::Info { .. } | Self::Diagnostics { .. } => MessageClass::Notice,
             Self::Error(_)
             | Self::SceneChange { .. }
             | Self::SliceOverwrite { .. }
@@ -212,6 +220,7 @@ impl Entry {
             source_name: SharedString::new(),
             has_unsaved_changes: false,
             save_as_mode: false,
+            has_scene: false,
         };
         match self {
             Self::Error(build_texts) => {
@@ -241,6 +250,10 @@ impl Entry {
                 message.save_as_mode = offer.save_as_mode();
             }
             Self::SliceOverwrite { .. } => message.kind = MessageKind::SliceOverwrite,
+            Self::Diagnostics { has_scene, .. } => {
+                message.kind = MessageKind::Diagnostics;
+                message.has_scene = *has_scene;
+            }
             Self::Recovery { scenes, .. } => {
                 message.kind = MessageKind::Recovery;
                 message.heading = ctr!("RecoveryDialog", "Breadslicer closed without saving");
@@ -255,8 +268,8 @@ impl Entry {
     }
 
     /// Carries out `answer`: the caller's callback of a question; nothing for
-    /// a notice or an error.
-    fn settle(self, answer: MessageAnswer) {
+    /// a notice or an error. `include_models` is the diagnostics' tick.
+    fn settle(self, answer: MessageAnswer, include_models: bool) {
         match self {
             Self::Error(_) | Self::Info { .. } => {}
             Self::SceneChange { on_choice, .. } => on_choice(match answer {
@@ -271,6 +284,13 @@ impl Entry {
                 // Only an explicit Re-slice replaces the held slice.
                 if answer == MessageAnswer::Confirm {
                     on_confirm();
+                }
+            }
+            Self::Diagnostics {
+                has_scene, on_save, ..
+            } => {
+                if answer == MessageAnswer::Export {
+                    on_save(has_scene && include_models);
                 }
             }
             Self::Recovery { on_choice, .. } => on_choice(match answer {
@@ -364,6 +384,7 @@ impl DialogManager {
                 if new {
                     self.serial.set(self.serial.get().wrapping_add(1));
                     ui.set_message_silence(false);
+                    ui.set_message_include_models(false);
                     ui.set_message_serial(self.serial.get());
                 }
                 ui.set_message_open(true);
@@ -389,6 +410,12 @@ impl DialogManager {
         let Some(entry) = self.queue.borrow_mut().pop_front() else {
             return;
         };
+        // Read before the next message resets the tick.
+        let include_models = self
+            .host
+            .borrow()
+            .upgrade()
+            .is_some_and(|ui| ui.get_message_include_models());
         // The next message (or none) goes on show before the answer runs: a
         // callback that queues a message then finds the queue settled.
         self.present(true);
@@ -398,7 +425,7 @@ impl DialogManager {
                 PreferencesChange::SilencedMessages
             });
         }
-        entry.settle(answer);
+        entry.settle(answer, include_models);
     }
 
     /// A click on the window around the message: closes a notice, and does
@@ -419,6 +446,10 @@ impl DialogManager {
             "[error] {}: {}\n{}",
             texts.heading, texts.message, texts.details
         );
+        crate::breadcrumbs::note(&format!(
+            "message: error: {}: {} {}",
+            texts.heading, texts.message, texts.details
+        ));
         self.enqueue(Entry::Error(Box::new(build_texts)));
     }
 
@@ -426,6 +457,7 @@ impl DialogManager {
     /// "Don't show again": for a notice that says an action did nothing. Must
     /// run on the Slint UI thread.
     pub(crate) fn show_info(self: &Rc<Self>, build_texts: impl Fn() -> InfoTexts + 'static) {
+        crate::breadcrumbs::note(&format!("message: {}", build_texts().heading));
         self.enqueue(Entry::Info {
             build_texts: Box::new(build_texts),
             key: None,
@@ -442,6 +474,7 @@ impl DialogManager {
         if self.bus.snapshot().silenced_messages.contains(key.id()) {
             return;
         }
+        crate::breadcrumbs::note(&format!("message: {}", key.id()));
         let queued = self.queue.borrow().iter().any(|e| e.key() == Some(key));
         if queued {
             // The same notice is already waiting; its texts are as good.
@@ -535,6 +568,29 @@ impl DialogManager {
         }
         self.enqueue(Entry::SliceOverwrite {
             on_confirm: Box::new(on_confirm),
+        });
+    }
+
+    /// Shows what a diagnostics file holds (Help > Export Diagnostics). On
+    /// Save, calls `on_save` once with whether the scene's models go in; a
+    /// scene must be there to offer them. Nothing on Cancel. Must run on the
+    /// Slint UI thread.
+    pub(crate) fn show_diagnostics_export(
+        self: &Rc<Self>,
+        has_scene: bool,
+        on_save: impl FnOnce(bool) + 'static,
+    ) {
+        let asking = self
+            .queue
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Entry::Diagnostics { .. }));
+        if asking {
+            return;
+        }
+        self.enqueue(Entry::Diagnostics {
+            has_scene,
+            on_save: Box::new(on_save),
         });
     }
 
@@ -887,6 +943,38 @@ mod message_policy_tests {
     }
 
     #[test]
+    fn only_save_exports_the_diagnostics_and_a_click_outside_closes_them() {
+        for (answer, saved) in [
+            (MessageAnswer::Export, true),
+            (MessageAnswer::Cancel, false),
+            (MessageAnswer::Close, false),
+        ] {
+            let (_bus, manager) = manager();
+            let done = Rc::new(Cell::new(false));
+            let sink = done.clone();
+            manager.show_diagnostics_export(true, move |_| sink.set(true));
+            assert_eq!(
+                manager.queued_for_test(),
+                [(MessageKind::Diagnostics, MessageClass::Notice)]
+            );
+            manager.answer(answer, false);
+            assert_eq!(done.get(), saved, "{answer:?}");
+        }
+        let (_bus, manager) = manager();
+        manager.show_diagnostics_export(false, |_| panic!("a click outside saves nothing"));
+        manager.click_outside(false);
+        assert!(manager.queued_for_test().is_empty());
+    }
+
+    #[test]
+    fn a_2nd_diagnostics_request_waits_for_the_1st() {
+        let (_bus, manager) = manager();
+        manager.show_diagnostics_export(true, |_| {});
+        manager.show_diagnostics_export(true, |_| {});
+        assert_eq!(manager.queued_for_test().len(), 1);
+    }
+
+    #[test]
     fn messages_show_one_after_another_in_order() {
         let (_bus, manager) = manager();
         manager.show_error(error);
@@ -1029,6 +1117,69 @@ mod message_layer_tests {
             )
         });
         assert_eq!((silenced, open), (1, false));
+    }
+
+    /// Opens `show` in a main window of the main window's least size, in
+    /// `language`, and tells whether the card goes on past its primary
+    /// button: (to its right, below it).
+    fn card_around_primary_button(
+        language: &'static str,
+        show: impl FnOnce(&Rc<DialogManager>) + Send,
+    ) -> (bool, bool) {
+        on_fresh_slint_thread(move || {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            pick_language(&bus, language);
+            ui.window().set_size(slint::PhysicalSize::new(960, 560));
+            ui.show().expect("the headless platform shows the window");
+            show(&manager);
+            crate::test_support::message_cards::card_around_primary_button(ui.window())
+        })
+    }
+
+    /// The card with the most text holds its buttons.
+    #[test]
+    fn the_diagnostics_card_holds_its_buttons() {
+        let around = card_around_primary_button("en", |manager| {
+            manager.show_diagnostics_export(true, |_| {});
+        });
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
+    }
+
+    /// The card with the most buttons holds them in Spanish, whose labels
+    /// run longer.
+    #[test]
+    fn the_scene_change_card_holds_its_buttons_in_spanish() {
+        let around = card_around_primary_button("es", |manager| {
+            manager.show_replace_scene_confirm(
+                "dragon.stl".to_owned(),
+                KeepChangesOffer::SaveAsNew,
+                |_| {},
+            );
+        });
+        assert_eq!(around, (true, true), "(card right of the button, below it)");
+    }
+
+    #[test]
+    fn the_models_go_in_only_when_ticked_and_there_is_a_scene() {
+        let got = on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            let got = Rc::new(RefCell::new(Vec::new()));
+            for (has_scene, ticked) in [(true, true), (true, false), (false, true)] {
+                let sink = got.clone();
+                manager.show_diagnostics_export(has_scene, move |models| {
+                    sink.borrow_mut().push(models);
+                });
+                // Each new message starts unticked.
+                assert!(!ui.get_message_include_models());
+                assert_eq!(ui.get_message().has_scene, has_scene);
+                ui.set_message_include_models(ticked);
+                ui.invoke_message_answered(MessageAnswer::Export);
+            }
+            got.take()
+        });
+        assert_eq!(got, [true, false, false]);
     }
 
     #[test]
