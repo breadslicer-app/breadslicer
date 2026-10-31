@@ -309,6 +309,7 @@ fn progress_reports_every_stage_in_order() {
             Stage::FloodFill,
             Stage::ParityRefine,
             Stage::DistanceField,
+            Stage::WallDistance,
             Stage::KeepMask,
             Stage::CavitySurface,
             Stage::Stabilize,
@@ -328,4 +329,117 @@ fn an_empty_mesh_is_refused() {
     )
     .unwrap_err();
     assert_eq!(err, HollowError::EmptyMesh);
+}
+
+/// The wall at each vertex of `cavity`: its distance to the session's source.
+fn walls(session: &Session, cavity: &IndexedMesh) -> Vec<f32> {
+    let source = session.source_mesh();
+    let bvh = session.inner().source_bvh();
+    let mut walls: Vec<f32> = cavity
+        .positions
+        .iter()
+        .map(|&p| bvh.nearest_distance(source, p, 1e6).unwrap())
+        .collect();
+    walls.sort_by(f32::total_cmp);
+    walls
+}
+
+fn quantile(sorted: &[f32], q: f32) -> f32 {
+    sorted[((sorted.len() - 1) as f32 * q).round() as usize]
+}
+
+/// The preview's wall is the one asked for: the median within 0.01 mm, the
+/// thinnest within the interpolation between voxel centres (#265). The
+/// chamfer field gave a median of 2.29 mm here, and as little as 1.93 mm
+/// at a 0.3 mm voxel. The smoothed result is never thinner than that.
+#[test]
+fn the_wall_is_the_requested_one() {
+    let request = GridRequest {
+        voxel_size_mm: 0.65,
+        ..GridRequest::default()
+    };
+    let session = Session::build(icosphere(20.0, 5), &request, None, Control::none()).unwrap();
+    for wall in [1.5, 2.0, 3.0] {
+        let settings = HollowSettings {
+            wall_thickness_mm: wall,
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let previewed = walls(&session, &preview.cavity);
+        let (min, median) = (previewed[0], quantile(&previewed, 0.5));
+        assert!(
+            (median - wall).abs() <= 0.01,
+            "wall {wall}: median {median}"
+        );
+        assert!(min >= wall - 0.1, "wall {wall}: min {min}");
+        let applied = session.apply(&settings, &[], Control::none()).unwrap();
+        let applied_min = walls(&session, &applied.cavity)[0];
+        assert!(
+            applied_min >= wall - 0.1,
+            "wall {wall}: applied min {applied_min}"
+        );
+    }
+}
+
+/// Two blocks joined by a bar whose cavity is a channel a voxel or two wide:
+/// smoothing must not pinch it into sealed pockets no drain reaches.
+#[test]
+fn smoothing_leaves_one_cavity() {
+    let dumbbell = crate::shapes::merged(&[
+        tessellated_box([-25.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
+        tessellated_box([-5.5, -2.6, -2.6], [5.5, 2.6, 2.6], 6),
+        tessellated_box([5.0, -10.0, -10.0], [25.0, 10.0, 10.0], 6),
+    ]);
+    let session = Session::build(dumbbell, &GridRequest::default(), None, Control::none()).unwrap();
+    let settings = HollowSettings::default();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    assert_eq!(face_shells(&preview.cavity).1, 1);
+    let applied = session.apply(&settings, &[], Control::none()).unwrap();
+    assert!(is_edge_manifold(&applied.mesh));
+    assert_eq!(face_shells(&applied.cavity).1, 1);
+}
+
+/// A preview or an apply does not depend on the walls asked for before it
+/// on the same session.
+#[test]
+fn an_earlier_wall_does_not_change_a_later_one() {
+    let thin = HollowSettings::default();
+    let thick = HollowSettings {
+        wall_thickness_mm: 4.0,
+        ..HollowSettings::default()
+    };
+    let fresh = sphere_session(0.65);
+    let preview = fresh.preview(&thin, Control::none()).unwrap();
+    let applied = fresh.apply(&thin, &[], Control::none()).unwrap();
+
+    let used = sphere_session(0.65);
+    used.preview(&thick, Control::none()).unwrap();
+    assert_eq!(
+        used.preview(&thin, Control::none()).unwrap().cavity,
+        preview.cavity
+    );
+    assert_eq!(
+        used.apply(&thin, &[], Control::none()).unwrap().mesh,
+        applied.mesh
+    );
+}
+
+/// A preview cancelled while measuring the wall leaves the session as it
+/// was: the next one measures again and gets the same cavity.
+#[test]
+fn a_cancelled_wall_measure_keeps_nothing() {
+    let token = CancelToken::new();
+    token.cancel();
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let err = session
+        .preview(&settings, Control::new(Some(&token), None))
+        .unwrap_err();
+    assert_eq!(err, HollowError::Cancelled);
+    assert!(session.measured_wall().is_none());
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let fresh = sphere_session(0.65)
+        .preview(&settings, Control::none())
+        .unwrap();
+    assert_eq!(preview.cavity, fresh.cavity);
 }

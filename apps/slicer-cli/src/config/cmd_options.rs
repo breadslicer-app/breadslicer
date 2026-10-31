@@ -81,6 +81,7 @@ pub(crate) struct PlateOptions {
 
 #[derive(Clone, Debug)]
 pub(crate) enum CmdOptions {
+    Bodies(crate::commands::bodies::BodiesArgs),
     Convert {
         source: OsString,
         source_format: Option<MeshFileType>,
@@ -104,6 +105,7 @@ pub(crate) enum CmdOptions {
     },
     Help,
     Inspect {},
+    Orient(crate::commands::orient::OrientArgs),
     ProfilesExport {
         output: OsString,
         printers: bool,
@@ -527,6 +529,10 @@ fn get_profiles_options() -> impl Parser<CmdOptions> {
 }
 
 pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
+    let bodies = crate::commands::bodies::get_bodies_options()
+        .to_options()
+        .descr("List the bodies a 3d model splits into, with the time it takes")
+        .command("bodies");
     let convert = get_convert_options()
         .to_options()
         .descr("Convert between file formats")
@@ -547,6 +553,10 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .to_options()
         .descr("Prints help information")
         .command("help");
+    let orient = crate::commands::orient::get_orient_options()
+        .to_options()
+        .descr("Find the best orientation of a 3d model for printing, with three options and their physical breakdown")
+        .command("orient");
     let profiles = get_profiles_options()
         .to_options()
         .descr("List, export, and import profiles in the user library")
@@ -571,11 +581,13 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .command("version");
 
     construct!([
+        bodies,
         convert,
         diagnose,
         fix,
         help,
         inspect,
+        orient,
         profiles,
         review,
         slice,

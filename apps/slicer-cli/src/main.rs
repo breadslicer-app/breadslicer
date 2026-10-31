@@ -18,9 +18,11 @@ mod filesystem;
 use anyhow::Result;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 
+use crate::commands::bodies::bodies;
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
 use crate::commands::fix::fix;
+use crate::commands::orient::orient;
 use crate::commands::profiles::{
     export as profiles_export, import as profiles_import, list as profiles_list,
 };
@@ -38,6 +40,7 @@ fn main() -> Result<()> {
     let libraries = resolve_profile_libraries();
 
     match cmd_options {
+        CmdOptions::Bodies(args) => bodies(args),
         CmdOptions::Convert {
             source,
             source_format,
@@ -83,6 +86,7 @@ fn main() -> Result<()> {
         CmdOptions::Inspect {} => {
             todo!("Not yet implemented :(");
         }
+        CmdOptions::Orient(args) => orient(args, &libraries),
         CmdOptions::ProfilesExport {
             output,
             printers,

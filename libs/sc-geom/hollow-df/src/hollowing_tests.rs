@@ -275,7 +275,7 @@ fn scalar_field_blur_cannot_flip_outer_skin_voxels() {
             }
         }
     }
-    let field = build_smoothed_cavity_scalar_field(&grid, &solid, &keep, &dist, 1.0, 9);
+    let field = build_smoothed_cavity_scalar_field(&grid, &solid, &keep, &dist, 1.0, 9, false);
     for z in 0..5 {
         for y in 0..5 {
             let i = grid.idx(1, y, z);
@@ -315,6 +315,7 @@ fn parity_refinement_clears_enclosed_non_surface_cavity_component() {
         &surface,
         &mut solid,
         &mesh,
+        &Bvh::build(&mesh),
         Control::none(),
     )
     .unwrap();
@@ -529,6 +530,7 @@ fn blocked_kept_voxels_stay_positive_in_cavity_scalar_field() {
         &[0.5, 1.5, 4.5],
         1.0,
         0,
+        false,
     );
     assert!(field[0] > 0.0);
     assert!(field[1] < 0.0);

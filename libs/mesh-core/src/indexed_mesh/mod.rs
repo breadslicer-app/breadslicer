@@ -4,6 +4,7 @@
  */
 
 pub mod diagnose;
+mod duplicate_faces;
 pub mod error_summary;
 pub mod fix;
 mod half_edges;
@@ -20,6 +21,8 @@ mod tests_collinear_faces;
 mod tests_declared_facet_normals;
 #[cfg(test)]
 mod tests_diagnose;
+#[cfg(test)]
+mod tests_duplicate_faces;
 #[cfg(test)]
 mod tests_fingerprint;
 #[cfg(test)]

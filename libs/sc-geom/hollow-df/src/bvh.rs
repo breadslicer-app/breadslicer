@@ -3,10 +3,12 @@
 //!
 //! Ported from DragonFruit `rust/dragonfruit-mesh-core/src/bvh.rs`: the flat,
 //! leaf-batched build and the ray hit count the parity tests of the hollowing
-//! engine use, plus [`Bvh::ray_hit_distances`] for automatic drain depth.
+//! engine use, plus [`Bvh::ray_hit_distances`] for automatic drain depth and
+//! [`Bvh::nearest_distance`] for the exact wall distance.
 
 use rayon::prelude::*;
 
+use crate::hollowing::point_triangle_distance;
 use crate::mesh::{Aabb, IndexedMesh, Vec3};
 
 /// Triangles per leaf (DragonFruit measured 8 best over 1, 2, 4, 16).
@@ -38,11 +40,21 @@ impl FlatNode {
     }
 }
 
+#[derive(Clone)]
 pub struct Bvh {
     nodes: Vec<FlatNode>,
     /// Triangle indices, grouped by leaf.
     faces: Vec<u32>,
     root: u32,
+}
+
+impl std::fmt::Debug for Bvh {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bvh")
+            .field("nodes", &self.nodes.len())
+            .field("faces", &self.faces.len())
+            .finish()
+    }
 }
 
 impl Bvh {
@@ -90,6 +102,54 @@ impl Bvh {
         self.traverse(mesh, origin, dir, |t| hits.push(t));
         hits.sort_by(f32::total_cmp);
         hits
+    }
+
+    /// Distance from `p` to the closest triangle of `mesh`, if one is closer
+    /// than `max_distance`. Nearer boxes are visited first, and boxes no
+    /// closer than the best triangle so far are skipped.
+    pub fn nearest_distance(&self, mesh: &IndexedMesh, p: Vec3, max_distance: f32) -> Option<f32> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let mut best = max_distance * max_distance;
+        let mut found = false;
+        let mut stack = [0u32; STACK_DEPTH];
+        let mut depth = 1usize;
+        stack[0] = self.root;
+        while depth > 0 {
+            depth -= 1;
+            let node = &self.nodes[stack[depth] as usize];
+            if box_distance_sq(node, p) >= best {
+                continue;
+            }
+            if node.is_leaf() {
+                for k in 0..node.face_count() {
+                    let [a, b, c] = mesh.tri_positions(self.faces[node.a as usize + k]);
+                    let d = point_triangle_distance(p, a, b, c);
+                    if d * d < best {
+                        best = d * d;
+                        found = true;
+                    }
+                }
+            } else {
+                let near_a = box_distance_sq(&self.nodes[node.a as usize], p);
+                let near_b = box_distance_sq(&self.nodes[node.b as usize], p);
+                // The farther child goes first on the stack, so the nearer
+                // is visited first and tightens `best` for the other.
+                let (far, near) = if near_a <= near_b {
+                    ((node.b, near_b), (node.a, near_a))
+                } else {
+                    ((node.a, near_a), (node.b, near_b))
+                };
+                for (child, d2) in [far, near] {
+                    if d2 < best {
+                        stack[depth] = child;
+                        depth += 1;
+                    }
+                }
+            }
+        }
+        found.then(|| best.sqrt())
     }
 
     fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, mut hit: impl FnMut(f32)) {
@@ -189,6 +249,19 @@ fn build_rec(
         b: right,
     });
     idx
+}
+
+/// Squared distance from `p` to `node`'s box (0 inside it).
+#[inline]
+fn box_distance_sq(node: &FlatNode, p: Vec3) -> f32 {
+    p.to_array()
+        .iter()
+        .zip(node.min.iter().zip(&node.max))
+        .map(|(&p, (&min, &max))| {
+            let v = (min - p).max(p - max).max(0.0);
+            v * v
+        })
+        .sum()
 }
 
 #[inline]
