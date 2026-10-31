@@ -450,10 +450,10 @@ fn subtract_convex_attempts(
             continue;
         }
         match cut.run(&touching) {
-            Ok((out, fresh)) => {
-                let defects = edge_manifold_defects(&out);
-                if !defects.is_clean() {
-                    last = CutError::ResultNotManifold(defects);
+            Ok((out, fresh, is_closed)) => {
+                debug_assert_eq!(is_closed, edge_manifold_defects(&out).is_clean());
+                if !is_closed {
+                    last = CutError::ResultNotManifold(edge_manifold_defects(&out));
                     continue;
                 }
                 if general && clean_triangles(&out, &fresh, &cutter) {
@@ -465,6 +465,65 @@ fn subtract_convex_attempts(
         }
     }
     closed.ok_or(last)
+}
+
+/// Whether `out`, the cut of the closed edge-manifold `mesh` that replaced
+/// its triangles `replaced` with the triangles `fresh` of `out`, is closed
+/// and edge-manifold too: what `edge_manifold_defects` says of it, read
+/// only where the cut changed something. Every other edge still has the
+/// two faces it had; an edge of a replaced or a fresh triangle must now
+/// have one face each way, or none at all (cut away whole). A full check
+/// sorts every half-edge of the mesh, millions on a figure, for each cut.
+fn closed_where_cut(
+    mesh: &IndexedMesh,
+    replaced: &[u32],
+    out: &[[u32; 3]],
+    fresh: &[usize],
+) -> bool {
+    let mut is_fresh = vec![false; out.len()];
+    for &t in fresh {
+        is_fresh[t] = true;
+    }
+    let mut touched = vec![false; mesh.positions.len()];
+    // Each changed edge, and its faces each way.
+    let mut faces: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for &t in replaced {
+        let tri = mesh.triangles[t as usize];
+        for c in 0..3 {
+            touched[tri[c] as usize] = true;
+            faces.insert(canon(tri[c], tri[(c + 1) % 3]), (0, 0));
+        }
+    }
+    for &t in fresh {
+        let [a, b, c] = out[t];
+        if a == b || b == c || a == c {
+            return false;
+        }
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            faces.insert(canon(u, v), (0, 0));
+        }
+    }
+    let original = mesh.positions.len() as u32;
+    for (t, tri) in out.iter().enumerate() {
+        // A kept triangle shares a changed edge only through vertices of
+        // the triangles the cut replaced.
+        if !is_fresh[t] && !tri.iter().any(|&v| v < original && touched[v as usize]) {
+            continue;
+        }
+        for c in 0..3 {
+            let (u, v) = (tri[c], tri[(c + 1) % 3]);
+            if let Some(count) = faces.get_mut(&canon(u, v)) {
+                if u < v {
+                    count.0 += 1;
+                } else {
+                    count.1 += 1;
+                }
+            }
+        }
+    }
+    faces
+        .values()
+        .all(|&count| count == (1, 1) || count == (0, 0))
 }
 
 /// No triangle of `fresh` (those a cut made, in `out`) has a zero-length
@@ -1068,8 +1127,9 @@ impl<'a> Cut<'a> {
         true
     }
 
-    /// The cut, and which of its triangles it made (indices into it).
-    fn run(mut self, candidates: &[u32]) -> Result<(IndexedMesh, Vec<usize>), CutError> {
+    /// The cut, which of its triangles it made (indices into it), and
+    /// whether it is closed and edge-manifold ([`closed_where_cut`]).
+    fn run(mut self, candidates: &[u32]) -> Result<(IndexedMesh, Vec<usize>, bool), CutError> {
         let mut out: Vec<[u32; 3]> = Vec::with_capacity(self.mesh.triangles.len());
         let mut fresh: Vec<usize> = Vec::new();
         let mut next = candidates.iter().copied().peekable();
@@ -1090,11 +1150,12 @@ impl<'a> Cut<'a> {
             self.cap_face(k, &mut out)?;
             fresh.extend(start..out.len());
         }
+        let closed = closed_where_cut(self.mesh, candidates, &out, &fresh);
         let mut positions: Vec<Vec3> = self.mesh.positions.clone();
         positions.extend(self.extra.iter().map(|&p| to32(p)));
         let mut mesh = IndexedMesh::new(positions, out);
         compact_unreferenced_vertices(&mut mesh);
-        Ok((mesh, fresh))
+        Ok((mesh, fresh, closed))
     }
 
     /// Keeps the part of triangle `t` outside the cutter and records its cut
