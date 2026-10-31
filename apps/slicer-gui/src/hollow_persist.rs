@@ -23,6 +23,8 @@
 //!                                        in the leaf's local frame
 //! u32 length, the original mesh           as a `.bread` mesh chunk holds it
 //! ```
+//!
+//! `smooth` is the smoothing builds before #29 had: written 1, not read.
 
 use std::sync::Arc;
 
@@ -130,7 +132,10 @@ fn encode(hollowed: &Hollowed) -> Vec<u8> {
     f32s(&mut out, &[o.wall_mm, o.voxel_mm]);
     out.push(o.fill);
     f32s(&mut out, &[o.cell_mm, o.beam_mm]);
-    out.push(u8::from(o.smooth));
+    // The smoothing the tab had before #29: the cavity is the exact wall
+    // now. Written on, which a build before it reads as its own default
+    // (off would have it chamfer the cavity, which thins the wall).
+    out.push(1);
     f32s(&mut out, &[o.drain_radius_mm]);
     out.extend_from_slice(&(hollowed.drains.len() as u32).to_le_bytes());
     for d in &hollowed.drains {
@@ -180,7 +185,8 @@ fn decode(bytes: &[u8]) -> Option<(HollowOptions, Vec<LocalDrain>, IndexedMesh)>
     let [wall_mm, voxel_mm] = input.f32s()?;
     let fill = input.u8()?;
     let [cell_mm, beam_mm] = input.f32s()?;
-    let smooth = input.u8()? != 0;
+    // The smoothing of builds before #29: no setting now.
+    let _smooth = input.u8()?;
     let drain_radius_mm = input.f32()?;
     let options = HollowOptions {
         wall_mm,
@@ -188,7 +194,6 @@ fn decode(bytes: &[u8]) -> Option<(HollowOptions, Vec<LocalDrain>, IndexedMesh)>
         fill,
         cell_mm,
         beam_mm,
-        smooth,
         drain_radius_mm,
     };
     let count = input.u32()? as usize;
@@ -228,7 +233,6 @@ mod hollow_persist_tests {
             options: HollowOptions {
                 wall_mm: 3.1,
                 fill: 2,
-                smooth: false,
                 ..HollowOptions::default()
             },
         }

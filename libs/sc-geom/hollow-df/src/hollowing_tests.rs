@@ -244,7 +244,7 @@ fn polygonizer_emits_nothing_for_label_only_crossings() {
             negative[i] = true;
         }
     }
-    let mesh = organic_boundary_mesh(&grid, &positive, &negative, &scalar);
+    let mesh = organic_boundary_mesh(&grid, &positive, &negative, &scalar, false);
     assert_eq!(mesh.triangle_count(), 0);
 }
 
@@ -472,46 +472,13 @@ fn thin_shells_use_reduced_internal_smoothing_until_there_is_enough_slack() {
     assert_eq!(thick.taubin_iterations, 18);
     assert!((thick.taubin_max_step_scale - 0.62).abs() < 1e-5);
     let disabled = effective_internal_cavity_smoothing_profile(2.0, false, 4.0);
-    assert!(disabled.is_disabled());
-}
-
-#[test]
-fn internal_smoothing_profile_backs_off_progressively_before_disabling() {
-    let full = InternalCavitySmoothingProfile {
-        scalar_field_blur_iterations: 9,
-        taubin_iterations: 18,
-        taubin_max_step_scale: 0.62,
-    };
-    let once = reduced_internal_cavity_smoothing_profile(full).unwrap();
-    assert_eq!(
-        (once.scalar_field_blur_iterations, once.taubin_iterations),
-        (4, 9)
-    );
-    assert!(once.taubin_max_step_scale < full.taubin_max_step_scale);
-    let twice = reduced_internal_cavity_smoothing_profile(once).unwrap();
-    assert_eq!(
-        (twice.scalar_field_blur_iterations, twice.taubin_iterations),
-        (2, 4)
-    );
-    let thrice = reduced_internal_cavity_smoothing_profile(twice).unwrap();
     assert_eq!(
         (
-            thrice.scalar_field_blur_iterations,
-            thrice.taubin_iterations
+            disabled.scalar_field_blur_iterations,
+            disabled.taubin_iterations
         ),
-        (1, 2)
+        (0, 0)
     );
-    let fourth = reduced_internal_cavity_smoothing_profile(thrice).unwrap();
-    assert_eq!(
-        (
-            fourth.scalar_field_blur_iterations,
-            fourth.taubin_iterations
-        ),
-        (0, 1)
-    );
-    let disabled = reduced_internal_cavity_smoothing_profile(fourth).unwrap();
-    assert!(disabled.is_disabled());
-    assert!(reduced_internal_cavity_smoothing_profile(disabled).is_none());
 }
 
 #[test]
@@ -561,6 +528,7 @@ fn cavity_polygonizer_uses_scalar_sign_not_only_hard_voxel_labels() {
         &scalar,
         &[true; 8],
         &[false; 8],
+        false,
     );
     assert_eq!(soup.len(), 9);
 }
@@ -608,22 +576,27 @@ fn infill_mode_keeps_more_material_than_plain_cavity() {
 // SoulCrafted additions.
 
 #[test]
-fn final_mesh_of_a_sphere_is_closed_and_hollow() {
+fn the_exact_cavity_of_a_sphere_is_closed_and_faces_inward() {
     let session = HollowSession::new(icosphere(20.0, 3), 64);
     let options = HollowOptions {
         shell_thickness_mm: 2.0,
+        exact_wall: true,
         ..HollowOptions::default()
     };
-    let fin = session.final_mesh(&options, Control::none()).unwrap();
-    assert!(fin.stabilized);
-    assert!(is_edge_manifold(&fin.mesh));
+    let cavity = session
+        .exact_cavity(&options, &session.dist, Control::none())
+        .unwrap();
+    assert!(cavity.closed);
+    assert!(is_edge_manifold(&cavity.wall));
+    assert!(cavity.infill.is_none());
     let source = session.source_mesh().signed_volume();
-    let out = fin.mesh.signed_volume();
+    let inside = -cavity.wall.signed_volume();
     assert!(
-        out > 0.0 && out < source * 0.5,
-        "source {source}, hollow {out}"
+        inside > source * 0.5 && inside < source,
+        "source {source}, cavity {inside}"
     );
-    assert!(fin.cavity.signed_volume() < 0.0, "cavity faces inward");
+    assert!(cavity.removed_voxels > 0);
+    assert!(!cavity.removed_voxel_indices.is_empty());
 }
 
 #[test]

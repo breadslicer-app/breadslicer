@@ -15,9 +15,12 @@
 //! finishes on a scene edited meanwhile is discarded.
 //!
 //! While the tab is open the selected model shows previews over it: the
-//! cavity the current settings carve (DragonFruit's fast preview, recomputed
-//! as the wall or detail change and re-posed as the model moves), its drains,
-//! and with the drain tool the drain a click would drill.
+//! cavity the current settings carve (recomputed as the wall or detail change
+//! and re-posed as the model moves), its drains, and with the drain tool the
+//! drain a click would drill. The cavity shown is the one Hollow builds (#29):
+//! the engine keeps it, and Hollow with the same settings puts exactly that
+//! cavity in the model, so where the preview shows cavity behind the wall a
+//! drain opens into it.
 //!
 //! The Review card (#90) asks which hollow made here holds a resin trap
 //! ([`HollowRun::hollow_at`]) and opens the drain tool on that model (#158).
@@ -68,7 +71,6 @@ pub(crate) struct HollowOptions {
     pub(crate) fill: u8,
     pub(crate) cell_mm: f32,
     pub(crate) beam_mm: f32,
-    pub(crate) smooth: bool,
     pub(crate) drain_radius_mm: f32,
 }
 
@@ -81,7 +83,6 @@ impl Default for HollowOptions {
             fill: 0,
             cell_mm: 4.24,
             beam_mm: 0.35,
-            smooth: true,
             drain_radius_mm: 1.5,
         }
     }
@@ -104,7 +105,6 @@ impl HollowOptions {
         HollowSettings {
             fill,
             wall_thickness_mm: self.wall_mm,
-            smooth_internal_surfaces: self.smooth,
             ..HollowSettings::default()
         }
     }
@@ -542,20 +542,18 @@ impl HollowRun {
         ui.set_hollow_fill_index(i32::from(o.fill));
         ui.set_hollow_cell(o.cell_mm);
         ui.set_hollow_beam(o.beam_mm);
-        ui.set_hollow_smooth(o.smooth);
         ui.set_hollow_drain_radius(o.drain_radius_mm);
     }
 
-    /// An option change from the tab: 0 wall, 1 voxel, 2 smooth, 3 fill,
-    /// 4 infill cell, 5 beam radius, 6 drain radius. Values are clamped to
-    /// what the engine accepts.
+    /// An option change from the tab: 0 wall, 1 voxel, 3 fill, 4 infill
+    /// cell, 5 beam radius, 6 drain radius (2 was the smoothing, gone with
+    /// #29). Values are clamped to what the engine accepts.
     fn on_option(&self, code: i32, value: f32) {
         {
             let mut o = self.options.borrow_mut();
             match code {
                 0 => o.wall_mm = value.clamp(0.5, 10.0),
                 1 => o.voxel_mm = value.clamp(0.1, 3.0),
-                2 => o.smooth = value != 0.0,
                 3 => o.fill = (value.round() as i32).clamp(0, 2) as u8,
                 4 => o.cell_mm = value.clamp(1.0, 30.0),
                 5 => o.beam_mm = value.clamp(0.1, 5.0),
