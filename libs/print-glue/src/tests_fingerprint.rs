@@ -12,6 +12,7 @@ use std::sync::Arc;
 use sc_mesh_core::Vertex;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::unit_cube_mesh;
+use sc_print_primitives::{ScaleCompensation, ScaleCompensationPercent};
 use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::error::SliceSceneError;
@@ -19,7 +20,7 @@ use sc_sl1cer::profile::LayerSchedule;
 
 use crate::fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
-    slice_input_fingerprint, validate_persisted_slices,
+    fingerprint_under_scheme, slice_input_fingerprint, validate_persisted_slices,
 };
 
 fn schedule() -> LayerSchedule {
@@ -41,6 +42,16 @@ fn cube_leaf(scene: &mut Scene, name: Option<&str>, transform: Transform3D) {
     scene.add_root(leaf).expect("fresh leaf becomes a root");
 }
 
+/// A compensation of `x`, `y` and `z` percent.
+fn scale(x: f64, y: f64, z: f64) -> ScaleCompensation {
+    let percent = |value| ScaleCompensationPercent::new(value).expect("within +-10 %");
+    ScaleCompensation {
+        x: percent(x),
+        y: percent(y),
+        z: percent(z),
+    }
+}
+
 fn identity_cube_scene() -> Scene {
     let mut scene = Scene::new();
     cube_leaf(&mut scene, None, Transform3D::Identity);
@@ -48,7 +59,8 @@ fn identity_cube_scene() -> Scene {
 }
 
 fn fingerprint(scene: &Scene) -> SliceInputFingerprint {
-    slice_input_fingerprint(scene, &schedule()).expect("a cube scene fingerprints")
+    slice_input_fingerprint(scene, &schedule(), ScaleCompensation::NONE)
+        .expect("a cube scene fingerprints")
 }
 
 #[cfg(test)]
@@ -106,31 +118,73 @@ mod sensitivity_tests {
     #[test]
     fn changes_with_the_layer_height() {
         let scene = identity_cube_scene();
-        let a = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.05, 0.05, 10).unwrap())
-            .unwrap();
-        let b = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.10, 0.05, 10).unwrap())
-            .unwrap();
+        let a = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.05, 0.05, 10).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
+        let b = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.10, 0.05, 10).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
         assert_ne!(a, b);
     }
 
     #[test]
     fn changes_with_the_first_layer_height() {
         let scene = identity_cube_scene();
-        let a = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.05, 0.05, 10).unwrap())
-            .unwrap();
-        let b = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.05, 0.08, 10).unwrap())
-            .unwrap();
+        let a = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.05, 0.05, 10).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
+        let b = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.05, 0.08, 10).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
         assert_ne!(a, b);
     }
 
     #[test]
     fn changes_with_the_layer_count() {
         let scene = identity_cube_scene();
-        let a = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.05, 0.05, 10).unwrap())
-            .unwrap();
-        let b = slice_input_fingerprint(&scene, &LayerSchedule::uniform(0.05, 0.05, 11).unwrap())
-            .unwrap();
+        let a = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.05, 0.05, 10).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
+        let b = slice_input_fingerprint(
+            &scene,
+            &LayerSchedule::uniform(0.05, 0.05, 11).unwrap(),
+            ScaleCompensation::NONE,
+        )
+        .unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn changes_with_each_axis_of_the_scale_compensation() {
+        // The compensation scales every leaf before it is cut (#227), so a
+        // slice cut under 1 compensation does not describe another (#295).
+        let scene = identity_cube_scene();
+        let under = |scale| slice_input_fingerprint(&scene, &schedule(), scale).unwrap();
+        let none = under(ScaleCompensation::NONE);
+        for other in [
+            scale(0.5, 0.0, 0.0),
+            scale(0.0, 0.5, 0.0),
+            scale(0.0, 0.0, 0.5),
+        ] {
+            assert_ne!(none, under(other), "{other:?}");
+        }
+        assert_ne!(under(scale(0.5, 0.0, 0.0)), under(scale(0.0, 0.5, 0.0)));
+        assert_eq!(under(scale(0.5, 0.5, 0.0)), under(scale(0.5, 0.5, 0.0)));
     }
 }
 
@@ -194,7 +248,7 @@ mod error_tests {
     fn empty_scene_is_an_enumeration_error() {
         let scene = Scene::new();
         assert!(matches!(
-            slice_input_fingerprint(&scene, &schedule()).unwrap_err(),
+            slice_input_fingerprint(&scene, &schedule(), ScaleCompensation::NONE).unwrap_err(),
             SliceInputFingerprintError::Enumeration(SliceSceneError::EmptyScene),
         ));
     }
@@ -241,6 +295,19 @@ mod token_tests {
         // SCHEME_VERSION deliberately and update this literal.
         assert_eq!(
             fingerprint(&identity_cube_scene()).to_token(),
+            "18e89ae8c4eb12db4050dbc78318217afc20de21ece311d2c2525f8ece28a97d8fd988de7d84da12e5a3607bac847a8d",
+        );
+    }
+
+    #[test]
+    fn scheme_1_still_hashes_the_layout_projects_were_saved_with() {
+        // The token a project saved before the scale compensation joined the
+        // fingerprint (#295) carries, as the previous pin recorded it, so the
+        // staleness test of such a token runs against the real thing.
+        assert_eq!(
+            fingerprint_under_scheme(1, &identity_cube_scene(), &schedule(), None)
+                .unwrap()
+                .to_token(),
             "1da4b55cf6ee216aaab05074a99c02e62c6e39e05158cdce57f886b1de9a6ce822b6edf154baba6abf03da464afb8b70",
         );
     }
@@ -270,7 +337,7 @@ mod guard_tests {
     fn a_matching_token_is_in_sync() {
         let scene = identity_cube_scene();
         assert_eq!(
-            validate_persisted_slices(&token(&scene), &scene, &schedule()),
+            validate_persisted_slices(&token(&scene), &scene, &schedule(), ScaleCompensation::NONE),
             PersistedSliceValidity::InSync,
         );
     }
@@ -285,7 +352,7 @@ mod guard_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         );
         assert_eq!(
-            validate_persisted_slices(&stored, &moved, &schedule()),
+            validate_persisted_slices(&stored, &moved, &schedule(), ScaleCompensation::NONE),
             PersistedSliceValidity::Stale,
         );
     }
@@ -305,7 +372,7 @@ mod guard_tests {
             .expect("inline-mesh leaf");
         scene.add_root(leaf).expect("fresh leaf becomes a root");
         assert_eq!(
-            validate_persisted_slices(&stored, &scene, &schedule()),
+            validate_persisted_slices(&stored, &scene, &schedule(), ScaleCompensation::NONE),
             PersistedSliceValidity::Stale,
         );
     }
@@ -316,7 +383,7 @@ mod guard_tests {
         let stored = token(&scene);
         let other = LayerSchedule::uniform(0.10, 0.05, 10).expect("a positive, non-empty schedule");
         assert_eq!(
-            validate_persisted_slices(&stored, &scene, &other),
+            validate_persisted_slices(&stored, &scene, &other, ScaleCompensation::NONE),
             PersistedSliceValidity::Stale,
         );
     }
@@ -325,7 +392,12 @@ mod guard_tests {
     fn an_unrelated_token_makes_the_slices_stale() {
         let scene = identity_cube_scene();
         assert_eq!(
-            validate_persisted_slices("not-a-real-token", &scene, &schedule()),
+            validate_persisted_slices(
+                "not-a-real-token",
+                &scene,
+                &schedule(),
+                ScaleCompensation::NONE
+            ),
             PersistedSliceValidity::Stale,
         );
     }
@@ -336,7 +408,39 @@ mod guard_tests {
         // be recomputed; unverifiable slices are treated as stale.
         let stored = token(&identity_cube_scene());
         assert_eq!(
-            validate_persisted_slices(&stored, &Scene::new(), &schedule()),
+            validate_persisted_slices(&stored, &Scene::new(), &schedule(), ScaleCompensation::NONE),
+            PersistedSliceValidity::Stale,
+        );
+    }
+
+    #[test]
+    fn a_changed_scale_compensation_makes_the_slices_stale() {
+        // A project saved, then reopened after only the resin's X/Y
+        // compensation changed (#295).
+        let scene = identity_cube_scene();
+        let stored = slice_input_fingerprint(&scene, &schedule(), scale(0.4, 0.4, 0.0))
+            .unwrap()
+            .to_token();
+        assert_eq!(
+            validate_persisted_slices(&stored, &scene, &schedule(), scale(0.4, 0.4, 0.0)),
+            PersistedSliceValidity::InSync,
+        );
+        assert_eq!(
+            validate_persisted_slices(&stored, &scene, &schedule(), scale(0.6, 0.4, 0.0)),
+            PersistedSliceValidity::Stale,
+        );
+    }
+
+    #[test]
+    fn a_token_saved_before_the_scale_compensation_is_stale() {
+        // A version 1 token cannot tell which compensation its slices were
+        // cut with, so it never validates, not even under no compensation.
+        let scene = identity_cube_scene();
+        let stored = fingerprint_under_scheme(1, &scene, &schedule(), None)
+            .unwrap()
+            .to_token();
+        assert_eq!(
+            validate_persisted_slices(&stored, &scene, &schedule(), ScaleCompensation::NONE),
             PersistedSliceValidity::Stale,
         );
     }

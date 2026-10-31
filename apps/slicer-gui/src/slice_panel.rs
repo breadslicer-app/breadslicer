@@ -6,12 +6,14 @@
 //! Per-window bridge between the Slice control panel and the scene document. It
 //! pushes the panel's view into the window: the printer and resin pickers, the
 //! format dropdown and the first-layer-height field. It applies the user's
-//! picks to the document, which marks it save-dirty.
+//! picks to the document, which marks it save-dirty. It keeps the Export button
+//! off while the held slice no longer matches what the profiles resolve to,
+//! re-reading them when one is saved (#296).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sc_print_primitives::{MaterialId, OutputFormatBinding, PrinterId};
+use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use sc_sla_formats::PrinterFileFormat;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -21,7 +23,8 @@ use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
-use crate::slice_result::SliceParams;
+use crate::slice_projection::current_layer_values;
+use crate::slice_result::{LayerValues, SliceParams, layers_changed};
 use crate::slice_selection::{
     FirstLayerHeightInput, PickerModel, format_first_layer_height, parse_first_layer_height,
     slice_panel_view,
@@ -44,6 +47,9 @@ pub(crate) struct SlicePanelBridge {
     selected_format: RefCell<Option<PrinterFileFormat>>,
     // The printer that the panel shows; a format pick is remembered against it.
     shown_printer: RefCell<Option<PrinterId>>,
+    // What the profiles on disk resolve to for the selection in force, so the
+    // export gate reads them once per selection, not on every scene edit.
+    current_layers: RefCell<LayerValuesCache>,
     // RAII subscriptions kept alive for the window's lifetime; dropping the
     // bridge unsubscribes both.
     document_sub: RefCell<Option<SceneSubscription>>,
@@ -71,6 +77,7 @@ impl SlicePanelBridge {
             print_format_bindings: RefCell::new(Vec::new()),
             selected_format: RefCell::new(None),
             shown_printer: RefCell::new(None),
+            current_layers: RefCell::new(LayerValuesCache::default()),
             document_sub: RefCell::new(None),
             bus_sub: RefCell::new(None),
         });
@@ -126,6 +133,10 @@ impl SlicePanelBridge {
     fn apply(&self, update: PanelUpdate) {
         match update {
             PanelUpdate::Full => self.refresh(),
+            PanelUpdate::Profiles => {
+                self.current_layers.borrow_mut().forget();
+                self.refresh();
+            }
             PanelUpdate::ExportGate => self.refresh_export_enabled(),
         }
     }
@@ -207,11 +218,22 @@ impl SlicePanelBridge {
         let geometry_changed = held
             .as_ref()
             .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+        // A profile saved in place keeps its id: compare what it resolves to.
+        let layers_changed = match (&held, &current) {
+            (Some(_), Some(current)) => layers_changed(
+                self.document.slice_layer_values(),
+                self.current_layers
+                    .borrow_mut()
+                    .get(current, current_layer_values),
+            ),
+            _ => false,
+        };
 
         ui.set_slice_export_enabled(export_button_enabled(
             held.as_ref(),
             current.as_ref(),
             geometry_changed,
+            layers_changed,
             self.selected_format.borrow().is_some(),
         ));
     }
@@ -279,12 +301,58 @@ impl SlicePanelBridge {
     }
 }
 
+/// What the profiles resolve to for 1 selection: the [`LayerValues`] a slice
+/// of it is cut with, read from disk once and kept until the selection changes
+/// or the profiles do.
+#[derive(Default)]
+struct LayerValuesCache {
+    entry: Option<(LayerValuesKey, Option<LayerValues>)>,
+}
+
+/// The inputs [`LayerValues`] resolve from: the printer, the resin and the
+/// per-print first-layer height.
+type LayerValuesKey = (PrinterId, MaterialId, Option<PositiveFiniteMm>);
+
+impl LayerValuesCache {
+    /// Returns the values for `params`, resolving them with `resolve` only when
+    /// the selection differs from the one held.
+    fn get(
+        &mut self,
+        params: &SliceParams,
+        resolve: impl FnOnce(&SliceParams) -> Option<LayerValues>,
+    ) -> Option<LayerValues> {
+        let key = (
+            params.printer.clone(),
+            params.resin.clone(),
+            params.first_layer_height,
+        );
+        match &self.entry {
+            Some((held, values)) if *held == key => *values,
+            _ => {
+                let values = resolve(params);
+                self.entry = Some((key, values));
+                values
+            }
+        }
+    }
+
+    /// Drops the held values, so the next [`get`](Self::get) reads the profiles
+    /// again.
+    fn forget(&mut self) {
+        self.entry = None;
+    }
+}
+
 /// The part of the Slice panel that a change makes stale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PanelUpdate {
     /// The pickers, the format dropdown, the first-layer-height field and the
     /// export gate.
     Full,
+    /// A profile changed on disk: what the profiles resolve to, then all of
+    /// [`Full`](Self::Full). A saved name shows in the pickers, a saved value
+    /// may no longer match the held slice.
+    Profiles,
     /// Only whether the export can run.
     ExportGate,
 }
@@ -316,6 +384,7 @@ impl PanelUpdate {
             // A slice ran with an AA level, so the level moves only the export
             // gate.
             PreferencesChange::AaLevel => Some(Self::ExportGate),
+            PreferencesChange::Profiles => Some(Self::Profiles),
             // A format pick calls the bus while it borrows `shown_printer`,
             // which a refresh writes.
             PreferencesChange::OutputFormat => None,
@@ -395,6 +464,7 @@ mod panel_update_tests {
             (PreferencesChange::Projection, None),
             (PreferencesChange::DiagnosticLog, None),
             (PreferencesChange::SilencedMessages, None),
+            (PreferencesChange::Profiles, Some(PanelUpdate::Profiles)),
         ];
         for (change, update) in expected {
             assert_eq!(
@@ -411,6 +481,57 @@ mod panel_update_tests {
             PanelUpdate::for_preferences_change(PreferencesChange::OutputFormat),
             None,
         );
+    }
+}
+
+#[cfg(test)]
+mod layer_values_cache_tests {
+    use std::cell::Cell;
+
+    use sc_print_primitives::{AaLevel, ScaleCompensation};
+
+    use super::*;
+    use crate::scene_document::SceneRevision;
+
+    fn params(resin: &str) -> SliceParams {
+        SliceParams {
+            printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
+            resin: MaterialId::new(resin).expect("valid id"),
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+            geometry: SceneRevision::from_top_edit_id(None),
+        }
+    }
+
+    fn values() -> LayerValues {
+        let height = PositiveFiniteMm::new(0.05).expect("valid length");
+        LayerValues {
+            layer_height: height,
+            first_layer_height: height,
+            scale: ScaleCompensation::NONE,
+        }
+    }
+
+    #[test]
+    fn the_profiles_are_read_once_per_selection_until_forgotten() {
+        let reads = Cell::new(0);
+        let resolve = |_: &SliceParams| {
+            reads.set(reads.get() + 1);
+            Some(values())
+        };
+        let mut cache = LayerValuesCache::default();
+
+        assert_eq!(cache.get(&params("standard-405"), resolve), Some(values()));
+        assert_eq!(cache.get(&params("standard-405"), resolve), Some(values()));
+        assert_eq!(reads.get(), 1, "a scene edit must not read the disk");
+
+        cache.get(&params("abs-like-405"), resolve);
+        assert_eq!(reads.get(), 2, "another resin reads its profile");
+
+        // A profile saved in Preferences (#296).
+        cache.forget();
+        cache.get(&params("abs-like-405"), resolve);
+        assert_eq!(reads.get(), 3, "a saved profile is read again");
     }
 }
 
@@ -459,5 +580,79 @@ mod bridge_tests {
             (labels, ctr!("SlicePanel", ".goo (V3.0)").to_string())
         });
         assert_eq!(labels, [expected]);
+    }
+
+    #[test]
+    fn export_stays_off_while_the_profiles_resolve_other_layer_values() {
+        // A resin saved with another scale compensation keeps its id, so only
+        // the values it resolves to tell that the held slice is stale (#296).
+        use sc_print_glue::PlateContours;
+        use sc_print_primitives::{ScaleCompensation, ScaleCompensationPercent};
+        use sc_sl1cer::contour::{ContourLayer, ContourStack};
+        use sc_sl1cer::profile::LayerSchedule;
+
+        use crate::slice_result::SliceResult;
+        use crate::test_support::documents::loaded_document;
+
+        let (with_held_values, with_other_values) = on_fresh_slint_thread(|| {
+            let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
+            let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
+            let snapshot = PreferencesSnapshot {
+                default_printer: Some(printer.clone()),
+                default_resin: Some(resin.clone()),
+                ..PreferencesSnapshot::for_tests()
+            };
+            let aa_level = snapshot.aa_level;
+            let bus = PreferencesBus::new(snapshot);
+            let catalog = ProfileCatalog::from_entries(
+                vec![printer_entry(
+                    printer.clone(),
+                    "Elegoo",
+                    [153.36, 77.76, 165.0],
+                )],
+                Vec::new(),
+            );
+            let (document, _) = loaded_document();
+            let params = SliceParams {
+                printer,
+                resin,
+                first_layer_height: None,
+                aa_level,
+                geometry: document.scene_revision(),
+            };
+            let current = current_layer_values(&params).expect("the bundled profiles resolve");
+            let hold = |layers: LayerValues| {
+                let schedule = LayerSchedule::uniform(0.05, 0.05, 1).expect("a 1-layer schedule");
+                let stack = ContourStack::new_unchecked(vec![ContourLayer::new(0.05, vec![])]);
+                document.set_slice_result(SliceResult {
+                    contours: PlateContours::new(stack, schedule).expect("1 layer for 1 layer"),
+                    token: String::new(),
+                    params: params.clone(),
+                    layers: Some(layers),
+                });
+            };
+            hold(current);
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let _bridge = SlicePanelBridge::install(
+                &window,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus.clone(),
+                document.clone(),
+            );
+            let with_held_values = window.get_slice_export_enabled();
+
+            let shifted = ScaleCompensationPercent::new(current.scale.x.value() + 0.5)
+                .expect("within +-10 %");
+            hold(LayerValues {
+                scale: ScaleCompensation {
+                    x: shifted,
+                    ..current.scale
+                },
+                ..current
+            });
+            (with_held_values, window.get_slice_export_enabled())
+        });
+        assert!(with_held_values, "a current slice can be exported");
+        assert!(!with_other_values, "a stale slice cannot");
     }
 }
