@@ -14,7 +14,9 @@
 use std::path::PathBuf;
 
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_formats::messages::{LoadObjWarning, SceneLoadWarning, SharedVertexLeaf};
+use sc_mesh_formats::messages::{
+    DuplicateFacesLeaf, LoadObjWarning, SceneLoadWarning, SharedVertexLeaf,
+};
 use sc_scene::{NodeId, Scene};
 use slint::wgpu_30::wgpu;
 
@@ -271,6 +273,33 @@ fn describe_scene_shared_vertices_emits_each_object_name() {
     assert!(s.contains("'cube'"), "{s}");
     assert!(s.contains("'sphere'"), "{s}");
     assert!(s.contains("share at least one vertex"), "{s}");
+}
+
+#[test]
+fn describe_scene_duplicate_faces_gives_the_total_and_each_mesh() {
+    let ids = fresh_node_ids(2);
+    let s = describe_scene_warning(&SceneLoadWarning::DuplicateFacesDropped {
+        leaves: vec![
+            DuplicateFacesLeaf {
+                node_id: ids[0],
+                object_name: Some("Werewolf".to_string()),
+                faces: 2160,
+            },
+            DuplicateFacesLeaf {
+                node_id: ids[1],
+                object_name: None,
+                faces: 12,
+            },
+        ],
+    });
+    assert_eq!(
+        s,
+        format!(
+            "removed 2172 duplicate face(s), exact copies of other faces: 'Werewolf' (2160), \
+             node {} (12)",
+            ids[1].get()
+        )
+    );
 }
 
 #[test]

@@ -18,6 +18,7 @@
 pub mod aabb;
 pub mod bake;
 pub mod diagnose;
+pub mod duplicate_faces;
 pub mod error;
 pub mod expand;
 pub mod mesh_health;

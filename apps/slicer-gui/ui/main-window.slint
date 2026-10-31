@@ -536,6 +536,11 @@ export component MainWindow inherits Window {
     // Single Delete callback shared by the Delete key, the
     // context-menu Delete item, and the Edit > Delete menu item.
     callback delete-requested();
+    // Edit > Split into Bodies and Keep Only This Body (#257).
+    callback split-bodies-requested();
+    callback keep-only-body-requested();
+    // Whether the selected object came from a split that left other bodies.
+    in property <bool> can-keep-only-body: false;
     // Right-button press / release positions for the context-menu
     // click-vs-orbit classifier on the Rust side.
     callback viewport-right-pointer-down(length, length);
@@ -659,6 +664,24 @@ export component MainWindow inherits Window {
                     && root.workspace-section == WorkspaceSection.Transform;
                 activated => {
                     root.delete-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Split into Bodies");
+                enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                && root.workspace-section == WorkspaceSection.Transform && !root.repairing-in-progress;
+                activated => {
+                    root.split-bodies-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Keep Only This Body");
+                enabled: root.has-scene && !root.loading && root.can-keep-only-body
+                && root.workspace-section == WorkspaceSection.Transform && !root.repairing-in-progress;
+                activated => {
+                    root.keep-only-body-requested();
                 }
             }
 
@@ -1749,6 +1772,24 @@ export component MainWindow inherits Window {
                     && root.workspace-section == WorkspaceSection.Transform;
                     activated => {
                         root.delete-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Split into Bodies");
+                    enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                    && root.workspace-section == WorkspaceSection.Transform && !root.repairing-in-progress;
+                    activated => {
+                        root.split-bodies-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Keep Only This Body");
+                    enabled: root.has-scene && !root.loading && root.can-keep-only-body
+                    && root.workspace-section == WorkspaceSection.Transform && !root.repairing-in-progress;
+                    activated => {
+                        root.keep-only-body-requested();
                     }
                 }
 

@@ -26,9 +26,9 @@ use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, Slice
 use crate::grouping::{group_by_facing, point_in_ring};
 use crate::mesh_slice::segments_at_z_for_faces;
 use crate::profile::SliceProfile;
-use crate::shells::FaceShells;
 use crate::stitch::{normalise_to_ccw, stitch_layer_with_faces};
 use crate::z_bins::LayerBuckets;
+use sc_mesh_core::shells::FaceShells;
 
 /// Slices the leaf identified by `leaf` in `scene` into a [`ContourStack`],
 /// using the per-layer schedule and the other parameters carried by `profile`.
@@ -455,7 +455,7 @@ where
     F: Fn(SliceProgress) + Sync,
 {
     let topology = MeshTopology::from_edge_manifold(mesh);
-    let shells = FaceShells::build(mesh);
+    let shells = FaceShells::build(mesh.vertices(), mesh.faces());
     let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
     let buckets = LayerBuckets::build(mesh, &zs);
     // `Ok(None)` marks a layer skipped by the cancellation poll. The collect is

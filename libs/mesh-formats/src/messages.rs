@@ -96,6 +96,16 @@ pub struct SharedVertexLeaf {
     pub object_name: Option<String>,
 }
 
+/// An entry in a scene-level `DuplicateFacesDropped` warning: 1 mesh that had
+/// exact duplicate faces, labelled by the first leaf that shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicateFacesLeaf {
+    pub node_id: NodeId,
+    pub object_name: Option<String>,
+    /// How many faces were removed from the mesh.
+    pub faces: usize,
+}
+
 /// Warnings derived from the assembled scene after a successful read,
 /// regardless of source format. These observations live above the per-format
 /// parsers because they describe relationships between `SceneObject`s, not
@@ -106,6 +116,11 @@ pub enum SceneLoadWarning {
     /// with `-0.0` normalised to `0.0`). For OBJ inputs this typically means
     /// the source file declared `v` directives reused by multiple `o` blocks.
     SharedVertices { leaves: Vec<SharedVertexLeaf> },
+    /// Meshes stored faces twice (same 3 positions, same winding), usually a
+    /// body saved twice. 1 face of each such pair was removed, which leaves the
+    /// shape as it was: the copies made the mesh non-manifold, and kept it from
+    /// slicing.
+    DuplicateFacesDropped { leaves: Vec<DuplicateFacesLeaf> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
