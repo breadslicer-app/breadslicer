@@ -235,7 +235,7 @@ impl ConvexCutter {
     /// what is left of it clipped to the cutter shrunk by that much has an
     /// area. A triangle that only touches a face (the hole's wall, a cut's
     /// edge) does not, even rounded to `f32`.
-    fn overlaps(&self, tri: [P3; 3]) -> bool {
+    pub(crate) fn overlaps(&self, tri: [P3; 3]) -> bool {
         let mut poly: Vec<P3> = tri.to_vec();
         for plane in &self.planes {
             let side = |p: P3| plane.signed(p) + FOLD_MM;
@@ -537,6 +537,21 @@ impl<'a> OverlappingShells<'a> {
     /// they are, in place. On failure, the index of the first cutter that
     /// failed on some shell, and why.
     pub fn subtract_convex(&self, cutters: &[&ConvexCutter]) -> Result<IndexedMesh, CutFailure> {
+        let cut = self.subtract_convex_apart(cutters)?;
+        let mut out = cut.untouched;
+        for shell in &cut.shells {
+            append(&mut out, shell);
+        }
+        Ok(out)
+    }
+
+    /// [`OverlappingShells::subtract_convex`], with the shells a cutter
+    /// reached kept apart, in shell order: a cut can split one in pieces,
+    /// and the caller may want to tell them apart.
+    pub fn subtract_convex_apart(
+        &self,
+        cutters: &[&ConvexCutter],
+    ) -> Result<CutShells, CutFailure> {
         use rayon::prelude::*;
         let results: Vec<(usize, Result<IndexedMesh, CutFailure>)> = (0..self.len())
             .into_par_iter()
@@ -559,7 +574,10 @@ impl<'a> OverlappingShells<'a> {
             })
             .collect();
         if results.is_empty() {
-            return Ok(self.mesh.clone());
+            return Ok(CutShells {
+                untouched: self.mesh.clone(),
+                shells: Vec::new(),
+            });
         }
         let mut failed: Option<CutFailure> = None;
         let mut cut = vec![false; self.len()];
@@ -588,15 +606,9 @@ impl<'a> OverlappingShells<'a> {
             .filter(|&(_, &label)| !cut[label as usize])
             .map(|(&tri, _)| tri)
             .collect();
-        let mut out = IndexedMesh::new(self.mesh.positions.clone(), triangles);
-        compact_unreferenced_vertices(&mut out);
-        for shell in shells {
-            let offset = out.positions.len() as u32;
-            out.positions.extend_from_slice(&shell.positions);
-            out.triangles
-                .extend(shell.triangles.iter().map(|t| t.map(|v| v + offset)));
-        }
-        Ok(out)
+        let mut untouched = IndexedMesh::new(self.mesh.positions.clone(), triangles);
+        compact_unreferenced_vertices(&mut untouched);
+        Ok(CutShells { untouched, shells })
     }
 
     /// Shell `s` as a mesh of its own.
@@ -616,6 +628,73 @@ impl<'a> OverlappingShells<'a> {
             .collect();
         IndexedMesh::new(positions, triangles)
     }
+}
+
+/// Shells after [`OverlappingShells::subtract_convex_apart`].
+#[derive(Debug, Clone)]
+pub struct CutShells {
+    /// The shells no cutter reached, as one mesh, in place.
+    pub untouched: IndexedMesh,
+    /// Each shell a cutter reached, less the cutters (maybe in pieces, maybe
+    /// empty), in shell order.
+    pub shells: Vec<IndexedMesh>,
+}
+
+/// `extra`'s triangles added to `mesh`, on vertices of their own.
+pub(crate) fn append(mesh: &mut IndexedMesh, extra: &IndexedMesh) {
+    let offset = mesh.positions.len() as u32;
+    mesh.positions.extend_from_slice(&extra.positions);
+    mesh.triangles
+        .extend(extra.triangles.iter().map(|t| t.map(|v| v + offset)));
+}
+
+/// Whether the surfaces of two meshes cross: an edge of one passes through
+/// a triangle of the other. For closed solids that are not one inside the
+/// other, whether they overlap. Brute force over the triangles whose boxes
+/// meet: meant for small pieces.
+pub(crate) fn surfaces_cross(a: &IndexedMesh, b: &IndexedMesh) -> bool {
+    let triangles = |m: &IndexedMesh| -> Vec<([P3; 3], (P3, P3))> {
+        m.triangles
+            .iter()
+            .map(|t| {
+                let pts = t.map(|v| to64(m.positions[v as usize]));
+                (pts, grown_box(&pts, 0.0))
+            })
+            .collect()
+    };
+    let (ta, tb) = (triangles(a), triangles(b));
+    let pierces = |edges: &[([P3; 3], (P3, P3))], faces: &[([P3; 3], (P3, P3))]| {
+        edges.iter().any(|(e, ebox)| {
+            faces.iter().any(|(f, fbox)| {
+                boxes_meet(*ebox, *fbox)
+                    && (0..3).any(|k| segment_hits_triangle(e[k], e[(k + 1) % 3], *f))
+            })
+        })
+    };
+    pierces(&ta, &tb) || pierces(&tb, &ta)
+}
+
+/// Whether segment `pq` passes through triangle `tri` (Möller–Trumbore,
+/// both ends included).
+fn segment_hits_triangle(p: P3, q: P3, tri: [P3; 3]) -> bool {
+    let dir = sub(q, p);
+    let (e1, e2) = (sub(tri[1], tri[0]), sub(tri[2], tri[0]));
+    let h = cross(dir, e2);
+    let det = dot(e1, h);
+    if det.abs() <= 1e-12 * dot(e1, e1).sqrt() * dot(h, h).sqrt() {
+        return false;
+    }
+    let s = sub(p, tri[0]);
+    let u = dot(s, h) / det;
+    if !(0.0..=1.0).contains(&u) {
+        return false;
+    }
+    let qv = cross(s, e1);
+    let v = dot(dir, qv) / det;
+    if v < 0.0 || u + v > 1.0 {
+        return false;
+    }
+    (0.0..=1.0).contains(&(dot(e2, qv) / det))
 }
 
 fn boxes_meet(a: (P3, P3), b: (P3, P3)) -> bool {

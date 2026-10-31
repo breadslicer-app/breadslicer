@@ -289,7 +289,8 @@ pub struct HollowRequest {
     /// [`HollowRequest::solid_areas`].
     pub settings: HollowSettings,
     pub solid_areas: Vec<WorldSolidArea>,
-    /// Apply only.
+    /// Cut by an apply; a preview shows the channels they clear through
+    /// the infill (#339).
     pub drains: Vec<WorldDrain>,
     /// A session from an earlier job; reused when it matches.
     pub prepared: Option<Arc<PreparedHollow>>,
@@ -505,7 +506,10 @@ fn run_hollow(
 
     let (stats, result) = match request.kind {
         HollowKind::Preview => {
-            let preview = session.preview(&settings, ctl).map_err(to_job)?;
+            let drains: Vec<DrainHole> = request.drains.iter().map(|d| d.in_frame(frame)).collect();
+            let preview = session
+                .preview_with_drains(&settings, &drains, ctl)
+                .map_err(to_job)?;
             let centers = preview
                 .removed_voxel_centers
                 .chunks_exact(3)

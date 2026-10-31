@@ -1488,3 +1488,261 @@ fn an_auto_drain_ends_inside_a_thin_cavity() {
     };
     assert_eq!(wide.auto_depth_mm(), 2.8);
 }
+
+fn to_p3(p: Vec3) -> [f64; 3] {
+    [p.x as f64, p.y as f64, p.z as f64]
+}
+
+/// The channel `hole` clears through the infill, as far in as any retry
+/// turns its prism: within the circle its sides touch.
+fn channel_core(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
+    let (center, axis) = drain_axis(hole);
+    let inscribed = (std::f32::consts::PI / report.segments as f32).cos() * 0.999;
+    let radius = (hole.radius_mm + DRAIN_INFILL_CLEARANCE_MM) * inscribed;
+    ConvexCutter::prism(
+        center.sub(axis.scale(hole.outside_mm)),
+        axis,
+        radius,
+        radius,
+        hole.outside_mm + report.depth_mm + 2.0 * hole.radius_mm,
+        report.segments,
+        0.0,
+    )
+}
+
+/// The infill's beams (edge-connected shells), with their boxes.
+fn beams_of(infill: &IndexedMesh) -> Vec<(IndexedMesh, crate::mesh::Aabb)> {
+    split_shells(infill)
+        .into_iter()
+        .map(|beam| {
+            let bbox = beam.bbox();
+            (beam, bbox)
+        })
+        .collect()
+}
+
+/// A 40 mm cube with pillars (6 mm cells, 0.6 mm beams) or a lattice.
+fn infill_settings(pattern: InfillMode) -> HollowSettings {
+    HollowSettings {
+        fill: HollowFill::Infill {
+            pattern,
+            cell_mm: 6.0,
+            beam_radius_mm: 0.6,
+        },
+        ..HollowSettings::default()
+    }
+}
+
+/// #339: a drain on the top face right over a pillar clears the pillar out
+/// of its channel, from the opening through the wall and on into the
+/// cavity, with the clearance: nothing of the infill is left inside the
+/// channel; the rest of that pillar stays, standing on the floor, and every
+/// other pillar is untouched. The preview with the drain shows exactly the
+/// infill the hollow gets.
+#[test]
+fn a_drain_over_a_pillar_clears_it_from_the_channel() {
+    let session = cube_session();
+    let settings = infill_settings(InfillMode::Pillar);
+    let plain = session.preview(&settings, Control::none()).unwrap();
+    let infill = plain.infill.clone().unwrap();
+    let pillars = beams_of(&infill);
+    // The pillar nearest the middle of the top.
+    let (pillar, at) = pillars
+        .iter()
+        .map(|(beam, bbox)| (beam, bbox.min.add(bbox.max).scale(0.5)))
+        .min_by(|a, b| (a.1.x.hypot(a.1.y)).total_cmp(&b.1.x.hypot(b.1.y)))
+        .unwrap();
+    let hole = DrainHole::new([at.x, at.y, 20.0], [0.0, 0.0, -1.0], 1.5);
+    let report = session.drain_report(&settings, &hole).unwrap();
+    assert!(report.reaches_cavity, "{report:?}");
+
+    let shown = session
+        .preview_with_drains(&settings, &[hole], Control::none())
+        .unwrap();
+    let drained = shown.infill.clone().unwrap();
+    let applied = session.apply(&settings, &[hole], Control::none()).unwrap();
+    assert!(is_edge_manifold(&applied.mesh));
+    assert!(
+        contains_every_triangle(&applied.mesh, &drained),
+        "the preview is the result"
+    );
+    // The channel: nothing of the infill reaches into it.
+    let channel = channel_core(&hole, &report);
+    let reaching = drained
+        .triangles
+        .iter()
+        .filter(|t| channel.overlaps(t.map(|i| drained.positions[i as usize]).map(to_p3)))
+        .count();
+    assert_eq!(reaching, 0, "infill left in the channel");
+    // Clear along the axis from outside to past the drain's end.
+    let (center, axis) = drain_axis(&hole);
+    let out_bvh = Bvh::build(&applied.mesh);
+    let first = out_bvh.ray_hit_distances(&applied.mesh, center.sub(axis.scale(0.5)), axis)[0];
+    assert!(
+        first - 0.5 > report.depth_mm + 2.0 * hole.radius_mm,
+        "first surface at {first}"
+    );
+    // The pillar under the drain lost its top only, and stands on the
+    // floor; the others are as they were.
+    let after = beams_of(&drained);
+    assert_eq!(after.len(), pillars.len(), "no pillar removed whole");
+    let rest = after
+        .iter()
+        .find(|(_, bbox)| {
+            (bbox.min.x - pillar.bbox().min.x).abs() < 1e-3
+                && (bbox.min.y - pillar.bbox().min.y).abs() < 1e-3
+        })
+        .expect("the cut pillar stays");
+    assert!(
+        (rest.1.min.z - pillar.bbox().min.z).abs() < 1e-3,
+        "on the floor"
+    );
+    let top = 20.0 - report.depth_mm - 2.0 * hole.radius_mm;
+    assert!(rest.1.max.z <= top + 1e-3, "{} under {top}", rest.1.max.z);
+    assert!(
+        rest.1.max.z > top - 1.0,
+        "only the channel goes: {}",
+        rest.1.max.z
+    );
+    let untouched = pillars
+        .iter()
+        .filter(|(beam, _)| contains_every_triangle(&drained, beam))
+        .count();
+    assert_eq!(untouched, pillars.len() - 1);
+}
+
+/// #339: two deep drains through the side cut a row of pillars twice: the
+/// piece between the cuts holds on to nothing and is dropped, the pieces on
+/// the floor and from the ceiling stay. Every beam left is anchored in the
+/// wall. Removing the drains gives the infill back exactly, and the same
+/// drains give the same mesh again (undo, re-run).
+#[test]
+fn a_piece_of_a_pillar_left_floating_is_dropped() {
+    let session = cube_session();
+    let settings = infill_settings(InfillMode::Pillar);
+    let plain = session.apply(&settings, &[], Control::none()).unwrap();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let infill = preview.infill.clone().unwrap();
+    // Along a row of pillars: the y of the pillar nearest the middle.
+    let (_, row) = beams_of(&infill)
+        .into_iter()
+        .min_by(|a, b| {
+            let (ca, cb) = (a.1.min.add(a.1.max), b.1.min.add(b.1.max));
+            ca.x.hypot(ca.y).total_cmp(&cb.x.hypot(cb.y))
+        })
+        .unwrap();
+    let y = 0.5 * (row.min.y + row.max.y);
+    let mut drains = Vec::new();
+    for z in [-8.0, 6.0] {
+        let mut hole = DrainHole::new([20.0, y, z], [-1.0, 0.0, 0.0], 1.0);
+        hole.depth = DrainDepth::Mm(36.0);
+        drains.push(hole);
+    }
+    let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+    assert!(applied.drains.iter().all(|r| r.reaches_cavity));
+    assert!(is_edge_manifold(&applied.mesh));
+    let drained = session
+        .preview_with_drains(&settings, &drains, Control::none())
+        .unwrap()
+        .infill
+        .unwrap();
+    assert!(contains_every_triangle(&applied.mesh, &drained));
+    let (_, cavity) = session.cached_cavity().unwrap();
+    let (wall, wall_bvh) = cavity.drain_target();
+    let beams = beams_of(&drained);
+    for (beam, bbox) in &beams {
+        assert!(
+            beam.positions
+                .iter()
+                .any(|&p| !point_inside_mesh_parity(wall, wall_bvh, p, 0.01)),
+            "a beam floats: {bbox:?}"
+        );
+    }
+    // The row was cut twice: its pillars are now two pieces each.
+    let in_row = |bbox: &crate::mesh::Aabb| (bbox.min.y - row.min.y).abs() < 1e-3;
+    let before = beams_of(&infill).iter().filter(|(_, b)| in_row(b)).count();
+    let after = beams.iter().filter(|(_, b)| in_row(b)).count();
+    assert!(before >= 3, "{before} pillars in the row");
+    assert_eq!(after, 2 * before, "floor and ceiling pieces only");
+    // Undo gives the infill back; the same drains give the same mesh.
+    assert_eq!(
+        session.apply(&settings, &[], Control::none()).unwrap().mesh,
+        plain.mesh
+    );
+    let again = cube_session()
+        .apply(&settings, &drains, Control::none())
+        .unwrap();
+    assert_eq!(again.mesh, applied.mesh);
+}
+
+/// #339 holds for a lattice too: drains on every face clear their channels
+/// through the struts, each strut left is anchored in the wall or crosses
+/// one that is, the preview with the drains is the result, and the result
+/// is closed and deterministic.
+#[test]
+fn drains_clear_their_channels_through_a_lattice() {
+    let session = cube_session();
+    let settings = infill_settings(InfillMode::Lattice);
+    let mut drains = Vec::new();
+    for k in 0..3 {
+        for sign in [-1.0f32, 1.0] {
+            let mut center = [1.7, -2.3, 0.9];
+            center[k] = 20.0 * sign;
+            let mut direction = [0.0; 3];
+            direction[k] = -sign;
+            drains.push(DrainHole::new(center, direction, 1.5));
+        }
+    }
+    // And one deep across the cube, which cuts many struts twice.
+    let mut deep = DrainHole::new([20.0, 4.0, -3.0], [-1.0, 0.0, 0.0], 1.2);
+    deep.depth = DrainDepth::Mm(36.0);
+    drains.push(deep);
+    let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+    assert!(applied.drains.iter().all(|r| r.reaches_cavity));
+    assert!(is_edge_manifold(&applied.mesh));
+    let shown = session
+        .preview_with_drains(&settings, &drains, Control::none())
+        .unwrap();
+    let drained = shown.infill.unwrap();
+    assert!(contains_every_triangle(&applied.mesh, &drained));
+    for (hole, report) in drains.iter().zip(&applied.drains) {
+        let channel = channel_core(hole, report);
+        assert!(
+            !drained
+                .triangles
+                .iter()
+                .any(|t| channel.overlaps(t.map(|i| drained.positions[i as usize]).map(to_p3))),
+            "{hole:?}: infill left in the channel"
+        );
+    }
+    let (_, cavity) = session.cached_cavity().unwrap();
+    let (wall, wall_bvh) = cavity.drain_target();
+    let beams = beams_of(&drained);
+    let mut anchored: Vec<bool> = beams
+        .iter()
+        .map(|(beam, _)| {
+            beam.positions
+                .iter()
+                .any(|&p| !point_inside_mesh_parity(wall, wall_bvh, p, 0.01))
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for i in 0..beams.len() {
+            if !anchored[i]
+                && (0..beams.len()).any(|j| anchored[j] && surfaces_cross(&beams[i].0, &beams[j].0))
+            {
+                anchored[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    assert!(anchored.iter().all(|&a| a), "a strut floats");
+    let again = cube_session()
+        .apply(&settings, &drains, Control::none())
+        .unwrap();
+    assert_eq!(again.mesh, applied.mesh);
+}
