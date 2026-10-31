@@ -131,13 +131,12 @@ fn real_model_hollow_timings() {
     );
     match &applied {
         Ok(a) => eprintln!(
-            "apply: {} triangles, edge-manifold {}, source {:.2} ml -> {:.2} ml (removed {:.2} ml), smoothing retries {}",
+            "apply: {} triangles, edge-manifold {}, source {:.2} ml -> {:.2} ml (removed {:.2} ml)",
             a.mesh.triangle_count(),
             is_edge_manifold(&a.mesh),
             a.stats.source_volume_mm3 / 1000.0,
             a.stats.output_volume_mm3.unwrap() / 1000.0,
             a.stats.removed_volume_mm3.unwrap() / 1000.0,
-            a.stats.smoothing_retries
         ),
         Err(e) => eprintln!("apply failed: {e}"),
     }

@@ -351,7 +351,7 @@ fn quantile(sorted: &[f32], q: f32) -> f32 {
 /// The preview's wall is the one asked for: the median within 0.01 mm, the
 /// thinnest within the interpolation between voxel centres (#265). The
 /// chamfer field gave a median of 2.29 mm here, and as little as 1.93 mm
-/// at a 0.3 mm voxel. The smoothed result is never thinner than that.
+/// at a 0.3 mm voxel. The result's cavity is the preview's (#29).
 #[test]
 fn the_wall_is_the_requested_one() {
     let request = GridRequest {
@@ -382,9 +382,9 @@ fn the_wall_is_the_requested_one() {
 }
 
 /// Two blocks joined by a bar whose cavity is a channel a voxel or two wide:
-/// smoothing must not pinch it into sealed pockets no drain reaches.
+/// the result keeps it open, one cavity, not sealed pockets no drain reaches.
 #[test]
-fn smoothing_leaves_one_cavity() {
+fn a_narrow_channel_leaves_one_cavity() {
     let dumbbell = crate::shapes::merged(&[
         tessellated_box([-25.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
         tessellated_box([-5.5, -2.6, -2.6], [5.5, 2.6, 2.6], 6),
@@ -437,6 +437,7 @@ fn a_cancelled_wall_measure_keeps_nothing() {
         .unwrap_err();
     assert_eq!(err, HollowError::Cancelled);
     assert!(session.measured_wall().is_none());
+    assert!(session.cached_cavity().is_none());
     let preview = session.preview(&settings, Control::none()).unwrap();
     let fresh = sphere_session(0.65)
         .preview(&settings, Control::none())
@@ -444,70 +445,279 @@ fn a_cancelled_wall_measure_keeps_nothing() {
     assert_eq!(preview.cavity, fresh.cavity);
 }
 
-/// The surface `b` is within `tolerance` of every vertex of `a`.
-fn max_deviation(a: &IndexedMesh, b: &IndexedMesh) -> f32 {
-    let bvh = Bvh::build(b);
-    a.positions
-        .iter()
-        .map(|&p| bvh.nearest_distance(b, p, 1e6).unwrap())
-        .fold(0.0, f32::max)
+/// A triangle by the bits of its corners, from its smallest corner on, so
+/// the same triangle in two meshes gives the same key.
+fn triangle_key(mesh: &IndexedMesh, tri: [u32; 3]) -> [u32; 9] {
+    let corners = tri.map(|i| mesh.positions[i as usize].to_array().map(f32::to_bits));
+    let first = (0..3).min_by_key(|&k| corners[k]).unwrap();
+    std::array::from_fn(|i| corners[(first + i / 3) % 3][i % 3])
 }
 
-/// The result's smoothed cavity is the preview's, moved only into the cavity
-/// and never out of the preview's voxels (#266): the same shells, nothing
-/// thinner than the wall, no retries. The dumbbell's bar is a thin part
-/// whose cavity is a narrow channel the old smoothing could close.
+/// Every triangle of `part` is in `whole`, corner for corner.
+fn contains_every_triangle(whole: &IndexedMesh, part: &IndexedMesh) -> bool {
+    let all: std::collections::HashSet<[u32; 9]> = whole
+        .triangles
+        .iter()
+        .map(|&t| triangle_key(whole, t))
+        .collect();
+    part.triangles
+        .iter()
+        .all(|&t| all.contains(&triangle_key(part, t)))
+}
+
+/// A 40 x 30 x 30 mm block with a 3 mm fin 20 mm tall on top, as one
+/// closed shell (#264's test piece): a T in x-z, 30 mm deep in y. With a
+/// 1 mm wall the fin holds a channel a voxel or two wide.
+fn finned_block() -> IndexedMesh {
+    let outline: [(f32, f32); 8] = [
+        (0.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 30.0),
+        (21.5, 30.0),
+        (21.5, 50.0),
+        (18.5, 50.0),
+        (18.5, 30.0),
+        (0.0, 30.0),
+    ];
+    let n = outline.len() as u32;
+    let mut positions = Vec::new();
+    for y in [0.0, 30.0] {
+        positions.extend(outline.iter().map(|&(x, z)| Vec3::new(x, y, z)));
+    }
+    // The outline split at its own corners: no corner lies on another
+    // triangle's edge.
+    let cap: [[u32; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 3],
+        [6, 3, 4],
+        [6, 4, 5],
+        [0, 3, 6],
+        [0, 6, 7],
+    ];
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
+    for [a, b, c] in cap {
+        triangles.push([a, c, b]);
+        triangles.push([a + n, b + n, c + n]);
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        triangles.push([i, j, j + n]);
+        triangles.push([i, j + n, i + n]);
+    }
+    let mut mesh = IndexedMesh::new(positions, triangles);
+    if mesh.signed_volume() < 0.0 {
+        for tri in &mut mesh.triangles {
+            tri.swap(1, 2);
+        }
+    }
+    assert!(is_edge_manifold(&mesh));
+    mesh
+}
+
+/// The hollow's cavity is the one the preview shows, vertex for vertex (#29,
+/// Damian's rule: the preview is the reference, 0.000 mm): for any model and
+/// settings, the result carries the preview's cavity triangles exactly, is
+/// closed, and its wall is nowhere thinner than asked (within the
+/// interpolation between voxel centres).
 #[test]
-fn the_result_follows_the_preview() {
+fn the_result_is_the_preview() {
     let dumbbell = crate::shapes::merged(&[
         tessellated_box([-25.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
         tessellated_box([-5.5, -2.6, -2.6], [5.5, 2.6, 2.6], 6),
         tessellated_box([5.0, -10.0, -10.0], [25.0, 10.0, 10.0], 6),
     ]);
+    let mut turned = tessellated_box([-20.0; 3], [20.0; 3], 16);
+    let (a, b) = (30f32.to_radians(), 20f32.to_radians());
+    for p in &mut turned.positions {
+        let (x, y, z) = (
+            p.x * a.cos() - p.y * a.sin(),
+            p.x * a.sin() + p.y * a.cos(),
+            p.z,
+        );
+        *p = Vec3::new(x, y * b.cos() - z * b.sin(), y * b.sin() + z * b.cos());
+    }
+    // The dumbbell is three overlapping boxes: its inner faces count as
+    // surface for the wall, and the measure below would read them too.
     let models = [
-        icosphere(20.0, 5),
-        tessellated_box([-20.0; 3], [20.0; 3], 16),
-        dumbbell,
+        ("sphere", icosphere(20.0, 5), true),
+        ("turned cube", turned, true),
+        ("finned block", finned_block(), true),
+        ("dumbbell", dumbbell, false),
     ];
-    for (k, model) in models.into_iter().enumerate() {
-        let session =
-            Session::build(model, &GridRequest::default(), None, Control::none()).unwrap();
-        let settings = HollowSettings::default();
-        let wall = settings.wall_thickness_mm;
-        let preview = session.preview(&settings, Control::none()).unwrap();
-        let applied = session.apply(&settings, &[], Control::none()).unwrap();
-        assert!(is_edge_manifold(&applied.mesh), "model {k}");
-        assert_eq!(applied.stats.smoothing_retries, 0, "model {k}");
-        assert_eq!(
-            face_shells(&applied.cavity).1,
-            face_shells(&preview.cavity).1,
-            "model {k}"
-        );
-        // The cavity keeps the preview's voxels: its wall moves within them.
-        let cap = session.grid().voxel_mm;
-        let to_result = max_deviation(&preview.cavity, &applied.cavity);
-        let to_preview = max_deviation(&applied.cavity, &preview.cavity);
-        assert!(to_result <= cap, "model {k}: preview -> result {to_result}");
-        assert!(
-            to_preview <= cap,
-            "model {k}: result -> preview {to_preview}"
-        );
-        let thinnest = walls(&session, &applied.cavity)[0];
-        assert!(thinnest >= wall - 0.1, "model {k}: wall {thinnest}");
+    let lattice = HollowFill::Infill {
+        pattern: InfillMode::Lattice,
+        cell_mm: 6.0,
+        beam_radius_mm: 0.6,
+    };
+    for (name, model, one_shell) in models {
+        // A finer voxel on the cube, whose faces do not follow the grid.
+        let voxels: &[f32] = if name == "turned cube" {
+            &[0.65, 0.4]
+        } else {
+            &[0.65]
+        };
+        for &voxel in voxels {
+            let request = GridRequest {
+                voxel_size_mm: voxel,
+                ..GridRequest::default()
+            };
+            let session = Session::build(model.clone(), &request, None, Control::none()).unwrap();
+            for (wall, fill, solid) in [
+                (2.0, HollowFill::Cavity, false),
+                (1.0, HollowFill::Cavity, false),
+                (3.0, HollowFill::Cavity, true),
+                (2.0, lattice, false),
+            ] {
+                let settings = HollowSettings {
+                    fill,
+                    wall_thickness_mm: wall,
+                    solid_areas: if solid {
+                        vec![SolidArea::Sphere {
+                            center: [0.0, 0.0, 0.0],
+                            radius_mm: 6.0,
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                };
+                let case = format!("{name}, voxel {voxel}, wall {wall}, {fill:?}, solid {solid}");
+                let preview = session.preview(&settings, Control::none()).unwrap();
+                let applied = session.apply(&settings, &[], Control::none()).unwrap();
+                let shown = match &preview.infill {
+                    Some(infill) => merge_meshes(&preview.cavity, infill),
+                    None => preview.cavity.clone(),
+                };
+                assert_eq!(applied.cavity, shown, "{case}");
+                if wall == 2.0 && fill == HollowFill::Cavity {
+                    // A fresh session, as when the hollow runs without its
+                    // preview (another job, a file opened): the same mesh.
+                    let fresh = Session::build(model.clone(), &request, None, Control::none())
+                        .unwrap()
+                        .apply(&settings, &[], Control::none())
+                        .unwrap();
+                    assert_eq!(fresh.mesh, applied.mesh, "{case}");
+                }
+                assert!(contains_every_triangle(&applied.mesh, &shown), "{case}");
+                assert_eq!(
+                    applied.mesh.triangle_count(),
+                    session.source_mesh().triangle_count() + shown.triangle_count(),
+                    "{case}: the source and the cavity, nothing else"
+                );
+                assert!(is_edge_manifold(&applied.mesh), "{case}");
+                assert_eq!(applied.stats.removed_voxels, preview.stats.removed_voxels);
+                if one_shell && !preview.cavity.triangles.is_empty() {
+                    let thinnest = walls(&session, &preview.cavity)[0];
+                    assert!(thinnest >= wall - 0.1, "{case}: wall {thinnest}");
+                }
+            }
+        }
     }
 }
 
-/// Without smoothing the result's cavity is the preview's, vertex for vertex.
+/// With drains the result is the preview's cavity with the drains cut: every
+/// cavity triangle away from the drains is in it unchanged.
 #[test]
-fn an_unsmoothed_result_is_the_preview() {
+fn drains_cut_the_previewed_cavity() {
     let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let drain = DrainHole::new([0.0, 0.0, -20.0], [0.0, 0.0, 1.0], 1.5);
+    let applied = session.apply(&settings, &[drain], Control::none()).unwrap();
+    assert!(applied.drains[0].reaches_cavity);
+    assert_eq!(applied.cavity, preview.cavity);
+    let far: Vec<[u32; 3]> = preview
+        .cavity
+        .triangles
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.iter().all(|&i| {
+                let p = preview.cavity.positions[i as usize];
+                p.x.hypot(p.y) > 4.0 || p.z > -10.0
+            })
+        })
+        .collect();
+    assert!(far.len() > preview.cavity.triangle_count() / 2);
+    let far = IndexedMesh::new(preview.cavity.positions.clone(), far);
+    assert!(contains_every_triangle(&applied.mesh, &far));
+}
+
+/// An apply right after its preview takes the preview's cavity instead of
+/// building it again, and still reports every stage and still cancels.
+#[test]
+fn an_apply_after_its_preview_reuses_the_cavity() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    session.preview(&settings, Control::none()).unwrap();
+    let (_, cached) = session.cached_cavity().unwrap();
+    let token = CancelToken::new();
+    token.cancel();
+    let err = session
+        .apply(&settings, &[], Control::new(Some(&token), None))
+        .unwrap_err();
+    assert_eq!(err, HollowError::Cancelled);
+    session.apply(&settings, &[], Control::none()).unwrap();
+    assert!(Arc::ptr_eq(&session.cached_cavity().unwrap().1, &cached));
+    // Other settings build their own, which then takes the place.
+    let thick = HollowSettings {
+        wall_thickness_mm: 3.0,
+        ..HollowSettings::default()
+    };
+    session.apply(&thick, &[], Control::none()).unwrap();
+    let (built_for, other) = session.cached_cavity().unwrap();
+    assert_eq!(built_for, thick);
+    assert!(!Arc::ptr_eq(&other, &cached));
+}
+
+/// The fin of #264: wherever the preview shows the channel in the fin, a
+/// drain into it is drilled, up to its tip. Before #29 the result's cavity
+/// stopped lower than the preview's, and the drain was refused as not
+/// reaching the cavity.
+#[test]
+fn a_drain_where_the_preview_shows_cavity_is_drilled() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
     let settings = HollowSettings {
-        smooth_internal_surfaces: false,
-        internal_chamfer_passes: 0,
+        wall_thickness_mm: 1.0,
         ..HollowSettings::default()
     };
     let preview = session.preview(&settings, Control::none()).unwrap();
-    let applied = session.apply(&settings, &[], Control::none()).unwrap();
-    assert_eq!(max_deviation(&preview.cavity, &applied.cavity), 0.0);
-    assert_eq!(max_deviation(&applied.cavity, &preview.cavity), 0.0);
+    // The highest point of the channel the preview shows in the fin.
+    let top = preview
+        .cavity
+        .positions
+        .iter()
+        .copied()
+        .filter(|p| p.z > 32.0)
+        .max_by(|a, b| a.z.total_cmp(&b.z))
+        .expect("the preview shows a channel in the fin");
+    // Just under the tip: before #29 the hollow's channel stopped 0.3 mm
+    // lower than the preview's (48.65 against 48.96 mm), and a drain here
+    // was refused.
+    let z = top.z - 0.15;
+    assert!(z > 40.0, "the channel reaches up the fin: {top:?}");
+    // From the fin's side, straight in, where the preview shows the channel.
+    let center = [21.5, top.y.clamp(5.0, 25.0), z];
+    let direction = Vec3::new(-1.0, 0.0, 0.0);
+    let cavity_bvh = Bvh::build(&preview.cavity);
+    assert!(
+        !cavity_bvh
+            .ray_hit_distances(
+                &preview.cavity,
+                Vec3::new(center[0] + 0.3, center[1], z),
+                direction
+            )
+            .is_empty(),
+        "the axis meets the previewed channel"
+    );
+    let drain = DrainHole::new(center, direction.to_array(), 0.5);
+    let applied = session.apply(&settings, &[drain], Control::none()).unwrap();
+    assert!(applied.drains[0].reaches_cavity, "{:?}", applied.drains[0]);
+    assert!(is_edge_manifold(&applied.mesh));
+    assert_eq!(face_shells(&applied.mesh).1, 1, "the channel drains out");
 }

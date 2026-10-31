@@ -165,6 +165,56 @@ fn the_wall_is_physical_under_a_non_uniform_scale() {
     assert!((span[2] - 16.0).abs() < 0.6, "z span {}", span[2]);
 }
 
+/// The hollow a model gets carries the cavity its preview showed, in the
+/// leaf's own frame, vertex for vertex (#29), also under a non-uniform
+/// scale and through the session the preview left (as the Hollow tab runs
+/// them).
+#[test]
+fn the_applied_hollow_carries_the_previewed_cavity() {
+    let world = affine(
+        [[1.6, 0.0, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 0.8]],
+        [5.0, -3.0, 12.0],
+    );
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), world);
+    let preview = run(&scene, leaf, HollowRequest::default());
+    let HollowResult::Preview { cavity, .. } = &preview.result else {
+        panic!("preview");
+    };
+    let applied = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            prepared: Some(preview.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(applied.reused_session);
+    let HollowResult::Apply { mesh, .. } = &applied.result else {
+        panic!("apply");
+    };
+    let corners = |m: &IndexedMesh, f: &IndexedTriangle| {
+        f.vertices
+            .map(|v| m.vertices()[usize::from(v)].as_array().map(f32::to_bits))
+    };
+    let hollow: std::collections::HashSet<[[u32; 3]; 3]> =
+        mesh.faces().iter().map(|f| corners(mesh, f)).collect();
+    assert!(!cavity.faces().is_empty());
+    for f in cavity.faces() {
+        let [a, b, c] = corners(cavity, f);
+        assert!(
+            [[a, b, c], [b, c, a], [c, a, b]]
+                .iter()
+                .any(|t| hollow.contains(t)),
+            "a previewed cavity triangle is not in the hollow"
+        );
+    }
+    assert_eq!(
+        mesh.faces().len(),
+        sphere_leaf_mesh(12.0).faces().len() + cavity.faces().len()
+    );
+}
+
 fn profile(layers: u32) -> SliceProfile {
     SliceProfile::new(
         BuildVolume::new(100.0, 100.0, 100.0).unwrap(),

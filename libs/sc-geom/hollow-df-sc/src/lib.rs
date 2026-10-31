@@ -239,7 +239,7 @@ pub enum WorldSolidArea {
     },
 }
 
-/// Preview (fast, visual) or apply (printable).
+/// Preview (the cavity, as apply builds it) or apply (printable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HollowKind {
     Preview,
@@ -250,7 +250,7 @@ pub enum HollowKind {
 pub struct HollowRequest {
     pub kind: HollowKind,
     pub grid: GridRequest,
-    /// Wall, fill and smoothing. Its `solid_areas` are ignored: use
+    /// Wall and fill. Its `solid_areas` are ignored: use
     /// [`HollowRequest::solid_areas`].
     pub settings: HollowSettings,
     pub solid_areas: Vec<WorldSolidArea>,

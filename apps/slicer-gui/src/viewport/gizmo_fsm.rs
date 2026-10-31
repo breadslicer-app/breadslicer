@@ -18,7 +18,6 @@ use sc_mesh_core::transform::Transform3D;
 use sc_scene::NodeId;
 
 use crate::PointerModifiers;
-use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
 use crate::mesh_render::{GizmoHover, default_fov_y};
@@ -28,9 +27,7 @@ use crate::scene_document::{SceneDocument, SceneEdit};
 use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
 };
-use super::translation_clamp::clamp_translate_edit;
 use super::types::{ScreenPoint, ViewportSize};
-use crate::gizmo::axis::Axis;
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
 pub(super) struct StartCtx<'a> {
@@ -49,10 +46,6 @@ pub(super) struct MoveCtx<'a> {
     pub(super) viewport: Option<ViewportSize>,
     pub(super) cursor: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
-    /// Build envelope used by the post-move clamp on translate drags (rotate /
-    /// scale drags ignore it). Carried by value since `BuildVolume` is `Copy`
-    /// and small.
-    pub(super) build_volume: BuildVolume,
 }
 
 /// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same shape as
@@ -297,22 +290,11 @@ impl GizmoFsm {
             return false;
         };
 
-        // Explicit Z motion stays free. XY keeps the existing envelope policy;
-        // rotation/scale receive only a floor lift, in the same undoable edit.
-        let new_transform = if matches!(new_op, DragOp::Translate { axis: Axis::Z, .. }) {
+        // Translation is free, also out of the plate: the out-of-volume
+        // warning marks it instead of holding it back. Rotation and scale
+        // receive only a floor lift, in the same undoable edit.
+        let new_transform = if matches!(new_op, DragOp::Translate { .. }) {
             new_transform
-        } else if matches!(new_op, DragOp::Translate { .. }) {
-            ctx.document
-                .with_scene(|spatial| {
-                    clamp_translate_edit(
-                        spatial,
-                        node_id,
-                        original,
-                        new_transform,
-                        ctx.build_volume,
-                    )
-                })
-                .unwrap_or(new_transform)
         } else {
             ctx.document
                 .with_scene(|spatial| {
