@@ -5,9 +5,9 @@
 
 use std::io::Cursor;
 
-use sc_print_primitives::{AaLevel, Mirror, PanelRotation};
-use sc_sla_formats::AnycubicZipVariant;
+use sc_print_primitives::{AaLevel, Mirror, PanelRotation, PositiveFiniteSec};
 use sc_sla_formats::layer_images::PLACEHOLDER_GREY;
+use sc_sla_formats::{AnycubicZipVariant, PrintProgram};
 
 use super::*;
 use crate::read::read_anycubic_zip;
@@ -104,11 +104,18 @@ fn the_machine_block_names_the_panel_and_the_variant() {
         assert_eq!(machine["print_xsize"], 10);
         assert_eq!(machine["print_ysize"], 7.5);
         assert_eq!(machine["raster_antialiasing"], 4);
-        assert_eq!(
-            file.settings["machine_extern"]["picture"],
+        assert_eq!(machine["raster_segments_capacity"], 100_000);
+        let picture = if variant == AnycubicZipVariant::Pwsz {
+            "Anycubic_Photon_Mono_M7Pro.png"
+        } else {
             "AnycubicPhotonMonoM7Pro.png"
-        );
+        };
+        assert_eq!(file.settings["machine_extern"]["picture"], picture);
     }
+    // The machine's raster figures do not follow the print's anti-aliasing.
+    let file =
+        read_anycubic_zip(Cursor::new(written(AnycubicZipVariant::Pwsz, AaLevel::Off))).unwrap();
+    assert_eq!(file.settings["machine_type"]["raster_antialiasing"], 4);
 }
 
 #[test]
@@ -132,15 +139,127 @@ fn the_active_resin_carries_the_print_settings() {
     assert_eq!(slice["zup_speed"], 1.5);
     assert_eq!(slice["zdown_speed"], 2.5);
     assert_eq!(slice["use_indivi_layerpara"], 0);
+    // A travel in one stage is written in 2 at the same speeds, 3 mm first,
+    // as the files that finish on the machine carry it (#309).
     let stages = &resin["slice_extpara"]["multi_state_paras"];
-    assert_eq!(stages["bott_0"]["height"], 7);
+    assert_eq!(resin["slice_extpara"]["multi_state_used"], 1);
+    assert_eq!(stages["bott_0"]["height"], 3);
+    assert_eq!(stages["bott_1"]["height"], 4);
     assert_eq!(stages["bott_0"]["up_speed"], 1);
+    assert_eq!(stages["bott_1"]["up_speed"], 1);
+    assert_eq!(stages["normal_0"]["height"], 3);
+    assert_eq!(stages["normal_1"]["height"], 3);
     assert_eq!(stages["normal_0"]["down_speed"], 2.5);
-    assert_eq!(stages["normal_1"]["height"], 0);
-    assert_eq!(resin["slice_extpara"]["multi_state_used"], 0);
+    assert_eq!(stages["normal_1"]["down_speed"], 2.5);
+    assert_eq!(resin["slice_extpara"]["intelli_mode"], 1);
     // The factory resin keeps Anycubic's own defaults.
-    let factory = &file.settings["machine_extern"]["factory_resins"][0]["slicepara"];
-    assert_eq!(factory["bott_time"], 30);
+    let factory = &file.settings["machine_extern"]["factory_resins"][0];
+    assert_eq!(factory["slicepara"]["bott_time"], 30);
+    assert_eq!(factory["slice_extpara"]["intelli_mode"], 1);
+    // The curve per temperature in the factory order: 25 °C first.
+    let curve = &resin["depth_penetration_curve"]["temperature_coefficients"];
+    let temperatures: Vec<f64> = curve
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["temperature"].as_f64().unwrap())
+        .collect();
+    assert_eq!(temperatures, [25.0, 10.0, 55.0, 35.0, 45.0]);
+    assert_eq!(curve[0]["x_coefficient"], 197.78);
+    let planner = &file.settings["machine_extern"]["firmware_calc_print_time_paras"]["MACHINE_MINIMUM_PLANNER_SPEED"];
+    assert_eq!(planner.as_f64(), Some(0.05));
+}
+
+/// The fixture's program with a 3-layer transition ramp from the bottom
+/// exposure to the normal one, as the slicer steps it.
+fn ramped_program(layers: usize) -> PrintProgram {
+    let mut program = program(
+        "Photon Mono M7 Pro",
+        raster(AaLevel::Off, Mirror::default()),
+        layers,
+    );
+    program.transition_layer_count = 3;
+    let (bottom, normal) = (35.0, 2.5);
+    for step in 1..=3 {
+        let exposure = bottom + (normal - bottom) * f64::from(step) / 4.0;
+        program.layers[1 + step as usize].exposure_sec = PositiveFiniteSec::new(exposure).unwrap();
+    }
+    program
+}
+
+fn written_program(program: &PrintProgram) -> crate::read::AnycubicZipFile {
+    let mut out = Cursor::new(Vec::new());
+    write_file(
+        AnycubicZipVariant::Pwsz,
+        program,
+        None,
+        &stack(program.layers.len()),
+        &mut out,
+    )
+    .unwrap();
+    read_anycubic_zip(Cursor::new(out.into_inner())).unwrap()
+}
+
+fn listed_exposures(file: &crate::read::AnycubicZipFile) -> Vec<f64> {
+    file.layers_manifest["paras"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|layer| layer["exposure_time"].as_f64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_transition_ramp_is_left_to_the_machine() {
+    // #309: the files that finish on the machine keep the per-layer list off
+    // and list the bottom and normal exposures; the machine ramps the
+    // transition layers from `transition_layercount`.
+    let file = written_program(&ramped_program(7));
+    let resin = &file.settings["machine_extern"]["user_resins"][0];
+    assert_eq!(resin["slicepara"]["use_indivi_layerpara"], 0);
+    assert_eq!(resin["slice_extpara"]["transition_layercount"], 3);
+    assert_eq!(
+        listed_exposures(&file),
+        [35.0, 35.0, 2.5, 2.5, 2.5, 2.5, 2.5]
+    );
+}
+
+#[test]
+fn a_layer_off_the_ramp_turns_the_per_layer_list_on() {
+    let mut program = ramped_program(7);
+    program.layers[6].exposure_sec = PositiveFiniteSec::new(4.0).unwrap();
+    let file = written_program(&program);
+    let resin = &file.settings["machine_extern"]["user_resins"][0];
+    assert_eq!(resin["slicepara"]["use_indivi_layerpara"], 1);
+    assert_eq!(
+        listed_exposures(&file),
+        [35.0, 35.0, 26.88, 18.75, 10.63, 2.5, 4.0]
+    );
+}
+
+#[test]
+fn every_entry_carries_a_data_descriptor() {
+    // As the files that finish on the machine: flag 8 on every entry.
+    let bytes = written(AnycubicZipVariant::Pwsz, AaLevel::Off);
+    let end = bytes
+        .windows(4)
+        .rposition(|window| window == b"PK")
+        .unwrap();
+    let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+    let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let count = usize::from(u16_at(end + 10));
+    let mut at = u32_at(end + 16) as usize;
+    for _ in 0..count {
+        assert_eq!(&bytes[at..at + 4], b"PK");
+        let flags = u16_at(at + 8);
+        let local = u32_at(at + 42) as usize;
+        assert_eq!(flags & 8, 8);
+        assert_eq!(u16_at(local + 6) & 8, 8);
+        at += 46
+            + usize::from(u16_at(at + 28))
+            + usize::from(u16_at(at + 30))
+            + usize::from(u16_at(at + 32));
+    }
 }
 
 #[test]
@@ -179,6 +298,13 @@ fn the_layer_list_and_the_scene_follow_the_program() {
     assert!((last.top_mm - 0.3).abs() < 1e-6);
     assert_eq!(last.outline_count, 2);
     assert!(last.area_mm2 > 10.0 && last.area_mm2 < 30.0, "{last:?}");
+    // The field after the outline count stays 0, as the machine's own files
+    // leave it (#309).
+    assert!(
+        file.scene_layers
+            .iter()
+            .all(|layer| layer.largest_outline_mm2 == 0.0)
+    );
     // Every lit pixel sits inside the plate.
     let [left, top, right, bottom] = last.bounds_mm;
     assert!(left >= -5.0 && right <= 5.0 && left < right);

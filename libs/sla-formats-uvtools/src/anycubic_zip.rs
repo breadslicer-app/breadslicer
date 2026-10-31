@@ -42,7 +42,6 @@
 
 use std::io::{self, Write};
 
-use sc_print_primitives::AaLevel;
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::layer_images::write_layer_images;
 use sc_sla_formats::{
@@ -52,11 +51,12 @@ use sc_sla_formats::{
 use serde::{Serialize, Serializer};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
+use zip::write::StreamWriter;
 
 use crate::layer_stats::{ContourStats, LayerStats, PixelRect};
 use crate::program::{
     ProgramSummary, StageSettings, mm_per_sec, round_away, round_display, round_height, slabs,
-    uses_per_layer_settings,
+    uses_per_layer_list,
 };
 use crate::pw0;
 use crate::resample::{downscale, png_bytes};
@@ -101,6 +101,13 @@ const RAW_VOLUME_TO_MILLILITERS: f32 = 0.0011;
 
 /// The name of the resin the file activates.
 const ACTIVE_RESIN: &str = "default_resin";
+
+/// `intelli_mode` as the files that finish on the machine carry it (#309).
+const INTELLI_MODE: u8 = 1;
+
+/// The first stage of a travel written in one stage, as the files that finish
+/// on the machine split it (#309).
+const FIRST_STAGE_MM: f32 = 3.0;
 
 /// Where a layer image lives in the archive.
 pub(crate) fn layer_entry(index: usize) -> String {
@@ -441,7 +448,7 @@ fn factory_resin() -> Resin {
                 normal_1: MultiStateParas::new(5.0, 6.0, 6.0),
             },
             exposure_compensate: Num(0.0),
-            intelli_mode: 0,
+            intelli_mode: INTELLI_MODE,
             max_acceleration: Num(2.0),
             separate_support_exposure_delayed: Num(0.0),
             material_scale_coeffs: [],
@@ -492,13 +499,15 @@ fn resin_property() -> ResinProperty {
     }
 }
 
+/// The resin's curve per temperature, in the order Anycubic's own files list
+/// it: 25 °C first, the curve `current_tempcurve_selector` 0 picks.
 fn depth_penetration_curve() -> DepthPenetrationCurve {
     let coefficients = [
-        (10.0, 184.27, 1675.80),
         (25.0, 197.78, 1803.20),
+        (10.0, 184.27, 1675.80),
+        (55.0, 166.76, 1474.10),
         (35.0, 161.19, 1417.30),
         (45.0, 167.31, 1480.90),
-        (55.0, 166.76, 1474.10),
     ];
     DepthPenetrationCurve {
         zthick_min: Num(0.01),
@@ -531,10 +540,20 @@ fn first_stage(stage: &StageSettings) -> MultiStateParas {
     stage_paras(stage.lift_mm, stage.lift_mm_min, stage.retract_mm_min)
 }
 
-fn second_stage(stage: &StageSettings) -> MultiStateParas {
+/// Both stages of a group's travel. A travel in one stage is written in 2 at
+/// the same speeds, as the files that finish on the machine carry it (#309):
+/// [`FIRST_STAGE_MM`] first, or half when the travel is shorter, and the rest.
+fn stages(stage: &StageSettings) -> (MultiStateParas, MultiStateParas) {
     match stage.second_stage {
-        Some((height, lift, retract)) => stage_paras(height, lift, retract),
-        None => MultiStateParas::new(0.0, 0.0, 0.0),
+        Some((height, lift, retract)) => (first_stage(stage), stage_paras(height, lift, retract)),
+        None => {
+            let total = round_away(stage.lift_mm, 2);
+            let first = round_away((total / 2.0).min(FIRST_STAGE_MM), 2);
+            (
+                stage_paras(first, stage.lift_mm_min, stage.retract_mm_min),
+                stage_paras(total - first, stage.lift_mm_min, stage.retract_mm_min),
+            )
+        }
     }
 }
 
@@ -542,16 +561,17 @@ fn second_stage(stage: &StageSettings) -> MultiStateParas {
 fn user_resin(program: &PrintProgram) -> Resin {
     let summary = ProgramSummary::of(program);
     let (bottom, normal) = (&summary.bottom, &summary.normal);
-    let two_stage = bottom.second_stage.is_some() || normal.second_stage.is_some();
     let mut resin = factory_resin();
-    resin.slice_extpara.multi_state_used = u8::from(two_stage);
+    resin.slice_extpara.multi_state_used = 1;
     resin.slice_extpara.transition_layercount =
         u16::try_from(program.transition_layer_count).unwrap_or(u16::MAX);
+    let (bott_0, bott_1) = stages(bottom);
+    let (normal_0, normal_1) = stages(normal);
     resin.slice_extpara.multi_state_paras = MultiStates {
-        bott_0: first_stage(bottom),
-        bott_1: second_stage(bottom),
-        normal_0: first_stage(normal),
-        normal_1: second_stage(normal),
+        bott_0,
+        bott_1,
+        normal_0,
+        normal_1,
     };
     let bottom_exposure = round_away(bottom.exposure_sec, 2);
     resin.slicepara = SlicePara {
@@ -566,9 +586,7 @@ fn user_resin(program: &PrintProgram) -> Resin {
         wait_before_lift: Num(round_away(normal.wait_after_cure_sec, 2)),
         gray_level: 0,
         off_time: Num(round_away(normal.wait_before_cure_sec, 2)),
-        use_indivi_layerpara: Num(f32::from(u8::from(uses_per_layer_settings(
-            program, &summary,
-        )))),
+        use_indivi_layerpara: Num(f32::from(u8::from(uses_per_layer_list(program, &summary)))),
         use_random_erode: 0,
         zthick: Num(round_height(program.layer_height_mm.value() as f32)),
         zup_height: Num(round_height(
@@ -597,6 +615,15 @@ fn anycubic_machine_name(machine_name: &str) -> String {
     }
 }
 
+/// The machine's picture: the M7 Pro's as Anycubic's own files name it, and for
+/// the others the name without spaces, as UVtools writes it.
+fn machine_picture(variant: AnycubicZipVariant, name: &str) -> String {
+    match variant {
+        AnycubicZipVariant::Pwsz => "Anycubic_Photon_Mono_M7Pro.png".to_owned(),
+        _ => format!("{}.png", name.replace(' ', "")),
+    }
+}
+
 fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> SettingsManifest {
     let resolution = program.raster.panel_resolution();
     let plate = program.raster.build_volume();
@@ -604,12 +631,6 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
     let display_x = round_display(panel_x_mm as f32);
     let display_y = round_display(panel_y_mm as f32);
     let name = anycubic_machine_name(program.machine_name.as_str());
-    let raster_antialiasing = match program.raster.aa() {
-        AaLevel::Off => 1,
-        AaLevel::X2 => 2,
-        AaLevel::X4 => 4,
-        AaLevel::X8 => 8,
-    };
     SettingsManifest {
         version: "3",
         machine_type: MachineType {
@@ -640,8 +661,10 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
             }],
             prev2_back_color: nums([0.08, 0.11, 0.16]),
             prev2_image_size: [MIDDLE_PREVIEW_SIZE.width, MIDDLE_PREVIEW_SIZE.height],
-            raster_segments_capacity: 0,
-            raster_antialiasing,
+            // The machine's own figures, whatever the print's anti-aliasing
+            // (that one is the resin's `anti_count`).
+            raster_segments_capacity: 100_000,
+            raster_antialiasing: 4,
             cloudprev_back_color: nums([0.0, 0.28, 0.39]),
             cloudprev_imag_size: [PREVIEW_SIZES.large.width, PREVIEW_SIZES.large.height],
             print_platform_zheights: nums([0.0]),
@@ -649,7 +672,7 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
         machine_extern: MachineExtern {
             version: "3",
             alias: name.clone(),
-            picture: format!("{}.png", name.replace(' ', "")),
+            picture: machine_picture(variant, &name),
             cloud_property: 0,
             device_cn_code: "",
             factory_resins: vec![factory_resin()],
@@ -668,7 +691,7 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
                 MACHINE_MAX_ACCELERATION: nums([1000.0, 1000.0, 160.0, 1000.0]),
                 MACHINE_MAX_FEEDRATE: nums([200.0, 200.0, 20.0, 45.0]),
                 MACHINE_MAX_STEP_FREQUENCY: Num(256_000.0),
-                MACHINE_MINIMUM_PLANNER_SPEED: Num(0.5),
+                MACHINE_MINIMUM_PLANNER_SPEED: Num(0.05),
                 MACHINE_NOR_LAYER_DOWN_HEIGHT_DIV: Num(0.25),
                 MACHINE_NOR_LAYER_DOWN_SPEED_DIV: Num(0.5),
                 MACHINE_NOR_LAYER_UP_HEIGHT_DIV: Num(0.25),
@@ -694,7 +717,14 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
     }
 }
 
+/// Each layer's exposure, height, thickness and first lift. Unless a layer
+/// departs from the bottom, transition and normal settings, the list carries
+/// the bottom exposure on the bottom layers and the normal one on the rest, as
+/// the machine's own files do: the machine ramps the transition layers itself
+/// from `transition_layercount` (#309).
 fn layers_manifest(program: &PrintProgram) -> LayersControllerManifest {
+    let summary = ProgramSummary::of(program);
+    let per_layer = uses_per_layer_list(program, &summary);
     let mut min_height = 0.0_f32;
     let paras = program
         .layers
@@ -703,8 +733,15 @@ fn layers_manifest(program: &PrintProgram) -> LayersControllerManifest {
         .enumerate()
         .map(|(index, (layer, (thickness, _)))| {
             let thickness = round_height(thickness);
+            let exposure = if per_layer {
+                layer.exposure_sec.value() as f32
+            } else if (index as u32) < program.bottom_layer_count {
+                summary.bottom.exposure_sec
+            } else {
+                summary.normal.exposure_sec
+            };
             let manifest = LayerManifest {
-                exposure_time: Num(round_away(layer.exposure_sec.value() as f32, 2)),
+                exposure_time: Num(round_away(exposure, 2)),
                 layer_index: index as u32,
                 layer_minheight: Num(round_height(min_height)),
                 layer_thickness: Num(thickness),
@@ -857,7 +894,6 @@ struct LayerFigures {
     area_mm2: f32,
     bounds: Option<PixelRect>,
     outline_count: u32,
-    largest_solid_mm2: f32,
 }
 
 fn write_f32(out: &mut Vec<u8>, value: f32) {
@@ -917,7 +953,8 @@ fn scene_file(program: &PrintProgram, display: &Display, layers: &[LayerFigures]
         write_f32(&mut out, right);
         write_f32(&mut out, bottom);
         write_u32(&mut out, layer.outline_count);
-        write_f32(&mut out, round_away(layer.largest_solid_mm2, 4));
+        // The largest outline's area: the machine's own files leave it 0.
+        write_f32(&mut out, 0.0);
         out.extend(std::iter::repeat_n(0, 8 * 4));
     }
     out.extend_from_slice(b"--->");
@@ -1039,8 +1076,10 @@ pub fn write_file(
     let contour_stats: Vec<ContourStats> = stack.layers().iter().map(ContourStats::of).collect();
 
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let mut zip = ZipWriter::new(out);
-    let entry = |zip: &mut ZipWriter<&mut dyn PrinterFileSink>,
+    // Written as a stream, each entry followed by its data descriptor (flag
+    // 8), as the machine's own files are.
+    let mut zip = ZipWriter::new_stream(out);
+    let entry = |zip: &mut ZipWriter<StreamWriter<&mut dyn PrinterFileSink>>,
                  name: &str,
                  bytes: &[u8]|
      -> Result<(), WriteFailure> {
@@ -1099,7 +1138,6 @@ pub fn write_file(
                 outline_count: contours
                     .outline_count
                     .max(u32::from(stats.bounds.is_some())),
-                largest_solid_mm2: contours.largest_solid_mm2 as f32,
             });
             Ok(())
         },

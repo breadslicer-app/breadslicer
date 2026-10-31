@@ -134,6 +134,35 @@ pub(crate) fn uses_per_layer_settings(program: &PrintProgram, summary: &ProgramS
     })
 }
 
+/// Reports whether a layer departs from what the bottom, transition and normal
+/// settings give it, so the file must ask the machine to read the per-layer
+/// list. The transition layers step linearly from the bottom exposure to the
+/// normal one over `transition_layer_count + 1` steps, as the machine ramps
+/// them itself; a layer within a hundredth of a second of that counts as
+/// following it. UVtools decides the flag the same way.
+pub(crate) fn uses_per_layer_list(program: &PrintProgram, summary: &ProgramSummary) -> bool {
+    let (bottom, normal) = (&summary.bottom, &summary.normal);
+    let bottom_count = program.bottom_layer_count;
+    let steps = program.transition_layer_count as f32 + 1.0;
+    program.layers.iter().enumerate().any(|(index, layer)| {
+        let index = index as u32;
+        let (group, exposure) = if index < bottom_count {
+            (bottom, bottom.exposure_sec)
+        } else if index - bottom_count < program.transition_layer_count {
+            let step = (index - bottom_count + 1) as f32;
+            let ramp =
+                bottom.exposure_sec + (normal.exposure_sec - bottom.exposure_sec) * step / steps;
+            (normal, ramp)
+        } else {
+            (normal, normal.exposure_sec)
+        };
+        let this = StageSettings::of(Some(layer));
+        (this.exposure_sec - exposure).abs() > 0.01
+            || this.lift_mm != group.lift_mm
+            || this.lift_mm_min != group.lift_mm_min
+    })
+}
+
 /// Above this, .NET leaves a float as it is when asked to round it.
 const SINGLE_ROUND_LIMIT: f32 = 1.0e8;
 
