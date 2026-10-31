@@ -184,8 +184,43 @@ pub fn is_edge_manifold(mesh: &IndexedMesh) -> bool {
     edge_manifold_defects(mesh).is_clean()
 }
 
-/// Edge-connected components (shells) of `mesh`, as one label per face,
-/// numbered `0..count` in order of each shell's first face.
+/// Components of `mesh` joined through shared edges, as one label per face,
+/// numbered `0..count` in order of each component's first face. Unlike
+/// [`face_shells`], faces that only share a vertex stay apart: two closed
+/// tubes welded at one point are two components.
+pub fn edge_components(mesh: &IndexedMesh) -> (Vec<u32>, usize) {
+    fn find(parent: &mut [u32], mut i: u32) -> u32 {
+        while parent[i as usize] != i {
+            parent[i as usize] = parent[parent[i as usize] as usize];
+            i = parent[i as usize];
+        }
+        i
+    }
+    let mut parent: Vec<u32> = (0..mesh.triangles.len() as u32).collect();
+    let mut first_face: AHashMap<EdgeKey, u32> =
+        AHashMap::with_capacity_and_hasher(mesh.triangles.len() * 2, edge_hasher());
+    for (f, tri) in mesh.triangles.iter().enumerate() {
+        let f = f as u32;
+        for (u, v) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            let other = *first_face.entry(edge_key(u, v)).or_insert(f);
+            let (a, b) = (find(&mut parent, f), find(&mut parent, other));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    let mut label_of_root: AHashMap<u32, u32> = AHashMap::new();
+    let mut labels = Vec::with_capacity(mesh.triangles.len());
+    for f in 0..mesh.triangles.len() as u32 {
+        let root = find(&mut parent, f);
+        let next = label_of_root.len() as u32;
+        labels.push(*label_of_root.entry(root).or_insert(next));
+    }
+    (labels, label_of_root.len())
+}
+
+/// Components (shells) of `mesh` joined through shared vertices, as one
+/// label per face, numbered `0..count` in order of each shell's first face.
 pub fn face_shells(mesh: &IndexedMesh) -> (Vec<u32>, usize) {
     fn find(parent: &mut [u32], mut i: u32) -> u32 {
         while parent[i as usize] != i {
