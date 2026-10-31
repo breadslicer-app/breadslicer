@@ -23,6 +23,23 @@ export component Icon inherits Path {
     fill: transparent;
 }
 
+// The triangle beside a toggle that shows and hides more: pointing right
+// when closed, down when open. Drawn as a path, so it does not depend on the
+// font having the glyphs (a font without them draws a box).
+export component DisclosureChevron inherits Path {
+    in property <bool> open;
+    in property <brush> color: Theme.text-soft;
+    in property <length> size: 10px;
+    width: self.size;
+    height: self.size;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    fill: self.color;
+    stroke: transparent;
+    commands: self.open ? "M 1 3 L 9 3 L 5 8 Z" : "M 3 1 L 8 5 L 3 9 Z";
+    accessible-role: none;
+}
+
 export enum ButtonKind { normal, primary, ghost }
 
 export component ScButton inherits Rectangle {

@@ -1148,6 +1148,50 @@ mod message_layer_tests {
         })
     }
 
+    /// Opens a notice whose details are 1 short line, in a main window of the
+    /// main window's least size, clicks "Show details" and reads the card.
+    fn open_short_details() -> crate::test_support::message_cards::OpenDetails {
+        on_fresh_slint_thread(|| {
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let (_l, ui, manager) = attached(&bus);
+            ui.window().set_size(slint::PhysicalSize::new(960, 560));
+            ui.show().expect("the headless platform shows the window");
+            manager.show_info(|| InfoTexts {
+                heading: "Mesh repair".into(),
+                message: "1 mesh repaired.".into(),
+                details: "• welded 1 vertex of a crack".into(),
+            });
+            crate::test_support::message_cards::open_details(ui.window())
+        })
+    }
+
+    /// The toggle's chevron is drawn, not a glyph the font may lack (#251; a
+    /// missing glyph draws a box): open, it is a small filled triangle that
+    /// points down, before the toggle's text.
+    #[test]
+    fn the_details_toggle_draws_its_chevron() {
+        let card = open_short_details();
+        assert!(card.chevron_pixels >= 8, "{card:?}");
+        assert!((4..=12).contains(&card.chevron_width), "{card:?}");
+        let rows = &card.chevron_rows;
+        assert!(rows.len() >= 3, "{card:?}");
+        assert!(rows.iter().all(|&(_, gap)| !gap), "filled: {card:?}");
+        assert!(
+            rows.windows(2).all(|pair| pair[1].0 <= pair[0].0),
+            "narrower downward: {card:?}"
+        );
+        assert!(rows[0].0 >= rows[rows.len() - 1].0 + 2, "{card:?}");
+    }
+
+    /// The details wrap at the card's width, not at the width of the summary
+    /// above them: a short line stays on 1 line (#251).
+    #[test]
+    fn short_details_stay_on_1_line_at_the_card_width() {
+        let card = open_short_details();
+        assert_eq!(card.detail_lines, 1, "{card:?}");
+        assert!(card.detail_width > 100, "{card:?}");
+    }
+
     /// The card with the most text holds its buttons.
     #[test]
     fn the_diagnostics_card_holds_its_buttons() {

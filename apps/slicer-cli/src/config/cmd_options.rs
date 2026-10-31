@@ -100,6 +100,8 @@ pub(crate) enum CmdOptions {
         fix_zero_length_edges: bool,
         fix_flipped_faces: bool,
         fix_collinear_faces: bool,
+        fix_non_manifold_edges: bool,
+        fix_holes: bool,
     },
     Help,
     Inspect {},
@@ -231,6 +233,20 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .adjacent()
         .fallback(RepairPasses::default_repair().collinear_faces);
 
+    let fix_non_manifold_edges = long("fix-non-manifold-edges")
+        .help(
+            "Separates parts that touch at an edge or a vertex (edges shared by more than 2 faces)",
+        )
+        .argument::<bool>("FIX_NON_MANIFOLD_EDGES")
+        .adjacent()
+        .fallback(RepairPasses::default_repair().non_manifold_edges);
+
+    let fix_holes = long("fix-holes")
+        .help("Welds open boundaries and fills holes")
+        .argument::<bool>("FIX_HOLES")
+        .adjacent()
+        .fallback(RepairPasses::default_repair().holes);
+
     construct!(CmdOptions::Fix {
         source,
         source_format,
@@ -239,6 +255,8 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         fix_zero_length_edges,
         fix_flipped_faces,
         fix_collinear_faces,
+        fix_non_manifold_edges,
+        fix_holes,
     })
 }
 
@@ -359,7 +377,7 @@ fn get_plate_options() -> impl Parser<PlateOptions> {
 
     let repair = long("repair")
         .help(
-            "Repair the loaded mesh before slicing, using the same defaults as the `fix` subcommand (zero-length-edge removal and flipped-face correction enabled). Pre-existing problems that the enabled passes cannot address still propagate as a slicer validation error.",
+            "Repair the loaded mesh before slicing, using the same defaults as the `fix` subcommand (every repair pass enabled, holes and parts that touch at an edge included). Pre-existing problems that the enabled passes cannot address still propagate as a slicer validation error.",
         )
         .switch();
 

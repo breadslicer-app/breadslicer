@@ -5,14 +5,14 @@
 
 //! Scene-wide repair driver: runs the per-mesh repair policy over every stored
 //! mesh (the [`Scene::mesh_targets`] walk) and reports a per-target outcome,
-//! with no global abort. Each target is assessed through a shared borrow first;
-//! storage shared through `Arc`s is forked only for meshes that receive work,
-//! so clean and refused targets keep their pointer identity (callers can
-//! compare pointers to learn what changed).
+//! with no global abort. Each target is repaired as a copy, through a shared
+//! borrow; storage shared through `Arc`s is replaced only for meshes the run
+//! changed, so clean, refused and unchanged targets keep their pointer identity
+//! (callers can compare pointers to learn what changed).
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
-use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, RepairEnd, assess_repair};
+use sc_mesh_core::indexed_mesh::repair::repaired_copy;
 use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairPasses};
 
 /// Everything a repair run did, and did not do, to 1 stored mesh.
@@ -42,22 +42,13 @@ impl Scene {
                 // total.
                 continue;
             };
-            let report = match assess_repair(mesh, passes) {
-                RepairAssessment::Clean(state) => MeshRepairReport {
-                    fixes: Vec::new(),
-                    end: RepairEnd::Completed(state),
-                },
-                RepairAssessment::Refused(refusal) => MeshRepairReport {
-                    fixes: Vec::new(),
-                    end: RepairEnd::Refused(refusal),
-                },
-                RepairAssessment::Work => {
-                    let Some(mesh) = self.target_mesh_mut(target) else {
-                        continue;
-                    };
-                    mesh.repair(passes)
-                }
-            };
+            let (report, repaired) = repaired_copy(mesh, passes);
+            if let Some(repaired) = repaired {
+                let Some(mesh) = self.target_mesh_mut(target) else {
+                    continue;
+                };
+                *mesh = repaired;
+            }
             outcomes.push(SceneRepairOutcome { target, report });
         }
         outcomes
@@ -70,7 +61,7 @@ mod scene_repair_tests {
 
     use super::*;
     use crate::node::{LeafPayload, NodeId};
-    use sc_mesh_core::indexed_mesh::repair::MeshStateAfterRepair;
+    use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
     use sc_mesh_core::indexed_mesh::{IndexedMesh, RepairRefusal};
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
@@ -183,6 +174,7 @@ mod scene_repair_tests {
         let closed = RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         });
         assert_eq!(outcomes.len(), 3);
         assert_eq!(outcomes[0].target, MeshTarget::Resource(rid));
@@ -257,7 +249,8 @@ mod scene_repair_tests {
         ));
     }
 
-    /// Pins that a hole is a verdict, not a refusal, and does not fork.
+    /// Pins that a hole too large to fill (the strip is a flat plate) is a
+    /// verdict, not a refusal, and does not fork.
     #[test]
     fn a_holed_target_reports_false_verdict_without_work() {
         let mut graph = Scene::new();
@@ -275,6 +268,7 @@ mod scene_repair_tests {
                 end: RepairEnd::Completed(MeshStateAfterRepair {
                     edge_manifold: false,
                     zero_area_face_count: 0,
+                    holes_left_open: 1,
                 }),
             }
         );
@@ -300,6 +294,7 @@ mod scene_repair_tests {
                 end: RepairEnd::Completed(MeshStateAfterRepair {
                     edge_manifold: true,
                     zero_area_face_count: 1,
+                    holes_left_open: 0,
                 }),
             }
         );
