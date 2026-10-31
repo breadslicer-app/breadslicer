@@ -36,7 +36,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_orient::{
     Cancelled, Candidate, Note, OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome,
-    Stage, turned_about_footprint,
+    Stage, kept_on_plate, turned_about_footprint,
 };
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
@@ -126,6 +126,9 @@ pub(crate) struct Target {
     world: AffineTransform3D,
     parent_inverse: Transform3D,
     revision: SceneRevision,
+    /// The plate, its corners in world X/Y: an option that would reach past
+    /// an edge is shifted back onto it.
+    plate: Option<([f64; 2], [f64; 2])>,
 }
 
 impl Target {
@@ -147,6 +150,7 @@ impl Target {
                     world: affine(&query.world_transform()),
                     parent_inverse: query.parent_world().inverse().ok()?,
                     revision,
+                    plate: None,
                 })
             })
             .flatten()
@@ -213,7 +217,8 @@ pub(crate) enum Step {
 }
 
 /// A worker's job: builds the analysis unless `cached` has it, then
-/// searches with `ctx` (when given) and works out each option's pose.
+/// searches with `ctx` (when given) and works out each option's pose: turned
+/// about the centre of its footprint, the lift kept, and kept on the plate.
 pub(crate) fn work(
     target: &Target,
     cached: Option<Arc<OrientAnalysis>>,
@@ -244,7 +249,17 @@ pub(crate) fn work(
                             .options
                             .iter()
                             .map(|c| {
-                                turned_about_footprint(&target.mesh, &target.world, &c.rotation)
+                                let turned = turned_about_footprint(
+                                    &target.mesh,
+                                    &target.world,
+                                    &c.rotation,
+                                );
+                                match target.plate {
+                                    Some((lo, hi)) => {
+                                        kept_on_plate(&target.mesh, &target.world, &turned, lo, hi)
+                                    }
+                                    None => turned,
+                                }
                             })
                             .collect();
                         Found { outcome, worlds }
@@ -513,7 +528,13 @@ impl OrientRun {
         self.start(target, Some(mode));
     }
 
-    fn start(&self, target: Target, mode: Option<SearchMode>) {
+    fn start(&self, mut target: Target, mode: Option<SearchMode>) {
+        let volume = self.ctrl.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        target.plate = Some((
+            [f64::from(lo.x), f64::from(lo.y)],
+            [f64::from(hi.x), f64::from(hi.y)],
+        ));
         let id = self.next_id.get();
         self.next_id.set(id + 1);
         let cached = self

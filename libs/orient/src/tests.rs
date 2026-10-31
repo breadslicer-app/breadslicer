@@ -571,3 +571,50 @@ fn aligning_to_the_plate_lays_the_shadow_square() {
     };
     assert!((turn_deg - 60.0).abs() < 1e-4, "{turn_deg}");
 }
+
+/// A model on the plate stays on it after a turn that would reach past an
+/// edge, moved in the plate plane by the least amount; one that was off the
+/// plate is left as turned.
+#[test]
+fn a_turn_near_the_edge_is_shifted_back_onto_the_plate() {
+    let bar = Shape::default()
+        .boxed([-30.0, -5.0, 0.0], [30.0, 5.0, 6.0], 4)
+        .mesh();
+    let (lo, hi) = ([-50.0, -40.0], [50.0, 40.0]);
+    let bounds = |t: &AffineTransform3D| {
+        bar.vertices.iter().fold(
+            ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+            |(mut a, mut b), v| {
+                let p = t.apply_to_vertex(*v).coords().map(f64::from);
+                for k in 0..3 {
+                    a[k] = a[k].min(p[k]);
+                    b[k] = b[k].max(p[k]);
+                }
+                (a, b)
+            },
+        )
+    };
+    // Along X near the +Y edge; a quarter turn stands it along Y, 62 mm up.
+    let world = AffineTransform3D::from_translation([10.0, 32.0, 0.0]);
+    let quarter = axis_angle([0.0, 0.0, 1.0], PI / 2.0);
+    let turned = turned_about_footprint(&bar, &world, &quarter);
+    let (_, b) = bounds(&turned);
+    assert!((b[1] - 62.0).abs() < 1e-3, "{b:?}");
+    let kept = kept_on_plate(&bar, &world, &turned, lo, hi);
+    let (a, b) = bounds(&kept);
+    for k in 0..2 {
+        assert!(a[k] >= lo[k] && b[k] <= hi[k], "axis {k}: {a:?} {b:?}");
+    }
+    assert!((b[1] - 40.0).abs() < 1e-2, "moved just inside: {b:?}");
+    // Only moved along Y, and only in the plate plane.
+    assert_eq!(kept.linear(), turned.linear());
+    assert_eq!(kept.translation()[0], turned.translation()[0]);
+    assert_eq!(kept.translation()[2], turned.translation()[2]);
+    // Wider than the plate along Y: that axis is left alone.
+    let narrow = kept_on_plate(&bar, &world, &turned, [-50.0, -20.0], [50.0, 37.1]);
+    assert_eq!(narrow, turned);
+    // Off the plate to begin with: left as turned.
+    let off = AffineTransform3D::from_translation([200.0, 0.0, 0.0]).compose(&world);
+    let turned_off = turned_about_footprint(&bar, &off, &quarter);
+    assert_eq!(kept_on_plate(&bar, &off, &turned_off, lo, hi), turned_off);
+}

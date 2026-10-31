@@ -58,17 +58,39 @@ struct Fixture {
     window: MainWindow,
     document: Rc<SceneDocument>,
     run: Rc<OrientRun>,
+    ctrl: Rc<ViewportController>,
     leaf: NodeId,
 }
 
 /// A window with the tipped cube selected and the Orient tool installed.
 fn fixture() -> Fixture {
+    fixture_at(tipped())
+}
+
+/// The tipped cube with its lowest corner on the plate.
+fn resting() -> Transform3D {
+    let world = affine(&tipped());
+    let lowest = cube()
+        .vertices
+        .iter()
+        .map(|v| f64::from(world.apply_to_vertex(*v).coords()[2]))
+        .fold(f64::INFINITY, f64::min);
+    Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, -lowest]).compose(&world))
+}
+
+/// A window with the cube at `pose`, selected, and the Orient tool installed.
+fn fixture_at(pose: Transform3D) -> Fixture {
+    fixture_with(cube(), pose)
+}
+
+/// A window with `mesh` at `pose`, selected, and the Orient tool installed.
+fn fixture_with(mesh: IndexedMesh, pose: Transform3D) -> Fixture {
     let window = MainWindow::new().expect("the headless platform creates a main window");
     let ctrl = Rc::new(ViewportController::new_for_test());
     let document = ctrl.document();
     let mut graph = Scene::new();
     let leaf = graph
-        .add_leaf(None, tipped(), LeafPayload::Mesh(Arc::new(cube())))
+        .add_leaf(None, pose, LeafPayload::Mesh(Arc::new(mesh)))
         .unwrap();
     graph.add_root(leaf).unwrap();
     document.install_graph(graph, PathBuf::from("cube.stl"));
@@ -80,11 +102,18 @@ fn fixture() -> Fixture {
         ctrl.dialogs(),
         ctrl.clone(),
     );
-    let run = OrientRun::install(&window, document.clone(), ctrl.dialogs(), ctrl, supports);
+    let run = OrientRun::install(
+        &window,
+        document.clone(),
+        ctrl.dialogs(),
+        ctrl.clone(),
+        supports,
+    );
     Fixture {
         window,
         document,
         run,
+        ctrl,
         leaf,
     }
 }
@@ -144,9 +173,10 @@ fn bounds(f: &Fixture) -> ([f64; 3], [f64; 3]) {
     f.document
         .with_scene(|spatial| {
             let world = affine(&spatial.leaf(f.leaf)?.world_transform());
+            let mesh = spatial.graph().leaf_mesh_arc(f.leaf)?;
             let mut lo = [f64::INFINITY; 3];
             let mut hi = [f64::NEG_INFINITY; 3];
-            for v in &cube().vertices {
+            for v in &mesh.vertices {
                 let p = world.apply_to_vertex(*v).coords().map(f64::from);
                 for k in 0..3 {
                     lo[k] = lo[k].min(p[k]);
@@ -297,6 +327,7 @@ fn a_cancelled_search_moves_nothing() {
         world: AffineTransform3D::identity(),
         parent_inverse: Transform3D::Identity,
         revision: SceneRevision::from_top_edit_id(None),
+        plate: None,
     };
     let worked = work(
         &target,
@@ -451,6 +482,7 @@ fn orient_timing() {
         world: AffineTransform3D::identity(),
         parent_inverse: Transform3D::Identity,
         revision: SceneRevision::from_top_edit_id(None),
+        plate: None,
     };
     let cancel = AtomicBool::new(false);
     for round in 0..2 {
@@ -479,6 +511,217 @@ fn orient_timing() {
                 found.outcome.keep_current,
                 found.outcome.options[0].cost.estimated_tips(),
                 found.outcome.options[0].cost.peel.peak_force_n,
+            );
+        }
+    }
+}
+
+/// The lowest point of the model, from its vertices, in world mm.
+fn lowest(f: &Fixture) -> f64 {
+    bounds(f).0[2]
+}
+
+/// The lowest point of the model as the viewport draws it: in f32, with the
+/// matrix the GPU gets (`mesh_render::scene_upload::leaf_world_box`). Below 0
+/// the plate shows the model through it.
+fn drawn_lowest(f: &Fixture) -> f32 {
+    let (world, mesh) = f
+        .document
+        .with_scene(|spatial| {
+            Some((
+                affine(&spatial.leaf(f.leaf)?.world_transform()),
+                spatial.graph().leaf_mesh_arc(f.leaf)?.clone(),
+            ))
+        })
+        .flatten()
+        .expect("the model");
+    let (l, t) = (world.linear(), world.translation());
+    let m = glam::Mat4::from_cols(
+        glam::Vec4::new(l[0][0] as f32, l[1][0] as f32, l[2][0] as f32, 0.0),
+        glam::Vec4::new(l[0][1] as f32, l[1][1] as f32, l[2][1] as f32, 0.0),
+        glam::Vec4::new(l[0][2] as f32, l[1][2] as f32, l[2][2] as f32, 0.0),
+        glam::Vec4::new(t[0] as f32, t[1] as f32, t[2] as f32, 1.0),
+    );
+    mesh.vertices
+        .iter()
+        .map(|v| m.transform_point3(glam::Vec3::from(v.coords())).z)
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// The model's box as the viewport draws it (f32, with the GPU's matrix),
+/// and whether the viewport finds it inside the build envelope: outside, it
+/// tints the model and marks the walls it crosses.
+fn drawn_inside(f: &Fixture) -> (bool, sc_mesh_core::Aabb) {
+    let (world, mesh) = f
+        .document
+        .with_scene(|spatial| {
+            Some((
+                affine(&spatial.leaf(f.leaf)?.world_transform()),
+                spatial.graph().leaf_mesh_arc(f.leaf)?.clone(),
+            ))
+        })
+        .flatten()
+        .expect("the model");
+    let (l, t) = (world.linear(), world.translation());
+    let m = glam::Mat4::from_cols(
+        glam::Vec4::new(l[0][0] as f32, l[1][0] as f32, l[2][0] as f32, 0.0),
+        glam::Vec4::new(l[0][1] as f32, l[1][1] as f32, l[2][1] as f32, 0.0),
+        glam::Vec4::new(l[0][2] as f32, l[1][2] as f32, l[2][2] as f32, 0.0),
+        glam::Vec4::new(t[0] as f32, t[1] as f32, t[2] as f32, 1.0),
+    );
+    let mut aabb = sc_mesh_core::Aabb::empty();
+    for v in &mesh.vertices {
+        let p = m.transform_point3(glam::Vec3::from(v.coords()));
+        aabb.extend(Vertex::new([p.x, p.y, p.z]));
+    }
+    (f.ctrl.build_volume().volume().contains(&aabb), aabb)
+}
+
+/// A 60 × 10 × 6 mm bar.
+fn bar() -> IndexedMesh {
+    let mut bar = sc_mesh_fixtures::unit_cube_mesh();
+    for v in &mut bar.vertices {
+        let [x, y, z] = v.as_array();
+        *v = Vertex::new([x * 60.0, y * 10.0, z * 6.0]);
+    }
+    bar
+}
+
+/// Near the edge of the plate, a turn to lie square to it, or a tilt, can
+/// reach past the edge although the model fits the plate: the options shift
+/// it back in, in the preview and once applied.
+#[test]
+fn options_near_the_edge_stay_on_the_plate() {
+    on_fresh_slint_thread(|| {
+        let probe = fixture();
+        let hi = probe.ctrl.build_volume().envelope_max_mm();
+        // Turned 60°, resting on the plate, 26 mm in from the +X edge:
+        // inside, but lying along X it would reach 4 mm past the edge.
+        let pose = Transform3D::Affine(
+            AffineTransform3D::from_translation([f64::from(hi.x) - 26.0, 0.0, 3.0])
+                .compose(&AffineTransform3D::from_rotation_z(60f64.to_radians())),
+        );
+        let f = fixture_with(bar(), pose);
+        assert!(drawn_inside(&f).0, "inside to start with");
+        f.run.on_option(2, 1.0);
+        for mode in [SearchMode::Quick, SearchMode::Full] {
+            searched(&f, mode);
+            for i in 0..options(&f) {
+                f.run.hover(i as i32, true);
+                let (inside, aabb) = drawn_inside(&f);
+                assert!(inside, "{mode:?} preview {i}: {aabb:?}");
+                assert!(lowest(&f).abs() < 1e-3, "{mode:?} preview {i} floats");
+                f.run.hover(i as i32, false);
+            }
+            f.run.pick(0);
+            assert!(f.run.apply());
+            assert!(
+                drawn_inside(&f).0,
+                "{mode:?} applied: {:?}",
+                drawn_inside(&f).1
+            );
+            drop_to_plate(&f);
+            assert!(
+                drawn_inside(&f).0,
+                "{mode:?} dropped: {:?}",
+                drawn_inside(&f).1
+            );
+            assert!(f.document.undo().unwrap());
+        }
+    });
+}
+
+/// Drop to plate on the selected model, as the Transform inspector does it.
+fn drop_to_plate(f: &Fixture) {
+    let change = f
+        .document
+        .with_scene(|spatial| {
+            let query = spatial.leaf(f.leaf)?;
+            let after = crate::viewport::numeric_transform::apply(
+                &query,
+                crate::viewport::numeric_transform::NumericEdit::DropToPlate,
+            )?;
+            Some((query.local_transform(), after))
+        })
+        .flatten()
+        .expect("Drop to plate applies");
+    let edit = SceneEdit::SetLocalTransform {
+        node_id: f.leaf,
+        before: change.0,
+        after: change.1,
+    };
+    f.document.apply_edit(edit.clone()).unwrap();
+    f.document.push_edit(edit);
+}
+
+/// Aligned to the plate, every option of a model resting on the plate keeps
+/// it on the plate: in the preview, once applied, and after Drop to plate.
+#[test]
+fn aligned_options_rest_on_the_plate() {
+    on_fresh_slint_thread(|| aligned_options_rest(fixture_at(resting())));
+}
+
+/// The same on a real model resting on the plate:
+/// `ORIENT_MODEL=<stl> cargo test -p sc-slicer-gui --release aligned_real -- --ignored`
+#[test]
+#[ignore = "needs ORIENT_MODEL, a real model"]
+fn aligned_real_model_rests_on_the_plate() {
+    let path = std::env::var("ORIENT_MODEL").expect("ORIENT_MODEL");
+    let loaded = sc_mesh_formats::load_mesh_from_path(
+        std::path::Path::new(&path),
+        None,
+        Some(sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES),
+    )
+    .expect("the model opens");
+    let mesh = sc_mesh_formats::scene_writer::flatten_graph_to_mesh(&loaded.graph)
+        .unwrap()
+        .mesh;
+    let low = mesh
+        .vertices
+        .iter()
+        .map(|v| f64::from(v.coords()[2]))
+        .fold(f64::INFINITY, f64::min);
+    let pose = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, -low]));
+    on_fresh_slint_thread(move || aligned_options_rest(fixture_with(mesh, pose)));
+}
+
+fn aligned_options_rest(f: Fixture) {
+    {
+        assert!(lowest(&f).abs() < 1e-4, "{}", lowest(&f));
+        f.run.on_option(2, 1.0);
+        assert!(f.run.settings.get().align_to_plate);
+        for mode in [SearchMode::Quick, SearchMode::Full] {
+            searched(&f, mode);
+            let count = options(&f);
+            assert_eq!(count, 3);
+            for i in 0..count {
+                f.run.hover(i as i32, true);
+                assert!(
+                    lowest(&f).abs() < 1e-3,
+                    "{mode:?} preview {i}: {}",
+                    lowest(&f)
+                );
+                assert!(
+                    drawn_lowest(&f) >= 0.0,
+                    "{mode:?} preview {i} drawn: {}",
+                    drawn_lowest(&f)
+                );
+                f.run.hover(i as i32, false);
+            }
+            f.run.pick(2);
+            assert!(f.run.apply());
+            assert!(lowest(&f).abs() < 1e-3, "{mode:?} applied: {}", lowest(&f));
+            assert!(
+                drawn_lowest(&f) >= 0.0,
+                "{mode:?} applied drawn: {}",
+                drawn_lowest(&f)
+            );
+            drop_to_plate(&f);
+            assert!(lowest(&f).abs() < 1e-3, "{mode:?} dropped: {}", lowest(&f));
+            assert!(
+                drawn_lowest(&f) >= 0.0,
+                "{mode:?} dropped drawn: {}",
+                drawn_lowest(&f)
             );
         }
     }

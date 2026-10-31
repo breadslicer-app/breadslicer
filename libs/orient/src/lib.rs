@@ -82,7 +82,7 @@ mod tests_shapes;
 pub use analysis::OrientAnalysis;
 pub use islands::{ISLAND_CLUSTER_MM, count_clustered};
 pub use peel::{LayerProfile, PeelModel, PeelSummary};
-pub use pose::{rotation_between, rotation_to_up, turned_about_footprint};
+pub use pose::{kept_on_plate, rotation_between, rotation_to_up, turned_about_footprint};
 
 use std::fmt;
 use std::str::FromStr;
