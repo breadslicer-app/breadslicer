@@ -351,8 +351,8 @@ fn offset_coincident_vertices(vertices: &mut [Vertex], faces: &[IndexedTriangle]
                     normals[i][j] += n[j];
                 }
                 for other in [(k + 1) % 3, (k + 2) % 3] {
-                    for j in 0..3 {
-                        corners[i].0[j] += points[other][j];
+                    for (sum, c) in corners[i].0.iter_mut().zip(points[other]) {
+                        *sum += c;
                     }
                     corners[i].1 += 1;
                 }
