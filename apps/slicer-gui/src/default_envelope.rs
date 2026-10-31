@@ -18,8 +18,10 @@ use crate::profile_catalog::ProfileCatalog;
 /// The plate of the app's default printer (the explicit default, else the
 /// first-run soft default), or the placeholder when the catalog does not hold
 /// that printer. It is derived at construction and again on each
-/// `DefaultPrinter` change, from the catalog in the cell at that moment; a
-/// catalog rebuild alone leaves it as it is.
+/// `DefaultPrinter` or `Profiles` change, from the catalog in the cell at that
+/// moment: saving, importing or deleting a printer profile can change the
+/// plate or the name of the default printer (#326). A catalog rebuild alone,
+/// without its `Profiles` change, leaves it as it is.
 pub(crate) struct DefaultEnvelope {
     current: Rc<Cell<BuildVolume>>,
     /// The name of the printer whose plate it is, for the plate's front tab.
@@ -44,7 +46,10 @@ impl DefaultEnvelope {
             let current = current.clone();
             let printer_name = printer_name.clone();
             move |snap, change| {
-                if *change == PreferencesChange::DefaultPrinter {
+                if matches!(
+                    change,
+                    PreferencesChange::DefaultPrinter | PreferencesChange::Profiles
+                ) {
                     let (plate, name) =
                         default_printer_plate(&catalog.borrow(), snap.default_printer.as_ref());
                     current.set(plate);
@@ -201,6 +206,47 @@ mod default_envelope_tests {
         *catalog_cell.borrow_mut() = Rc::new(catalog(OTHER_REBUILT, GENERIC_REBUILT));
 
         assert_eq!(envelope.current(), BuildVolume::new(200.0, 200.0, 200.0));
+    }
+
+    #[test]
+    fn a_profiles_change_derives_from_the_catalog_in_the_cell() {
+        // Saving the default printer's profile with another plate and name.
+        let bus = bus_with_default(Some(other_printer()));
+        let catalog_cell = cell(catalog(OTHER, GENERIC));
+        let envelope = DefaultEnvelope::new(&bus, catalog_cell.clone());
+
+        *catalog_cell.borrow_mut() = Rc::new(ProfileCatalog::from_entries(
+            vec![
+                printer_entry(generic_printer_id().clone(), "Generic", GENERIC),
+                printer_entry(other_printer(), "Alpha Pro", OTHER_REBUILT),
+            ],
+            Vec::new(),
+        ));
+        bus.update(|_| PreferencesChange::Profiles);
+
+        assert_eq!(envelope.current(), BuildVolume::new(130.0, 72.0, 160.0));
+        assert_eq!(envelope.printer_name().as_deref(), Some("Alpha Pro"));
+    }
+
+    #[test]
+    fn a_profiles_change_without_the_default_printer_falls_back() {
+        // Deleting the default printer's profile leaves the placeholder.
+        let bus = bus_with_default(Some(other_printer()));
+        let catalog_cell = cell(catalog(OTHER, GENERIC));
+        let envelope = DefaultEnvelope::new(&bus, catalog_cell.clone());
+
+        *catalog_cell.borrow_mut() = Rc::new(ProfileCatalog::from_entries(
+            vec![printer_entry(
+                generic_printer_id().clone(),
+                "Generic",
+                GENERIC,
+            )],
+            Vec::new(),
+        ));
+        bus.update(|_| PreferencesChange::Profiles);
+
+        assert_eq!(envelope.current(), NO_PRINTER_BUILD_VOLUME);
+        assert_eq!(envelope.printer_name(), None);
     }
 
     #[test]
