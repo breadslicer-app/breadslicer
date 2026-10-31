@@ -1076,6 +1076,24 @@ impl SceneDocument {
         }
     }
 
+    /// Reserves a leaf id and a mesh-resource id for each of `count` new
+    /// leaves, each to show a mesh of its own, for an edit the caller builds
+    /// (Split into bodies). Empty when no scene is loaded.
+    pub(crate) fn allocate_leaf_slots(&self, count: usize) -> Vec<(NodeId, MeshResourceId)> {
+        let mut slot = self.spatial.borrow_mut();
+        let Some(spatial) = slot.as_mut() else {
+            return Vec::new();
+        };
+        (0..count)
+            .map(|_| {
+                (
+                    spatial.allocate_unbound_node_id(),
+                    spatial.allocate_unbound_mesh_resource_id(),
+                )
+            })
+            .collect()
+    }
+
     /// Deletes the currently-selected leaf, recording the operation as 1 undo
     /// entry.
     ///

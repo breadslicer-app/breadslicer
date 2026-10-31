@@ -3308,3 +3308,51 @@ msgid "This drain does not reach the cavity, so it was left out: drilled, it wou
 msgid_plural "These drains do not reach the cavity, so they were left out: drilled, they would only bore into the model, or through it. Place them where the cavity preview shows behind the wall."
 msgstr[0] "Este drenaje no llega a la cavidad, así que se quitó: perforado, solo entraría en el modelo o lo atravesaría. Ponelo donde la vista previa de la cavidad se ve detrás de la pared."
 msgstr[1] "Estos drenajes no llegan a la cavidad, así que se quitaron: perforados, solo entrarían en el modelo o lo atravesarían. Ponelos donde la vista previa de la cavidad se ve detrás de la pared."
+
+msgctxt "MenuBar"
+msgid "Split into Bodies"
+msgstr "Separar en cuerpos"
+
+msgctxt "MenuBar"
+msgid "Keep Only This Body"
+msgstr "Quedarse solo con este cuerpo"
+
+msgctxt "SplitBodies"
+msgid "Split into bodies"
+msgstr "Separar en cuerpos"
+
+msgctxt "SplitBodies"
+msgid "Supports are not split into bodies. Select a model to split it."
+msgstr "Los soportes no se separan en cuerpos. Seleccioná un modelo para separarlo."
+
+msgctxt "SplitBodies"
+msgid "This object is a single body, so there is nothing to split."
+msgstr "Este objeto es un solo cuerpo, así que no hay nada que separar."
+
+msgctxt "SplitBodies"
+msgid "This object was hollowed as a whole, so it is not split: its hollow and drains belong to the whole object. Undo the hollow, split the object, and hollow the bodies you keep."
+msgstr "Este objeto se ahuecó entero, así que no se separa: su hueco y sus drenajes son del objeto entero. Deshacé el ahuecado, separá el objeto y ahuecá los cuerpos que te quedes."
+
+msgctxt "SplitBodies"
+msgid "{} fragments"
+msgstr "{}: fragmentos"
+
+msgctxt "SplitBodies"
+msgid "Object"
+msgstr "Objeto"
+
+msgctxt "SplitBodies"
+msgid "The supports of this object stay as they were, so the print does not change. They no longer belong to one model, so they cannot be edited by hand: generate supports for the bodies you keep to replace them."
+msgstr "Los soportes de este objeto quedan como estaban, así que la impresión no cambia. Ya no son de un solo modelo, así que no se pueden editar a mano: generá soportes para los cuerpos que te quedes y reemplazalos."
+
+msgctxt "SplitBodies"
+msgid "Split into 1 object."
+msgid_plural "Split into {n} objects."
+msgstr[0] "Separado en 1 objeto."
+msgstr[1] "Separado en {n} objetos."
+
+msgctxt "SplitBodies"
+msgid "Kept this body and removed 1 other."
+msgid_plural "Kept this body and removed {n} others."
+msgstr[0] "Quedó este cuerpo y se quitó 1 más."
+msgstr[1] "Quedó este cuerpo y se quitaron {n} más."
