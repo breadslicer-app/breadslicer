@@ -31,6 +31,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState};
 use support_gen_df::three::{Matrix4, Vec3};
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
 
+use crate::document::ModelPrint;
 use crate::shift::{PlaneMotion, bases, model_collections, move_model_supports};
 use crate::{DF_SUPPORT_MESH_NAME, SettingsRecipe, weld_parts};
 
@@ -58,6 +59,9 @@ pub struct DfSupportSession {
     /// Per model, its world mesh, built on the first edit and shared by
     /// every copy of the session.
     bvhs: Arc<[OnceLock<Arc<MeshBvh>>]>,
+    /// Per model, what tells it apart in a document, made on the first save
+    /// or comparison (a pass over every vertex) and shared by every copy.
+    prints: Arc<[OnceLock<ModelPrint>]>,
     /// Who names what among the supports, for removals: built on the first
     /// removal or its preview and kept while the state stands (a hover over
     /// the supports asks for it on every move). An edit drops it.
@@ -345,6 +349,7 @@ impl DfSupportSession {
         next_id: u64,
     ) -> Self {
         let bvhs = (0..models.len()).map(|_| OnceLock::new()).collect();
+        let prints = (0..models.len()).map(|_| OnceLock::new()).collect();
         let sdfs = (0..models.len()).map(|_| SdfSlot::default()).collect();
         DfSupportSession {
             removal_index: Arc::default(),
@@ -353,6 +358,7 @@ impl DfSupportSession {
             recipe: recipe.map(Arc::new),
             state,
             bvhs,
+            prints,
             sdfs,
             id_prefix,
             next_id,
@@ -369,6 +375,15 @@ impl DfSupportSession {
             &self.id_prefix,
             self.next_id,
         )
+    }
+
+    /// What tells each model apart in a document, in model order.
+    pub(crate) fn model_prints(&self) -> Vec<ModelPrint> {
+        self.models
+            .iter()
+            .zip(self.prints.iter())
+            .map(|(model, print)| print.get_or_init(|| ModelPrint::of(model)).clone())
+            .collect()
     }
 
     /// The support state as it now stands.
@@ -445,6 +460,15 @@ impl DfSupportSession {
                 _ => OnceLock::new(),
             })
             .collect();
+        let prints = self
+            .prints
+            .iter()
+            .enumerate()
+            .map(|(i, print)| match print.get() {
+                Some(print) if i != index => OnceLock::from(print.clone()),
+                _ => OnceLock::new(),
+            })
+            .collect();
         // Taken, as an edit borrows them: Undo back to this session builds
         // its own again.
         let sdfs = self
@@ -464,6 +488,7 @@ impl DfSupportSession {
             recipe: self.recipe.clone(),
             state,
             bvhs,
+            prints,
             removal_index: Arc::default(),
             sdfs,
             id_prefix: self.id_prefix.clone(),
@@ -489,6 +514,9 @@ impl DfSupportSession {
                 let bvh = self.bvhs[i]
                     .get()
                     .map_or_else(OnceLock::new, |bvh| OnceLock::from(bvh.clone()));
+                let print = self.prints[i]
+                    .get()
+                    .map_or_else(OnceLock::new, |print| OnceLock::from(print.clone()));
                 let sdf = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
                 DfSupportSession {
                     models: vec![model].into(),
@@ -499,6 +527,7 @@ impl DfSupportSession {
                         ..SupportState::default()
                     },
                     bvhs: vec![bvh].into(),
+                    prints: vec![print].into(),
                     removal_index: Arc::default(),
                     sdfs: vec![SdfSlot(std::sync::Mutex::new(sdf))].into(),
                     id_prefix: format!("{}.{i}", self.id_prefix),
@@ -671,7 +700,7 @@ impl DfSupportSession {
         if outcome.kind.is_none() {
             let why = outcome
                 .rejected_reason
-                .map_or_else(|| "rejected".to_owned(), |r| format!("{r:?}"));
+                .map_or_else(|| "rejected".to_owned(), |r| r.as_str().to_owned());
             return Err(EditError::NoRoute(why));
         }
         self.hand_edited = true;

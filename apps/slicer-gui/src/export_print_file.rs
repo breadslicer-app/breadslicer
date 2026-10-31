@@ -114,18 +114,20 @@ impl From<UnexportableSlice> for ExportFailure {
 /// `current` is absent while no printer or resin is chosen. The comparison is
 /// the one a Slice press makes, so anything that would re-slice also blocks the
 /// export: the contours on hand would otherwise be written under a program
-/// describing a different print. The one exception is a profile edited in
-/// place, which the gate does not read from disk: the export itself refuses
-/// layers cut with values the profiles no longer hold (#280).
+/// describing a different print. `layers_changed` covers a profile edited in
+/// place (#280): whether the profiles now resolve other values than the held
+/// layers were cut with (#296). The export itself checks again on disk.
 pub(crate) fn export_button_enabled(
     held: Option<&SliceParams>,
     current: Option<&SliceParams>,
     geometry_changed: bool,
+    layers_changed: bool,
     format_selected: bool,
 ) -> bool {
     format_selected
         && current.is_some_and(|current| {
-            decide_re_slice(held, current, geometry_changed, false) == ReSliceDecision::Unchanged
+            decide_re_slice(held, current, geometry_changed, layers_changed)
+                == ReSliceDecision::Unchanged
         })
 }
 
@@ -389,6 +391,7 @@ mod export_button_enabled_tests {
             Some(&params()),
             Some(&params()),
             false,
+            false,
             true,
         ));
     }
@@ -400,17 +403,30 @@ mod export_button_enabled_tests {
             Some(&params()),
             false,
             false,
+            false,
         ));
     }
 
     #[test]
     fn an_unsliced_scene_has_nothing_to_export() {
-        assert!(!export_button_enabled(None, Some(&params()), false, true));
+        assert!(!export_button_enabled(
+            None,
+            Some(&params()),
+            false,
+            false,
+            true
+        ));
     }
 
     #[test]
     fn without_a_printer_and_a_resin_there_is_nothing_to_compare_against() {
-        assert!(!export_button_enabled(Some(&params()), None, false, true));
+        assert!(!export_button_enabled(
+            Some(&params()),
+            None,
+            false,
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -423,6 +439,7 @@ mod export_button_enabled_tests {
             Some(&params()),
             Some(&current),
             false,
+            false,
             true,
         ));
     }
@@ -432,6 +449,20 @@ mod export_button_enabled_tests {
         assert!(!export_button_enabled(
             Some(&params()),
             Some(&params()),
+            true,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn a_profile_resolving_other_layer_values_blocks_the_export() {
+        // A resin whose scale compensation was edited and saved since the
+        // slice keeps its id: only the resolved values tell (#296).
+        assert!(!export_button_enabled(
+            Some(&params()),
+            Some(&params()),
+            false,
             true,
             true,
         ));

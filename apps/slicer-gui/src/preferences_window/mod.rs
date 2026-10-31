@@ -230,8 +230,9 @@ pub(crate) fn build_preferences_window(
     );
 
     // Rebuild every catalog-derived view (gallery, tabs, resin list) from the
-    // current catalog handle, preserving the active filter and selection.
-    // Called after each rebuild of the catalog.
+    // current catalog handle, preserving the active filter and selection, then
+    // tell the bus that the profiles changed, so the Slice panels re-check
+    // their held slices (#296). Called after each rebuild of the catalog.
     let refresh_view: Rc<dyn Fn()> = {
         let prefs_weak = prefs_weak.clone();
         let bus = bus.clone();
@@ -277,6 +278,7 @@ pub(crate) fn build_preferences_window(
                 all_cards.clone(),
                 thumbnail_paths(&catalog),
             );
+            bus.update(|_| PreferencesChange::Profiles);
         })
     };
 

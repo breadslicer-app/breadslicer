@@ -30,6 +30,9 @@ pub(crate) enum OverlayTint {
     Cavity = 3,
     /// A drain.
     Drain = 4,
+    /// A placement not known yet to work or not (a drain before the cavity
+    /// it would open into is computed): neutral, neither green nor red.
+    Pending = 5,
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

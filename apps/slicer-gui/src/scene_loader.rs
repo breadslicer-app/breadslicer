@@ -55,6 +55,7 @@ use crate::failure_gate::FailureGate;
 use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
 use crate::hollow_persist::RestoredHollows;
 use crate::i18n::ctr;
+use crate::import_notes::{ImportNotes, Notes};
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
@@ -249,6 +250,8 @@ pub(crate) struct SceneLoader {
     // flips false (the guard's drop). Behind an `Rc` so the callback can reach
     // it through a `Weak` without forming a cycle.
     progress_timer: Rc<slint::Timer>,
+    // The open scene's import notes (#301), behind the status bar's line.
+    import_notes: ImportNotes,
 }
 
 impl SceneLoader {
@@ -259,6 +262,7 @@ impl SceneLoader {
     ) -> Self {
         Self {
             ui: ui.as_weak(),
+            import_notes: ImportNotes::new(ui.as_weak(), dialogs.clone()),
             dialogs,
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
@@ -283,6 +287,7 @@ impl SceneLoader {
     pub(crate) fn new_for_test(dialogs: Rc<DialogManager>) -> Self {
         Self {
             ui: slint::Weak::default(),
+            import_notes: ImportNotes::new(slint::Weak::default(), dialogs.clone()),
             dialogs,
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
@@ -479,6 +484,13 @@ impl SceneLoader {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
         self.upload_failures.reset();
+        self.import_notes.clear();
+    }
+
+    /// Opens the list of the open scene's import notes (#301), from the
+    /// status bar.
+    pub(crate) fn open_import_notes(&self) {
+        self.import_notes.open();
     }
 
     /// Ends the upload-failure run without touching the load FSM.
@@ -568,6 +580,7 @@ impl SceneLoader {
         match result {
             Ok(prepared) => {
                 log_load_warnings(&path, &prepared);
+                self.import_notes.set(Notes::of(&path, &prepared));
                 self.upload_failures.reset();
                 let failures = &prepared.restored_supports.failures;
                 if !failures.is_empty() {
@@ -633,8 +646,8 @@ impl SceneLoader {
     }
 }
 
-// Load-time warnings are surfaced to stderr until the UI grows a place to show
-// them. Profile-reference lines come in 2 tiers: a reference with an embedded
+// Load-time warnings also go to stderr, all of them: the app's import notes
+// (`import_notes`) leave out the lines a resin print never misses. Profile-reference lines come in 2 tiers: a reference with an embedded
 // copy in the file is a note (the data is at hand, just not installed), one
 // without is a warning.
 fn log_load_warnings(path: &Path, prepared: &PreparedScene) {
@@ -745,14 +758,23 @@ pub(crate) fn describe_threemf_warning(warning: &LoadThreeMfWarning) -> String {
 }
 
 pub(crate) fn describe_scene_warning(warning: &SceneLoadWarning) -> String {
+    describe_scene_warning_naming(warning, &|id, object_name| match object_name {
+        Some(name) => format!("'{name}'"),
+        None => format!("node {}", id.get()),
+    })
+}
+
+/// [`describe_scene_warning`] with the objects named by `name`, from their
+/// node and the name the file gives them.
+pub(crate) fn describe_scene_warning_naming(
+    warning: &SceneLoadWarning,
+    name: &dyn Fn(sc_scene::NodeId, Option<&str>) -> String,
+) -> String {
     match warning {
         SceneLoadWarning::SharedVertices { leaves } => {
             let labels: Vec<String> = leaves
                 .iter()
-                .map(|leaf| match &leaf.object_name {
-                    Some(name) => format!("'{name}'"),
-                    None => format!("node {}", leaf.node_id.get()),
-                })
+                .map(|leaf| name(leaf.node_id, leaf.object_name.as_deref()))
                 .collect();
             format!(
                 "objects share at least one vertex coordinate: {}",
@@ -764,10 +786,7 @@ pub(crate) fn describe_scene_warning(warning: &SceneLoadWarning) -> String {
             let labels: Vec<String> = leaves
                 .iter()
                 .map(|leaf| {
-                    let label = match &leaf.object_name {
-                        Some(name) => format!("'{name}'"),
-                        None => format!("node {}", leaf.node_id.get()),
-                    };
+                    let label = name(leaf.node_id, leaf.object_name.as_deref());
                     format!("{label} ({})", leaf.faces)
                 })
                 .collect();
@@ -795,7 +814,7 @@ pub(crate) fn describe_project_warning(warning: &ReadProjectWarning) -> String {
     }
 }
 
-fn dialect_name(dialect: ForeignDialect) -> &'static str {
+pub(crate) fn dialect_name(dialect: ForeignDialect) -> &'static str {
     match dialect {
         ForeignDialect::PrusaSlicer => "PrusaSlicer",
         ForeignDialect::BambuStudioOrca => "Bambu Studio / OrcaSlicer",

@@ -1937,6 +1937,32 @@ msgctxt "RepairDialog"
 msgid "Mesh {}"
 msgstr "Malla {}"
 
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "{n} mesh has no faces"
+msgid_plural "{n} meshes have no faces"
+msgstr[0] "{n} malla no tiene caras"
+msgstr[1] "{n} mallas no tienen caras"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "this mesh has no faces"
+msgstr "esta malla no tiene caras"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "removed {n} face of a double wall"
+msgid_plural "removed {n} faces of double walls"
+msgstr[0] "se quitó {n} cara de una pared doble"
+msgstr[1] "se quitaron {n} caras de paredes dobles"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "removed {n} face that named a missing vertex"
+msgid_plural "removed {n} faces that named a missing vertex"
+msgstr[0] "se quitó {n} cara que apuntaba a un vértice inexistente"
+msgstr[1] "se quitaron {n} caras que apuntaban a un vértice inexistente"
+
 #: src/slice_run.rs:372
 msgctxt "ErrorDialog"
 msgid "Cannot slice"
@@ -3673,3 +3699,131 @@ msgid "Kept this body and removed 1 other."
 msgid_plural "Kept this body and removed {n} others."
 msgstr[0] "Quedó este cuerpo y se quitó 1 más."
 msgstr[1] "Quedó este cuerpo y se quitaron {n} más."
+
+msgctxt "Workspace"
+msgid "Opened with {n} note"
+msgid_plural "Opened with {n} notes"
+msgstr[0] "Se abrió con {n} nota"
+msgstr[1] "Se abrió con {n} notas"
+
+msgctxt "ImportNotes"
+msgid "Import notes"
+msgstr "Notas de importación"
+
+msgctxt "ImportNotes"
+msgid "{} opened with these notes:"
+msgstr "{} se abrió con estas notas:"
+
+msgctxt "ImportNotes"
+msgid "Removed {n} duplicate face from {}: an exact copy of another face, so the shape did not change."
+msgid_plural "Removed {n} duplicate faces from {}: exact copies of other faces, so the shape did not change."
+msgstr[0] "Se quitó {n} cara duplicada de {}: era una copia exacta de otra cara, así que la forma no cambió."
+msgstr[1] "Se quitaron {n} caras duplicadas de {}: eran copias exactas de otras caras, así que la forma no cambió."
+
+msgctxt "ImportNotes"
+msgid "These objects share vertices in the file: {}."
+msgstr "Estos objetos comparten vértices en el archivo: {}."
+
+msgctxt "ImportNotes"
+msgid "Skipped {n} file part with no content type, such as another slicer's settings or pictures."
+msgid_plural "Skipped {n} file parts with no content type, such as another slicer's settings or pictures."
+msgstr[0] "Se omitió {n} parte del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
+msgstr[1] "Se omitieron {n} partes del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} material group: materials are not supported yet."
+msgid_plural "Ignored {n} material groups: materials are not supported yet."
+msgstr[0] "Se ignoró {n} grupo de materiales: los materiales todavía no están soportados."
+msgstr[1] "Se ignoraron {n} grupos de materiales: los materiales todavía no están soportados."
+
+msgctxt "ImportNotes"
+msgid "Skipped object {}: the file does not place it on the plate."
+msgstr "Se omitió el objeto {}: el archivo no lo pone en la plataforma."
+
+msgctxt "ImportNotes"
+msgid "Object {} is marked as '{}' in the file; it was loaded as a plain model."
+msgstr "El objeto {} está marcado como '{}' en el archivo; se cargó como un modelo común."
+
+msgctxt "ImportNotes"
+msgid "Ignored the slices stored in the file ({n} stack); the full models were loaded."
+msgid_plural "Ignored the slices stored in the file ({n} stacks); the full models were loaded."
+msgstr[0] "Se ignoraron las capas laminadas que trae el archivo ({n} pila); se cargaron los modelos completos."
+msgstr[1] "Se ignoraron las capas laminadas que trae el archivo ({n} pilas); se cargaron los modelos completos."
+
+msgctxt "ImportNotes"
+msgid "The file places no objects on the plate."
+msgstr "El archivo no pone ningún objeto en la plataforma."
+
+msgctxt "ImportNotes"
+msgid "Dropped the face normals stored for object {}: its mesh changed after they were saved."
+msgstr "Se descartaron las normales de cara guardadas del objeto {}: su malla cambió después de guardarlas."
+
+msgctxt "ImportNotes"
+msgid "Ignored a damaged part with stored face normals."
+msgstr "Se ignoró una parte dañada con normales de cara guardadas."
+
+msgctxt "ImportNotes"
+msgid "The OBJ file has no vertices."
+msgstr "El archivo OBJ no tiene vértices."
+
+msgctxt "ImportNotes"
+msgid "The OBJ file has no faces."
+msgstr "El archivo OBJ no tiene caras."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} OBJ group line; its faces were loaded with their object."
+msgid_plural "Ignored {n} OBJ group lines; their faces were loaded with their objects."
+msgstr[0] "Se ignoró {n} línea de grupo del OBJ; sus caras se cargaron con su objeto."
+msgstr[1] "Se ignoraron {n} líneas de grupo del OBJ; sus caras se cargaron con sus objetos."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} OBJ material line: materials are not supported yet."
+msgid_plural "Ignored {n} OBJ material lines: materials are not supported yet."
+msgstr[0] "Se ignoró {n} línea de material del OBJ: los materiales todavía no están soportados."
+msgstr[1] "Se ignoraron {n} líneas de material del OBJ: los materiales todavía no están soportados."
+
+msgctxt "ImportNotes"
+msgid "Skipped {n} OBJ line this reader does not handle, such as lines or points."
+msgid_plural "Skipped {n} OBJ lines this reader does not handle, such as lines or points."
+msgstr[0] "Se omitió {n} línea del OBJ que este lector no maneja, como líneas o puntos."
+msgstr[1] "Se omitieron {n} líneas del OBJ que este lector no maneja, como líneas o puntos."
+
+msgctxt "ImportNotes"
+msgid "The project settings were saved by a newer version (format {}) and were ignored."
+msgstr "La configuración del proyecto se guardó con una versión más nueva (formato {}) y se ignoró."
+
+msgctxt "ImportNotes"
+msgid "Ignored an unknown part among the profiles the file carries."
+msgstr "Se ignoró una parte desconocida entre los perfiles que trae el archivo."
+
+msgctxt "ImportNotes"
+msgid "The file carries project settings from {}; only the models were loaded."
+msgstr "El archivo trae configuración de proyecto de {}; solo se cargaron los modelos."
+
+msgctxt "ImportNotes"
+msgid "The project uses the printer profile \"{}\", which is not installed."
+msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado."
+
+msgctxt "ImportNotes"
+msgid "The project uses the printer profile \"{}\", which is not installed; the file carries a copy of it."
+msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado; el archivo trae una copia."
+
+msgctxt "ImportNotes"
+msgid "The project uses the resin profile \"{}\", which is not installed."
+msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado."
+
+msgctxt "ImportNotes"
+msgid "The project uses the resin profile \"{}\", which is not installed; the file carries a copy of it."
+msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado; el archivo trae una copia."
+
+msgctxt "Workspace"
+msgid "A drain here would not reach the cavity: hollowing leaves it out."
+msgstr "Un drenaje acá no llegaría a la cavidad: al ahuecar queda afuera."
+
+msgctxt "Workspace"
+msgid "Not known yet whether a drain here reaches the cavity: the cavity is not computed."
+msgstr "Todavía no se sabe si un drenaje acá llega a la cavidad: la cavidad no está calculada."
+
+msgctxt "Workspace"
+msgid "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back."
+msgstr "Hacé clic en la superficie del modelo para perforar un drenaje ahí, donde se ve verde: en rojo no llega a la cavidad. Deshacer lo quita."

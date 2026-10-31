@@ -520,7 +520,11 @@ impl AppState {
         // loop responsive on slow / network-mounted / nearly-full config
         // directories.
         let (saver_tx, settings_saver) = spawn_settings_saver(settings_file, loaded)?;
-        let settings_sub = prefs.subscribe(move |snap, _change| {
+        let settings_sub = prefs.subscribe(move |snap, change| {
+            // A profile change leaves the snapshot as it was: nothing to write.
+            if *change == PreferencesChange::Profiles {
+                return;
+            }
             // Channel send is non-blocking; failure means the worker has
             // already exited, which only happens at shutdown.
             let _ = saver_tx.send(snap.clone());

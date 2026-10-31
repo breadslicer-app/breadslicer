@@ -6,7 +6,8 @@
 //! Revalidation of a reopened project's persisted slices.
 //!
 //! A saved project carries its merged slice geometry plus a validity token
-//! fingerprinting the scene geometry and the resolved layer schedule. On load
+//! fingerprinting the scene geometry, the resolved layer schedule and the
+//! resin's scale compensation. On load
 //! the slices are trusted only when that token still matches: the profiles are
 //! re-resolved from the installed library and the fingerprint recomputed
 //! against the reopened scene, so a profile or geometry change since the save
@@ -18,7 +19,8 @@
 //! [`SliceResult`] at install time, when the scene-geometry marker is known.
 
 use sc_print_glue::{PersistedSliceValidity, PlateContours, validate_persisted_slices};
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
+use sc_print_profiles::resolve_scale_compensation;
 use sc_project_formats::{PersistedSlices, ProjectPayload};
 use sc_scene::Scene;
 use sc_sl1cer::profile::LayerSchedule;
@@ -63,11 +65,12 @@ impl ReloadedSlices {
 
 /// Revalidates a project's persisted slices against the reopened scene,
 /// returning them only when they are still in sync. Resolves the layer schedule
-/// from the installed profiles the same way the save path does, then recomputes
-/// the geometry fingerprint and compares it to the stored token. A payload
-/// without a printer or resin, a schedule that no longer resolves, a stack
-/// whose layer count differs from the schedule's, or a token mismatch yields
-/// `None`, and the scene loads slice-less.
+/// and the scale compensation from the installed profiles the same way the
+/// slice does, then recomputes the fingerprint and compares it to the stored
+/// token. A payload without a printer or resin, a schedule that no longer
+/// resolves, a stack whose layer count differs from the schedule's, or a token
+/// mismatch (a compensation edited since the save, or a token saved before the
+/// fingerprint covered it) yields `None`, and the scene loads slice-less.
 pub(crate) fn revalidate_persisted_slices(
     payload: &ProjectPayload,
     scene: &Scene,
@@ -85,7 +88,8 @@ pub(crate) fn revalidate_persisted_slices(
     let schedule =
         schedule_for_profiles(&printer_profile, &resin_profile, first_layer_height, scene).ok()?;
     let contours = PlateContours::new(stack, schedule).ok()?;
-    if !slices_in_sync(&token, scene, contours.schedule()) {
+    let scale = resolve_scale_compensation(&printer_profile, &resin_profile);
+    if !slices_in_sync(&token, scene, contours.schedule(), scale) {
         return None;
     }
     Some(ReloadedSlices {
@@ -94,17 +98,22 @@ pub(crate) fn revalidate_persisted_slices(
         printer,
         resin,
         first_layer_height,
-        // The token pins the schedule, not the scale compensation: the slices
-        // are taken as cut with what the profiles hold at load.
+        // The token pins the schedule and the scale compensation, so the
+        // slices were cut with what the profiles hold at load.
         layers: LayerValues::resolve(&printer_profile, &resin_profile, first_layer_height),
     })
 }
 
 /// Reports whether the stored token still matches the fingerprint of the scene
-/// under the resolved schedule.
-fn slices_in_sync(token: &str, scene: &Scene, schedule: &LayerSchedule) -> bool {
+/// under the resolved schedule and scale compensation.
+fn slices_in_sync(
+    token: &str,
+    scene: &Scene,
+    schedule: &LayerSchedule,
+    scale: ScaleCompensation,
+) -> bool {
     matches!(
-        validate_persisted_slices(token, scene, schedule),
+        validate_persisted_slices(token, scene, schedule, scale),
         PersistedSliceValidity::InSync
     )
 }
@@ -123,7 +132,11 @@ mod reloaded_slices_tests {
     use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
     use crate::slice_projection::resolve_current_schedule;
-    use crate::test_support::projects::{cube_mesh, project_with_in_sync_slices, three_mf};
+    use sc_print_primitives::ScaleCompensationPercent;
+
+    use crate::test_support::projects::{
+        cube_mesh, project_with_in_sync_slices, resolved_scale, three_mf,
+    };
 
     fn cube_scene() -> Scene {
         let mut scene = Scene::new();
@@ -145,7 +158,11 @@ mod reloaded_slices_tests {
     }
 
     fn token_for(scene: &Scene, schedule: &LayerSchedule) -> String {
-        slice_input_fingerprint(scene, schedule)
+        token_under(scene, schedule, ScaleCompensation::NONE)
+    }
+
+    fn token_under(scene: &Scene, schedule: &LayerSchedule, scale: ScaleCompensation) -> String {
+        slice_input_fingerprint(scene, schedule, scale)
             .expect("the scene has sliceable geometry")
             .to_token()
     }
@@ -188,7 +205,7 @@ mod reloaded_slices_tests {
 
         let loaded = read_project(&mut Cursor::new(bytes), three_mf()).expect("the project reads");
         assert!(
-            slices_in_sync(&token, &loaded.scene, &schedule),
+            slices_in_sync(&token, &loaded.scene, &schedule, ScaleCompensation::NONE),
             "the fingerprint must match after a project round trip"
         );
         assert_eq!(loaded.slice_fingerprint.as_deref(), Some(token.as_str()));
@@ -200,8 +217,18 @@ mod reloaded_slices_tests {
         let schedule = schedule();
         let token = token_for(&scene, &schedule);
 
-        assert!(slices_in_sync(&token, &scene, &schedule));
-        assert!(!slices_in_sync("not-the-real-token", &scene, &schedule));
+        assert!(slices_in_sync(
+            &token,
+            &scene,
+            &schedule,
+            ScaleCompensation::NONE
+        ));
+        assert!(!slices_in_sync(
+            "not-the-real-token",
+            &scene,
+            &schedule,
+            ScaleCompensation::NONE
+        ));
     }
 
     #[test]
@@ -211,7 +238,12 @@ mod reloaded_slices_tests {
         let scene = cube_scene();
         let token = token_for(&scene, &schedule());
         let other = LayerSchedule::uniform(0.1, 0.05, 20).expect("a valid schedule");
-        assert!(!slices_in_sync(&token, &scene, &other));
+        assert!(!slices_in_sync(
+            &token,
+            &scene,
+            &other,
+            ScaleCompensation::NONE
+        ));
     }
 
     #[test]
@@ -258,14 +290,15 @@ mod reloaded_slices_tests {
 
     #[test]
     fn a_saved_stack_of_another_layer_count_reopens_without_slices() {
-        // The token covers only the scene and the schedule, so a matching token
-        // does not prove that the saved layer count is correct.
+        // The token covers only the scene, the schedule and the compensation,
+        // so a matching token does not prove that the saved layer count is
+        // correct.
         let scene = cube_scene();
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
         let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
         let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
             .expect("the bundled default profiles resolve a schedule");
-        let token = token_for(&scene, &schedule);
+        let token = token_under(&scene, &schedule, resolved_scale(&printer, &resin));
         let payload = ProjectPayload {
             printer: Some(printer),
             resin: Some(resin),
@@ -284,6 +317,46 @@ mod reloaded_slices_tests {
 
         assert!(reopen(empty_layers_at(schedule.iter_z())).is_some());
         assert!(reopen(empty_layers_at(schedule.iter_z().skip(1))).is_none());
+    }
+
+    #[test]
+    fn slices_cut_under_another_scale_compensation_reopen_stale() {
+        // A project saved, then reopened after only the resin's X/Y scale
+        // compensation changed: the schedule still matches, the layers do not
+        // (#295).
+        let scene = cube_scene();
+        let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
+        let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
+        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+            .expect("the bundled default profiles resolve a schedule");
+        let current = resolved_scale(&printer, &resin);
+        let shifted = |percent: ScaleCompensationPercent| {
+            ScaleCompensationPercent::new(if percent.value() > 0.0 { 0.0 } else { 0.5 })
+                .expect("within +-10 %")
+        };
+        let other = ScaleCompensation {
+            x: shifted(current.x),
+            y: shifted(current.y),
+            z: current.z,
+        };
+        let payload = ProjectPayload {
+            printer: Some(printer),
+            resin: Some(resin),
+            ..empty_payload()
+        };
+        let reopen = |token: String| {
+            revalidate_persisted_slices(
+                &payload,
+                &scene,
+                PersistedSlices {
+                    contours: empty_layers_at(schedule.iter_z()),
+                    fingerprint: token,
+                },
+            )
+        };
+
+        assert!(reopen(token_under(&scene, &schedule, current)).is_some());
+        assert!(reopen(token_under(&scene, &schedule, other)).is_none());
     }
 
     #[test]
