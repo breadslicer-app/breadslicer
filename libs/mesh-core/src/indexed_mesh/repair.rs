@@ -260,21 +260,24 @@ pub(crate) fn assess_with_verdict(
     // mesh has faces, so no bad edge means it is edge-manifold.
     let records = half_edges::sorted_half_edge_records(&mesh.faces);
     let edge_manifold = count_bad_edge_records(&records) == 0;
+    // The slicer also takes a mesh whose only bad edges join solids that
+    // touch; only a mesh with bad edges pays for that check.
+    let sliceable = || edge_manifold || mesh.is_sliceable();
     let mut holes_left_open = 0;
     if passes.watertight() && !edge_manifold {
         if !plan_pass {
-            return (RepairAssessment::Work, edge_manifold);
+            return (RepairAssessment::Work, sliceable());
         }
         let outcome = plan_watertight(&mesh.vertices, &mesh.faces, &passes.watertight_options());
         if outcome.repaired.is_some() {
-            return (RepairAssessment::Work, edge_manifold);
+            return (RepairAssessment::Work, sliceable());
         }
         holes_left_open = outcome.holes_left_open;
     }
     if passes.flipped_faces
         && plan_orientation_with_records(&mesh.vertices, &mesh.faces, records).is_some()
     {
-        return (RepairAssessment::Work, edge_manifold);
+        return (RepairAssessment::Work, sliceable());
     }
     // Here the orientation pass changes nothing, so the run gives the
     // collinear-face pass this same mesh.
@@ -285,7 +288,7 @@ pub(crate) fn assess_with_verdict(
         && let Ok(manifold) = witness.validated_edge_manifold()
         && CollinearFaceRemovals::new(&manifold).next().is_some()
     {
-        return (RepairAssessment::Work, edge_manifold);
+        return (RepairAssessment::Work, sliceable());
     }
     (
         RepairAssessment::Clean(state_after_repair(
@@ -293,7 +296,7 @@ pub(crate) fn assess_with_verdict(
             face_areas,
             holes_left_open,
         )),
-        edge_manifold,
+        sliceable(),
     )
 }
 
