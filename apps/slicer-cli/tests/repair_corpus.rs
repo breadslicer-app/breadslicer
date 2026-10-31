@@ -53,6 +53,11 @@ struct Row {
     /// The kinds of fix the run applied, with how many records of each.
     fixes: String,
     repair_ms: f64,
+    /// The faces of the mesh after Repair.
+    faces_after: usize,
+    /// The start of the geometry fingerprint of the mesh after Repair, to
+    /// tell 2 runs that give the same mesh, bit for bit.
+    geometry_after: String,
 }
 
 /// Totals over a set of rows. Meshes without faces are only counted: a
@@ -195,8 +200,24 @@ fn measure_scene(corpus: &'static str, file: &str, scene: &mut Scene) -> Vec<Row
             fixes: fix_label(&outcome.report.fixes),
             // The run covers the whole scene; it is reported on each mesh.
             repair_ms,
+            faces_after: scene
+                .target_mesh(outcome.target)
+                .map_or(0, |m| m.faces.len()),
+            geometry_after: scene
+                .target_mesh(outcome.target)
+                .map(geometry_label)
+                .unwrap_or_default(),
         })
         .collect()
+}
+
+/// Returns the first 8 bytes of the geometry fingerprint of `mesh`, in hex.
+fn geometry_label(mesh: &IndexedMesh) -> String {
+    let digest: [u8; 48] = mesh.geometry_fingerprint().into();
+    digest[..8].iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 fn read_list(list: &Path) -> Vec<PathBuf> {
@@ -228,12 +249,12 @@ fn print_rows(rows: &[Row]) {
 
 fn tsv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "corpus\tfile\tmesh\tfaces\tsliceable_before\tsliceable_after\tsliceable_after_stl\tend\tfixes\trepair_ms\n",
+        "corpus\tfile\tmesh\tfaces\tsliceable_before\tsliceable_after\tsliceable_after_stl\tend\tfixes\trepair_ms\tfaces_after\tgeometry_after\n",
     );
     for row in rows {
         let _ = writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{}\t{}",
             row.corpus,
             row.file,
             row.mesh,
@@ -243,7 +264,9 @@ fn tsv(rows: &[Row]) -> String {
             row.after_stl,
             row.end,
             row.fixes,
-            row.repair_ms
+            row.repair_ms,
+            row.faces_after,
+            row.geometry_after
         );
     }
     out
