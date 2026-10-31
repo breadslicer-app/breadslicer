@@ -9,7 +9,8 @@
 //! repair policy on a worker thread so the event loop stays responsive; the
 //! finished result is deposited into a slot and picked up on the UI thread via
 //! `invoke_repair_finished`. No progress bar or cancel: the run is 1 validation
-//! pass per mesh, the same cost the load worker absorbs silently.
+//! pass per mesh, the same cost the load worker absorbs silently. The notice
+//! that follows shows the report of `repair_report`.
 //!
 //! The window's `repairing-in-progress` property is the single gate: the button
 //! and undo/redo are disabled while it is set (an undo landing mid-run would
@@ -26,10 +27,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
-use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
+use sc_mesh_core::indexed_mesh::RepairPasses;
+use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_scene::mesh_targets::MeshTarget;
 use sc_scene::repair::SceneRepairOutcome;
 use sc_scene::{Scene, SceneError};
@@ -39,9 +41,12 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
-use crate::mesh_health::{needs_repair, scene_mesh_health};
+use crate::mesh_check::{show_card, target_arc};
 use crate::mesh_loader::panic_message;
-use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
+use crate::repair_report::{details_text, left_reason, summary_message, target_names};
+use crate::scene_document::{
+    EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
+};
 use crate::workspace_section::allows_repair;
 
 /// A mesh the repair run rewrote: the storage place plus the exact Arcs before
@@ -74,6 +79,8 @@ impl MeshReplacement {
 struct CompletedRepair {
     outcomes: Vec<SceneRepairOutcome>,
     replacements: Vec<MeshReplacement>,
+    /// How long the whole run took on the worker.
+    elapsed: Duration,
 }
 
 type RepairSlot = Arc<Mutex<Option<Result<CompletedRepair, String>>>>;
@@ -98,6 +105,8 @@ pub(crate) struct RepairRun {
     slot: RepairSlot,
     // Revision captured at launch; `None` when no run is in flight.
     pending_revision: RefCell<Option<SceneRevision>>,
+    // Keeps the MESH CHECK card following the scene.
+    _scene_events: SceneSubscription,
 }
 
 impl RepairRun {
@@ -108,12 +117,22 @@ impl RepairRun {
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
     ) -> Rc<Self> {
+        let scene_events = {
+            let ui = ui.as_weak();
+            let weak_document = Rc::downgrade(&document);
+            document.subscribe(move |event| {
+                if let Some(document) = weak_document.upgrade() {
+                    follow_scene(&ui, &document, event);
+                }
+            })
+        };
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             document,
             dialogs,
             slot: Arc::new(Mutex::new(None)),
             pending_revision: RefCell::new(None),
+            _scene_events: scene_events,
         });
         {
             let run = run.clone();
@@ -196,24 +215,34 @@ impl RepairRun {
                 });
             }
             RepairSettlement::NothingApplied | RepairSettlement::Applied => {
-                // The Transform tab's repair card follows the scene's health.
-                if let (Some(ui), Some(health)) = (
-                    self.ui.upgrade(),
-                    self.document
-                        .with_scene(|spatial| scene_mesh_health(spatial.graph())),
-                ) {
-                    ui.set_mesh_needs_repair(needs_repair(health));
-                }
-                let outcomes = completed.outcomes;
-                let names = self
+                let CompletedRepair {
+                    outcomes, elapsed, ..
+                } = completed;
+                // The Transform tab's repair card follows what the run left:
+                // the live scene now holds the meshes the run ended with.
+                let check = self.document.mesh_check();
+                let (names, card) = self
                     .document
-                    .with_scene(|spatial| target_names(&outcomes, spatial.graph()))
+                    .with_scene(|spatial| {
+                        let graph = spatial.graph();
+                        for outcome in &outcomes {
+                            if let Some(mesh) = target_arc(graph, outcome.target) {
+                                let sliceable = outcome.report.end == RepairEnd::NoFaces
+                                    || outcome.details.after.sliceable;
+                                check.remember(&mesh, sliceable, left_reason(outcome));
+                            }
+                        }
+                        (target_names(&outcomes, graph), check.card(graph, true))
+                    })
                     .unwrap_or_default();
+                if let (Some(ui), Some(card)) = (self.ui.upgrade(), card) {
+                    show_card(&ui, &card);
+                }
                 self.dialogs
                     .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
                         heading: ctr!("RepairDialog", "Mesh repair"),
-                        message: summary_message(&outcomes).into(),
-                        details: dialog_lines(&outcomes, &names).join("\n").into(),
+                        message: summary_message(&outcomes, &names).into(),
+                        details: details_text(&outcomes, &names, elapsed).into(),
                     });
             }
             RepairSettlement::Rejected(error) => {
@@ -236,6 +265,7 @@ impl RepairRun {
 /// the live scene, so an Arc that survived the run unchanged proves the live
 /// mesh needs no replacing.
 fn run_repair(mut scene: Scene) -> CompletedRepair {
+    let start = Instant::now();
     let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = scene
         .mesh_targets()
         .into_iter()
@@ -260,15 +290,36 @@ fn run_repair(mut scene: Scene) -> CompletedRepair {
     CompletedRepair {
         outcomes,
         replacements,
+        elapsed: start.elapsed(),
     }
 }
 
-/// Returns a clone of the `Arc` stored at `target`, or `None` for a dead
-/// target.
-fn target_arc(scene: &Scene, target: MeshTarget) -> Option<Arc<IndexedMesh>> {
-    match target {
-        MeshTarget::Resource(rid) => scene.mesh_resource_arc(rid).cloned(),
-        MeshTarget::InlineLeaf(id) => scene.leaf_mesh_arc(id).cloned(),
+/// Keeps the MESH CHECK card on what the scene holds now: an undo that puts
+/// a broken mesh back, a deleted object. A mesh with no verdict is checked
+/// only while the card shows a problem (see `mesh_check`).
+fn follow_scene(ui: &slint::Weak<MainWindow>, document: &SceneDocument, event: SceneEvent) {
+    let Some(ui) = ui.upgrade() else {
+        return;
+    };
+    match event {
+        SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::UndoStackChanged => {
+            let check_unknown = ui.get_mesh_needs_repair();
+            let card = document
+                .with_scene(|spatial| document.mesh_check().card(spatial.graph(), check_unknown))
+                .flatten();
+            if let Some(card) = card {
+                show_card(&ui, &card);
+            }
+        }
+        SceneEvent::Cleared => {
+            document.mesh_check().forget_all();
+            show_card(&ui, &Default::default());
+        }
+        // A new scene gets its card from the load worker's verdicts.
+        SceneEvent::Installed
+        | SceneEvent::SelectionChanged
+        | SceneEvent::SliceChanged
+        | SceneEvent::DirtyChanged => {}
     }
 }
 
@@ -305,364 +356,21 @@ fn settle(
     }
 }
 
-/// Builds the 1-line rollup for the dialog's message.
-fn summary_message(outcomes: &[SceneRepairOutcome]) -> String {
-    let repaired = outcomes
-        .iter()
-        .filter(|o| !o.report.fixes.is_empty() && matches!(o.report.end, RepairEnd::Completed(_)))
-        .count();
-    let refused = outcomes
-        .iter()
-        .filter(|o| matches!(o.report.end, RepairEnd::Refused(_)))
-        .count();
-    let without_faces = outcomes
-        .iter()
-        .filter(|o| o.report.end == RepairEnd::NoFaces)
-        .count();
-    let still_holed = outcomes
-        .iter()
-        .filter_map(completed_state)
-        .filter(|state| !state.edge_manifold)
-        .count();
-    // Zero-area faces do not block slicing: on a mesh that slices they are a
-    // detail note, and on one that does not, the edge verdict already says so.
-    let with_zero_area_faces = outcomes
-        .iter()
-        .filter_map(completed_state)
-        .filter(|state| !state.edge_manifold && state.zero_area_face_count > 0)
-        .count();
-    if repaired == 0
-        && refused == 0
-        && without_faces == 0
-        && still_holed == 0
-        && with_zero_area_faces == 0
-    {
-        return ctr!("RepairDialog", "No problems found.").to_string();
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if repaired > 0 {
-        parts.push(
-            ctr!(
-                "RepairDialog",
-                "{n} mesh repaired",
-                "{n} meshes repaired",
-                repaired
-            )
-            .to_string(),
-        );
-    }
-    if refused > 0 {
-        parts.push(
-            ctr!(
-                "RepairDialog",
-                "{n} mesh could not be fully repaired",
-                "{n} meshes could not be fully repaired",
-                refused
-            )
-            .to_string(),
-        );
-    }
-    if without_faces > 0 {
-        parts.push(
-            ctr!(
-                "RepairDialog",
-                "{n} mesh has no faces",
-                "{n} meshes have no faces",
-                without_faces
-            )
-            .to_string(),
-        );
-    }
-    if still_holed > 0 {
-        parts.push(
-            ctr!(
-                "RepairDialog",
-                "{n} mesh still not edge-manifold",
-                "{n} meshes still not edge-manifold",
-                still_holed
-            )
-            .to_string(),
-        );
-    }
-    if with_zero_area_faces > 0 {
-        parts.push(
-            ctr!(
-                "RepairDialog",
-                "{n} mesh still has zero-area faces",
-                "{n} meshes still have zero-area faces",
-                with_zero_area_faces
-            )
-            .to_string(),
-        );
-    }
-    format!("{}.", parts.join(", "))
-}
-
-/// Returns the state of the mesh of `outcome` after its run, or `None` when the
-/// run was refused or the mesh has no faces.
-fn completed_state(outcome: &SceneRepairOutcome) -> Option<&MeshStateAfterRepair> {
-    match &outcome.report.end {
-        RepairEnd::Completed(state) => Some(state),
-        RepairEnd::Refused(_) | RepairEnd::NoFaces => None,
-    }
-}
-
-/// Builds the per-mesh detail lines: 1 line per target with something to say
-/// (fixes, a refusal, a remaining edge-manifold failure, or remaining zero-area
-/// faces); clean targets stay silent. `names` holds the scene name of each
-/// target of `outcomes`, as [`target_names`] gives them; a target with no name
-/// gets a 1-based fallback.
-fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Vec<String> {
-    outcomes
-        .iter()
-        .zip(names)
-        .enumerate()
-        .filter_map(|(i, (outcome, name))| {
-            let mut notes: Vec<String> = Vec::new();
-            let mut removed = 0usize;
-            let mut broken = 0usize;
-            let mut leftover = 0usize;
-            let mut duplicate = 0usize;
-            let mut opposite = 0usize;
-            let mut reoriented = 0usize;
-            let mut collinear = 0usize;
-            let mut welded = 0usize;
-            let mut separated = 0usize;
-            let mut filled = 0usize;
-            let mut turned_outward = 0usize;
-            for fix in &outcome.report.fixes {
-                match fix {
-                    MeshFix::RemovedZeroLengthEdgeFace { .. } => removed += 1,
-                    MeshFix::RemovedOutOfRangeFace { .. } => broken += 1,
-                    MeshFix::RemovedCollinearFaceByMerge { .. }
-                    | MeshFix::RemovedCollinearFaceBySplit { .. } => collinear += 1,
-                    MeshFix::WeldedBoundaryVertices { vertices, .. } => welded += vertices,
-                    MeshFix::SplitNonManifoldEdges { edges, .. } => separated += edges,
-                    MeshFix::RemovedUnpairedFaces { faces } => leftover += faces,
-                    MeshFix::RemovedDuplicateFaces { faces } => duplicate += faces,
-                    MeshFix::RemovedOppositeFaces { faces } => opposite += faces,
-                    MeshFix::ReorientedFaces { faces } => reoriented += faces,
-                    MeshFix::FilledHoles { holes, .. } => filled += holes,
-                    MeshFix::TurnedShellsOutward { shells, .. } => turned_outward += shells,
-                }
-            }
-            if filled > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "filled {n} hole",
-                        "filled {n} holes",
-                        filled
-                    )
-                    .to_string(),
-                );
-            }
-            if separated > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "separated parts that touched at {n} edge",
-                        "separated parts that touched at {n} edges",
-                        separated
-                    )
-                    .to_string(),
-                );
-            }
-            if welded > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "welded {n} vertex of a crack",
-                        "welded {n} vertices of cracks",
-                        welded
-                    )
-                    .to_string(),
-                );
-            }
-            if duplicate > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} duplicate face",
-                        "removed {n} duplicate faces",
-                        duplicate
-                    )
-                    .to_string(),
-                );
-            }
-            if opposite > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} face of a double wall",
-                        "removed {n} faces of double walls",
-                        opposite
-                    )
-                    .to_string(),
-                );
-            }
-            if leftover > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} leftover face",
-                        "removed {n} leftover faces",
-                        leftover
-                    )
-                    .to_string(),
-                );
-            }
-            if turned_outward > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "turned {n} inside-out part outward",
-                        "turned {n} inside-out parts outward",
-                        turned_outward
-                    )
-                    .to_string(),
-                );
-            }
-            if removed > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} degenerate face",
-                        "removed {n} degenerate faces",
-                        removed
-                    )
-                    .to_string(),
-                );
-            }
-            if broken > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} face that named a missing vertex",
-                        "removed {n} faces that named a missing vertex",
-                        broken
-                    )
-                    .to_string(),
-                );
-            }
-            if reoriented > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "reoriented {n} face",
-                        "reoriented {n} faces",
-                        reoriented
-                    )
-                    .to_string(),
-                );
-            }
-            if collinear > 0 {
-                notes.push(
-                    ctr!(
-                        "RepairDialog",
-                        "removed {n} collinear face",
-                        "removed {n} collinear faces",
-                        collinear
-                    )
-                    .to_string(),
-                );
-            }
-            match &outcome.report.end {
-                RepairEnd::Refused(refusal) => notes.push(
-                    ctr!("RepairDialog", "could not be fully repaired: {}", refusal).to_string(),
-                ),
-                RepairEnd::NoFaces => {
-                    notes.push(ctr!("RepairDialog", "this mesh has no faces").to_string());
-                }
-                RepairEnd::Completed(state) => {
-                    if !state.edge_manifold {
-                        notes.push(ctr!("RepairDialog", "still not edge-manifold").to_string());
-                    }
-                    if state.zero_area_face_count > 0 && state.edge_manifold {
-                        notes.push(
-                            ctr!(
-                                "RepairDialog",
-                                "{n} zero-area face kept; the mesh slices fine",
-                                "{n} zero-area faces kept; the mesh slices fine",
-                                state.zero_area_face_count
-                            )
-                            .to_string(),
-                        );
-                    } else if state.zero_area_face_count > 0 {
-                        notes.push(
-                            ctr!(
-                                "RepairDialog",
-                                "{n} zero-area face remains",
-                                "{n} zero-area faces remain",
-                                state.zero_area_face_count
-                            )
-                            .to_string(),
-                        );
-                    }
-                    if state.holes_left_open > 0 {
-                        notes.push(
-                            ctr!(
-                                "RepairDialog",
-                                "{n} hole left open: too large to fill on its own",
-                                "{n} holes left open: too large to fill on their own",
-                                state.holes_left_open
-                            )
-                            .to_string(),
-                        );
-                    }
-                }
-            }
-            if notes.is_empty() {
-                return None;
-            }
-            let name = name
-                .clone()
-                .unwrap_or_else(|| ctr!("RepairDialog", "Mesh {}", i + 1).to_string());
-            let items: Vec<String> = notes.iter().map(|note| format!("• {note}")).collect();
-            Some(format!("{name}:\n{}", items.join("\n")))
-        })
-        .collect()
-}
-
-/// Returns the scene name of each target of `outcomes`, in their order: the
-/// first referencing leaf's name, else the mesh's own name, the same resolution
-/// order the object list uses.
-fn target_names(outcomes: &[SceneRepairOutcome], graph: &Scene) -> Vec<Option<String>> {
-    outcomes
-        .iter()
-        .map(|outcome| {
-            let node_name = graph
-                .leaves_referencing(outcome.target)
-                .into_iter()
-                .next()
-                .and_then(|id| graph.node(id))
-                .and_then(|node| node.meta.as_ref())
-                .and_then(|meta| meta.name.clone());
-            let mesh_name = graph
-                .target_mesh(outcome.target)
-                .and_then(|mesh| mesh.meta().as_ref())
-                .and_then(|meta| meta.name.clone());
-            node_name.or(mesh_name)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod repair_run_tests {
     use std::path::PathBuf;
 
-    use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairRefusal};
-    use sc_mesh_core::primitives::{FaceIndex, IndexedTriangle};
+    use sc_mesh_core::indexed_mesh::repair::MeshStateAfterRepair;
+    use sc_mesh_core::indexed_mesh::{MeshFix, MeshRepairReport};
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
         unit_cube_mesh, unit_cube_with_collinear_faces, unit_cube_with_flipped_faces,
     };
     use sc_scene::node::LeafPayload;
-    use sc_scene_fixtures::named_trio_under_group_root;
 
     use super::*;
-    use crate::mesh_health::{MeshHealth, scene_mesh_health};
+    use crate::mesh_health::scene_slices;
 
     /// Returns the shared broken trio as 1 scene: cube and Z-tunnel inline,
     /// Y-tunnel behind a shared resource, plus 1 clean inline cube.
@@ -738,11 +446,15 @@ mod repair_run_tests {
             }),
         };
         assert!(completed.outcomes.iter().all(|o| o.report == clean));
-        assert_eq!(summary_message(&completed.outcomes), "No problems found.");
+        let names = target_names(&completed.outcomes, &Scene::new());
+        assert_eq!(
+            summary_message(&completed.outcomes, &names),
+            "No problems found. Everything can be sliced."
+        );
     }
 
     /// Pins the pass set of `run_repair`, which chooses it itself: the 2
-    /// collinear faces of the cube go, and the dialog line says so.
+    /// collinear faces of the cube go, and the report says so.
     #[test]
     fn run_repair_removes_the_collinear_faces_of_a_mesh() {
         let mut graph = Scene::new();
@@ -776,9 +488,11 @@ mod repair_run_tests {
             })
         );
         let names = target_names(&completed.outcomes, &graph);
-        assert_eq!(
-            dialog_lines(&completed.outcomes, &names),
-            ["Mesh 1:\n• removed 2 collinear faces"]
+        let details = details_text(&completed.outcomes, &names, completed.elapsed);
+        assert!(details.starts_with("Object 1: repaired\n"), "{details}");
+        assert!(
+            details.contains("\n• Removed 2 zero-area slivers\n"),
+            "{details}"
         );
     }
 
@@ -800,10 +514,7 @@ mod repair_run_tests {
                     .collect()
             })
             .unwrap();
-        assert_eq!(
-            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
-            MeshHealth::HasProblems
-        );
+        assert!(!doc.with_scene(|s| scene_slices(s.graph())).unwrap());
 
         let completed = doc
             .with_scene(|spatial| run_repair(spatial.graph().clone()))
@@ -812,19 +523,13 @@ mod repair_run_tests {
             settle(&doc, &completed, captured),
             RepairSettlement::Applied
         );
-        assert_eq!(
-            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
-            MeshHealth::ProblemFree
-        );
+        assert!(doc.with_scene(|s| scene_slices(s.graph())).unwrap());
         // The apply moved the revision: a slice captured before the repair
         // reads as stale.
         assert!(doc.slice_geometry_changed(captured));
 
         assert!(doc.undo().unwrap());
-        assert_eq!(
-            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
-            MeshHealth::HasProblems
-        );
+        assert!(!doc.with_scene(|s| scene_slices(s.graph())).unwrap());
         doc.with_scene(|spatial| {
             let graph = spatial.graph();
             for (target, original) in &originals {
@@ -865,9 +570,8 @@ mod repair_run_tests {
             settle(&doc, &completed, captured),
             RepairSettlement::DiscardedStale
         );
-        assert_eq!(
-            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
-            MeshHealth::HasProblems,
+        assert!(
+            !doc.with_scene(|s| scene_slices(s.graph())).unwrap(),
             "a discarded result must not touch the scene"
         );
     }
@@ -905,9 +609,8 @@ mod repair_run_tests {
             settle(&doc, &completed, captured),
             RepairSettlement::DiscardedStale
         );
-        assert_eq!(
-            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
-            MeshHealth::HasProblems,
+        assert!(
+            !doc.with_scene(|s| scene_slices(s.graph())).unwrap(),
             "the freshly opened scene must keep its own geometry"
         );
         doc.with_scene(|spatial| {
@@ -922,376 +625,5 @@ mod repair_run_tests {
         })
         .unwrap();
         assert!(!doc.can_undo(), "nothing was recorded on the new scene");
-    }
-
-    #[test]
-    fn dialog_lines_name_each_touched_mesh_and_skip_clean_ones() {
-        let scene = broken_trio_scene();
-        let completed = run_repair(scene.clone());
-        let names = target_names(&completed.outcomes, &scene);
-        let lines = dialog_lines(&completed.outcomes, &names);
-        assert_eq!(lines.len(), 3, "3 defective targets, clean cube silent");
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.contains("reoriented") && line.contains("face")),
-            "each line reports the flip fixes: {lines:?}"
-        );
-    }
-
-    fn outcome(target: MeshTarget, fixes: Vec<MeshFix>, end: RepairEnd) -> SceneRepairOutcome {
-        SceneRepairOutcome {
-            target,
-            report: MeshRepairReport { fixes, end },
-        }
-    }
-
-    /// An outcome for `target` with 1 flipped face and nothing left to fix.
-    fn one_flip(target: MeshTarget) -> SceneRepairOutcome {
-        outcome(
-            target,
-            vec![MeshFix::ReorientedFaces { faces: 1 }],
-            RepairEnd::Completed(MeshStateAfterRepair {
-                edge_manifold: true,
-                zero_area_face_count: 0,
-                holes_left_open: 0,
-            }),
-        )
-    }
-
-    #[test]
-    fn target_names_give_the_scene_name_of_each_target_in_order() {
-        let scene = named_trio_under_group_root([0.0; 3]);
-        let outcomes: Vec<_> = scene.mesh_targets().into_iter().map(one_flip).collect();
-        let expected = ["Cube", "ZTunnel", "YTunnel"].map(|name| Some(name.to_string()));
-        assert_eq!(target_names(&outcomes, &scene), expected);
-    }
-
-    #[test]
-    fn an_unnamed_target_has_no_scene_name() {
-        let scene = broken_trio_scene();
-        let completed = run_repair(scene.clone());
-        assert_eq!(
-            target_names(&completed.outcomes, &scene),
-            [None, None, None, None]
-        );
-    }
-
-    #[test]
-    fn dialog_lines_number_a_target_with_no_scene_name() {
-        let targets = broken_trio_scene().mesh_targets();
-        let outcomes = [one_flip(targets[0]), one_flip(targets[1])];
-        let names = [Some("Lid".to_string()), None];
-        assert_eq!(
-            dialog_lines(&outcomes, &names),
-            ["Lid:\n• reoriented 1 face", "Mesh 2:\n• reoriented 1 face"]
-        );
-    }
-
-    /// An outcome for `target` with `fixes` and nothing left to fix.
-    fn fixed(target: MeshTarget, fixes: Vec<MeshFix>) -> SceneRepairOutcome {
-        outcome(
-            target,
-            fixes,
-            RepairEnd::Completed(MeshStateAfterRepair {
-                edge_manifold: true,
-                zero_area_face_count: 0,
-                holes_left_open: 0,
-            }),
-        )
-    }
-
-    fn flipped_faces(count: usize) -> Vec<MeshFix> {
-        vec![MeshFix::ReorientedFaces { faces: count }]
-    }
-
-    fn removed_faces(count: usize) -> Vec<MeshFix> {
-        (0..count)
-            .map(|face| MeshFix::RemovedZeroLengthEdgeFace {
-                face_idx: FaceIndex::from(face),
-            })
-            .collect()
-    }
-
-    /// An outcome for `target` that the repair refused.
-    fn refused(target: MeshTarget) -> SceneRepairOutcome {
-        outcome(
-            target,
-            Vec::new(),
-            RepairEnd::Refused(RepairRefusal::InvalidVertices(Vec::new())),
-        )
-    }
-
-    /// An outcome for `target` with nothing fixed and the mesh still not
-    /// edge-manifold.
-    fn still_not_edge_manifold(target: MeshTarget) -> SceneRepairOutcome {
-        outcome(
-            target,
-            Vec::new(),
-            RepairEnd::Completed(MeshStateAfterRepair {
-                edge_manifold: false,
-                zero_area_face_count: 0,
-                holes_left_open: 0,
-            }),
-        )
-    }
-
-    /// An outcome for `target` with nothing fixed and `count` faces with zero
-    /// area in the mesh.
-    fn with_zero_area_faces(target: MeshTarget, count: usize) -> SceneRepairOutcome {
-        outcome(
-            target,
-            Vec::new(),
-            RepairEnd::Completed(MeshStateAfterRepair {
-                edge_manifold: true,
-                zero_area_face_count: count,
-                holes_left_open: 0,
-            }),
-        )
-    }
-
-    #[test]
-    fn the_summary_counts_repaired_meshes_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        assert_eq!(summary_message(&[one_flip(target)]), "1 mesh repaired.");
-        assert_eq!(
-            summary_message(&[one_flip(target), one_flip(target)]),
-            "2 meshes repaired."
-        );
-    }
-
-    #[test]
-    fn the_summary_counts_refused_meshes_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        assert_eq!(
-            summary_message(&[refused(target)]),
-            "1 mesh could not be fully repaired."
-        );
-        assert_eq!(
-            summary_message(&[refused(target), refused(target)]),
-            "2 meshes could not be fully repaired."
-        );
-    }
-
-    /// Pins #298: a mesh without faces gets its own summary and line, not a
-    /// refusal.
-    #[test]
-    fn a_mesh_without_faces_says_so() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let empty = || outcome(target, Vec::new(), RepairEnd::NoFaces);
-        assert_eq!(summary_message(&[empty()]), "1 mesh has no faces.");
-        assert_eq!(
-            summary_message(&[empty(), empty(), one_flip(target)]),
-            "1 mesh repaired, 2 meshes have no faces."
-        );
-        assert_eq!(
-            dialog_lines(&[empty()], &[Some("Lid".to_string())]),
-            ["Lid:\n• this mesh has no faces"]
-        );
-    }
-
-    #[test]
-    fn dialog_lines_list_double_walls_and_faces_that_named_a_missing_vertex() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let fixes = vec![
-            MeshFix::RemovedOppositeFaces { faces: 4 },
-            MeshFix::RemovedOutOfRangeFace {
-                face_idx: FaceIndex::from(7),
-            },
-        ];
-        assert_eq!(
-            dialog_lines(&[fixed(target, fixes)], &[Some("Lid".to_string())]),
-            ["Lid:\n\
-              • removed 4 faces of double walls\n\
-              • removed 1 face that named a missing vertex"]
-        );
-    }
-
-    #[test]
-    fn the_summary_counts_meshes_still_not_edge_manifold_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        assert_eq!(
-            summary_message(&[still_not_edge_manifold(target)]),
-            "1 mesh still not edge-manifold."
-        );
-        assert_eq!(
-            summary_message(&[
-                still_not_edge_manifold(target),
-                still_not_edge_manifold(target)
-            ]),
-            "2 meshes still not edge-manifold."
-        );
-    }
-
-    #[test]
-    fn the_summary_counts_open_meshes_with_zero_area_faces_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let open = |count| {
-            outcome(
-                target,
-                Vec::new(),
-                RepairEnd::Completed(MeshStateAfterRepair {
-                    edge_manifold: false,
-                    zero_area_face_count: count,
-                    holes_left_open: 0,
-                }),
-            )
-        };
-        assert_eq!(
-            summary_message(&[open(2)]),
-            "1 mesh still not edge-manifold, 1 mesh still has zero-area faces."
-        );
-        assert_eq!(
-            summary_message(&[open(1), open(3)]),
-            "2 meshes still not edge-manifold, 2 meshes still have zero-area faces."
-        );
-    }
-
-    /// Pins that zero-area faces on a mesh that slices read as a detail, not
-    /// as a problem: the Siraya test model keeps 2 after Repair and slices.
-    #[test]
-    fn zero_area_faces_on_a_mesh_that_slices_are_no_problem() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        assert_eq!(
-            summary_message(&[with_zero_area_faces(target, 2)]),
-            "No problems found."
-        );
-        let mut repaired = with_zero_area_faces(target, 12);
-        repaired.report.fixes = vec![MeshFix::FilledHoles {
-            holes: 3,
-            added_faces: 9,
-            largest_hole_edges: 5,
-        }];
-        assert_eq!(summary_message(&[repaired]), "1 mesh repaired.");
-    }
-
-    #[test]
-    fn dialog_lines_count_removed_faces_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Lid".to_string())];
-        assert_eq!(
-            dialog_lines(&[fixed(target, removed_faces(1))], &names),
-            ["Lid:\n• removed 1 degenerate face"]
-        );
-        assert_eq!(
-            dialog_lines(&[fixed(target, removed_faces(2))], &names),
-            ["Lid:\n• removed 2 degenerate faces"]
-        );
-    }
-
-    #[test]
-    fn dialog_lines_count_reoriented_faces_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Lid".to_string())];
-        assert_eq!(
-            dialog_lines(&[fixed(target, flipped_faces(1))], &names),
-            ["Lid:\n• reoriented 1 face"]
-        );
-        assert_eq!(
-            dialog_lines(&[fixed(target, flipped_faces(2))], &names),
-            ["Lid:\n• reoriented 2 faces"]
-        );
-    }
-
-    /// A merge and a split of collinear faces, in that order.
-    fn collinear_removals() -> [MeshFix; 2] {
-        let triangle = IndexedTriangle::from_raw_indices;
-        [
-            MeshFix::RemovedCollinearFaceByMerge {
-                collinear: triangle([4, 5, 8]),
-                merged_neighbours: [triangle([4, 8, 6]), triangle([8, 5, 6])],
-                merged: triangle([4, 5, 6]),
-            },
-            MeshFix::RemovedCollinearFaceBySplit {
-                collinear: triangle([4, 5, 8]),
-                opposite: triangle([0, 5, 4]),
-                halves: [triangle([8, 4, 0]), triangle([0, 5, 8])],
-            },
-        ]
-    }
-
-    #[test]
-    fn dialog_lines_count_both_collinear_removals_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Lid".to_string())];
-        let [merge, split] = collinear_removals();
-        assert_eq!(
-            dialog_lines(&[fixed(target, vec![split.clone()])], &names),
-            ["Lid:\n• removed 1 collinear face"]
-        );
-        assert_eq!(
-            dialog_lines(&[fixed(target, vec![merge, split])], &names),
-            ["Lid:\n• removed 2 collinear faces"]
-        );
-    }
-
-    #[test]
-    fn dialog_lines_count_remaining_zero_area_faces_in_the_singular_and_the_plural() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Lid".to_string())];
-        assert_eq!(
-            dialog_lines(&[with_zero_area_faces(target, 1)], &names),
-            ["Lid:\n• 1 zero-area face kept; the mesh slices fine"]
-        );
-        assert_eq!(
-            dialog_lines(&[with_zero_area_faces(target, 2)], &names),
-            ["Lid:\n• 2 zero-area faces kept; the mesh slices fine"]
-        );
-    }
-
-    #[test]
-    fn dialog_lines_give_a_refused_target_only_its_refusal() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Lid".to_string())];
-        assert_eq!(
-            dialog_lines(&[refused(target)], &names),
-            ["Lid:\n• could not be fully repaired: mesh has 0 invalid vertex coordinates"]
-        );
-    }
-
-    /// Pins the list layout of the watertight fixes: 1 action per line, and
-    /// leftover faces apart from degenerate ones.
-    #[test]
-    fn dialog_lines_list_1_watertight_action_per_line() {
-        let target = broken_trio_scene().mesh_targets()[0];
-        let names = [Some("Siraya".to_string())];
-        let mut repaired = outcome(
-            target,
-            vec![
-                MeshFix::WeldedBoundaryVertices {
-                    vertices: 1,
-                    collapsed_faces: 0,
-                },
-                MeshFix::SplitNonManifoldEdges {
-                    edges: 4,
-                    split_vertices: 6,
-                },
-                MeshFix::RemovedUnpairedFaces { faces: 12 },
-                MeshFix::FilledHoles {
-                    holes: 3,
-                    added_faces: 9,
-                    largest_hole_edges: 5,
-                },
-            ],
-            RepairEnd::Completed(MeshStateAfterRepair {
-                edge_manifold: true,
-                zero_area_face_count: 2,
-                holes_left_open: 0,
-            }),
-        );
-        assert_eq!(
-            dialog_lines(&[repaired.clone()], &names),
-            ["Siraya:\n\
-              • filled 3 holes\n\
-              • separated parts that touched at 4 edges\n\
-              • welded 1 vertex of a crack\n\
-              • removed 12 leftover faces\n\
-              • 2 zero-area faces kept; the mesh slices fine"]
-        );
-        repaired.report.fixes.clear();
-        assert_eq!(
-            dialog_lines(&[repaired], &names),
-            ["Siraya:\n• 2 zero-area faces kept; the mesh slices fine"]
-        );
     }
 }

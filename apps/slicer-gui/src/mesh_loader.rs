@@ -32,7 +32,7 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::hollow_persist::{RestoredHollows, restore_hollows};
 use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink};
-use crate::mesh_health::scene_mesh_health;
+use crate::mesh_health::scene_mesh_verdicts;
 use crate::mesh_render::{DeviceLoss, GpuScene};
 use crate::project_profiles::profile_ref_warnings;
 use crate::reloaded_slices::revalidate_persisted_slices;
@@ -270,7 +270,7 @@ fn prepare_scene(
     // receives a ready health verdict; the initial workspace section is derived
     // from it. Placement changes only transforms, so the verdict is the same
     // whether or not the scene was placed above.
-    let mesh_health = scene_mesh_health(&scene);
+    let mesh_verdicts = scene_mesh_verdicts(&scene);
     // Eager priming: build the per-mesh spatial caches on this worker thread,
     // so the UI thread receives a fully-primed `SceneSpatial` and the first
     // picker click / gizmo attachment doesn't pay the build cost synchronously.
@@ -294,7 +294,7 @@ fn prepare_scene(
         profile_warnings,
         reloaded_slices,
         source_path: path.to_path_buf(),
-        mesh_health,
+        mesh_verdicts,
         restored_supports,
         restored_hollows,
     })

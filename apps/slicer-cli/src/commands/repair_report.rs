@@ -175,7 +175,7 @@ fn mesh_block(outcome: &SceneRepairOutcome, name: &str) -> Option<String> {
             }
             if let Some(leftovers) = &details.leftovers {
                 for text in leftover_texts(leftovers) {
-                    lines.push(format!("  Left: {text}"));
+                    lines.push(format!("  {text}"));
                 }
             }
             match state.zero_area_face_count {
@@ -231,10 +231,11 @@ fn action_text(action: &RepairAction) -> String {
             vertices,
             collapsed_faces,
         } => {
-            let welded = format!(
-                "Welded {} along cracks",
-                count(vertices, "vertex", "vertices")
-            );
+            let welded = if vertices == 1 {
+                "Welded 1 vertex along a crack".to_string()
+            } else {
+                format!("Welded {vertices} vertices along cracks")
+            };
             match collapsed_faces {
                 0 => welded,
                 n => format!(
@@ -288,12 +289,12 @@ fn leftover_texts(leftovers: &Leftovers) -> Vec<String> {
         let place = place(body, leftovers.bodies);
         for hole in body.holes.iter().take(LISTED_HOLES) {
             let reason = if hole.too_large_to_fill() {
-                "too large to close on its own; it may be open on purpose"
+                ", too large to close on its own; it may be open on purpose"
             } else {
-                "Repair could not close it"
+                " that Repair could not close"
             };
             texts.push(format!(
-                "{place}open hole of {} mm² ({:.0} % of the surface), {reason}",
+                "{place}open hole of {} mm² ({:.0} % of the surface){reason}",
                 area(hole.area_mm2),
                 hole.surface_fraction * 100.0
             ));
@@ -324,25 +325,26 @@ fn leftover_texts(leftovers: &Leftovers) -> Vec<String> {
     texts
 }
 
-/// Where a leftover is: nothing for a mesh of 1 body.
+/// Where a leftover is, as the start of its line: the body is named only
+/// when the mesh has several.
 fn place(body: &BodyLeftovers, bodies: usize) -> String {
     if bodies < 2 {
-        String::new()
+        "Left: ".to_string()
     } else if body.fragments {
-        "on its loose fragments, ".to_string()
+        "Left on its loose fragments: ".to_string()
     } else {
-        format!("on body {} of {bodies}, ", body.body + 1)
+        format!("Left on body {} of {bodies}: ", body.body + 1)
     }
 }
 
 fn refusal_text(refusal: &RepairRefusal) -> String {
     match refusal {
         RepairRefusal::InvalidVertices(errors) => format!(
-            "{} coordinates that are not numbers; export the model again from its 3D app",
+            "{} coordinates that are not numbers; export the model again from its 3D app.",
             count(errors.len(), "vertex has", "vertices have")
         ),
         RepairRefusal::UnfixableFaceErrors(errors) => format!(
-            "{} invalid, and their pass is off",
+            "{} invalid.",
             count(errors.len(), "face is", "faces are")
         ),
     }
@@ -564,8 +566,8 @@ mod repair_report_tests {
              Plate: still can't be sliced\n  \
              Before: 2 faces, can't be sliced\n  \
              After: 2 faces, can't be sliced\n  \
-             Left: on body 2 of 2, open hole of 200.0 mm² (93 % of the surface), too large to close on its own; it may be open on purpose\n  \
-             Left: on body 2 of 2, 2 tangled edges (more than 2 faces, or faces that disagree on which side is out)\n  \
+             Left on body 2 of 2: open hole of 200.0 mm² (93 % of the surface), too large to close on its own; it may be open on purpose\n  \
+             Left on body 2 of 2: 2 tangled edges (more than 2 faces, or faces that disagree on which side is out)\n  \
              Time: 20 ms\n\
              \n\
              Total time: 25 ms\n"

@@ -51,7 +51,7 @@ use crate::gizmo;
 use crate::gizmo::axis::Axis;
 use crate::hollow_persist::install_hollows;
 use crate::i18n::ctr;
-use crate::mesh_health::needs_repair;
+use crate::mesh_check::show_card;
 use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender, StageRefusal};
 use crate::pending_load::PendingLoad;
@@ -909,7 +909,7 @@ impl ViewportController {
             project_payload,
             reloaded_slices,
             source_path,
-            mesh_health,
+            mesh_verdicts,
             restored_supports,
             restored_hollows,
             ..
@@ -969,8 +969,17 @@ impl ViewportController {
         // after install so the tabs, gated on a scene being present, are
         // already showing.
         self.set_section(WorkspaceSection::Transform);
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_mesh_needs_repair(needs_repair(mesh_health));
+        let document = self.session.document();
+        let check = document.mesh_check();
+        check.forget_all();
+        for (mesh, sliceable) in &mesh_verdicts {
+            check.remember(mesh, *sliceable, None);
+        }
+        if let (Some(ui), Some(Some(card))) = (
+            self.ui.upgrade(),
+            document.with_scene(|spatial| check.card(spatial.graph(), false)),
+        ) {
+            show_card(&ui, &card);
         }
 
         if scene_installed {

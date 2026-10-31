@@ -45,6 +45,7 @@ mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;
 mod material_form;
+mod mesh_check;
 mod mesh_health;
 mod mesh_loader;
 pub mod mesh_render;
@@ -66,6 +67,7 @@ mod project_profiles;
 mod project_versions;
 mod raft_clash;
 mod reloaded_slices;
+mod repair_report;
 mod repair_run;
 mod review;
 mod review_marks;

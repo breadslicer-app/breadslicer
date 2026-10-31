@@ -64,6 +64,8 @@ export component MessageLayer inherits Rectangle {
     background: #0000008c;
 
     property <bool> details-visible: false;
+    // The details were copied since they were last shown.
+    property <bool> copied: false;
     property <length> font-secondary: 0.85rem;
     property <length> font-footnote: 0.8rem;
     property <bool> notice: root.message.kind == MessageKind.info || root.message.kind == MessageKind.error;
@@ -74,6 +76,7 @@ export component MessageLayer inherits Rectangle {
 
     changed serial => {
         root.details-visible = false;
+        root.copied = false;
         if (root.open) {
             fs.focus();
         }
@@ -203,49 +206,82 @@ export component MessageLayer inherits Rectangle {
                             wrap: word-wrap;
                         }
 
-                        if root.message.details != "": HorizontalLayout {
-                            alignment: start;
-                            TouchArea {
-                                width: toggle.preferred-width;
-                                height: toggle.preferred-height;
-                                mouse-cursor: pointer;
-                                toggle := HorizontalLayout {
-                                    spacing: 5px;
-                                    alignment: start;
-                                    DisclosureChevron {
-                                        open: root.details-visible;
-                                        color: Theme.accent;
-                                        size: 9px;
-                                        y: (parent.height - self.height) / 2;
+                        // The toggle, and the details folded under it. The
+                        // details are always there, of no height while folded,
+                        // so the Copy link beside the toggle reaches them.
+                        if root.message.details != "": VerticalLayout {
+                            spacing: root.details-visible ? 6px : 0px;
+
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 16px;
+
+                                TouchArea {
+                                    width: toggle.preferred-width;
+                                    height: toggle.preferred-height;
+                                    mouse-cursor: pointer;
+                                    toggle := HorizontalLayout {
+                                        spacing: 5px;
+                                        alignment: start;
+                                        DisclosureChevron {
+                                            open: root.details-visible;
+                                            color: Theme.accent;
+                                            size: 9px;
+                                            y: (parent.height - self.height) / 2;
+                                        }
+                                        Text {
+                                            text: root.message.kind == MessageKind.error
+                                                ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
+                                                : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
+                                            font-size: root.font-footnote;
+                                            color: Theme.accent;
+                                            vertical-alignment: center;
+                                        }
                                     }
-                                    Text {
-                                        text: root.message.kind == MessageKind.error
-                                            ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
-                                            : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
+
+                                    clicked => {
+                                        root.details-visible = !root.details-visible;
+                                    }
+                                }
+
+                                // Copies the details as text, to paste them in
+                                // a message or an issue.
+                                if root.details-visible: TouchArea {
+                                    width: copy-label.preferred-width;
+                                    height: copy-label.preferred-height;
+                                    mouse-cursor: pointer;
+                                    copy-label := Text {
+                                        text: root.copied ? @tr("InfoDialog" => "Copied") : @tr("InfoDialog" => "Copy details");
                                         font-size: root.font-footnote;
                                         color: Theme.accent;
                                         vertical-alignment: center;
                                     }
-                                }
-
-                                clicked => {
-                                    root.details-visible = !root.details-visible;
+                                    clicked => {
+                                        details-text.select-all();
+                                        details-text.copy();
+                                        details-text.clear-selection();
+                                        root.copied = true;
+                                    }
                                 }
                             }
-                        }
 
-                        if root.message.details != "" && root.details-visible: details-scroll := ScrollView {
-                            max-height: 180px;
-                            // A viewport as wide as the view, so the text wraps
-                            // instead of scrolling sideways.
-                            content-width: self.visible-width;
-                            Text {
-                                width: details-scroll.visible-width;
-                                text: root.message.details;
-                                font-size: root.font-footnote;
-                                wrap: word-wrap;
-                                horizontal-alignment: left;
-                                color: Theme.text-muted;
+                            details-scroll := ScrollView {
+                                visible: root.details-visible;
+                                height: root.details-visible ? Math.min(details-text.preferred-height, 180px) : 0px;
+                                // A viewport as wide as the view, so the text
+                                // wraps instead of scrolling sideways.
+                                content-width: self.visible-width;
+                                // Selectable, so a part can be copied too.
+                                details-text := TextInput {
+                                    width: details-scroll.visible-width;
+                                    text: root.message.details;
+                                    font-size: root.font-footnote;
+                                    wrap: word-wrap;
+                                    single-line: false;
+                                    read-only: true;
+                                    horizontal-alignment: left;
+                                    color: Theme.text-muted;
+                                }
                             }
                         }
                     }

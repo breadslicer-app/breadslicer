@@ -33,6 +33,7 @@
 //! specks from all three.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -43,7 +44,8 @@ use sc_print_glue::{
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
 use sc_review::{CavityFill, fill_stack};
-use sc_scene::Scene;
+use sc_scene::{NodeId, Scene};
+use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
 
@@ -53,6 +55,7 @@ use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::print_selection::PrintDefaults;
+use crate::repair_report::object_names_by_leaf;
 use crate::review::{ReviewOutcome, erased_stack, review_slices};
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
@@ -442,7 +445,14 @@ impl SliceRun {
                 // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
-                self.dialogs.show_error(move || slice_failure_texts(&err));
+                // The objects a failure names, as the object list names them
+                // now.
+                let names = self
+                    .document
+                    .with_scene(|spatial| object_names_by_leaf(spatial.graph()))
+                    .unwrap_or_default();
+                self.dialogs
+                    .show_error(move || slice_failure_texts(&err, &names));
             }
         }
     }
@@ -461,13 +471,88 @@ fn missing_selection_texts() -> ErrorTexts {
     }
 }
 
-/// The texts of the dialog that reports a failed slice run.
-fn slice_failure_texts(failure: &SliceFailure) -> ErrorTexts {
+/// The texts of the dialog that reports a failed slice run. `names` holds the
+/// object-list name of each object, for a failure that names objects.
+fn slice_failure_texts(failure: &SliceFailure, names: &HashMap<NodeId, String>) -> ErrorTexts {
+    if let SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(failures)) = failure
+        && !failures.is_empty()
+    {
+        return invalid_objects_texts(failures, names, failure);
+    }
     ErrorTexts {
         heading: ctr!("ErrorDialog", "Slicing failed"),
         context: None,
         message: failure.to_string().into(),
         details: Default::default(),
+    }
+}
+
+/// The texts for objects whose meshes the slicer refused: which objects, and
+/// what to do. The slicer's own words go in the details.
+fn invalid_objects_texts(
+    failures: &[LeafValidationFailure],
+    names: &HashMap<NodeId, String>,
+    failure: &SliceFailure,
+) -> ErrorTexts {
+    let name = |f: &LeafValidationFailure| {
+        names
+            .get(&f.leaf)
+            .cloned()
+            .or_else(|| f.leaf_name.clone())
+            .unwrap_or_else(|| ctr!("ErrorDialog", "Object {}", f.leaf.get()).to_string())
+    };
+    // Repair cannot give a vertex a coordinate: such a model has to be
+    // exported again.
+    let bad_numbers =
+        |f: &&LeafValidationFailure| matches!(f.geometry, InvalidLeafGeometry::Vertices(_));
+    let (heading, message) = match failures {
+        [only] if bad_numbers(&only) => (
+            ctr!("ErrorDialog", "Can't slice “{}”", name(only)),
+            ctr!(
+                "ErrorDialog",
+                "“{}” has vertices whose coordinates are not numbers. Repair can't fix that: export the model again from its 3D app and open it again.",
+                name(only)
+            ),
+        ),
+        [only] => (
+            ctr!("ErrorDialog", "Can't slice “{}”", name(only)),
+            ctr!(
+                "ErrorDialog",
+                "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair meshes in the Transform tab, then slice again.",
+                name(only)
+            ),
+        ),
+        _ => {
+            let listed: Vec<String> = failures.iter().map(name).collect();
+            let message = if failures.iter().all(|f| bad_numbers(&f)) {
+                ctr!(
+                    "ErrorDialog",
+                    "These objects have vertices whose coordinates are not numbers: {}. Repair can't fix that: export them again from their 3D app.",
+                    listed.join(", ")
+                )
+            } else {
+                ctr!(
+                    "ErrorDialog",
+                    "These objects are not closed meshes: {}. Press Repair meshes in the Transform tab, then slice again.",
+                    listed.join(", ")
+                )
+            };
+            (
+                ctr!(
+                    "ErrorDialog",
+                    "Can't slice {n} object",
+                    "Can't slice {n} objects",
+                    failures.len()
+                ),
+                message,
+            )
+        }
+    };
+    ErrorTexts {
+        heading,
+        context: None,
+        message,
+        details: failure.to_string().into(),
     }
 }
 
@@ -720,10 +805,89 @@ mod dialog_text_tests {
 
     #[test]
     fn a_failed_run_shows_its_failure() {
-        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry);
+        let texts = slice_failure_texts(&SliceFailure::EmptySceneGeometry, &HashMap::new());
         assert_eq!(texts.heading, "Slicing failed");
         assert_eq!(texts.context, None);
         assert_eq!(texts.message, "The scene has no geometry to slice.");
         assert_eq!(texts.details, "");
+    }
+
+    /// A scene of 1 open triangle named `name`, and the failure slicing it
+    /// gives.
+    fn open_object(name: &str) -> (Scene, SliceFailure) {
+        use sc_mesh_core::IndexedMesh;
+        use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+        use sc_mesh_core::transform::Transform3D;
+        use sc_scene::{LeafPayload, SceneMetadata};
+
+        let mut graph = Scene::new();
+        let root = graph.add_group(None, Transform3D::Identity);
+        graph.add_root(root).unwrap();
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, 1.0, 2.0]]
+                .into_iter()
+                .map(Vertex::new)
+                .collect(),
+            faces: vec![IndexedTriangle::from_raw_indices([0, 1, 2])],
+        };
+        let leaf = graph
+            .add_leaf(
+                Some(SceneMetadata {
+                    name: Some(name.to_string()),
+                    comment: None,
+                }),
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .unwrap();
+        graph.add_child(root, leaf).unwrap();
+        let failure = SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(vec![
+            LeafValidationFailure {
+                leaf,
+                leaf_name: None,
+                geometry: InvalidLeafGeometry::Manifold(Vec::new()),
+            },
+        ]));
+        (graph, failure)
+    }
+
+    #[test]
+    fn a_refused_object_is_named_with_what_to_do() {
+        let (graph, failure) = open_object("Wolf");
+        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph));
+        assert_eq!(texts.heading, "Can't slice “Wolf”");
+        assert_eq!(
+            texts.message,
+            "“Wolf” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair meshes in the Transform tab, then slice again."
+        );
+        // The slicer's own words stay in the details.
+        assert!(
+            texts.details.contains("mesh validation failed"),
+            "{}",
+            texts.details
+        );
+    }
+
+    #[test]
+    fn several_refused_objects_are_listed() {
+        let (graph, failure) = open_object("Wolf");
+        let SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(mut failures)) = failure
+        else {
+            unreachable!()
+        };
+        let leaf = failures[0].leaf;
+        failures.push(LeafValidationFailure {
+            leaf,
+            leaf_name: None,
+            geometry: InvalidLeafGeometry::Vertices(Vec::new()),
+        });
+        let failure = SliceFailure::Slice(SliceSceneError::LeavesValidationFailed(failures));
+        let texts = slice_failure_texts(&failure, &object_names_by_leaf(&graph));
+        assert_eq!(texts.heading, "Can't slice 2 objects");
+        assert_eq!(
+            texts.message,
+            "These objects are not closed meshes: Wolf, Wolf. Press Repair meshes in the Transform tab, then slice again."
+        );
     }
 }

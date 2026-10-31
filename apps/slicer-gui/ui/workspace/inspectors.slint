@@ -636,6 +636,10 @@ export component TransformInspector inherits VerticalLayout {
     in property <[StandardListViewItem]> objects;
     in property <int> selected-index: -1;
     in property <bool> needs-repair;
+    // What the MESH CHECK card says when a mesh does not slice: its short
+    // status and which objects, why, and what to do (see `mesh_check.rs`).
+    in property <string> check-note;
+    in property <string> check-text;
     in property <bool> repair-enabled;
     in property <bool> repairing;
     // The selected object, in world millimetres and degrees (see
@@ -677,12 +681,12 @@ export component TransformInspector inherits VerticalLayout {
 
     if root.needs-repair: Card {
         title: @tr("Inspector" => "MESH CHECK");
-        note: @tr("Inspector" => "Problems found");
+        note: root.check-note;
         note-color: Theme.warning;
         highlighted: true;
 
         Note {
-            text: @tr("Inspector" => "Some meshes are not watertight. Slicing needs closed meshes; repair fixes most files.");
+            text: root.check-text;
         }
         ScButton {
             text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");

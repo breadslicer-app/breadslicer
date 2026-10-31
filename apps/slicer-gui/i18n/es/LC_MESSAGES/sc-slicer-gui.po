@@ -3827,3 +3827,483 @@ msgstr "Todavía no se sabe si un drenaje acá llega a la cavidad: la cavidad no
 msgctxt "Workspace"
 msgid "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back."
 msgstr "Hacé clic en la superficie del modelo para perforar un drenaje ahí, donde se ve verde: en rojo no llega a la cavidad. Deshacer lo quita."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Nothing to repair: no object has faces."
+msgstr "No hay nada que reparar: ningún objeto tiene caras."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "No problems found. Everything can be sliced."
+msgstr "No se encontraron problemas. Todo se puede laminar."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Repaired {n} object."
+msgid_plural "Repaired {n} objects."
+msgstr[0] "Se reparó {n} objeto."
+msgstr[1] "Se repararon {n} objetos."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Everything can be sliced now."
+msgstr "Ahora todo se puede laminar."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} object still can't be sliced: {}."
+msgid_plural "{n} objects still can't be sliced: {}."
+msgstr[0] "{n} objeto todavía no se puede laminar: {}."
+msgstr[1] "{n} objetos todavía no se pueden laminar: {}."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "No problems: {}"
+msgstr "Sin problemas: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "No faces, nothing to repair: {}"
+msgstr "Sin caras, nada que reparar: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Total time: {}"
+msgstr "Tiempo total: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: not repaired"
+msgstr "{}: no se reparó"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: repaired, can be sliced now"
+msgstr "{}: reparado, ahora se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: repaired"
+msgstr "{}: reparado"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: repaired in part, still can't be sliced"
+msgstr "{}: reparado en parte, todavía no se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: can be sliced"
+msgstr "{}: se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: still can't be sliced"
+msgstr "{}: todavía no se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Kept {n} zero-area face; it does not affect slicing."
+msgid_plural "Kept {n} zero-area faces; they do not affect slicing."
+msgstr[0] "Quedó {n} cara de área cero; no afecta el laminado."
+msgstr[1] "Quedaron {n} caras de área cero; no afectan el laminado."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Left: {n} zero-area face"
+msgid_plural "Left: {n} zero-area faces"
+msgstr[0] "Queda: {n} cara de área cero"
+msgstr[1] "Queda: {n} caras de área cero"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Before: {n} face, {} ml, can be sliced"
+msgid_plural "Before: {n} faces, {} ml, can be sliced"
+msgstr[0] "Antes: {n} cara, {} ml, se podía laminar"
+msgstr[1] "Antes: {n} caras, {} ml, se podía laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Before: {n} face, can be sliced"
+msgid_plural "Before: {n} faces, can be sliced"
+msgstr[0] "Antes: {n} cara, se podía laminar"
+msgstr[1] "Antes: {n} caras, se podía laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Before: {n} face, can't be sliced"
+msgid_plural "Before: {n} faces, can't be sliced"
+msgstr[0] "Antes: {n} cara, no se podía laminar"
+msgstr[1] "Antes: {n} caras, no se podía laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "After: {n} face, {} ml, can be sliced"
+msgid_plural "After: {n} faces, {} ml, can be sliced"
+msgstr[0] "Después: {n} cara, {} ml, se puede laminar"
+msgstr[1] "Después: {n} caras, {} ml, se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "After: {n} face, can be sliced"
+msgid_plural "After: {n} faces, can be sliced"
+msgstr[0] "Después: {n} cara, se puede laminar"
+msgstr[1] "Después: {n} caras, se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "After: {n} face, can't be sliced"
+msgid_plural "After: {n} faces, can't be sliced"
+msgstr[0] "Después: {n} cara, no se puede laminar"
+msgstr[1] "Después: {n} caras, no se puede laminar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Filled {n} hole ({} mm²)"
+msgid_plural "Filled {n} holes (largest {} mm²)"
+msgstr[0] "Se tapó {n} agujero ({} mm²)"
+msgstr[1] "Se taparon {n} agujeros (el más grande, {} mm²)"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Welded {n} vertex along a crack"
+msgid_plural "Welded {n} vertices along cracks"
+msgstr[0] "Se soldó {n} vértice a lo largo de una grieta"
+msgstr[1] "Se soldaron {n} vértices a lo largo de grietas"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} face the welds flattened"
+msgid_plural "removed {n} faces the welds flattened"
+msgstr[0] "se quitó {n} cara que las soldaduras aplastaron"
+msgstr[1] "se quitaron {n} caras que las soldaduras aplastaron"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Separated parts that touched at {n} edge"
+msgid_plural "Separated parts that touched at {n} edges"
+msgstr[0] "Se separaron piezas que se tocaban en {n} arista"
+msgstr[1] "Se separaron piezas que se tocaban en {n} aristas"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} duplicate face (1 copy of each stays)"
+msgid_plural "Removed {n} duplicate faces (1 copy of each stays)"
+msgstr[0] "Se quitó {n} cara duplicada (queda 1 copia de cada una)"
+msgstr[1] "Se quitaron {n} caras duplicadas (queda 1 copia de cada una)"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} face of a double wall"
+msgid_plural "Removed {n} faces of double walls"
+msgstr[0] "Se quitó {n} cara de una pared doble"
+msgstr[1] "Se quitaron {n} caras de paredes dobles"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} face left without a partner"
+msgid_plural "Removed {n} faces left without a partner"
+msgstr[0] "Se quitó {n} cara que quedó sin pareja"
+msgstr[1] "Se quitaron {n} caras que quedaron sin pareja"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Turned {n} inside-out shell outward"
+msgid_plural "Turned {n} inside-out shells outward"
+msgstr[0] "Se dio vuelta {n} cáscara que estaba al revés"
+msgstr[1] "Se dieron vuelta {n} cáscaras que estaban al revés"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Flipped {n} face that faced the wrong way"
+msgid_plural "Flipped {n} faces that faced the wrong way"
+msgstr[0] "Se dio vuelta {n} cara que miraba para el lado equivocado"
+msgstr[1] "Se dieron vuelta {n} caras que miraban para el lado equivocado"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} face that named a vertex twice"
+msgid_plural "Removed {n} faces that named a vertex twice"
+msgstr[0] "Se quitó {n} cara que nombraba dos veces el mismo vértice"
+msgstr[1] "Se quitaron {n} caras que nombraban dos veces el mismo vértice"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} face that named a missing vertex"
+msgid_plural "Removed {n} faces that named a missing vertex"
+msgstr[0] "Se quitó {n} cara que nombraba un vértice que no existe"
+msgstr[1] "Se quitaron {n} caras que nombraban un vértice que no existe"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Removed {n} zero-area sliver"
+msgid_plural "Removed {n} zero-area slivers"
+msgstr[0] "Se quitó {n} astilla de área cero"
+msgstr[1] "Se quitaron {n} astillas de área cero"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} more open hole"
+msgid_plural "{n} more open holes"
+msgstr[0] "{n} agujero abierto más"
+msgstr[1] "{n} agujeros abiertos más"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} open edge on no closed hole"
+msgid_plural "{n} open edges on no closed hole"
+msgstr[0] "{n} arista abierta que no cierra un agujero"
+msgstr[1] "{n} aristas abiertas que no cierran un agujero"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} tangled edge (more than 2 faces, or faces that disagree on which side is out)"
+msgid_plural "{n} tangled edges (more than 2 faces, or faces that disagree on which side is out)"
+msgstr[0] "{n} arista enredada (más de 2 caras, o caras que no coinciden en cuál es el lado de afuera)"
+msgstr[1] "{n} aristas enredadas (más de 2 caras, o caras que no coinciden en cuál es el lado de afuera)"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "open hole of {} mm² ({} % of the surface), too large to close on its own; it may be open on purpose"
+msgstr "agujero abierto de {} mm² ({} % de la superficie), demasiado grande para cerrarlo solo; puede estar abierto a propósito"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "open hole of {} mm² ({} % of the surface) that Repair could not close"
+msgstr "agujero abierto de {} mm² ({} % de la superficie) que Reparar no pudo cerrar"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Left: {}"
+msgstr "Queda: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Left on its loose fragments: {}"
+msgstr "Queda en sus fragmentos sueltos: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Left on body {} of {}: {}"
+msgstr "Queda en el cuerpo {} de {}: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} vertex has coordinates that are not numbers; export the model again from its 3D app."
+msgid_plural "{n} vertices have coordinates that are not numbers; export the model again from its 3D app."
+msgstr[0] "{n} vértice tiene coordenadas que no son números; exportá el modelo de nuevo desde su programa 3D."
+msgstr[1] "{n} vértices tienen coordenadas que no son números; exportá el modelo de nuevo desde su programa 3D."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} face is invalid."
+msgid_plural "{n} faces are invalid."
+msgstr[0] "{n} cara no es válida."
+msgstr[1] "{n} caras no son válidas."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Time: {}"
+msgstr "Tiempo: {}"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Time: {} ({}, checks {})"
+msgstr "Tiempo: {} ({}, controles {})"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removing broken faces"
+msgstr "quitar caras rotas"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "closing holes and separating parts"
+msgstr "cerrar agujeros y separar piezas"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "orienting faces"
+msgstr "orientar caras"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removing slivers"
+msgstr "quitar astillas"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "under 1 ms"
+msgstr "menos de 1 ms"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "some of its vertices are not valid numbers. Export it again from its 3D app."
+msgstr "algunos de sus vértices no son números válidos. Exportalo de nuevo desde su programa 3D."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "it has a hole too large to close on its own ({} % of its surface). If it is open on purpose, close it in its 3D app."
+msgstr "tiene un agujero demasiado grande para cerrarlo solo ({} % de su superficie). Si está abierto a propósito, cerralo en su programa 3D."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Repair could not close all of its edges. Fix it in its 3D app."
+msgstr "Reparar no pudo cerrar todas sus aristas. Arreglalo en su programa 3D."
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Not fully repaired"
+msgstr "Reparado en parte"
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "“{}” still can't be sliced after Repair: {}"
+msgstr "“{}” todavía no se puede laminar después de Reparar: {}"
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{n} object still can't be sliced after Repair: {}. The repair report says what is left on each."
+msgid_plural "{n} objects still can't be sliced after Repair: {}. The repair report says what is left on each."
+msgstr[0] "{n} objeto todavía no se puede laminar después de Reparar: {}. El informe de Reparar dice qué quedó en cada uno."
+msgstr[1] "{n} objetos todavía no se pueden laminar después de Reparar: {}. El informe de Reparar dice qué quedó en cada uno."
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Problems found"
+msgstr "Se encontraron problemas"
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "“{}” can't be sliced yet: it has holes, cracks or faces that don't line up. Repair fixes most files."
+msgstr "“{}” todavía no se puede laminar: tiene agujeros, grietas o caras que no encajan. Reparar arregla la mayoría de los archivos."
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{n} object can't be sliced yet: {}. They have holes, cracks or faces that don't line up. Repair fixes most files."
+msgid_plural "{n} objects can't be sliced yet: {}. They have holes, cracks or faces that don't line up. Repair fixes most files."
+msgstr[0] "{n} objeto todavía no se puede laminar: {}. Tiene agujeros, grietas o caras que no encajan. Reparar arregla la mayoría de los archivos."
+msgstr[1] "{n} objetos todavía no se pueden laminar: {}. Tienen agujeros, grietas o caras que no encajan. Reparar arregla la mayoría de los archivos."
+
+#: src/mesh_check.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} and {n} more"
+msgid_plural "{} and {n} more"
+msgstr[0] "{} y {n} más"
+msgstr[1] "{} y {n} más"
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Object {}"
+msgstr "Objeto {}"
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Can't slice “{}”"
+msgstr "No se puede laminar “{}”"
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "“{}” has vertices whose coordinates are not numbers. Repair can't fix that: export the model again from its 3D app and open it again."
+msgstr "“{}” tiene vértices cuyas coordenadas no son números. Reparar no puede arreglar eso: exportá el modelo de nuevo desde su programa 3D y volvé a abrirlo."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair meshes in the Transform tab, then slice again."
+msgstr "“{}” no es una malla cerrada: tiene agujeros, grietas o caras que no encajan. Tocá Reparar mallas en la pestaña Transformar y volvé a laminar."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "These objects have vertices whose coordinates are not numbers: {}. Repair can't fix that: export them again from their 3D app."
+msgstr "Estos objetos tienen vértices cuyas coordenadas no son números: {}. Reparar no puede arreglar eso: exportalos de nuevo desde su programa 3D."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "These objects are not closed meshes: {}. Press Repair meshes in the Transform tab, then slice again."
+msgstr "Estos objetos no son mallas cerradas: {}. Tocá Reparar mallas en la pestaña Transformar y volvé a laminar."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Can't slice {n} object"
+msgid_plural "Can't slice {n} objects"
+msgstr[0] "No se puede laminar {n} objeto"
+msgstr[1] "No se pueden laminar {n} objetos"
+
+#: ui/message-layer.slint
+msgctxt "InfoDialog"
+msgid "Copy details"
+msgstr "Copiar detalles"
+
+#: ui/message-layer.slint
+msgctxt "InfoDialog"
+msgid "Copied"
+msgstr "Copiado"

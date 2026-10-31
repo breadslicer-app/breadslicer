@@ -36,6 +36,7 @@ use sc_sl1cer::profile::LayerSchedule;
 pub(crate) use sc_scene_edit::SceneEdit;
 
 use crate::hollow_run::Hollowed;
+use crate::mesh_check::MeshCheck;
 use crate::print_selection::{PrintDefaults, PrintSelection};
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{LayerValues, SliceParams, SliceResult};
@@ -295,6 +296,9 @@ pub(crate) struct SceneDocument {
     /// Puts back what a live preview shows (the Orient tool's options,
     /// #182), while one is up.
     live_preview: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Whether each stored mesh slices, for the Transform tab's MESH CHECK
+    /// card.
+    mesh_check: MeshCheck,
 }
 
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
@@ -350,6 +354,7 @@ impl SceneDocument {
             support_follow: Cell::new(None),
             hollows: Rc::default(),
             live_preview: RefCell::new(None),
+            mesh_check: MeshCheck::default(),
         })
     }
 
@@ -389,6 +394,12 @@ impl SceneDocument {
     /// The models hollowed in the Hollow tab, each by the hollow mesh it put
     /// on its leaf (#161): kept here, beside the scene, so a `.bread` save
     /// stores them and an open puts them back.
+    /// What is known of each stored mesh: whether it slices, and what a
+    /// Repair run left on it.
+    pub(crate) fn mesh_check(&self) -> &MeshCheck {
+        &self.mesh_check
+    }
+
     pub(crate) fn hollows(&self) -> Rc<RefCell<Vec<Hollowed>>> {
         self.hollows.clone()
     }
