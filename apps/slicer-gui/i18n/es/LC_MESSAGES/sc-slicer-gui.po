@@ -3365,6 +3365,267 @@ msgid_plural "These drains do not reach the cavity, so they were left out: drill
 msgstr[0] "Este drenaje no llega a la cavidad, así que se quitó: perforado, solo entraría en el modelo o lo atravesaría. Ponelo donde la vista previa de la cavidad se ve detrás de la pared."
 msgstr[1] "Estos drenajes no llegan a la cavidad, así que se quitaron: perforados, solo entrarían en el modelo o lo atravesarían. Ponelos donde la vista previa de la cavidad se ve detrás de la pared."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Does not fit the printer"
+msgstr "No entra en la impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ORIENT"
+msgstr "ORIENTAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model."
+msgstr "Busca la mejor posición para imprimir: menos soportes, menos fuerza de despegue, menos altura. Pasá el mouse sobre una opción para verla en el modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Objective"
+msgstr "Objetivo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Balanced"
+msgstr "Equilibrado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Fewer supports"
+msgstr "Menos soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lower force"
+msgstr "Menos fuerza"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Faster"
+msgstr "Más rápido"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Advanced"
+msgstr "Avanzado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Max tilt from now"
+msgstr "Inclinación máxima desde la actual"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Align to the plate"
+msgstr "Alinear a la cama"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of supports"
+msgstr "Peso de los soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of peel force"
+msgstr "Peso de la fuerza de despegue"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of height"
+msgstr "Peso de la altura"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate."
+msgstr "Con 180° vale cualquier pose, incluso boca abajo. Sin alinear, una opción gira sobre la vertical solo para entrar en la cama."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "AUTO-ORIENT"
+msgstr "AUTO-ORIENTAR"
+
+#: ui/workspace/inspectors.slint src/orient_run.rs
+msgctxt "Inspector"
+msgid "Quick"
+msgstr "Rápida"
+
+#: ui/workspace/inspectors.slint src/orient_run.rs
+msgctxt "Inspector"
+msgid "Full"
+msgstr "Completa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Preparing the model…"
+msgstr "Preparando el modelo…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Searching…"
+msgstr "Buscando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Refining the best poses…"
+msgstr "Afinando las mejores poses…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Judging the finalists…"
+msgstr "Comparando las finalistas…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Apply {}"
+msgstr "Aplicar {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Apply"
+msgstr "Aplicar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Auto-orient"
+msgstr "Auto-orientar"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Orient: the best way up for printing"
+msgstr "Orientar: la mejor posición para imprimir"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Search cancelled. The model was not moved."
+msgstr "Búsqueda cancelada. El modelo no se movió."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The scene changed while searching; the result was dropped. Search again."
+msgstr "La escena cambió mientras buscaba; se descartó el resultado. Buscá de nuevo."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Your orientation is already the best I found ({} s). Nothing was moved."
+msgstr "Tu orientación ya es la mejor que encontré ({} s). No se movió nada."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Searched in {} s. Hover an option to see it."
+msgstr "Buscado en {} s. Pasá el mouse sobre una opción para verla."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The model changed since the search. Search again."
+msgstr "El modelo cambió desde la búsqueda. Buscá de nuevo."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Applied option {}. Undo puts the model back."
+msgstr "Opción {} aplicada. Deshacer vuelve el modelo atrás."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "This model has supports: an option that tilts it makes them again; a turn about the vertical takes them along."
+msgstr "Este modelo tiene soportes: una opción que lo inclina los genera de nuevo; un giro sobre la vertical los lleva con él."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "This model is hollowed: its cavity was made for the current pose. Orienting before hollowing works best."
+msgstr "Este modelo está ahuecado: su cavidad se hizo para la pose actual. Conviene orientar antes de ahuecar."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The mesh is not closed, so peel force was left out. Repair it for a full answer."
+msgstr "La malla no está cerrada, así que no se midió la fuerza de despegue. Reparala para una respuesta completa."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "No option fits the printer. Scale the model down or pick a larger printer."
+msgstr "Ninguna opción entra en la impresora. Achicá el modelo o elegí una impresora más grande."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "≈ {} tips"
+msgstr "≈ {} puntas"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} mm tall"
+msgstr "{} mm de alto"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Peak {} N"
+msgstr "Pico {} N"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Peak not measured"
+msgstr "Pico sin medir"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "As it stands"
+msgstr "Como está"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tilts {}°"
+msgstr "Inclina {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Turns {}°"
+msgstr "Gira {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tilts {}°, turns {}°"
+msgstr "Inclina {}°, gira {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Now: ≈ {} tips · peak {} N · {} mm tall"
+msgstr "Ahora: ≈ {} puntas · pico {} N · {} mm de alto"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Now: ≈ {} tips · {} mm tall"
+msgstr "Ahora: ≈ {} puntas · {} mm de alto"
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "Auto-orient failed"
+msgstr "Falló la auto-orientación"
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "The search stopped unexpectedly. The model was not moved."
+msgstr "La búsqueda se detuvo inesperadamente. El modelo no se movió."
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "The scene rejected the new pose; nothing was moved."
+msgstr "La escena rechazó la pose nueva; no se movió nada."
+
 msgctxt "MenuBar"
 msgid "Split into Bodies"
 msgstr "Separar en cuerpos"

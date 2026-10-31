@@ -469,3 +469,152 @@ fn pruned_minima_match_a_full_scan() {
         }
     }
 }
+
+#[test]
+fn a_full_search_judges_more_finalists_and_is_never_worse_than_the_current_pose() {
+    for mesh in [lopsided(), mini()] {
+        let quick = search(&mesh, &balanced());
+        let full_ctx = OrientContext {
+            mode: SearchMode::Full,
+            ..balanced()
+        };
+        let full = search(&mesh, &full_ctx);
+        assert_eq!(full.options.len(), 3);
+        for (i, a) in full.options.iter().enumerate() {
+            for b in &full.options[i + 1..] {
+                assert!(angle_deg(a.up, b.up) >= DIVERSE_DEG - 1e-9);
+            }
+        }
+        assert!(full.timings.stage1_poses > 3 * quick.timings.stage1_poses);
+        assert_eq!(full.timings.verdict_poses, FULL_FINALISTS + 1);
+        assert!(full.recommended().cost.total <= full.current.cost.total + 1e-9);
+        // The same pose, scored the same way: what it finds is as good as
+        // what Quick finds, give or take the margin within which poses tie.
+        let (q, f) = (quick.options[0].cost.total, full.options[0].cost.total);
+        assert!(f <= q * (1.0 + KEEP_MARGIN), "Full {f} against Quick {q}");
+        // Deterministic too.
+        let again = search(&mesh, &full_ctx);
+        assert_eq!(
+            again.options.iter().map(|c| c.up).collect::<Vec<_>>(),
+            full.options.iter().map(|c| c.up).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_max_tilt_keeps_every_option_near_the_current_pose() {
+    for mode in [SearchMode::Quick, SearchMode::Full] {
+        let ctx = OrientContext {
+            mode,
+            max_tilt_deg: Some(30.0),
+            ..balanced()
+        };
+        let o = search(&lopsided(), &ctx);
+        assert!(!o.options.is_empty());
+        for c in &o.options {
+            assert!(c.tilt_deg <= 30.0 + 1e-6, "{mode:?}: {}°", c.tilt_deg);
+        }
+        // Without the limit the best pose of this shape tilts further.
+        let free = search(&lopsided(), &OrientContext { mode, ..balanced() });
+        assert!(free.options.iter().any(|c| c.tilt_deg > 30.0));
+    }
+}
+
+#[test]
+fn aligning_to_the_plate_lays_the_shadow_square() {
+    // A flat 40 × 10 bar turned 30° about the vertical.
+    let bar = Shape::default()
+        .boxed([0.0; 3], [40.0, 10.0, 4.0], 4)
+        .mesh();
+    let bar = rotated(&bar, &axis_angle([0.0, 0.0, 1.0], 30f64.to_radians()));
+    let a = analyse(&bar);
+    let keep = a.evaluate(
+        [0.0, 0.0, 1.0],
+        &OrientContext {
+            build_volume_mm: Some([120.0, 70.0, 150.0]),
+            ..balanced()
+        },
+    );
+    assert_eq!(keep.fit, Fit::Fits { turn_deg: 0.0 });
+    let ctx = OrientContext {
+        build_volume_mm: Some([120.0, 70.0, 150.0]),
+        align_to_plate: true,
+        ..balanced()
+    };
+    let square = a.evaluate([0.0, 0.0, 1.0], &ctx);
+    let Fit::Fits { turn_deg } = square.fit else {
+        panic!("{:?}", square.fit);
+    };
+    assert!((turn_deg + 30.0).abs() < 1e-4, "{turn_deg}");
+    // The options turn the same way: however the bar tilts, its length
+    // stays over the X axis, so its shadow lies along X.
+    let o = search(&bar, &ctx);
+    let best = o.recommended();
+    let along = mul(
+        &best.rotation,
+        mul(
+            &axis_angle([0.0, 0.0, 1.0], 30f64.to_radians()),
+            [1.0, 0.0, 0.0],
+        ),
+    );
+    assert!(
+        along[1].abs() < 1e-3,
+        "the bar's shadow lies along X: {along:?}"
+    );
+    // A plate deeper than wide takes the long side along Y.
+    let tall = OrientContext {
+        build_volume_mm: Some([70.0, 120.0, 150.0]),
+        ..ctx
+    };
+    let Fit::Fits { turn_deg } = a.evaluate([0.0, 0.0, 1.0], &tall).fit else {
+        panic!("fits");
+    };
+    assert!((turn_deg - 60.0).abs() < 1e-4, "{turn_deg}");
+}
+
+/// A model on the plate stays on it after a turn that would reach past an
+/// edge, moved in the plate plane by the least amount; one that was off the
+/// plate is left as turned.
+#[test]
+fn a_turn_near_the_edge_is_shifted_back_onto_the_plate() {
+    let bar = Shape::default()
+        .boxed([-30.0, -5.0, 0.0], [30.0, 5.0, 6.0], 4)
+        .mesh();
+    let (lo, hi) = ([-50.0, -40.0], [50.0, 40.0]);
+    let bounds = |t: &AffineTransform3D| {
+        bar.vertices.iter().fold(
+            ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+            |(mut a, mut b), v| {
+                let p = t.apply_to_vertex(*v).coords().map(f64::from);
+                for k in 0..3 {
+                    a[k] = a[k].min(p[k]);
+                    b[k] = b[k].max(p[k]);
+                }
+                (a, b)
+            },
+        )
+    };
+    // Along X near the +Y edge; a quarter turn stands it along Y, 62 mm up.
+    let world = AffineTransform3D::from_translation([10.0, 32.0, 0.0]);
+    let quarter = axis_angle([0.0, 0.0, 1.0], PI / 2.0);
+    let turned = turned_about_footprint(&bar, &world, &quarter);
+    let (_, b) = bounds(&turned);
+    assert!((b[1] - 62.0).abs() < 1e-3, "{b:?}");
+    let kept = kept_on_plate(&bar, &world, &turned, lo, hi);
+    let (a, b) = bounds(&kept);
+    for k in 0..2 {
+        assert!(a[k] >= lo[k] && b[k] <= hi[k], "axis {k}: {a:?} {b:?}");
+    }
+    assert!((b[1] - 40.0).abs() < 1e-2, "moved just inside: {b:?}");
+    // Only moved along Y, and only in the plate plane.
+    assert_eq!(kept.linear(), turned.linear());
+    assert_eq!(kept.translation()[0], turned.translation()[0]);
+    assert_eq!(kept.translation()[2], turned.translation()[2]);
+    // Wider than the plate along Y: that axis is left alone.
+    let narrow = kept_on_plate(&bar, &world, &turned, [-50.0, -20.0], [50.0, 37.1]);
+    assert_eq!(narrow, turned);
+    // Off the plate to begin with: left as turned.
+    let off = AffineTransform3D::from_translation([200.0, 0.0, 0.0]).compose(&world);
+    let turned_off = turned_about_footprint(&bar, &off, &quarter);
+    assert_eq!(kept_on_plate(&bar, &off, &turned_off, lo, hi), turned_off);
+}

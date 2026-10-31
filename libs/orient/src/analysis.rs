@@ -15,7 +15,9 @@ use sc_mesh_core::transform::AffineTransform3D;
 
 use crate::cups::Voxels;
 use crate::histogram::{Bin, histogram, overhang, overhang_weight};
-use crate::hull::{Hull, convex_hull, fit_turn_deg, hull_2d, min_width};
+use crate::hull::{
+    Hull, convex_hull, fit_turn_deg, fits_turned, hull_2d, min_width, square_turn_deg,
+};
 use crate::islands::{ISLAND_CLUSTER_MM, Neighbours, Ring, count_clustered, local_minima_many};
 use crate::peel::{LayerProfile, layer_profile, summarize};
 use crate::pose::{axis_angle, matmul, rotation_between};
@@ -287,7 +289,7 @@ impl OrientAnalysis {
         );
         let width = min_width(&shadow);
         let slenderness = if width > 0.0 { height / width } else { 0.0 };
-        let fit = match ctx.build_volume_mm {
+        let mut fit = match ctx.build_volume_mm {
             None => Fit::Unknown,
             Some([_, _, z]) if height + lift > z + 1e-6 => Fit::TooTall,
             Some([x, y, _]) => match fit_turn_deg(&shadow, x, y) {
@@ -295,6 +297,22 @@ impl OrientAnalysis {
                 None => Fit::TooWide,
             },
         };
+        let mut turn_deg = match fit {
+            Fit::Fits { turn_deg } => turn_deg,
+            _ => 0.0,
+        };
+        if ctx.align_to_plate {
+            let square =
+                square_turn_deg(&shadow, ctx.build_volume_mm.is_some_and(|[x, y, _]| y > x));
+            match (fit, ctx.build_volume_mm) {
+                (Fit::Unknown, _) => turn_deg = square,
+                (Fit::Fits { .. }, Some([x, y, _])) if fits_turned(&shadow, x, y, square) => {
+                    turn_deg = square;
+                    fit = Fit::Fits { turn_deg };
+                }
+                _ => {}
+            }
+        }
 
         let detail = self.detail.as_ref().map(|d| DetailCost {
             tips: sums.detail_area / ctx.area_per_tip_mm2,
@@ -314,10 +332,6 @@ impl OrientAnalysis {
             + w.slenderness * (slenderness - w.slender_from).max(0.0)
             + detail.map_or(0.0, |d| w.detail_up * (1.0 - d.facing_up));
         let layers = ((height + lift) / ctx.layer_height_mm.max(1e-3)).ceil() as usize;
-        let turn_deg = match fit {
-            Fit::Fits { turn_deg } => turn_deg,
-            _ => 0.0,
-        };
         let cu = unit(ctx.current_up).unwrap_or([0.0, 0.0, 1.0]);
         let rotation = if turn_deg == 0.0 {
             to_current
