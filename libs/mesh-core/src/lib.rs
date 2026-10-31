@@ -22,6 +22,7 @@ pub mod aabb;
 pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;
+pub mod shells;
 pub mod transform;
 pub mod triangle_iterator;
 
@@ -33,5 +34,7 @@ pub use crate::triangle_iterator::{
     IndexedMeshBuildError, TriangleIterator, indexed_mesh_from_soup,
 };
 
+#[cfg(test)]
+mod tests_shells;
 #[cfg(test)]
 mod tests_triangle_iterator;

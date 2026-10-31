@@ -81,6 +81,7 @@ pub(crate) struct PlateOptions {
 
 #[derive(Clone, Debug)]
 pub(crate) enum CmdOptions {
+    Bodies(crate::commands::bodies::BodiesArgs),
     Convert {
         source: OsString,
         source_format: Option<MeshFileType>,
@@ -510,6 +511,10 @@ fn get_profiles_options() -> impl Parser<CmdOptions> {
 }
 
 pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
+    let bodies = crate::commands::bodies::get_bodies_options()
+        .to_options()
+        .descr("List the bodies a 3d model splits into, with the time it takes")
+        .command("bodies");
     let convert = get_convert_options()
         .to_options()
         .descr("Convert between file formats")
@@ -558,6 +563,7 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         .command("version");
 
     construct!([
+        bodies,
         convert,
         diagnose,
         fix,

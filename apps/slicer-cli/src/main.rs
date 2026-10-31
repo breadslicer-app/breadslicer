@@ -18,6 +18,7 @@ mod filesystem;
 use anyhow::Result;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 
+use crate::commands::bodies::bodies;
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
 use crate::commands::fix::fix;
@@ -39,6 +40,7 @@ fn main() -> Result<()> {
     let libraries = resolve_profile_libraries();
 
     match cmd_options {
+        CmdOptions::Bodies(args) => bodies(args),
         CmdOptions::Convert {
             source,
             source_format,
