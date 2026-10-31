@@ -70,6 +70,13 @@ export component MeshViewer inherits Rectangle {
 
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
+    // A right or middle drag that orbits starts at the cursor and ends when
+    // its button comes up; Rust picks the pivot and places its marker.
+    callback orbit-begin(length, length);
+    callback orbit-end();
+    in property <bool> orbit-pivot-visible: false;
+    in property <length> orbit-pivot-x;
+    in property <length> orbit-pivot-y;
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
     in property <bool> orthographic-view: false;
@@ -483,9 +490,11 @@ export component MeshViewer inherits Rectangle {
                         });
                     } else if (event.button == PointerEventButton.right) {
                         root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        if (root.active-gesture == 1) { root.orbit-begin(ta.mouse-x, ta.mouse-y); }
                         root.viewport-right-pointer-down(ta.mouse-x, ta.mouse-y);
                     } else if (event.button == PointerEventButton.middle) {
                         root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        if (root.active-gesture == 1) { root.orbit-begin(ta.mouse-x, ta.mouse-y); }
                     }
                 } else if (event.kind == PointerEventKind.up) {
                     if (root.modal-click-pending) { root.modal-click-pending = false; }
@@ -498,9 +507,11 @@ export component MeshViewer inherits Rectangle {
                             meta: event.modifiers.meta,
                         });
                     } else if (event.button == PointerEventButton.right) {
+                        if (root.active-gesture == 1) { root.orbit-end(); }
                         root.active-gesture = 0;
                         root.viewport-right-pointer-up(ta.mouse-x, ta.mouse-y);
                     } else if (event.button == PointerEventButton.middle) {
+                        if (root.active-gesture == 1) { root.orbit-end(); }
                         root.active-gesture = 0;
                     }
                 } else if (event.kind == PointerEventKind.move && root.active-gesture == 0) {
@@ -588,6 +599,18 @@ export component MeshViewer inherits Rectangle {
         border-width: 1px;
         border-color: #6fb3ff;
         background: #6fb3ff22;
+        accessible-role: none;
+    }
+    // The orbit's pivot. It holds still on screen while the camera turns.
+    if root.orbit-pivot-visible: Rectangle {
+        x: root.orbit-pivot-x - self.width / 2;
+        y: root.orbit-pivot-y - self.height / 2;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        border-width: 2px;
+        border-color: #f0f0f0;
+        background: #3a8fd9;
         accessible-role: none;
     }
     if root.modal-transform-active: Rectangle {

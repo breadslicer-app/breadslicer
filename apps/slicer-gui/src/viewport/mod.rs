@@ -18,6 +18,7 @@ mod keyboard_drive;
 mod modal_transform;
 pub(crate) mod numeric_transform;
 mod object_list;
+mod orbit_pivot;
 mod performance_probe;
 mod render_host;
 mod render_scheduler;
@@ -30,6 +31,8 @@ mod tests_controller_lifecycle;
 mod tests_controller_multi_select;
 #[cfg(test)]
 mod tests_controller_numeric;
+#[cfg(test)]
+mod tests_controller_orbit;
 #[cfg(test)]
 mod tests_controller_section_gating;
 #[cfg(test)]

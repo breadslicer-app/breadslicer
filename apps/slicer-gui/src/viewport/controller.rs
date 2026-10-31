@@ -23,7 +23,7 @@ use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 
-use super::camera_controller::CameraController;
+use super::camera_controller::{CameraController, OrbitDrag};
 use super::gizmo_drag::DragOp;
 use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
@@ -261,6 +261,11 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn set_camera_for_test(&self, camera: crate::camera::OrbitCamera) {
         *self.camera.camera_cell().borrow_mut() = Some(camera);
+    }
+
+    #[cfg(test)]
+    pub(super) fn camera_for_test(&self) -> Option<crate::camera::OrbitCamera> {
+        self.camera.camera_cell().borrow().clone()
     }
 
     #[cfg(test)]
@@ -817,9 +822,59 @@ impl ViewportController {
         self.render.on_resize_settled();
     }
 
+    /// A right or middle button went down to orbit, with the cursor at
+    /// `(x, y)`. The pivot is chosen at the first movement (#346).
+    pub(crate) fn on_orbit_begin(&self, x: f32, y: f32) {
+        self.camera.arm_orbit(ScreenPoint::new(x, y));
+    }
+
+    /// The orbit's button came up: the pivot and its marker go.
+    pub(crate) fn on_orbit_end(&self) {
+        if self.camera.end_orbit()
+            && let Some(ui) = self.ui.upgrade()
+        {
+            ui.set_orbit_pivot_visible(false);
+        }
+    }
+
     pub(crate) fn on_rotate(&self, delta: ScreenDelta) {
+        if let OrbitDrag::Armed(cursor) = self.camera.orbit_drag() {
+            self.hold_orbit_pivot(cursor);
+        }
         if self.camera.on_rotate(delta, self.render.viewport()) {
             self.mark_dirty();
+        }
+    }
+
+    /// Chooses the pivot of the armed orbit and shows its marker.
+    fn hold_orbit_pivot(&self, cursor: ScreenPoint) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        let slot = self.camera.camera_cell().borrow();
+        let Some(camera) = slot.as_ref() else {
+            return;
+        };
+        let (pivot, _) = super::orbit_pivot::choose(
+            self.session.document(),
+            camera,
+            vp,
+            self.session.build_volume(),
+            cursor,
+        );
+        let on_screen = picking::project_world_to_screen(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            pivot,
+        );
+        drop(slot);
+        self.camera.hold_orbit_pivot(pivot);
+        if let (Some(ui), Some((x, y))) = (self.ui.upgrade(), on_screen) {
+            ui.set_orbit_pivot_x(x);
+            ui.set_orbit_pivot_y(y);
+            ui.set_orbit_pivot_visible(true);
         }
     }
 
