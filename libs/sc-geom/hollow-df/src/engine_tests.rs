@@ -788,23 +788,8 @@ fn a_drain_report_is_what_apply_does() {
                     .expect("the cavity is here")
             })
             .collect();
-        // With infill, cutting a drain into the cavity fails today ("crossings
-        // along a cutter edge do not alternate", as in `main` before #302):
-        // there only the drains left out are applied.
-        let applied: Vec<&DrainHole> = drains
-            .iter()
-            .zip(&asked)
-            .filter(|(_, r)| fill == HollowFill::Cavity || !r.reaches_cavity)
-            .map(|(d, _)| d)
-            .collect();
-        let expected: Vec<DrainReport> = asked
-            .iter()
-            .copied()
-            .filter(|r| fill == HollowFill::Cavity || !r.reaches_cavity)
-            .collect();
-        let holes: Vec<DrainHole> = applied.into_iter().copied().collect();
-        let applied = session.apply(&settings, &holes, Control::none()).unwrap();
-        assert_eq!(expected, applied.drains, "wall {wall}, {fill:?}");
+        let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+        assert_eq!(asked, applied.drains, "wall {wall}, {fill:?}");
         assert!(is_edge_manifold(&applied.mesh));
         // Into the fin's side: a channel behind it with the 1 mm wall; with
         // 2 the fin is solid, and the axis comes out its other side.
@@ -817,6 +802,112 @@ fn a_drain_report_is_what_apply_does() {
         misses += asked.iter().filter(|r| !r.reaches_cavity).count();
     }
     assert!(opens > 0 && misses > 0, "{opens} open, {misses} miss");
+}
+
+/// Infill beams cross one another and run into the wall, where they used to
+/// break the cut of every drain that opens (#321). With Lattice and Pillars,
+/// thin and thick beams, a drain opens exactly where it does without infill
+/// (the beams do not stand for the cavity), every one that opens is cut
+/// clear through the wall, and the result stays closed.
+#[test]
+fn drains_open_through_infill() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    // The fin's tip drains moved off the diagonal of its top: on it, a
+    // corner of the second cutter lies exactly on the first cut's sliver,
+    // which leaves a fold over the hole with or without infill.
+    let mut drains: Vec<DrainHole> = drains_around_the_fin()
+        .into_iter()
+        .map(|mut d| {
+            if d.center[2] == 50.0 {
+                d.center[0] += 0.1;
+            }
+            d
+        })
+        .collect();
+    // Short of the 2 mm wall: beams run up to 1.2 mm into it, and must not
+    // pass for the cavity.
+    for x in [10.0, 30.0] {
+        let mut short = DrainHole::new([x, 15.0, 0.0], [0.0, 0.0, 1.0], 1.5);
+        short.depth = DrainDepth::Mm(1.6);
+        drains.push(short);
+    }
+    let mut opens = 0;
+    for (pattern, beam_radius_mm) in [
+        (InfillMode::Lattice, 0.6),
+        (InfillMode::Lattice, 1.5),
+        (InfillMode::Pillar, 0.6),
+        (InfillMode::Pillar, 1.5),
+    ] {
+        let hollow = HollowSettings::default();
+        session.preview(&hollow, Control::none()).unwrap();
+        let without: Vec<DrainReport> = drains
+            .iter()
+            .map(|hole| session.drain_report(&hollow, hole).unwrap())
+            .collect();
+        let settings = HollowSettings {
+            fill: HollowFill::Infill {
+                pattern,
+                cell_mm: 6.0,
+                beam_radius_mm,
+            },
+            ..hollow
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let asked: Vec<DrainReport> = drains
+            .iter()
+            .map(|hole| session.drain_report(&settings, hole).unwrap())
+            .collect();
+        let case = format!("{pattern:?} {beam_radius_mm}");
+        assert_eq!(without, asked, "{case}");
+        let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+        assert_eq!(asked, applied.drains, "{case}");
+        assert!(is_edge_manifold(&applied.mesh), "{case}");
+        assert!(face_shells(&applied.mesh).1 > 2, "{case}: beams are kept");
+
+        // Along each axis that opens, nothing is left from just outside the
+        // model to the cavity: the hole goes clear through.
+        let wall_bvh = Bvh::build(&preview.cavity);
+        let out_bvh = Bvh::build(&applied.mesh);
+        for (hole, report) in drains.iter().zip(&asked) {
+            if !report.reaches_cavity {
+                continue;
+            }
+            let (center, axis) = drain_axis(hole);
+            let origin = center.sub(axis.scale(0.5));
+            let to_wall = wall_bvh.ray_hit_distances(&preview.cavity, origin, axis)[0];
+            let first_left = out_bvh
+                .ray_hit_distances(&applied.mesh, origin, axis)
+                .first()
+                .copied()
+                .unwrap_or(f32::INFINITY);
+            assert!(
+                first_left > to_wall + 0.05,
+                "{case}: {hole:?} is plugged at {first_left} (wall at {to_wall})"
+            );
+            opens += 1;
+        }
+        assert!(
+            asked.iter().zip(&drains).any(|(r, d)| r.reaches_cavity
+                && d.depth == DrainDepth::Auto
+                && d.center[2] == 0.0),
+            "{case}: a drain opens from below"
+        );
+        assert!(
+            asked
+                .iter()
+                .zip(&drains)
+                .filter(|(_, d)| d.depth != DrainDepth::Auto)
+                .all(|(r, _)| !r.reaches_cavity),
+            "{case}: a drain short of the wall stays out"
+        );
+    }
+    assert!(opens > 40, "{opens}");
 }
 
 /// The other refusals of #264 read the same: an axis inside the side wall,

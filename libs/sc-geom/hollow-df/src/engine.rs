@@ -48,13 +48,17 @@
 //! - a drain whose axis does not open into the cavity is not cut (#264): it
 //!   would drain nothing, and at the automatic depth it drills through the
 //!   model;
+//! - with infill, drains are measured against the cavity wall alone (a beam
+//!   reaching into the wall is not the cavity), and cut from the source and
+//!   the wall, then from each beam on its own, since beams overlap the wall
+//!   and one another (#321);
 //! - the result reports volumes in mm³ from the meshes themselves.
 
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
-use crate::drain::{ConvexCutter, CutError, subtract_convex_closed};
+use crate::drain::{ConvexCutter, CutError, OverlappingShells, subtract_convex_closed};
 use crate::hollowing::{
     ExactCavity, GridSpec, HollowMode, HollowOptions, HollowSession, InfillMode,
     MIN_VOXEL_RESOLUTION, OpenFace, merge_meshes, normalize_mesh_for_boolean,
@@ -377,12 +381,13 @@ impl Clone for Session {
 
 /// A cavity as the session keeps it, with what drains are measured
 /// against, built on the first drain measured (a hover, an apply) and kept
-/// with it: every drain on this cavity reads the same mesh and BVH.
+/// with it: every drain on this cavity reads the same wall and BVH.
 #[derive(Debug)]
 struct BuiltCavity {
     exact: ExactCavity,
     /// The wall and the infill beams as one mesh; only with infill.
     merged: OnceLock<IndexedMesh>,
+    /// The wall's BVH.
     bvh: OnceLock<Bvh>,
 }
 
@@ -405,10 +410,13 @@ impl BuiltCavity {
         }
     }
 
-    /// [`BuiltCavity::surface`] and its BVH, for drains.
+    /// The cavity wall and its BVH, which drains are measured against: a
+    /// drain opens where its axis meets the wall. The beams are left out:
+    /// they run into the wall, and an axis that meets one there has not
+    /// reached the cavity yet (#321).
     fn drain_target(&self) -> (&IndexedMesh, &Bvh) {
-        let surface = self.surface();
-        (surface, self.bvh.get_or_init(|| Bvh::build(surface)))
+        let wall = &self.exact.wall;
+        (wall, self.bvh.get_or_init(|| Bvh::build(wall)))
     }
 }
 
@@ -773,31 +781,51 @@ impl Session {
         if !shell.defects.is_clean() {
             return Err(HollowError::NotClosed(shell.defects));
         }
-        // The cavity goes in as it is, on its own vertices: no weld across
-        // it and the source, which could move or merge them. Two closed
-        // meshes on separate vertices make a closed one.
-        let mut mesh = merge_meshes(shell.mesh.as_ref().unwrap_or(self.source_mesh()), &added);
         let mut reports = Vec::with_capacity(drains.len());
+        // The drains that open, as (drain index, cutter).
+        let mut cutters = Vec::with_capacity(drains.len());
         if !drains.is_empty() {
             ctl.stage(Stage::Drains)?;
             // Every drain is measured before any is cut, so drains do not
             // depend on their order; as `Session::drain_report` measures them.
-            let mut cutters = Vec::with_capacity(drains.len());
-            for hole in drains {
+            for (index, hole) in drains.iter().enumerate() {
                 ctl.check()?;
                 let report = self.measure_drain(settings, &built, hole);
-                cutters.push(report.reaches_cavity.then(|| drain_cutter(hole, &report)));
+                if report.reaches_cavity {
+                    cutters.push((index, drain_cutter(hole, &report)));
+                }
                 reports.push(report);
             }
-            for (index, cutter) in cutters.iter().enumerate() {
-                let Some(cutter) = cutter else {
-                    continue;
-                };
-                ctl.check()?;
-                // Closed: proven by the stabilization or by the previous cut.
-                mesh = subtract_convex_closed(&mesh, cutter)
-                    .map_err(|error| HollowError::Drain { index, error })?;
-            }
+        }
+        // The cavity goes in as it is, on its own vertices: no weld across
+        // it and the source, which could move or merge them. Two closed
+        // meshes on separate vertices make a closed one. Beams overlap the
+        // wall and one another, so when drains are cut they join after:
+        // the drains are cut from the source and the wall, then from each
+        // beam on its own.
+        let beams = cavity.infill.as_ref().filter(|_| !cutters.is_empty());
+        let mut mesh = merge_meshes(
+            shell.mesh.as_ref().unwrap_or(self.source_mesh()),
+            if beams.is_some() {
+                &cavity.wall
+            } else {
+                &added
+            },
+        );
+        for (index, cutter) in &cutters {
+            ctl.check()?;
+            // Closed: proven by the stabilization or by the previous cut.
+            mesh = subtract_convex_closed(&mesh, cutter).map_err(|error| HollowError::Drain {
+                index: *index,
+                error,
+            })?;
+        }
+        if let Some(infill) = beams {
+            let beams = cut_beams(infill, &cutters, ctl)?;
+            let offset = mesh.positions.len() as u32;
+            mesh.positions.extend_from_slice(&beams.positions);
+            mesh.triangles
+                .extend(beams.triangles.iter().map(|t| t.map(|v| v + offset)));
         }
         // Every step that produced `mesh` checked it edge-manifold (the
         // source and the cavity on their own, then each cut); the stage
@@ -820,6 +848,23 @@ impl Session {
             stats,
         })
     }
+}
+
+/// The infill `infill` less the drains' `cutters` (drain index, cutter):
+/// each beam cut on its own, since they overlap (#321).
+fn cut_beams(
+    infill: &IndexedMesh,
+    cutters: &[(usize, ConvexCutter)],
+    ctl: Control<'_>,
+) -> Result<IndexedMesh, HollowError> {
+    ctl.check()?;
+    let only: Vec<&ConvexCutter> = cutters.iter().map(|(_, cutter)| cutter).collect();
+    OverlappingShells::new(infill)
+        .subtract_convex(&only)
+        .map_err(|(i, error)| HollowError::Drain {
+            index: cutters[i].0,
+            error,
+        })
 }
 
 /// A drain's axis, normalized (straight down when it has no direction), and

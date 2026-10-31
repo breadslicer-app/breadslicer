@@ -4327,3 +4327,310 @@ msgstr "Reparando…"
 msgctxt "Inspector"
 msgid "Repair meshes"
 msgstr "Reparar mallas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "HOLLOWING"
+msgstr "AHUECADO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Working"
+msgstr "Trabajando"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Hollow"
+msgstr "Ahuecado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Select a model to hollow it."
+msgstr "Seleccioná un modelo para ahuecarlo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "That is the support mesh; select a model."
+msgstr "Esa es la malla de soportes; seleccioná un modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Hollow again"
+msgstr "Ahuecar de nuevo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Hollow model"
+msgstr "Ahuecar modelo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Starting…"
+msgstr "Empezando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Show the cavity (live preview)"
+msgstr "Mostrar la cavidad (vista previa en vivo)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Make solid again"
+msgstr "Volver a hacerlo macizo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "WALL"
+msgstr "PARED"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Wall thickness"
+msgstr "Grosor de pared"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Recommended ({} mm)"
+msgstr "Recomendado ({} mm)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Detail (voxel)"
+msgstr "Detalle (vóxel)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Inside"
+msgstr "Interior"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Empty"
+msgstr "Vacío"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lattice"
+msgstr "Enrejado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Pillars"
+msgstr "Pilares"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cell size"
+msgstr "Tamaño de celda"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Beam radius"
+msgstr "Radio de las barras"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "DRAINS"
+msgstr "DRENAJES"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Placing drains (D)"
+msgstr "Poniendo drenajes (D)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Place drains (D)"
+msgstr "Poner drenajes (D)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drain radius"
+msgstr "Radio del drenaje"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Remove all drains"
+msgstr "Quitar todos los drenajes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Sealed cavity: resin stays trapped inside and the walls act as a suction cup. Add at least one drain near the plate."
+msgstr "Cavidad cerrada: la resina queda atrapada adentro y las paredes hacen de ventosa. Agregá al menos un drenaje cerca de la plataforma."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Place drains now or after hollowing: click the model's surface with the drain tool. They are drilled when the model is hollowed."
+msgstr "Poné drenajes ahora o después de ahuecar: hacé clic en la superficie del modelo con la herramienta de drenajes. Se perforan cuando el modelo se ahueca."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "These drains are drilled when you hollow the model."
+msgstr "Estos drenajes se perforan cuando ahuecás el modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each new drain hollows the model again with it: one undo per drain."
+msgstr "Cada drenaje nuevo vuelve a ahuecar el modelo con él: se deshace de a un drenaje."
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Drain holes"
+msgstr "Agujeros de drenaje"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Hollow"
+msgstr "Ahuecar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Supports"
+msgstr "Soportes"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Hollowing is on its way; supports can be generated before or after it."
+msgstr "El ahuecado está en camino; los soportes se pueden generar antes o después."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Export"
+msgstr "Exportar"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "The printer file uses the printer and resin in force."
+msgstr "El archivo de impresora usa la impresora y la resina elegidas."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "PRINTER FILE"
+msgstr "ARCHIVO DE IMPRESORA"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Slice first: the printer file is written from the held slice."
+msgstr "Laminá primero: el archivo de impresora se escribe a partir del laminado actual."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ALSO"
+msgstr "TAMBIÉN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Save project (.3mf with slices)"
+msgstr "Guardar proyecto (.3mf con el laminado)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Export mesh (STL / OBJ / 3MF)"
+msgstr "Exportar malla (STL / OBJ / 3MF)"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Solid again. Undo brings the hollow back."
+msgstr "Macizo de nuevo. Deshacer lo vuelve a ahuecar."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Hollowing failed"
+msgstr "No se pudo ahuecar"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Hollow discarded"
+msgstr "Ahuecado descartado"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "The scene changed while the model was being hollowed; nothing was changed."
+msgstr "La escena cambió mientras se ahuecaba el modelo; no se cambió nada."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "The scene rejected the new mesh; nothing was changed."
+msgstr "La escena rechazó la malla nueva; no se cambió nada."
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Done"
+msgstr "Listo"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Voxelizing surface"
+msgstr "Voxelizando la superficie"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Filling outside"
+msgstr "Rellenando el exterior"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Restoring sealed voids"
+msgstr "Recuperando los huecos cerrados"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Measuring wall distance"
+msgstr "Midiendo la distancia a la pared"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Measuring exact wall distance"
+msgstr "Midiendo la distancia exacta a la pared"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Choosing wall voxels"
+msgstr "Eligiendo los vóxeles de la pared"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Building cavity surface"
+msgstr "Armando la superficie de la cavidad"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Building infill"
+msgstr "Armando el relleno"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Checking hollow mesh"
+msgstr "Revisando la malla ahuecada"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Cutting drain holes"
+msgstr "Perforando los agujeros de drenaje"
+
+#: src/hollow_run.rs
+msgctxt "HollowRun"
+msgid "Validating result"
+msgstr "Validando el resultado"
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "Saves {} of {} ml ({} %). Wall {} mm, voxel {} mm."
+msgstr "Ahorra {} de {} ml ({} %). Pared de {} mm, vóxel de {} mm."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "One drain drilled."
+msgid_plural "{n} drains drilled."
+msgstr[0] "Un drenaje perforado."
+msgstr[1] "{n} drenajes perforados."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "One left out: it does not reach the cavity."
+msgid_plural "{n} left out: they do not reach the cavity."
+msgstr[0] "Uno quedó afuera: no llega a la cavidad."
+msgstr[1] "{n} quedaron afuera: no llegan a la cavidad."

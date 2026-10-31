@@ -274,6 +274,28 @@ impl ViewportController {
     }
 
     #[cfg(test)]
+    /// Returns the printer name on the plate's front tab.
+    pub(crate) fn plate_printer_name_for_test(&self) -> Option<String> {
+        self.plate_printer_name.borrow().clone()
+    }
+
+    /// Returns the out-of-volume warning mask that a paint of the scene
+    /// shows: 1 bit per envelope wall that some object crosses, 0 without a
+    /// scene.
+    #[cfg(test)]
+    pub(crate) fn envelope_warning_mask_for_test(&self) -> u32 {
+        self.session
+            .document()
+            .with_scene(|s| {
+                crate::mesh_render::envelope_warning_mask_for_test(
+                    s.graph(),
+                    self.session.build_volume(),
+                )
+            })
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
     pub(crate) fn reachable_leaf_count_for_test(&self) -> usize {
         self.session
             .document()

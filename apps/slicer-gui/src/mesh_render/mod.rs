@@ -276,6 +276,14 @@ impl std::fmt::Debug for Renderer {
     }
 }
 
+/// Returns the out-of-volume warning mask that a paint of `graph` on
+/// `build_volume` shows, in the plate shader's bit layout.
+#[cfg(test)]
+pub(crate) fn envelope_warning_mask_for_test(graph: &Scene, build_volume: BuildVolume) -> u32 {
+    build_envelope_warning_mask(graph, build_volume, &mut WorldBoxes::default())
+        .expect("the leaf walk succeeds")
+}
+
 /// Vertical field of view in radians.
 ///
 /// Chosen so that a sphere of the scene's bounding radius fills `FIT_FRACTION`

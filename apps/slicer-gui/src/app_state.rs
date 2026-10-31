@@ -419,8 +419,9 @@ fn spawn_settings_saver(
 }
 
 /// Subscribes `window` to the preferences of `bus`: each change applies them to
-/// the window, a `DefaultPrinter` change also sets the build volume of
-/// `controller` to the new default plate, and a `Language` change makes
+/// the window, a `DefaultPrinter` or `Profiles` change also shows the default
+/// plate again in `controller` (a saved printer profile can change its size or
+/// name, #326), and a `Language` change makes
 /// `controller` build its texts again. `envelope` and `UiLanguage` must
 /// subscribe to `bus` first, so that the listener reads the new plate and the
 /// new language.
@@ -442,7 +443,10 @@ fn subscribe_window_preferences(
         if let Some(w) = window.upgrade() {
             w.apply_preferences(snap);
         }
-        if matches!(change, PreferencesChange::DefaultPrinter) {
+        if matches!(
+            change,
+            PreferencesChange::DefaultPrinter | PreferencesChange::Profiles
+        ) {
             show_envelope(&controller, &envelope);
         }
         if matches!(change, PreferencesChange::Language) {
@@ -2436,6 +2440,8 @@ mod file_drag_tests {
 mod window_wiring_tests {
     use std::sync::Arc;
 
+    use crate::build_volume::BuildVolume;
+
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::unit_cube_mesh;
     use sc_print_primitives::PrinterId;
@@ -2880,6 +2886,114 @@ mod window_wiring_tests {
             app.on_first_window(&window_of(&app, id));
             error_heading()
         })
+    }
+
+    /// A catalog where the listed printer has the plate `plate` and the
+    /// manufacturer `name`, as a saved profile leaves it.
+    fn saved_catalog(name: &str, plate: [f64; 3]) -> Rc<ProfileCatalog> {
+        Rc::new(ProfileCatalog::from_entries(
+            vec![printer_entry(listed_printer(), name, plate)],
+            Vec::new(),
+        ))
+    }
+
+    /// Loads 2 cubes into `controller` and deletes 1, so the window has a
+    /// scene and an undo step.
+    fn load_edited_scene(controller: &ViewportController) {
+        controller.install_graph_for_test(meshes_as_roots([unit_cube_mesh(), unit_cube_mesh()]));
+        let leaf = controller
+            .document()
+            .with_scene(|scene| scene.leaf_id_at_index(0))
+            .flatten()
+            .expect("the cube is a leaf");
+        controller
+            .document()
+            .set_selection(Selection::One(LeafId(leaf)));
+        assert!(
+            controller
+                .document()
+                .delete_selected_leaf()
+                .expect("the delete applies")
+        );
+    }
+
+    /// What window `id` shows of the default plate and its scene.
+    #[derive(Debug, PartialEq)]
+    struct PlateView {
+        build_volume: BuildVolume,
+        printer_name: Option<String>,
+        warning_mask: u32,
+        objects: usize,
+        can_undo: bool,
+    }
+
+    fn plate_view(app: &AppState, id: u64) -> PlateView {
+        let controller = controller_of(app, id);
+        PlateView {
+            build_volume: controller.build_volume(),
+            printer_name: controller.plate_printer_name_for_test(),
+            warning_mask: controller.envelope_warning_mask_for_test(),
+            objects: controller.reachable_leaf_count_for_test(),
+            can_undo: controller.document().can_undo(),
+        }
+    }
+
+    #[test]
+    fn saving_the_default_printer_profile_redraws_the_plate_in_every_window() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot {
+                default_printer: Some(listed_printer()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let ids = [add_window(&app), add_window(&app)];
+            for id in ids {
+                load_edited_scene(&controller_of(&app, id));
+            }
+            let before = ids.map(|id| plate_view(&app, id));
+            // The profile is saved with a plate smaller than the 1 mm cube,
+            // and the library rebuild says so on the bus.
+            *app.catalog.borrow_mut() = saved_catalog("Beta", [0.5, 0.5, 0.5]);
+            app.prefs.update(|_| PreferencesChange::Profiles);
+            (before, ids.map(|id| plate_view(&app, id)))
+        });
+        for (before, after) in before.iter().zip(&after) {
+            assert_eq!(before.build_volume, BuildVolume::new(120.0, 68.0, 150.0));
+            assert_eq!(before.printer_name.as_deref(), Some("Alpha"));
+            assert_eq!(after.build_volume, BuildVolume::new(0.5, 0.5, 0.5));
+            assert_eq!(after.printer_name.as_deref(), Some("Beta"));
+            // The cube now crosses the side walls too.
+            assert_ne!(after.warning_mask, before.warning_mask);
+            assert_eq!(
+                after.warning_mask & before.warning_mask,
+                before.warning_mask
+            );
+            // The scene and its undo step stay.
+            assert_eq!((after.objects, after.can_undo), (1, true));
+            assert_eq!((before.objects, before.can_undo), (1, true));
+        }
+    }
+
+    #[test]
+    fn saving_another_printer_profile_keeps_the_plate() {
+        let (before, after) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot {
+                default_printer: Some(listed_printer()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let id = add_window(&app);
+            load_edited_scene(&controller_of(&app, id));
+            let before = plate_view(&app, id);
+            let mut entries = app.catalog.borrow().printers().to_vec();
+            entries.push(printer_entry(
+                PrinterId::new("another-printer").expect("valid printer id"),
+                "Gamma",
+                [10.0, 10.0, 10.0],
+            ));
+            *app.catalog.borrow_mut() = Rc::new(ProfileCatalog::from_entries(entries, Vec::new()));
+            app.prefs.update(|_| PreferencesChange::Profiles);
+            (before, plate_view(&app, id))
+        });
+        assert_eq!(after, before);
     }
 
     #[test]
