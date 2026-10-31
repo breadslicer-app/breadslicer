@@ -12,7 +12,7 @@
 
 import { CheckBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "kit/theme.slint";
-import { ButtonKind, ScButton } from "kit/controls.slint";
+import { ButtonKind, DisclosureChevron, ScButton } from "kit/controls.slint";
 
 // `diagnostics` is Help > Export Diagnostics (#74); `diagnostic-log` asks
 // before the diagnostic log starts (Preferences > Privacy).
@@ -152,9 +152,10 @@ export component MessageLayer inherits Rectangle {
                 padding: card.inset;
                 spacing: 16px;
 
+                // Stretched, not packed at the start: the text column takes
+                // the card's width, so the details wrap at it.
                 if root.notice: HorizontalLayout {
                     spacing: 14px;
-                    alignment: start;
 
                     if root.message.kind == MessageKind.error: Text {
                         text: "⚠";
@@ -205,17 +206,26 @@ export component MessageLayer inherits Rectangle {
                         if root.message.details != "": HorizontalLayout {
                             alignment: start;
                             TouchArea {
-                                width: toggle-text.preferred-width;
-                                height: toggle-text.preferred-height;
+                                width: toggle.preferred-width;
+                                height: toggle.preferred-height;
                                 mouse-cursor: pointer;
-                                toggle-text := Text {
-                                    // The glyph is kept out of the translatable
-                                    // strings so translators can't drop it.
-                                    text: (root.details-visible ? "▾ " : "▸ ") + (root.message.kind == MessageKind.error
-                                        ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
-                                        : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details")));
-                                    font-size: root.font-footnote;
-                                    color: Theme.accent;
+                                toggle := HorizontalLayout {
+                                    spacing: 5px;
+                                    alignment: start;
+                                    DisclosureChevron {
+                                        open: root.details-visible;
+                                        color: Theme.accent;
+                                        size: 9px;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                    Text {
+                                        text: root.message.kind == MessageKind.error
+                                            ? (root.details-visible ? @tr("ErrorDialog" => "Hide technical details") : @tr("ErrorDialog" => "Show technical details"))
+                                            : (root.details-visible ? @tr("InfoDialog" => "Hide details") : @tr("InfoDialog" => "Show details"));
+                                        font-size: root.font-footnote;
+                                        color: Theme.accent;
+                                        vertical-alignment: center;
+                                    }
                                 }
 
                                 clicked => {
@@ -228,7 +238,7 @@ export component MessageLayer inherits Rectangle {
                             max-height: 180px;
                             // A viewport as wide as the view, so the text wraps
                             // instead of scrolling sideways.
-                            viewport-width: self.visible-width;
+                            content-width: self.visible-width;
                             Text {
                                 width: details-scroll.visible-width;
                                 text: root.message.details;
