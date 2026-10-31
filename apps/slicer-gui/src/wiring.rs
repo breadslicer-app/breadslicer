@@ -173,6 +173,10 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_orbit_step(move |h, v| ctrl.on_orbit_step(h, v));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_pan_drag(move |dx, dy| ctrl.on_pan(ScreenDelta::new(dx, dy)));
     }
     {

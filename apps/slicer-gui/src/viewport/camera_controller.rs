@@ -161,6 +161,17 @@ impl CameraController {
         true
     }
 
+    /// Turns the camera about `pivot` by `yaw` and `pitch` radians (a keyed
+    /// orbit step, #348). Returns `true` if a camera was present.
+    pub(super) fn turn_around(&self, pivot: Vec3, yaw: f32, pitch: f32) -> bool {
+        let mut slot = self.camera.borrow_mut();
+        let Some(cam) = slot.as_mut() else {
+            return false;
+        };
+        cam.turn_around(pivot, yaw, pitch);
+        true
+    }
+
     /// Pans the camera in the view plane. Returns `true` if a camera and
     /// viewport were present.
     pub(super) fn on_pan(&self, delta: ScreenDelta, viewport: Option<ViewportSize>) -> bool {

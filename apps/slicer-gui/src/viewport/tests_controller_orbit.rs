@@ -134,3 +134,58 @@ fn each_drag_picks_its_own_pivot() {
     ctrl.on_rotate(ScreenDelta::new(20.0, 0.0));
     assert_eq!(camera(&ctrl).target, target);
 }
+
+fn select_the_cube(ctrl: &ViewportController) {
+    let id = ctrl
+        .document()
+        .with_scene(|s| s.leaf_id_at_index(0))
+        .flatten()
+        .unwrap();
+    ctrl.document().set_selection(Selection::One(LeafId(id)));
+}
+
+#[test]
+fn a_numpad_step_turns_about_the_selection_and_it_holds_still() {
+    for ortho in [false, true] {
+        let ctrl = far_cube(ortho);
+        select_the_cube(&ctrl);
+        let cube = Vec3::new(40.0, 30.0, 0.5);
+        let start = screen_of(&ctrl, cube);
+        for (h, v) in [(-1, 0), (1, 0), (0, 1), (0, -1), (1, 0)] {
+            let before = camera(&ctrl);
+            ctrl.on_orbit_step(h, v);
+            let after = camera(&ctrl);
+            assert_ne!(after.eye(), before.eye(), "step ({h}, {v}) turns");
+            let at = screen_of(&ctrl, cube);
+            assert!(
+                (at.0 - start.0).abs() < 0.05 && (at.1 - start.1).abs() < 0.05,
+                "drift {at:?} from {start:?} (ortho {ortho})"
+            );
+        }
+    }
+}
+
+#[test]
+fn without_a_selection_a_numpad_step_turns_about_the_target() {
+    for ortho in [false, true] {
+        let ctrl = far_cube(ortho);
+        let target = camera(&ctrl).target;
+        ctrl.on_orbit_step(1, 0);
+        ctrl.on_orbit_step(0, 1);
+        assert!((camera(&ctrl).target - target).length() < 1e-4);
+    }
+}
+
+#[test]
+fn a_numpad_step_during_a_drag_keeps_the_drag_pivot() {
+    let ctrl = far_cube(false);
+    select_the_cube(&ctrl);
+    let cube = Vec3::new(40.0, 30.0, 0.5);
+    let start = screen_of(&ctrl, cube);
+    drag(&ctrl, ScreenPoint::new(10.0, 10.0), &[(20.0, 5.0)]);
+    ctrl.document().set_selection(Selection::None);
+    ctrl.on_orbit_step(-1, 0);
+    let at = screen_of(&ctrl, cube);
+    assert!((at.0 - start.0).abs() < 0.05 && (at.1 - start.1).abs() < 0.05);
+    ctrl.on_orbit_end();
+}
