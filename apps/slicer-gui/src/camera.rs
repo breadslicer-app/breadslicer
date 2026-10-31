@@ -110,8 +110,15 @@ impl OrbitCamera {
 
     pub fn orbit(&mut self, dx_pixels: f32, dy_pixels: f32, viewport_height: f32) {
         let sensitivity = std::f32::consts::PI / viewport_height.max(1.0);
-        self.yaw -= dx_pixels * sensitivity;
-        self.pitch = clamp_pitch(self.pitch + dy_pixels * sensitivity);
+        self.turn(-dx_pixels * sensitivity, dy_pixels * sensitivity);
+    }
+
+    /// Turns the camera about its target by `yaw` and `pitch` radians. A
+    /// positive yaw moves the eye to its right (the scene turns as under a
+    /// drag to the left); a positive pitch raises the eye (as a drag down).
+    fn turn(&mut self, yaw: f32, pitch: f32) {
+        self.yaw += yaw;
+        self.pitch = clamp_pitch(self.pitch + pitch);
     }
 
     /// Orbits like [`Self::orbit`], but about `pivot` instead of the target:
@@ -125,8 +132,15 @@ impl OrbitCamera {
         dy_pixels: f32,
         viewport_height: f32,
     ) {
+        let sensitivity = std::f32::consts::PI / viewport_height.max(1.0);
+        self.turn_around(pivot, -dx_pixels * sensitivity, dy_pixels * sensitivity);
+    }
+
+    /// Turns the camera about `pivot` by `yaw` and `pitch` radians, in the
+    /// directions of [`Self::turn`]; the pivot keeps its place on screen.
+    pub fn turn_around(&mut self, pivot: Vec3, yaw: f32, pitch: f32) {
         let before = self.view_basis();
-        self.orbit(dx_pixels, dy_pixels, viewport_height);
+        self.turn(yaw, pitch);
         // The rotation that carries the old view frame onto the new one; it
         // carries the eye offset too, so turning the target with it about the
         // pivot turns the whole camera rigidly about the pivot.
@@ -186,7 +200,7 @@ impl OrbitCamera {
         )
     }
 
-    fn right_and_up(&self) -> (Vec3, Vec3) {
+    pub(crate) fn right_and_up(&self) -> (Vec3, Vec3) {
         let forward = (self.target - self.eye()).normalize_or_zero();
         // When `forward` is nearly parallel to `self.up`, the cross product
         // `forward.cross(self.up)` collapses toward zero; its sign is then
