@@ -516,9 +516,9 @@ impl Box3 {
     };
 
     fn add(&mut self, p: [f64; 3]) {
-        for k in 0..3 {
-            self.min[k] = self.min[k].min(p[k]);
-            self.max[k] = self.max[k].max(p[k]);
+        for (k, c) in p.into_iter().enumerate() {
+            self.min[k] = self.min[k].min(c);
+            self.max[k] = self.max[k].max(c);
         }
     }
 

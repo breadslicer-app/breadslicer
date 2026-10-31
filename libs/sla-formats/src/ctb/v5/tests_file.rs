@@ -378,3 +378,33 @@ fn a_preview_of_another_size_is_refused_before_any_byte() {
     );
     assert!(out.into_inner().is_empty());
 }
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: a machine can stall on a dark layer, so a gap and a dark top
+    // each carry one pixel, stored at the placeholder's 7 bits.
+    let program = program(vec![
+        layer(0.1, 30.0),
+        layer(0.2, 2.5),
+        layer(0.3, 2.5),
+        layer(0.4, 2.5),
+    ]);
+    let stack = ContourStack::new_unchecked(vec![
+        rect_layer(0.05, 4.0),
+        ContourLayer::new(0.15, Vec::new()),
+        rect_layer(0.25, 1.0),
+        ContourLayer::new(0.35, Vec::new()),
+    ]);
+    let bytes = written(&program, &stack);
+    let placeholder = crate::layer_images::PLACEHOLDER_GREY >> 1;
+
+    for (index, (image_at, length)) in table_entries(&bytes).into_iter().enumerate() {
+        let runs = crate::ctb::tests_rle7::decode(&bytes[image_at..image_at + length]);
+        let lit: Vec<(u8, u32)> = runs.into_iter().filter(|&(value, _)| value > 0).collect();
+        if index % 2 == 1 {
+            assert_eq!(lit, [(placeholder, 1)], "layer {index}");
+        } else {
+            assert!(!lit.is_empty(), "layer {index}");
+        }
+    }
+}

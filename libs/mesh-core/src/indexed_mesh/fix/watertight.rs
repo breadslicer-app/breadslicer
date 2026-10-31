@@ -762,6 +762,21 @@ fn weld_boundary_vertices(
     });
 }
 
+/// Separates closed solids that touch along edges, for the slicer's own copy
+/// of a mesh: steps 2 and 3 of a round on a mesh whose only bad edges have
+/// more than 2 faces. Returns whether every such edge resolved into pairs that
+/// walk it opposite ways and no face had to go or turn; the caller then checks
+/// the result with the edge check. The faces keep their order and winding;
+/// each new vertex is a copy at the same position.
+pub(crate) fn separate_touching_solids(
+    vertices: &mut Vec<Vertex>,
+    faces: &mut [IndexedTriangle],
+) -> bool {
+    let mut stats = Stats::default();
+    let dropped = pair_split_and_orient(vertices, faces, true, &mut stats);
+    dropped.is_none() && stats.reoriented_faces == 0
+}
+
 /// Marks a pair whose 2 faces walk their shared edge the same way.
 const SAME_WAY: u32 = 1 << 31;
 
@@ -875,10 +890,19 @@ fn corner_of(face: &IndexedTriangle, v: u32) -> u32 {
     }
 }
 
+/// How many steps of `f32`, at the size of the coordinates, 2 faces of an edge
+/// may lie apart around it and still count as lying on each other.
+const COINCIDENT_FACE_STEPS: f64 = 8.0;
+
 /// Pairs the faces of 1 edge with more than 2 faces, sorted by angle around
 /// it: a solid wedge lies between a face that walks the edge from its higher
 /// vertex to its lower one and the next face that walks it back. Faces left
 /// over pair in sorted order; an odd one stays unpaired.
+///
+/// Faces that lie on each other (2 parts that touch along a face, whose
+/// walls coincide; the same angle within the rounding of `f32`) are ordered so
+/// that no solid wedge lies between them: the parts stay apart rather than
+/// joined by a wedge of no thickness.
 fn radial_pairs(
     vertices: &[Vertex],
     faces: &[IndexedTriangle],
@@ -897,8 +921,12 @@ fn radial_pairs(
     let u = cross(axis, helper);
     let u = u.map(|c| c / norm(u));
     let w = cross(axis, u);
-    // (angle, face, walks lo to hi)
-    let mut ring: Vec<(f64, u32, bool)> = run
+    let mut scale = base
+        .iter()
+        .chain(&position(vertices, hi.get()))
+        .fold(0.0f64, |m, c| m.max(c.abs()));
+    // (angle, face, walks lo to hi, distance of the apex from the edge)
+    let mut ring: Vec<(f64, u32, bool, f64)> = run
         .iter()
         .map(|&(_, value)| {
             let face = half_edges::face_of(value).get() as u32;
@@ -906,17 +934,24 @@ fn radial_pairs(
                 .into_iter()
                 .find(|&v| v != lo.get() && v != hi.get())
                 .unwrap_or(lo.get());
-            let q = sub(position(vertices, apex), base);
+            let p = position(vertices, apex);
+            scale = p.iter().fold(scale, |m, c| m.max(c.abs()));
+            let q = sub(p, base);
             let along = dot(q, axis);
             let q = sub(q, axis.map(|c| c * along));
             (
                 dot(q, w).atan2(dot(q, u)),
                 face,
                 !half_edges::is_reversed(value),
+                norm(q),
             )
         })
         .collect();
     ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+    order_coincident_faces(
+        &mut ring,
+        COINCIDENT_FACE_STEPS * f64::from(f32::EPSILON) * scale,
+    );
     let k = ring.len();
     let mut used = vec![false; k];
     let mut pairs = Vec::with_capacity(k / 2);
@@ -934,6 +969,42 @@ fn radial_pairs(
         pairs.push((ring[a].1, ring[b].1, ring[a].2 == ring[b].2));
     }
     pairs
+}
+
+/// Within each run of faces of `ring` (sorted by angle) that lie on each other
+/// (apexes less than `slack` mm apart across the angle between them), puts
+/// the faces that walk the edge from its lower vertex first, so that no solid
+/// wedge of no thickness lies between 2 of them. A run across the wrap of the
+/// angle turns the ring first so that it starts after a real gap. Rings
+/// without such runs keep their order.
+fn order_coincident_faces(ring: &mut [(f64, u32, bool, f64)], slack: f64) {
+    use std::f64::consts::TAU;
+    let k = ring.len();
+    let coincident = |a: &(f64, u32, bool, f64), b: &(f64, u32, bool, f64)| {
+        let turn = (b.0 - a.0).rem_euclid(TAU);
+        turn.min(TAU - turn) * a.3.min(b.3) <= slack
+    };
+    if k < 2 {
+        return;
+    }
+    if coincident(&ring[k - 1], &ring[0]) {
+        let Some(start) = (1..k).find(|&i| !coincident(&ring[i - 1], &ring[i])) else {
+            return;
+        };
+        ring.rotate_left(start);
+    }
+    let mut i = 0;
+    while i < k {
+        let mut j = i + 1;
+        while j < k && coincident(&ring[j - 1], &ring[j]) {
+            j += 1;
+        }
+        if j - i > 1 {
+            // Stable: faces walking the same way keep their order.
+            ring[i..j].sort_by_key(|entry| !entry.2);
+        }
+        i = j;
+    }
 }
 
 /// A union-find over face corners (`face * 3 + corner`), only over the

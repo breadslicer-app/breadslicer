@@ -6,6 +6,7 @@
 use std::io::Cursor;
 
 use sc_print_primitives::{AaLevel, Mirror, PanelRotation, PositiveFiniteMmPerMin};
+use sc_sla_formats::layer_images::PLACEHOLDER_GREY;
 use sc_sla_formats::{
     AnycubicBinaryVariant, MotionStage, PreviewImage, PrintPreviews, PrintProgram,
 };
@@ -14,7 +15,8 @@ use super::*;
 use crate::pws;
 use crate::read::{AnycubicBinaryFile, read_anycubic_binary};
 use crate::test_fixture::{
-    PIXELS_X, PIXELS_Y, expected_images, mm, program, raster, stack, turned_ccw,
+    DARK_LAYERS, PIXELS_X, PIXELS_Y, assert_no_dark_layer, expected_images, gapped_stack, mm,
+    program, raster, stack, turned_ccw,
 };
 
 fn written_program(variant: AnycubicBinaryVariant, program: &PrintProgram) -> Vec<u8> {
@@ -328,4 +330,27 @@ fn a_preview_of_the_wrong_size_is_refused_before_writing() {
     .unwrap_err();
     assert!(matches!(err, WriteFailure::PreviewSize(_)), "{err:?}");
     assert!(out.into_inner().is_empty());
+}
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: a machine can stall on a dark layer, so a gap and a dark top
+    // each carry one pixel, which the layer table counts.
+    for variant in AnycubicBinaryVariant::ALL {
+        for aa in [AaLevel::Off, AaLevel::X4] {
+            let program = program("Photon Mono X", raster(aa, Mirror::default()), 6);
+            let mut out = Cursor::new(Vec::new());
+            write_file(variant, &program, None, &gapped_stack(), &mut out).unwrap();
+            let file = read_anycubic_binary(&out.into_inner(), variant).unwrap();
+
+            let placeholder = quantised(variant, aa, vec![PLACEHOLDER_GREY])[0];
+            assert_no_dark_layer(&file.layers, placeholder);
+            for index in DARK_LAYERS {
+                assert_eq!(
+                    file.layer_definitions[index].lit_pixels, 1,
+                    "{variant:?} {aa:?} layer {index}"
+                );
+            }
+        }
+    }
 }

@@ -93,6 +93,8 @@ mod support_persist;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
+mod tests_bread_roundtrip;
+#[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]
 mod tests_print_file_preview;

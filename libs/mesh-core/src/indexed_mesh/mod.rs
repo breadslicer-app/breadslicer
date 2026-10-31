@@ -11,6 +11,7 @@ mod half_edges;
 mod mesh;
 pub mod repair;
 pub mod repair_report;
+pub mod sliceable;
 pub mod topology;
 pub mod validate;
 pub mod validated;
@@ -32,6 +33,7 @@ mod tests_mesh;
 mod tests_repair;
 #[cfg(test)]
 mod tests_repair_report;
+mod tests_sliceable;
 #[cfg(test)]
 mod tests_validated_faces;
 #[cfg(test)]
@@ -46,6 +48,7 @@ pub use mesh::declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch,
 pub use mesh::geometry_fingerprint::GeometryFingerprint;
 pub use mesh::{IndexedMesh, MeshMetadata};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
+pub use sliceable::SliceableError;
 pub use topology::MeshTopology;
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{

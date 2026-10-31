@@ -5,12 +5,14 @@
 
 use sc_print_primitives::{AaLevel, Mirror, PanelRotation};
 use sc_sl1cer::raster::rle::RleRun;
+use sc_sla_formats::layer_images::PLACEHOLDER_GREY;
 use sc_sla_formats::{CxdlpVersion, PreviewImage, PrintPreviews, WriteFailure};
 
 use super::*;
 use crate::read::read_cxdlp;
 use crate::test_fixture::{
-    PIXELS_X, PIXELS_Y, expected_images, program, raster, stack, turned_ccw,
+    PIXELS_X, PIXELS_Y, assert_no_dark_layer, expected_images, gapped_stack, program, raster,
+    stack, turned_ccw,
 };
 
 fn written(version: CxdlpVersion, aa: AaLevel, machine: &str) -> Vec<u8> {
@@ -276,4 +278,18 @@ fn a_column_run_is_one_line_per_grey_change() {
     push_line(&mut first, 2, 2, 1, 100);
     assert_eq!(&record[8..20], first.as_slice());
     assert_eq!(&record[20..], &PAGE_BREAK);
+}
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: a machine can stall on a dark layer, so a gap and a dark top
+    // each carry one line of one pixel.
+    for version in [CxdlpVersion::V2, CxdlpVersion::V3] {
+        let program = program("Halot One", raster(AaLevel::Off, Mirror::default()), 6);
+        let mut out = Vec::new();
+        write_file(version, &program, None, &gapped_stack(), &mut out).unwrap();
+        let file = read_cxdlp(&out).unwrap();
+        assert!(file.checksum_matches);
+        assert_no_dark_layer(&file.layers, PLACEHOLDER_GREY);
+    }
 }
