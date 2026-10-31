@@ -5311,6 +5311,7 @@ dependencies = [
  "futures-channel",
  "glam",
  "harfrust 0.8.4",
+ "i-slint-backend-testing",
  "ico",
  "image",
  "newtypes",

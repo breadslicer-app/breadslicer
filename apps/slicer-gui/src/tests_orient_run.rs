@@ -23,7 +23,7 @@ use slint::Model;
 use super::*;
 use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
 use crate::selection::{LeafId, Selection};
-use crate::test_support::slint_thread::on_fresh_slint_thread;
+use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
 
 /// A 20 mm cube.
 fn cube() -> IndexedMesh {
@@ -725,4 +725,68 @@ fn aligned_options_rest(f: Fixture) {
             );
         }
     }
+}
+
+/// Where `label` is drawn in `window`: its top and bottom, in logical
+/// pixels. The first element with that accessible label and a size.
+fn drawn_span(window: &MainWindow, label: &str) -> (f32, f32) {
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, label)
+        .find(|e| e.size().height > 0.0)
+        .map(|e| {
+            let y = e.absolute_position().y;
+            (y, y + e.size().height)
+        })
+        .unwrap_or_else(|| panic!("{label} is drawn"))
+}
+
+/// With Advanced open and three options, the card grows to hold everything:
+/// its last row (Apply, Close) ends inside the card, above its padding, and
+/// the next card starts below it.
+#[test]
+fn the_card_holds_its_last_row_with_advanced_open_and_three_options() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        f.window
+            .show()
+            .expect("the headless platform shows the window");
+        f.window
+            .window()
+            .set_size(slint::LogicalSize::new(1400.0, 1400.0));
+        f.window.set_has_scene(true);
+        f.window.set_selection_valid(true);
+        searched(&f, SearchMode::Quick);
+        assert_eq!(options(&f), 3);
+        render_frames();
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&f.window, "Advanced")
+            .next()
+            .expect("the Advanced row")
+            .invoke_accessible_default_action();
+        render_frames();
+        // Advanced is open: its fields and its note are drawn.
+        drawn_span(&f.window, "Align to the plate");
+        let (_, note_bottom) = drawn_span(
+            &f.window,
+            "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate.",
+        );
+        let card = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+            &f.window,
+            "OrientCard",
+        )
+        .next()
+        .expect("the Orient card");
+        let card_bottom = card.absolute_position().y + card.size().height;
+        let (apply_top, apply_bottom) = drawn_span(&f.window, "Apply A");
+        let (_, close_bottom) = drawn_span(&f.window, "Close");
+        let (objects_top, _) = drawn_span(&f.window, "OBJECTS");
+        assert!(note_bottom < apply_top);
+        // The card body has 12 px of padding below its last row.
+        for (name, bottom) in [("Apply", apply_bottom), ("Close", close_bottom)] {
+            assert!(
+                bottom <= card_bottom - 12.0 + 0.5,
+                "{name} ends at {bottom}, past the card's content (to {})",
+                card_bottom - 12.0
+            );
+        }
+        assert!(objects_top >= card_bottom, "the next card overlaps");
+    });
 }

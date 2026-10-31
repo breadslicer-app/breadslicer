@@ -471,60 +471,58 @@ export component OrientCard inherits Card {
             }
         }
     }
-    if root.advanced: VerticalLayout {
-        spacing: 8px;
-
-        NumberField {
-            label: @tr("Inspector" => "Max tilt from now");
-            unit: "°";
-            decimals: 0;
-            value: root.max-tilt;
-            enabled: !root.running;
-            committed(v) => {
-                root.option-changed(1, v);
-            }
+    // Each one under its own `if`: a wrapped Note inside a nested layout
+    // under an `if` is measured as one line, and the card came out short.
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Max tilt from now");
+        unit: "°";
+        decimals: 0;
+        value: root.max-tilt;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(1, v);
         }
-        CheckBox {
-            text: @tr("Inspector" => "Align to the plate");
-            checked: root.align;
-            enabled: !root.running;
-            toggled => {
-                root.option-changed(2, self.checked ? 1 : 0);
-            }
+    }
+    if root.advanced: CheckBox {
+        text: @tr("Inspector" => "Align to the plate");
+        checked: root.align;
+        enabled: !root.running;
+        toggled => {
+            root.option-changed(2, self.checked ? 1 : 0);
         }
-        NumberField {
-            label: @tr("Inspector" => "Weight of supports");
-            unit: "%";
-            decimals: 0;
-            value: root.weight-supports;
-            enabled: !root.running;
-            committed(v) => {
-                root.option-changed(3, v);
-            }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of supports");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-supports;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(3, v);
         }
-        NumberField {
-            label: @tr("Inspector" => "Weight of peel force");
-            unit: "%";
-            decimals: 0;
-            value: root.weight-force;
-            enabled: !root.running;
-            committed(v) => {
-                root.option-changed(4, v);
-            }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of peel force");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-force;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(4, v);
         }
-        NumberField {
-            label: @tr("Inspector" => "Weight of height");
-            unit: "%";
-            decimals: 0;
-            value: root.weight-height;
-            enabled: !root.running;
-            committed(v) => {
-                root.option-changed(5, v);
-            }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of height");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-height;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(5, v);
         }
-        Note {
-            text: @tr("Inspector" => "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate.");
-        }
+    }
+    if root.advanced: Note {
+        text: @tr("Inspector" => "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate.");
     }
     Text {
         text: @tr("Inspector" => "AUTO-ORIENT");

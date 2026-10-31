@@ -95,4 +95,7 @@ sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
 
 float-cmp = { workspace = true }
+# Slint's element queries (positions and sizes of laid-out elements) for
+# layout tests; the same version as `slint`.
+i-slint-backend-testing = "=1.18.1"
 tempfile = "3.23.0"
