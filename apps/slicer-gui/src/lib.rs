@@ -48,6 +48,7 @@ mod material_form;
 mod mesh_health;
 mod mesh_loader;
 pub mod mesh_render;
+mod orient_run;
 mod pending_load;
 mod picking;
 mod preferences_bus;

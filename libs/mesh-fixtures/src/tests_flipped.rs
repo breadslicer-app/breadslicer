@@ -10,7 +10,6 @@
 
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
-use sc_mesh_core::primitives::FaceIndex;
 
 use super::*;
 
@@ -79,17 +78,15 @@ fn default_repair_restores_each_variant_to_its_pristine_donor() {
             state.edge_manifold,
             "{name} must be edge-manifold after repair"
         );
-        let mut fixed: Vec<FaceIndex> = report
-            .fixes
-            .iter()
-            .map(|fix| match fix {
-                MeshFix::FlippedFaceOrientation { face_idx } => *face_idx,
-                other => panic!("{name}: unexpected fix {other:?}"),
-            })
-            .collect();
-        fixed.sort_unstable();
-        let expected: Vec<FaceIndex> = flipped.into_iter().map(FaceIndex::from).collect();
-        assert_eq!(fixed, expected, "{name} must fix exactly the flipped faces");
+        // The watertight pass orients each piece as a whole and reports a
+        // count; the byte-for-byte check below pins which faces it flipped.
+        assert_eq!(
+            report.fixes,
+            vec![MeshFix::ReorientedFaces {
+                faces: flipped.len()
+            }],
+            "{name} must fix exactly the flipped faces"
+        );
         assert_eq!(
             broken, pristine,
             "{name} must be byte-identical to its donor after repair"

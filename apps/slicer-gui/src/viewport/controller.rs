@@ -721,10 +721,11 @@ impl ViewportController {
         crate::workspace_section::allows_transform_gizmo(self.session.section())
     }
 
-    /// Whether a gizmo drag or a keyboard transform is under way: the scene
-    /// then shows a pose no edit has committed yet.
+    /// Whether a gizmo drag, a keyboard transform or a live preview (#182)
+    /// is under way: the scene then shows a pose no edit has committed yet.
     pub(crate) fn is_mid_gesture(&self) -> bool {
-        self.input.modal.get().is_some()
+        self.session.document().has_live_preview()
+            || self.input.modal.get().is_some()
             || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
     }
 

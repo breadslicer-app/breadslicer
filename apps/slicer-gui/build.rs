@@ -50,7 +50,13 @@ fn run_build() {
     generate_language_table(&bundle);
     generate_message_catalog(&bundle);
 
-    let config = CompilerConfiguration::new().with_bundled_translations(I18N_DIR);
+    // Development builds (tests among them) carry the element ids and type
+    // names Slint's element queries need, so layout tests can measure what is
+    // drawn. Release builds do not.
+    let debug_info = env::var("PROFILE").as_deref() == Ok("debug");
+    let config = CompilerConfiguration::new()
+        .with_bundled_translations(I18N_DIR)
+        .with_debug_info(debug_info);
     compile_with_config("ui/main-window.slint", config).expect("Slint build failed");
 }
 
