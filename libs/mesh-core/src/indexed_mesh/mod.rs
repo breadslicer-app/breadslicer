@@ -33,6 +33,7 @@ mod tests_mesh;
 mod tests_repair;
 #[cfg(test)]
 mod tests_repair_report;
+#[cfg(test)]
 mod tests_sliceable;
 #[cfg(test)]
 mod tests_validated_faces;
