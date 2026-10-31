@@ -343,8 +343,8 @@ mod tests {
             op: DragOp::Rotate {
                 axis: Axis::Y,
                 start_angle: 0.0,
-                last_raw: 0.0,
-                current_unwrapped: std::f32::consts::FRAC_PI_2,
+                turn: crate::gizmo::drag_math::ScreenTurn::new((400.0, 300.0), (500.0, 300.0)),
+                sign: -1.0,
                 applied: std::f32::consts::FRAC_PI_2,
             },
             pivot_start: Vec3::ZERO,

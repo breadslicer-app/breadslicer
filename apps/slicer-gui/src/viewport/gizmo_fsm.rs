@@ -174,11 +174,20 @@ impl GizmoFsm {
                         // rejected; but bail defensively if it slips through,
                         // leaving the press as a click candidate.
                         let start_angle = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)?;
+                        // The turn is measured on screen around the projected
+                        // pivot, so a circle drawn on screen turns evenly.
+                        let pivot_screen =
+                            picking::project_world_to_screen(camera, fov_y, w, h, pivot)?;
+                        let toward_eye = if camera.orthographic {
+                            camera.eye() - camera.target
+                        } else {
+                            camera.eye() - pivot
+                        };
                         DragOp::Rotate {
                             axis,
                             start_angle,
-                            last_raw: start_angle,
-                            current_unwrapped: start_angle,
+                            turn: gizmo::drag_math::ScreenTurn::new(pivot_screen, (x, y)),
+                            sign: gizmo::drag_math::screen_turn_sign(axis, toward_eye),
                             applied: 0.0,
                         }
                     }

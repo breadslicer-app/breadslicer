@@ -31,6 +31,8 @@ mod tests_controller_numeric;
 #[cfg(test)]
 mod tests_controller_orbit;
 #[cfg(test)]
+mod tests_controller_rotate;
+#[cfg(test)]
 mod tests_controller_section_gating;
 #[cfg(test)]
 mod tests_controller_supports_selection;

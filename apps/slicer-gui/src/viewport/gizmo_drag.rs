@@ -18,6 +18,7 @@ use sc_scene::NodeId;
 
 use crate::gizmo::axis::Axis;
 use crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+use crate::gizmo::drag_math::ScreenTurn;
 use crate::gizmo::modifiers::DragModifiers;
 use crate::gizmo::{self};
 use crate::picking;
@@ -45,11 +46,14 @@ pub(super) enum GizmoState {
 ///
 /// - `Translate` composes a translation; `anchor` is the world-space
 ///   closest point on the axis at press, recomputed each move.
-/// - `Rotate` composes a rotation about the axis through the pivot.
-///   `start_angle` is the angular position at press; `last_raw` and
-///   `current_unwrapped` track the unwrap counter so a full-revolution
-///   drag yields a real 360°+ rotation instead of resetting at ±π;
-///   `applied` is the turn actually applied (snapped with Ctrl).
+/// - `Rotate` composes a rotation about the axis through the pivot. The
+///   turn is measured on screen (`turn`, around the projected pivot, with
+///   `sign` set at press from whether the ring faces the camera), so a
+///   circle drawn on screen turns evenly whatever the tilt of the ring;
+///   it unwraps, so a full-revolution drag yields a real 360°+ rotation.
+///   `start_angle` is where the ring was grabbed, in the basis of
+///   `axis_basis`, for the marks of the turn; `applied` is the turn
+///   actually applied (snapped with Ctrl).
 /// - `ScaleAxis` composes a per-axis scale about the pivot from the
 ///   world-space closest points on the axis at press and now.
 /// - `ScaleUniform` (the centre ball) composes a uniform scale from the
@@ -64,8 +68,8 @@ pub(super) enum DragOp {
     Rotate {
         axis: Axis,
         start_angle: f32,
-        last_raw: f32,
-        current_unwrapped: f32,
+        turn: ScreenTurn,
+        sign: f32,
         applied: f32,
     },
     ScaleAxis {
@@ -137,18 +141,16 @@ pub(super) fn apply_drag_move(
         DragOp::Rotate {
             axis,
             start_angle,
-            last_raw,
-            current_unwrapped,
+            mut turn,
+            sign,
             ..
         } => {
-            let raw = gizmo::drag_math::rotate_drag_angle(ray, pivot, axis)?;
-            let new_unwrapped = unwrap_angle(last_raw, current_unwrapped, raw);
-            let applied = modifiers.angle(new_unwrapped - start_angle);
+            let applied = modifiers.angle(sign * turn.update(cursor));
             let new_op = DragOp::Rotate {
                 axis,
                 start_angle,
-                last_raw: raw,
-                current_unwrapped: new_unwrapped,
+                turn,
+                sign,
                 applied,
             };
             // R(axis, applied) about the world-space pivot, expressed in
@@ -194,24 +196,6 @@ pub(super) fn apply_drag_move(
             ))
         }
     }
-}
-
-/// Updates the unwrap counter so a multi-revolution drag yields a
-/// continuous angle. `last_raw` and `current_unwrapped` are the
-/// previous frame's raw atan2 reading and the cumulative unwrapped
-/// angle; `raw` is this frame's raw reading. When the per-frame raw
-/// difference exceeds π, atan2 has wrapped through ±π; adjust by
-/// 2π in the opposite direction so the unwrapped angle stays
-/// continuous.
-pub(super) fn unwrap_angle(last_raw: f32, current_unwrapped: f32, raw: f32) -> f32 {
-    use std::f32::consts::{PI, TAU};
-    let mut diff = raw - last_raw;
-    if diff > PI {
-        diff -= TAU;
-    } else if diff < -PI {
-        diff += TAU;
-    }
-    current_unwrapped + diff
 }
 
 /// Affine rotation about a world-aligned axis by `angle` radians,
@@ -298,65 +282,6 @@ fn world_pivot_to_local(pivot: Vec3, parent_world: &Transform3D) -> Vec3 {
 }
 
 #[cfg(test)]
-mod unwrap_angle_tests {
-    use super::*;
-    use float_cmp::assert_approx_eq;
-
-    #[test]
-    fn small_step_does_not_wrap() {
-        // No wrap: cumulative grows by the same amount as the raw
-        // difference.
-        let result = unwrap_angle(0.5, 0.5, 0.6);
-        assert_approx_eq!(f32, result, 0.6, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn cw_wrap_through_negative_pi_adjusts_by_2pi() {
-        // Last raw was just below π, this raw is just above -π. The
-        // user dragged CCW past the discontinuity; the unwrapped
-        // angle should keep growing past π.
-        let pi = std::f32::consts::PI;
-        let last_raw = pi - 0.1;
-        let last_unwrapped = pi - 0.1;
-        let raw_now = -pi + 0.1; // jumped by ~ -2π + 0.2 (raw)
-        let result = unwrap_angle(last_raw, last_unwrapped, raw_now);
-        assert_approx_eq!(f32, result, pi + 0.1, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn ccw_wrap_through_positive_pi_adjusts_by_minus_2pi() {
-        // Symmetric case in the other direction: cursor jumped CCW
-        // through +π → unwrapped angle should keep decreasing.
-        let pi = std::f32::consts::PI;
-        let last_raw = -pi + 0.1;
-        let last_unwrapped = -pi + 0.1;
-        let raw_now = pi - 0.1;
-        let result = unwrap_angle(last_raw, last_unwrapped, raw_now);
-        assert_approx_eq!(f32, result, -pi - 0.1, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn full_revolution_yields_continuous_angle() {
-        // Simulate dragging CCW through a full 2π. Successive raw
-        // readings: 0, π/2, π-ε, -π+ε, -π/2, -ε, 0, π/2, ... . The
-        // unwrapped sequence should grow monotonically over a full
-        // revolution.
-        let pi = std::f32::consts::PI;
-        let mut last_raw = 0.0_f32;
-        let mut unwrapped = 0.0_f32;
-        for raw in [pi * 0.5, pi - 0.01, -pi + 0.01, -pi * 0.5, -0.01, 0.01] {
-            unwrapped = unwrap_angle(last_raw, unwrapped, raw);
-            last_raw = raw;
-        }
-        // After a full revolution, unwrapped should be just past 2π.
-        assert!(
-            unwrapped > 2.0 * pi - 0.05 && unwrapped < 2.0 * pi + 0.05,
-            "expected unwrapped ≈ 2π, got {unwrapped}"
-        );
-    }
-}
-
-#[cfg(test)]
 mod apply_drag_move_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
@@ -365,6 +290,18 @@ mod apply_drag_move_tests {
         snap: false,
         fine: false,
     };
+
+    /// A rotate drag of a ring facing the camera, pressed at `press` around
+    /// the projected pivot `pivot_screen`.
+    fn rotate_op(axis: Axis, pivot_screen: (f32, f32), press: (f32, f32)) -> DragOp {
+        DragOp::Rotate {
+            axis,
+            start_angle: 0.0,
+            turn: ScreenTurn::new(pivot_screen, press),
+            sign: -1.0,
+            applied: 0.0,
+        }
+    }
 
     fn ray_from(origin: Vec3, target: Vec3) -> picking::Ray {
         picking::Ray {
@@ -514,23 +451,17 @@ mod apply_drag_move_tests {
         assert_approx_eq!(f64, read_translation_t(&t)[0], 2.0, epsilon = 1e-5);
 
         // Rotate: a 20° turn snaps to 15°, and `applied` says so.
-        let op = DragOp::Rotate {
-            axis: Axis::Z,
-            start_angle: 0.0,
-            last_raw: 0.0,
-            current_unwrapped: 0.0,
-            applied: 0.0,
-        };
+        // On screen the cursor turns 20° counter-clockwise around the
+        // pivot of a ring facing the camera.
+        let op = rotate_op(Axis::Z, (100.0, 100.0), (200.0, 100.0));
         let a = 20f32.to_radians();
-        let target = Vec3::new(a.cos(), a.sin(), 0.0);
-        let ray = ray_from(target + Vec3::Z * 5.0, target);
         let (t, new_op) = apply_drag_move(
             op,
             &ray,
             pivot,
             &Transform3D::Identity,
             &original,
-            (0.0, 0.0),
+            (100.0 + 100.0 * a.cos(), 100.0 - 100.0 * a.sin()),
             snap,
         )
         .unwrap();
@@ -565,21 +496,12 @@ mod apply_drag_move_tests {
 
     #[test]
     fn rotate_op_composes_a_rotation_about_pivot() {
-        // Press angle 0 (cursor on +Y for the X-axis arc), current
-        // angle +π/2 (cursor on +Z). The rotation is +π/2 about +X,
-        // which takes +Y → +Z. Verify the linear part.
+        // The X ring faces the camera; the cursor turns a quarter turn
+        // counter-clockwise on screen around the pivot, which is +π/2 about
+        // +X and takes +Y to +Z.
         let pivot = pivot_origin();
         let original = Transform3D::Identity;
-        let start = 0.0_f32;
-        let op = DragOp::Rotate {
-            axis: Axis::X,
-            start_angle: start,
-            last_raw: start,
-            current_unwrapped: start,
-            applied: 0.0,
-        };
-        // Ray crosses the X arc plane at (0, 0, 1): a point on +Z
-        // → angle π/2 in the X-axis basis (u=Y, v=Z).
+        let op = rotate_op(Axis::X, (100.0, 100.0), (200.0, 100.0));
         let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
         let (new_t, new_op) = apply_drag_move(
             op,
@@ -587,30 +509,49 @@ mod apply_drag_move_tests {
             pivot,
             &Transform3D::Identity,
             &original,
-            (0.0, 0.0),
+            (100.0, 0.0),
             NO_KEYS,
         )
         .unwrap();
-        // The linear part rotates +Y onto +Z (right-handed about +X).
         let m = read_linear(&new_t);
         // R(X, π/2) maps (0, 1, 0) → (0, 0, 1):
         //   m[0][1] = 0, m[1][1] = 0, m[2][1] = 1.
         assert_approx_eq!(f64, m[0][1], 0.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[1][1], 0.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[2][1], 1.0, epsilon = 1e-4);
-        // The new op state should have advanced last_raw + unwrapped.
-        if let DragOp::Rotate {
-            current_unwrapped, ..
-        } = new_op
-        {
-            assert_approx_eq!(
-                f32,
-                current_unwrapped,
-                std::f32::consts::FRAC_PI_2,
-                epsilon = 1e-4
-            );
-        } else {
-            panic!("expected Rotate, got {new_op:?}");
+        match new_op {
+            DragOp::Rotate { applied, .. } => {
+                assert_approx_eq!(f32, applied, std::f32::consts::FRAC_PI_2, epsilon = 1e-4)
+            }
+            other => panic!("expected Rotate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_ring_facing_away_turns_the_other_way() {
+        let op = DragOp::Rotate {
+            axis: Axis::X,
+            start_angle: 0.0,
+            turn: ScreenTurn::new((100.0, 100.0), (200.0, 100.0)),
+            sign: 1.0,
+            applied: 0.0,
+        };
+        let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
+        let (_, new_op) = apply_drag_move(
+            op,
+            &ray,
+            pivot_origin(),
+            &Transform3D::Identity,
+            &Transform3D::Identity,
+            (100.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
+        match new_op {
+            DragOp::Rotate { applied, .. } => {
+                assert_approx_eq!(f32, applied, -std::f32::consts::FRAC_PI_2, epsilon = 1e-4)
+            }
+            other => panic!("expected Rotate, got {other:?}"),
         }
     }
 
@@ -671,16 +612,8 @@ mod apply_drag_move_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([40.0, 0.0, 0.0]));
         let original = Transform3D::Identity;
         let world_pivot = Vec3::new(40.0, 0.0, 0.0);
-        let op = DragOp::Rotate {
-            axis: Axis::Z,
-            start_angle: 0.0,
-            last_raw: 0.0,
-            current_unwrapped: 0.0,
-            applied: 0.0,
-        };
-        // Ray hits the Z-axis plane at the pivot (degenerate angle
-        // 0); use a ray crossing y=+1 in the pivot's XY plane so
-        // `rotate_drag_angle` returns π/2 (90° CCW).
+        // A quarter turn counter-clockwise on screen around the pivot.
+        let op = rotate_op(Axis::Z, (100.0, 100.0), (200.0, 100.0));
         let ray = ray_from(Vec3::new(40.0, 1.0, 5.0), Vec3::new(40.0, 1.0, 0.0));
         let (new_local, _) = apply_drag_move(
             op,
@@ -688,7 +621,7 @@ mod apply_drag_move_tests {
             world_pivot,
             &parent_world,
             &original,
-            (0.0, 0.0),
+            (100.0, 0.0),
             NO_KEYS,
         )
         .unwrap();
