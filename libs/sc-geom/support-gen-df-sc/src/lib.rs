@@ -30,6 +30,7 @@ use support_gen_df::supports::types::SupportState;
 use support_gen_df::three::Vec3;
 use support_gen_df::three::buffer_geometry::BufferGeometry;
 
+mod compare;
 mod document;
 mod options;
 mod session;
