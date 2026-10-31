@@ -581,8 +581,9 @@ mod import_notes_tests {
 endfacet
 ";
 
-    /// An ASCII STL of a tetrahedron that stores its first face twice.
-    const TETRAHEDRON_WITH_A_DUPLICATE: &str = "solid t
+    /// An ASCII STL of a tetrahedron that stores its first face twice, and
+    /// gives it no name.
+    const TETRAHEDRON_WITH_A_DUPLICATE: &str = "solid
 facet normal 0 0 -1
  outer loop
   vertex 0 0 0
@@ -618,7 +619,7 @@ facet normal 1 1 1
   vertex 0 0 10
  endloop
 endfacet
-endsolid t
+endsolid
 ";
 
     const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
