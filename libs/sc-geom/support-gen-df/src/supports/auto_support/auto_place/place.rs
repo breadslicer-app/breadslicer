@@ -58,7 +58,10 @@ use crate::three::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectReason {
-    TrunkBuildError,
+    /// The trunk could not be built, and why.
+    Trunk(LimitationCode),
+    /// The trunk's contact cone would sit on a side wall (within 15° of flat).
+    SideWallContact,
     GridRejectCollision,
     GridRejectNoAttachment,
     GridRejectOther,
@@ -69,7 +72,15 @@ pub enum RejectReason {
 impl RejectReason {
     pub fn as_str(self) -> &'static str {
         match self {
-            RejectReason::TrunkBuildError => "trunk_build_error",
+            RejectReason::Trunk(code) => match code {
+                LimitationCode::AngleTooSteep => "trunk_angle_too_steep",
+                LimitationCode::KnotAboveTip => "trunk_knot_above_tip",
+                LimitationCode::StumpBelowRoot => "trunk_stump_below_root",
+                LimitationCode::CollisionWithModel => "trunk_collision_with_model",
+                LimitationCode::TooCloseToExisting => "trunk_too_close_to_existing",
+                LimitationCode::OutOfBounds => "trunk_out_of_bounds",
+            },
+            RejectReason::SideWallContact => "side_wall_contact",
             RejectReason::GridRejectCollision => "grid_reject_collision",
             RejectReason::GridRejectNoAttachment => "grid_reject_no_attachment",
             RejectReason::GridRejectOther => "grid_reject_other",
@@ -461,7 +472,7 @@ pub fn place_one_candidate(
                 }
             }
         }
-        return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset);
+        return PlaceOutcome::rejected(RejectReason::Trunk(error), preset);
     }
 
     // Side-wall guard: no trunk whose contact cone lies within 15° of flat.
@@ -472,7 +483,7 @@ pub fn place_one_candidate(
             live.tip.cone_angle_mode.unwrap_or_default(),
             live.tip.adaptive_cone_angle_offset_deg,
         ) {
-            return PlaceOutcome::rejected(RejectReason::TrunkBuildError, preset);
+            return PlaceOutcome::rejected(RejectReason::SideWallContact, preset);
         }
     }
 
