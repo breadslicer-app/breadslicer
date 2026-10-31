@@ -33,8 +33,7 @@ impl BuildVolume {
         )
     }
 
-    /// Returns the wrapped library value, which owns the wall test and the
-    /// clamp of translate moves.
+    /// Returns the wrapped library value, which owns the wall test.
     pub fn volume(&self) -> sc_print_primitives::BuildVolume {
         self.volume
     }

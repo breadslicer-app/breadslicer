@@ -1475,7 +1475,6 @@ impl ViewportController {
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
-            self.session.build_volume(),
             cursor,
             modifiers,
         ) {
@@ -2104,7 +2103,6 @@ impl ViewportController {
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
-            self.session.build_volume(),
         );
 
         let mut renderer_slot = self.render.renderer_cell().borrow_mut();
@@ -3496,13 +3494,12 @@ mod viewport_click_tests {
     }
 
     #[test]
-    fn gizmo_translate_drag_clamps_at_plus_x_wall() {
+    fn gizmo_translate_drag_moves_past_plus_x_wall() {
         // The fixture's triangle has world.max.x = 0.5 with the installed
         // transform (an `Affine` equal to the identity). A build envelope whose
-        // env.max.x = 0.5 leaves no room on +X: any positive drag delta must
-        // clamp to 0. Without the clamp wiring, the same press and move would
-        // translate the object along +X (covered by
-        // `drag_translates_object_along_world_axis`).
+        // env.max.x = 0.5 leaves no room on +X, yet the drag still moves the
+        // object out of the plate: the out-of-volume warning marks it, it
+        // does not hold it back.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.session
@@ -3515,9 +3512,31 @@ mod viewport_click_tests {
         );
 
         let actual = read_translation(&ctrl);
-        assert_approx_eq!(f32, actual.x, 0.0, epsilon = 1e-6);
+        assert!(actual.x > 0.1, "the drag moved {actual}");
         assert_approx_eq!(f32, actual.y, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, actual.z, 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn gizmo_translate_drag_moves_an_object_already_past_both_walls() {
+        // An object scaled wider than the plate crosses both X walls. Dragging
+        // it either way along X still moves it.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.session
+            .set_build_volume(BuildVolume::new(0.2, 4.0, 4.0));
+
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
+        assert!(read_translation(&ctrl).x > 0.1, "moved away from the plate");
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 - 50.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
+        assert!(read_translation(&ctrl).x < -0.1, "moved back across it");
     }
 }
 
@@ -3815,8 +3834,8 @@ mod keyboard_focus_tests {
     }
 
     /// Builds a single object whose box has max.x = 1 under the identity
-    /// transform, for clamp tests where the envelope is flush with the object's
-    /// +X face, so any +X delta clamps to 0.
+    /// transform, for envelope tests where the envelope is flush with the
+    /// object's +X face, so any +X move takes it out of the plate.
     fn cube_object_graph() -> Scene {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -3857,7 +3876,6 @@ mod keyboard_focus_tests {
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
             selection_id: ctrl.session.document().selection_primary_node_id(),
-            build_volume: ctrl.session.build_volume(),
         });
         std::thread::sleep(std::time::Duration::from_millis(50));
         let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
@@ -3865,16 +3883,14 @@ mod keyboard_focus_tests {
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
             selection_id: ctrl.session.document().selection_primary_node_id(),
-            build_volume: ctrl.session.build_volume(),
         });
     }
 
     #[test]
-    fn keyboard_translate_focus_clamps_at_plus_x_wall() {
+    fn keyboard_translate_focus_moves_past_plus_x_wall() {
         // Cube world AABB.max.x = 1.0 with identity. Envelope of (2, 4, 4)
         // gives env.max.x = 1.0 exactly: no room on +X. Holding +X under
-        // Translate focus must leave the object where it is across as many
-        // ticks as we run.
+        // Translate focus still moves the object out of the plate.
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
@@ -3898,8 +3914,8 @@ mod keyboard_focus_tests {
             Transform3D::Affine(a) => *a.translation(),
         };
         assert!(
-            translation[0] <= f64::EPSILON,
-            "expected translation.x clamped to 0 against +X wall, got {}",
+            translation[0] > 0.0,
+            "expected the object to move past the +X wall, got {}",
             translation[0]
         );
     }
@@ -3907,12 +3923,12 @@ mod keyboard_focus_tests {
     #[test]
     fn keyboard_rotate_focus_unaffected_by_envelope() {
         // Same envelope-flush-with-cube setup. Rotate focus must ignore the
-        // clamp: the linear part of the resulting transform reflects the
+        // envelope: the linear part of the resulting transform reflects the
         // integrated rotation, although the composed transform also gets a
         // translation (a rotation about a pivot off the origin keeps the box
         // centroid in place by writing a translation into the affine form). The
         // test asserts that the linear part leaves the identity: the rotation
-        // happened, and the clamp did not undo it.
+        // happened, and nothing undid it.
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
