@@ -11,11 +11,12 @@
 //! random picks come from a fixed-seed generator, so every run measures the
 //! same meshes. Coordinates are rounded to `f32` and exactly equal ones are
 //! welded, as the STL reader does on load, so 2 parts that touch share their
-//! vertices (that is what makes 2 cubes sharing an edge non-manifold; the
-//! slicer separates them on its own copy, so they pass its gate).
+//! vertices (that is what makes 2 cubes sharing an edge or a face
+//! non-manifold; the slicer separates them on its own copy, so they pass its
+//! gate).
 //!
-//! [`RepairExpectation`] records what each mesh is as built: 11 fail the
-//! slicer's gate ([`IndexedMesh::is_sliceable`]), 5 pass it and are right,
+//! [`RepairExpectation`] records what each mesh is as built: 10 fail the
+//! slicer's gate ([`IndexedMesh::is_sliceable`]), 6 pass it and are right,
 //! and 2 pass it but print wrong (a mesh inside out, a cavity wound outward),
 //! which the sliceable metric cannot see.
 
@@ -116,7 +117,7 @@ pub fn repair_corpus() -> [RepairFixture; 18] {
         fixture(
             "s10-cubes-sharing-face",
             "2 cubes sharing a face",
-            Broken,
+            Sliceable,
             cubes_sharing_face,
         ),
         fixture(

@@ -38,14 +38,14 @@ const TOP: [usize; 2] = [2, 3];
 /// The 2 faces of the box's +X side.
 const RIGHT: [usize; 2] = [10, 11];
 /// The 2 faces of the box's -X side.
-const LEFT: [usize; 2] = [8, 9];
+pub(super) const LEFT: [usize; 2] = [8, 9];
 
 /// A triangle soup builder: boxes appended one after another, each with its
 /// own vertices.
 #[derive(Default)]
 pub(super) struct Soup {
-    vertices: Vec<[f32; 3]>,
-    faces: Vec<[u32; 3]>,
+    pub(super) vertices: Vec<[f32; 3]>,
+    pub(super) faces: Vec<[u32; 3]>,
 }
 
 impl Soup {

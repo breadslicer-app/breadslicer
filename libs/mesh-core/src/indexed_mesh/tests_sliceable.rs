@@ -9,7 +9,7 @@
 
 use super::mesh::IndexedMesh;
 use super::sliceable::SliceableError;
-use super::tests_watertight::{Soup, edge_manifold, volume};
+use super::tests_watertight::{LEFT, Soup, edge_manifold, volume};
 use super::validated::MeshEdgeManifoldError;
 use crate::primitives::Vertex;
 
@@ -159,4 +159,86 @@ fn an_empty_mesh_is_rejected() {
             MeshEdgeManifoldError::EmptyMesh
         ]))
     );
+}
+
+#[test]
+fn solids_whose_shared_walls_are_triangulated_apart_are_sliceable() {
+    // The 2nd box's -X wall uses the other diagonal: the 2 walls lie on each
+    // other without being the same faces, so every edge of the shared square
+    // has 2 coplanar faces at the same angle around it.
+    let mut soup = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &[], false)
+        .add_box([1.0, 0.0, 0.0], [2.0, 1.0, 1.0], &LEFT, false);
+    let base = 8;
+    for face in [[0, 4, 2], [2, 4, 6]] {
+        soup.faces.push(face.map(|v| v + base));
+    }
+    let mut mesh = soup.mesh();
+    assert!(!edge_manifold(&mesh));
+    assert!(mesh.is_sliceable());
+    mesh.make_sliceable().expect("sliceable");
+    assert!(edge_manifold(&mesh));
+    assert!((volume(&mesh) - 2.0).abs() < 1e-9, "{}", volume(&mesh));
+}
+
+/// 2 cubes of side 10 that share the face at x = 10, each wound as the
+/// synthetic repair corpus builds them, welded by position in the order the
+/// faces first use the corners, as the STL reader does.
+fn cubes_sharing_a_face() -> IndexedMesh {
+    const FACES: [[u32; 3]; 12] = [
+        [0, 2, 1],
+        [1, 2, 3],
+        [4, 5, 6],
+        [5, 7, 6],
+        [0, 1, 4],
+        [1, 5, 4],
+        [2, 6, 3],
+        [3, 6, 7],
+        [0, 4, 2],
+        [2, 4, 6],
+        [1, 3, 5],
+        [3, 7, 5],
+    ];
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut faces = Vec::new();
+    for x0 in [0.0f32, 10.0] {
+        let corner = |i: u32| {
+            Vertex::new([
+                x0 + if i & 1 == 1 { 10.0 } else { 0.0 },
+                if i & 2 == 2 { 10.0 } else { 0.0 },
+                if i & 4 == 4 { 10.0 } else { 0.0 },
+            ])
+        };
+        for face in FACES {
+            let welded = face.map(|i| {
+                let p = corner(i);
+                match vertices.iter().position(|v| *v == p) {
+                    Some(k) => k as u32,
+                    None => {
+                        vertices.push(p);
+                        (vertices.len() - 1) as u32
+                    }
+                }
+            });
+            faces.push(crate::primitives::IndexedTriangle::from_raw_indices(welded));
+        }
+    }
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces,
+    }
+}
+
+#[test]
+fn solids_whose_walls_lie_on_each_other_are_separated() {
+    // The 2 walls of the shared face lie on each other: around each edge of
+    // that face, 2 of its 4 faces have the same angle. Taken the wrong way
+    // round they would join the cubes by a wedge of no thickness.
+    let mut mesh = cubes_sharing_a_face();
+    assert!(!edge_manifold(&mesh));
+    assert!(mesh.is_sliceable());
+    mesh.make_sliceable().expect("sliceable");
+    assert!(edge_manifold(&mesh));
+    assert!((volume(&mesh) - 2000.0).abs() < 1e-6, "{}", volume(&mesh));
 }

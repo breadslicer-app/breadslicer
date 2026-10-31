@@ -12,9 +12,9 @@ use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, assess_repair};
 use super::repair_corpus::{RepairExpectation, repair_corpus};
 use super::*;
 
-/// How many of the 11 broken corpus meshes Repair makes sliceable today. Each
+/// How many of the 10 broken corpus meshes Repair makes sliceable today. Each
 /// repair step that raises it updates this number in the same change.
-const BROKEN_MADE_SLICEABLE: usize = 11;
+const BROKEN_MADE_SLICEABLE: usize = 10;
 
 /// Runs Repair as the Repair button does (`Scene::repair_meshes`): the passes
 /// run only when the assessment finds work.
@@ -45,7 +45,7 @@ fn the_corpus_has_18_distinct_names_in_order() {
         .iter()
         .filter(|f| f.expectation == RepairExpectation::Broken)
         .count();
-    assert_eq!(broken, 11);
+    assert_eq!(broken, 10);
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn repair_makes_the_baseline_count_of_broken_fixtures_sliceable() {
             _ => assert!(sliceable, "Repair broke {}", fixture.name),
         }
     }
-    println!("sliceable after Repair: {} of 11 broken", fixed.len());
+    println!("sliceable after Repair: {} of 10 broken", fixed.len());
     assert_eq!(
         fixed.len(),
         BROKEN_MADE_SLICEABLE,
