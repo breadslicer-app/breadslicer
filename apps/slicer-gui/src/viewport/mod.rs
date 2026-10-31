@@ -30,7 +30,6 @@ mod tests_controller_numeric;
 mod tests_controller_section_gating;
 #[cfg(test)]
 mod tests_controller_supports_selection;
-mod translation_clamp;
 mod types;
 
 pub(crate) use controller::ViewportController;

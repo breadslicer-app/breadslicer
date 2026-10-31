@@ -27,6 +27,16 @@ use crate::primitives::{
     CoordAxis, FaceIndex, IndexedTriangle, TriVertexSlot, Vertex, VertexIndex,
 };
 
+/// Returns the default pass set without the watertight pass, to pin the
+/// passes that run after it.
+fn passes_before_watertight() -> RepairPasses {
+    RepairPasses {
+        non_manifold_edges: false,
+        holes: false,
+        ..RepairPasses::default_repair()
+    }
+}
+
 /// Returns a closed, consistently wound tetrahedron.
 fn tetrahedron() -> IndexedMesh {
     let vertices = vec![
@@ -124,6 +134,8 @@ fn default_repair_enables_the_3_passes() {
             zero_length_edges: false,
             flipped_faces: false,
             collinear_faces: false,
+            non_manifold_edges: false,
+            holes: false,
         }
     );
 }
@@ -139,6 +151,7 @@ fn all_passes_off_is_a_no_op_on_a_clean_mesh() {
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         })
     );
     assert_eq!(mesh, original);
@@ -156,6 +169,7 @@ fn all_passes_off_leaves_a_flipped_face_untouched() {
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: false,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         })
     );
     assert_eq!(mesh, original);
@@ -166,17 +180,13 @@ fn default_repair_fixes_a_flipped_face() {
     let mut mesh = tetrahedron();
     mesh.faces[0].vertices.reverse();
     let report = mesh.repair(RepairPasses::default_repair());
-    assert_eq!(
-        report.fixes,
-        vec![MeshFix::FlippedFaceOrientation {
-            face_idx: FaceIndex::from(0_usize),
-        }]
-    );
+    assert_eq!(report.fixes, vec![MeshFix::ReorientedFaces { faces: 1 }]);
     assert_eq!(
         report.end,
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         })
     );
     assert_eq!(mesh.faces[0].vertices, tetrahedron().faces[0].vertices);
@@ -198,6 +208,7 @@ fn zero_length_edge_faces_are_removed_with_a_pinned_log() {
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         })
     );
     assert_eq!(mesh.faces.len(), 4);
@@ -270,6 +281,8 @@ fn zle_pass_disabled_refuses_carrying_every_face_error() {
         zero_length_edges: false,
         flipped_faces: true,
         collinear_faces: false,
+        non_manifold_edges: false,
+        holes: false,
     });
     assert!(report.fixes.is_empty());
     assert_eq!(
@@ -288,6 +301,8 @@ fn zle_pass_disabled_assesses_as_a_refusal_carrying_every_face_error() {
         zero_length_edges: false,
         flipped_faces: true,
         collinear_faces: false,
+        non_manifold_edges: false,
+        holes: false,
     };
     assert_eq!(
         assess_repair(&mesh, passes),
@@ -335,7 +350,7 @@ fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
     mesh.faces[1].vertices.reverse();
     let degenerate = append_zero_length_edge_face(&mut mesh);
 
-    let report = mesh.repair(RepairPasses::default_repair());
+    let report = mesh.repair(passes_before_watertight());
 
     assert_eq!(
         report.fixes,
@@ -374,6 +389,7 @@ fn a_disabled_flip_pass_assesses_winding_problems_as_clean() {
     let state = MeshStateAfterRepair {
         edge_manifold: false,
         zero_area_face_count: 0,
+        holes_left_open: 0,
     };
     for (name, mesh) in [("flipped", flipped), ("lone-triangle", lone_triangle)] {
         assert_eq!(
@@ -391,6 +407,8 @@ fn a_disabled_flip_pass_assesses_winding_problems_as_clean() {
 
 #[test]
 fn a_hole_is_reported_by_the_verdict_not_a_refusal() {
+    // The strip is a flat plate: filling it would double it, over the size
+    // cap, so the hole stays open and is counted.
     let mut mesh = open_strip();
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses::default_repair());
@@ -400,6 +418,7 @@ fn a_hole_is_reported_by_the_verdict_not_a_refusal() {
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: false,
             zero_area_face_count: 0,
+            holes_left_open: 1,
         })
     );
     assert_eq!(mesh, original);
@@ -416,6 +435,7 @@ fn default_repair_completes_a_clean_tetrahedron_with_no_zero_area_face() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         }
     );
@@ -435,6 +455,7 @@ fn default_repair_counts_the_zero_area_face_of_a_flat_tetrahedron() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 1,
+                holes_left_open: 0,
             }),
         }
     );
@@ -455,6 +476,7 @@ fn default_repair_counts_the_collinear_face_of_an_open_mesh() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: false,
                 zero_area_face_count: 1,
+                holes_left_open: 1,
             }),
         }
     );
@@ -472,6 +494,7 @@ fn the_collinear_face_pass_merges_the_neighbours_of_a_collinear_face() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         }
     );
@@ -493,6 +516,7 @@ fn the_collinear_face_pass_splits_the_face_across_the_long_edge() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
         }
     );
@@ -507,7 +531,7 @@ fn the_collinear_face_pass_splits_the_face_across_the_long_edge() {
 #[test]
 fn the_orientation_pass_runs_before_the_collinear_face_pass() {
     let mut mesh = flipped_split_tetrahedron();
-    let report = mesh.repair(RepairPasses::default_repair());
+    let report = mesh.repair(passes_before_watertight());
     assert_eq!(
         report.fixes,
         vec![
@@ -522,6 +546,7 @@ fn the_orientation_pass_runs_before_the_collinear_face_pass() {
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
             zero_area_face_count: 0,
+            holes_left_open: 0,
         })
     );
     assert_eq!(mesh.faces, merged_split_tetrahedron_faces());
@@ -550,6 +575,7 @@ fn a_disabled_collinear_face_pass_leaves_the_collinear_face() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 1,
+                holes_left_open: 0,
             }),
         }
     );
@@ -562,7 +588,7 @@ fn a_winding_error_that_stays_keeps_the_collinear_pass_from_running() {
     let original = mesh.clone();
     let report = mesh.repair(RepairPasses {
         flipped_faces: false,
-        ..RepairPasses::default_repair()
+        ..passes_before_watertight()
     });
     assert_eq!(
         report,
@@ -571,6 +597,7 @@ fn a_winding_error_that_stays_keeps_the_collinear_pass_from_running() {
             end: RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: false,
                 zero_area_face_count: 1,
+                holes_left_open: 0,
             }),
         }
     );
@@ -630,6 +657,7 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     ];
     let pass_sets = [
         RepairPasses::default_repair(),
+        passes_before_watertight(),
         RepairPasses {
             flipped_faces: false,
             ..RepairPasses::default_repair()
@@ -679,18 +707,19 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     // The matrix covers all 3 assessment kinds; pin the per-case kinds so a
     // fixture drifting into another class is caught.
     let passes = RepairPasses::default_repair();
-    for (mesh, edge_manifold, zero_area_face_count) in [
-        (tetrahedron(), true, 0),
-        (open_strip(), false, 0),
-        (flat_tetrahedron(), true, 1),
-        (blocked_split_tetrahedron(), true, 1),
-        (open_strip_with_a_collinear_face(), false, 1),
+    for (mesh, edge_manifold, zero_area_face_count, holes_left_open) in [
+        (tetrahedron(), true, 0, 0),
+        (open_strip(), false, 0, 1),
+        (flat_tetrahedron(), true, 1, 0),
+        (blocked_split_tetrahedron(), true, 1, 0),
+        (open_strip_with_a_collinear_face(), false, 1, 1),
     ] {
         assert_eq!(
             assess_repair(&mesh, passes),
             RepairAssessment::Clean(MeshStateAfterRepair {
                 edge_manifold,
                 zero_area_face_count,
+                holes_left_open,
             })
         );
     }
@@ -727,13 +756,14 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
     }
     let without_flips = RepairPasses {
         flipped_faces: false,
-        ..RepairPasses::default_repair()
+        ..passes_before_watertight()
     };
     assert_eq!(
         assess_repair(&flipped_split_tetrahedron(), without_flips),
         RepairAssessment::Clean(MeshStateAfterRepair {
             edge_manifold: false,
             zero_area_face_count: 1,
+            holes_left_open: 0,
         })
     );
 }

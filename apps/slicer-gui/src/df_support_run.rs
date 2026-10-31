@@ -1177,6 +1177,14 @@ impl DfSupportRun {
         self.on_option(9, 2.0);
     }
 
+    /// The overhang angle (degrees from horizontal) and the area per
+    /// support (mm²) the engine is set to: the Orient tool (#182) counts tips
+    /// as the engine places them.
+    pub(crate) fn overhang_terms(&self) -> (f64, f64) {
+        let o = self.options.borrow();
+        (o.overhang_angle_deg, o.area_per_support_mm2)
+    }
+
     /// Whether models wait for supports the last edit took away, or a run
     /// is making them (#153).
     pub(crate) fn regenerating(&self) -> bool {
@@ -3630,6 +3638,42 @@ mod hand_edit_tests {
             ));
             assert_ne!(leaf_transform(&document, leaves[1]), before[1]);
             assert_eq!(run.sets_in_force().len(), 2);
+        });
+    }
+
+    /// #182: an Orient option that tilts a supported model takes its set
+    /// away in the same Undo step and leaves the model waiting for new
+    /// supports (#153); one Undo puts the pose and the set back.
+    #[test]
+    fn an_orient_option_that_tilts_a_supported_model_makes_its_supports_again() {
+        use crate::orient_run::OrientRun;
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let before = leaf_transform(&document, leaves[0]);
+            let (_, mesh) = set_of(&document, &run, leaves[0]);
+            document.set_selection(Selection::One(LeafId(leaves[0])));
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let orient =
+                OrientRun::install(&window, document.clone(), ctrl.dialogs(), ctrl, run.clone());
+            let tilting = orient
+                .search_now(sc_orient::SearchMode::Quick)
+                .iter()
+                .position(|c| c.tilt_deg >= 1.0)
+                .expect("an option tilts the cube");
+            assert!(window.get_orient_warning().contains("supports"));
+            orient.pick(tilting as i32);
+            assert!(orient.apply());
+            assert_ne!(leaf_transform(&document, leaves[0]), before);
+            assert!(support_sets(&document).is_empty(), "the old set is gone");
+            let (_, wants) = document.supports_wanted().expect("new supports wanted");
+            assert_eq!(wants.ids(), vec![leaves[0]]);
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, leaves[0]), before);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, leaves[0]).1, &mesh));
+            assert!(document.supports_wanted().is_none());
         });
     }
 

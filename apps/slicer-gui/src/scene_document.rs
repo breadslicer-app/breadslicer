@@ -292,6 +292,9 @@ pub(crate) struct SceneDocument {
     /// follow it (#119).
     support_follow: Cell<Option<crate::support_follow::Anchor>>,
     hollows: Rc<RefCell<Vec<Hollowed>>>,
+    /// Puts back what a live preview shows (the Orient tool's options,
+    /// #182), while one is up.
+    live_preview: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 /// The edit that swaps the mesh a leaf shows for `after`, whichever way the
@@ -346,7 +349,30 @@ impl SceneDocument {
             support_sessions: Rc::default(),
             support_follow: Cell::new(None),
             hollows: Rc::default(),
+            live_preview: RefCell::new(None),
         })
+    }
+
+    /// Starts (`Some`) or ends (`None`) a live preview: a pose shown on the
+    /// scene that no edit has committed, like a gizmo drag that outlasts the
+    /// pointer (#182). `restore` puts back what the history has; Undo, Redo
+    /// and a save run it first, so neither the history nor a file ever takes
+    /// the preview for the scene.
+    pub(crate) fn set_live_preview(&self, restore: Option<Rc<dyn Fn()>>) {
+        *self.live_preview.borrow_mut() = restore;
+    }
+
+    /// Whether a live preview is up.
+    pub(crate) fn has_live_preview(&self) -> bool {
+        self.live_preview.borrow().is_some()
+    }
+
+    /// Ends a live preview, putting back what the history has.
+    pub(crate) fn end_live_preview(&self) {
+        let restore = self.live_preview.borrow_mut().take();
+        if let Some(restore) = restore {
+            restore();
+        }
     }
 
     /// The editable support sessions (see [`crate::support_persist`]).
@@ -430,6 +456,7 @@ impl SceneDocument {
     }
 
     pub(crate) fn clear_scene(&self) {
+        *self.live_preview.borrow_mut() = None;
         let was_dirty = self.is_dirty();
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = None;
@@ -1076,6 +1103,24 @@ impl SceneDocument {
         }
     }
 
+    /// Reserves a leaf id and a mesh-resource id for each of `count` new
+    /// leaves, each to show a mesh of its own, for an edit the caller builds
+    /// (Split into bodies). Empty when no scene is loaded.
+    pub(crate) fn allocate_leaf_slots(&self, count: usize) -> Vec<(NodeId, MeshResourceId)> {
+        let mut slot = self.spatial.borrow_mut();
+        let Some(spatial) = slot.as_mut() else {
+            return Vec::new();
+        };
+        (0..count)
+            .map(|_| {
+                (
+                    spatial.allocate_unbound_node_id(),
+                    spatial.allocate_unbound_mesh_resource_id(),
+                )
+            })
+            .collect()
+    }
+
     /// Deletes the currently-selected leaf, recording the operation as 1 undo
     /// entry.
     ///
@@ -1345,6 +1390,7 @@ impl SceneDocument {
     /// scene's rejection otherwise; on anything but `Ok(true)` the stacks are
     /// left as they were.
     pub(crate) fn undo(&self) -> Result<bool, SceneError> {
+        self.end_live_preview();
         let was_dirty = self.is_dirty();
         // Before the pop: it moves the revision a live move is anchored to.
         crate::support_follow::settle(self);
@@ -1381,6 +1427,7 @@ impl SceneDocument {
     /// scene loaded), and the scene's rejection otherwise; on anything but
     /// `Ok(true)` the stacks are left as they were.
     pub(crate) fn redo(&self) -> Result<bool, SceneError> {
+        self.end_live_preview();
         let was_dirty = self.is_dirty();
         crate::support_follow::settle(self);
         let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {

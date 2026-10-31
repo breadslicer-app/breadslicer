@@ -13,7 +13,11 @@
 //!   `HollowSession::with_rotation`) share one function;
 //! - DragonFruit's manifold3d round trip (`finalize_hollow_output_mesh_for_manifold`)
 //!   is replaced by the edge-manifold check SoulCrafted's slicer applies, with
-//!   the same weld and smoothing back-off ladder ([`finalize_hollow_output_mesh`]);
+//!   the same weld ladder ([`stabilize_hollow_mesh`]);
+//! - over exact wall distances ([`HollowOptions::exact_wall`]) the cavity is
+//!   smoothed in its field only, clamped, without Taubin or the smoothing
+//!   back-off ladder, and built once for the preview and the result
+//!   ([`HollowSession::exact_cavity`], #29);
 //! - the voxel-tunnel drain fallback is not ported: drains are exact cuts
 //!   ([`crate::drain`]).
 
@@ -28,7 +32,7 @@ use rayon::prelude::*;
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
 use crate::mesh::{Aabb, IndexedMesh, Vec3};
-use crate::topology::{Topology, is_edge_manifold};
+use crate::topology::{Topology, edge_manifold_defects, is_edge_manifold};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HollowMode {
@@ -94,7 +98,11 @@ pub struct HollowOptions {
     /// field, so the cavity wall sits at the requested wall (DragonFruit,
     /// `false`, pushes every voxel at least 5 % of the wall away from it,
     /// which moves the wall by up to that much either way). The smoothing
-    /// may then only add material, and leaves a single cavity.
+    /// is then clamped (#266): it may only add material, at most
+    /// [`EXACT_SMOOTHING_CAP_VOXELS`], and never turns a cavity voxel into
+    /// material, so the smoothed cavity has the unsmoothed one's voxels and
+    /// shells. The mesh is not Taubin-smoothed, and a cavity that does not
+    /// close falls back to the unsmoothed one instead of DragonFruit's ladder.
     pub exact_wall: bool,
 }
 
@@ -761,8 +769,14 @@ impl HollowSession {
         }
 
         // Optional voxel-level chamfering of cavity boundaries, turning hard
-        // orthogonal internal steps into printable ~45° transitions.
-        if options.internal_chamfer_passes > 0 && !options.smooth_internal_surfaces {
+        // orthogonal internal steps into printable ~45° transitions. Not over
+        // exact distances: their contour has no steps, and every kept voxel
+        // is within the wall, so carving one thins the wall (#29: down to
+        // 1.46 mm of 2 on the Wolverine).
+        if options.internal_chamfer_passes > 0
+            && !options.smooth_internal_surfaces
+            && !options.exact_wall
+        {
             let passes = effective_internal_cavity_chamfer_passes(
                 options.shell_thickness_mm,
                 shell_voxels_f,
@@ -855,7 +869,8 @@ impl HollowSession {
             options.shell_thickness_mm,
             options.smooth_internal_surfaces,
             smoothing_shell_voxels,
-        );
+        )
+        .for_wall(options.exact_wall);
 
         ctl.stage(Stage::KeepMask)?;
         let (keep, kept_shell) = self.compute_keep_mask_with(options, dist);
@@ -974,88 +989,127 @@ impl HollowSession {
         })
     }
 
-    /// The final hollow mesh (source shell plus cavity wall and infill), put
-    /// through [`finalize_hollow_output_mesh`]. Ignores the preview flags and
-    /// the voxel drain corridors of `options` (drains are exact cuts
-    /// afterwards). In the session frame; rotation is not undone.
-    #[cfg(test)]
-    pub(crate) fn final_mesh(
-        &self,
-        options: &HollowOptions,
-        ctl: Control<'_>,
-    ) -> Result<FinalHollow, Cancelled> {
-        self.final_mesh_with_distances(options, &self.dist, ctl)
-    }
-
-    /// [`HollowSession::final_mesh`] over the wall distances `dist` (in
-    /// voxels, one per cell) instead of the chamfer distances.
-    pub(crate) fn final_mesh_with_distances(
+    /// The cavity of an exact-wall hollow (#29): the one surface the preview
+    /// shows and the result is built from, so the hollow carries exactly the
+    /// cavity on screen. It is the contour of the exact wall field itself:
+    /// over exact distances smoothing only thickens the wall (#266) and the
+    /// voxel chamfer only thins it, so neither runs. Ignores the preview
+    /// flags and the voxel drain corridors of `options` (drains are exact
+    /// cuts on the result). In the session frame: the session must not be
+    /// rotated.
+    pub(crate) fn exact_cavity(
         &self,
         options: &HollowOptions,
         dist: &[f32],
         ctl: Control<'_>,
-    ) -> Result<FinalHollow, Cancelled> {
+    ) -> Result<ExactCavity, Cancelled> {
+        debug_assert!(options.exact_wall && is_identity_quat(self.rotation_quat));
         let mut options = options.clone();
-        options.preview_cavity_only = false;
-        options.preview_surface_only = false;
-        options.preview_voxel_spheres = false;
         options.drain_holes.clear();
         let shell_voxels_f = options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm;
-        let smoothing_profile = effective_internal_cavity_smoothing_profile(
-            options.shell_thickness_mm,
-            options.smooth_internal_surfaces,
-            shell_voxels_f,
-        );
+
         ctl.stage(Stage::KeepMask)?;
         let (keep, _kept_shell) = self.compute_keep_mask_with(&options, dist);
         let kept = keep.iter().filter(|v| **v).count();
+
         ctl.stage(Stage::CavitySurface)?;
-        let (out, cavity, cavity_wall_score) = build_hollow_output_mesh(
-            &self.source_mesh,
-            &self.source_bbox,
-            &self.grid,
-            &self.solid,
-            dist,
-            &keep,
-            &options,
-            shell_voxels_f,
-            smoothing_profile,
-        );
-        ctl.stage(Stage::Stabilize)?;
-        let finalized = finalize_hollow_output_mesh(
-            &self.source_mesh,
-            &self.source_bbox,
-            &self.grid,
-            &self.solid,
-            dist,
-            &keep,
-            &options,
-            shell_voxels_f,
-            smoothing_profile,
-            out,
-            cavity,
-            cavity_wall_score,
-            ctl,
-        )?;
-        Ok(FinalHollow {
-            mesh: finalized.mesh,
-            cavity: finalized.cavity,
-            stabilized: finalized.stabilized,
-            smoothing_retries: finalized.retries,
+        let (wall, wall_closed) =
+            exact_cavity_wall(&self.grid, &self.solid, &keep, dist, shell_voxels_f);
+
+        let infill = if matches!(options.mode, HollowMode::Infill) {
+            ctl.stage(Stage::Infill)?;
+            let mesh = build_smooth_infill_mesh(
+                &self.source_bbox,
+                &self.grid,
+                &self.solid,
+                &keep,
+                options.infill_mode,
+                options.infill_cell_mm,
+                options.infill_beam_radius_mm,
+            );
+            (!mesh.triangles.is_empty()).then_some(mesh)
+        } else {
+            None
+        };
+        // Beams are closed tubes by construction; checked all the same, so
+        // `closed` speaks for everything the result adds to the source.
+        let closed = wall_closed && infill.as_ref().is_none_or(is_edge_manifold);
+
+        let (blocked_voxel_centers, blocked_voxel_indices) =
+            collect_blocked_voxel_data(&self.grid, &self.solid, &options.blocked_voxel_indices);
+        Ok(ExactCavity {
+            wall,
+            infill,
+            closed,
             removed_voxels: self.occupied_voxels.saturating_sub(kept),
+            removed_voxel_centers: collect_removed_voxel_centers(&self.grid, &self.solid, &keep),
+            removed_voxel_indices: collect_removed_voxel_indices(&self.grid, &self.solid, &keep),
+            blocked_voxel_centers,
+            blocked_voxel_indices,
         })
     }
 }
 
-/// What [`HollowSession::final_mesh`] hands back.
-pub(crate) struct FinalHollow {
-    pub mesh: IndexedMesh,
-    pub cavity: IndexedMesh,
-    /// The mesh passed the edge-manifold check.
-    pub stabilized: bool,
-    /// Rebuilds with reduced smoothing it took.
-    pub smoothing_retries: usize,
+/// The cavity of an exact-wall hollow ([`HollowSession::exact_cavity`]).
+#[derive(Debug, Clone)]
+pub(crate) struct ExactCavity {
+    /// The cavity wall, facing inward.
+    pub wall: IndexedMesh,
+    /// The infill beams, when the hollow has infill.
+    pub infill: Option<IndexedMesh>,
+    /// The wall and the beams are edge-manifold: a result can be built.
+    pub closed: bool,
     pub removed_voxels: usize,
+    /// Centres of the removed voxels on the cavity wall (x, y, z each).
+    pub removed_voxel_centers: Vec<f32>,
+    pub removed_voxel_indices: Vec<u32>,
+    pub blocked_voxel_centers: Vec<f32>,
+    pub blocked_voxel_indices: Vec<u32>,
+}
+
+/// The cavity wall of `keep` over exact distances, and whether it is closed
+/// (edge-manifold, no degenerate triangle). Its edges are interpolated in
+/// one order, so it is normally contoured closed and taken as it is; any
+/// other goes through the repairs the hollow has always run (near seams
+/// welded, open shards dropped, degenerate triangles out, the weld ladder),
+/// which leave a closed wall unchanged.
+fn exact_cavity_wall(
+    grid: &GridSpec,
+    solid: &[bool],
+    keep: &[bool],
+    dist: &[f32],
+    shell_voxels_f: f32,
+) -> (IndexedMesh, bool) {
+    let negative: Vec<bool> = solid
+        .par_iter()
+        .zip(keep)
+        .map(|(solid, kept)| *solid && !*kept)
+        .collect();
+    let scalar =
+        build_smoothed_cavity_scalar_field(grid, solid, keep, dist, shell_voxels_f, 0, true);
+    let mesh = organic_boundary_mesh(grid, keep, &negative, &scalar, true);
+    if edge_manifold_defects(&mesh).is_clean() && !has_degenerate_triangle(&mesh) {
+        return (mesh, true);
+    }
+    let (mesh, _score) =
+        drop_open_cavity_fragments(stabilize_cavity_mesh_for_boolean(mesh, grid.voxel_mm));
+    let mesh = normalize_mesh_for_boolean(mesh);
+    match stabilize_hollow_mesh(&mesh) {
+        Some(closed) => (closed, true),
+        None => (mesh, false),
+    }
+}
+
+/// A triangle [`normalize_mesh_for_boolean`] would drop: a repeated vertex
+/// or no area.
+fn has_degenerate_triangle(mesh: &IndexedMesh) -> bool {
+    mesh.triangles.par_iter().any(|tri| {
+        if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
+            return true;
+        }
+        let [a, b, c] = tri.map(|i| mesh.positions[i as usize]);
+        b.sub(a).cross(c.sub(a)).length() * 0.5 <= 1e-16
+    })
 }
 
 /// Whether the removed voxel at (x, y, z) is 6-adjacent to a voxel that is
@@ -1262,70 +1316,92 @@ const TETRAHEDRA_IN_CUBE: [[usize; 4]; 6] = [
     [0, 4, 5, 6],
 ];
 
+/// The isosurface of `scalar_field` between the classified voxels, by
+/// marching tetrahedra. The z slabs run in parallel and are joined in
+/// order: the same triangles, in the same order, as one sweep.
+///
+/// With `canonical_edges`, each grid edge is interpolated from the same end
+/// whichever tetrahedron crosses it, so the tetrahedra on both sides put its
+/// point on the same bits and the weld always joins them. In DragonFruit's
+/// order (kept for its parity) the two can round into neighbouring weld
+/// cells and leave a hairline crack the hollow then has to repair.
 fn organic_boundary_mesh(
     grid: &GridSpec,
     positive: &[bool],
     negative: &[bool],
     scalar_field: &[f32],
+    canonical_edges: bool,
 ) -> IndexedMesh {
-    let mut soup = Vec::<f32>::new();
-    let mut corner_pos = [Vec3::ZERO; 8];
-    let mut corner_scalar = [0.0f32; 8];
-    let mut corner_kept = [false; 8];
-    let mut corner_carved = [false; 8];
+    let slabs: Vec<Vec<f32>> = (0..grid.nz.saturating_sub(1))
+        .into_par_iter()
+        .map(|z| {
+            let mut soup = Vec::<f32>::new();
+            let mut corner_pos = [Vec3::ZERO; 8];
+            let mut corner_scalar = [0.0f32; 8];
+            let mut corner_kept = [false; 8];
+            let mut corner_carved = [false; 8];
+            for y in 0..grid.ny.saturating_sub(1) {
+                for x in 0..grid.nx.saturating_sub(1) {
+                    let mut has_scalar_positive = false;
+                    let mut has_scalar_negative = false;
 
-    for z in 0..grid.nz.saturating_sub(1) {
-        for y in 0..grid.ny.saturating_sub(1) {
-            for x in 0..grid.nx.saturating_sub(1) {
-                let mut has_scalar_positive = false;
-                let mut has_scalar_negative = false;
+                    for (corner_i, &(dx, dy, dz)) in CUBE_CORNERS.iter().enumerate() {
+                        let vx = x + dx;
+                        let vy = y + dy;
+                        let vz = z + dz;
+                        let vi = grid.idx(vx, vy, vz);
 
-                for (corner_i, &(dx, dy, dz)) in CUBE_CORNERS.iter().enumerate() {
-                    let vx = x + dx;
-                    let vy = y + dy;
-                    let vz = z + dz;
-                    let vi = grid.idx(vx, vy, vz);
-
-                    corner_pos[corner_i] = grid.center_world(vx, vy, vz);
-                    corner_kept[corner_i] = positive[vi];
-                    corner_carved[corner_i] = negative[vi];
-                    corner_scalar[corner_i] = scalar_field[vi];
-                    if corner_kept[corner_i] || corner_carved[corner_i] {
-                        if corner_scalar[corner_i] >= 0.0 {
-                            has_scalar_positive = true;
-                        } else {
-                            has_scalar_negative = true;
+                        corner_pos[corner_i] = grid.center_world(vx, vy, vz);
+                        corner_kept[corner_i] = positive[vi];
+                        corner_carved[corner_i] = negative[vi];
+                        corner_scalar[corner_i] = scalar_field[vi];
+                        if corner_kept[corner_i] || corner_carved[corner_i] {
+                            if corner_scalar[corner_i] >= 0.0 {
+                                has_scalar_positive = true;
+                            } else {
+                                has_scalar_negative = true;
+                            }
                         }
                     }
-                }
 
-                // Cubes whose classified corners all share one scalar sign
-                // contain no isosurface.
-                if !(has_scalar_positive && has_scalar_negative) {
-                    continue;
-                }
+                    // Cubes whose classified corners all share one scalar
+                    // sign contain no isosurface.
+                    if !(has_scalar_positive && has_scalar_negative) {
+                        continue;
+                    }
 
-                for tet in TETRAHEDRA_IN_CUBE {
-                    polygonize_cavity_tetrahedron(
-                        &mut soup,
-                        tet,
-                        &corner_pos,
-                        &corner_scalar,
-                        &corner_kept,
-                        &corner_carved,
-                    );
+                    for tet in TETRAHEDRA_IN_CUBE {
+                        polygonize_cavity_tetrahedron(
+                            &mut soup,
+                            tet,
+                            &corner_pos,
+                            &corner_scalar,
+                            &corner_kept,
+                            &corner_carved,
+                            canonical_edges,
+                        );
+                    }
                 }
             }
-        }
-    }
+            soup
+        })
+        .collect();
 
-    IndexedMesh::from_triangle_soup(&soup, 1e-6)
+    IndexedMesh::from_triangle_soup(&slabs.concat(), 1e-6)
 }
 
 /// How far, in voxels, an exact cavity field keeps its values from 0 (see
 /// `build_smoothed_cavity_scalar_field`): the wall moves by at most this
 /// much, 0.03 mm at DragonFruit's voxel.
 const EXACT_WALL_SAMPLE_MARGIN: f32 = 0.05;
+
+/// How far, in voxels, the smoothing of an exact cavity field may raise a
+/// value (#266): the smoothed cavity wall stays within about this much of
+/// the unsmoothed one, the preview's (0.16 mm at DragonFruit's voxel).
+/// Over exact distances the blur hardly smooths anything (the unsmoothed
+/// surface is as even as the smoothed one); it rounds inner creases and
+/// thickens convex cavities evenly, so a small cap loses nothing.
+pub(crate) const EXACT_SMOOTHING_CAP_VOXELS: f32 = 0.25;
 
 fn build_smoothed_cavity_scalar_field(
     grid: &GridSpec,
@@ -1338,31 +1414,35 @@ fn build_smoothed_cavity_scalar_field(
 ) -> Vec<f32> {
     let exterior_value = -2.5f32;
     let active_band_voxels = 4.5f32;
-    let mut field = vec![exterior_value; solid.len()];
-
-    for i in 0..solid.len() {
-        if solid[i] {
+    // Each cell from its own inputs only: in parallel, the same values.
+    let mut field: Vec<f32> = (0..solid.len())
+        .into_par_iter()
+        .map(|i| {
+            if !solid[i] {
+                return exterior_value;
+            }
             let shell_signed = shell_voxels_f - dist[i];
             if exact_wall && keep[i] == (shell_signed >= 0.0) {
                 // Off the sample by a hair: a value of 0 puts the wall on
                 // the voxel centre, where its triangles collapse.
-                field[i] = if keep[i] {
+                if keep[i] {
                     shell_signed.max(EXACT_WALL_SAMPLE_MARGIN)
                 } else {
                     shell_signed.min(-EXACT_WALL_SAMPLE_MARGIN)
-                };
+                }
             } else if keep[i] {
                 // Blocked voxels deep in the cavity get a small epsilon so the
                 // zero-crossing sits just inside the blocked region.
-                field[i] = shell_signed.max(0.05 * shell_voxels_f.max(0.2));
+                shell_signed.max(0.05 * shell_voxels_f.max(0.2))
             } else {
-                field[i] = shell_signed.min(-0.05 * shell_voxels_f.max(0.2));
+                shell_signed.min(-0.05 * shell_voxels_f.max(0.2))
             }
-        }
-    }
+        })
+        .collect();
 
-    let mut active = vec![false; solid.len()];
-    for z in 0..grid.nz {
+    // The cells the blur reads: none without a blur.
+    let mut active = vec![false; solid.len() * usize::from(smoothing_iterations > 0)];
+    for z in 0..grid.nz * usize::from(smoothing_iterations > 0) {
         for y in 0..grid.ny {
             for x in 0..grid.nx {
                 let i = grid.idx(x, y, z);
@@ -1403,18 +1483,30 @@ fn build_smoothed_cavity_scalar_field(
         }
     }
 
-    // Over exact distances the blur may only add material: a voxel stays
-    // material if either field says so, so the smoothed wall is never
-    // thinner than the exact one (the guard #266 builds on).
-    let unblurred = (exact_wall && smoothing_iterations > 0).then(|| field.clone());
-    let mut scratch = field.clone();
+    // Over exact distances the blur is clamped (#266): each value stays
+    // between the exact field and `cap` above it, and a cavity value stays
+    // a cavity value. The smoothed wall is never thinner than the exact one,
+    // and the cavity keeps the exact field's voxels, so it has the shape and
+    // the topology of the preview's: no channel closes, no pocket seals.
+    let exact_bounds = (exact_wall && smoothing_iterations > 0).then(|| field.clone());
+    let mut scratch = if smoothing_iterations > 0 {
+        field.clone()
+    } else {
+        Vec::new()
+    };
+    let plane = grid.nx * grid.ny;
     for _ in 0..smoothing_iterations {
-        for z in 0..grid.nz {
-            for y in 0..grid.ny {
-                for x in 0..grid.nx {
-                    let i = grid.idx(x, y, z);
+        // Each cell reads the previous pass only: the slabs run in parallel
+        // and give the same values as one sweep.
+        scratch
+            .par_chunks_mut(plane)
+            .enumerate()
+            .for_each(|(z, layer)| {
+                for (k, out) in layer.iter_mut().enumerate() {
+                    let (x, y) = (k % grid.nx, k / grid.nx);
+                    let i = z * plane + k;
                     if !active[i] {
-                        scratch[i] = field[i];
+                        *out = field[i];
                         continue;
                     }
 
@@ -1449,61 +1541,67 @@ fn build_smoothed_cavity_scalar_field(
                         }
                     }
                     let blurred = sum / weight;
-                    scratch[i] = field[i] * 0.2 + blurred * 0.8;
+                    let smoothed = field[i] * 0.2 + blurred * 0.8;
+                    *out = match &exact_bounds {
+                        Some(exact) => {
+                            clamp_smoothed(smoothed, exact[i], EXACT_SMOOTHING_CAP_VOXELS)
+                        }
+                        None => smoothed,
+                    };
                 }
-            }
-        }
+            });
         std::mem::swap(&mut field, &mut scratch);
     }
     // Outer-skin guard: blur must never flip a kept voxel on the model's outer
     // surface negative, or the cavity exits through the skin at thin features.
+    // Each cell reads only the masks: the slabs run in parallel.
     let skin_floor = 0.05 * shell_voxels_f.max(0.2);
-    for z in 0..grid.nz {
-        for y in 0..grid.ny {
-            for x in 0..grid.nx {
-                let i = grid.idx(x, y, z);
-                if !keep[i] || !solid[i] {
-                    continue;
-                }
-                let mut touches_outside = false;
-                for (dx, dy, dz) in N6 {
-                    let nx_i = x as isize + dx;
-                    let ny_i = y as isize + dy;
-                    let nz_i = z as isize + dz;
-                    if !grid.in_bounds(nx_i, ny_i, nz_i) {
-                        touches_outside = true;
-                        break;
+    field
+        .par_chunks_mut(plane)
+        .enumerate()
+        .for_each(|(z, layer)| {
+            for y in 0..grid.ny {
+                for x in 0..grid.nx {
+                    let i = grid.idx(x, y, z);
+                    if !keep[i] || !solid[i] {
+                        continue;
                     }
-                    let ni = grid.idx(nx_i as usize, ny_i as usize, nz_i as usize);
-                    if !solid[ni] {
-                        touches_outside = true;
-                        break;
+                    let mut touches_outside = false;
+                    for (dx, dy, dz) in N6 {
+                        let nx_i = x as isize + dx;
+                        let ny_i = y as isize + dy;
+                        let nz_i = z as isize + dz;
+                        if !grid.in_bounds(nx_i, ny_i, nz_i) {
+                            touches_outside = true;
+                            break;
+                        }
+                        let ni = grid.idx(nx_i as usize, ny_i as usize, nz_i as usize);
+                        if !solid[ni] {
+                            touches_outside = true;
+                            break;
+                        }
                     }
-                }
-                if touches_outside {
-                    field[i] = field[i].max(skin_floor);
+                    if touches_outside {
+                        let k = i - z * plane;
+                        layer[k] = layer[k].max(skin_floor);
+                    }
                 }
             }
-        }
-    }
-
-    if let Some(unblurred) = unblurred {
-        for (value, exact) in field.iter_mut().zip(unblurred) {
-            *value = value.max(exact);
-        }
-        // Material the blur adds can pinch a narrow channel shut and seal
-        // part of the cavity off, a pocket no drain reaches: as the keep
-        // mask does, only the largest cavity stays.
-        let mut material: Vec<bool> = field.iter().map(|&value| value >= 0.0).collect();
-        retain_largest_connected_cavity_component(grid, solid, &mut material);
-        for (value, material) in field.iter_mut().zip(material) {
-            if material && *value < 0.0 {
-                *value = EXACT_WALL_SAMPLE_MARGIN;
-            }
-        }
-    }
+        });
 
     field
+}
+
+/// A smoothed cavity value over exact distances: never below the exact
+/// value `exact` (no material removed), at most `cap` above it, and on the
+/// same side of the wall (a cavity voxel stays at least
+/// [`EXACT_WALL_SAMPLE_MARGIN`] inside the cavity).
+fn clamp_smoothed(smoothed: f32, exact: f32, cap: f32) -> f32 {
+    let mut high = exact + cap;
+    if exact < 0.0 {
+        high = high.min(-EXACT_WALL_SAMPLE_MARGIN);
+    }
+    smoothed.min(high).max(exact)
 }
 
 /// A visual inward surface from the same keep mask as the final mesh.
@@ -1523,7 +1621,7 @@ pub(crate) fn build_visual_cavity_mesh(
         .collect();
     let scalar =
         build_smoothed_cavity_scalar_field(grid, solid, keep, dist, shell_voxels_f, 0, exact_wall);
-    organic_boundary_mesh(grid, keep, &negative, &scalar)
+    organic_boundary_mesh(grid, keep, &negative, &scalar, exact_wall)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1564,7 +1662,7 @@ fn build_hollow_output_mesh(
 }
 
 /// Builds only the internal cavity (+ infill) mesh without the outer shell:
-/// the part that depends on the smoothing profile and is rebuilt on retries.
+/// the part that depends on the smoothing profile.
 #[allow(clippy::too_many_arguments)]
 fn build_cavity_inner_mesh(
     source_bbox: &Aabb,
@@ -1594,7 +1692,13 @@ fn build_cavity_inner_mesh(
     let (cavity_mesh, wall_defect_score) =
         drop_open_cavity_fragments(stabilize_cavity_mesh_for_boolean(
             smooth_cavity_mesh(
-                organic_boundary_mesh(grid, keep, &cavity_negative, &cavity_scalar),
+                organic_boundary_mesh(
+                    grid,
+                    keep,
+                    &cavity_negative,
+                    &cavity_scalar,
+                    options.exact_wall,
+                ),
                 grid.voxel_mm,
                 smoothing_profile.taubin_iterations,
                 smoothing_profile.taubin_max_step_scale,
@@ -1635,6 +1739,7 @@ fn polygonize_cavity_tetrahedron(
     scalar: &[f32; 8],
     kept: &[bool; 8],
     carved: &[bool; 8],
+    canonical_edges: bool,
 ) {
     let tet_edges = [(0usize, 1usize), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
     let mut intersections = [Vec3::ZERO; 4];
@@ -1665,8 +1770,8 @@ fn polygonize_cavity_tetrahedron(
     }
 
     for (ea, eb) in tet_edges {
-        let ia = tet[ea];
-        let ib = tet[eb];
+        let mut ia = tet[ea];
+        let mut ib = tet[eb];
         let Some(a_positive) = side[ea] else {
             continue;
         };
@@ -1676,6 +1781,9 @@ fn polygonize_cavity_tetrahedron(
 
         if a_positive == b_positive {
             continue;
+        }
+        if canonical_edges && precedes(positions[ib], positions[ia]) {
+            std::mem::swap(&mut ia, &mut ib);
         }
 
         let pa = positions[ia];
@@ -1747,6 +1855,12 @@ fn polygonize_cavity_tetrahedron(
         emit_oriented_triangle(soup, ordered[0], ordered[1], ordered[2], desired_normal);
         emit_oriented_triangle(soup, ordered[0], ordered[2], ordered[3], desired_normal);
     }
+}
+
+/// Whether `a` comes before `b` in (z, y, x) order: which end of a grid edge
+/// its interpolation starts from.
+fn precedes(a: Vec3, b: Vec3) -> bool {
+    (a.z, a.y, a.x) < (b.z, b.y, b.x)
 }
 
 fn emit_oriented_triangle(soup: &mut Vec<f32>, a: Vec3, b: Vec3, c: Vec3, desired_normal: Vec3) {
@@ -1933,16 +2047,18 @@ struct InternalCavitySmoothingProfile {
 }
 
 impl InternalCavitySmoothingProfile {
-    fn disabled(self) -> Self {
-        Self {
-            scalar_field_blur_iterations: 0,
-            taubin_iterations: 0,
-            taubin_max_step_scale: self.taubin_max_step_scale,
+    /// Over exact distances the cavity is smoothed in its field only, where
+    /// the blur is clamped (#266): Taubin moves the mesh both ways, into the
+    /// wall too.
+    fn for_wall(self, exact_wall: bool) -> Self {
+        if exact_wall {
+            Self {
+                taubin_iterations: 0,
+                ..self
+            }
+        } else {
+            self
         }
-    }
-
-    fn is_disabled(self) -> bool {
-        self.scalar_field_blur_iterations == 0 && self.taubin_iterations == 0
     }
 }
 
@@ -1980,40 +2096,6 @@ fn effective_internal_cavity_smoothing_profile(
         scalar_field_blur_iterations: 9,
         taubin_iterations: 18,
         taubin_max_step_scale: 0.62,
-    }
-}
-
-fn reduced_internal_cavity_smoothing_profile(
-    profile: InternalCavitySmoothingProfile,
-) -> Option<InternalCavitySmoothingProfile> {
-    if profile.is_disabled() {
-        return None;
-    }
-
-    let next_blur = match profile.scalar_field_blur_iterations {
-        0 | 1 => 0,
-        n => (n / 2).max(1),
-    };
-    let next_taubin = match profile.taubin_iterations {
-        0 | 1 => 0,
-        n => (n / 2).max(1),
-    };
-    let next_step =
-        (profile.taubin_max_step_scale * 0.82).clamp(0.16, profile.taubin_max_step_scale);
-
-    let reduced = InternalCavitySmoothingProfile {
-        scalar_field_blur_iterations: next_blur,
-        taubin_iterations: next_taubin,
-        taubin_max_step_scale: next_step,
-    };
-
-    if reduced.scalar_field_blur_iterations == profile.scalar_field_blur_iterations
-        && reduced.taubin_iterations == profile.taubin_iterations
-        && (reduced.taubin_max_step_scale - profile.taubin_max_step_scale).abs() <= f32::EPSILON
-    {
-        None
-    } else {
-        Some(reduced)
     }
 }
 
@@ -2199,104 +2281,6 @@ fn stabilize_hollow_mesh(mesh: &IndexedMesh) -> Option<IndexedMesh> {
         }
     }
     None
-}
-
-pub(crate) struct Finalized {
-    pub mesh: IndexedMesh,
-    pub cavity: IndexedMesh,
-    pub stabilized: bool,
-    pub retries: usize,
-}
-
-/// DragonFruit's `finalize_hollow_output_mesh_for_manifold`, on the
-/// edge-manifold check: when the merged mesh fails, the cavity is rebuilt
-/// with progressively reduced smoothing, then none; the outer shell is
-/// reused. A nonzero cavity-wall defect score skips a provably futile check.
-#[allow(clippy::too_many_arguments)]
-fn finalize_hollow_output_mesh(
-    source_mesh: &IndexedMesh,
-    source_bbox: &Aabb,
-    grid: &GridSpec,
-    solid: &[bool],
-    dist: &[f32],
-    keep: &[bool],
-    options: &HollowOptions,
-    shell_voxels_f: f32,
-    smoothing_profile: InternalCavitySmoothingProfile,
-    out_mesh: IndexedMesh,
-    cavity_mesh: IndexedMesh,
-    cavity_wall_score: usize,
-    ctl: Control<'_>,
-) -> Result<Finalized, Cancelled> {
-    if cavity_wall_score == 0
-        && let Some(mesh) = stabilize_hollow_mesh(&out_mesh)
-    {
-        return Ok(Finalized {
-            mesh,
-            cavity: cavity_mesh,
-            stabilized: true,
-            retries: 0,
-        });
-    }
-    let failed = |retries| Finalized {
-        mesh: out_mesh.clone(),
-        cavity: cavity_mesh.clone(),
-        stabilized: false,
-        retries,
-    };
-    if smoothing_profile.is_disabled() {
-        return Ok(failed(0));
-    }
-
-    // The outer shell never changes between retries.
-    let filtered_source =
-        filter_source_mesh_for_openings(source_mesh, options, source_bbox, grid.voxel_mm);
-    let mut retries = 0;
-    let mut retry_profile = smoothing_profile;
-    let try_profile = |profile: InternalCavitySmoothingProfile| {
-        let (retry_cavity_mesh, retry_score) = build_cavity_inner_mesh(
-            source_bbox,
-            grid,
-            solid,
-            dist,
-            keep,
-            options,
-            shell_voxels_f,
-            profile,
-        );
-        if retry_score != 0 {
-            return None;
-        }
-        let retry_mesh =
-            normalize_mesh_for_boolean(merge_meshes(&filtered_source, &retry_cavity_mesh));
-        stabilize_hollow_mesh(&retry_mesh).map(|mesh| (mesh, retry_cavity_mesh))
-    };
-    while let Some(reduced_profile) = reduced_internal_cavity_smoothing_profile(retry_profile) {
-        ctl.check()?;
-        retry_profile = reduced_profile;
-        retries += 1;
-        if let Some((mesh, cavity)) = try_profile(retry_profile) {
-            return Ok(Finalized {
-                mesh,
-                cavity,
-                stabilized: true,
-                retries,
-            });
-        }
-    }
-    if !retry_profile.is_disabled() {
-        ctl.check()?;
-        retries += 1;
-        if let Some((mesh, cavity)) = try_profile(smoothing_profile.disabled()) {
-            return Ok(Finalized {
-                mesh,
-                cavity,
-                stabilized: true,
-                retries,
-            });
-        }
-    }
-    Ok(failed(retries))
 }
 
 fn retain_largest_connected_cavity_component(grid: &GridSpec, solid: &[bool], keep: &mut [bool]) {

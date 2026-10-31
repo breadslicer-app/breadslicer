@@ -5,6 +5,7 @@
 
 pub(super) mod collinear_faces;
 pub(super) mod records;
+pub(super) mod watertight;
 
 use std::collections::HashMap;
 use std::fmt;
