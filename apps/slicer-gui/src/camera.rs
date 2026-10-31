@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 const PITCH_EPSILON: f32 = 1e-3;
 const MIN_DISTANCE_FACTOR: f32 = 0.05;
@@ -112,6 +112,32 @@ impl OrbitCamera {
         let sensitivity = std::f32::consts::PI / viewport_height.max(1.0);
         self.yaw -= dx_pixels * sensitivity;
         self.pitch = clamp_pitch(self.pitch + dy_pixels * sensitivity);
+    }
+
+    /// Orbits like [`Self::orbit`], but about `pivot` instead of the target:
+    /// the eye and the target turn together around the pivot, so the pivot
+    /// keeps its place on screen in both projections and the distance (the
+    /// zoom) stays the same.
+    pub fn orbit_around(
+        &mut self,
+        pivot: Vec3,
+        dx_pixels: f32,
+        dy_pixels: f32,
+        viewport_height: f32,
+    ) {
+        let before = self.view_basis();
+        self.orbit(dx_pixels, dy_pixels, viewport_height);
+        // The rotation that carries the old view frame onto the new one; it
+        // carries the eye offset too, so turning the target with it about the
+        // pivot turns the whole camera rigidly about the pivot.
+        let turn = self.view_basis() * before.transpose();
+        self.target = pivot + turn * (self.target - pivot);
+    }
+
+    /// The camera frame as columns: right, up and backward (toward the eye).
+    fn view_basis(&self) -> Mat3 {
+        let (right, up) = self.right_and_up();
+        Mat3::from_cols(right, up, right.cross(up))
     }
 
     pub fn pan(&mut self, dx_pixels: f32, dy_pixels: f32, fov_y: f32, viewport_height: f32) {
@@ -668,5 +694,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn orbit_around_keeps_the_pivot_still_on_screen() {
+        let (width, height, fov) = (1200.0, 800.0, 0.8);
+        for ortho in [false, true] {
+            for pivot in [
+                Vec3::new(80.0, -60.0, 5.0),
+                Vec3::new(-30.0, 40.0, 0.0),
+                Vec3::new(0.0, 0.0, 0.0),
+            ] {
+                let mut cam = OrbitCamera::new(Vec3::new(0.0, 0.0, 50.0), 150.0);
+                cam.orthographic = ortho;
+                let screen = |cam: &OrbitCamera| {
+                    let ndc = (cam.projection(fov, width / height, 0.1, 1.0e5) * cam.view_matrix())
+                        .project_point3(pivot);
+                    Vec3::new(
+                        (ndc.x + 1.0) * width * 0.5,
+                        (1.0 - ndc.y) * height * 0.5,
+                        0.0,
+                    )
+                };
+                let start = screen(&cam);
+                let distance = cam.distance;
+                // Small and large steps, and one that runs into the pitch clamp.
+                for (dx, dy) in [(3.0, 2.0), (-40.0, 25.0), (250.0, -90.0), (0.0, 5000.0)] {
+                    cam.orbit_around(pivot, dx, dy, height);
+                    let drift = screen(&cam) - start;
+                    assert!(drift.length() < 0.05, "drift {drift} (ortho {ortho})");
+                    assert_eq!(cam.distance, distance);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn orbit_around_turns_like_orbit() {
+        let mut free = OrbitCamera::new(Vec3::ZERO, 100.0);
+        let mut pinned = free.clone();
+        free.orbit(120.0, -40.0, 600.0);
+        pinned.orbit_around(Vec3::new(30.0, 10.0, 0.0), 120.0, -40.0, 600.0);
+        assert_eq!(free.yaw, pinned.yaw);
+        assert_eq!(free.pitch, pinned.pitch);
+    }
+
+    #[test]
+    fn orbit_around_the_target_is_a_plain_orbit() {
+        let mut free = OrbitCamera::new(Vec3::new(5.0, 6.0, 7.0), 100.0);
+        let mut pinned = free.clone();
+        free.orbit(80.0, 30.0, 600.0);
+        pinned.orbit_around(free.target, 80.0, 30.0, 600.0);
+        assert!((free.eye() - pinned.eye()).length() < 1e-3);
+        assert!((free.target - pinned.target).length() < 1e-3);
     }
 }
