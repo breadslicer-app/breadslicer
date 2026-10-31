@@ -13,8 +13,13 @@
 //!
 //! The pivot is chosen once per drag and then held, so it does not slide on
 //! screen while the camera turns ([`OrbitCamera::orbit_around`]).
+//!
+//! The numpad turns the camera a fixed step about the same pivot (#348); a
+//! key has no place on screen, so there it is the selection, else the
+//! camera's target. A pivot off screen is marked on the viewport's edge,
+//! pointing toward it (#349).
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use sc_mesh_spatial::SceneSpatial;
 
 use super::types::{ScreenPoint, ViewportSize};
@@ -41,10 +46,7 @@ pub(super) fn choose(
     build_volume: BuildVolume,
     cursor: ScreenPoint,
 ) -> (Vec3, PivotSource) {
-    if let Some(centre) = selection_bounds(document)
-        .map(|(min, max)| (min + max) * 0.5)
-        .filter(|&centre| in_front(camera, centre))
-    {
+    if let Some(centre) = selection_centre(document, camera) {
         return (centre, PivotSource::Selection);
     }
     let ray = picking::ray_from_pixel(
@@ -65,6 +67,85 @@ pub(super) fn choose(
         return (point, PivotSource::Plate);
     }
     (focus_point(camera, &ray), PivotSource::Focus)
+}
+
+/// One numpad orbit step: 15 degrees, as in Blender.
+pub(super) const STEP: f32 = std::f32::consts::PI / 12.0;
+
+/// How far inside the viewport's edge the marker of an off-screen pivot sits.
+pub(super) const EDGE_INSET: f32 = 14.0;
+
+/// The yaw and pitch of one numpad step. `horizontal` is -1 for left
+/// (Numpad 4) and 1 for right (Numpad 6); `vertical` is 1 for up (Numpad 8)
+/// and -1 for down (Numpad 2). The camera moves that way about the pivot.
+pub(super) fn step_angles(horizontal: i32, vertical: i32) -> (f32, f32) {
+    (
+        horizontal.signum() as f32 * STEP,
+        vertical.signum() as f32 * STEP,
+    )
+}
+
+/// The pivot of a numpad step: the selection, else the camera's target.
+pub(super) fn step_pivot(document: &SceneDocument, camera: &OrbitCamera) -> Vec3 {
+    selection_centre(document, camera).unwrap_or(camera.target)
+}
+
+/// Where the pivot marker goes on screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Marker {
+    pub x: f32,
+    pub y: f32,
+    /// With the pivot off screen the marker sits on the edge and this is the
+    /// screen direction toward the pivot, in degrees clockwise from the
+    /// right (screen y grows downward). `None` on screen.
+    pub toward: Option<f32>,
+}
+
+/// Places the marker of `pivot`: on it while it is on screen, else on the
+/// viewport's edge, [`EDGE_INSET`] inside, where the line from the centre
+/// toward the pivot leaves the view.
+pub(super) fn marker(camera: &OrbitCamera, viewport: ViewportSize, pivot: Vec3) -> Marker {
+    let (width, height) = (viewport.width(), viewport.height());
+    let projected = picking::project_world_to_screen(camera, default_fov_y(), width, height, pivot);
+    if let Some((x, y)) = projected
+        && (0.0..=width).contains(&x)
+        && (0.0..=height).contains(&y)
+    {
+        return Marker { x, y, toward: None };
+    }
+    let centre = Vec2::new(width, height) * 0.5;
+    let direction = match projected {
+        Some((x, y)) => Vec2::new(x, y) - centre,
+        // Behind the camera a projection mirrors: take the side the pivot
+        // lies on across the view instead.
+        None => {
+            let (right, up) = camera.right_and_up();
+            let offset = pivot - camera.eye();
+            let across = Vec2::new(offset.dot(right), -offset.dot(up));
+            // Straight behind, any side will do: below.
+            if across.length() > 1e-4 * offset.length() {
+                across
+            } else {
+                Vec2::Y
+            }
+        }
+    };
+    let room = (centre - Vec2::splat(EDGE_INSET)).max(Vec2::ZERO);
+    let reach = (room.x / direction.x.abs()).min(room.y / direction.y.abs());
+    let at = centre + direction * reach;
+    Marker {
+        x: at.x,
+        y: at.y,
+        toward: Some(direction.y.atan2(direction.x).to_degrees()),
+    }
+}
+
+/// The centre of the selection's bounding box, when something is selected
+/// and it lies in front of the camera.
+fn selection_centre(document: &SceneDocument, camera: &OrbitCamera) -> Option<Vec3> {
+    selection_bounds(document)
+        .map(|(min, max)| (min + max) * 0.5)
+        .filter(|&centre| in_front(camera, centre))
 }
 
 /// The world bounding box of everything selected, or `None` with nothing
@@ -225,5 +306,144 @@ mod orbit_pivot_tests {
         camera.distance = 10.0;
         let (_, source) = choose(&document, &camera, viewport(), plate(), centre());
         assert_ne!(source, PivotSource::Selection);
+    }
+
+    #[test]
+    fn numpad_steps_move_the_camera_15_degrees_each_way() {
+        for ortho in [false, true] {
+            let pivot = Vec3::new(10.0, -5.0, 2.0);
+            let mut camera = OrbitCamera::new(Vec3::ZERO, 20.0);
+            camera.orthographic = ortho;
+            for (h, v) in [(-1, 0), (1, 0), (0, 1), (0, -1)] {
+                let mut turned = camera.clone();
+                let (yaw, pitch) = step_angles(h, v);
+                turned.turn_around(pivot, yaw, pitch);
+                let (right, _) = camera.right_and_up();
+                let moved = turned.eye() - camera.eye();
+                if h != 0 {
+                    assert_eq!(moved.dot(right).signum(), h as f32, "({h}, {v})");
+                } else {
+                    assert_eq!(moved.z.signum(), v as f32, "({h}, {v})");
+                }
+                // One step, and the eye swings rigidly about the pivot.
+                let turn = (turned.yaw - camera.yaw, turned.pitch - camera.pitch);
+                assert!(
+                    (turn.0.abs() + turn.1.abs() - STEP).abs() < 1e-5,
+                    "{turn:?}"
+                );
+                let (from, to) = (camera.eye() - pivot, turned.eye() - pivot);
+                assert!((from.length() - to.length()).abs() < 1e-3);
+                if h != 0 {
+                    let angle = from.truncate().angle_to(to.truncate()).abs();
+                    assert!((angle - STEP).abs() < 1e-4, "{angle} for ({h}, {v})");
+                }
+                let screen = |c: &OrbitCamera| {
+                    picking::project_world_to_screen(c, default_fov_y(), WIDTH, HEIGHT, pivot)
+                        .unwrap()
+                };
+                let (a, b) = (screen(&camera), screen(&turned));
+                assert!((a.0 - b.0).abs() < 0.05 && (a.1 - b.1).abs() < 0.05);
+            }
+        }
+    }
+
+    #[test]
+    fn a_step_turns_about_the_selection_else_the_target() {
+        let (document, camera) = cube_from_above(false);
+        let target = Vec3::new(3.0, 4.0, 0.0);
+        let mut aside = camera.clone();
+        aside.target = target;
+        assert_eq!(step_pivot(&document, &aside), target);
+        select_the_cube(&document);
+        assert!(step_pivot(&document, &aside).length() < 1e-4);
+        // A selection behind the camera is no pivot.
+        aside.target = Vec3::new(0.0, 0.0, -1.0e3);
+        aside.distance = 10.0;
+        assert_eq!(step_pivot(&document, &aside), aside.target);
+    }
+
+    /// Looking along +Y from y = -60: +X is screen right, +Z screen up.
+    fn front_camera(ortho: bool) -> OrbitCamera {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 20.0);
+        camera.set_axis_view(AxisView::Front);
+        camera.orthographic = ortho;
+        camera
+    }
+
+    fn assert_near(marker: Marker, x: f32, y: f32, toward: Option<f32>) {
+        assert!(
+            (marker.x - x).abs() < 0.5 && (marker.y - y).abs() < 0.5,
+            "{marker:?} not at ({x}, {y})"
+        );
+        match (marker.toward, toward) {
+            (Some(a), Some(b)) => assert!((a - b).abs() < 0.5, "{marker:?} toward {b}"),
+            (a, b) => assert_eq!(a, b, "{marker:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pivot_on_screen_is_marked_where_it_is() {
+        for ortho in [false, true] {
+            let camera = front_camera(ortho);
+            let pivot = Vec3::new(1.0, 0.0, 1.0);
+            let (x, y) =
+                picking::project_world_to_screen(&camera, default_fov_y(), WIDTH, HEIGHT, pivot)
+                    .unwrap();
+            assert_near(marker(&camera, viewport(), pivot), x, y, None);
+        }
+    }
+
+    #[test]
+    fn a_pivot_off_screen_is_marked_on_the_nearest_edge() {
+        let (w, h, inset) = (WIDTH, HEIGHT, EDGE_INSET);
+        for ortho in [false, true] {
+            let camera = front_camera(ortho);
+            let at = |pivot| marker(&camera, viewport(), pivot);
+            assert_near(
+                at(Vec3::new(1.0e3, 0.0, 0.0)),
+                w - inset,
+                h / 2.0,
+                Some(0.0),
+            );
+            assert_near(at(Vec3::new(-1.0e3, 0.0, 0.0)), inset, h / 2.0, Some(180.0));
+            assert_near(at(Vec3::new(0.0, 0.0, 1.0e3)), w / 2.0, inset, Some(-90.0));
+            assert_near(
+                at(Vec3::new(0.0, 0.0, -1.0e3)),
+                w / 2.0,
+                h - inset,
+                Some(90.0),
+            );
+            // Off a corner, along the line from the centre: the top edge for
+            // this wide view, a little right of the centre.
+            let corner = at(Vec3::new(1.0e3, 0.0, 1.0e3));
+            assert!((corner.y - inset).abs() < 0.5, "{corner:?}");
+            assert!(corner.x > w / 2.0 && corner.x <= w - inset, "{corner:?}");
+            let toward = corner.toward.unwrap();
+            assert!((-90.0..0.0).contains(&toward), "{corner:?}");
+        }
+    }
+
+    #[test]
+    fn a_pivot_behind_the_camera_is_marked_on_its_side() {
+        let (w, h, inset) = (WIDTH, HEIGHT, EDGE_INSET);
+        for ortho in [false, true] {
+            let camera = front_camera(ortho);
+            // The eye sits at y = -60; these lie behind it.
+            let at = |pivot| marker(&camera, viewport(), pivot);
+            assert_near(
+                at(Vec3::new(5.0, -90.0, 0.0)),
+                w - inset,
+                h / 2.0,
+                Some(0.0),
+            );
+            assert_near(at(Vec3::new(0.0, -90.0, 5.0)), w / 2.0, inset, Some(-90.0));
+            // Straight behind: below.
+            assert_near(
+                at(Vec3::new(0.0, -90.0, 0.0)),
+                w / 2.0,
+                h - inset,
+                Some(90.0),
+            );
+        }
     }
 }

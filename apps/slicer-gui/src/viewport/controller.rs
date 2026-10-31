@@ -100,6 +100,8 @@ pub(crate) struct ViewportController {
     /// Steps the performance test a slice at a time, so the window keeps
     /// answering while it runs.
     probe_timer: slint::Timer,
+    /// Hides the pivot marker a moment after a numpad orbit step (#348).
+    orbit_marker_timer: slint::Timer,
 }
 
 /// A tool of a workspace tab that acts where the model is clicked.
@@ -146,6 +148,7 @@ impl ViewportController {
             overlay: RefCell::new(None),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
+            orbit_marker_timer: slint::Timer::default(),
         }
     }
 
@@ -181,6 +184,7 @@ impl ViewportController {
             overlay: RefCell::new(None),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
+            orbit_marker_timer: slint::Timer::default(),
         };
         // Most viewport tests exercise the Transform-section tooling (gizmo
         // drag, keyboard drive, delete, paste); the fixture starts in
@@ -823,7 +827,49 @@ impl ViewportController {
     /// A right or middle button went down to orbit, with the cursor at
     /// `(x, y)`. The pivot is chosen at the first movement (#346).
     pub(crate) fn on_orbit_begin(&self, x: f32, y: f32) {
+        self.orbit_marker_timer.stop();
         self.camera.arm_orbit(ScreenPoint::new(x, y));
+    }
+
+    /// A numpad key turns the camera one step (#348) about the pivot of the
+    /// drag in progress, else the selection, else the camera's target. The
+    /// marker shows the pivot for a moment.
+    pub(crate) fn on_orbit_step(&self, horizontal: i32, vertical: i32) {
+        let Some(vp) = self.render.viewport() else {
+            return;
+        };
+        let held = match self.camera.orbit_drag() {
+            OrbitDrag::Pivot(pivot) => Some(pivot),
+            OrbitDrag::Idle | OrbitDrag::Armed(_) => None,
+        };
+        let Some(pivot) = held.or_else(|| {
+            let slot = self.camera.camera_cell().borrow();
+            let camera = slot.as_ref()?;
+            Some(super::orbit_pivot::step_pivot(
+                self.session.document(),
+                camera,
+            ))
+        }) else {
+            return;
+        };
+        let (yaw, pitch) = super::orbit_pivot::step_angles(horizontal, vertical);
+        if !self.camera.turn_around(pivot, yaw, pitch) {
+            return;
+        }
+        self.mark_dirty();
+        self.show_orbit_marker(pivot, vp);
+        if held.is_none() {
+            let ui = self.ui.clone();
+            self.orbit_marker_timer.start(
+                slint::TimerMode::SingleShot,
+                std::time::Duration::from_millis(700),
+                move || {
+                    if let Some(ui) = ui.upgrade() {
+                        ui.set_orbit_pivot_visible(false);
+                    }
+                },
+            );
+        }
     }
 
     /// The orbit's button came up: the pivot and its marker go.
@@ -860,18 +906,29 @@ impl ViewportController {
             self.session.build_volume(),
             cursor,
         );
-        let on_screen = picking::project_world_to_screen(
-            camera,
-            crate::mesh_render::default_fov_y(),
-            vp.width(),
-            vp.height(),
-            pivot,
-        );
         drop(slot);
         self.camera.hold_orbit_pivot(pivot);
-        if let (Some(ui), Some((x, y))) = (self.ui.upgrade(), on_screen) {
-            ui.set_orbit_pivot_x(x);
-            ui.set_orbit_pivot_y(y);
+        self.show_orbit_marker(pivot, vp);
+    }
+
+    /// Shows the pivot marker: on the pivot, or on the viewport's edge
+    /// pointing toward it when it is off screen (#349). The pivot holds its
+    /// place on screen while the camera turns about it, so once is enough.
+    fn show_orbit_marker(&self, pivot: glam::Vec3, vp: super::types::ViewportSize) {
+        let Some(marker) = self
+            .camera
+            .camera_cell()
+            .borrow()
+            .as_ref()
+            .map(|camera| super::orbit_pivot::marker(camera, vp, pivot))
+        else {
+            return;
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_orbit_pivot_x(marker.x);
+            ui.set_orbit_pivot_y(marker.y);
+            ui.set_orbit_pivot_edge(marker.toward.is_some());
+            ui.set_orbit_pivot_toward(marker.toward.unwrap_or(0.0));
             ui.set_orbit_pivot_visible(true);
         }
     }

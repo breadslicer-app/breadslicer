@@ -468,9 +468,12 @@ export component MainWindow inherits Window {
     callback rotate-drag(length, length);
     callback orbit-begin(length, length);
     callback orbit-end();
+    callback orbit-step(int, int);
     in property <bool> orbit-pivot-visible: false;
     in property <length> orbit-pivot-x;
     in property <length> orbit-pivot-y;
+    in property <bool> orbit-pivot-edge: false;
+    in property <float> orbit-pivot-toward;
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
     in property <bool> orthographic-view: false;
@@ -1281,9 +1284,14 @@ export component MainWindow inherits Window {
                     orbit-end() => {
                         root.orbit-end();
                     }
+                    orbit-step(h, v) => {
+                        root.orbit-step(h, v);
+                    }
                     orbit-pivot-visible: root.orbit-pivot-visible;
                     orbit-pivot-x: root.orbit-pivot-x;
                     orbit-pivot-y: root.orbit-pivot-y;
+                    orbit-pivot-edge: root.orbit-pivot-edge;
+                    orbit-pivot-toward: root.orbit-pivot-toward;
                     pan-drag(dx, dy) => {
                         root.pan-drag(dx, dy);
                     }
