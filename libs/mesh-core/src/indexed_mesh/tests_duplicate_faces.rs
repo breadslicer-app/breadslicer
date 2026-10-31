@@ -156,3 +156,38 @@ fn stale_declared_facet_normals_are_dropped_with_the_faces() {
             .is_some_and(|m| m.declared_facet_normals.is_none())
     );
 }
+
+#[test]
+fn a_face_and_its_reversed_copy_cancel_out() {
+    let mut mesh = mesh(tetra_vertices(), &[[0, 1, 2], [0, 3, 1], [2, 1, 0]]);
+    assert_eq!(mesh.opposite_face_pairs(), faces(&[0, 2]));
+    assert_eq!(mesh.drop_opposite_face_pairs(), 2);
+    assert_eq!(mesh.faces, [IndexedTriangle::from_raw_indices([0, 3, 1])]);
+}
+
+#[test]
+fn only_as_many_faces_cancel_as_the_other_winding_has() {
+    // 2 copies 1 way, 1 the other: 1 pair cancels, 1 face stays.
+    let mesh = mesh(tetra_vertices(), &[[0, 1, 2], [1, 2, 0], [0, 2, 1]]);
+    assert_eq!(mesh.opposite_face_pairs(), faces(&[0, 2]));
+}
+
+#[test]
+fn opposite_copies_through_their_own_vertices_cancel_out() {
+    // 2 boxes glued face to face store the shared wall once per box.
+    let mut vertices = tetra_vertices();
+    vertices.extend(tetra_vertices());
+    let mesh = mesh(vertices, &[[0, 1, 2], [4, 6, 5]]);
+    assert_eq!(mesh.opposite_face_pairs(), faces(&[0, 1]));
+}
+
+#[test]
+fn a_clean_mesh_and_faces_with_repeated_positions_have_no_opposite_pairs() {
+    assert!(tetrahedron().opposite_face_pairs().is_empty());
+    assert!(tetrahedron_twice().opposite_face_pairs().is_empty());
+    let mesh = mesh(
+        tetra_vertices(),
+        &[[0, 0, 1], [0, 1, 0], [9, 1, 2], [2, 1, 9]],
+    );
+    assert!(mesh.opposite_face_pairs().is_empty());
+}

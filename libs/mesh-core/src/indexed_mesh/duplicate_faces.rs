@@ -10,7 +10,9 @@
 //!
 //! Faces are compared by vertex position, not by vertex index, so a copy that
 //! went through its own vertices is found too. A face with a reversed winding
-//! is not a duplicate: it bounds the other side of the surface.
+//! is not a duplicate: it bounds the other side of the surface. A face and its
+//! reversed copy are an opposite pair instead: together they enclose nothing,
+//! like the double wall where 2 parts were glued face to face, and both go.
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
@@ -23,6 +25,10 @@ use super::mesh::declared_facet_normals::DeclaredFacetNormals;
 /// The positions of a face, rotated so the smallest comes first. Rotating keeps
 /// the winding, so 2 faces get the same key exactly when they are duplicates.
 type FaceKey = [CanonicalCoords; 3];
+
+/// The key of 1 of the 2 windings of a face, the smaller: a face and its
+/// reversed copy get the same one.
+type UnorientedKey = FaceKey;
 
 impl IndexedMesh {
     /// Returns every face that duplicates an earlier face, in ascending order.
@@ -68,11 +74,78 @@ impl IndexedMesh {
     /// duplicates is left untouched.
     pub fn drop_duplicate_faces(&mut self) -> usize {
         let duplicates = self.duplicate_faces();
-        if duplicates.is_empty() {
+        self.drop_faces(&duplicates)
+    }
+
+    /// Returns the faces that cancel out with an opposite copy, in ascending
+    /// order: of each group of faces with the same 3 positions, as many faces
+    /// of 1 winding as there are faces of the other are listed, both windings.
+    /// A face and its reversed copy enclose nothing; files carry them as the
+    /// double wall where 2 parts were glued face to face. The faces that are
+    /// left over keep their winding. Faces with an out-of-range index or a
+    /// non-finite coordinate, and faces with 2 equal positions, are never
+    /// listed.
+    pub fn opposite_face_pairs(&self) -> Vec<FaceIndex> {
+        // (hash of the unoriented key, face, winding) per keyed face.
+        let mut records: Vec<(u64, u32, bool)> = (0..self.faces.len())
+            .into_par_iter()
+            .filter_map(|face| {
+                let (key, forward) = self.unoriented_face_key(face)?;
+                Some((hash_key(&key), face as u32, forward))
+            })
+            .collect();
+        records.par_sort_unstable();
+
+        let mut cancelled: Vec<FaceIndex> = Vec::new();
+        for run in records.chunk_by(|a, b| a.0 == b.0) {
+            if run.len() < 2 || run.iter().all(|r| r.2 == run[0].2) {
+                continue;
+            }
+            // Within a run, faces with equal full keys form a group; each group
+            // cancels its windings pairwise, in face order.
+            let mut groups: Vec<(UnorientedKey, Vec<u32>, Vec<u32>)> = Vec::new();
+            for &(_, face, forward) in run {
+                let (key, _) = self
+                    .unoriented_face_key(face as usize)
+                    .expect("keyed above");
+                let slot = match groups.iter().position(|g| g.0 == key) {
+                    Some(slot) => slot,
+                    None => {
+                        groups.push((key, Vec::new(), Vec::new()));
+                        groups.len() - 1
+                    }
+                };
+                let group = &mut groups[slot];
+                if forward { &mut group.1 } else { &mut group.2 }.push(face);
+            }
+            for (_, forward, backward) in groups {
+                let pairs = forward.len().min(backward.len());
+                for &face in forward[..pairs].iter().chain(&backward[..pairs]) {
+                    cancelled.push(FaceIndex::from(face as usize));
+                }
+            }
+        }
+        cancelled.sort_unstable();
+        cancelled
+    }
+
+    /// Removes the faces that [`IndexedMesh::opposite_face_pairs`] lists and
+    /// returns how many it removed, as [`IndexedMesh::drop_duplicate_faces`]
+    /// does.
+    pub fn drop_opposite_face_pairs(&mut self) -> usize {
+        let cancelled = self.opposite_face_pairs();
+        self.drop_faces(&cancelled)
+    }
+
+    /// Removes `faces` (ascending, in range), keeping the order of the others
+    /// and the declared facet normals bound to them. Returns how many it
+    /// removed.
+    fn drop_faces(&mut self, faces: &[FaceIndex]) -> usize {
+        if faces.is_empty() {
             return 0;
         }
         let mut keep = vec![true; self.faces.len()];
-        for face in &duplicates {
+        for face in faces {
             keep[face.get()] = false;
         }
         // Read before the faces change, while they still match the geometry.
@@ -96,7 +169,24 @@ impl IndexedMesh {
                 meta.declared_facet_normals = Some(declared);
             }
         }
-        duplicates.len()
+        faces.len()
+    }
+
+    /// The key of a face whatever its winding, and whether the face winds the
+    /// way the key does. `None` for a face that [`Self::face_key`] cannot key
+    /// and for a face with 2 equal positions, whose 2 windings are 1 key.
+    fn unoriented_face_key(&self, face: usize) -> Option<(UnorientedKey, bool)> {
+        let key = self.face_key(face)?;
+        let [a, b, c] = key;
+        let reversed = [[a, c, b], [c, b, a], [b, a, c]]
+            .into_iter()
+            .min()
+            .expect("3 rotations");
+        match key.cmp(&reversed) {
+            std::cmp::Ordering::Less => Some((key, true)),
+            std::cmp::Ordering::Greater => Some((reversed, false)),
+            std::cmp::Ordering::Equal => None,
+        }
     }
 
     fn face_key(&self, face: usize) -> Option<FaceKey> {

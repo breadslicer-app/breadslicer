@@ -4,13 +4,9 @@
  */
 
 //! Pins for the per-mesh repair policy: pass gating, refusal boundaries
-//! (mesh-level refusals leave the mesh byte-identical, pass-level refusals keep
-//! earlier passes' fixes), the fix log, and the state of the mesh after a
-//! completed run.
+//! (refusals leave the mesh byte-identical), the fix log, and the state of the
+//! mesh after a completed run.
 
-use std::error::Error;
-
-use crate::indexed_mesh::fix::MeshFixError;
 use crate::indexed_mesh::fix::collinear_faces::test_meshes::{
     SPLIT_TETRAHEDRON, SQUARE_FAN_PYRAMID, blocked_split_tetrahedron, fan_pyramid,
     flat_tetrahedron, split_tetrahedron,
@@ -57,10 +53,7 @@ fn tetrahedron() -> IndexedMesh {
 }
 
 /// Returns an open strip of 2 consistently wound triangles sharing 1 edge: the
-/// 4 outer edges are boundary edges (a hole), and with 2 faces the flip pass's
-/// inside-out threshold (`faces / 2 = 1`) is above the 0 flips detected, so the
-/// strip exercises the hole verdict without the lone-face case, where a
-/// threshold of 0 makes the flip pass refuse.
+/// 4 outer edges are boundary edges (a hole).
 fn open_strip() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([0.0, 0.0, 0.0]),
@@ -310,42 +303,71 @@ fn zle_pass_disabled_assesses_as_a_refusal_carrying_every_face_error() {
     );
 }
 
-/// Pins the mesh-level refusal boundary: face errors the enabled passes cannot
-/// address refuse the run before any mutation, and the refusal carries exactly
-/// the unaddressable residue.
+/// Pins that a face naming a vertex that does not exist is dropped with the
+/// zero-length-edge faces, instead of refusing the whole mesh, and that the
+/// rest of the run goes on.
 #[test]
-fn mixed_face_errors_refuse_with_the_mesh_byte_identical() {
+fn faces_with_an_out_of_range_index_are_dropped_not_refused() {
     let mut mesh = tetrahedron();
-    append_zero_length_edge_face(&mut mesh);
+    let degenerate = append_zero_length_edge_face(&mut mesh);
+    let out_of_range = FaceIndex::from(mesh.faces.len());
     mesh.faces
-        .push(IndexedTriangle::from_raw_indices([0, 1, 99]));
-    let residue: Vec<MeshFaceError> = mesh
-        .validate_faces()
-        .unwrap_err()
-        .into_iter()
-        .filter(|e| !matches!(e, MeshFaceError::ZeroLengthEdge { .. }))
-        .collect();
-    assert!(!residue.is_empty(), "fixture must carry a non-ZLE error");
-    let original = mesh.clone();
+        .push(IndexedTriangle::from_raw_indices([0, 99, 100]));
+    mesh.faces[0].vertices.reverse();
 
     let report = mesh.repair(RepairPasses::default_repair());
 
-    assert!(report.fixes.is_empty());
+    assert_eq!(
+        report.fixes[..2],
+        [
+            MeshFix::RemovedZeroLengthEdgeFace {
+                face_idx: degenerate,
+            },
+            MeshFix::RemovedOutOfRangeFace {
+                face_idx: out_of_range,
+            },
+        ]
+    );
     assert_eq!(
         report.end,
-        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residue))
+        RepairEnd::Completed(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+            holes_left_open: 0,
+        })
     );
-    assert_eq!(mesh, original, "mesh-level refusal must not mutate");
+    assert_eq!(
+        mesh.faces,
+        tetrahedron().faces,
+        "the flipped face is fixed too"
+    );
 }
 
-/// Pins the pass-level refusal boundary: an orientation failure keeps the
-/// zero-length-edge fixes already applied; the mesh holds exactly the completed
-/// passes' state.
+/// Pins #298: a mesh without faces gets its own result, with nothing run and
+/// nothing changed, whatever its vertices and passes.
 #[test]
-fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
+fn a_mesh_without_faces_ends_as_no_faces() {
+    let empty = IndexedMesh {
+        meta: None,
+        vertices: vec![Vertex::new([f32::NAN, 0.0, 0.0])],
+        faces: Vec::new(),
+    };
+    for passes in [RepairPasses::default_repair(), RepairPasses::default()] {
+        assert_eq!(assess_repair(&empty, passes), RepairAssessment::NoFaces);
+        let mut mesh = empty.clone();
+        let report = mesh.repair(passes);
+        assert!(report.fixes.is_empty());
+        assert_eq!(report.end, RepairEnd::NoFaces);
+        assert_eq!(mesh.faces, empty.faces);
+    }
+}
+
+/// Pins that half the faces flipped, where the old per-face rule refused, is
+/// oriented as a whole and comes out outward, after the zero-length-edge
+/// removal.
+#[test]
+fn half_the_faces_flipped_come_out_outward() {
     let mut mesh = tetrahedron();
-    // 2 of 4 faces flipped puts every face at 2 winding complaints, so the flip
-    // pass refuses with TooManyFlippedFaces.
     mesh.faces[0].vertices.reverse();
     mesh.faces[1].vertices.reverse();
     let degenerate = append_zero_length_edge_face(&mut mesh);
@@ -353,23 +375,17 @@ fn orientation_refusal_keeps_the_zero_length_edge_fixes() {
     let report = mesh.repair(passes_before_watertight());
 
     assert_eq!(
-        report.fixes,
-        vec![MeshFix::RemovedZeroLengthEdgeFace {
+        report.fixes[0],
+        MeshFix::RemovedZeroLengthEdgeFace {
             face_idx: degenerate,
-        }]
+        }
     );
-    assert_eq!(
-        report.end,
-        RepairEnd::Refused(RepairRefusal::OrientationFixFailed(
-            MeshFixError::TooManyFlippedFaces
-        ))
-    );
-    assert_eq!(mesh.faces.len(), 4, "the ZLE removal must stand");
+    assert!(matches!(report.end, RepairEnd::Completed(state) if state.edge_manifold));
+    assert_eq!(mesh.faces, tetrahedron().faces);
 }
 
 /// Pins the flip pass gate in both functions: with the pass off, a lone
-/// triangle, which trips the flip threshold when the pass is on, assesses as
-/// clean and is left untouched, as is a flipped face.
+/// triangle and a flipped face assess as clean and are left untouched.
 #[test]
 fn a_disabled_flip_pass_assesses_winding_problems_as_clean() {
     let passes = RepairPasses {
@@ -535,9 +551,7 @@ fn the_orientation_pass_runs_before_the_collinear_face_pass() {
     assert_eq!(
         report.fixes,
         vec![
-            MeshFix::FlippedFaceOrientation {
-                face_idx: FaceIndex::from(5_usize),
-            },
+            MeshFix::ReorientedFaces { faces: 1 },
             split_tetrahedron_merge(),
         ]
     );
@@ -631,9 +645,18 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         mesh.vertices[0] = Vertex::new([f32::NAN, 1.0, 1.0]);
         mesh
     };
-    // A lone open triangle trips the flip pass's threshold of 0 (half its face
-    // count, rounded down); the pin here is only that assessment and run agree
-    // about it.
+    let inside_out = {
+        let mut mesh = tetrahedron();
+        for face in &mut mesh.faces {
+            face.vertices.reverse();
+        }
+        mesh
+    };
+    let empty = IndexedMesh {
+        meta: None,
+        vertices: Vec::new(),
+        faces: Vec::new(),
+    };
     let lone_triangle = {
         let mut mesh = open_strip();
         mesh.faces.truncate(1);
@@ -646,6 +669,8 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         ("zle", with_zle),
         ("mixed", mixed),
         ("nan", nan),
+        ("inside-out", inside_out),
+        ("empty", empty),
         ("lone-triangle", lone_triangle),
         ("open-strip", open_strip()),
         ("flat-tetrahedron", flat_tetrahedron()),
@@ -701,10 +726,14 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
                         "{name} under {passes:?}: Work predicts applied fixes"
                     );
                 }
+                RepairAssessment::NoFaces => {
+                    assert!(report.fixes.is_empty(), "{name} under {passes:?}");
+                    assert_eq!(report.end, RepairEnd::NoFaces, "{name} under {passes:?}");
+                }
             }
         }
     }
-    // The matrix covers all 3 assessment kinds; pin the per-case kinds so a
+    // The matrix covers all 4 assessment kinds; pin the per-case kinds so a
     // fixture drifting into another class is caught.
     let passes = RepairPasses::default_repair();
     for (mesh, edge_manifold, zero_area_face_count, holes_left_open) in [
@@ -713,6 +742,16 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
         (flat_tetrahedron(), true, 1, 0),
         (blocked_split_tetrahedron(), true, 1, 0),
         (open_strip_with_a_collinear_face(), false, 1, 1),
+        (
+            {
+                let mut m = open_strip();
+                m.faces.truncate(1);
+                m
+            },
+            false,
+            0,
+            1,
+        ),
     ] {
         assert_eq!(
             assess_repair(&mesh, passes),
@@ -733,19 +772,6 @@ fn assessment_matches_the_repair_report_for_every_fixture_class() {
             passes
         ),
         RepairAssessment::Work
-    ));
-    assert!(matches!(
-        assess_repair(
-            &{
-                let mut m = open_strip();
-                m.faces.truncate(1);
-                m
-            },
-            passes
-        ),
-        RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(
-            MeshFixError::TooManyFlippedFaces
-        ))
     ));
     for mesh in [
         split_tetrahedron(SPLIT_TETRAHEDRON),
@@ -789,29 +815,8 @@ fn repair_refusals_display_their_cause() {
             RepairRefusal::UnfixableFaceErrors(vec![zle.clone(), zle]),
             "2 face errors the enabled repair passes cannot address",
         ),
-        (
-            RepairRefusal::OrientationFixFailed(MeshFixError::TooManyFlippedFaces),
-            "face orientation fix failed: too many flipped faces",
-        ),
     ];
     for (refusal, text) in cases {
         assert_eq!(refusal.to_string(), text);
     }
-}
-
-#[test]
-fn only_the_orientation_refusal_has_a_source() {
-    let failed = RepairRefusal::OrientationFixFailed(MeshFixError::TooManyFlippedFaces);
-    assert_eq!(
-        failed
-            .source()
-            .and_then(|source| source.downcast_ref::<MeshFixError>()),
-        Some(&MeshFixError::TooManyFlippedFaces)
-    );
-    assert!(RepairRefusal::InvalidVertices(vec![]).source().is_none());
-    assert!(
-        RepairRefusal::UnfixableFaceErrors(vec![])
-            .source()
-            .is_none()
-    );
 }
