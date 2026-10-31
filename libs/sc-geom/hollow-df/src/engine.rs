@@ -11,9 +11,9 @@
 //!   the final mesh uses, without smoothing, stabilization or merging. Fast,
 //!   for feedback; never printable.
 //! - [`Session::apply`]: the printable mesh. The source shell plus the
-//!   smoothed cavity wall (and infill), checked edge-manifold with
-//!   DragonFruit's smoothing back-off ladder, then the drain holes cut
-//!   exactly. Fails explicitly when the result cannot be made closed.
+//!   smoothed cavity wall (and infill), checked edge-manifold, then the drain
+//!   holes cut exactly. Fails explicitly when the result cannot be made
+//!   closed.
 //!
 //! Differences from DragonFruit's front end, all on purpose:
 //!
@@ -21,9 +21,13 @@
 //!   triangles, measured within the wall plus [`WALL_BAND_MARGIN_VOXELS`] of
 //!   the surface; DragonFruit cuts it from a chamfer distance that runs up to
 //!   12.8 % long and starts half a voxel off the surface, so its wall comes
-//!   out thicker than asked on average and thinner in places; the result's
-//!   smoothing may only add material to that wall, and never seals part of
-//!   the cavity off;
+//!   out thicker than asked on average and thinner in places;
+//! - the result's smoothing is clamped (#266): it may only add material to
+//!   that wall, a quarter voxel at most, and keeps the preview's cavity
+//!   voxels, so the result's cavity is the preview's moved within them (no
+//!   channel closes, no pocket seals). DragonFruit also Taubin-smooths the
+//!   mesh, which moves it into the wall too, and retries with less smoothing
+//!   when the result does not close; neither is needed here;
 //! - the voxel size it actually used is reported ([`GridInfo`]), including when
 //!   the resolution bound changed it (DragonFruit clamps to 24..=192 silently);
 //!   the upper bound is a setting ([`GridRequest::max_resolution`]);
@@ -264,7 +268,8 @@ pub struct HollowStats {
     pub output_volume_mm3: Option<f64>,
     /// Apply only: `source - output`, the resin saved.
     pub removed_volume_mm3: Option<f64>,
-    /// Apply only: cavity rebuilds with reduced smoothing it took.
+    /// Apply only: cavity rebuilds with reduced smoothing it took: 0, or 1
+    /// when the smoothed cavity did not close and the unsmoothed one did.
     pub smoothing_retries: usize,
 }
 

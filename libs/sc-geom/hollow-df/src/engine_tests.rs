@@ -443,3 +443,71 @@ fn a_cancelled_wall_measure_keeps_nothing() {
         .unwrap();
     assert_eq!(preview.cavity, fresh.cavity);
 }
+
+/// The surface `b` is within `tolerance` of every vertex of `a`.
+fn max_deviation(a: &IndexedMesh, b: &IndexedMesh) -> f32 {
+    let bvh = Bvh::build(b);
+    a.positions
+        .iter()
+        .map(|&p| bvh.nearest_distance(b, p, 1e6).unwrap())
+        .fold(0.0, f32::max)
+}
+
+/// The result's smoothed cavity is the preview's, moved only into the cavity
+/// and never out of the preview's voxels (#266): the same shells, nothing
+/// thinner than the wall, no retries. The dumbbell's bar is a thin part
+/// whose cavity is a narrow channel the old smoothing could close.
+#[test]
+fn the_result_follows_the_preview() {
+    let dumbbell = crate::shapes::merged(&[
+        tessellated_box([-25.0, -10.0, -10.0], [-5.0, 10.0, 10.0], 6),
+        tessellated_box([-5.5, -2.6, -2.6], [5.5, 2.6, 2.6], 6),
+        tessellated_box([5.0, -10.0, -10.0], [25.0, 10.0, 10.0], 6),
+    ]);
+    let models = [
+        icosphere(20.0, 5),
+        tessellated_box([-20.0; 3], [20.0; 3], 16),
+        dumbbell,
+    ];
+    for (k, model) in models.into_iter().enumerate() {
+        let session =
+            Session::build(model, &GridRequest::default(), None, Control::none()).unwrap();
+        let settings = HollowSettings::default();
+        let wall = settings.wall_thickness_mm;
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let applied = session.apply(&settings, &[], Control::none()).unwrap();
+        assert!(is_edge_manifold(&applied.mesh), "model {k}");
+        assert_eq!(applied.stats.smoothing_retries, 0, "model {k}");
+        assert_eq!(
+            face_shells(&applied.cavity).1,
+            face_shells(&preview.cavity).1,
+            "model {k}"
+        );
+        // The cavity keeps the preview's voxels: its wall moves within them.
+        let cap = session.grid().voxel_mm;
+        let to_result = max_deviation(&preview.cavity, &applied.cavity);
+        let to_preview = max_deviation(&applied.cavity, &preview.cavity);
+        assert!(to_result <= cap, "model {k}: preview -> result {to_result}");
+        assert!(
+            to_preview <= cap,
+            "model {k}: result -> preview {to_preview}"
+        );
+        let thinnest = walls(&session, &applied.cavity)[0];
+        assert!(thinnest >= wall - 0.1, "model {k}: wall {thinnest}");
+    }
+}
+
+/// Without smoothing the result's cavity is the preview's, vertex for vertex.
+#[test]
+fn an_unsmoothed_result_is_the_preview() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings {
+        smooth_internal_surfaces: false,
+        internal_chamfer_passes: 0,
+        ..HollowSettings::default()
+    };
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let applied = session.apply(&settings, &[], Control::none()).unwrap();
+    assert_eq!(max_deviation(&preview.cavity, &applied.cavity), 0.0);
+    assert_eq!(max_deviation(&applied.cavity, &preview.cavity), 0.0);
+}
