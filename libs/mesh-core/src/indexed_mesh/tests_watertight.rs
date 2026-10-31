@@ -130,7 +130,9 @@ fn repair(mesh: &mut IndexedMesh) -> MeshRepairReport {
             assert_eq!(report.end, RepairEnd::Completed(state));
             assert_eq!(*mesh, before);
         }
-        RepairAssessment::Refused(_) => panic!("refused: {report:?}"),
+        RepairAssessment::Refused(_) | RepairAssessment::NoFaces => {
+            panic!("refused: {report:?}")
+        }
     }
     report
 }
@@ -215,16 +217,127 @@ fn boxes_that_share_an_edge_become_2_closed_shells() {
 }
 
 #[test]
-fn boxes_that_share_a_face_slice_as_their_union() {
+fn boxes_that_share_a_face_become_1_box() {
     let mut mesh = Soup::default()
         .add_box([0.0; 3], [1.0; 3], &[], false)
         .add_box([1.0, 0.0, 0.0], [2.0, 1.0, 1.0], &[], false)
         .mesh();
     assert!(!edge_manifold(&mesh));
-    repair(&mut mesh);
+    let report = repair(&mut mesh);
     assert!(mesh.is_sliceable());
-    // The copies at the shared face moved 1 um into their boxes.
-    assert!((1.99..2.0).contains(&volume(&mesh)), "{}", volume(&mesh));
+    // The 2 copies of the shared wall cancel out: 1 solid, nothing split.
+    assert_eq!(
+        report.fixes,
+        vec![MeshFix::RemovedOppositeFaces { faces: 4 }]
+    );
+    assert_eq!(mesh.faces.len(), 20);
+    assert!((volume(&mesh) - 2.0).abs() < 1e-6, "{}", volume(&mesh));
+}
+
+#[test]
+fn a_glued_wall_also_stored_twice_goes_whole() {
+    // Box 1 stores its +X side twice: 3 copies of the wall, 1 way round twice.
+    let mut soup = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &[], false)
+        .add_box([1.0, 0.0, 0.0], [2.0, 1.0, 1.0], &[], false);
+    for i in RIGHT {
+        soup.faces.push(soup.faces[i]);
+    }
+    let mut mesh = soup.mesh();
+    let report = repair(&mut mesh);
+    assert!(mesh.is_sliceable());
+    assert_eq!(
+        report.fixes,
+        vec![
+            MeshFix::RemovedDuplicateFaces { faces: 2 },
+            MeshFix::RemovedOppositeFaces { faces: 4 },
+        ]
+    );
+    assert_eq!(mesh.faces.len(), 20);
+    assert!((volume(&mesh) - 2.0).abs() < 1e-6, "{}", volume(&mesh));
+}
+
+#[test]
+fn a_box_inside_out_comes_out_outward() {
+    // Closed and edge-manifold: it passes the edge check, but the slicer
+    // would take it for a hole.
+    let mut mesh = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &[], true)
+        .mesh();
+    assert!(mesh.is_sliceable());
+    let report = repair(&mut mesh);
+    assert_eq!(
+        report.fixes,
+        vec![MeshFix::TurnedShellsOutward {
+            shells: 1,
+            faces: 12
+        }]
+    );
+    assert!((volume(&mesh) - 1.0).abs() < 1e-6, "{}", volume(&mesh));
+}
+
+#[test]
+fn an_inside_out_part_poking_out_of_a_body_is_turned_outward() {
+    // A 3 mm body and an inside-out 1 mm box that sticks out 1 mm past its
+    // +X side: not a cavity, so the slicer would drop the part outside.
+    let mut mesh = Soup::default()
+        .add_box([0.0; 3], [3.0; 3], &[], false)
+        .add_box([2.0, 1.0, 1.0], [4.0, 2.0, 2.0], &[], true)
+        .mesh();
+    assert!(mesh.is_sliceable());
+    assert!((volume(&mesh) - 25.0).abs() < 1e-6);
+    let report = repair(&mut mesh);
+    assert_eq!(
+        report.fixes,
+        vec![MeshFix::TurnedShellsOutward {
+            shells: 1,
+            faces: 12
+        }]
+    );
+    // Both shells wind outward: every point of the part has winding 1 or 2,
+    // the 1 mm outside the body included.
+    assert!((volume(&mesh) - 29.0).abs() < 1e-6, "{}", volume(&mesh));
+}
+
+#[test]
+fn a_closed_hollow_box_is_left_alone() {
+    let mut mesh = Soup::default()
+        .add_box([0.0; 3], [3.0; 3], &[], false)
+        .add_box([1.0; 3], [2.0; 3], &[], true)
+        .mesh();
+    assert_eq!(
+        assess_repair(&mesh, RepairPasses::default_repair()),
+        RepairAssessment::Clean(MeshStateAfterRepair {
+            edge_manifold: true,
+            zero_area_face_count: 0,
+            holes_left_open: 0,
+        })
+    );
+    let before = mesh.clone();
+    repair(&mut mesh);
+    assert_eq!(mesh, before);
+}
+
+#[test]
+fn the_orientation_pass_alone_never_leaves_more_bad_edges() {
+    // With the watertight pass off, the orientation pass runs alone on a box
+    // with 1 face flipped and its top missing: it fixes the winding and leaves
+    // the hole.
+    let mut mesh = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &TOP, false)
+        .mesh();
+    mesh.faces[0].vertices.reverse();
+    let passes = RepairPasses {
+        non_manifold_edges: false,
+        holes: false,
+        ..RepairPasses::default_repair()
+    };
+    let report = mesh.repair(passes);
+    assert_eq!(report.fixes, vec![MeshFix::ReorientedFaces { faces: 1 }]);
+    let fixed = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &TOP, false)
+        .mesh();
+    assert_eq!(mesh, fixed);
 }
 
 #[test]

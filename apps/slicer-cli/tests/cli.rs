@@ -161,10 +161,8 @@ fn flipped_winding_tetrahedron_mesh() -> IndexedMesh {
 }
 
 /// Returns the tetrahedron with the winding of faces 0 and 1 reversed. Half the
-/// faces then disagree with the other half, every face collects 2 winding
-/// complaints, and the flip pass refuses with `TooManyFlippedFaces` rather than
-/// guess which half is right: an "unrepairable" input that the loaders can
-/// produce.
+/// faces then disagree with the other half and every face collects 2 winding
+/// complaints.
 fn two_flipped_faces_tetrahedron_mesh() -> IndexedMesh {
     let mut mesh = tetrahedron_mesh(None);
     mesh.faces[0].vertices.reverse();
@@ -1624,9 +1622,10 @@ mod fix_partial_repair_tests {
     }
 
     /// Writes 2 tetrahedra in 1 OBJ: object "repairable" has 1 flipped face
-    /// (the flip pass corrects it), object "unrepairable" has 2 (the flip pass
-    /// refuses with `TooManyFlippedFaces`). OBJ vertex numbering is global and
-    /// 1-based, so the 2nd object's faces index vertices 5 to 8.
+    /// (the flip pass corrects it), object "unrepairable" has an extra face
+    /// that names vertex 5 twice (refused with the invalid-face pass off). OBJ
+    /// vertex numbering is global and 1-based, so the 2nd object's faces index
+    /// vertices 5 to 8.
     fn write_two_object_obj(path: &Path) {
         let mut text = String::new();
         let verts = "v 1 1 1\nv 1 -1 -1\nv -1 1 -1\nv -1 -1 1\n";
@@ -1635,7 +1634,7 @@ mod fix_partial_repair_tests {
         text.push_str("f 3 2 1\nf 1 4 2\nf 1 3 4\nf 2 4 3\n");
         text.push_str("o unrepairable\n");
         text.push_str(verts);
-        text.push_str("f 7 6 5\nf 6 8 5\nf 5 7 8\nf 6 8 7\n");
+        text.push_str("f 7 6 5\nf 6 8 5\nf 5 7 8\nf 6 8 7\nf 5 5 6\n");
         fs::write(path, text).expect("write fixture obj");
     }
 
@@ -1660,13 +1659,16 @@ mod fix_partial_repair_tests {
                 target.to_str().unwrap(),
                 "--fix-non-manifold-edges=false",
                 "--fix-holes=false",
+                "--fix-zero-length-edges=false",
             ])
             .assert()
             .failure()
             .stderr(predicate::str::contains("Applied fixes"))
-            .stderr(predicate::str::contains("Flipped orientation"))
             .stderr(predicate::str::contains(
-                "warning (mesh 2 of 2): Unable to fix mesh: too many flipped faces",
+                "Flipped 1 faces to orient each piece",
+            ))
+            .stderr(predicate::str::contains(
+                "warning (mesh 2 of 2): Unable to fix mesh, there are invalid faces and their pass is off.",
             ))
             .stderr(predicate::str::contains(
                 "1 of 2 meshes could not be fully repaired",
@@ -1685,24 +1687,29 @@ mod fix_partial_repair_tests {
             1,
             "exactly the repairable object became edge-manifold"
         );
-        // The refused object reaches the output geometrically intact: still a
-        // full tetrahedron, just with its input winding.
+        // The refused object reaches the output intact: the full tetrahedron
+        // and its invalid face.
         let refused = meshes
             .iter()
             .find(|m| !is_edge_manifold(m))
             .expect("refused object present");
-        assert_eq!(refused.faces.len(), 4);
+        assert_eq!(refused.faces.len(), 5);
         assert_eq!(refused.vertices.len(), 4);
     }
 
-    /// Pins the single-mesh contract under partial repair: a refusal warns and
-    /// exits non-zero, but the target is still written, equal to the input.
+    /// Pins #298: `fix` on a mesh without faces says so, without calling it a
+    /// failed repair.
     #[test]
-    fn fix_single_mesh_refusal_still_writes_the_target() {
+    fn fix_on_a_mesh_without_faces_says_it_has_no_faces() {
         let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("insideout.stla");
+        let source = tmp.path().join("empty.stla");
         let target = tmp.path().join("fixed.stla");
-        write_stla_to(&source, &two_flipped_faces_tetrahedron_mesh());
+        let empty = IndexedMesh {
+            meta: None,
+            vertices: vec![],
+            faces: vec![],
+        };
+        write_stla_to(&source, &empty);
 
         Command::cargo_bin(BIN)
             .unwrap()
@@ -1712,13 +1719,40 @@ mod fix_partial_repair_tests {
                 source.to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
-                "--fix-non-manifold-edges=false",
-                "--fix-holes=false",
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("warning: This mesh has no faces"))
+            .stderr(predicate::str::contains("No fixes were applied."))
+            .stderr(predicate::str::contains("flipped").not());
+    }
+
+    /// Pins the single-mesh contract under partial repair: a refusal warns and
+    /// exits non-zero, but the target is still written, equal to the input.
+    #[test]
+    fn fix_single_mesh_refusal_still_writes_the_target() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("invalid-face.stla");
+        let target = tmp.path().join("fixed.stla");
+        let mut mesh = two_flipped_faces_tetrahedron_mesh();
+        mesh.faces
+            .push(IndexedTriangle::from_raw_indices([0, 1, 0]));
+        write_stla_to(&source, &mesh);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
             ])
             .assert()
             .failure()
             .stderr(predicate::str::contains(
-                "warning: Unable to fix mesh: too many flipped faces",
+                "warning: Unable to fix mesh, there are invalid faces and their pass is off.",
             ))
             .stderr(predicate::str::contains("No fixes were applied."))
             .stderr(predicate::str::contains(
@@ -1734,7 +1768,7 @@ mod fix_partial_repair_tests {
             !is_edge_manifold(mesh),
             "geometry preserved, not half-fixed"
         );
-        assert_eq!(mesh.faces.len(), 4);
+        assert_eq!(mesh.faces.len(), 5);
     }
 }
 
@@ -2085,17 +2119,17 @@ mod slice_repair_tests {
             .stderr(predicate::str::contains("1x NonManifoldEdge"));
     }
 
-    /// Pins that a repair refusal does not abort the slice: it becomes a
-    /// warning, slicing proceeds, and the engine's validation gate stays the
-    /// authority (its report and fix hint are what the user sees).
+    /// Pins that a mesh Repair cannot close does not abort the slice: it
+    /// becomes a warning, slicing proceeds, and the engine's validation gate
+    /// stays the authority (its report and fix hint are what the user sees).
     #[test]
-    fn slice_with_repair_proceeds_past_a_refused_mesh_to_the_validation_gate() {
+    fn slice_with_repair_proceeds_past_an_open_mesh_to_the_validation_gate() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("fin.stla");
         let output = tmp.path().join("layers");
         fs::create_dir(&output).unwrap();
         // A lone upright open triangle: the hole pass leaves it (its fill
-        // would double it), and the flip pass refuses a 1-face mesh.
+        // would double it).
         let mut fin = single_triangle_mesh();
         fin.vertices[2] = Vertex::new([0.0, 0.0, 1.0]);
         write_stla_to(&source, &fin);
@@ -2103,7 +2137,7 @@ mod slice_repair_tests {
         run_slice(&source, &output, &["--repair"])
             .failure()
             .stderr(predicate::str::contains(
-                "warning: Unable to fix mesh: too many flipped faces",
+                "warning: 1 hole was left open: it is too large to fill on its own",
             ))
             .stderr(predicate::str::contains("mesh validation failed"))
             .stderr(predicate::str::contains(

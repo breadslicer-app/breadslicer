@@ -41,7 +41,6 @@ mod tests_watertight;
 
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
-pub use fix::MeshFixError;
 pub use fix::records::MeshFix;
 pub use mesh::declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
 pub use mesh::geometry_fingerprint::GeometryFingerprint;

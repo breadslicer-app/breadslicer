@@ -4,17 +4,19 @@
  */
 
 //! Per-mesh repair policy: which passes run, in which order, and when repair is
-//! refused. The repair primitives (zero-length-edge face removal, the
-//! watertight pass, face orientation fixes, collinear-face removal) live in
+//! refused. The repair primitives (invalid-face removal, the watertight pass,
+//! the orientation pass, collinear-face removal) live in
 //! [`super::fix`]; this module owns the decisions around them so every frontend
 //! repairs meshes the same way.
 
 use std::fmt;
 
-use super::fix::MeshFixError;
 use super::fix::collinear_faces::CollinearFaceRemovals;
 use super::fix::records::MeshFix;
-use super::fix::watertight::{WatertightOptions, plan_watertight};
+use super::fix::watertight::{
+    WatertightOptions, count_bad_edge_records, plan_orientation_with_records, plan_watertight,
+};
+use super::half_edges;
 use super::mesh::IndexedMesh;
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::ZeroAreaFace;
@@ -24,9 +26,14 @@ use super::validated::ZeroAreaFace;
 /// is all-off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RepairPasses {
-    /// Removes faces that contain a zero-length edge.
+    /// Removes invalid faces: faces that contain a zero-length edge (a vertex
+    /// named twice) and faces that name a vertex that does not exist. With it
+    /// off, a mesh with either is refused.
     pub zero_length_edges: bool,
-    /// Reverses the vertex order of inconsistently wound faces.
+    /// Orients each piece as a whole, flipping the smaller side of faces that
+    /// wind against their neighbours, and turns closed inside-out shells
+    /// outward unless they are cavities. It never leaves more bad edges than
+    /// it found.
     pub flipped_faces: bool,
     /// Removes collinear faces: zero-area faces whose 3 distinct vertices lie
     /// on 1 line. It runs only on a mesh that is edge-manifold after the
@@ -110,15 +117,10 @@ pub enum RepairRefusal {
     /// The mesh has non-finite vertex coordinates; no pass can run. The mesh is
     /// left untouched.
     InvalidVertices(Vec<MeshVertexError>),
-    /// Face errors the enabled passes cannot address: all of them when the
-    /// zero-length-edge pass is disabled, otherwise the residue that is not a
-    /// zero-length edge. The mesh is left untouched.
+    /// Face errors with the invalid-face pass
+    /// ([`RepairPasses::zero_length_edges`]) disabled. The mesh is left
+    /// untouched.
     UnfixableFaceErrors(Vec<MeshFaceError>),
-    /// The orientation pass failed while planning its mutations (see
-    /// [`MeshFixError`]). Fixes applied by earlier passes remain in place; the
-    /// orientation pass itself left the mesh untouched (the primitive is
-    /// transactional).
-    OrientationFixFailed(MeshFixError),
 }
 
 impl fmt::Display for RepairRefusal {
@@ -134,21 +136,11 @@ impl fmt::Display for RepairRefusal {
                     errors.len()
                 )
             }
-            Self::OrientationFixFailed(err) => {
-                write!(f, "face orientation fix failed: {err}")
-            }
         }
     }
 }
 
-impl std::error::Error for RepairRefusal {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::OrientationFixFailed(err) => Some(err),
-            Self::InvalidVertices(_) | Self::UnfixableFaceErrors(_) => None,
-        }
-    }
-}
+impl std::error::Error for RepairRefusal {}
 
 /// Everything a [`IndexedMesh::repair`] run did, and did not do, to a mesh.
 #[derive(Clone, Debug, PartialEq)]
@@ -163,6 +155,8 @@ pub struct MeshRepairReport {
 /// How a [`IndexedMesh::repair`] run ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RepairEnd {
+    /// The mesh has no faces: there is nothing to repair, and no pass ran.
+    NoFaces,
     /// The run stopped early.
     Refused(RepairRefusal),
     /// Every enabled pass ran to completion. This does not mean that the mesh
@@ -188,6 +182,8 @@ pub struct MeshStateAfterRepair {
 /// [`assess_repair`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum RepairAssessment {
+    /// The mesh has no faces; the run would end with [`RepairEnd::NoFaces`].
+    NoFaces,
     /// Every enabled pass would find nothing to do. Holds the state that the
     /// run reports.
     Clean(MeshStateAfterRepair),
@@ -208,9 +204,9 @@ pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessme
 
 /// Runs [`IndexedMesh::repair`] on a copy of `mesh` and returns its report,
 /// with the copy when the run changed it (when the report has fixes). A mesh
-/// that [`assess_repair`] finds clean or refused is not copied. Same report as
-/// [`assess_repair`] followed by a run, at the cost of 1 planning of the
-/// watertight pass instead of 2.
+/// that [`assess_repair`] finds clean, refused or without faces is not copied.
+/// Same report as [`assess_repair`] followed by a run, at the cost of 1
+/// planning of the watertight pass instead of 2.
 pub fn repaired_copy(
     mesh: &IndexedMesh,
     passes: RepairPasses,
@@ -230,6 +226,13 @@ pub fn repaired_copy(
             },
             None,
         ),
+        RepairAssessment::NoFaces => (
+            MeshRepairReport {
+                fixes: Vec::new(),
+                end: RepairEnd::NoFaces,
+            },
+            None,
+        ),
         RepairAssessment::Work => {
             let mut copy = mesh.clone();
             let report = copy.repair(passes);
@@ -244,6 +247,9 @@ pub fn repaired_copy(
 fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAssessment {
     // Mirrors the gates of `run_repair_passes`, orientation planning included:
     // a change to either must go to both.
+    if mesh.faces.is_empty() {
+        return RepairAssessment::NoFaces;
+    }
     if let Err(errors) = mesh.validate_vertices() {
         return RepairAssessment::Refused(RepairRefusal::InvalidVertices(errors));
     }
@@ -253,24 +259,17 @@ fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAs
             if !passes.zero_length_edges {
                 return RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(face_errors));
             }
-            let residue: Vec<MeshFaceError> = face_errors
-                .iter()
-                .filter(|e| !matches!(e, MeshFaceError::ZeroLengthEdge { .. }))
-                .cloned()
-                .collect();
-            if !residue.is_empty() {
-                return RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(residue));
-            }
-            // Every face error is a zero-length edge and the pass is enabled:
-            // faces will be removed.
+            // The invalid-face pass is enabled: faces will be removed.
             return RepairAssessment::Work;
         }
     };
-    // The face areas come 1st: the edge check consumes the witness.
     let face_areas = witness.validate_face_areas();
-    let edge_manifold = witness.validated_edge_manifold();
+    // 1 sort of the edges serves the edge check and the orientation pass. The
+    // mesh has faces, so no bad edge means it is edge-manifold.
+    let records = half_edges::sorted_half_edge_records(&mesh.faces);
+    let edge_manifold = count_bad_edge_records(&records) == 0;
     let mut holes_left_open = 0;
-    if passes.watertight() && edge_manifold.is_err() {
+    if passes.watertight() && !edge_manifold {
         if !plan_pass {
             return RepairAssessment::Work;
         }
@@ -281,28 +280,23 @@ fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAs
         holes_left_open = outcome.holes_left_open;
     }
     if passes.flipped_faces
-        && let Err(manifold_errors) = &edge_manifold
+        && plan_orientation_with_records(&mesh.vertices, &mesh.faces, records).is_some()
     {
-        return match super::fix::plan_faces_orientation_impl(mesh, manifold_errors) {
-            Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
-            Ok(faces_to_flip) if faces_to_flip.is_empty() => {
-                RepairAssessment::Clean(state_after_repair(false, face_areas, holes_left_open))
-            }
-            Ok(_) => RepairAssessment::Work,
-        };
+        return RepairAssessment::Work;
     }
     // Here the orientation pass changes nothing, so the run gives the
     // collinear-face pass this same mesh.
     // #[gamma::skip(logical.and_remove_right, reason = "finds no face")]
     if passes.collinear_faces
         && face_areas.is_err()
-        && let Ok(manifold) = &edge_manifold
-        && CollinearFaceRemovals::new(manifold).next().is_some()
+        && edge_manifold
+        && let Ok(manifold) = witness.validated_edge_manifold()
+        && CollinearFaceRemovals::new(&manifold).next().is_some()
     {
         return RepairAssessment::Work;
     }
     RepairAssessment::Clean(state_after_repair(
-        edge_manifold.is_ok(),
+        edge_manifold,
         face_areas,
         holes_left_open,
     ))
@@ -324,21 +318,25 @@ impl IndexedMesh {
     /// Runs the enabled repair passes over this mesh and reports what happened.
     ///
     /// Pass order and refusal semantics:
+    /// 0. A mesh without faces ends with [`RepairEnd::NoFaces`], untouched.
     /// 1. Vertex gate: non-finite coordinates refuse the whole run with the
     ///    mesh untouched.
     /// 2. Face gate, decided before any mutation: when face validation fails
-    ///    and the enabled passes cannot address every error, the run is refused
-    ///    with the mesh untouched.
-    /// 3. Zero-length-edge pass: removes the offending faces.
+    ///    and the invalid-face pass is disabled, the run is refused with the
+    ///    mesh untouched.
+    /// 3. Invalid-face pass: removes the faces with a zero-length edge or an
+    ///    out-of-range index.
     /// 4. Watertight pass (the non-manifold-edge and hole passes), on a mesh
     ///    that fails the edge check: welds open boundaries, resolves edges with
     ///    more than 2 faces, orients each piece, fills holes and turns closed
     ///    inside-out shells outward, in up to [`MAX_WATERTIGHT_ROUNDS`]
     ///    rounds. It is all or nothing, and kept only when it leaves fewer bad
     ///    edges than it found.
-    /// 5. Flipped-face pass: reverses the winding of inconsistently wound
-    ///    faces. A failure here refuses the rest of the run but keeps the fixes
-    ///    already applied; the mesh never holds a half-applied pass.
+    /// 5. Orientation pass: orients each piece as a whole and turns closed
+    ///    inside-out shells outward, unless they are cavities. It runs on
+    ///    every mesh, since a mesh inside out passes the edge check, and is
+    ///    kept only when it leaves fewer bad edges than it found, or flips
+    ///    only whole closed shells.
     /// 6. Collinear-face pass: removes collinear faces when the mesh is
     ///    edge-manifold at this point. On a mesh that is not, it does not run,
     ///    and that is no refusal.
@@ -359,6 +357,9 @@ impl IndexedMesh {
     }
 
     fn run_repair_passes(&mut self, passes: RepairPasses) -> (Vec<MeshFix>, RepairEnd) {
+        if self.faces.is_empty() {
+            return (Vec::new(), RepairEnd::NoFaces);
+        }
         if let Err(errors) = self.validate_vertices() {
             return (
                 Vec::new(),
@@ -372,33 +373,20 @@ impl IndexedMesh {
             Ok(witness) => witness,
             Err(face_errors) => {
                 // Refusals are decided before any mutation: with the
-                // zero-length-edge pass disabled every face error is
-                // unaddressable; with it enabled, any residue that is not a
-                // zero-length edge refuses the run while the mesh is still
-                // untouched.
+                // invalid-face pass disabled every face error is
+                // unaddressable.
                 if !passes.zero_length_edges {
                     return (
                         fixes,
                         RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(face_errors)),
                     );
                 }
-                let residue: Vec<MeshFaceError> = face_errors
-                    .iter()
-                    .filter(|e| !matches!(e, MeshFaceError::ZeroLengthEdge { .. }))
-                    .cloned()
-                    .collect();
-                if !residue.is_empty() {
-                    return (
-                        fixes,
-                        RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residue)),
-                    );
-                }
-                let (edge_fixes, witness) = self.fix_zero_length_edges_into_validated(&face_errors);
-                fixes.extend(edge_fixes);
+                let (face_fixes, witness) = self.fix_invalid_faces_into_validated(&face_errors);
+                fixes.extend(face_fixes);
                 match witness {
                     Ok(w) => w,
-                    // Unreachable when every input error was a zero-length edge
-                    // (whole-face removal preserves the in-range invariant);
+                    // Unreachable: the errors name every invalid face, and
+                    // removing whole faces keeps the others as they were;
                     // mapped instead of panicking so the function stays total.
                     Err(residual) => {
                         return (
@@ -418,21 +406,8 @@ impl IndexedMesh {
             holes_left_open = left_open;
         }
 
-        if passes.flipped_faces
-            && let Err(manifold_errors) = validated.validate_edge_manifold()
-        {
-            match validated.fix_faces_orientation(&manifold_errors) {
-                Ok(orientation_fixes) => fixes.extend(orientation_fixes),
-                // Pass-level refusal: the orientation primitive is
-                // transactional, so the mesh holds exactly the completed
-                // passes' state and their fixes stay in the report.
-                Err(err) => {
-                    return (
-                        fixes,
-                        RepairEnd::Refused(RepairRefusal::OrientationFixFailed(err)),
-                    );
-                }
-            }
+        if passes.flipped_faces {
+            fixes.extend(validated.fix_orientation());
         }
 
         // The face-area test only skips the mint for a mesh without zero-area

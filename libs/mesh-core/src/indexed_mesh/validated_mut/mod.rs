@@ -8,25 +8,26 @@
 //!
 //! 1. [`ValidatedFacesMut`]: the face indices are in range. Minted by
 //!    [`IndexedMesh::validated_faces_mut`], or by
-//!    [`IndexedMesh::fix_zero_length_edges_into_validated`] for the mesh that
-//!    its removals leave.
+//!    [`IndexedMesh::fix_zero_length_edges_into_validated`] or
+//!    [`IndexedMesh::fix_invalid_faces_into_validated`] for the mesh that
+//!    their removals leave.
 //! 2. [`ValidatedEdgeManifoldMeshMut`]: in addition, the mesh is edge-manifold.
 //!    Minted by [`ValidatedFacesMut::validated_edge_manifold_mut`], which
 //!    borrows the in-range witness instead of consuming it.
 //!
-//! `fix_faces_orientation` reverses the vertex order of faces in place, so it
-//! keeps the in-range claim. `fix_collinear_faces` keeps it too (it writes only
+//! `fix_orientation` reverses the vertex order of faces in place, so it keeps
+//! the in-range claim. `fix_collinear_faces` keeps it too (it writes only
 //! vertex indices that the faces already hold, and keeps the vertices), but it
 //! changes the edges, so it consumes the mutable edge-manifold witness.
 
 mod fix_collinear_faces;
-mod fix_faces_orientation;
+mod fix_orientation;
 mod fix_watertight;
 
 use crate::primitives::{IndexedTriangle, Vertex};
 
-use super::fix::fix_zero_length_edges_impl;
 use super::fix::records::MeshFix;
+use super::fix::{fix_invalid_faces_impl, fix_zero_length_edges_impl};
 use super::mesh::IndexedMesh;
 use super::validate::MeshFaceError;
 use super::validated::{MeshEdgeManifoldError, ValidatedFaces, ZeroAreaFace};
@@ -116,6 +117,31 @@ impl IndexedMesh {
         // whole faces changes neither `vertices.len()` nor the indices of the
         // faces that stay.
         // #[gamma::skip(cond.always_false, reason = "Ok too for a full list")]
+        let witness = if only_zero_length {
+            Ok(ValidatedFacesMut::new_unchecked(self))
+        } else {
+            self.validated_faces_mut()
+        };
+        (fixes, witness)
+    }
+
+    /// Removes every face that `errors` names, zero-length edge or
+    /// out-of-range index, then returns the applied fixes and a witness for
+    /// the mesh that stays, or the face errors that remain. `errors` must be
+    /// the face errors of this mesh, as `validate_faces` returns them: when
+    /// they are all `ZeroLengthEdge`, the witness is created without a new
+    /// validation.
+    pub fn fix_invalid_faces_into_validated(
+        &mut self,
+        errors: &[MeshFaceError],
+    ) -> (
+        Vec<MeshFix>,
+        Result<ValidatedFacesMut<'_>, Vec<MeshFaceError>>,
+    ) {
+        let only_zero_length = errors
+            .iter()
+            .all(|e| matches!(e, MeshFaceError::ZeroLengthEdge { .. }));
+        let fixes = fix_invalid_faces_impl(self, errors);
         let witness = if only_zero_length {
             Ok(ValidatedFacesMut::new_unchecked(self))
         } else {

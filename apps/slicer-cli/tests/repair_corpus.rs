@@ -39,8 +39,8 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
+use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::repair_corpus::{RepairExpectation, repair_corpus};
 use sc_mesh_formats::loader::drop_scene_duplicate_faces;
@@ -76,6 +76,8 @@ struct Row {
     /// Sliceable after Repair, saved as STL and read back.
     after_stl: bool,
     end: String,
+    /// The kinds of fix the run applied, with how many records of each.
+    fixes: String,
     repair_ms: f64,
     /// For a mesh that passes the gate only once the slicer separates its
     /// touching solids: its layers as opened against its layers after Repair.
@@ -108,6 +110,7 @@ struct Totals {
     made_sliceable: usize,
     made_sliceable_through_stl: usize,
     healthy_broken_by_repair: usize,
+    healthy_changed_by_repair: usize,
     /// Meshes that are not edge-manifold as opened but slice anyway.
     sliced_by_separating: usize,
     /// Of those, the ones whose layers match the repaired mesh's, binary and
@@ -140,6 +143,9 @@ impl Totals {
                 (true, false) => t.healthy_broken_by_repair += 1,
                 (true, true) => {}
             }
+            if row.before && !row.fixes.is_empty() {
+                t.healthy_changed_by_repair += 1;
+            }
         }
         t
     }
@@ -148,14 +154,16 @@ impl Totals {
         format!(
             "{} meshes ({} empty ones skipped), {} not sliceable when opened, {} of them \
              sliceable after Repair ({} after saving as STL and reopening); {} sliceable meshes \
-             broken by Repair; {} not edge-manifold but sliced by separating touching solids, \
-             {} of them with the same layers as after Repair ({} with 4x anti-aliasing)",
+             broken by Repair, {} changed by it; {} not edge-manifold but sliced by \
+             separating touching solids, {} of them with the same layers as after Repair \
+             ({} with 4x anti-aliasing)",
             self.meshes,
             self.empty,
             self.broken,
             self.made_sliceable,
             self.made_sliceable_through_stl,
             self.healthy_broken_by_repair,
+            self.healthy_changed_by_repair,
             self.sliced_by_separating,
             self.same_binary_layers,
             self.same_aa_layers
@@ -165,6 +173,7 @@ impl Totals {
 
 fn end_label(end: &RepairEnd) -> String {
     match end {
+        RepairEnd::NoFaces => "no faces".into(),
         RepairEnd::Refused(refusal) => format!("refused: {refusal:?}").chars().take(80).collect(),
         RepairEnd::Completed(MeshStateAfterRepair {
             edge_manifold: true,
@@ -172,6 +181,29 @@ fn end_label(end: &RepairEnd) -> String {
         }) => "completed: edge-manifold".into(),
         RepairEnd::Completed(_) => "completed: not edge-manifold".into(),
     }
+}
+
+/// The kinds of `fixes`, in order of first use, each with how many records
+/// it has, like `ReorientedFaces(1) TurnedShellsOutward(1)`.
+fn fix_label(fixes: &[MeshFix]) -> String {
+    let mut kinds: Vec<(String, usize)> = Vec::new();
+    for fix in fixes {
+        let debug = format!("{fix:?}");
+        let kind = debug
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        match kinds.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, n)) => *n += 1,
+            None => kinds.push((kind, 1)),
+        }
+    }
+    kinds
+        .iter()
+        .map(|(kind, n)| format!("{kind}({n})"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Saves `mesh` as binary STL in memory, reads it back as importing does, and
@@ -230,6 +262,7 @@ fn measure_scene(corpus: &'static str, file: &str, scene: &mut Scene) -> Vec<Row
                     after_stl: repaired
                         .is_some_and(|m| m.faces.is_empty() || sliceable_through_stl(m)),
                     end: end_label(&outcome.report.end),
+                    fixes: fix_label(&outcome.report.fixes),
                     // The run covers the whole scene; it is reported on each mesh.
                     repair_ms,
                     layers: opened
@@ -351,7 +384,7 @@ fn read_list(list: &Path) -> Vec<PathBuf> {
 fn print_rows(rows: &[Row]) {
     for row in rows {
         println!(
-            "{:>4}  {:>9} faces  {:<3} -> {:<3} (stl {:<3})  {:>9.1} ms  {}  {}",
+            "{:>4}  {:>9} faces  {:<3} -> {:<3} (stl {:<3})  {:>9.1} ms  {}  [{}]  {}",
             row.mesh,
             row.faces,
             if row.before { "yes" } else { "no" },
@@ -359,6 +392,7 @@ fn print_rows(rows: &[Row]) {
             if row.after_stl { "yes" } else { "no" },
             row.repair_ms,
             row.end,
+            row.fixes,
             row.file
         );
         if let Some(l) = &row.layers {
@@ -374,14 +408,14 @@ fn print_rows(rows: &[Row]) {
 fn tsv(rows: &[Row]) -> String {
     let mut out = String::from(
         "corpus\tfile\tmesh\tfaces\tedge_manifold_before\tsliceable_before\tsliceable_after\t\
-         sliceable_after_stl\tend\trepair_ms\tlayers\tbinary_pixels_differing\t\
+         sliceable_after_stl\tend\tfixes\trepair_ms\tlayers\tbinary_pixels_differing\t\
          aa_pixels_differing\tgate_ms\n",
     );
     for row in rows {
         let l = row.layers.unwrap_or_default();
         let _ = writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{}\t{}\t{}\t{:.1}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{}\t{}\t{}\t{:.1}",
             row.corpus,
             row.file,
             row.mesh,
@@ -391,6 +425,7 @@ fn tsv(rows: &[Row]) -> String {
             row.after,
             row.after_stl,
             row.end,
+            row.fixes,
             row.repair_ms,
             l.layers,
             l.binary_pixels,
