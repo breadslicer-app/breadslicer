@@ -6,11 +6,15 @@
 use std::io::Cursor;
 
 use sc_print_primitives::{AaLevel, Mirror, PositiveFiniteMmPerMin, PositiveFiniteSec};
+use sc_sla_formats::layer_images::PLACEHOLDER_GREY;
 use sc_sla_formats::{CtbVariant, MotionStage, PreviewImage, PrintPreviews, PrintProgram};
 
 use super::*;
 use crate::read::{CtbFile, read_ctb};
-use crate::test_fixture::{PIXELS_X, PIXELS_Y, expected_images, mm, program, raster, stack};
+use crate::test_fixture::{
+    PIXELS_X, PIXELS_Y, assert_no_dark_layer, expected_images, gapped_stack, mm, program, raster,
+    stack,
+};
 
 const LEGACY: [CtbVariant; 3] = [CtbVariant::V2, CtbVariant::V3, CtbVariant::V4];
 
@@ -259,4 +263,17 @@ fn the_previews_are_the_ctb_sizes() {
     .unwrap_err();
     assert!(matches!(err, WriteFailure::PreviewSize(_)), "{err:?}");
     assert!(out.into_inner().is_empty());
+}
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: a machine can stall on a dark layer, so a gap and a dark top
+    // each carry one pixel.
+    for variant in LEGACY {
+        let program = program("Mars 2 Pro", raster(AaLevel::Off, Mirror::default()), 6);
+        let mut out = Cursor::new(Vec::new());
+        write_file(variant, &program, None, &gapped_stack(), &mut out).unwrap();
+        let file = read_ctb(&out.into_inner()).unwrap();
+        assert_no_dark_layer(&file.layers, seven_bit(PLACEHOLDER_GREY));
+    }
 }

@@ -12,13 +12,14 @@
 //!   use, without slicing.
 
 use std::fmt;
+use std::num::NonZeroU32;
 
 use sc_print_primitives::{AaLevel, PositiveFiniteMm, ScaleCompensation};
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, resolve_scale_compensation};
 use sc_scene::Scene;
 use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
-use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
+use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
 use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
 
 use crate::prepare::{UnsliceableSelection, slice_profile_for_selection};
@@ -173,6 +174,24 @@ impl PlateContours {
     /// Return the layer schedule the stack was cut on.
     pub fn schedule(&self) -> &LayerSchedule {
         &self.schedule
+    }
+
+    /// Keep only the first `layers` layers, and the schedule's slabs under
+    /// them. A count at or past the stack's length keeps everything.
+    pub(crate) fn truncated(self, layers: NonZeroU32) -> Self {
+        let kept = usize::try_from(layers.get()).unwrap_or(usize::MAX);
+        if kept >= self.stack.layers().len() {
+            return self;
+        }
+        let LayerSchedule::Uniform(grid) = self.schedule;
+        Self {
+            stack: ContourStack::new_unchecked(self.stack.layers()[..kept].to_vec()),
+            schedule: LayerSchedule::Uniform(UniformSchedule::new(
+                grid.layer_height(),
+                grid.first_layer_height(),
+                layers,
+            )),
+        }
     }
 }
 

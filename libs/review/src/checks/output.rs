@@ -44,9 +44,12 @@
 //!   first solid layer (error: nothing is cured on the plate, so the first
 //!   solid layer has nothing to stick to); between solid layers (error: a
 //!   gap, so everything above it rests on nothing); after the last solid
-//!   layer (info: they cost print time and print nothing). The layer
-//!   count stops at the last layer cut below the plate's top (#226), so a
-//!   plate sliced now never ends in one; slices saved before can.
+//!   layer (info: they print nothing, and the printer file leaves them
+//!   out, #309). The layer count stops at the last layer cut below the
+//!   plate's top (#226), so a plate sliced now ends in one only when its
+//!   top is too small to light a pixel; slices saved before can. The
+//!   printer file gives an empty layer it keeps one placeholder pixel, so
+//!   the printer does not stall on it (#309).
 //! - **Nothing to print** (error). Contours on the plate, yet no layer has
 //!   a single lit pixel: the printer file would print nothing.
 //! - **Floating part** (error). A printed body whose lowest region is on
@@ -1104,7 +1107,7 @@ fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
             RoleScope::Both,
             "Gap in the print",
             format!(
-                "{} a {gap_mm:.2} mm gap, so everything above it has nothing to rest on.",
+                "{} a {gap_mm:.2} mm gap, so everything above it has nothing to rest on. The printer file still lights a pixel on every layer, so the printer does not stall on them.",
                 plural(layer - start, "empty layer leaves", "empty layers leave")
             ),
         ));
@@ -1127,8 +1130,10 @@ fn empty_layers(ctx: &ReviewContext<'_>, extent: SolidExtent) -> Vec<Finding> {
                 "Empty layers at the top"
             },
             format!(
-                "The last {} empty ({height_mm:.2} mm), which adds print time and prints nothing.",
-                counted(count, "layer is", "layers are")
+                "The last {} empty ({height_mm:.2} mm): {} nothing, so the printer file leaves {} out.",
+                counted(count, "layer is", "layers are"),
+                if count == 1 { "it prints" } else { "they print" },
+                if count == 1 { "it" } else { "them" },
             ),
         ));
     }

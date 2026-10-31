@@ -7,11 +7,13 @@ use std::io::Cursor;
 
 use sc_print_primitives::{AaLevel, Mirror, PanelRotation};
 use sc_sla_formats::AnycubicZipVariant;
+use sc_sla_formats::layer_images::PLACEHOLDER_GREY;
 
 use super::*;
 use crate::read::read_anycubic_zip;
 use crate::test_fixture::{
-    PIXELS_X, PIXELS_Y, expected_images, program, raster, stack, turned_ccw,
+    DARK_LAYERS, PIXELS_X, PIXELS_Y, assert_no_dark_layer, expected_images, gapped_stack, program,
+    raster, stack, turned_ccw,
 };
 
 fn written(variant: AnycubicZipVariant, aa: AaLevel) -> Vec<u8> {
@@ -181,4 +183,33 @@ fn the_layer_list_and_the_scene_follow_the_program() {
     let [left, top, right, bottom] = last.bounds_mm;
     assert!(left >= -5.0 && right <= 5.0 && left < right);
     assert!(top >= -3.75 && bottom <= 3.75 && top < bottom);
+}
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: the M7 Pro stalled on a dark last layer. A gap and a dark top
+    // each carry one pixel, and the scene describes it as one object.
+    let raster = raster(AaLevel::Off, Mirror::default());
+    let program = program("Photon Mono M7 Pro", raster.clone(), 6);
+    let stack = gapped_stack();
+    let mut out = Cursor::new(Vec::new());
+    write_file(AnycubicZipVariant::Pwsz, &program, None, &stack, &mut out).unwrap();
+
+    let file = read_anycubic_zip(Cursor::new(out.into_inner())).unwrap();
+    assert_no_dark_layer(&file.layers, (PLACEHOLDER_GREY >> 4) * 17);
+    let quantised: Vec<Vec<u8>> = expected_images(&stack, &raster)
+        .into_iter()
+        .map(|image| image.into_iter().map(|grey| (grey >> 4) * 17).collect())
+        .collect();
+    assert_eq!(file.layers, quantised);
+    for index in DARK_LAYERS {
+        let layer = &file.scene_layers[index];
+        assert_eq!(layer.outline_count, 1, "layer {index}");
+        let [left, top, right, bottom] = layer.bounds_mm;
+        assert!(-5.0 < left && left < right && right < 5.0, "layer {index}");
+        assert!(
+            -3.75 < top && top < bottom && bottom < 3.75,
+            "layer {index}"
+        );
+    }
 }

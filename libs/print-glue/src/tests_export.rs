@@ -434,3 +434,84 @@ fn a_program_failure_keeps_the_projection_message() {
     );
     assert!(err.source().is_some());
 }
+
+/// `contours` with `extra` empty layers stacked on top, on the same grid.
+fn with_dark_top(contours: PlateContours, extra: u32) -> PlateContours {
+    let LayerSchedule::Uniform(grid) = *contours.schedule();
+    let schedule = LayerSchedule::uniform(
+        grid.layer_height().value(),
+        grid.first_layer_height().value(),
+        grid.total_layers().get() + extra,
+    )
+    .expect("a positive, non-empty schedule");
+    let mut layers = contours.stack().layers().to_vec();
+    layers.extend(
+        schedule
+            .iter_z()
+            .skip(layers.len())
+            .map(|z| ContourLayer::new(z, vec![])),
+    );
+    let stack = ContourStack::new(layers).expect("z is strictly increasing");
+    PlateContours::new(stack, schedule).expect("the counts pair")
+}
+
+#[test]
+fn empty_layers_on_top_are_left_out_of_the_printer_file() {
+    let scene = trio_as_roots();
+    let contours = contours_of(&scene, &resin_defaults());
+    let lit = contours.stack().layers().len();
+    let lit_tops: Vec<f64> = contours.schedule().iter_slab_tops().collect();
+
+    let job = export(
+        &scene,
+        with_dark_top(contours, 2),
+        &calibrated(),
+        &SceneOverrides::default(),
+    )
+    .expect("the export prepares");
+
+    assert_eq!(job.contours.stack().layers().len(), lit);
+    assert_eq!(job.contours.schedule().total_layers() as usize, lit);
+    let tops: Vec<f64> = job
+        .program
+        .layers
+        .iter()
+        .map(|layer| layer.slab_top_mm.value())
+        .collect();
+    assert_eq!(tops, lit_tops);
+}
+
+#[test]
+fn a_slice_whose_top_layer_is_lit_exports_every_layer() {
+    let scene = trio_as_roots();
+    let contours = contours_of(&scene, &resin_defaults());
+    let layers = contours.stack().layers().len();
+
+    let job = export(&scene, contours, &calibrated(), &SceneOverrides::default())
+        .expect("the export prepares");
+
+    assert_eq!(job.program.layers.len(), layers);
+}
+
+#[test]
+fn a_plate_that_lights_nothing_keeps_its_layers() {
+    let schedule = LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule");
+    let stack = ContourStack::new(
+        schedule
+            .iter_z()
+            .map(|z| ContourLayer::new(z, vec![]))
+            .collect(),
+    )
+    .expect("z is strictly increasing");
+    let contours = PlateContours::new(stack, schedule).expect("3 layers pair with 3");
+
+    let job = export(
+        &trio_as_roots(),
+        contours,
+        &calibrated(),
+        &SceneOverrides::default(),
+    )
+    .expect("the export prepares");
+
+    assert_eq!(job.program.layers.len(), 3);
+}

@@ -1083,6 +1083,7 @@ pub fn write_file(
     write_layer_images(
         stack,
         &program.raster,
+        pw0::DIMMEST_STORED,
         |_, runs| (pw0::encode(runs), LayerStats::of(runs, width)),
         |index, (image, stats): (Vec<u8>, LayerStats)| -> Result<(), WriteFailure> {
             entry(&mut zip, &layer_entry(index), &image)?;
@@ -1093,7 +1094,11 @@ pub fn write_file(
                 thickness_mm: round_height(thickness_mm),
                 area_mm2: (stats.covered_pixels as f32) * display.pixel_area_mm2(),
                 bounds: stats.bounds,
-                outline_count: contours.outline_count,
+                // A layer without contours is written with a placeholder
+                // pixel (#309): one object, as its image shows.
+                outline_count: contours
+                    .outline_count
+                    .max(u32::from(stats.bounds.is_some())),
                 largest_solid_mm2: contours.largest_solid_mm2 as f32,
             });
             Ok(())

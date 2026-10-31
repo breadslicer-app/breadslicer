@@ -731,6 +731,7 @@ pub fn write_file(
     write_layer_images(
         stack,
         &program.raster,
+        dimmest_stored,
         |_, runs| {
             let image = if bit_planes {
                 pws::encode(runs, anti_aliasing)
