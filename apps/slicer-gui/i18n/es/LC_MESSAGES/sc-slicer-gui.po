@@ -4307,3 +4307,23 @@ msgstr "Copiar detalles"
 msgctxt "InfoDialog"
 msgid "Copied"
 msgstr "Copiado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "MESH CHECK"
+msgstr "REVISIÓN DE MALLAS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "No problems"
+msgstr "Sin problemas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Repairing…"
+msgstr "Reparando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Repair meshes"
+msgstr "Reparar mallas"
