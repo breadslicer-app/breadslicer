@@ -79,6 +79,11 @@ struct Row {
     /// The kinds of fix the run applied, with how many records of each.
     fixes: String,
     repair_ms: f64,
+    /// The faces of the mesh after Repair.
+    faces_after: usize,
+    /// The start of the geometry fingerprint of the mesh after Repair, to
+    /// tell 2 runs that give the same mesh, bit for bit.
+    geometry_after: String,
     /// For a mesh that passes the gate only once the slicer separates its
     /// touching solids: its layers as opened against its layers after Repair.
     layers: Option<LayerComparison>,
@@ -265,6 +270,8 @@ fn measure_scene(corpus: &'static str, file: &str, scene: &mut Scene) -> Vec<Row
                     fixes: fix_label(&outcome.report.fixes),
                     // The run covers the whole scene; it is reported on each mesh.
                     repair_ms,
+                    faces_after: repaired.map_or(0, |m| m.faces.len()),
+                    geometry_after: repaired.map(geometry_label).unwrap_or_default(),
                     layers: opened
                         .zip(repaired)
                         .map(|(opened, repaired)| compare_layers(&opened, repaired)),
@@ -371,6 +378,15 @@ fn compare_layers(opened: &IndexedMesh, repaired: &IndexedMesh) -> LayerComparis
     }
 }
 
+/// Returns the first 8 bytes of the geometry fingerprint of `mesh`, in hex.
+fn geometry_label(mesh: &IndexedMesh) -> String {
+    let digest: [u8; 48] = mesh.geometry_fingerprint().into();
+    digest[..8].iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
+}
+
 fn read_list(list: &Path) -> Vec<PathBuf> {
     std::fs::read_to_string(list)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", list.display()))
@@ -407,15 +423,14 @@ fn print_rows(rows: &[Row]) {
 
 fn tsv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "corpus\tfile\tmesh\tfaces\tedge_manifold_before\tsliceable_before\tsliceable_after\t\
-         sliceable_after_stl\tend\tfixes\trepair_ms\tlayers\tbinary_pixels_differing\t\
-         aa_pixels_differing\tgate_ms\n",
+        "corpus	file	mesh	faces	edge_manifold_before	sliceable_before	sliceable_after	\n         sliceable_after_stl	end	fixes	repair_ms	faces_after	geometry_after	layers	\n         binary_pixels_differing	aa_pixels_differing	gate_ms
+",
     );
     for row in rows {
         let l = row.layers.unwrap_or_default();
         let _ = writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{}\t{}\t{}\t{:.1}",
+            "{}	{}	{}	{}	{}	{}	{}	{}	{}	{}	{:.1}	{}	{}	{}	{}	{}	{:.1}",
             row.corpus,
             row.file,
             row.mesh,
@@ -427,6 +442,8 @@ fn tsv(rows: &[Row]) -> String {
             row.end,
             row.fixes,
             row.repair_ms,
+            row.faces_after,
+            row.geometry_after,
             l.layers,
             l.binary_pixels,
             l.aa_pixels,

@@ -56,7 +56,7 @@ use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use crate::primitives::{IndexedTriangle, Vertex, VertexIndex};
+use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
 use super::super::half_edges;
 use super::super::mesh::IndexedMesh;
@@ -514,7 +514,7 @@ pub(crate) fn count_bad_edge_records(records: &[(u64, u32)]) -> usize {
 }
 
 /// The counts of 1 round, or of all kept rounds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Stats {
     opposite_faces: usize,
     duplicate_faces: usize,
@@ -527,6 +527,8 @@ struct Stats {
     holes: usize,
     fill_faces: usize,
     largest_hole: usize,
+    /// The area of the largest fill, in mm².
+    largest_hole_area: f64,
     shells_outward: usize,
     shell_faces_outward: usize,
     holes_left_open: usize,
@@ -557,6 +559,7 @@ impl Stats {
         self.holes += other.holes;
         self.fill_faces += other.fill_faces;
         self.largest_hole = self.largest_hole.max(other.largest_hole);
+        self.largest_hole_area = self.largest_hole_area.max(other.largest_hole_area);
         self.shells_outward += other.shells_outward;
         self.shell_faces_outward += other.shell_faces_outward;
     }
@@ -600,6 +603,7 @@ impl Stats {
                 holes: self.holes,
                 added_faces: self.fill_faces,
                 largest_hole_edges: self.largest_hole,
+                largest_hole_area_mm2: self.largest_hole_area,
             });
         }
         if self.shells_outward > 0 {
@@ -1270,10 +1274,149 @@ fn fill_holes(
             stats.holes += 1;
             stats.fill_faces += added.len() - before;
             stats.largest_hole = stats.largest_hole.max(hole.len());
+            let fill_area: f64 = added[before..]
+                .iter()
+                .map(|face| {
+                    let [a, b, c] = raw(face).map(|v| position(vertices, v));
+                    triangle_area(a, b, c)
+                })
+                .sum();
+            stats.largest_hole_area = stats.largest_hole_area.max(fill_area);
         }
     }
     drop(records);
     faces.extend(added);
+}
+
+/// What keeps a mesh from passing the edge check, edge by edge (see
+/// [`leftover_edges`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LeftoverEdges {
+    /// The closed loops of open edges: holes.
+    pub(crate) loops: Vec<OpenLoop>,
+    /// A face beside each open edge on no closed loop.
+    pub(crate) open: Vec<FaceIndex>,
+    /// A face on each edge with more than 2 faces, or whose 2 faces wind the
+    /// same way.
+    pub(crate) tangled: Vec<FaceIndex>,
+    /// The area of the whole mesh, in mm².
+    pub(crate) mesh_area: f64,
+}
+
+/// A closed loop of open edges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct OpenLoop {
+    /// A face beside the loop.
+    pub(crate) face: FaceIndex,
+    /// How many edges the loop has.
+    pub(crate) edges: usize,
+    /// The area a fan from its centroid covers, in mm²: what the hole step
+    /// weighs against its size cap.
+    pub(crate) area: f64,
+}
+
+/// Finds the edges of a mesh, whose face indices are in range, that break the
+/// edge check, and groups its open edges into holes as the hole step walks
+/// them. Analysis only: a report tells with it what a repair left.
+pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> LeftoverEdges {
+    let records = half_edges::sorted_half_edge_records(faces);
+    // Each open edge, in the direction its face walks it, with its face.
+    let mut boundary: Vec<(u32, u32, FaceIndex)> = Vec::new();
+    let mut tangled = Vec::new();
+    for run in records.chunk_by(|a, b| a.0 == b.0) {
+        match run {
+            [single] => {
+                let (lo, hi) = half_edges::key_vertices(single.0);
+                let face = half_edges::face_of(single.1);
+                if half_edges::is_reversed(single.1) {
+                    boundary.push((hi.get(), lo.get(), face));
+                } else {
+                    boundary.push((lo.get(), hi.get(), face));
+                }
+            }
+            [a, b] if half_edges::is_reversed(a.1) != half_edges::is_reversed(b.1) => {}
+            _ => tangled.push(half_edges::face_of(run[0].1)),
+        }
+    }
+    drop(records);
+    let mesh_area: f64 = faces
+        .iter()
+        .map(|face| {
+            let [a, b, c] = raw(face).map(|v| position(vertices, v));
+            triangle_area(a, b, c)
+        })
+        .sum();
+    boundary.sort_unstable_by_key(|&(from, to, _)| (from, to));
+    let edge_from = |from: u32, to: u32| {
+        let start = boundary.partition_point(|e| e.0 < from);
+        boundary[start..]
+            .iter()
+            .take_while(|e| e.0 == from)
+            .find(|e| e.1 == to)
+            .map(|e| e.2)
+    };
+    let mut used = vec![false; boundary.len()];
+    let mut loops = Vec::new();
+    let mut open = Vec::new();
+    for start in 0..boundary.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let (first, mut current, _) = boundary[start];
+        let mut walk = vec![first];
+        let mut walked = vec![start];
+        let mut closed = true;
+        while current != first {
+            let from = boundary.partition_point(|e| e.0 < current);
+            let next = (from..boundary.len())
+                .take_while(|&k| boundary[k].0 == current)
+                .find(|&k| !used[k]);
+            let Some(k) = next else {
+                closed = false;
+                break;
+            };
+            used[k] = true;
+            walk.push(current);
+            walked.push(k);
+            current = boundary[k].1;
+        }
+        if !closed {
+            open.extend(walked.iter().map(|&k| boundary[k].2));
+            continue;
+        }
+        for hole in split_into_simple_loops(&walk) {
+            let face = (hole.len() >= 3)
+                .then(|| edge_from(hole[0], hole[1]))
+                .flatten();
+            let Some(face) = face else {
+                // 2 open edges between the same 2 vertices: a slit, not a
+                // hole to fill.
+                for (i, &v) in hole.iter().enumerate() {
+                    if let Some(face) = edge_from(v, hole[(i + 1) % hole.len()]) {
+                        open.push(face);
+                    }
+                }
+                continue;
+            };
+            let points: Vec<[f64; 3]> = hole.iter().map(|&v| position(vertices, v)).collect();
+            let centroid = centroid(&points);
+            let area: f64 = (0..points.len())
+                .map(|i| triangle_area(points[i], points[(i + 1) % points.len()], centroid))
+                .sum();
+            loops.push(OpenLoop {
+                face,
+                edges: hole.len(),
+                area,
+            });
+        }
+    }
+    LeftoverEdges {
+        loops,
+        open,
+        tangled,
+        mesh_area,
+    }
 }
 
 fn centroid(points: &[[f64; 3]]) -> [f64; 3] {

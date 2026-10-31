@@ -1215,8 +1215,9 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("No fixes were applied"))
-            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
+            .stderr(predicate::str::contains(
+                "No problems found. Every mesh can be sliced.",
+            ));
         assert!(target.exists());
     }
 
@@ -1225,7 +1226,7 @@ mod fix_tests {
         // Default flags: every `--fix-*` flag is true. The flipped-winding
         // tetrahedron triggers the flipped-face fix path. The test pins that
         // the default configuration (no `--fix-*` flags on the command line)
-        // does produce a fix, surfaces it in the "Applied fixes" report, and
+        // does produce a fix, surfaces it in the repair report, and
         // writes the repaired mesh to the target.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("flipped.stla");
@@ -1243,11 +1244,11 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("Applied fixes"))
+            .stderr(predicate::str::contains("Repaired 1 mesh."))
             .stderr(predicate::str::contains(
-                "Flipped 1 faces to orient each piece",
+                "- Flipped 1 face that faced the wrong way",
             ))
-            .stderr(predicate::str::contains("Sliceable: yes (was no)"));
+            .stderr(predicate::str::contains("repaired, can be sliced now"));
         assert!(target.exists());
     }
 
@@ -1277,11 +1278,12 @@ mod fix_tests {
             .assert()
             .success()
             .stderr(predicate::str::contains(
-                "Resolved 1 edges shared by more than 2 faces (added 2 vertices)",
+                "- Separated parts that touched at 1 edge",
             ))
             // The slicer separates such cubes on its own copy, so they slice
             // before the repair too.
-            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
+            .stderr(predicate::str::contains(": repaired
+"));
 
         // STL merges vertices by position on load; the copies at the shared
         // edge moved 1 um into their cubes, so the cubes stay apart.
@@ -1297,8 +1299,9 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("No fixes were applied."))
-            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
+            .stderr(predicate::str::contains(
+                "No problems found. Every mesh can be sliced.",
+            ));
     }
 
     #[test]
@@ -1338,9 +1341,9 @@ mod fix_tests {
             .assert()
             .success()
             .stderr(predicate::str::contains(
-                "warning: 1 hole was left open: it is too large to fill on its own",
+                "Left: open hole of 1.00 mm² (100 % of the surface), too large to close on its own",
             ))
-            .stderr(predicate::str::contains("Sliceable: no (was no)"));
+            .stderr(predicate::str::contains("still can't be sliced"));
     }
 
     // The bits of the normals the `tetrahedron_declared_normals` fixtures
@@ -1383,7 +1386,7 @@ mod fix_tests {
     #[test]
     fn fix_without_a_change_writes_the_declared_normals_back() {
         let normals =
-            fix_to_binary_stl_normals("tetrahedron_declared_normals.stla", "No fixes were applied");
+            fix_to_binary_stl_normals("tetrahedron_declared_normals.stla", "No problems found");
         assert_eq!(normals, DECLARED);
     }
 
@@ -1391,7 +1394,7 @@ mod fix_tests {
     fn fix_that_repairs_a_face_writes_the_normals_of_the_geometry() {
         let normals = fix_to_binary_stl_normals(
             "tetrahedron_declared_normals_flipped.stla",
-            "Flipped 1 faces to orient each piece",
+            "Flipped 1 face that faced the wrong way",
         );
         // The outward normals of the 4 facets, each component +-1 / sqrt(3).
         let s = 0.577_350_26_f32;
@@ -1663,9 +1666,9 @@ mod fix_partial_repair_tests {
             ])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("Applied fixes"))
+            .stderr(predicate::str::contains("Repaired 1 mesh."))
             .stderr(predicate::str::contains(
-                "Flipped 1 faces to orient each piece",
+                "- Flipped 1 face that faced the wrong way",
             ))
             .stderr(predicate::str::contains(
                 "warning (mesh 2 of 2): Unable to fix mesh, there are invalid faces and their pass is off.",
@@ -1722,8 +1725,9 @@ mod fix_partial_repair_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("warning: This mesh has no faces"))
-            .stderr(predicate::str::contains("No fixes were applied."))
+            .stderr(predicate::str::contains(
+                "Nothing to repair: no mesh has faces.",
+            ))
             .stderr(predicate::str::contains("flipped").not());
     }
 
@@ -1754,7 +1758,7 @@ mod fix_partial_repair_tests {
             .stderr(predicate::str::contains(
                 "warning: Unable to fix mesh, there are invalid faces and their pass is off.",
             ))
-            .stderr(predicate::str::contains("No fixes were applied."))
+            .stderr(predicate::str::contains("1 mesh still can't be sliced"))
             .stderr(predicate::str::contains(
                 "1 of 1 meshes could not be fully repaired",
             ));
@@ -2283,12 +2287,12 @@ mod repair_pipeline_trio_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("Applied fixes (3):"))
+            .stderr(predicate::str::contains("Repaired 3 meshes."))
             .stderr(predicate::str::contains(
-                "Flipped 2 faces to orient each piece",
+                "- Flipped 2 faces that faced the wrong way",
             ))
             .stderr(predicate::str::contains(
-                "Flipped 3 faces to orient each piece",
+                "- Flipped 3 faces that faced the wrong way",
             ));
 
         Command::cargo_bin(BIN)
@@ -2483,6 +2487,7 @@ mod remaining_zero_area_tests {
     use super::*;
 
     const WARNING: &str = "warning: 1 face with zero area remains";
+    const NOTE: &str = "Kept 1 zero-area face; it does not affect slicing.";
 
     /// Writes each flat-tetrahedron variant to its own ASCII STL file in `dir`.
     fn write_variants(dir: &Path) -> Vec<PathBuf> {
@@ -2516,7 +2521,7 @@ mod remaining_zero_area_tests {
                 ])
                 .assert()
                 .success()
-                .stderr(predicate::str::contains(WARNING));
+                .stderr(predicate::str::contains(NOTE));
         }
     }
 
@@ -2556,6 +2561,7 @@ mod fix_collinear_faces_tests {
 
     const ZERO_AREA: &str = "is degenerate: zero area";
     const REMOVAL: &str = "Removed collinear face";
+    const FIX_REMOVAL: &str = "zero-area sliver";
 
     fn diagnose(source: &Path) -> assert_cmd::assert::Assert {
         Command::cargo_bin(BIN)
@@ -2595,7 +2601,7 @@ mod fix_collinear_faces_tests {
         write_with_zero_area_faces(&source, &unit_cube_with_collinear_faces());
         fix(&source, &target, &["--fix-collinear-faces=true"])
             .success()
-            .stderr(predicate::str::contains(REMOVAL));
+            .stderr(predicate::str::contains(FIX_REMOVAL));
         diagnose(&target).success();
     }
 
@@ -2607,7 +2613,7 @@ mod fix_collinear_faces_tests {
         write_with_zero_area_faces(&source, &unit_cube_with_collinear_faces());
         fix(&source, &target, &["--fix-collinear-faces=false"])
             .success()
-            .stderr(predicate::str::contains(REMOVAL).not());
+            .stderr(predicate::str::contains(FIX_REMOVAL).not());
         diagnose(&target)
             .failure()
             .stderr(predicate::str::contains(ZERO_AREA));
@@ -2640,7 +2646,7 @@ mod fix_collinear_faces_tests {
             write_with_zero_area_faces(&source, &mesh);
             fix(&source, &target, &[])
                 .success()
-                .stderr(predicate::str::contains(REMOVAL));
+                .stderr(predicate::str::contains(FIX_REMOVAL));
             diagnose(&target).success();
         }
     }

@@ -159,10 +159,12 @@ export component MainWindow inherits Window {
     // still be edited, not in Slice and Export, which show a held result.
     out property <bool> history-allowed: root.workspace-section != WorkspaceSection.Slice
         && root.workspace-section != WorkspaceSection.Export;
-    // True when a mesh of the scene is not watertight: the Transform
-    // inspector then leads with the repair card. Pushed by Rust on load and
-    // after a repair.
+    // True when a mesh of the scene does not slice: the Transform inspector
+    // then leads with the repair card, which says which objects and why.
+    // Pushed by Rust on load, after a repair, and as the scene changes.
     in property <bool> mesh-needs-repair: false;
+    in property <string> mesh-check-note: "";
+    in property <string> mesh-check-text: "";
     // A one-line summary of the last support run, for the Supports tab.
     in property <string> supports-last-run: "";
     // A short note of what the last action did, shown in the status bar in
@@ -1554,6 +1556,8 @@ export component MainWindow inherits Window {
                             objects: root.object-list;
                             selected-index: root.selected-object-index;
                             needs-repair: root.mesh-needs-repair;
+                            check-note: root.mesh-check-note;
+                            check-text: root.mesh-check-text;
                             repairing: root.repairing-in-progress;
                             repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
                                 && !root.repairing-in-progress;

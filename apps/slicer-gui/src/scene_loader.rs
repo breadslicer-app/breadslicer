@@ -59,7 +59,7 @@ use crate::import_notes::{ImportNotes, Notes};
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
-use crate::mesh_health::MeshHealth;
+use crate::mesh_health::MeshVerdicts;
 use crate::mesh_render::{
     AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
 };
@@ -109,10 +109,10 @@ pub(crate) struct PreparedScene {
     /// document at install time so callers can derive default export filenames,
     /// surface the source in window titles, etc.
     pub source_path: PathBuf,
-    /// Mesh-health verdict computed on the worker (faces + manifold per leaf).
-    /// Consumed by the load-finished handler: anything but problem-free leads
-    /// the Transform tab with the repair card.
-    pub mesh_health: MeshHealth,
+    /// Whether each stored mesh slices, checked on the worker. Consumed by
+    /// the load-finished handler: a mesh that does not slice leads the
+    /// Transform tab with the repair card.
+    pub mesh_verdicts: MeshVerdicts,
     /// The supports a `.bread` kept as data, rebuilt on the worker: the
     /// editable session, whose mesh is already in the scene, and why any
     /// could not be rebuilt.

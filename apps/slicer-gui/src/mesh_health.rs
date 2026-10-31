@@ -3,49 +3,45 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Mesh-health status captured at load time. A scene whose meshes are all
-//! closed and edge-manifold is safe to edit and slice; anything with detected
-//! problems (or not yet checked) opens Transform with its repair card in
-//! front.
+//! Mesh-health verdicts captured at load time: whether each stored mesh
+//! passes the slicer's gate. The load worker checks every mesh so the UI
+//! thread receives ready verdicts; the Transform tab's MESH CHECK card
+//! (`mesh_check`) remembers them and leads the tab with the repair card when
+//! a mesh does not slice.
 
+use std::sync::Arc;
+
+use sc_mesh_core::IndexedMesh;
 use sc_scene::Scene;
 
-/// Whether a loaded scene's meshes are known to be sound.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum MeshHealth {
-    /// Not checked yet: no scene loaded, or the pre-validation state.
-    #[default]
-    Unknown,
-    /// Every leaf is closed and edge-manifold.
-    ProblemFree,
-    /// At least 1 leaf's mesh is not closed and edge-manifold.
-    HasProblems,
+use crate::mesh_check::{mesh_slices, target_arc};
+
+/// Each stored mesh of a scene, with whether it slices.
+pub(crate) type MeshVerdicts = Vec<(Arc<IndexedMesh>, bool)>;
+
+/// Checks every stored mesh of `scene` (vertices, faces and the edge check).
+/// A mesh without faces counts as sound: it is the support set of a project,
+/// kept as data.
+pub(crate) fn scene_mesh_verdicts(scene: &Scene) -> MeshVerdicts {
+    scene
+        .mesh_targets()
+        .into_iter()
+        .filter_map(|target| target_arc(scene, target))
+        .map(|mesh| {
+            let sliceable = mesh_slices(&mesh);
+            (mesh, sliceable)
+        })
+        .collect()
 }
 
-/// Classifies a scene by validating every mesh (face validation and the
-/// edge-manifold check). A scene with no problematic leaves is `ProblemFree`; 1
-/// or more defective leaves make it `HasProblems`. An empty scene has no
-/// problematic leaves and so reports `ProblemFree`.
-pub(crate) fn scene_mesh_health(scene: &Scene) -> MeshHealth {
-    if scene.non_edge_manifold_leaves().is_empty() {
-        MeshHealth::ProblemFree
-    } else {
-        MeshHealth::HasProblems
-    }
-}
-
-/// Whether a freshly loaded scene of this health should lead the Transform
-/// inspector with the repair card: anything but a confirmed problem-free
-/// scene.
-pub(crate) fn needs_repair(health: MeshHealth) -> bool {
-    !matches!(health, MeshHealth::ProblemFree)
+/// Whether every mesh of `scene` slices.
+#[cfg(test)]
+pub(crate) fn scene_slices(scene: &Scene) -> bool {
+    scene_mesh_verdicts(scene).iter().all(|(_, ok)| *ok)
 }
 
 #[cfg(test)]
 mod mesh_health_tests {
-    use std::sync::Arc;
-
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
     use sc_mesh_core::transform::Transform3D;
     use sc_scene::{LeafPayload, NodeId};
@@ -103,33 +99,51 @@ mod mesh_health_tests {
     }
 
     #[test]
-    fn a_closed_manifold_scene_is_problem_free() {
+    fn a_closed_manifold_scene_slices() {
         let (mut graph, root) = scene_with_root();
         add_inline_leaf(&mut graph, root, tetrahedron_mesh());
-        assert_eq!(scene_mesh_health(&graph), MeshHealth::ProblemFree);
+        assert!(scene_slices(&graph));
     }
 
     #[test]
-    fn a_scene_with_an_open_mesh_has_problems() {
+    fn a_scene_with_an_open_mesh_does_not_slice() {
         let (mut graph, root) = scene_with_root();
+        add_inline_leaf(&mut graph, root, tetrahedron_mesh());
         add_inline_leaf(&mut graph, root, open_triangle_mesh());
-        assert_eq!(scene_mesh_health(&graph), MeshHealth::HasProblems);
+        let verdicts = scene_mesh_verdicts(&graph);
+        assert_eq!(
+            verdicts.iter().map(|(_, ok)| *ok).collect::<Vec<_>>(),
+            [true, false]
+        );
+        assert!(!scene_slices(&graph));
     }
 
     #[test]
-    fn an_empty_scene_is_problem_free() {
-        assert_eq!(scene_mesh_health(&Scene::new()), MeshHealth::ProblemFree);
+    fn a_mesh_without_faces_is_no_problem() {
+        let (mut graph, root) = scene_with_root();
+        add_inline_leaf(
+            &mut graph,
+            root,
+            IndexedMesh {
+                meta: None,
+                vertices: Vec::new(),
+                faces: Vec::new(),
+            },
+        );
+        assert!(scene_slices(&graph));
     }
 
     #[test]
-    fn only_a_problem_free_scene_skips_the_repair_card() {
-        assert!(!needs_repair(MeshHealth::ProblemFree));
-        assert!(needs_repair(MeshHealth::HasProblems));
-        assert!(needs_repair(MeshHealth::Unknown));
+    fn an_empty_scene_slices() {
+        assert!(scene_slices(&Scene::new()));
     }
 
     #[test]
-    fn default_health_is_unknown() {
-        assert_eq!(MeshHealth::default(), MeshHealth::Unknown);
+    fn a_mesh_with_a_nan_vertex_does_not_slice() {
+        let (mut graph, root) = scene_with_root();
+        let mut mesh = tetrahedron_mesh();
+        mesh.vertices[0] = Vertex::new([f32::NAN, 1.0, 1.0]);
+        add_inline_leaf(&mut graph, root, mesh);
+        assert!(!scene_slices(&graph));
     }
 }

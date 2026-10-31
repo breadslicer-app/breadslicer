@@ -14,6 +14,7 @@ mod mesh_loader;
 mod mesh_writer;
 pub(crate) mod orient;
 pub(crate) mod profiles;
+mod repair_report;
 pub(crate) mod review;
 pub(crate) mod slice;
 pub(crate) mod support_gen;

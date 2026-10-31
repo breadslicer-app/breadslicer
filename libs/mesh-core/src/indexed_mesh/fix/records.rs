@@ -56,11 +56,13 @@ pub enum MeshFix {
     /// Faces were flipped so that each connected piece winds 1 way.
     ReorientedFaces { faces: usize },
     /// Holes were filled with new faces. `largest_hole_edges` is the boundary
-    /// length, in edges, of the largest one.
+    /// length, in edges, of the longest one; `largest_hole_area_mm2` the area
+    /// of the largest fill.
     FilledHoles {
         holes: usize,
         added_faces: usize,
         largest_hole_edges: usize,
+        largest_hole_area_mm2: f64,
     },
     /// Closed shells that were inside out, and not a cavity of another shell,
     /// were turned outward, so the slicer no longer takes them for holes.

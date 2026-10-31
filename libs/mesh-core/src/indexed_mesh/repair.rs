@@ -10,6 +10,7 @@
 //! repairs meshes the same way.
 
 use std::fmt;
+use std::time::Instant;
 
 use super::fix::collinear_faces::CollinearFaceRemovals;
 use super::fix::records::MeshFix;
@@ -18,6 +19,7 @@ use super::fix::watertight::{
 };
 use super::half_edges;
 use super::mesh::IndexedMesh;
+use super::repair_report::{RepairStage, StageTime};
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::ZeroAreaFace;
 
@@ -211,56 +213,46 @@ pub fn repaired_copy(
     mesh: &IndexedMesh,
     passes: RepairPasses,
 ) -> (MeshRepairReport, Option<IndexedMesh>) {
-    match assess(mesh, passes, false) {
-        RepairAssessment::Clean(state) => (
-            MeshRepairReport {
-                fixes: Vec::new(),
-                end: RepairEnd::Completed(state),
-            },
-            None,
-        ),
-        RepairAssessment::Refused(refusal) => (
-            MeshRepairReport {
-                fixes: Vec::new(),
-                end: RepairEnd::Refused(refusal),
-            },
-            None,
-        ),
-        RepairAssessment::NoFaces => (
-            MeshRepairReport {
-                fixes: Vec::new(),
-                end: RepairEnd::NoFaces,
-            },
-            None,
-        ),
-        RepairAssessment::Work => {
-            let mut copy = mesh.clone();
-            let report = copy.repair(passes);
-            let changed = !report.fixes.is_empty();
-            (report, changed.then_some(copy))
-        }
-    }
+    let (report, repaired, _) = super::repair_report::repaired_copy_with_details(mesh, passes);
+    (report, repaired)
 }
 
 /// [`assess_repair`]; with `plan_pass` off, a mesh the watertight pass
 /// would look at assesses as [`RepairAssessment::Work`] without planning it.
 fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAssessment {
+    assess_with_verdict(mesh, passes, plan_pass).0
+}
+
+/// [`assess`], with whether `mesh` passes the slicer's gate
+/// ([`IndexedMesh::is_sliceable`]) as it is, which the checks of the
+/// assessment tell on the way.
+pub(crate) fn assess_with_verdict(
+    mesh: &IndexedMesh,
+    passes: RepairPasses,
+    plan_pass: bool,
+) -> (RepairAssessment, bool) {
     // Mirrors the gates of `run_repair_passes`, orientation planning included:
     // a change to either must go to both.
     if mesh.faces.is_empty() {
-        return RepairAssessment::NoFaces;
+        return (RepairAssessment::NoFaces, mesh.is_sliceable());
     }
     if let Err(errors) = mesh.validate_vertices() {
-        return RepairAssessment::Refused(RepairRefusal::InvalidVertices(errors));
+        return (
+            RepairAssessment::Refused(RepairRefusal::InvalidVertices(errors)),
+            false,
+        );
     }
     let witness = match mesh.validated_faces() {
         Ok(witness) => witness,
         Err(face_errors) => {
             if !passes.zero_length_edges {
-                return RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(face_errors));
+                return (
+                    RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(face_errors)),
+                    false,
+                );
             }
             // The invalid-face pass is enabled: faces will be removed.
-            return RepairAssessment::Work;
+            return (RepairAssessment::Work, false);
         }
     };
     let face_areas = witness.validate_face_areas();
@@ -268,21 +260,24 @@ fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAs
     // mesh has faces, so no bad edge means it is edge-manifold.
     let records = half_edges::sorted_half_edge_records(&mesh.faces);
     let edge_manifold = count_bad_edge_records(&records) == 0;
+    // The slicer also takes a mesh whose only bad edges join solids that
+    // touch; only a mesh with bad edges pays for that check.
+    let sliceable = || edge_manifold || mesh.is_sliceable();
     let mut holes_left_open = 0;
     if passes.watertight() && !edge_manifold {
         if !plan_pass {
-            return RepairAssessment::Work;
+            return (RepairAssessment::Work, sliceable());
         }
         let outcome = plan_watertight(&mesh.vertices, &mesh.faces, &passes.watertight_options());
         if outcome.repaired.is_some() {
-            return RepairAssessment::Work;
+            return (RepairAssessment::Work, sliceable());
         }
         holes_left_open = outcome.holes_left_open;
     }
     if passes.flipped_faces
         && plan_orientation_with_records(&mesh.vertices, &mesh.faces, records).is_some()
     {
-        return RepairAssessment::Work;
+        return (RepairAssessment::Work, sliceable());
     }
     // Here the orientation pass changes nothing, so the run gives the
     // collinear-face pass this same mesh.
@@ -293,13 +288,16 @@ fn assess(mesh: &IndexedMesh, passes: RepairPasses, plan_pass: bool) -> RepairAs
         && let Ok(manifold) = witness.validated_edge_manifold()
         && CollinearFaceRemovals::new(&manifold).next().is_some()
     {
-        return RepairAssessment::Work;
+        return (RepairAssessment::Work, sliceable());
     }
-    RepairAssessment::Clean(state_after_repair(
-        edge_manifold,
-        face_areas,
-        holes_left_open,
-    ))
+    (
+        RepairAssessment::Clean(state_after_repair(
+            edge_manifold,
+            face_areas,
+            holes_left_open,
+        )),
+        sliceable(),
+    )
 }
 
 fn state_after_repair(
@@ -347,7 +345,17 @@ impl IndexedMesh {
     /// Every path is total: no panic, and at every observable point the mesh is
     /// at least as valid as it was before the call.
     pub fn repair(&mut self, passes: RepairPasses) -> MeshRepairReport {
-        let (fixes, end) = self.run_repair_passes(passes);
+        self.repair_timed(passes, &mut Vec::new())
+    }
+
+    /// [`Self::repair`], adding the time of each stage it goes through to
+    /// `stages`.
+    pub(crate) fn repair_timed(
+        &mut self,
+        passes: RepairPasses,
+        stages: &mut Vec<StageTime>,
+    ) -> MeshRepairReport {
+        let (fixes, end) = self.run_repair_passes(passes, stages);
         if !fixes.is_empty()
             && let Some(meta) = &mut self.meta
         {
@@ -356,7 +364,11 @@ impl IndexedMesh {
         MeshRepairReport { fixes, end }
     }
 
-    fn run_repair_passes(&mut self, passes: RepairPasses) -> (Vec<MeshFix>, RepairEnd) {
+    fn run_repair_passes(
+        &mut self,
+        passes: RepairPasses,
+        stages: &mut Vec<StageTime>,
+    ) -> (Vec<MeshFix>, RepairEnd) {
         if self.faces.is_empty() {
             return (Vec::new(), RepairEnd::NoFaces);
         }
@@ -381,7 +393,13 @@ impl IndexedMesh {
                         RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(face_errors)),
                     );
                 }
+                let start = Instant::now();
                 let (face_fixes, witness) = self.fix_invalid_faces_into_validated(&face_errors);
+                stages.push(StageTime::since(
+                    RepairStage::InvalidFaces,
+                    start,
+                    !face_fixes.is_empty(),
+                ));
                 fixes.extend(face_fixes);
                 match witness {
                     Ok(w) => w,
@@ -400,14 +418,27 @@ impl IndexedMesh {
 
         let mut holes_left_open = 0;
         if passes.watertight() && validated.validate_edge_manifold().is_err() {
+            let start = Instant::now();
             let (watertight_fixes, left_open) =
                 validated.fix_watertight(&passes.watertight_options());
+            stages.push(StageTime::since(
+                RepairStage::Watertight,
+                start,
+                !watertight_fixes.is_empty(),
+            ));
             fixes.extend(watertight_fixes);
             holes_left_open = left_open;
         }
 
         if passes.flipped_faces {
-            fixes.extend(validated.fix_orientation());
+            let start = Instant::now();
+            let orientation_fixes = validated.fix_orientation();
+            stages.push(StageTime::since(
+                RepairStage::Orientation,
+                start,
+                !orientation_fixes.is_empty(),
+            ));
+            fixes.extend(orientation_fixes);
         }
 
         // The face-area test only skips the mint for a mesh without zero-area
@@ -417,7 +448,14 @@ impl IndexedMesh {
             && validated.validate_face_areas().is_err()
             && let Ok(manifold) = validated.validated_edge_manifold_mut()
         {
-            fixes.extend(manifold.fix_collinear_faces());
+            let start = Instant::now();
+            let collinear_fixes = manifold.fix_collinear_faces();
+            stages.push(StageTime::since(
+                RepairStage::CollinearFaces,
+                start,
+                !collinear_fixes.is_empty(),
+            ));
+            fixes.extend(collinear_fixes);
         }
 
         let state = state_after_repair(
