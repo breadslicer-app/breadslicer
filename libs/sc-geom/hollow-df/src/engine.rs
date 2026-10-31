@@ -357,7 +357,7 @@ pub struct Session {
     wall: Mutex<Option<Arc<WallDistances>>>,
     /// The cavity built last, and the settings it was built for: a
     /// preview's, which the apply that follows it reuses.
-    cavity: Mutex<Option<(HollowSettings, Arc<ExactCavity>)>>,
+    cavity: Mutex<Option<(HollowSettings, Arc<BuiltCavity>)>>,
     /// The source as a result carries it, prepared on the first apply.
     shell: OnceLock<SourceShell>,
 }
@@ -372,6 +372,43 @@ impl Clone for Session {
             cavity: Mutex::new(self.cached_cavity()),
             shell: self.shell.clone(),
         }
+    }
+}
+
+/// A cavity as the session keeps it, with what drains are measured
+/// against, built on the first drain measured (a hover, an apply) and kept
+/// with it: every drain on this cavity reads the same mesh and BVH.
+#[derive(Debug)]
+struct BuiltCavity {
+    exact: ExactCavity,
+    /// The wall and the infill beams as one mesh; only with infill.
+    merged: OnceLock<IndexedMesh>,
+    bvh: OnceLock<Bvh>,
+}
+
+impl BuiltCavity {
+    fn new(exact: ExactCavity) -> Self {
+        Self {
+            exact,
+            merged: OnceLock::new(),
+            bvh: OnceLock::new(),
+        }
+    }
+
+    /// The cavity as the hollow carries it: the wall, and the infill beams.
+    fn surface(&self) -> &IndexedMesh {
+        match &self.exact.infill {
+            Some(infill) => self
+                .merged
+                .get_or_init(|| merge_meshes(&self.exact.wall, infill)),
+            None => &self.exact.wall,
+        }
+    }
+
+    /// [`BuiltCavity::surface`] and its BVH, for drains.
+    fn drain_target(&self) -> (&IndexedMesh, &Bvh) {
+        let surface = self.surface();
+        (surface, self.bvh.get_or_init(|| Bvh::build(surface)))
     }
 }
 
@@ -471,7 +508,7 @@ impl Session {
         })
     }
 
-    fn cached_cavity(&self) -> Option<(HollowSettings, Arc<ExactCavity>)> {
+    fn cached_cavity(&self) -> Option<(HollowSettings, Arc<BuiltCavity>)> {
         self.cavity
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -485,7 +522,7 @@ impl Session {
         &self,
         settings: &HollowSettings,
         ctl: Control<'_>,
-    ) -> Result<Arc<ExactCavity>, Cancelled> {
+    ) -> Result<Arc<BuiltCavity>, Cancelled> {
         if let Some((built_for, cavity)) = self.cached_cavity()
             && built_for == *settings
         {
@@ -496,7 +533,9 @@ impl Session {
         }
         let options = self.options(settings);
         let dist = self.wall_distances(settings.wall_thickness_mm, ctl)?;
-        let cavity = Arc::new(self.inner.exact_cavity(&options, &dist, ctl)?);
+        let cavity = Arc::new(BuiltCavity::new(
+            self.inner.exact_cavity(&options, &dist, ctl)?,
+        ));
         *self.cavity.lock().unwrap_or_else(PoisonError::into_inner) =
             Some((settings.clone(), cavity.clone()));
         Ok(cavity)
@@ -537,6 +576,47 @@ impl Session {
             }
         };
         Ok(measured.clamped(band))
+    }
+
+    /// What `hole` would do on the hollow `settings` make, measured exactly
+    /// as [`Session::apply`] measures it before cutting: the same check on
+    /// the same cavity, so a report that does not reach the cavity is a
+    /// drain apply leaves out, and one that does is a drain it cuts. Cheap
+    /// enough to ask per frame (two rays through kept BVHs; the first ask
+    /// on a cavity builds its BVH).
+    ///
+    /// `None` while this session holds no cavity for `settings` (a preview
+    /// or an apply with them builds it): this never builds one.
+    pub fn drain_report(&self, settings: &HollowSettings, hole: &DrainHole) -> Option<DrainReport> {
+        let (built_for, cavity) = self.cached_cavity()?;
+        (built_for == *settings).then(|| self.measure_drain(settings, &cavity, hole))
+    }
+
+    /// Builds what [`Session::drain_report`] reads for the cavity of
+    /// `settings`, when this session holds it, so the first ask is as quick
+    /// as the next ones. Returns whether that cavity is here.
+    pub fn prepare_drain_reports(&self, settings: &HollowSettings) -> bool {
+        match self.cached_cavity() {
+            Some((built_for, cavity)) if built_for == *settings => {
+                cavity.drain_target();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn measure_drain(
+        &self,
+        settings: &HollowSettings,
+        cavity: &BuiltCavity,
+        hole: &DrainHole,
+    ) -> DrainReport {
+        drain_report_on(
+            hole,
+            settings.wall_thickness_mm,
+            (self.source_mesh(), self.inner.source_bvh()),
+            cavity.drain_target(),
+        )
     }
 
     pub fn grid(&self) -> &GridInfo {
@@ -654,7 +734,8 @@ impl Session {
         settings: &HollowSettings,
         ctl: Control<'_>,
     ) -> Result<HollowPreview, HollowError> {
-        let cavity = self.cavity(settings, ctl)?;
+        let built = self.cavity(settings, ctl)?;
+        let cavity = &built.exact;
         let stats = self.stats(
             settings,
             cavity.removed_voxels,
@@ -679,12 +760,10 @@ impl Session {
         drains: &[DrainHole],
         ctl: Control<'_>,
     ) -> Result<HollowApplied, HollowError> {
-        let cavity = self.cavity(settings, ctl)?;
+        let built = self.cavity(settings, ctl)?;
+        let cavity = &built.exact;
         ctl.stage(Stage::Stabilize)?;
-        let added = match &cavity.infill {
-            Some(infill) => merge_meshes(&cavity.wall, infill),
-            None => cavity.wall.clone(),
-        };
+        let added = built.surface().clone();
         if !cavity.closed {
             return Err(HollowError::NotClosed(edge_manifold_defects(&added)));
         }
@@ -701,21 +780,13 @@ impl Session {
         let mut reports = Vec::with_capacity(drains.len());
         if !drains.is_empty() {
             ctl.stage(Stage::Drains)?;
-            let source = self.source_mesh();
-            let source_bvh = self.inner.source_bvh();
-            let cavity_bvh = Bvh::build(&added);
             // Every drain is measured before any is cut, so drains do not
-            // depend on their order.
+            // depend on their order; as `Session::drain_report` measures them.
             let mut cutters = Vec::with_capacity(drains.len());
             for hole in drains {
                 ctl.check()?;
-                let (cutter, report) = drain_cutter(
-                    hole,
-                    settings.wall_thickness_mm,
-                    (source, source_bvh),
-                    (&added, &cavity_bvh),
-                );
-                cutters.push(report.reaches_cavity.then_some(cutter));
+                let report = self.measure_drain(settings, &built, hole);
+                cutters.push(report.reaches_cavity.then(|| drain_cutter(hole, &report)));
                 reports.push(report);
             }
             for (index, cutter) in cutters.iter().enumerate() {
@@ -751,22 +822,31 @@ impl Session {
     }
 }
 
-/// The prism a drain cuts, and what it will do. `source` (the model before
-/// hollowing) and `cavity` (the cavity wall) say where the axis opens into
-/// the cavity, if it does.
-fn drain_cutter(
-    hole: &DrainHole,
-    wall_thickness_mm: f32,
-    source: (&IndexedMesh, &Bvh),
-    cavity: (&IndexedMesh, &Bvh),
-) -> (ConvexCutter, DrainReport) {
+/// A drain's axis, normalized (straight down when it has no direction), and
+/// its center.
+fn drain_axis(hole: &DrainHole) -> (Vec3, Vec3) {
     let axis = vec3_normalize(Vec3::new(
         hole.direction[0],
         hole.direction[1],
         hole.direction[2],
     ))
     .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
-    let center = Vec3::new(hole.center[0], hole.center[1], hole.center[2]);
+    (
+        Vec3::new(hole.center[0], hole.center[1], hole.center[2]),
+        axis,
+    )
+}
+
+/// What a drain will do: how deep it goes and whether it opens into the
+/// cavity. `source` (the model before hollowing) and `cavity` (the cavity
+/// wall) say where the axis opens into the cavity, if it does.
+fn drain_report_on(
+    hole: &DrainHole,
+    wall_thickness_mm: f32,
+    source: (&IndexedMesh, &Bvh),
+    cavity: (&IndexedMesh, &Bvh),
+) -> DrainReport {
+    let (center, axis) = drain_axis(hole);
     let opening = drain_opening(source, cavity, center, axis);
     let (depth_mm, auto_depth) = match hole.depth {
         DrainDepth::Mm(mm) => (mm.clamp(0.01, DRAIN_MAX_DEPTH_MM), false),
@@ -782,20 +862,38 @@ fn drain_cutter(
         }
     };
     let reaches_cavity = opening.is_some_and(|o| o.cavity_mm < depth_mm);
-    let radius_x = hole.radius_mm.max(0.02);
-    let radius_y = hole.radius_y_mm.unwrap_or(hole.radius_mm).max(0.02);
+    let (radius_x, radius_y) = drain_radii(hole);
     let segments =
         ((std::f32::consts::TAU * radius_x.max(radius_y) / 0.7).ceil() as usize).clamp(16, 80);
-    let origin = center.sub(axis.scale(hole.outside_mm.max(0.0)));
-    let length = depth_mm + hole.outside_mm.max(0.0);
+    DrainReport {
+        depth_mm,
+        auto_depth,
+        reaches_cavity,
+        segments,
+    }
+}
+
+fn drain_radii(hole: &DrainHole) -> (f32, f32) {
     (
-        ConvexCutter::prism(origin, axis, radius_x, radius_y, length, segments, 0.0),
-        DrainReport {
-            depth_mm,
-            auto_depth,
-            reaches_cavity,
-            segments,
-        },
+        hole.radius_mm.max(0.02),
+        hole.radius_y_mm.unwrap_or(hole.radius_mm).max(0.02),
+    )
+}
+
+/// The prism `hole` cuts, as `report` measured it.
+fn drain_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
+    let (center, axis) = drain_axis(hole);
+    let (radius_x, radius_y) = drain_radii(hole);
+    let origin = center.sub(axis.scale(hole.outside_mm.max(0.0)));
+    let length = report.depth_mm + hole.outside_mm.max(0.0);
+    ConvexCutter::prism(
+        origin,
+        axis,
+        radius_x,
+        radius_y,
+        length,
+        report.segments,
+        0.0,
     )
 }
 

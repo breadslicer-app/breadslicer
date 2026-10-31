@@ -721,3 +721,168 @@ fn a_drain_where_the_preview_shows_cavity_is_drilled() {
     assert!(is_edge_manifold(&applied.mesh));
     assert_eq!(face_shells(&applied.mesh).1, 1, "the channel drains out");
 }
+
+/// Drains on every side of the finned block, apart so their cuts never
+/// overlap: on the fin (both faces, up to just under its tip, and the tip)
+/// and on the body.
+fn drains_around_the_fin() -> Vec<DrainHole> {
+    let mut drains = Vec::new();
+    for y in [5.0, 15.0, 25.0] {
+        for z in [33.0, 37.0, 41.0, 45.0, 48.8] {
+            drains.push(DrainHole::new([21.5, y, z], [-1.0, 0.0, 0.0], 0.5));
+            drains.push(DrainHole::new([18.5, y + 2.0, z], [1.0, 0.0, 0.0], 0.5));
+        }
+        // Off the diagonals of the block's two-triangle faces.
+        for z in [7.0, 13.0, 22.0] {
+            drains.push(DrainHole::new([0.0, y, z], [1.0, 0.0, 0.0], 1.5));
+            drains.push(DrainHole::new([40.0, y, z], [-1.0, 0.0, 0.0], 1.5));
+        }
+        for x in [10.0, 30.0] {
+            drains.push(DrainHole::new([x, y, 0.0], [0.0, 0.0, 1.0], 1.5));
+            drains.push(DrainHole::new([x, y, 30.0], [0.0, 0.0, -1.0], 1.5));
+        }
+    }
+    for y in [10.0, 20.0] {
+        drains.push(DrainHole::new([20.0, y, 50.0], [0.0, 0.0, -1.0], 0.5));
+    }
+    drains
+}
+
+/// The check a hover asks (#302) is the one apply makes before cutting:
+/// on the fin of #264 and on the body, with a channel in the fin (1 mm
+/// wall) and without (2 mm), hollow and with infill, every drain the query
+/// says reaches the cavity is cut, and every one it says misses is left
+/// out. Both kinds occur.
+#[test]
+fn a_drain_report_is_what_apply_does() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let drains = drains_around_the_fin();
+    let lattice = HollowFill::Infill {
+        pattern: InfillMode::Lattice,
+        cell_mm: 6.0,
+        beam_radius_mm: 0.6,
+    };
+    let (mut opens, mut misses) = (0, 0);
+    for (wall, fill) in [
+        (1.0, HollowFill::Cavity),
+        (2.0, HollowFill::Cavity),
+        (2.0, lattice),
+    ] {
+        let settings = HollowSettings {
+            fill,
+            wall_thickness_mm: wall,
+            ..HollowSettings::default()
+        };
+        session.preview(&settings, Control::none()).unwrap();
+        let asked: Vec<DrainReport> = drains
+            .iter()
+            .map(|hole| {
+                session
+                    .drain_report(&settings, hole)
+                    .expect("the cavity is here")
+            })
+            .collect();
+        // With infill, cutting a drain into the cavity fails today ("crossings
+        // along a cutter edge do not alternate", as in `main` before #302):
+        // there only the drains left out are applied.
+        let applied: Vec<&DrainHole> = drains
+            .iter()
+            .zip(&asked)
+            .filter(|(_, r)| fill == HollowFill::Cavity || !r.reaches_cavity)
+            .map(|(d, _)| d)
+            .collect();
+        let expected: Vec<DrainReport> = asked
+            .iter()
+            .copied()
+            .filter(|r| fill == HollowFill::Cavity || !r.reaches_cavity)
+            .collect();
+        let holes: Vec<DrainHole> = applied.into_iter().copied().collect();
+        let applied = session.apply(&settings, &holes, Control::none()).unwrap();
+        assert_eq!(expected, applied.drains, "wall {wall}, {fill:?}");
+        assert!(is_edge_manifold(&applied.mesh));
+        // Into the fin's side: a channel behind it with the 1 mm wall; with
+        // 2 the fin is solid, and the axis comes out its other side.
+        let side = drains
+            .iter()
+            .position(|d| d.center == [21.5, 15.0, 41.0])
+            .unwrap();
+        assert_eq!(asked[side].reaches_cavity, wall < 1.5, "wall {wall}");
+        opens += asked.iter().filter(|r| r.reaches_cavity).count();
+        misses += asked.iter().filter(|r| !r.reaches_cavity).count();
+    }
+    assert!(opens > 0 && misses > 0, "{opens} open, {misses} miss");
+}
+
+/// The other refusals of #264 read the same: an axis inside the side wall,
+/// through an arm into the body, and a manual depth short of the cavity.
+#[test]
+fn a_drain_report_matches_apply_on_every_refusal() {
+    let arm = tessellated_box([22.0, -5.0, -5.0], [25.0, 5.0, 5.0], 2);
+    let body = tessellated_box([-20.0; 3], [20.0; 3], 8);
+    let session = Session::build(
+        crate::shapes::merged(&[arm, body]),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let settings = HollowSettings::default();
+    let mut shallow = DrainHole::new([0.0, 0.0, -20.0], [0.0, 0.0, 1.0], 1.5);
+    shallow.depth = DrainDepth::Mm(0.5);
+    let mut deep = shallow;
+    deep.depth = DrainDepth::Mm(4.0);
+    let drains = [
+        DrainHole::new([19.0, 19.0, -20.0], [0.0, 0.0, 1.0], 0.5),
+        DrainHole::new([25.0, 0.5, 0.5], [-1.0, 0.0, 0.0], 1.0),
+        DrainHole::new([0.0, 20.0, 0.0], [0.0, -1.0, 0.0], 1.5),
+        shallow,
+    ];
+    session.preview(&settings, Control::none()).unwrap();
+    let asked: Vec<DrainReport> = drains
+        .iter()
+        .map(|hole| session.drain_report(&settings, hole).unwrap())
+        .collect();
+    let reaches: Vec<bool> = asked.iter().map(|r| r.reaches_cavity).collect();
+    assert_eq!(reaches, [false, false, true, false]);
+    let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+    assert_eq!(asked, applied.drains);
+    // The same spot deep enough opens: the depth is part of the geometry.
+    assert!(
+        session
+            .drain_report(&settings, &deep)
+            .unwrap()
+            .reaches_cavity
+    );
+}
+
+/// With no cavity for these settings the query has no answer, and never
+/// builds one: a hover must not stand for a preview.
+#[test]
+fn a_drain_report_needs_the_cavity_built() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let drain = DrainHole::new([0.0, 0.0, -20.0], [0.0, 0.0, 1.0], 1.5);
+    assert_eq!(session.drain_report(&settings, &drain), None);
+    assert!(!session.prepare_drain_reports(&settings));
+    assert!(session.cached_cavity().is_none(), "nothing was built");
+    session.preview(&settings, Control::none()).unwrap();
+    assert!(session.prepare_drain_reports(&settings));
+    assert!(
+        session
+            .drain_report(&settings, &drain)
+            .unwrap()
+            .reaches_cavity
+    );
+    // Another wall is another cavity, not built yet.
+    let thick = HollowSettings {
+        wall_thickness_mm: 3.0,
+        ..HollowSettings::default()
+    };
+    assert_eq!(session.drain_report(&thick, &drain), None);
+}

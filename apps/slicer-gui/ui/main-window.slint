@@ -220,7 +220,9 @@ export component MainWindow inherits Window {
     // whether there is one (false clears the preview).
     callback support-tool-hover(float, float, float, bool);
     // The drain tool's hover: point, surface normal (world), whether on the model.
-    callback hollow-drain-hover(float, float, float, float, float, float, bool);
+    // The point and normal under the cursor, whether the cursor is on a
+    // model, and whether that model is the selected one.
+    callback hollow-drain-hover(float, float, float, float, float, float, bool, bool);
     // A tab tool was armed or put away, or the tab changed.
     callback tab-tools-changed();
     changed support-tool => {
@@ -244,6 +246,12 @@ export component MainWindow inherits Window {
     in property <int> hollow-model-state: 0;
     in property <int> hollow-drain-count: 0;
     in-out property <bool> hollow-drain-tool: false;
+    // What the drain under the cursor would do (#302): 0 no drain there,
+    // 1 it opens into the cavity, 2 it does not reach it (left out), 3 not
+    // known yet (the cavity is not computed).
+    in property <int> hollow-drain-reach: 0;
+    property <bool> drain-misses: root.workspace-section == WorkspaceSection.Hollow
+        && root.hollow-drain-tool && root.hollow-drain-reach == 2;
     // Show the cavity the current settings carve, over the selected model.
     in-out property <bool> hollow-show-cavity: true;
     in property <float> hollow-wall: 2;
@@ -1629,15 +1637,17 @@ export component MainWindow inherits Window {
                 if root.status-notice == "": Text {
                     text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
                         : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
+                        : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
-                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
                     font-size: Theme.font-xs;
-                    color: Theme.text-muted;
+                    color: root.drain-misses ? Theme.danger : Theme.text-muted;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;
