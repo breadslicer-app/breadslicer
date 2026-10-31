@@ -39,7 +39,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::df_hollow::hollow_df::{GridRequest, HollowFill, HollowSettings, InfillMode};
+use sc_geom::df_hollow::hollow_df::{GridRequest, HollowFill, HollowSettings, InfillMode, Stage};
 use sc_geom::df_hollow::{
     HollowKind, HollowOutcome, HollowRequest, HollowResult, LeafFrame, PreparedHollow, WorldDrain,
     start_hollow_mesh,
@@ -64,6 +64,50 @@ const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PREVIEW_TICK: Duration = Duration::from_millis(40);
 /// Sides of a drawn drain.
 const DRAIN_SIDES: u32 = 24;
+
+/// Every stage of the hollow engine, in the order it runs them.
+const STAGES: [Stage; 11] = [
+    Stage::Voxelize,
+    Stage::FloodFill,
+    Stage::ParityRefine,
+    Stage::DistanceField,
+    Stage::WallDistance,
+    Stage::KeepMask,
+    Stage::CavitySurface,
+    Stage::Infill,
+    Stage::Stabilize,
+    Stage::Drains,
+    Stage::Validate,
+];
+
+/// The phase a hollow job reports, in the person's language. The engine
+/// reports its stage labels in English ([`Stage::label`], then `Done`); a
+/// phase it does not know stays as it came.
+fn phase_text(phase: &str) -> slint::SharedString {
+    if phase == "Done" {
+        return ctr!("HollowRun", "Done");
+    }
+    STAGES
+        .iter()
+        .find(|stage| stage.label() == phase)
+        .map_or_else(|| phase.into(), |&stage| stage_text(stage))
+}
+
+fn stage_text(stage: Stage) -> slint::SharedString {
+    match stage {
+        Stage::Voxelize => ctr!("HollowRun", "Voxelizing surface"),
+        Stage::FloodFill => ctr!("HollowRun", "Filling outside"),
+        Stage::ParityRefine => ctr!("HollowRun", "Restoring sealed voids"),
+        Stage::DistanceField => ctr!("HollowRun", "Measuring wall distance"),
+        Stage::WallDistance => ctr!("HollowRun", "Measuring exact wall distance"),
+        Stage::KeepMask => ctr!("HollowRun", "Choosing wall voxels"),
+        Stage::CavitySurface => ctr!("HollowRun", "Building cavity surface"),
+        Stage::Infill => ctr!("HollowRun", "Building infill"),
+        Stage::Stabilize => ctr!("HollowRun", "Checking hollow mesh"),
+        Stage::Drains => ctr!("HollowRun", "Cutting drain holes"),
+        Stage::Validate => ctr!("HollowRun", "Validating result"),
+    }
+}
 
 /// The Hollow tab's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -815,7 +859,7 @@ impl HollowRun {
                     };
                     let progress = job.handle.progress();
                     ui.set_hollow_progress(progress.fraction());
-                    ui.set_hollow_phase(progress.phase.into());
+                    ui.set_hollow_phase(phase_text(&progress.phase));
                     job.handle.try_poll()
                 };
                 if let Some(outcome) = finished {
@@ -928,16 +972,33 @@ impl HollowRun {
         } else {
             0.0
         };
-        let mut summary = format!(
-            "Saves {saved:.1} of {source:.1} ml ({percent:.0} %). Wall {:.1} mm, voxel {:.2} mm.",
-            stats.wall_thickness_mm, stats.grid.voxel_mm,
-        );
+        let mut summary = ctr!(
+            "HollowRun",
+            "Saves {} of {} ml ({} %). Wall {} mm, voxel {} mm.",
+            format!("{saved:.1}"),
+            format!("{source:.1}"),
+            format!("{percent:.0}"),
+            format!("{:.1}", stats.wall_thickness_mm),
+            format!("{:.2}", stats.grid.voxel_mm),
+        )
+        .to_string();
         if !drains.is_empty() {
-            summary.push_str(&format!(" {} drain(s)", kept.len()));
+            summary.push(' ');
+            summary.push_str(&ctr!(
+                "HollowRun",
+                "One drain drilled.",
+                "{n} drains drilled.",
+                kept.len()
+            ));
             if missed > 0 {
-                summary.push_str(&format!(", {missed} left out: not reaching the cavity"));
+                summary.push(' ');
+                summary.push_str(&ctr!(
+                    "HollowRun",
+                    "One left out: it does not reach the cavity.",
+                    "{n} left out: they do not reach the cavity.",
+                    missed
+                ));
             }
-            summary.push('.');
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(summary.into());
@@ -1351,6 +1412,40 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
+
+    /// The phases of a run, as the engine reports them and as the tab shows
+    /// them in Spanish.
+    fn phases_in_spanish() -> Vec<(String, String)> {
+        on_fresh_slint_thread(|| {
+            let _window = MainWindow::new().expect("the headless platform creates a main window");
+            slint::select_bundled_translation("es").expect("bundled language");
+            STAGES
+                .iter()
+                .map(|stage| stage.label())
+                .chain(["Done"])
+                .map(|phase| (phase.to_owned(), phase_text(phase).to_string()))
+                .collect()
+        })
+    }
+
+    #[test]
+    fn every_phase_of_a_run_shows_in_spanish() {
+        let phases = phases_in_spanish();
+        assert_eq!(phases.len(), STAGES.len() + 1);
+        for (english, spanish) in phases {
+            assert!(
+                !spanish.is_empty() && spanish != english,
+                "{english} has no Spanish"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_phase_shows_as_it_came() {
+        let shown = on_fresh_slint_thread(|| phase_text("Something new").to_string());
+        assert_eq!(shown, "Something new");
+    }
 
     #[test]
     fn the_recommended_wall_grows_with_the_model() {

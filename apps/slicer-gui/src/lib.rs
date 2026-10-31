@@ -100,6 +100,8 @@ mod tests_scene_dirty;
 mod tests_scene_loader;
 #[cfg(test)]
 mod tests_slice_result;
+#[cfg(test)]
+mod tests_tab_translations;
 mod ui_language;
 mod viewport;
 mod window_icon;
