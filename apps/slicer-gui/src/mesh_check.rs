@@ -52,8 +52,11 @@ pub(crate) struct MeshCheck {
     known: RefCell<Vec<Known>>,
     /// The failing targets the card shows, with their reasons, so a scene
     /// event that changes neither rebuilds nothing.
-    shown: RefCell<Option<Vec<(MeshTarget, Option<String>)>>>,
+    shown: RefCell<Option<Vec<Failing>>>,
 }
+
+/// A target that does not slice, with why when a Repair run left it so.
+type Failing = (MeshTarget, Option<String>);
 
 /// Whether `mesh` passes the slicer's gate. A mesh without faces is the
 /// support set of a project, kept as data: nothing to slice, nothing wrong.
@@ -91,7 +94,7 @@ impl MeshCheck {
     /// The card for `graph`, or `None` when it says what it says now. With
     /// `check_unknown` off, a mesh with no verdict counts as sound.
     pub(crate) fn card(&self, graph: &Scene, check_unknown: bool) -> Option<MeshCheckCard> {
-        let mut failing: Vec<(MeshTarget, Option<String>)> = Vec::new();
+        let mut failing: Vec<Failing> = Vec::new();
         for target in graph.mesh_targets() {
             let Some(mesh) = target_arc(graph, target) else {
                 continue;
@@ -131,7 +134,7 @@ pub(crate) fn target_arc(scene: &Scene, target: MeshTarget) -> Option<Arc<Indexe
 }
 
 /// The card for the failing targets of `graph`.
-fn card_for(graph: &Scene, failing: &[(MeshTarget, Option<String>)]) -> MeshCheckCard {
+fn card_for(graph: &Scene, failing: &[Failing]) -> MeshCheckCard {
     if failing.is_empty() {
         return MeshCheckCard::default();
     }

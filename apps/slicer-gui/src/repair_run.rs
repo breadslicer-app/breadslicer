@@ -203,6 +203,22 @@ impl RepairRun {
                 return;
             }
         };
+        // The meshes the run made get their verdicts before they land, so
+        // the card, which follows the scene, never checks them again.
+        let check = self.document.mesh_check();
+        for replacement in &completed.replacements {
+            if let Some(outcome) = completed
+                .outcomes
+                .iter()
+                .find(|o| o.target == replacement.target)
+            {
+                check.remember(
+                    &replacement.after,
+                    outcome_slices(outcome),
+                    left_reason(outcome),
+                );
+            }
+        }
         match settle(&self.document, &completed, captured) {
             RepairSettlement::DiscardedStale => {
                 self.dialogs.show_info(|| InfoTexts {
@@ -219,17 +235,19 @@ impl RepairRun {
                     outcomes, elapsed, ..
                 } = completed;
                 // The Transform tab's repair card follows what the run left:
-                // the live scene now holds the meshes the run ended with.
-                let check = self.document.mesh_check();
+                // the live scene now holds the meshes the run ended with, and
+                // a mesh the run left as it was gets what is left on it.
                 let (names, card) = self
                     .document
                     .with_scene(|spatial| {
                         let graph = spatial.graph();
                         for outcome in &outcomes {
                             if let Some(mesh) = target_arc(graph, outcome.target) {
-                                let sliceable = outcome.report.end == RepairEnd::NoFaces
-                                    || outcome.details.after.sliceable;
-                                check.remember(&mesh, sliceable, left_reason(outcome));
+                                check.remember(
+                                    &mesh,
+                                    outcome_slices(outcome),
+                                    left_reason(outcome),
+                                );
                             }
                         }
                         (target_names(&outcomes, graph), check.card(graph, true))
@@ -292,6 +310,12 @@ fn run_repair(mut scene: Scene) -> CompletedRepair {
         replacements,
         elapsed: start.elapsed(),
     }
+}
+
+/// Whether the mesh an outcome ends with slices, as the MESH CHECK card
+/// counts it: a mesh without faces is no problem.
+fn outcome_slices(outcome: &SceneRepairOutcome) -> bool {
+    outcome.report.end == RepairEnd::NoFaces || outcome.details.after.sliceable
 }
 
 /// Keeps the MESH CHECK card on what the scene holds now: an undo that puts
