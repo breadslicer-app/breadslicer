@@ -10,7 +10,7 @@
 import { CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
 export struct ReviewRow {
@@ -261,6 +261,377 @@ component Field inherits VerticalLayout {
     @children
 }
 
+// One option of the Orient tool (#182), as Rust lays it out.
+export struct OrientOption {
+    // "A", "B" or "C".
+    letter: string,
+    // The search that found it: "Quick" or "Full".
+    mode: string,
+    // "≈ 84 tips".
+    tips: string,
+    // Against the current pose: "−32 %", or empty.
+    change: string,
+    // Fewer tips than the current pose.
+    better: bool,
+    // "Peak 18 N".
+    peak: string,
+    // "62 mm tall".
+    height: string,
+    // "Tilts 35°", maybe with the turn about the vertical.
+    tilt: string,
+    // It fits the printer's build volume.
+    fits: bool,
+}
+
+// One option card: hovering it shows the pose on the model, a click picks it
+// for Apply.
+component OrientOptionCard inherits Rectangle {
+    in property <OrientOption> option;
+    in property <bool> selected;
+    callback hovered(bool);
+    callback clicked();
+
+    min-height: rows.preferred-height;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : touch.has-hover ? Theme.border-strong : Theme.border-soft;
+    background: touch.has-hover ? Theme.hover : Theme.well;
+    accessible-role: button;
+    accessible-label: root.option.letter + " " + root.option.tips;
+    accessible-checked: root.selected;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    rows := VerticalLayout {
+        padding: 8px;
+        padding-left: 10px;
+        spacing: 3px;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Text {
+                text: root.option.letter;
+                font-weight: 700;
+                font-size: Theme.font;
+                color: root.selected ? Theme.accent : Theme.text;
+            }
+            Text {
+                text: root.option.tips;
+                font-family: Theme.mono;
+                font-size: Theme.font;
+                color: Theme.text;
+            }
+            Text {
+                text: root.option.change;
+                font-family: Theme.mono;
+                font-size: Theme.font-sm;
+                color: root.option.better ? Theme.success : Theme.text-muted;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.option.mode;
+                font-size: Theme.font-xs;
+                color: Theme.text-faint;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 10px;
+
+            Text {
+                text: root.option.peak;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+            }
+            Text {
+                text: root.option.height;
+                font-size: Theme.font-sm;
+                color: Theme.text-soft;
+            }
+            Text {
+                text: root.option.tilt;
+                font-size: Theme.font-sm;
+                color: Theme.text-muted;
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+            }
+        }
+        if !root.option.fits: Text {
+            text: @tr("Inspector" => "Does not fit the printer");
+            font-size: Theme.font-sm;
+            color: Theme.warning;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        changed has-hover => {
+            root.hovered(self.has-hover);
+        }
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The Orient tool (#182): finds the best way up for printing and offers
+// three poses. Shown above the Transform inspector while the tool is open.
+export component OrientCard inherits Card {
+    // A model is selected and the scene can be edited.
+    in property <bool> enabled;
+    in property <bool> running;
+    // 0 preparing the model, 1 searching, 2 refining, 3 judging the best.
+    in property <int> phase;
+    in property <float> progress;
+    // 0 Balanced, 1 Fewer supports, 2 Lower force, 3 Faster.
+    in property <int> preset;
+    in property <float> max-tilt;
+    in property <bool> align;
+    in property <float> weight-supports;
+    in property <float> weight-force;
+    in property <float> weight-height;
+    in property <[OrientOption]> options;
+    in property <int> selected: -1;
+    // The current pose's numbers, or empty.
+    in property <string> current;
+    in property <string> status;
+    in property <string> warning;
+    // After Apply, with more than one model: offer Arrange all.
+    in property <bool> offer-arrange;
+    // 0 Quick, 1 Full.
+    callback search(int);
+    callback cancel();
+    // 0 preset, 1 max tilt, 2 align (0/1), 3 supports weight, 4 force
+    // weight, 5 height weight.
+    callback option-changed(int, float);
+    callback option-hovered(int, bool);
+    callback option-picked(int);
+    callback apply();
+    callback close();
+    callback arrange();
+
+    property <bool> advanced: false;
+
+    title: @tr("Inspector" => "ORIENT");
+    note: "O";
+    highlighted: true;
+
+    Note {
+        text: @tr("Inspector" => "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model.");
+    }
+    Field {
+        label: @tr("Inspector" => "Objective");
+        preset-combo := ComboBox {
+            model: [
+                @tr("Inspector" => "Balanced"),
+                @tr("Inspector" => "Fewer supports"),
+                @tr("Inspector" => "Lower force"),
+                @tr("Inspector" => "Faster"),
+            ];
+            current-index: root.preset;
+            enabled: !root.running;
+            selected => {
+                root.option-changed(0, preset-combo.current-index);
+            }
+        }
+    }
+    Rectangle {
+        height: 22px;
+        accessible-role: button;
+        accessible-label: @tr("Inspector" => "Advanced");
+        accessible-expanded: root.advanced;
+        accessible-action-default => {
+            root.advanced = !root.advanced;
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            DisclosureChevron {
+                open: root.advanced;
+                color: Theme.text-muted;
+                size: 9px;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: @tr("Inspector" => "Advanced");
+                font-size: Theme.font-sm;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.advanced = !root.advanced;
+            }
+        }
+    }
+    // Each one under its own `if`: a wrapped Note inside a nested layout
+    // under an `if` is measured as one line, and the card came out short.
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Max tilt from now");
+        unit: "°";
+        decimals: 0;
+        value: root.max-tilt;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(1, v);
+        }
+    }
+    if root.advanced: CheckBox {
+        text: @tr("Inspector" => "Align to the plate");
+        checked: root.align;
+        enabled: !root.running;
+        toggled => {
+            root.option-changed(2, self.checked ? 1 : 0);
+        }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of supports");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-supports;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(3, v);
+        }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of peel force");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-force;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(4, v);
+        }
+    }
+    if root.advanced: NumberField {
+        label: @tr("Inspector" => "Weight of height");
+        unit: "%";
+        decimals: 0;
+        value: root.weight-height;
+        enabled: !root.running;
+        committed(v) => {
+            root.option-changed(5, v);
+        }
+    }
+    if root.advanced: Note {
+        text: @tr("Inspector" => "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate.");
+    }
+    Text {
+        text: @tr("Inspector" => "AUTO-ORIENT");
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: Theme.text-muted;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        ScButton {
+            text: @tr("Inspector" => "Quick");
+            icon: Icons.auto;
+            kind: ButtonKind.primary;
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.search(0);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Full");
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.search(1);
+            }
+        }
+    }
+    if root.running: HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            spacing: 4px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.phase == 0 ? @tr("Inspector" => "Preparing the model…")
+                    : root.phase == 1 ? @tr("Inspector" => "Searching…")
+                    : root.phase == 2 ? @tr("Inspector" => "Refining the best poses…")
+                    : @tr("Inspector" => "Judging the finalists…");
+                font-size: Theme.font-sm;
+                color: Theme.text-muted;
+            }
+            ProgressIndicator {
+                progress: root.progress;
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Cancel");
+            clicked => {
+                root.cancel();
+            }
+        }
+    }
+    if root.status != "": Note {
+        text: root.status;
+    }
+    if root.warning != "": Note {
+        text: root.warning;
+        color: Theme.warning;
+    }
+    for option[i] in root.options: OrientOptionCard {
+        option: option;
+        selected: i == root.selected;
+        hovered(on) => {
+            root.option-hovered(i, on);
+        }
+        clicked => {
+            root.option-picked(i);
+        }
+    }
+    if root.current != "": Note {
+        text: root.current;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        if root.options.length > 0: ScButton {
+            text: root.selected >= 0 && root.selected < root.options.length
+                ? @tr("Inspector" => "Apply {}", root.options[root.selected].letter)
+                : @tr("Inspector" => "Apply");
+            kind: ButtonKind.primary;
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running && root.selected >= 0;
+            clicked => {
+                root.apply();
+            }
+        }
+        if root.offer-arrange: ScButton {
+            text: @tr("Inspector" => "Arrange all");
+            horizontal-stretch: 1;
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.arrange();
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Close");
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.close();
+            }
+        }
+    }
+}
+
 export component TransformInspector inherits VerticalLayout {
     in property <[StandardListViewItem]> objects;
     in property <int> selected-index: -1;
@@ -299,6 +670,8 @@ export component TransformInspector inherits VerticalLayout {
     callback arrange-cancel();
     // 0 gap, 1 edge margin, 2 turns (0/1), 3 shadow only (0/1).
     callback arrange-option-changed(int, float);
+    // The Auto-orient button of the ROTATE card opens the Orient tool (#182).
+    callback orient-requested();
 
     spacing: 12px;
 
@@ -504,6 +877,14 @@ export component TransformInspector inherits VerticalLayout {
             value: root.rot-z;
             committed(v) => {
                 root.numeric-edit(5, v);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Auto-orient");
+            icon: Icons.orient;
+            kind: ButtonKind.ghost;
+            clicked => {
+                root.orient-requested();
             }
         }
     }

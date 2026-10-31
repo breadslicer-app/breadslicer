@@ -55,6 +55,10 @@
 //! 5. **Final verdict:** the options and the current pose are scored again
 //!    with the peel on the full mesh.
 //!
+//! [`SearchMode::Full`] searches a denser sphere and refines many more
+//! finalists before the verdict; the expensive terms of #185 (suction cups
+//! at full resolution, model-to-model supports) join it there.
+//!
 //! The model only turns when the best option beats its current pose by more
 //! than [`KEEP_MARGIN`]: re-orienting an oriented model leaves it where it
 //! is. No randomness: the same mesh gives the same result, whatever the
@@ -78,7 +82,7 @@ mod tests_shapes;
 pub use analysis::OrientAnalysis;
 pub use islands::{ISLAND_CLUSTER_MM, count_clustered};
 pub use peel::{LayerProfile, PeelModel, PeelSummary};
-pub use pose::{rotation_between, rotation_to_up, turned_about_footprint};
+pub use pose::{kept_on_plate, rotation_between, rotation_to_up, turned_about_footprint};
 
 use std::fmt;
 use std::str::FromStr;
@@ -188,6 +192,22 @@ impl FromStr for Preset {
     }
 }
 
+/// How thorough a search is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SearchMode {
+    /// The staged search: stages 1 and 2, the refinement of the 3 options and
+    /// the final verdict. Well under a second on 2 M triangles.
+    #[default]
+    Quick,
+    /// Everything in Quick on a sphere about four times denser, with
+    /// [`FULL_FINALISTS`] finalists refined and judged on the full mesh
+    /// instead of 3.
+    Full,
+}
+
+/// Finalists a [`SearchMode::Full`] search refines and judges.
+pub const FULL_FINALISTS: usize = 16;
+
 /// The weight of each cost term, in equivalent tips per unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Weights {
@@ -233,6 +253,15 @@ pub struct OrientContext {
     pub current_up: [f64; 3],
     pub weights: Weights,
     pub peel: PeelModel,
+    pub mode: SearchMode,
+    /// The most an option may tilt from the current pose, degrees; `None`
+    /// allows any pose, upside down included.
+    pub max_tilt_deg: Option<f64>,
+    /// Turn each option about the vertical so its shadow lies square to the
+    /// plate (its smallest bounding rectangle, the long side along the
+    /// plate's long side), when that fits. Otherwise an option keeps the
+    /// turn it has and turns only to fit.
+    pub align_to_plate: bool,
 }
 
 impl OrientContext {
@@ -247,6 +276,9 @@ impl OrientContext {
             current_up: [0.0, 0.0, 1.0],
             weights: preset.weights(),
             peel: PeelModel::default(),
+            mode: SearchMode::Quick,
+            max_tilt_deg: None,
+            align_to_plate: false,
         }
     }
 }
@@ -360,7 +392,8 @@ pub struct Candidate {
     pub up: [f64; 3],
     /// How far it tilts from the current pose, degrees.
     pub tilt_deg: f64,
-    /// The turn about the vertical it needs to fit the plate, degrees.
+    /// The turn about the vertical it takes, degrees: to fit the plate, or
+    /// to lie square to it ([`OrientContext::align_to_plate`]).
     pub turn_deg: f64,
     /// The rotation (row-major) that takes the model there: the shortest arc
     /// from `up` to the current up, then `turn_deg` about it.

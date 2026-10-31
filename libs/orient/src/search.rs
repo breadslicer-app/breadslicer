@@ -13,14 +13,16 @@ use rayon::prelude::*;
 use crate::analysis::{OrientAnalysis, Quality};
 use crate::vec::{V3, add, angle_deg, basis, scale, unit};
 use crate::{
-    Cancelled, Candidate, DIVERSE_DEG, KEEP_MARGIN, Note, OrientContext, SearchOutcome, Stage,
-    Timings,
+    Cancelled, Candidate, DIVERSE_DEG, FULL_FINALISTS, KEEP_MARGIN, Note, OrientContext,
+    SearchMode, SearchOutcome, Stage, Timings,
 };
 
-/// Fibonacci directions of stage 1.
+/// Fibonacci directions of stage 1, Quick and Full.
 const STAGE1_DIRECTIONS: usize = 4200;
-/// Poses that get the full cost in stage 2.
+const STAGE1_DIRECTIONS_FULL: usize = 16_000;
+/// Poses that get the full cost in stage 2, Quick and Full.
 const STAGE2_KEEP: usize = 256;
+const STAGE2_KEEP_FULL: usize = 512;
 /// Evenly spread poses that also get the full cost in stage 2.
 const STAGE2_SPREAD: usize = 160;
 /// How far apart the stage 2 poses are, degrees.
@@ -60,7 +62,9 @@ fn ms(t: Instant) -> f64 {
 impl OrientAnalysis {
     /// Searches the best poses for the model. `progress` gets the options as
     /// they improve, from the calling thread; `cancel` stops the search
-    /// between steps.
+    /// between steps. How thorough it is, and how far it may tilt the model,
+    /// the context says ([`OrientContext::mode`],
+    /// [`OrientContext::max_tilt_deg`]).
     pub fn search(
         &self,
         ctx: &OrientContext,
@@ -79,15 +83,21 @@ impl OrientAnalysis {
             ..Timings::default()
         };
         let current_up = unit(ctx.current_up).unwrap_or([0.0, 0.0, 1.0]);
+        let (directions, keep, finalists) = match ctx.mode {
+            SearchMode::Quick => (STAGE1_DIRECTIONS, STAGE2_KEEP, OPTIONS),
+            SearchMode::Full => (STAGE1_DIRECTIONS_FULL, STAGE2_KEEP_FULL, FULL_FINALISTS),
+        };
+        let allowed = |u: &V3| within_tilt(ctx, *u);
 
         // Stage 1: every seed on the histogram.
         let t = Instant::now();
         let (hull_seeds, normal_seeds) = self.seeds();
+        let hull_seeds: Vec<V3> = hull_seeds.into_iter().filter(allowed).collect();
         let mut seeds: Vec<V3> = vec![current_up];
-        seeds.extend(fibonacci(STAGE1_DIRECTIONS));
+        seeds.extend(fibonacci(directions));
         seeds.extend(hull_seeds.iter().copied());
         seeds.extend(normal_seeds);
-        let seeds: Vec<V3> = seeds.into_iter().filter_map(unit).collect();
+        let seeds: Vec<V3> = seeds.into_iter().filter_map(unit).filter(allowed).collect();
         let mut ranked: Vec<(usize, (u8, i64, f64))> = seeds
             .par_iter()
             .enumerate()
@@ -105,7 +115,7 @@ impl OrientAnalysis {
         }
         let reserved = stage2.len();
         for (i, _) in &ranked {
-            if stage2.len() >= STAGE2_KEEP + reserved {
+            if stage2.len() >= keep + reserved {
                 break;
             }
             let u = seeds[*i];
@@ -120,7 +130,7 @@ impl OrientAnalysis {
         // Stage 1 sees neither islands nor peel: an even spread of the
         // sphere goes on as well, so a pose that wins on those is not lost.
         let picked = stage2.len();
-        for u in fibonacci(STAGE2_SPREAD) {
+        for u in fibonacci(STAGE2_SPREAD).into_iter().filter(allowed) {
             if stage2[..picked]
                 .iter()
                 .all(|s| angle_deg(*s, u) >= STAGE2_APART_DEG)
@@ -140,8 +150,8 @@ impl OrientAnalysis {
         timings.stage2_poses = stage2.len();
         check()?;
         let mut used = vec![false; scored.len()];
-        let picks = diverse(&scored, &[], OPTIONS);
-        let coarse: Vec<Candidate> = picks.iter().map(|&i| scored[i]).collect();
+        let picks = diverse(&scored, &[], finalists);
+        let coarse: Vec<Candidate> = picks.iter().take(OPTIONS).map(|&i| scored[i]).collect();
         progress(Stage::Coarse, &coarse);
 
         // Refinement, then options that converged together give way to the
@@ -165,14 +175,14 @@ impl OrientAnalysis {
                 refined.push(c);
             }
             refined.sort_by(|a, b| cmp_key(&a.cost.key(), &b.cost.key()));
-            let keep = diverse(&refined, &[], OPTIONS);
-            refined = keep.iter().map(|&i| refined[i]).collect();
-            if refined.len() >= OPTIONS {
+            let kept = diverse(&refined, &[], finalists);
+            refined = kept.iter().map(|&i| refined[i]).collect();
+            if refined.len() >= finalists {
                 break;
             }
             let fresh: Vec<usize> = (0..scored.len()).filter(|&i| !used[i]).collect();
             let pool: Vec<Candidate> = fresh.iter().map(|&i| scored[i]).collect();
-            let next: Vec<usize> = diverse(&pool, &refined, OPTIONS - refined.len())
+            let next: Vec<usize> = diverse(&pool, &refined, finalists - refined.len())
                 .into_iter()
                 .map(|k| fresh[k])
                 .collect();
@@ -186,7 +196,7 @@ impl OrientAnalysis {
         }
         timings.refine_ms = ms(t);
         timings.refine_poses = evaluations;
-        progress(Stage::Refined, &refined);
+        progress(Stage::Refined, &refined[..refined.len().min(OPTIONS)]);
         check()?;
 
         // Final verdict on the full mesh, the current pose with them.
@@ -198,6 +208,10 @@ impl OrientAnalysis {
         current.is_current = true;
         current.tilt_deg = 0.0;
         verdict.sort_by(|a, b| cmp_key(&a.cost.key(), &b.cost.key()));
+        // A Full search judges many finalists: the options are the best of
+        // them, apart from each other.
+        let shown = diverse(&verdict, &[], OPTIONS);
+        let mut verdict: Vec<Candidate> = shown.iter().map(|&i| verdict[i]).collect();
         for c in &mut verdict {
             c.is_current = crate::vec::dot(c.up, current_up) > 1.0 - 1e-12;
         }
@@ -258,6 +272,7 @@ impl OrientAnalysis {
                 for d in 0..8 {
                     let (s, c) = (d as f64 * std::f64::consts::FRAC_PI_4).sin_cos();
                     if let Some(u) = unit(add(w.best.up, scale(add(scale(e1, c), scale(e2, s)), t)))
+                        && within_tilt(ctx, u)
                     {
                         around.push(u);
                         owner.push(k);
@@ -288,6 +303,14 @@ impl OrientAnalysis {
         }
         walks.into_iter().map(|w| (w.best, w.evaluations)).collect()
     }
+}
+
+/// Whether `u` tilts no further from the current pose than the context
+/// allows.
+fn within_tilt(ctx: &OrientContext, u: V3) -> bool {
+    ctx.max_tilt_deg.is_none_or(|max| {
+        angle_deg(u, unit(ctx.current_up).unwrap_or([0.0, 0.0, 1.0])) <= max + 1e-9
+    })
 }
 
 /// The indices of up to `n` of `sorted` (best first), each at least

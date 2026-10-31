@@ -298,26 +298,6 @@ fn session_key(drawn: &DrawnSet) -> (NodeId, usize) {
     (drawn.leaf, Arc::as_ptr(&drawn.session) as usize)
 }
 
-/// Whether `kept` and `fresh` save as the same data (#287): the documents a
-/// save writes as `SUPP` match once `fresh`'s ids carry `kept`'s prefix.
-/// Every run names its supports under a prefix of its own, so two runs of
-/// the same settings on the same model differ only there.
-fn same_session_data(kept: &DfSupportSession, fresh: &DfSupportSession) -> bool {
-    let document = |session: &DfSupportSession| {
-        let text = String::from_utf8(session.to_document()?).ok()?;
-        let key = "\"idPrefix\":\"";
-        let start = text.find(key)? + key.len();
-        let prefix = text[start..].split('"').next()?.to_owned();
-        (!prefix.is_empty()).then_some((prefix, text))
-    };
-    let (Some((kept_prefix, kept)), Some((fresh_prefix, fresh))) =
-        (document(kept), document(fresh))
-    else {
-        return false;
-    };
-    fresh.replace(&fresh_prefix, &kept_prefix) == kept
-}
-
 /// A computed preview.
 struct HoverAnswer {
     generation: u64,
@@ -1175,6 +1155,14 @@ impl DfSupportRun {
     /// Bottom setting does.
     pub(crate) fn turn_raft_off(&self) {
         self.on_option(9, 2.0);
+    }
+
+    /// The overhang angle (degrees from horizontal) and the area per
+    /// support (mm²) the engine is set to: the Orient tool (#182) counts tips
+    /// as the engine places them.
+    pub(crate) fn overhang_terms(&self) -> (f64, f64) {
+        let o = self.options.borrow();
+        (o.overhang_angle_deg, o.area_per_support_mm2)
     }
 
     /// Whether models wait for supports the last edit took away, or a run
@@ -2077,7 +2065,7 @@ impl DfSupportRun {
                         return false;
                     };
                     let (_, _, session) = unmatched.swap_remove(at);
-                    same_session_data(&drawn.session, session)
+                    drawn.session.same_supports_as(session)
                 })
             })
             .unwrap_or(false)
@@ -3630,6 +3618,42 @@ mod hand_edit_tests {
             ));
             assert_ne!(leaf_transform(&document, leaves[1]), before[1]);
             assert_eq!(run.sets_in_force().len(), 2);
+        });
+    }
+
+    /// #182: an Orient option that tilts a supported model takes its set
+    /// away in the same Undo step and leaves the model waiting for new
+    /// supports (#153); one Undo puts the pose and the set back.
+    #[test]
+    fn an_orient_option_that_tilts_a_supported_model_makes_its_supports_again() {
+        use crate::orient_run::OrientRun;
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let before = leaf_transform(&document, leaves[0]);
+            let (_, mesh) = set_of(&document, &run, leaves[0]);
+            document.set_selection(Selection::One(LeafId(leaves[0])));
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let orient =
+                OrientRun::install(&window, document.clone(), ctrl.dialogs(), ctrl, run.clone());
+            let tilting = orient
+                .search_now(sc_orient::SearchMode::Quick)
+                .iter()
+                .position(|c| c.tilt_deg >= 1.0)
+                .expect("an option tilts the cube");
+            assert!(window.get_orient_warning().contains("supports"));
+            orient.pick(tilting as i32);
+            assert!(orient.apply());
+            assert_ne!(leaf_transform(&document, leaves[0]), before);
+            assert!(support_sets(&document).is_empty(), "the old set is gone");
+            let (_, wants) = document.supports_wanted().expect("new supports wanted");
+            assert_eq!(wants.ids(), vec![leaves[0]]);
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, leaves[0]), before);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, leaves[0]).1, &mesh));
+            assert!(document.supports_wanted().is_none());
         });
     }
 

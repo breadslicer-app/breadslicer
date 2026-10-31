@@ -9,7 +9,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { Theme } from "./kit/theme.slint";
 import { Icons } from "./kit/icons.slint";
 import { Icon, SupportLink, ToolButton, WorkflowTab } from "./kit/controls.slint";
-import { ExportInspector, HollowInspector, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
+import { ExportInspector, HollowInspector, OrientCard, OrientOption, ReviewRow, SliceInspector, SupportsInspector, TransformInspector } from "./workspace/inspectors.slint";
 import { LayerView } from "./workspace/layer-view.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
@@ -168,6 +168,9 @@ export component MainWindow inherits Window {
     // A short note of what the last action did, shown in the status bar in
     // place of the hint until Rust clears it a few seconds later.
     in property <string> status-notice: "";
+    // What the last load changed or left out of the file (#301), such as
+    // "Opened with 2 notes"; empty when nothing. A click opens the list.
+    in property <string> import-notes: "";
     // The selected object numbers for the Transform inspector, pushed by
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
@@ -220,7 +223,9 @@ export component MainWindow inherits Window {
     // whether there is one (false clears the preview).
     callback support-tool-hover(float, float, float, bool);
     // The drain tool's hover: point, surface normal (world), whether on the model.
-    callback hollow-drain-hover(float, float, float, float, float, float, bool);
+    // The point and normal under the cursor, whether the cursor is on a
+    // model, and whether that model is the selected one.
+    callback hollow-drain-hover(float, float, float, float, float, float, bool, bool);
     // A tab tool was armed or put away, or the tab changed.
     callback tab-tools-changed();
     changed support-tool => {
@@ -231,6 +236,9 @@ export component MainWindow inherits Window {
     }
     changed workspace-section => {
         root.tab-tools-changed();
+        if root.orient-open && root.workspace-section != WorkspaceSection.Transform {
+            root.orient-close-requested();
+        }
     }
     // The Hollow tab (BS-8): the selected model's hollow job, its options
     // (HollowRun::on_option) and the drain tool (a click drills a drain).
@@ -244,6 +252,12 @@ export component MainWindow inherits Window {
     in property <int> hollow-model-state: 0;
     in property <int> hollow-drain-count: 0;
     in-out property <bool> hollow-drain-tool: false;
+    // What the drain under the cursor would do (#302): 0 no drain there,
+    // 1 it opens into the cavity, 2 it does not reach it (left out), 3 not
+    // known yet (the cavity is not computed).
+    in property <int> hollow-drain-reach: 0;
+    property <bool> drain-misses: root.workspace-section == WorkspaceSection.Hollow
+        && root.hollow-drain-tool && root.hollow-drain-reach == 2;
     // Show the cavity the current settings carve, over the selected model.
     in-out property <bool> hollow-show-cavity: true;
     in property <float> hollow-wall: 2;
@@ -393,6 +407,7 @@ export component MainWindow inherits Window {
     callback previous-versions-requested();
     callback export-as-requested();
     callback scene-load-finished();
+    callback import-notes-requested();
     callback show-about-requested();
     // Help > Export Diagnostics (#74).
     callback export-diagnostics-requested();
@@ -478,6 +493,39 @@ export component MainWindow inherits Window {
     callback arrange-finished();
     callback arrange-cancel();
     callback arrange-option-changed(int, float);
+    // Orient (#182), the Transform tab's auto-orient tool: whether it is
+    // open, a search in flight, the options found and the tool's settings
+    // (Rust keeps them; see `orient_run.rs`).
+    in property <bool> orient-open: false;
+    in property <bool> orient-running: false;
+    // 0 preparing the model, 1 searching, 2 refining, 3 judging the best.
+    in property <int> orient-phase: 0;
+    in property <float> orient-progress: 0;
+    in property <int> orient-preset: 0;
+    in property <float> orient-max-tilt: 180;
+    in property <bool> orient-align: false;
+    in property <float> orient-weight-supports: 100;
+    in property <float> orient-weight-force: 100;
+    in property <float> orient-weight-height: 100;
+    in property <[OrientOption]> orient-options;
+    in property <int> orient-selected: -1;
+    in property <string> orient-current;
+    in property <string> orient-status;
+    in property <string> orient-warning;
+    in property <bool> orient-offer-arrange: false;
+    // Opens the tool, or closes it when open (the rail button, O, Auto-orient).
+    callback orient-toggle-requested();
+    // Closes the tool, putting back a pose an option shows.
+    callback orient-close-requested();
+    // 0 Quick, 1 Full.
+    callback orient-search(int);
+    callback orient-cancel();
+    callback orient-finished();
+    // 0 preset, 1 max tilt, 2 align (0/1), 3-5 term weights (%).
+    callback orient-option-changed(int, float);
+    callback orient-option-hovered(int, bool);
+    callback orient-option-picked(int);
+    callback orient-apply();
     // Tools > Generate Support (trivial): runs `sc-geom`'s
     // support-generation trivial (stub) algorithm end to end against the loaded scene.
     // Each generated component (mesh) is pasted into the scene as a real object (see
@@ -1006,6 +1054,7 @@ export component MainWindow inherits Window {
                         shortcut: "G";
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
+                            root.orient-close-requested();
                             root.gizmo-focus-translate-pressed();
                         }
                     }
@@ -1015,6 +1064,7 @@ export component MainWindow inherits Window {
                         shortcut: "R";
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
+                            root.orient-close-requested();
                             root.gizmo-focus-rotate-pressed();
                         }
                     }
@@ -1024,7 +1074,18 @@ export component MainWindow inherits Window {
                         shortcut: "S";
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
+                            root.orient-close-requested();
                             root.gizmo-focus-scale-pressed();
+                        }
+                    }
+                    if root.workspace-section == WorkspaceSection.Transform: ToolButton {
+                        icon: Icons.orient;
+                        label: @tr("Inspector" => "Orient: the best way up for printing");
+                        shortcut: "O";
+                        active: root.orient-open;
+                        enabled: root.has-scene && root.selection-valid;
+                        clicked => {
+                            root.orient-toggle-requested();
                         }
                     }
                     if root.workspace-section == WorkspaceSection.Transform: Rectangle {
@@ -1147,7 +1208,17 @@ export component MainWindow inherits Window {
                     placeholder-text: @tr("Open a 3D model to visualize it here");
                     modal-transform-active: root.modal-transform-active;
                     modal-transform-status: root.modal-transform-status;
-                    modal-transform-start(code,x,y) => { root.modal-transform-start(code,x,y); }
+                    modal-transform-start(code,x,y) => {
+                        root.orient-close-requested();
+                        root.modal-transform-start(code,x,y);
+                    }
+                    tool-escape => {
+                        if root.orient-open {
+                            root.orient-close-requested();
+                            return true;
+                        }
+                        return false;
+                    }
                     tab-tool-key(key) => {
                         if root.workspace-section == WorkspaceSection.Hollow && root.selection-valid
                             && root.hollow-model-state != 2 && !root.hollow-running && (key == "d" || key == "D") {
@@ -1164,6 +1235,11 @@ export component MainWindow inherits Window {
                                 root.support-tool = root.support-tool == 2 ? 0 : 2;
                                 return true;
                             }
+                        }
+                        if root.workspace-section == WorkspaceSection.Transform && root.has-scene
+                            && root.selection-valid && (key == "o" || key == "O") {
+                            root.orient-toggle-requested();
+                            return true;
                         }
                         if root.workspace-section == WorkspaceSection.Transform && root.has-scene
                             && !root.loading && !root.slicing-in-progress && !root.repairing-in-progress
@@ -1430,6 +1506,50 @@ export component MainWindow inherits Window {
                         spacing: 12px;
                         alignment: start;
 
+                        if root.workspace-section == WorkspaceSection.Transform && root.orient-open: OrientCard {
+                            enabled: root.has-scene && root.selection-valid && !root.loading
+                                && !root.slicing-in-progress && !root.repairing-in-progress && !root.arranging;
+                            running: root.orient-running;
+                            phase: root.orient-phase;
+                            progress: root.orient-progress;
+                            preset: root.orient-preset;
+                            max-tilt: root.orient-max-tilt;
+                            align: root.orient-align;
+                            weight-supports: root.orient-weight-supports;
+                            weight-force: root.orient-weight-force;
+                            weight-height: root.orient-weight-height;
+                            options: root.orient-options;
+                            selected: root.orient-selected;
+                            current: root.orient-current;
+                            status: root.orient-status;
+                            warning: root.orient-warning;
+                            offer-arrange: root.orient-offer-arrange;
+                            search(mode) => {
+                                root.orient-search(mode);
+                            }
+                            cancel => {
+                                root.orient-cancel();
+                            }
+                            option-changed(code, value) => {
+                                root.orient-option-changed(code, value);
+                            }
+                            option-hovered(i, on) => {
+                                root.orient-option-hovered(i, on);
+                            }
+                            option-picked(i) => {
+                                root.orient-option-picked(i);
+                            }
+                            apply => {
+                                root.orient-apply();
+                            }
+                            close => {
+                                root.orient-close-requested();
+                                mv.focus-viewport();
+                            }
+                            arrange => {
+                                root.arrange-requested(false);
+                            }
+                        }
                         if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
                             objects: root.object-list;
                             selected-index: root.selected-object-index;
@@ -1475,6 +1595,11 @@ export component MainWindow inherits Window {
                             }
                             arrange-option-changed(code, value) => {
                                 root.arrange-option-changed(code, value);
+                            }
+                            orient-requested => {
+                                if !root.orient-open {
+                                    root.orient-toggle-requested();
+                                }
                             }
                         }
                         if root.workspace-section == WorkspaceSection.Hollow: HollowInspector {
@@ -1629,18 +1754,40 @@ export component MainWindow inherits Window {
                 if root.status-notice == "": Text {
                     text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
                         : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
+                        : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
-                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
                     font-size: Theme.font-xs;
-                    color: Theme.text-muted;
+                    color: root.drain-misses ? Theme.danger : Theme.text-muted;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;
+                }
+                if root.has-scene && root.import-notes != "": TouchArea {
+                    width: notes-text.preferred-width;
+                    mouse-cursor: pointer;
+                    accessible-role: button;
+                    accessible-label: root.import-notes;
+                    accessible-action-default => {
+                        root.import-notes-requested();
+                    }
+                    clicked => {
+                        root.import-notes-requested();
+                    }
+
+                    notes-text := Text {
+                        // The glyph is kept out of the translatable string.
+                        text: "ℹ " + root.import-notes;
+                        font-size: Theme.font-xs;
+                        color: Theme.accent;
+                        vertical-alignment: center;
+                    }
                 }
                 if root.has-scene: Text {
                     text: @tr("Workspace" => "{} object(s)", root.object-list.length);

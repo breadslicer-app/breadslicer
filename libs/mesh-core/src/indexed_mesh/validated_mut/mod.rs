@@ -21,6 +21,7 @@
 
 mod fix_collinear_faces;
 mod fix_faces_orientation;
+mod fix_watertight;
 
 use crate::primitives::{IndexedTriangle, Vertex};
 

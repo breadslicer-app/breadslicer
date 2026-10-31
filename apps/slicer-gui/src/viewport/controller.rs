@@ -721,10 +721,11 @@ impl ViewportController {
         crate::workspace_section::allows_transform_gizmo(self.session.section())
     }
 
-    /// Whether a gizmo drag or a keyboard transform is under way: the scene
-    /// then shows a pose no edit has committed yet.
+    /// Whether a gizmo drag, a keyboard transform or a live preview (#182)
+    /// is under way: the scene then shows a pose no edit has committed yet.
     pub(crate) fn is_mid_gesture(&self) -> bool {
-        self.input.modal.get().is_some()
+        self.session.document().has_live_preview()
+            || self.input.modal.get().is_some()
             || matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. })
     }
 
@@ -1580,7 +1581,12 @@ impl ViewportController {
         let hit = self.tab_tool_hit(tool, cursor);
         let (p, n) = hit.map_or((glam::Vec3::ZERO, glam::Vec3::Z), |(_, p, n)| (p, n));
         if tool == TabTool::Drain {
-            ui.invoke_hollow_drain_hover(p.x, p.y, p.z, n.x, n.y, n.z, hit.is_some());
+            // A drain on another model selects it first: its own cavity
+            // says whether the drain reaches it.
+            let on_selected = hit.is_some_and(|(id, _, _)| {
+                self.session.document().selection().primary().map(|l| l.0) == Some(id)
+            });
+            ui.invoke_hollow_drain_hover(p.x, p.y, p.z, n.x, n.y, n.z, hit.is_some(), on_selected);
         } else {
             ui.invoke_support_tool_hover(p.x, p.y, p.z, hit.is_some());
         }
@@ -1605,7 +1611,7 @@ impl ViewportController {
         self.input.on_pointer_leave();
         self.set_preview_overlay(None);
         if let Some(ui) = self.ui.upgrade() {
-            ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, false);
+            ui.invoke_hollow_drain_hover(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, false, false);
         }
     }
 

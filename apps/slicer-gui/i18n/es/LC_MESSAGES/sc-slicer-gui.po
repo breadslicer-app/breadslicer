@@ -1832,6 +1832,62 @@ msgid_plural "{n} meshes still have zero-area faces"
 msgstr[0] "{n} malla todavía tiene caras de área cero"
 msgstr[1] "{n} mallas todavía tienen caras de área cero"
 
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} duplicate face"
+msgid_plural "removed {n} duplicate faces"
+msgstr[0] "se quitó {n} cara duplicada"
+msgstr[1] "se quitaron {n} caras duplicadas"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {n} leftover face"
+msgid_plural "removed {n} leftover faces"
+msgstr[0] "se quitó {n} cara sobrante"
+msgstr[1] "se quitaron {n} caras sobrantes"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} zero-area face kept; the mesh slices fine"
+msgid_plural "{n} zero-area faces kept; the mesh slices fine"
+msgstr[0] "quedó {n} cara de área cero; la malla se lamina bien"
+msgstr[1] "quedaron {n} caras de área cero; la malla se lamina bien"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "filled {n} hole"
+msgid_plural "filled {n} holes"
+msgstr[0] "se tapó {n} agujero"
+msgstr[1] "se taparon {n} agujeros"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "separated parts that touched at {n} edge"
+msgid_plural "separated parts that touched at {n} edges"
+msgstr[0] "se separaron piezas que se tocaban en {n} arista"
+msgstr[1] "se separaron piezas que se tocaban en {n} aristas"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "welded {n} vertex of a crack"
+msgid_plural "welded {n} vertices of cracks"
+msgstr[0] "se soldó {n} vértice de una grieta"
+msgstr[1] "se soldaron {n} vértices de grietas"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "turned {n} inside-out part outward"
+msgid_plural "turned {n} inside-out parts outward"
+msgstr[0] "se dio vuelta {n} pieza que estaba al revés"
+msgstr[1] "se dieron vuelta {n} piezas que estaban al revés"
+
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{n} hole left open: too large to fill on its own"
+msgid_plural "{n} holes left open: too large to fill on their own"
+msgstr[0] "{n} agujero quedó abierto: es demasiado grande para taparlo solo"
+msgstr[1] "{n} agujeros quedaron abiertos: son demasiado grandes para taparlos solos"
+
 #: src/repair_run.rs:406
 #, rust-format
 msgctxt "RepairDialog"
@@ -3309,6 +3365,267 @@ msgid_plural "These drains do not reach the cavity, so they were left out: drill
 msgstr[0] "Este drenaje no llega a la cavidad, así que se quitó: perforado, solo entraría en el modelo o lo atravesaría. Ponelo donde la vista previa de la cavidad se ve detrás de la pared."
 msgstr[1] "Estos drenajes no llegan a la cavidad, así que se quitaron: perforados, solo entrarían en el modelo o lo atravesarían. Ponelos donde la vista previa de la cavidad se ve detrás de la pared."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Does not fit the printer"
+msgstr "No entra en la impresora"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ORIENT"
+msgstr "ORIENTAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model."
+msgstr "Busca la mejor posición para imprimir: menos soportes, menos fuerza de despegue, menos altura. Pasá el mouse sobre una opción para verla en el modelo."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Objective"
+msgstr "Objetivo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Balanced"
+msgstr "Equilibrado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Fewer supports"
+msgstr "Menos soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lower force"
+msgstr "Menos fuerza"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Faster"
+msgstr "Más rápido"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Advanced"
+msgstr "Avanzado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Max tilt from now"
+msgstr "Inclinación máxima desde la actual"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Align to the plate"
+msgstr "Alinear a la cama"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of supports"
+msgstr "Peso de los soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of peel force"
+msgstr "Peso de la fuerza de despegue"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Weight of height"
+msgstr "Peso de la altura"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "180° allows any pose, upside down included. Without aligning, an option turns about the vertical only to fit the plate."
+msgstr "Con 180° vale cualquier pose, incluso boca abajo. Sin alinear, una opción gira sobre la vertical solo para entrar en la cama."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "AUTO-ORIENT"
+msgstr "AUTO-ORIENTAR"
+
+#: ui/workspace/inspectors.slint src/orient_run.rs
+msgctxt "Inspector"
+msgid "Quick"
+msgstr "Rápida"
+
+#: ui/workspace/inspectors.slint src/orient_run.rs
+msgctxt "Inspector"
+msgid "Full"
+msgstr "Completa"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Preparing the model…"
+msgstr "Preparando el modelo…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Searching…"
+msgstr "Buscando…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Refining the best poses…"
+msgstr "Afinando las mejores poses…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Judging the finalists…"
+msgstr "Comparando las finalistas…"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Apply {}"
+msgstr "Aplicar {}"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Apply"
+msgstr "Aplicar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Close"
+msgstr "Cerrar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Auto-orient"
+msgstr "Auto-orientar"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Orient: the best way up for printing"
+msgstr "Orientar: la mejor posición para imprimir"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Search cancelled. The model was not moved."
+msgstr "Búsqueda cancelada. El modelo no se movió."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The scene changed while searching; the result was dropped. Search again."
+msgstr "La escena cambió mientras buscaba; se descartó el resultado. Buscá de nuevo."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Your orientation is already the best I found ({} s). Nothing was moved."
+msgstr "Tu orientación ya es la mejor que encontré ({} s). No se movió nada."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Searched in {} s. Hover an option to see it."
+msgstr "Buscado en {} s. Pasá el mouse sobre una opción para verla."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The model changed since the search. Search again."
+msgstr "El modelo cambió desde la búsqueda. Buscá de nuevo."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Applied option {}. Undo puts the model back."
+msgstr "Opción {} aplicada. Deshacer vuelve el modelo atrás."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "This model has supports: an option that tilts it makes them again; a turn about the vertical takes them along."
+msgstr "Este modelo tiene soportes: una opción que lo inclina los genera de nuevo; un giro sobre la vertical los lleva con él."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "This model is hollowed: its cavity was made for the current pose. Orienting before hollowing works best."
+msgstr "Este modelo está ahuecado: su cavidad se hizo para la pose actual. Conviene orientar antes de ahuecar."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "The mesh is not closed, so peel force was left out. Repair it for a full answer."
+msgstr "La malla no está cerrada, así que no se midió la fuerza de despegue. Reparala para una respuesta completa."
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "No option fits the printer. Scale the model down or pick a larger printer."
+msgstr "Ninguna opción entra en la impresora. Achicá el modelo o elegí una impresora más grande."
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "≈ {} tips"
+msgstr "≈ {} puntas"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} mm tall"
+msgstr "{} mm de alto"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Peak {} N"
+msgstr "Pico {} N"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "Peak not measured"
+msgstr "Pico sin medir"
+
+#: src/orient_run.rs
+msgctxt "Inspector"
+msgid "As it stands"
+msgstr "Como está"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tilts {}°"
+msgstr "Inclina {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Turns {}°"
+msgstr "Gira {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tilts {}°, turns {}°"
+msgstr "Inclina {}°, gira {}°"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Now: ≈ {} tips · peak {} N · {} mm tall"
+msgstr "Ahora: ≈ {} puntas · pico {} N · {} mm de alto"
+
+#: src/orient_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Now: ≈ {} tips · {} mm tall"
+msgstr "Ahora: ≈ {} puntas · {} mm de alto"
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "Auto-orient failed"
+msgstr "Falló la auto-orientación"
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "The search stopped unexpectedly. The model was not moved."
+msgstr "La búsqueda se detuvo inesperadamente. El modelo no se movió."
+
+#: src/orient_run.rs
+msgctxt "OrientDialog"
+msgid "The scene rejected the new pose; nothing was moved."
+msgstr "La escena rechazó la pose nueva; no se movió nada."
+
 msgctxt "MenuBar"
 msgid "Split into Bodies"
 msgstr "Separar en cuerpos"
@@ -3356,3 +3673,131 @@ msgid "Kept this body and removed 1 other."
 msgid_plural "Kept this body and removed {n} others."
 msgstr[0] "Quedó este cuerpo y se quitó 1 más."
 msgstr[1] "Quedó este cuerpo y se quitaron {n} más."
+
+msgctxt "Workspace"
+msgid "Opened with {n} note"
+msgid_plural "Opened with {n} notes"
+msgstr[0] "Se abrió con {n} nota"
+msgstr[1] "Se abrió con {n} notas"
+
+msgctxt "ImportNotes"
+msgid "Import notes"
+msgstr "Notas de importación"
+
+msgctxt "ImportNotes"
+msgid "{} opened with these notes:"
+msgstr "{} se abrió con estas notas:"
+
+msgctxt "ImportNotes"
+msgid "Removed {n} duplicate face from {}: an exact copy of another face, so the shape did not change."
+msgid_plural "Removed {n} duplicate faces from {}: exact copies of other faces, so the shape did not change."
+msgstr[0] "Se quitó {n} cara duplicada de {}: era una copia exacta de otra cara, así que la forma no cambió."
+msgstr[1] "Se quitaron {n} caras duplicadas de {}: eran copias exactas de otras caras, así que la forma no cambió."
+
+msgctxt "ImportNotes"
+msgid "These objects share vertices in the file: {}."
+msgstr "Estos objetos comparten vértices en el archivo: {}."
+
+msgctxt "ImportNotes"
+msgid "Skipped {n} file part with no content type, such as another slicer's settings or pictures."
+msgid_plural "Skipped {n} file parts with no content type, such as another slicer's settings or pictures."
+msgstr[0] "Se omitió {n} parte del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
+msgstr[1] "Se omitieron {n} partes del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} material group: materials are not supported yet."
+msgid_plural "Ignored {n} material groups: materials are not supported yet."
+msgstr[0] "Se ignoró {n} grupo de materiales: los materiales todavía no están soportados."
+msgstr[1] "Se ignoraron {n} grupos de materiales: los materiales todavía no están soportados."
+
+msgctxt "ImportNotes"
+msgid "Skipped object {}: the file does not place it on the plate."
+msgstr "Se omitió el objeto {}: el archivo no lo pone en la plataforma."
+
+msgctxt "ImportNotes"
+msgid "Object {} is marked as '{}' in the file; it was loaded as a plain model."
+msgstr "El objeto {} está marcado como '{}' en el archivo; se cargó como un modelo común."
+
+msgctxt "ImportNotes"
+msgid "Ignored the slices stored in the file ({n} stack); the full models were loaded."
+msgid_plural "Ignored the slices stored in the file ({n} stacks); the full models were loaded."
+msgstr[0] "Se ignoraron las capas laminadas que trae el archivo ({n} pila); se cargaron los modelos completos."
+msgstr[1] "Se ignoraron las capas laminadas que trae el archivo ({n} pilas); se cargaron los modelos completos."
+
+msgctxt "ImportNotes"
+msgid "The file places no objects on the plate."
+msgstr "El archivo no pone ningún objeto en la plataforma."
+
+msgctxt "ImportNotes"
+msgid "Dropped the face normals stored for object {}: its mesh changed after they were saved."
+msgstr "Se descartaron las normales de cara guardadas del objeto {}: su malla cambió después de guardarlas."
+
+msgctxt "ImportNotes"
+msgid "Ignored a damaged part with stored face normals."
+msgstr "Se ignoró una parte dañada con normales de cara guardadas."
+
+msgctxt "ImportNotes"
+msgid "The OBJ file has no vertices."
+msgstr "El archivo OBJ no tiene vértices."
+
+msgctxt "ImportNotes"
+msgid "The OBJ file has no faces."
+msgstr "El archivo OBJ no tiene caras."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} OBJ group line; its faces were loaded with their object."
+msgid_plural "Ignored {n} OBJ group lines; their faces were loaded with their objects."
+msgstr[0] "Se ignoró {n} línea de grupo del OBJ; sus caras se cargaron con su objeto."
+msgstr[1] "Se ignoraron {n} líneas de grupo del OBJ; sus caras se cargaron con sus objetos."
+
+msgctxt "ImportNotes"
+msgid "Ignored {n} OBJ material line: materials are not supported yet."
+msgid_plural "Ignored {n} OBJ material lines: materials are not supported yet."
+msgstr[0] "Se ignoró {n} línea de material del OBJ: los materiales todavía no están soportados."
+msgstr[1] "Se ignoraron {n} líneas de material del OBJ: los materiales todavía no están soportados."
+
+msgctxt "ImportNotes"
+msgid "Skipped {n} OBJ line this reader does not handle, such as lines or points."
+msgid_plural "Skipped {n} OBJ lines this reader does not handle, such as lines or points."
+msgstr[0] "Se omitió {n} línea del OBJ que este lector no maneja, como líneas o puntos."
+msgstr[1] "Se omitieron {n} líneas del OBJ que este lector no maneja, como líneas o puntos."
+
+msgctxt "ImportNotes"
+msgid "The project settings were saved by a newer version (format {}) and were ignored."
+msgstr "La configuración del proyecto se guardó con una versión más nueva (formato {}) y se ignoró."
+
+msgctxt "ImportNotes"
+msgid "Ignored an unknown part among the profiles the file carries."
+msgstr "Se ignoró una parte desconocida entre los perfiles que trae el archivo."
+
+msgctxt "ImportNotes"
+msgid "The file carries project settings from {}; only the models were loaded."
+msgstr "El archivo trae configuración de proyecto de {}; solo se cargaron los modelos."
+
+msgctxt "ImportNotes"
+msgid "The project uses the printer profile \"{}\", which is not installed."
+msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado."
+
+msgctxt "ImportNotes"
+msgid "The project uses the printer profile \"{}\", which is not installed; the file carries a copy of it."
+msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado; el archivo trae una copia."
+
+msgctxt "ImportNotes"
+msgid "The project uses the resin profile \"{}\", which is not installed."
+msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado."
+
+msgctxt "ImportNotes"
+msgid "The project uses the resin profile \"{}\", which is not installed; the file carries a copy of it."
+msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado; el archivo trae una copia."
+
+msgctxt "Workspace"
+msgid "A drain here would not reach the cavity: hollowing leaves it out."
+msgstr "Un drenaje acá no llegaría a la cavidad: al ahuecar queda afuera."
+
+msgctxt "Workspace"
+msgid "Not known yet whether a drain here reaches the cavity: the cavity is not computed."
+msgstr "Todavía no se sabe si un drenaje acá llega a la cavidad: la cavidad no está calculada."
+
+msgctxt "Workspace"
+msgid "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back."
+msgstr "Hacé clic en la superficie del modelo para perforar un drenaje ahí, donde se ve verde: en rojo no llega a la cavidad. Deshacer lo quita."

@@ -372,6 +372,8 @@ pub(crate) fn prepare_save_for_target(
     target: PathBuf,
     defaults: &PrintDefaults,
 ) -> Option<(SaveBundle, ProjectPayload, SaveStamp)> {
+    // A live preview is not the scene: the file gets what the history has.
+    doc.end_live_preview();
     let payload = payload_for_save(doc, defaults, &ProfileLibraries::platform_default());
     let bundle = prepare_save(doc, payload.clone(), target)?;
     Some((bundle, payload, doc.save_stamp()))

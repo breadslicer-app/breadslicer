@@ -39,6 +39,7 @@ mod graphics_status;
 mod hollow_persist;
 mod hollow_run;
 mod i18n;
+mod import_notes;
 mod language;
 mod load_progress;
 #[cfg(target_os = "macos")]
@@ -47,6 +48,7 @@ mod material_form;
 mod mesh_health;
 mod mesh_loader;
 pub mod mesh_render;
+mod orient_run;
 mod pending_load;
 mod picking;
 mod preferences_bus;
