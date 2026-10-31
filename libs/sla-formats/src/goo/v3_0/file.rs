@@ -62,6 +62,7 @@ pub fn write_file(
     write_layer_images(
         stack,
         &program.raster,
+        1,
         |_, rows| {
             let mut image = Vec::new();
             encode_payload(rows, &mut image);

@@ -17,7 +17,7 @@ fn encoded(value: u8, length: u32) -> Vec<u8> {
 
 /// Decode a layer image back into the 7-bit values and lengths it
 /// carries, one entry per record.
-fn decode(bytes: &[u8]) -> Vec<(u8, u32)> {
+pub(crate) fn decode(bytes: &[u8]) -> Vec<(u8, u32)> {
     let mut runs = Vec::new();
     let mut at = 0;
     while at < bytes.len() {
