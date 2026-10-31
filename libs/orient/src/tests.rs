@@ -546,7 +546,8 @@ fn aligning_to_the_plate_lays_the_shadow_square() {
         panic!("{:?}", square.fit);
     };
     assert!((turn_deg + 30.0).abs() < 1e-4, "{turn_deg}");
-    // The options turn the same way, so the bar ends up along X.
+    // The options turn the same way: however the bar tilts, its length
+    // stays over the X axis, so its shadow lies along X.
     let o = search(&bar, &ctx);
     let best = o.recommended();
     let along = mul(
@@ -557,8 +558,8 @@ fn aligning_to_the_plate_lays_the_shadow_square() {
         ),
     );
     assert!(
-        along[0].abs() > 0.999 || along[2].abs() > 0.999,
-        "the bar's length lies along X or stands up: {along:?}"
+        along[1].abs() < 1e-3,
+        "the bar's shadow lies along X: {along:?}"
     );
     // A plate deeper than wide takes the long side along Y.
     let tall = OrientContext {
