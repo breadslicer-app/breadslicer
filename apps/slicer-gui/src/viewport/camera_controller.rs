@@ -39,6 +39,18 @@ pub(super) struct CameraController {
     /// scene install or clear drops, so every new framing keeps the projection
     /// that the user chose.
     orthographic: Cell<bool>,
+    /// The orbit drag in progress, if any (#346).
+    orbit: Cell<OrbitDrag>,
+}
+
+/// A pointer orbit: armed when the button goes down, given its pivot at the
+/// first movement (so a right-click that opens the menu picks nothing), and
+/// held until the button comes up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum OrbitDrag {
+    Idle,
+    Armed(ScreenPoint),
+    Pivot(Vec3),
 }
 
 impl CameraController {
@@ -48,6 +60,7 @@ impl CameraController {
         Self {
             camera: RefCell::new(None),
             orthographic: Cell::new(orthographic),
+            orbit: Cell::new(OrbitDrag::Idle),
         }
     }
 
@@ -69,6 +82,27 @@ impl CameraController {
     /// clear.
     pub(super) fn reset(&self) {
         *self.camera.borrow_mut() = None;
+        self.orbit.set(OrbitDrag::Idle);
+    }
+
+    /// Returns the orbit drag in progress.
+    pub(super) fn orbit_drag(&self) -> OrbitDrag {
+        self.orbit.get()
+    }
+
+    /// Arms an orbit that starts with the cursor at `cursor`.
+    pub(super) fn arm_orbit(&self, cursor: ScreenPoint) {
+        self.orbit.set(OrbitDrag::Armed(cursor));
+    }
+
+    /// Holds `pivot` for the rest of the drag.
+    pub(super) fn hold_orbit_pivot(&self, pivot: Vec3) {
+        self.orbit.set(OrbitDrag::Pivot(pivot));
+    }
+
+    /// Ends the orbit drag. Returns whether it had a pivot.
+    pub(super) fn end_orbit(&self) -> bool {
+        matches!(self.orbit.replace(OrbitDrag::Idle), OrbitDrag::Pivot(_))
     }
 
     /// Frames the orbit camera on the union of the scene's world AABB (when
@@ -109,7 +143,8 @@ impl CameraController {
         orthographic
     }
 
-    /// Orbits the camera around its target. Returns `true` if a camera and
+    /// Orbits the camera around the held pivot of a pointer orbit, or around
+    /// its target without one (the arrow keys). Returns `true` if a camera and
     /// viewport were present (and the caller should mark the frame dirty).
     pub(super) fn on_rotate(&self, delta: ScreenDelta, viewport: Option<ViewportSize>) -> bool {
         let Some(vp) = viewport else {
@@ -119,7 +154,10 @@ impl CameraController {
         let Some(cam) = slot.as_mut() else {
             return false;
         };
-        cam.orbit(delta.dx, delta.dy, vp.height());
+        match self.orbit.get() {
+            OrbitDrag::Pivot(pivot) => cam.orbit_around(pivot, delta.dx, delta.dy, vp.height()),
+            OrbitDrag::Idle | OrbitDrag::Armed(_) => cam.orbit(delta.dx, delta.dy, vp.height()),
+        }
         true
     }
 
@@ -431,5 +469,41 @@ mod camera_controller_tests {
         frame(&cc);
         assert!(cc.orthographic());
         assert!(camera_is_orthographic(&cc));
+    }
+
+    #[test]
+    fn a_held_pivot_turns_the_camera_about_it() {
+        let cc = CameraController::new(false);
+        frame(&cc);
+        let target = cc.camera_cell().borrow().as_ref().unwrap().target;
+        let pivot = target + Vec3::new(40.0, -25.0, 0.0);
+        cc.arm_orbit(ScreenPoint::new(10.0, 10.0));
+        cc.hold_orbit_pivot(pivot);
+        assert!(cc.on_rotate(ScreenDelta::new(80.0, 30.0), fhd_viewport()));
+        let cam = cc.camera_cell().borrow().as_ref().unwrap().clone();
+        assert_ne!(cam.target, target, "the target turns about the pivot");
+        assert!(((cam.target - pivot).length() - (target - pivot).length()).abs() < 1e-2);
+        assert!(cc.end_orbit());
+        assert_eq!(cc.orbit_drag(), OrbitDrag::Idle);
+    }
+
+    #[test]
+    fn without_a_pivot_the_camera_turns_about_its_target() {
+        let cc = CameraController::new(false);
+        frame(&cc);
+        let target = cc.camera_cell().borrow().as_ref().unwrap().target;
+        cc.arm_orbit(ScreenPoint::new(10.0, 10.0));
+        assert!(cc.on_rotate(ScreenDelta::new(80.0, 30.0), fhd_viewport()));
+        assert_eq!(cc.camera_cell().borrow().as_ref().unwrap().target, target);
+        assert!(!cc.end_orbit(), "an armed orbit had no pivot");
+    }
+
+    #[test]
+    fn a_reset_drops_the_orbit() {
+        let cc = CameraController::new(false);
+        frame(&cc);
+        cc.hold_orbit_pivot(Vec3::ONE);
+        cc.reset();
+        assert_eq!(cc.orbit_drag(), OrbitDrag::Idle);
     }
 }
