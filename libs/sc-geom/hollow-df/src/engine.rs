@@ -1168,7 +1168,7 @@ impl DrainOpening {
                 self.cavity_mm
                     + DRAIN_PAST_WALL_MM.min(0.5 * (self.cavity_end_mm - self.cavity_mm)),
             );
-        ((through * 100.0).ceil() / 100.0).min(DRAIN_MAX_DEPTH_MM)
+        ((through * 100.0).ceil() / 100.0).clamp(0.01, DRAIN_MAX_DEPTH_MM)
     }
 }
 
@@ -1193,7 +1193,7 @@ fn drain_opening(
     // From just outside the surface, as DragonFruit measures.
     let start = center.sub(axis.scale(DRAIN_RAY_START_MM));
     // Where a ray from `offset` (across the axis) enters and leaves the
-    // cavity, from the start plane; entering at 0 when it starts inside.
+    // cavity, from the start plane.
     let span = |offset: Vec3| -> Option<(f32, f32)> {
         let hits = cavity
             .1
@@ -1207,11 +1207,12 @@ fn drain_opening(
                 walls.push(t);
             }
         }
-        match walls.len() {
-            0 => None,
-            n if n % 2 == 1 => Some((0.0, walls[0])),
-            _ => Some((walls[0], walls[1])),
-        }
+        // Every ray starts outside the cavity, on the start plane outside
+        // the model or in its wall: the first wall is where it enters. A ray
+        // grazing a wall of the cavity can count one wall too many, so the
+        // count says nothing about where it starts.
+        let enter = *walls.first()?;
+        Some((enter, walls.get(1).copied().unwrap_or(f32::INFINITY)))
     };
     let (to_cavity, cavity_end) = span(Vec3::ZERO)?;
     let mut crossings: Vec<f32> = Vec::new();

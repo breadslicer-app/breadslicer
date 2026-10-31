@@ -1230,7 +1230,7 @@ fn drains_on_face_diagonals_open() {
 }
 
 /// Where rays along `axis` from `start` plus each of `offsets` first meet
-/// `cavity` (0 when they start inside it), the deepest of them.
+/// `cavity`, the deepest of them.
 fn deepest_entrance(
     cavity: (&IndexedMesh, &Bvh),
     start: Vec3,
@@ -1243,9 +1243,7 @@ fn deepest_entrance(
             let hits = cavity
                 .1
                 .ray_hit_distances_closed(cavity.0, start.add(offset), axis);
-            let first = *hits.first()?;
-            let walls = 1 + hits.windows(2).filter(|w| w[1] - w[0] > 0.05).count();
-            Some(if walls % 2 == 1 { 0.0 } else { first })
+            hits.first().copied()
         })
         .fold(0.0, f32::max)
 }
@@ -1745,4 +1743,48 @@ fn drains_clear_their_channels_through_a_lattice() {
         .apply(&settings, &drains, Control::none())
         .unwrap();
     assert_eq!(again.mesh, applied.mesh);
+}
+
+/// A drain whose axis runs along a wall of the cavity (up from below, under
+/// the cavity's edge and corner): the axis grazes that wall, which can
+/// count one wall too many. The depth still goes from the floor, and a
+/// drain reported open is cut: the mesh is not the one without it.
+#[test]
+fn a_drain_along_a_cavity_wall_is_cut_as_reported() {
+    // Centred, as the timing report poses it: there the cavity's lowest
+    // vertex is on its side wall, and the axis up from under it grazed that
+    // wall, read one wall too many, took itself for inside the cavity and
+    // got -0.1 mm, reported open and not cut.
+    let mut block = finned_block();
+    for p in &mut block.positions {
+        *p = Vec3::new(p.x - 20.0, p.y - 15.0, p.z - 25.0);
+    }
+    let session = Session::build(block, &GridRequest::default(), None, Control::none()).unwrap();
+    let settings = HollowSettings::default();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let floor = *preview
+        .cavity
+        .positions
+        .iter()
+        .min_by(|a, b| a.z.total_cmp(&b.z))
+        .unwrap();
+    let plain = session.apply(&settings, &[], Control::none()).unwrap();
+    for at in [
+        [floor.x, floor.y],
+        [floor.x, 0.0],
+        [0.0, floor.y],
+        [-floor.x, 0.0],
+    ] {
+        let hole = DrainHole::new([at[0], at[1], -25.0], [0.0, 0.0, 1.0], 1.5);
+        let report = session.drain_report(&settings, &hole).unwrap();
+        assert!(
+            report.reaches_cavity && (2.1..=2.6).contains(&report.depth_mm),
+            "{at:?}: {report:?}"
+        );
+        let applied = session.apply(&settings, &[hole], Control::none()).unwrap();
+        assert_eq!(applied.drains[0], report);
+        assert!(is_edge_manifold(&applied.mesh));
+        assert_ne!(applied.mesh, plain.mesh, "{at:?}: reported open, so cut");
+        assert_eq!(face_shells(&applied.mesh).1, 1, "{at:?}: drained");
+    }
 }
