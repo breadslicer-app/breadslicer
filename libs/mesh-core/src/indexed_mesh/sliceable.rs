@@ -45,7 +45,7 @@ impl IndexedMesh {
     /// first failing stage. Only a mesh with edges shared by 4 faces is copied,
     /// to try the separation.
     pub fn is_sliceable(&self) -> bool {
-        match self.edge_stage() {
+        match self.gate_as_is() {
             Ok(()) => true,
             Err(SliceableError::Manifold(errors)) => {
                 self.touching_solids_separated(&errors).is_some()
@@ -67,7 +67,7 @@ impl IndexedMesh {
     /// The [`SliceableError`] of the 1st stage that fails, with the errors of
     /// the mesh as given.
     pub fn make_sliceable(&mut self) -> Result<ValidatedEdgeManifoldMesh<'_>, SliceableError> {
-        if let Err(error) = self.edge_stage() {
+        if let Err(error) = self.gate_as_is() {
             let SliceableError::Manifold(errors) = &error else {
                 return Err(error);
             };
@@ -81,7 +81,7 @@ impl IndexedMesh {
     }
 
     /// Runs the 3 stages of the gate on the mesh as is.
-    fn edge_stage(&self) -> Result<(), SliceableError> {
+    fn gate_as_is(&self) -> Result<(), SliceableError> {
         self.validate_vertices().map_err(SliceableError::Vertices)?;
         self.validated_faces()
             .map_err(SliceableError::Faces)?
