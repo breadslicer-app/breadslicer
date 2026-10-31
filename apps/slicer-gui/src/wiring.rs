@@ -274,6 +274,10 @@ fn wire_open_file(
         let ctrl = ctrl.clone();
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());
     }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_import_notes_requested(move || ctrl.loader().open_import_notes());
+    }
 
     ui.on_open_file_requested(move || {
         ctrl.on_modal_transform_finish(false);

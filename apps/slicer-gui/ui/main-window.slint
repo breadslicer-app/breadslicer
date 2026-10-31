@@ -168,6 +168,9 @@ export component MainWindow inherits Window {
     // A short note of what the last action did, shown in the status bar in
     // place of the hint until Rust clears it a few seconds later.
     in property <string> status-notice: "";
+    // What the last load changed or left out of the file (#301), such as
+    // "Opened with 2 notes"; empty when nothing. A click opens the list.
+    in property <string> import-notes: "";
     // The selected object numbers for the Transform inspector, pushed by
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
@@ -404,6 +407,7 @@ export component MainWindow inherits Window {
     callback previous-versions-requested();
     callback export-as-requested();
     callback scene-load-finished();
+    callback import-notes-requested();
     callback show-about-requested();
     // Help > Export Diagnostics (#74).
     callback export-diagnostics-requested();
@@ -1764,6 +1768,26 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;
+                }
+                if root.has-scene && root.import-notes != "": TouchArea {
+                    width: notes-text.preferred-width;
+                    mouse-cursor: pointer;
+                    accessible-role: button;
+                    accessible-label: root.import-notes;
+                    accessible-action-default => {
+                        root.import-notes-requested();
+                    }
+                    clicked => {
+                        root.import-notes-requested();
+                    }
+
+                    notes-text := Text {
+                        // The glyph is kept out of the translatable string.
+                        text: "ℹ " + root.import-notes;
+                        font-size: Theme.font-xs;
+                        color: Theme.accent;
+                        vertical-alignment: center;
+                    }
                 }
                 if root.has-scene: Text {
                     text: @tr("Workspace" => "{} object(s)", root.object-list.length);

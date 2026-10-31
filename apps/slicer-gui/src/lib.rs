@@ -39,6 +39,7 @@ mod graphics_status;
 mod hollow_persist;
 mod hollow_run;
 mod i18n;
+mod import_notes;
 mod language;
 mod load_progress;
 #[cfg(target_os = "macos")]
