@@ -658,3 +658,61 @@ fn rotated_session_outputs_come_back_unrotated() {
     assert!(c.length() < 1.0, "center {c:?}");
     assert!(bbox.max.x < 15.0 && bbox.min.x > -15.0);
 }
+
+/// Over exact distances the smoothing never removes material, adds at most
+/// its cap, and never turns a cavity voxel into material (#266).
+#[test]
+fn clamped_smoothing_stays_between_the_exact_field_and_its_cap() {
+    // Material: may rise by the cap, never drop.
+    assert_eq!(clamp_smoothed(5.0, 1.0, 0.5), 1.5);
+    assert_eq!(clamp_smoothed(0.2, 1.0, 0.5), 1.0);
+    assert_eq!(clamp_smoothed(1.2, 1.0, 0.5), 1.2);
+    // Cavity: may rise by the cap, but stays cavity.
+    assert_eq!(clamp_smoothed(-2.0, -3.0, 0.5), -2.5);
+    assert_eq!(clamp_smoothed(0.4, -0.3, 0.5), -EXACT_WALL_SAMPLE_MARGIN);
+    assert_eq!(clamp_smoothed(-4.0, -3.0, 0.5), -3.0);
+    // A cavity value already within the margin is left where it is.
+    assert_eq!(clamp_smoothed(1.0, -0.01, 0.5), -0.01);
+}
+
+/// A thin channel between two cavities: the clamped blur leaves the field's
+/// signs, and so the cavity's voxels, as they were.
+#[test]
+fn clamped_smoothing_keeps_every_voxel_on_its_side() {
+    let grid = GridSpec {
+        nx: 9,
+        ny: 9,
+        nz: 9,
+        voxel_mm: 1.0,
+        min: Vec3::new(0.0, 0.0, 0.0),
+    };
+    let n = grid.cell_count();
+    let mut solid = vec![false; n];
+    let mut keep = vec![false; n];
+    let mut dist = vec![0.0f32; n];
+    for z in 1..8 {
+        for y in 1..8 {
+            for x in 1..8 {
+                let i = grid.idx(x, y, z);
+                solid[i] = true;
+                // A one-voxel channel along x through the middle.
+                let edge = x.min(8 - x).min(y.min(8 - y)).min(z.min(8 - z)) as f32;
+                dist[i] = if y == 4 && z == 4 { 1.4 } else { edge - 1.0 };
+                keep[i] = dist[i] <= 1.0;
+            }
+        }
+    }
+    let exact = build_smoothed_cavity_scalar_field(&grid, &solid, &keep, &dist, 1.0, 0, true);
+    let smoothed = build_smoothed_cavity_scalar_field(&grid, &solid, &keep, &dist, 1.0, 9, true);
+    for i in 0..n {
+        if !solid[i] {
+            continue;
+        }
+        assert_eq!(smoothed[i] >= 0.0, keep[i], "voxel {i} changed side");
+        assert!(smoothed[i] >= exact[i], "voxel {i} lost material");
+        assert!(
+            smoothed[i] <= exact[i] + EXACT_SMOOTHING_CAP_VOXELS + 1e-6,
+            "voxel {i} rose past the cap"
+        );
+    }
+}
