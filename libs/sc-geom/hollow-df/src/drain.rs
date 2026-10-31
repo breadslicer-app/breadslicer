@@ -670,8 +670,46 @@ impl<'a> OverlappingShells<'a> {
         Ok(CutShells { untouched, shells })
     }
 
+    /// Which shells reach into any of `cutters` by more than a hair
+    /// ([`ConvexCutter::overlaps`]): a shell only touching one stays.
+    pub fn reached_by(&self, cutters: &[&ConvexCutter]) -> Vec<bool> {
+        use rayon::prelude::*;
+        (0..self.len())
+            .into_par_iter()
+            .map(|s| {
+                cutters.iter().any(|cutter| {
+                    boxes_meet(self.bounds[s], (cutter.min, cutter.max))
+                        && self.faces[s].iter().any(|&f| {
+                            let tri = self.mesh.triangles[f as usize];
+                            cutter.overlaps(tri.map(|v| to64(self.mesh.positions[v as usize])))
+                        })
+                })
+            })
+            .collect()
+    }
+
+    /// The mesh without the shells `drop` marks, the rest in mesh order.
+    pub fn without(&self, drop: &[bool]) -> IndexedMesh {
+        let triangles = self
+            .mesh
+            .triangles
+            .iter()
+            .zip(&self.labels)
+            .filter(|&(_, &label)| !drop[label as usize])
+            .map(|(&tri, _)| tri)
+            .collect();
+        let mut out = IndexedMesh::new(self.mesh.positions.clone(), triangles);
+        compact_unreferenced_vertices(&mut out);
+        out
+    }
+
+    /// Whether the boxes of shells `a` and `b` meet.
+    pub fn boxes_meet(&self, a: usize, b: usize) -> bool {
+        boxes_meet(self.bounds[a], self.bounds[b])
+    }
+
     /// Shell `s` as a mesh of its own.
-    fn shell_mesh(&self, s: usize) -> IndexedMesh {
+    pub fn shell_mesh(&self, s: usize) -> IndexedMesh {
         let mut local: HashMap<u32, u32> = HashMap::new();
         let mut positions = Vec::new();
         let triangles = self.faces[s]

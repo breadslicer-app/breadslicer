@@ -55,11 +55,12 @@
 //!   reaching into the wall is not the cavity), and cut from the source and
 //!   the wall, then from each beam on its own, since beams overlap the wall
 //!   and one another (#321);
-//! - a drain clears its channel through the infill: every beam is cut by
-//!   the drain's prism grown by [`DRAIN_INFILL_CLEARANCE_MM`] and run on
-//!   into the cavity by the hole's width, so the drain opens into empty
-//!   space, and a piece of a beam left holding on to nothing is dropped
-//!   (#339). A preview given the drains shows that infill, the one the
+//! - a drain clears its channel through the infill: every member (pillar,
+//!   lattice strut) that the drain's prism, grown by
+//!   [`DRAIN_INFILL_CLEARANCE_MM`] and run on into the cavity by the hole's
+//!   width, reaches into is removed whole, so the drain opens into empty
+//!   space and no stub is left hanging; a member left without a hold goes
+//!   too (#339). A preview given the drains shows that infill, the one the
 //!   hollow gets ([`Session::preview_with_drains`]);
 //! - the result reports volumes in mm³ from the meshes themselves.
 
@@ -72,14 +73,11 @@ use crate::drain::{
 };
 use crate::hollowing::{
     ExactCavity, GridSpec, HollowMode, HollowOptions, HollowSession, InfillMode,
-    MIN_VOXEL_RESOLUTION, OpenFace, compact_unreferenced_vertices, merge_meshes,
-    normalize_mesh_for_boolean, normalize_mesh_for_boolean_with_weld, point_inside_mesh_parity,
-    vec3_normalize,
+    MIN_VOXEL_RESOLUTION, OpenFace, merge_meshes, normalize_mesh_for_boolean,
+    normalize_mesh_for_boolean_with_weld, point_inside_mesh_parity, vec3_normalize,
 };
-use crate::mesh::{Aabb, IndexedMesh, Vec3};
-use crate::topology::{
-    EdgeManifoldDefects, edge_components, edge_manifold_defects, is_edge_manifold,
-};
+use crate::mesh::{IndexedMesh, Vec3};
+use crate::topology::{EdgeManifoldDefects, edge_manifold_defects, is_edge_manifold};
 use crate::wall::WallDistances;
 
 /// DragonFruit's default voxel size in its Hollow panel.
@@ -849,7 +847,7 @@ impl Session {
             return Ok(Some(kept.clone()));
         }
         ctl.check()?;
-        let drained = Arc::new(clear_channels(infill, &cutters, built.drain_target())?);
+        let drained = Arc::new(clear_channels(infill, &cutters, built.drain_target()));
         *built.drained.lock().unwrap_or_else(PoisonError::into_inner) =
             Some((drains.to_vec(), drained.clone()));
         Ok(Some(drained))
@@ -942,105 +940,56 @@ impl Session {
     }
 }
 
-/// `infill` with the channels `cutters` (drain index, cutter) clear through
-/// it (#339): each beam is cut on its own, since they overlap (#321), and
-/// a piece of a beam left touching neither the cavity's wall nor a beam
-/// that does is dropped: it would float. `wall` is the cavity surface, so a
-/// vertex outside it is in the wall. Beams no cutter reaches stay whole.
+/// `infill` less every member (a pillar, a lattice strut: one closed shell
+/// each) that a drain's channel reaches into (#339): the member goes whole,
+/// not just the stretch inside the channel, which would leave the rest
+/// hanging from one end (an island or an overhang to a resin printer).
+/// A member left without a hold is dropped too: one that crossed a dropped
+/// member and has no vertex in the wall (`wall` is the cavity surface, so a
+/// vertex outside it is in the wall) nor crosses a member that holds. The
+/// rest stays as it is, in place.
 fn clear_channels(
     infill: &IndexedMesh,
     cutters: &[(usize, ConvexCutter)],
     wall: (&IndexedMesh, &Bvh),
-) -> Result<IndexedMesh, HollowError> {
+) -> IndexedMesh {
+    let members = OverlappingShells::new(infill);
     let only: Vec<&ConvexCutter> = cutters.iter().map(|(_, cutter)| cutter).collect();
-    let cut = OverlappingShells::new(infill)
-        .subtract_convex_apart(&only)
-        .map_err(|(i, error)| HollowError::Drain {
-            index: cutters[i].0,
-            error,
-        })?;
-    let pieces: Vec<IndexedMesh> = cut.shells.iter().flat_map(split_shells).collect();
+    let mut dropped = members.reached_by(&only);
+    if !dropped.contains(&true) {
+        return infill.clone();
+    }
+    // Members beside a dropped one may have held on through it. Every
+    // member reaches into the wall at both ends by construction, so this
+    // finds none but for a member the generator left short.
+    let gone: Vec<usize> = (0..members.len()).filter(|&s| dropped[s]).collect();
     let in_wall = |p: Vec3| !point_inside_mesh_parity(wall.0, wall.1, p, 0.01);
-    let mut anchored: Vec<bool> = pieces
-        .iter()
-        .map(|piece| piece.positions.iter().any(|&p| in_wall(p)))
+    let mut loose: Vec<(usize, IndexedMesh)> = (0..members.len())
+        .filter(|&s| !dropped[s] && gone.iter().any(|&g| members.boxes_meet(s, g)))
+        .map(|s| (s, members.shell_mesh(s)))
+        .filter(|(_, mesh)| !mesh.positions.iter().any(|&p| in_wall(p)))
         .collect();
-    // The rest hold on through a beam that does: one no cutter reached
-    // (each is anchored at both ends), or a piece found anchored.
-    let boxes: Vec<Aabb> = pieces.iter().map(IndexedMesh::bbox).collect();
     loop {
-        let mut changed = false;
-        for i in 0..pieces.len() {
-            if anchored[i] {
-                continue;
-            }
-            let holds = surfaces_cross(&pieces[i], &near_part(&cut.untouched, &boxes[i]))
-                || (0..pieces.len()).any(|j| {
-                    anchored[j]
-                        && boxes_overlap(&boxes[i], &boxes[j])
-                        && surfaces_cross(&pieces[i], &pieces[j])
-                });
-            if holds {
-                anchored[i] = true;
-                changed = true;
-            }
-        }
-        if !changed {
+        let unsure: Vec<usize> = loose.iter().map(|(s, _)| *s).collect();
+        let before = loose.len();
+        loose.retain(|(s, mesh)| {
+            let holds = (0..members.len()).any(|t| {
+                t != *s
+                    && !dropped[t]
+                    && !unsure.contains(&t)
+                    && members.boxes_meet(*s, t)
+                    && surfaces_cross(mesh, &members.shell_mesh(t))
+            });
+            !holds
+        });
+        if loose.len() == before {
             break;
         }
     }
-    let mut out = cut.untouched;
-    for (piece, kept) in pieces.iter().zip(anchored) {
-        if kept {
-            append(&mut out, piece);
-        }
+    for (s, _) in loose {
+        dropped[s] = true;
     }
-    Ok(out)
-}
-
-/// The edge-connected shells of `mesh`, each a mesh of its own, in order.
-fn split_shells(mesh: &IndexedMesh) -> Vec<IndexedMesh> {
-    let (labels, count) = edge_components(mesh);
-    let mut shells: Vec<Vec<[u32; 3]>> = vec![Vec::new(); count];
-    for (tri, &label) in mesh.triangles.iter().zip(&labels) {
-        shells[label as usize].push(*tri);
-    }
-    shells
-        .into_iter()
-        .filter(|triangles| !triangles.is_empty())
-        .map(|triangles| {
-            let mut shell = IndexedMesh::new(mesh.positions.clone(), triangles);
-            compact_unreferenced_vertices(&mut shell);
-            shell
-        })
-        .collect()
-}
-
-fn boxes_overlap(a: &Aabb, b: &Aabb) -> bool {
-    a.min.x <= b.max.x
-        && b.min.x <= a.max.x
-        && a.min.y <= b.max.y
-        && b.min.y <= a.max.y
-        && a.min.z <= b.max.z
-        && b.min.z <= a.max.z
-}
-
-/// The triangles of `mesh` whose box meets `area`.
-fn near_part(mesh: &IndexedMesh, area: &Aabb) -> IndexedMesh {
-    let triangles = mesh
-        .triangles
-        .iter()
-        .copied()
-        .filter(|tri| {
-            let [a, b, c] = tri.map(|v| mesh.positions[v as usize]);
-            let around = Aabb {
-                min: a.min(b).min(c),
-                max: a.max(b).max(c),
-            };
-            boxes_overlap(area, &around)
-        })
-        .collect();
-    IndexedMesh::new(mesh.positions.clone(), triangles)
+    members.without(&dropped)
 }
 
 /// A drain's axis, normalized (straight down when it has no direction), and
@@ -1105,7 +1054,8 @@ pub const DRAIN_INFILL_CLEARANCE_MM: f32 = 0.5;
 /// The channel a drain clears through the infill (#339): its prism, wider
 /// by [`DRAIN_INFILL_CLEARANCE_MM`] all round, from the same start outside
 /// through the wall and on past the drain's end into the cavity by the
-/// hole's width, so the drain opens into empty space.
+/// hole's width, so the drain opens into empty space. Every member of the
+/// infill it reaches into goes, whole.
 fn infill_cutter(hole: &DrainHole, report: &DrainReport) -> ConvexCutter {
     let (center, axis) = drain_axis(hole);
     let (radius_x, radius_y) = drain_radii(hole);
