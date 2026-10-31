@@ -4,7 +4,7 @@
  */
 
 //! Viewport-sized GPU resources owned by the renderer: the MSAA
-//! attachments (color + depth/stencil + private gizmo depth) and the
+//! attachments (color + depth/stencil) and the
 //! double-buffered destination color textures handed off to Slint.
 //!
 //! Both bundles are recreated whenever `(width, height)` changes; the
@@ -15,7 +15,7 @@ use slint::wgpu_30::wgpu;
 
 use super::device_ops::scoped;
 use super::error::{RenderAllocation, RenderError};
-use super::{DEPTH_FORMAT, GIZMO_DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
+use super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 
 pub(super) struct MsaaTargets {
     pub(super) width: u32,
@@ -26,14 +26,6 @@ pub(super) struct MsaaTargets {
     /// outline post-pass as a multisampled u32 texture. Recreated
     /// alongside `depth_view` since they share the underlying texture.
     pub(super) outline_bind_group: wgpu::BindGroup,
-    /// Private depth attachment for the gizmo pass. The gizmo
-    /// renders to the resolved (non-MSAA) target with depth cleared
-    /// at pass start so it sits on top of the mesh, but the gizmo
-    /// pipeline still runs depth-test-on internally so the three
-    /// axes order correctly where they overlap near the pivot. We
-    /// can't reuse the main MSAA depth: its sample count (4)
-    /// doesn't match the gizmo pipeline's count (1).
-    pub(super) gizmo_depth_view: wgpu::TextureView,
 }
 
 impl MsaaTargets {
@@ -110,29 +102,12 @@ impl MsaaTargets {
             }],
         });
 
-        let gizmo_depth = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer gizmo depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: GIZMO_DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let gizmo_depth_view = gizmo_depth.create_view(&wgpu::TextureViewDescriptor::default());
-
         Self {
             width,
             height,
             color_view,
             depth_view,
             outline_bind_group,
-            gizmo_depth_view,
         }
     }
 }

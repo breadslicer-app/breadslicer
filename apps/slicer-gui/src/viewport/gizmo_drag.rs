@@ -5,20 +5,20 @@
 
 //! Pure drag-math FSM for the transform gizmo. The data types
 //! (`GizmoState`, `DragOp`, `HandleHit`) and the per-frame compose
-//! functions (`apply_drag_move`, `re_anchor_scale_axis`) are
-//! controller-agnostic: they take the current cursor / camera /
-//! pivot inputs and return the new transform plus the (possibly
-//! mutated) op state. The `ViewportController` owns the `Cell`s and
-//! drives the Slint callbacks; everything in this module is a free
-//! function.
+//! function (`apply_drag_move`) are controller-agnostic: they take the
+//! current cursor / camera / pivot inputs and return the new transform
+//! plus the (possibly mutated) op state. The `ViewportController` owns
+//! the `Cell`s and drives the Slint callbacks; everything in this module
+//! is a free function.
 
 use glam::Vec3;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::NodeId;
 
-use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
+use crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+use crate::gizmo::modifiers::DragModifiers;
 use crate::gizmo::{self};
 use crate::picking;
 
@@ -48,15 +48,13 @@ pub(super) enum GizmoState {
 /// - `Rotate` composes a rotation about the axis through the pivot.
 ///   `start_angle` is the angular position at press; `last_raw` and
 ///   `current_unwrapped` track the unwrap counter so a full-revolution
-///   drag yields a real 360°+ rotation instead of resetting at ±π.
-/// - `ScaleAxis` composes either a per-axis scale or a uniform scale
-///   about the pivot, selected by `proportional` (driven by the live
-///   Shift state). `start_anchor` is the world-space closest point on
-///   the axis (used by the per-axis branch); `press_screen` /
-///   `pivot_screen` carry the equivalent screen anchors used by the
-///   uniform branch. Both anchor sets are captured at press *and*
-///   re-captured on every Shift toggle so the formula switch is
-///   visually snap-free (see `re_anchor_scale_axis`).
+///   drag yields a real 360°+ rotation instead of resetting at ±π;
+///   `applied` is the turn actually applied (snapped with Ctrl).
+/// - `ScaleAxis` composes a per-axis scale about the pivot from the
+///   world-space closest points on the axis at press and now.
+/// - `ScaleUniform` (the centre ball) composes a uniform scale from the
+///   cursor travel since `press`: right or up grows, left or down
+///   shrinks.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum DragOp {
     Translate {
@@ -68,6 +66,7 @@ pub(super) enum DragOp {
         start_angle: f32,
         last_raw: f32,
         current_unwrapped: f32,
+        applied: f32,
     },
     ScaleAxis {
         axis: Axis,
@@ -77,9 +76,9 @@ pub(super) enum DragOp {
         /// renderer can slide the per-axis cube along the axis to
         /// follow the cursor as visual feedback for the live scale.
         current_anchor: Vec3,
-        proportional: bool,
-        press_screen: (f32, f32),
-        pivot_screen: (f32, f32),
+    },
+    ScaleUniform {
+        press: (f32, f32),
     },
 }
 
@@ -92,25 +91,23 @@ pub(super) enum HandleHit {
     Translate(Axis),
     Rotate(Axis),
     ScaleAxis(Axis),
+    ScaleUniform,
 }
 
-/// Bundled inputs for `re_anchor_scale_axis`. The single call site
-/// already groups all of these together (camera, viewport, cursor,
-/// pivot, fov_y); packing them keeps the function signature short
-/// enough to forgo `#[allow(clippy::too_many_arguments)]`.
-pub(super) struct ReanchorCtx<'a> {
-    pub camera: &'a OrbitCamera,
-    pub pivot: Vec3,
-    pub fov_y: f32,
-    pub viewport: (f32, f32),
-    pub cursor: (f32, f32),
+/// Uniform scale factor of the centre ball for a cursor travel of
+/// `(dx, dy)` pixels: doubles per shaft length to the right or up, halves
+/// per shaft length to the left or down.
+pub(super) fn uniform_drag_factor(dx: f32, dy: f32) -> f32 {
+    ((dx - dy) / HANDLE_PIXEL_LENGTH).exp2().clamp(1e-3, 1e3)
 }
 
 /// Per-op delta computation for a move event. Returns the new
 /// transform composed onto `original`, paired with the (possibly
 /// updated) `DragOp` state: Rotate's unwrap counter mutates per
 /// frame; the others are pure functions of the press capture and the
-/// current cursor.
+/// current cursor. `ray` and `cursor` are the gesture cursor (slowed
+/// down while Shift is held); `modifiers.snap` rounds the result to
+/// steps.
 ///
 /// Returns `None` if the cursor produces no usable delta this frame
 /// (e.g. rotate ray slipped into the lock-out region between move
@@ -122,13 +119,14 @@ pub(super) fn apply_drag_move(
     pivot: Vec3,
     parent_world: &Transform3D,
     original: &Transform3D,
-    cursor_x: f32,
-    cursor_y: f32,
+    cursor: (f32, f32),
+    modifiers: DragModifiers,
 ) -> Option<(Transform3D, DragOp)> {
     match op {
         DragOp::Translate { axis, anchor } => {
             let new_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis)?;
-            let delta = new_anchor - anchor;
+            let along = modifiers.distance((new_anchor - anchor).dot(axis.world_dir()));
+            let delta = axis.world_dir() * along;
             let translation = AffineTransform3D::from_translation([
                 delta.x as f64,
                 delta.y as f64,
@@ -141,114 +139,61 @@ pub(super) fn apply_drag_move(
             start_angle,
             last_raw,
             current_unwrapped,
+            ..
         } => {
             let raw = gizmo::drag_math::rotate_drag_angle(ray, pivot, axis)?;
             let new_unwrapped = unwrap_angle(last_raw, current_unwrapped, raw);
-            let delta_angle = new_unwrapped - start_angle;
+            let applied = modifiers.angle(new_unwrapped - start_angle);
             let new_op = DragOp::Rotate {
                 axis,
                 start_angle,
                 last_raw: raw,
                 current_unwrapped: new_unwrapped,
+                applied,
             };
-            // R(axis, delta_angle) about the world-space pivot,
-            // expressed in the leaf's parent space by
-            // `compose_about_pivot`.
-            let rotation = axis_rotation(axis, delta_angle)
+            // R(axis, applied) about the world-space pivot, expressed in
+            // the leaf's parent space by `compose_about_pivot`.
+            let rotation = axis_rotation(axis, applied)
                 .map(|r| compose_about_pivot(&r, pivot, parent_world, original));
             rotation.map(|new_t| (new_t, new_op))
         }
         DragOp::ScaleAxis {
-            axis,
-            start_anchor,
-            current_anchor: _,
-            proportional,
-            press_screen,
-            pivot_screen,
+            axis, start_anchor, ..
         } => {
-            // Recompute the cursor's closest-point-on-axis on every
-            // move so the renderer can slide the cube along the axis,
-            // even when `proportional` is on (the uniform branch
-            // doesn't use the anchor for its own math, but we still
-            // refresh it so a Shift-toggle back to per-axis re-uses a
-            // current anchor instead of the stale press one). `None`
-            // here means the camera snapped into the axis lock-out
+            // `None` here means the camera snapped into the axis lock-out
             // since press; freeze the drag for this frame.
             let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis)?;
-            let scale_mat = if proportional {
-                let factor = gizmo::drag_math::uniform_scale_factor(
-                    pivot_screen.0,
-                    pivot_screen.1,
-                    press_screen.0,
-                    press_screen.1,
-                    cursor_x,
-                    cursor_y,
-                );
-                AffineTransform3D::from_uniform_scale(factor as f64)
-            } else {
-                let factor = gizmo::drag_math::scale_factor_along_axis(
-                    start_anchor,
-                    current_anchor,
-                    pivot,
-                    axis,
-                );
-                scale_along_axis(axis, factor)
-            };
+            let factor = modifiers.factor(gizmo::drag_math::scale_factor_along_axis(
+                start_anchor,
+                current_anchor,
+                pivot,
+                axis,
+            ));
             let new_op = DragOp::ScaleAxis {
                 axis,
                 start_anchor,
                 current_anchor,
-                proportional,
-                press_screen,
-                pivot_screen,
             };
             Some((
-                compose_about_pivot(&scale_mat, pivot, parent_world, original),
+                compose_about_pivot(
+                    &scale_along_axis(axis, factor),
+                    pivot,
+                    parent_world,
+                    original,
+                ),
                 new_op,
             ))
         }
+        DragOp::ScaleUniform { press } => {
+            let factor =
+                modifiers.factor(uniform_drag_factor(cursor.0 - press.0, cursor.1 - press.1));
+            let scale = AffineTransform3D::from_uniform_scale(factor as f64);
+            Some((
+                compose_about_pivot(&scale, pivot, parent_world, original),
+                op,
+            ))
+        }
     }
-}
-
-/// Re-anchors a `ScaleAxis` drag for a Shift toggle: the scene's
-/// running transform becomes the new `original`, the cursor's current
-/// position becomes the new press, both anchor sets (axis + screen)
-/// are recomputed from the cursor, and `proportional` is set to the
-/// new Shift state. After this call `apply_drag_move` produces the
-/// running transform unchanged for the toggling frame, so the formula
-/// switch is visually snap-free.
-///
-/// Returns `None` if the pivot's screen projection fails (degenerate
-/// camera) or if the cursor ray slipped into the axis lock-out since
-/// press; the caller leaves the drag unchanged in either case.
-/// Defensive against op variants other than `ScaleAxis`: returns
-/// `None` so the move dispatch falls through to the regular path.
-pub(super) fn re_anchor_scale_axis(
-    op: DragOp,
-    running_transform: Transform3D,
-    ctx: &ReanchorCtx<'_>,
-    new_proportional: bool,
-) -> Option<(DragOp, Transform3D)> {
-    let DragOp::ScaleAxis { axis, .. } = op else {
-        return None;
-    };
-    let (viewport_w, viewport_h) = ctx.viewport;
-    let (cursor_x, cursor_y) = ctx.cursor;
-    let pivot_screen =
-        picking::project_world_to_screen(ctx.camera, ctx.fov_y, viewport_w, viewport_h, ctx.pivot)?;
-    let ray = picking::ray_from_pixel(
-        ctx.camera, ctx.fov_y, viewport_w, viewport_h, cursor_x, cursor_y,
-    );
-    let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, ctx.pivot, axis)?;
-    let new_op = DragOp::ScaleAxis {
-        axis,
-        start_anchor,
-        current_anchor: start_anchor,
-        proportional: new_proportional,
-        press_screen: (cursor_x, cursor_y),
-        pivot_screen,
-    };
-    Some((new_op, running_transform))
 }
 
 /// Updates the unwrap counter so a multi-revolution drag yields a
@@ -416,6 +361,11 @@ mod apply_drag_move_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
+    const NO_KEYS: DragModifiers = DragModifiers {
+        snap: false,
+        fine: false,
+    };
+
     fn ray_from(origin: Vec3, target: Vec3) -> picking::Ray {
         picking::Ray {
             origin,
@@ -455,8 +405,16 @@ mod apply_drag_move_tests {
         };
         // Construct a ray whose closest point on +X axis is (1.5, 0, 0).
         let ray = ray_from(Vec3::new(1.5, -3.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
-        let (new_t, _) =
-            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
+        let (new_t, _) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
         let translation = read_translation_t(&new_t);
         assert_approx_eq!(f64, translation[0], 0.5, epsilon = 1e-4);
         assert_approx_eq!(f64, translation[1], 0.0, epsilon = 1e-4);
@@ -478,14 +436,18 @@ mod apply_drag_move_tests {
             axis: Axis::X,
             start_anchor: Vec3::new(1.0, 0.0, 0.0),
             current_anchor: Vec3::new(1.0, 0.0, 0.0),
-            proportional: false,
-            // Unused in the per-axis branch; supply zeros.
-            press_screen: (0.0, 0.0),
-            pivot_screen: (0.0, 0.0),
         };
         let ray = ray_from(Vec3::new(2.0, -3.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
-        let (new_t, _) =
-            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
+        let (new_t, _) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
         let m = read_linear(&new_t);
         assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[1][1], 1.0, epsilon = 1e-6);
@@ -495,40 +457,113 @@ mod apply_drag_move_tests {
     }
 
     #[test]
-    fn scale_axis_op_with_proportional_uses_uniform_formula() {
-        // Same `ScaleAxis` op; the only difference is the
-        // `proportional` flag. With it set, the formula is the uniform
-        // one: factor = current_dist / press_dist in screen pixels.
-        // Press at 50 px from pivot, current at 100 px → factor 2.
+    fn centre_ball_doubles_per_shaft_length_right_or_up() {
         let pivot = pivot_origin();
         let original = Transform3D::Identity;
-        let op = DragOp::ScaleAxis {
-            axis: Axis::X,
-            // `start_anchor` becomes irrelevant in the proportional
-            // branch; supply something out-of-range to make the
-            // contrast visible if a regression flips the dispatch
-            // back to the per-axis formula.
-            start_anchor: Vec3::new(99.0, 0.0, 0.0),
-            current_anchor: Vec3::new(99.0, 0.0, 0.0),
-            proportional: true,
-            press_screen: (150.0, 100.0),
-            pivot_screen: (100.0, 100.0),
+        let op = DragOp::ScaleUniform {
+            press: (100.0, 100.0),
         };
         let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
-        let (new_t, _) = apply_drag_move(
+        let run = |cursor: (f32, f32)| {
+            let (t, _) = apply_drag_move(
+                op,
+                &ray,
+                pivot,
+                &Transform3D::Identity,
+                &original,
+                cursor,
+                NO_KEYS,
+            )
+            .unwrap();
+            read_linear(&t)
+        };
+        let right = run((100.0 + HANDLE_PIXEL_LENGTH, 100.0));
+        let up = run((100.0, 100.0 - HANDLE_PIXEL_LENGTH));
+        let left = run((100.0 - HANDLE_PIXEL_LENGTH, 100.0));
+        for m in [right, up] {
+            for i in 0..3 {
+                assert_approx_eq!(f64, m[i][i], 2.0, epsilon = 1e-4);
+            }
+        }
+        for i in 0..3 {
+            assert_approx_eq!(f64, left[i][i], 0.5, epsilon = 1e-4);
+        }
+    }
+
+    #[test]
+    fn ctrl_snaps_every_drag_to_its_step() {
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let snap = DragModifiers {
+            snap: true,
+            fine: false,
+        };
+        // Move: 0.5 + 2.37 along X snaps to 2 mm from the press.
+        let op = DragOp::Translate {
+            axis: Axis::X,
+            anchor: Vec3::new(0.5, 0.0, 0.0),
+        };
+        let ray = ray_from(Vec3::new(2.87, -3.0, 0.0), Vec3::new(2.87, 0.0, 0.0));
+        let (t, _) = apply_drag_move(
             op,
             &ray,
             pivot,
             &Transform3D::Identity,
             &original,
-            200.0,
-            100.0,
+            (0.0, 0.0),
+            snap,
         )
         .unwrap();
-        let m = read_linear(&new_t);
-        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
-        assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
-        assert_approx_eq!(f64, m[2][2], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, read_translation_t(&t)[0], 2.0, epsilon = 1e-5);
+
+        // Rotate: a 20° turn snaps to 15°, and `applied` says so.
+        let op = DragOp::Rotate {
+            axis: Axis::Z,
+            start_angle: 0.0,
+            last_raw: 0.0,
+            current_unwrapped: 0.0,
+            applied: 0.0,
+        };
+        let a = 20f32.to_radians();
+        let target = Vec3::new(a.cos(), a.sin(), 0.0);
+        let ray = ray_from(target + Vec3::Z * 5.0, target);
+        let (t, new_op) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            snap,
+        )
+        .unwrap();
+        let m = read_linear(&t);
+        assert_approx_eq!(f64, m[1][0], 15f64.to_radians().sin(), epsilon = 1e-5);
+        match new_op {
+            DragOp::Rotate { applied, .. } => {
+                assert_approx_eq!(f32, applied, 15f32.to_radians(), epsilon = 1e-6)
+            }
+            other => panic!("expected Rotate, got {other:?}"),
+        }
+
+        // Scale along an axis: x1.73 snaps to x1.7.
+        let op = DragOp::ScaleAxis {
+            axis: Axis::X,
+            start_anchor: Vec3::new(1.0, 0.0, 0.0),
+            current_anchor: Vec3::new(1.0, 0.0, 0.0),
+        };
+        let ray = ray_from(Vec3::new(1.73, -3.0, 0.0), Vec3::new(1.73, 0.0, 0.0));
+        let (t, _) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            snap,
+        )
+        .unwrap();
+        assert_approx_eq!(f64, read_linear(&t)[0][0], 1.7, epsilon = 1e-5);
     }
 
     #[test]
@@ -544,12 +579,21 @@ mod apply_drag_move_tests {
             start_angle: start,
             last_raw: start,
             current_unwrapped: start,
+            applied: 0.0,
         };
         // Ray crosses the X arc plane at (0, 0, 1): a point on +Z
         // → angle π/2 in the X-axis basis (u=Y, v=Z).
         let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
-        let (new_t, new_op) =
-            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
+        let (new_t, new_op) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
         // The linear part rotates +Y onto +Z (right-handed about +X).
         let m = read_linear(&new_t);
         // R(X, π/2) maps (0, 1, 0) → (0, 0, 1):
@@ -574,41 +618,21 @@ mod apply_drag_move_tests {
     }
 
     #[test]
-    fn scale_axis_proportional_under_translated_parent_keeps_world_centre_fixed() {
-        // Regression for the displacement-on-shift bug: the gizmo
-        // pivot lives in world space; the leaf's transform is the
-        // PARENT-relative local. With a root translation
-        // `parent_world = T(40, 0, 0)` and an identity leaf carrying
-        // a mesh centred on the LOCAL origin, the world centre of
-        // the object is at `(40, 0, 0)`, which is also the press-
-        // time gizmo pivot. A uniform scale by factor 2 about that
-        // world pivot must produce a new leaf local whose world
-        // image still has its centre at `(40, 0, 0)`. The check is
-        // direct: the new leaf local, composed with parent_world,
-        // maps the origin (the mesh centre) to `(40, 0, 0)`.
-        //
-        // Before the fix, `compose_about_pivot` would have applied
-        // `T(40) ∘ scale ∘ T(-40)` on top of the identity leaf
-        // local, treating the world pivot as a local pivot. The
-        // resulting WORLD image of the origin came out at
-        // `(80, 0, 0)`: the object shifted by `δ_root * (1 - factor)
-        //  = 40 * (1 - 2) = -40`, i.e. ended up at world +80 if
-        // composed past the parent's +40.
+    fn uniform_scale_under_translated_parent_keeps_world_centre_fixed() {
+        // Regression for the displacement-on-scale bug: the gizmo pivot lives
+        // in world space; the leaf's transform is the PARENT-relative local.
+        // With a root translation `parent_world = T(40, 0, 0)` and an identity
+        // leaf carrying a mesh centred on the LOCAL origin, the world centre
+        // of the object is at `(40, 0, 0)`, which is also the gizmo pivot. A
+        // uniform scale by factor 2 about that world pivot must leave the
+        // world image of the mesh centre at `(40, 0, 0)`.
         let parent_world =
             Transform3D::Affine(AffineTransform3D::from_translation([40.0, 0.0, 0.0]));
         let original = Transform3D::Identity;
         let world_pivot = Vec3::new(40.0, 0.0, 0.0);
-        let op = DragOp::ScaleAxis {
-            axis: Axis::X,
-            start_anchor: Vec3::new(41.0, 0.0, 0.0),
-            current_anchor: Vec3::new(41.0, 0.0, 0.0),
-            proportional: true,
-            press_screen: (150.0, 100.0),
-            pivot_screen: (100.0, 100.0),
+        let op = DragOp::ScaleUniform {
+            press: (100.0, 100.0),
         };
-        // Pixel anchors: pivot at (100, 100), press at (150, 100)
-        // (50 px out), cursor at (200, 100) (100 px out) → uniform
-        // factor 2.
         let ray = ray_from(Vec3::new(40.0, -3.0, 0.0), Vec3::new(40.0, 0.0, 0.0));
         let (new_local, _) = apply_drag_move(
             op,
@@ -616,13 +640,11 @@ mod apply_drag_move_tests {
             world_pivot,
             &parent_world,
             &original,
-            200.0,
-            100.0,
+            (100.0 + HANDLE_PIXEL_LENGTH, 100.0),
+            NO_KEYS,
         )
         .unwrap();
 
-        // Image of the mesh's local origin under the new world
-        // transform: `world_centre = parent_world ∘ new_local ∘ 0`.
         let world_centre = match parent_world.compose(&new_local) {
             Transform3D::Identity => Vec3::ZERO,
             Transform3D::Affine(a) => {
@@ -633,9 +655,6 @@ mod apply_drag_move_tests {
         assert_approx_eq!(f32, world_centre.x, 40.0, epsilon = 1e-4);
         assert_approx_eq!(f32, world_centre.y, 0.0, epsilon = 1e-4);
         assert_approx_eq!(f32, world_centre.z, 0.0, epsilon = 1e-4);
-        // The linear part should still be a uniform 2x scale; the
-        // entire effect of the parent's translation should be
-        // confined to the translation channel of `new_local`.
         let m = read_linear(&new_local);
         assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
@@ -660,13 +679,22 @@ mod apply_drag_move_tests {
             start_angle: 0.0,
             last_raw: 0.0,
             current_unwrapped: 0.0,
+            applied: 0.0,
         };
         // Ray hits the Z-axis plane at the pivot (degenerate angle
         // 0); use a ray crossing y=+1 in the pivot's XY plane so
         // `rotate_drag_angle` returns π/2 (90° CCW).
         let ray = ray_from(Vec3::new(40.0, 1.0, 5.0), Vec3::new(40.0, 1.0, 0.0));
-        let (new_local, _) =
-            apply_drag_move(op, &ray, world_pivot, &parent_world, &original, 0.0, 0.0).unwrap();
+        let (new_local, _) = apply_drag_move(
+            op,
+            &ray,
+            world_pivot,
+            &parent_world,
+            &original,
+            (0.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
         let world_centre = match parent_world.compose(&new_local) {
             Transform3D::Identity => Vec3::ZERO,
             Transform3D::Affine(a) => {

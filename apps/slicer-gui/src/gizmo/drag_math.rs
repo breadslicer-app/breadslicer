@@ -125,40 +125,6 @@ pub(crate) fn scale_factor_along_axis(
     (current_proj / start_proj).clamp(EPS_SCALE, 1.0 / EPS_SCALE)
 }
 
-/// Uniform scale factor for a drag of the per-axis cube with the
-/// proportional-scale modifier (Shift) held. Driven by the
-/// screen-space distance between the cursor and the projected pivot:
-/// the factor is the ratio of the current distance to the press
-/// distance, clamped into `[EPS_SCALE, 1/EPS_SCALE]`.
-///
-/// `pivot_screen_*` must be the projection of the world-space
-/// pivot into the same logical-pixel coordinate space as the
-/// cursor positions. The controller computes that projection from
-/// its camera + viewport once per move event.
-///
-/// Returns `1.0` when the press lands within `1e-6` pixels of the
-/// projected pivot; the ratio is undefined there.
-pub(crate) fn uniform_scale_factor(
-    pivot_screen_x: f32,
-    pivot_screen_y: f32,
-    x_press: f32,
-    y_press: f32,
-    x_now: f32,
-    y_now: f32,
-) -> f32 {
-    let dx0 = x_press - pivot_screen_x;
-    let dy0 = y_press - pivot_screen_y;
-    let start_dist_sq = dx0 * dx0 + dy0 * dy0;
-    if start_dist_sq < 1e-12 {
-        return 1.0;
-    }
-    let dx1 = x_now - pivot_screen_x;
-    let dy1 = y_now - pivot_screen_y;
-    let current_dist_sq = dx1 * dx1 + dy1 * dy1;
-    let raw = (current_dist_sq / start_dist_sq).sqrt();
-    raw.clamp(EPS_SCALE, 1.0 / EPS_SCALE)
-}
-
 #[cfg(test)]
 mod closest_point_tests {
     use super::*;
@@ -481,56 +447,6 @@ mod scale_factor_along_axis_tests {
         // leaves the pivot's neighbourhood.
         let factor =
             scale_factor_along_axis(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, Axis::X);
-        assert_approx_eq!(f32, factor, 1.0, epsilon = 1e-6);
-    }
-}
-
-#[cfg(test)]
-mod uniform_scale_factor_tests {
-    use super::*;
-    use float_cmp::assert_approx_eq;
-
-    #[test]
-    fn ratio_of_distances_drives_factor() {
-        // Press 50 px away, now 100 px away → factor 2.
-        let factor = uniform_scale_factor(0.0, 0.0, 50.0, 0.0, 100.0, 0.0);
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn factor_uses_euclidean_distance() {
-        // Press at (3, 4) → distance 5. Now at (6, 8) → distance 10.
-        // Factor = 10 / 5 = 2.
-        let factor = uniform_scale_factor(0.0, 0.0, 3.0, 4.0, 6.0, 8.0);
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn pivot_offset_does_not_change_factor() {
-        let factor = uniform_scale_factor(100.0, 200.0, 150.0, 200.0, 200.0, 200.0);
-        // Press 50 px away, now 100 px away → factor 2.
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn factor_clamps_at_lower_bound() {
-        // Cursor moves toward the pivot; ratio approaches zero,
-        // clamps at EPS_SCALE.
-        let factor = uniform_scale_factor(0.0, 0.0, 100.0, 0.0, 1e-9, 0.0);
-        assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn factor_clamps_at_upper_bound() {
-        let factor = uniform_scale_factor(0.0, 0.0, 1e-3, 0.0, 1e6, 0.0);
-        assert_approx_eq!(f32, factor, 1.0 / EPS_SCALE, epsilon = 1e-3);
-    }
-
-    #[test]
-    fn press_at_pivot_returns_unit_factor() {
-        // Press lands exactly on the projected pivot → no defined
-        // factor; helper returns 1.0 so the drag is a no-op.
-        let factor = uniform_scale_factor(0.0, 0.0, 0.0, 0.0, 50.0, 0.0);
         assert_approx_eq!(f32, factor, 1.0, epsilon = 1e-6);
     }
 }

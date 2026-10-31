@@ -193,6 +193,17 @@ export component MainWindow inherits Window {
     // colour (SVG path commands in viewport pixels).
     in property <string> gesture-readout: "";
     in property <bool> axis-guide-visible: false;
+    // The figure next to the dragged handle (or the cursor, in G/R/S), left
+    // of its anchor point in viewport pixels; empty when none.
+    in property <string> gesture-tag: "";
+    in property <length> gesture-tag-x;
+    in property <length> gesture-tag-y;
+    // While moving: a dashed line from the start position (SVG path commands
+    // in viewport pixels) and a dot at the start.
+    in property <bool> move-trail-visible: false;
+    in property <string> move-trail-commands: "";
+    in property <length> move-trail-start-x;
+    in property <length> move-trail-start-y;
     // The Supports tab options (DfSupportOptions) and presets, pushed by
     // `DfSupportRun`.
     in property <[string]> support-preset-names: [];
@@ -1363,6 +1374,48 @@ export component MainWindow inherits Window {
                     fill: transparent;
                 }
 
+                if root.move-trail-visible: Path {
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: parent.width / 1px;
+                    viewbox-height: parent.height / 1px;
+                    commands: root.move-trail-commands;
+                    stroke: #c9ced2cc;
+                    stroke-width: 1.5px;
+                    fill: transparent;
+                }
+
+                if root.move-trail-visible: Rectangle {
+                    x: root.move-trail-start-x - 3.5px;
+                    y: root.move-trail-start-y - 3.5px;
+                    width: 7px;
+                    height: 7px;
+                    border-radius: 3.5px;
+                    background: #c9ced2;
+                    border-width: 1px;
+                    border-color: #0e1011;
+                }
+
+                if root.gesture-tag != "": Rectangle {
+                    x: max(4px, min(root.gesture-tag-x + 4px, parent.width - self.width - 4px));
+                    y: max(4px, min(root.gesture-tag-y - self.height / 2, parent.height - self.height - 4px));
+                    width: tag-text.preferred-width + 14px;
+                    height: 24px;
+                    border-radius: 4px;
+                    background: #16181af0;
+                    border-width: 1px;
+                    border-color: #4a5056;
+
+                    tag-text := Text {
+                        text: root.gesture-tag;
+                        font-family: Theme.mono;
+                        font-size: Theme.font-sm;
+                        color: #eef0f2;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+
                 if root.gesture-readout != "": Rectangle {
                     x: (parent.width - self.width) / 2;
                     y: 12px;
@@ -1757,7 +1810,7 @@ export component MainWindow inherits Window {
                 }
                 if root.status-notice == "": Text {
                     text: !root.has-scene ? @tr("Workspace" => "Open or drop a model to start.")
-                        : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis.")
+                        : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, Shift is finer.")
                         : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")

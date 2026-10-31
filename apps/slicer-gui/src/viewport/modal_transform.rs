@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 //! Cursor-driven modal transform math, independent of the UI and document.
+//! Ctrl snaps the gesture to steps and Shift slows it down (#275), as in the
+//! gizmo drags.
 use glam::Vec3;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
+
+use crate::gizmo::modifiers::{DragModifiers, PrecisionCursor};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ModalOp {
@@ -45,6 +49,10 @@ pub(super) struct ModalGesture {
     pub axis: Option<usize>,
     pub last_angle: f32,
     pub angle: f32,
+    /// The cursor the gesture reads: slowed down while Shift is held.
+    pub precision: PrecisionCursor,
+    /// The modifier keys of the last pointer event.
+    pub modifiers: DragModifiers,
 }
 impl ModalGesture {
     pub(super) fn world_translation(&self, local: Transform3D, delta: Vec3) -> Option<Transform3D> {
@@ -71,11 +79,18 @@ impl ModalGesture {
         );
         Some(self.parent.inverse().ok()?.compose(&world))
     }
-    pub(super) fn propose(&mut self, cursor: [f32; 2]) -> Option<Transform3D> {
+    /// The transform for the real cursor at `cursor` with `modifiers` held.
+    pub(super) fn propose(
+        &mut self,
+        cursor: [f32; 2],
+        modifiers: DragModifiers,
+    ) -> Option<Transform3D> {
         if !cursor.into_iter().all(f32::is_finite) {
             return None;
         }
         self.cursor = cursor;
+        self.modifiers = modifiers;
+        let cursor = self.precision.map(cursor, modifiers.fine);
         let dx = cursor[0] - self.start[0];
         let dy = cursor[1] - self.start[1];
         match self.op {
@@ -90,9 +105,12 @@ impl ModalGesture {
                     } else {
                         -dy
                     };
-                    unit * distance * self.world_per_pixel
+                    unit * modifiers.distance(distance * self.world_per_pixel)
                 } else {
-                    (self.right * dx - self.up * dy) * self.world_per_pixel
+                    ((self.right * dx - self.up * dy) * self.world_per_pixel)
+                        .to_array()
+                        .map(|c| modifiers.distance(c))
+                        .into()
                 };
                 self.world_translation(self.original, delta)
             }
@@ -108,6 +126,7 @@ impl ModalGesture {
                     ((dx - dy) * 0.01).exp()
                 }
                 .clamp(0.001, 1000.0);
+                let factor = modifiers.factor(factor);
                 let scale = if let Some(axis) = self.axis {
                     let mut factors = [1.0; 3];
                     factors[axis] = f64::from(factor);
@@ -139,7 +158,7 @@ impl ModalGesture {
                 };
                 let rotation = AffineTransform3D::from_axis_angle(
                     axis.to_array().map(f64::from),
-                    f64::from(self.angle * sign),
+                    f64::from(modifiers.angle(self.angle) * sign),
                 )
                 .ok()?;
                 self.about_pivot(rotation)
@@ -190,8 +209,23 @@ mod tests {
             axis: None,
             last_angle: 0.0,
             angle: 0.0,
+            precision: PrecisionCursor::new([100.0, 0.0], false),
+            modifiers: DragModifiers::default(),
         }
     }
+
+    const NO_KEYS: DragModifiers = DragModifiers {
+        snap: false,
+        fine: false,
+    };
+    const CTRL: DragModifiers = DragModifiers {
+        snap: true,
+        fine: false,
+    };
+    const SHIFT: DragModifiers = DragModifiers {
+        snap: false,
+        fine: true,
+    };
     fn point(t: Transform3D, p: [f32; 3]) -> [f32; 3] {
         t.apply_to_vertex(Vertex::new(p)).coords()
     }
@@ -200,7 +234,7 @@ mod tests {
         for axis in 0..3 {
             let mut g = gesture(ModalOp::Move);
             g.axis = Some(axis);
-            let p = point(g.propose([130.0, 20.0]).unwrap(), [0.0; 3]);
+            let p = point(g.propose([130.0, 20.0], NO_KEYS).unwrap(), [0.0; 3]);
             for (i, value) in p.iter().enumerate() {
                 if i != axis {
                     assert_eq!(*value, 0.0);
@@ -213,10 +247,13 @@ mod tests {
     #[test]
     fn uniform_and_axis_scale() {
         let mut g = gesture(ModalOp::Scale);
-        assert_eq!(point(g.propose([200.0, 0.0]).unwrap(), [1.0; 3]), [2.0; 3]);
+        assert_eq!(
+            point(g.propose([200.0, 0.0], NO_KEYS).unwrap(), [1.0; 3]),
+            [2.0; 3]
+        );
         for axis in 0..3 {
             g.axis = Some(axis);
-            let p = point(g.propose([200.0, 0.0]).unwrap(), [1.0; 3]);
+            let p = point(g.propose([200.0, 0.0], NO_KEYS).unwrap(), [1.0; 3]);
             for (i, v) in p.iter().enumerate() {
                 assert_eq!(*v, if i == axis { 2.0 } else { 1.0 });
             }
@@ -228,7 +265,7 @@ mod tests {
             let mut g = gesture(ModalOp::Rotate);
             g.axis = Some(axis);
             let p = axis_vector(axis).to_array();
-            let actual = point(g.propose([0.0, 100.0]).unwrap(), p);
+            let actual = point(g.propose([0.0, 100.0], NO_KEYS).unwrap(), p);
             for i in 0..3 {
                 assert!((p[i] - actual[i]).abs() < 1e-5);
             }
@@ -238,17 +275,17 @@ mod tests {
     fn previews_compose_from_original_not_previous_frame() {
         let mut g = gesture(ModalOp::Move);
         g.axis = Some(0);
-        g.propose([130.0, 0.0]);
-        let p = point(g.propose([140.0, 0.0]).unwrap(), [0.0; 3]);
+        g.propose([130.0, 0.0], NO_KEYS);
+        let p = point(g.propose([140.0, 0.0], NO_KEYS).unwrap(), [0.0; 3]);
         assert_eq!(p, [40.0, 0.0, 0.0]);
     }
     #[test]
     fn axis_switch_discards_unwanted_components_without_resetting_origin() {
         let mut g = gesture(ModalOp::Move);
-        g.propose([130.0, 20.0]);
+        g.propose([130.0, 20.0], NO_KEYS);
         g.axis = Some(1);
         assert_eq!(
-            point(g.propose([130.0, 20.0]).unwrap(), [0.0; 3]),
+            point(g.propose([130.0, 20.0], NO_KEYS).unwrap(), [0.0; 3]),
             [0.0, -20.0, 0.0]
         );
     }
@@ -257,23 +294,70 @@ mod tests {
         let mut g = gesture(ModalOp::Move);
         g.parent = Transform3D::Affine(AffineTransform3D::from_rotation_z(0.7));
         g.axis = Some(0);
-        let local = g.propose([130.0, 20.0]).unwrap();
+        let local = g.propose([130.0, 20.0], NO_KEYS).unwrap();
         let p = point(g.parent.compose(&local), [0.0; 3]);
         assert!((p[0] - 30.0).abs() < 1e-5 && p[1].abs() < 1e-5);
     }
     #[test]
     fn rotation_unwraps_across_pi() {
         let mut g = gesture(ModalOp::Rotate);
-        g.propose([-100.0, 1.0]);
+        g.propose([-100.0, 1.0], NO_KEYS);
         let first = g.angle;
-        g.propose([-100.0, -1.0]);
+        g.propose([-100.0, -1.0], NO_KEYS);
         assert!((g.angle - first).abs() < 0.03);
     }
     #[test]
     fn scale_keeps_pivot_fixed() {
         let mut g = gesture(ModalOp::Scale);
         g.pivot = Vec3::new(10.0, 20.0, 30.0);
-        let p = point(g.propose([200.0, 0.0]).unwrap(), g.pivot.to_array());
+        let p = point(
+            g.propose([200.0, 0.0], NO_KEYS).unwrap(),
+            g.pivot.to_array(),
+        );
         assert_eq!(p, g.pivot.to_array());
+    }
+
+    #[test]
+    fn ctrl_snaps_a_move_a_turn_and_a_scale() {
+        let mut g = gesture(ModalOp::Move);
+        g.axis = Some(0);
+        let p = point(g.propose([133.7, 0.0], CTRL).unwrap(), [0.0; 3]);
+        assert_eq!(p, [34.0, 0.0, 0.0]);
+        // A free move snaps each world axis.
+        g.axis = None;
+        let p = point(g.propose([112.4, -7.6], CTRL).unwrap(), [0.0; 3]);
+        assert_eq!(p, [12.0, 8.0, 0.0]);
+
+        let mut g = gesture(ModalOp::Scale);
+        let p = point(g.propose([173.0, 0.0], CTRL).unwrap(), [1.0; 3]);
+        for v in p {
+            assert!((v - 1.7).abs() < 1e-5, "{v}");
+        }
+
+        let mut g = gesture(ModalOp::Rotate);
+        g.axis = Some(2);
+        // From +X around the screen pivot to 20° off it: snaps to 15°.
+        let a = 20f32.to_radians();
+        let turned = g.propose([100.0 * a.cos(), 100.0 * a.sin()], CTRL).unwrap();
+        let x = point(turned, [1.0, 0.0, 0.0]);
+        let angle = x[1].atan2(x[0]).abs().to_degrees();
+        assert!((angle - 15.0).abs() < 1e-3, "{angle}");
+    }
+
+    #[test]
+    fn shift_moves_a_tenth_as_far_and_never_jumps() {
+        let mut g = gesture(ModalOp::Move);
+        g.axis = Some(0);
+        assert_eq!(
+            point(g.propose([150.0, 0.0], NO_KEYS).unwrap(), [0.0; 3]),
+            [50.0, 0.0, 0.0]
+        );
+        // Shift goes down at x = 150: nothing moves, then a tenth of the travel.
+        assert_eq!(
+            point(g.propose([150.0, 0.0], SHIFT).unwrap(), [0.0; 3]),
+            [50.0, 0.0, 0.0]
+        );
+        let p = point(g.propose([250.0, 0.0], SHIFT).unwrap(), [0.0; 3]);
+        assert!((p[0] - 60.0).abs() < 1e-4, "{p:?}");
     }
 }

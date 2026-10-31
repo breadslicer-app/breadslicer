@@ -7,6 +7,7 @@ mod bed_clearance;
 mod camera_controller;
 mod controller;
 mod frame_pacer;
+mod gesture_overlay;
 mod gizmo_drag;
 mod gizmo_frame_composer;
 mod gizmo_fsm;

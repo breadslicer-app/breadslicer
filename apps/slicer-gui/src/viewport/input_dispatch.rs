@@ -174,9 +174,8 @@ impl InputDispatch {
 
     /// Records the press and, if the cursor hits a gizmo handle,
     /// transitions the FSM into `Drag` capturing the original
-    /// transform and the world-space anchor. `modifiers.shift` at
-    /// press time captures into the resulting `ScaleAxis.proportional`
-    /// flag.
+    /// transform and the world-space anchor. Shift held at press
+    /// starts the drag fine.
     pub(super) fn on_pointer_down(
         &self,
         document: &Rc<SceneDocument>,

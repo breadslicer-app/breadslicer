@@ -218,6 +218,17 @@ export component MeshViewer inherits Rectangle {
         accessible-role: none;
 
         key-pressed(event) => {
+            // Ctrl (snap) and Shift (fine) change a drag or G/R/S in flight at
+            // once, without waiting for the mouse to move.
+            if ((event.text == Key.Control || event.text == Key.Shift) && (root.left-pressed || root.modal-transform-active)) {
+                root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                    shift: event.text == Key.Shift || event.modifiers.shift,
+                    control: event.text == Key.Control || event.modifiers.control,
+                    alt: event.modifiers.alt,
+                    meta: event.modifiers.meta,
+                });
+                return accept;
+            }
             if (root.is-view-key(event.text) && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 if (!root.modal-transform-active && root.active-gesture == 0 && !root.left-pressed && !root.view-wheel-key-held) {
                     root.view-wheel-x = ta.mouse-x;
@@ -400,6 +411,15 @@ export component MeshViewer inherits Rectangle {
         }
 
         key-released(event) => {
+            if ((event.text == Key.Control || event.text == Key.Shift) && (root.left-pressed || root.modal-transform-active)) {
+                root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                    shift: event.text != Key.Shift && event.modifiers.shift,
+                    control: event.text != Key.Control && event.modifiers.control,
+                    alt: event.modifiers.alt,
+                    meta: event.modifiers.meta,
+                });
+                return accept;
+            }
             if (root.is-view-key(event.text)) {
                 root.view-wheel-key-held = false;
                 if (root.view-wheel-open && root.view-wheel-selection >= 0) {
@@ -581,7 +601,7 @@ export component MeshViewer inherits Rectangle {
         border-color: #555;
         background: #202024;
         status := Text {
-            text: root.modal-transform-status + "  |  " + @tr("Enter / click: confirm | Esc / right click: cancel");
+            text: root.modal-transform-status + "  |  " + @tr("Enter / click: confirm | Esc / right click: cancel") + "  |  " + @tr("Ctrl: snap | Shift: fine");
             color: #eee;
             font-size: 13px;
             horizontal-alignment: center;

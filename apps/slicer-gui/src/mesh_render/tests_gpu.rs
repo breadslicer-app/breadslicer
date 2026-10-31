@@ -906,8 +906,7 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         pivot: center,
         scale: 0.5,
         visibility: GizmoVisibility::DraggingTranslate { axis: Axis::X },
-        locked_translate: [false, false, true],
-        locked_rotate: [false; 3],
+        view_dir: Vec3::new(0.0, 0.0, -1.0),
         hover: None,
         drag_visual: None,
     };
@@ -971,8 +970,7 @@ fn render_with_idle_gizmo_under_default_limits() {
         pivot: center,
         scale: 0.5,
         visibility: GizmoVisibility::Idle,
-        locked_translate: [false; 3],
-        locked_rotate: [false; 3],
+        view_dir: Vec3::new(-0.5, 0.6, -0.62).normalize(),
         hover: None,
         drag_visual: None,
     };
@@ -993,8 +991,9 @@ fn render_with_idle_gizmo_under_default_limits() {
         .expect("idle gizmo render should succeed");
 }
 
-/// Checks that rotate-drag visibility renders only the 3 rotate arcs. Pins the
-/// rotate-arc VBO/IBO and the per-axis camera-roll wiring under default limits.
+/// Checks that rotate-drag visibility renders the dragged ring with the marks of
+/// the turn, which pins the ring mesh and the per-frame marks buffer under
+/// default limits.
 #[test]
 fn render_with_rotate_gizmo_under_default_limits() {
     let Some((device, queue)) = shared_test_device() else {
@@ -1021,10 +1020,15 @@ fn render_with_rotate_gizmo_under_default_limits() {
         pivot: center,
         scale: 0.5,
         visibility: GizmoVisibility::DraggingRotate { axis: Axis::X },
-        locked_translate: [false; 3],
-        locked_rotate: [false, false, false],
+        view_dir: Vec3::new(-0.5, 0.6, -0.62).normalize(),
         hover: None,
-        drag_visual: None,
+        // A turn in progress: the slice and the ticks go through the
+        // per-frame marks buffer.
+        drag_visual: Some(GizmoDragVisual::Rotate {
+            axis: Axis::X,
+            start: 0.3,
+            sweep: 1.2,
+        }),
     };
     let _ = renderer
         .render(
@@ -1071,8 +1075,7 @@ fn render_with_scale_gizmo_under_default_limits() {
         pivot: center,
         scale: 0.5,
         visibility: GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
-        locked_translate: [false; 3],
-        locked_rotate: [false; 3],
+        view_dir: Vec3::new(-0.5, 0.6, -0.62).normalize(),
         hover: None,
         drag_visual: None,
     };
@@ -2034,4 +2037,263 @@ fn a_preview_overlay_is_drawn_in_its_tint() {
     assert!(with > before + 500, "red pixels {before} -> {with}");
     renderer.set_overlay(None);
     assert_eq!(frame(&mut renderer), before, "cleared");
+}
+
+/// A lathed tower (base, waist, ball) about 40 mm tall standing at
+/// `centre_xy`, dense enough for a realistic draw: `segments` around.
+fn tower_graph(centre_xy: [f32; 2], segments: u32) -> Scene {
+    let profile: [(f32, f32); 12] = [
+        (0.0, 0.0),
+        (13.0, 0.0),
+        (13.0, 3.0),
+        (10.0, 5.0),
+        (7.0, 14.0),
+        (6.5, 24.0),
+        (8.5, 27.0),
+        (9.0, 30.0),
+        (7.0, 34.0),
+        (5.0, 38.0),
+        (2.5, 40.0),
+        (0.0, 40.5),
+    ];
+    let mut vertices = Vec::new();
+    for i in 0..segments {
+        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
+        for &(r, z) in &profile {
+            vertices.push(Vertex::new([
+                centre_xy[0] + r * a.cos(),
+                centre_xy[1] + r * a.sin(),
+                z,
+            ]));
+        }
+    }
+    let n = profile.len() as u32;
+    let mut faces = Vec::new();
+    for i in 0..segments {
+        let j = (i + 1) % segments;
+        for k in 0..n - 1 {
+            let (a, b) = (i * n + k, j * n + k);
+            faces.push(IndexedTriangle::from_raw_indices([a, b, b + 1]));
+            faces.push(IndexedTriangle::from_raw_indices([a, b + 1, a + 1]));
+        }
+    }
+    let mesh = IndexedMesh {
+        meta: None,
+        vertices,
+        faces,
+    };
+    let (mut g, root) = graph_with_group_root();
+    add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
+    g
+}
+
+/// The scene, camera and gizmo pivot shared by the gizmo picture and timing
+/// runs: the tower on the middle of the plate, seen from the front left.
+fn gizmo_showcase() -> (Scene, OrbitCamera, Vec3) {
+    let lo = TEST_BV.envelope_min_mm();
+    let hi = TEST_BV.envelope_max_mm();
+    let centre = [(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5];
+    let graph = tower_graph(centre, 96);
+    let pivot = Vec3::new(centre[0], centre[1], 20.25);
+    let mut camera = OrbitCamera::new(pivot, 26.0);
+    camera.yaw = -2.1;
+    camera.pitch = 0.42;
+    (graph, camera, pivot)
+}
+
+fn showcase_frame(
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    height: f32,
+    visibility: GizmoVisibility,
+    hover: Option<GizmoHover>,
+    drag_visual: Option<GizmoDragVisual>,
+) -> GizmoFrame {
+    GizmoFrame {
+        pivot,
+        scale: crate::gizmo::gizmo_scale(camera, pivot, default_fov_y(), height)
+            .expect("pivot in front of the eye"),
+        view_dir: (camera.target - camera.eye()).normalize(),
+        visibility,
+        hover,
+        drag_visual,
+    }
+}
+
+/// Draws the gizmo of #208 in its states over a selected model and writes
+/// PNGs to `$BREADSLICER_GIZMO_SHOTS` (default: the temp folder). Run by hand:
+/// `cargo test -p sc-slicer-gui --lib gizmo_pictures -- --ignored --nocapture`.
+#[test]
+#[ignore = "writes pictures for a human to look at"]
+fn gizmo_pictures() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let dir = std::env::var_os("BREADSLICER_GIZMO_SHOTS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&dir).expect("picture folder");
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new");
+    let (graph, camera, pivot) = gizmo_showcase();
+    renderer.upload_scene(&graph).expect("upload_scene");
+    let (w, h) = (768u32, 576u32);
+    let shots: [(
+        &str,
+        GizmoVisibility,
+        Option<GizmoHover>,
+        Option<GizmoDragVisual>,
+    ); 6] = [
+        ("1-reposo", GizmoVisibility::Idle, None, None),
+        (
+            "2-mouse-encima-flecha-x",
+            GizmoVisibility::Idle,
+            Some(GizmoHover::Translate(Axis::X)),
+            None,
+        ),
+        (
+            "3-mouse-encima-anillo-z",
+            GizmoVisibility::Idle,
+            Some(GizmoHover::Rotate(Axis::Z)),
+            None,
+        ),
+        (
+            "4-girando-z-35",
+            GizmoVisibility::DraggingRotate { axis: Axis::Z },
+            None,
+            Some(GizmoDragVisual::Rotate {
+                axis: Axis::Z,
+                start: -2.0,
+                sweep: 35f32.to_radians(),
+            }),
+        ),
+        (
+            "5-moviendo-x",
+            GizmoVisibility::DraggingTranslate { axis: Axis::X },
+            None,
+            None,
+        ),
+        (
+            "6-escalando-y",
+            GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
+            None,
+            None,
+        ),
+    ];
+    for (name, visibility, hover, drag_visual) in shots {
+        let frame = showcase_frame(&camera, pivot, h as f32, visibility, hover, drag_visual);
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: Some(first_leaf(&graph)),
+                    gizmo: Some(frame),
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                w,
+                h,
+            )
+            .expect("render is not refused")
+            .expect("a texture");
+        let rgba = read_target_back(&device, &queue, &texture, w, h);
+        let path = dir.join(format!("gizmo-{name}.png"));
+        image::save_buffer(&path, &rgba, w, h, image::ExtendedColorType::Rgba8)
+            .expect("write the picture");
+        println!("{}", path.display());
+    }
+}
+
+/// Times full frames of the showcase at 1920 x 1080 without the gizmo, with it
+/// at rest, and while rotating (the per-frame marks), waiting for the GPU after
+/// each frame. Run by hand:
+/// `cargo test -p sc-slicer-gui --lib --release gizmo_frame_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "a benchmark, run by hand"]
+fn gizmo_frame_cost() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new");
+    let (graph, camera, pivot) = gizmo_showcase();
+    renderer.upload_scene(&graph).expect("upload_scene");
+    let (w, h) = (1920u32, 1080u32);
+    let cases: [(&str, Option<GizmoFrame>); 3] = [
+        ("sin gizmo", None),
+        (
+            "gizmo en reposo",
+            Some(showcase_frame(
+                &camera,
+                pivot,
+                h as f32,
+                GizmoVisibility::Idle,
+                Some(GizmoHover::Rotate(Axis::Z)),
+                None,
+            )),
+        ),
+        (
+            "gizmo girando",
+            Some(showcase_frame(
+                &camera,
+                pivot,
+                h as f32,
+                GizmoVisibility::DraggingRotate { axis: Axis::Z },
+                None,
+                Some(GizmoDragVisual::Rotate {
+                    axis: Axis::Z,
+                    start: 0.0,
+                    sweep: 4.0,
+                }),
+            )),
+        ),
+    ];
+    let mut render = |gizmo: Option<GizmoFrame>| {
+        let start = std::time::Instant::now();
+        let _ = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: Some(first_leaf(&graph)),
+                    gizmo,
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                w,
+                h,
+            )
+            .expect("render is not refused")
+            .expect("a texture");
+        renderer.wait_for_gpu();
+        start.elapsed().as_secs_f64() * 1000.0
+    };
+    // Three rounds, interleaved, so clock and driver drift hit every case.
+    let mut samples: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for _ in 0..3 {
+        for (i, (_, gizmo)) in cases.iter().enumerate() {
+            for _ in 0..20 {
+                render(*gizmo);
+            }
+            for _ in 0..150 {
+                samples[i].push(render(*gizmo));
+            }
+        }
+    }
+    for (i, (name, _)) in cases.iter().enumerate() {
+        let s = &mut samples[i];
+        s.sort_by(|a, b| a.total_cmp(b));
+        let mean = s.iter().sum::<f64>() / s.len() as f64;
+        let median = s[s.len() / 2];
+        let p95 = s[s.len() * 95 / 100];
+        println!("{name}: media {mean:.3} ms, mediana {median:.3} ms, p95 {p95:.3} ms");
+    }
 }

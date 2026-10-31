@@ -44,33 +44,34 @@ impl GizmoFrameComposer {
                 DragOp::Translate { axis, .. } => {
                     (GizmoVisibility::DraggingTranslate { axis }, None)
                 }
-                DragOp::Rotate { axis, last_raw, .. } => (
+                DragOp::Rotate {
+                    axis,
+                    start_angle,
+                    applied,
+                    ..
+                } => (
                     GizmoVisibility::DraggingRotate { axis },
                     Some(GizmoDragVisual::Rotate {
                         axis,
-                        angle: last_raw,
+                        start: start_angle,
+                        sweep: applied,
                     }),
                 ),
                 DragOp::ScaleAxis {
                     axis,
                     current_anchor,
-                    proportional,
                     ..
                 } => {
-                    // Proportional (Shift) is a uniform scale that
-                    // doesn't have a per-axis cursor projection, the
-                    // cube stays put and the object grows uniformly.
-                    let drag_visual = if proportional {
-                        None
-                    } else {
-                        let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
+                    let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
+                    (
+                        GizmoVisibility::DraggingScaleAxis { axis },
                         Some(GizmoDragVisual::ScaleAxis {
                             axis,
                             axial_distance,
-                        })
-                    };
-                    (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
+                        }),
+                    )
                 }
+                DragOp::ScaleUniform { .. } => (GizmoVisibility::DraggingScaleUniform, None),
             },
             GizmoState::Idle => (GizmoVisibility::Idle, None),
         };

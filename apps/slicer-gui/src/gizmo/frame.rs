@@ -12,10 +12,7 @@ use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
-use crate::picking;
 
-use super::axis::ALL_AXES;
-use super::hit_test::{arc_pickable, axis_pickable};
 use super::{gizmo_scale, pivot_for_leaf};
 
 /// Builds the per-frame `GizmoFrame` for the renderer when a single leaf is
@@ -33,22 +30,15 @@ pub(crate) fn build_gizmo_frame(
     let pivot = pivot_for_leaf(spatial, selection)?;
     let fov_y = default_fov_y();
     let scale = gizmo_scale(camera, pivot, fov_y, viewport_h_logical)?;
-    // The camera forward direction stands in for every ray through the gizmo in
-    // the lock-out masks: for a small gizmo those rays are within a degree or
-    // so of it, so 1 check per axis holds across the handle.
-    let forward = (camera.target - camera.eye()).normalize_or_zero();
-    let view_ray = picking::Ray {
-        origin: camera.eye(),
-        direction: forward,
-    };
-    let locked_translate = ALL_AXES.map(|a| !axis_pickable(&view_ray, a));
-    let locked_rotate = ALL_AXES.map(|a| !arc_pickable(&view_ray, a));
+    // The camera forward direction stands in for every ray through the gizmo
+    // in the fades of the handles that face the camera: for a small gizmo
+    // those rays are within a degree or so of it.
+    let view_dir = (camera.target - camera.eye()).normalize_or_zero();
     Some(GizmoFrame {
         pivot,
         scale,
+        view_dir,
         visibility,
-        locked_translate,
-        locked_rotate,
         hover,
         drag_visual,
     })
@@ -67,6 +57,7 @@ mod build_gizmo_frame_tests {
     use sc_scene::{LeafPayload, Scene};
 
     use crate::camera::{AxisView, OrbitCamera};
+    use crate::picking;
 
     use super::super::axis::Axis;
     use super::super::dimensions::HANDLE_PIXEL_LENGTH;
@@ -274,10 +265,8 @@ mod build_gizmo_frame_tests {
     }
 
     #[test]
-    fn locked_translate_marks_axis_parallel_to_view_ray() {
+    fn view_dir_is_the_camera_forward() {
         // Right view: yaw=0, pitch=0 -> eye at (+d, 0, 0), forward = -X.
-        // axis_pickable rejects X (|X . -X| = 1, above LOCKOUT_COS); Y and Z
-        // stay grabbable.
         let spatial = unit_triangle_spatial();
         let camera = camera_looking_down_x();
 
@@ -292,29 +281,7 @@ mod build_gizmo_frame_tests {
         )
         .expect("frame produced for valid leaf");
 
-        assert_eq!(frame.locked_translate, [true, false, false]);
-    }
-
-    #[test]
-    fn locked_rotate_marks_axes_perpendicular_to_view_ray() {
-        // Same Right-view camera. arc_pickable demands |axis . forward| >=
-        // ROTATE_LOCKOUT_COS; only X meets that (axis parallel to ray), so Y
-        // and Z arcs are locked (edge-on).
-        let spatial = unit_triangle_spatial();
-        let camera = camera_looking_down_x();
-
-        let frame = build_gizmo_frame(
-            &spatial,
-            &camera,
-            first_leaf(&spatial),
-            600.0,
-            GizmoVisibility::Idle,
-            None,
-            None,
-        )
-        .expect("frame produced for valid leaf");
-
-        assert_eq!(frame.locked_rotate, [false, true, true]);
+        assert!((frame.view_dir - Vec3::NEG_X).length() < 1e-5);
     }
 
     #[test]
@@ -324,7 +291,8 @@ mod build_gizmo_frame_tests {
         let hover = Some(GizmoHover::Rotate(Axis::Z));
         let drag_visual = Some(GizmoDragVisual::Rotate {
             axis: Axis::X,
-            angle: 1.5,
+            start: 0.25,
+            sweep: 1.5,
         });
 
         let frame = build_gizmo_frame(
@@ -343,9 +311,10 @@ mod build_gizmo_frame_tests {
         // GizmoDragVisual has no PartialEq; destructure to check the payload
         // survived the round trip.
         match frame.drag_visual {
-            Some(GizmoDragVisual::Rotate { axis, angle }) => {
+            Some(GizmoDragVisual::Rotate { axis, start, sweep }) => {
                 assert_eq!(axis, Axis::X);
-                assert_approx_eq!(f32, angle, 1.5);
+                assert_approx_eq!(f32, start, 0.25);
+                assert_approx_eq!(f32, sweep, 1.5);
             }
             other => panic!("expected Rotate drag visual, got {other:?}"),
         }
