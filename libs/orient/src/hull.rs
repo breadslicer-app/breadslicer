@@ -360,30 +360,81 @@ pub(crate) fn min_width(poly: &[[f64; 2]]) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// Whether the polygon, turned by `deg` about the vertical (counter-clockwise
+/// seen from above), fits a `width` × `depth` rectangle.
+pub(crate) fn fits_turned(poly: &[[f64; 2]], width: f64, depth: f64, deg: f64) -> bool {
+    let tolerance = 1e-6;
+    let [w, d] = turned_extent(poly, deg);
+    w <= width + tolerance && d <= depth + tolerance
+}
+
+/// The width and depth of the polygon's bounding rectangle once turned by
+/// `deg`.
+fn turned_extent(poly: &[[f64; 2]], deg: f64) -> [f64; 2] {
+    let (s, c) = deg.to_radians().sin_cos();
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for q in poly {
+        let r = [c * q[0] - s * q[1], s * q[0] + c * q[1]];
+        for k in 0..2 {
+            lo[k] = lo[k].min(r[k]);
+            hi[k] = hi[k].max(r[k]);
+        }
+    }
+    [hi[0] - lo[0], hi[1] - lo[1]]
+}
+
 /// The smallest turn about the vertical, in degrees within ±90°, after which
 /// the polygon fits a `width` × `depth` rectangle; `None` when no turn does.
 /// Turns are tried in half-degree steps, nearest to no turn first.
 pub(crate) fn fit_turn_deg(poly: &[[f64; 2]], width: f64, depth: f64) -> Option<f64> {
-    let tolerance = 1e-6;
-    let fits = |deg: f64| {
-        let (s, c) = deg.to_radians().sin_cos();
-        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-        for q in poly {
-            let r = [c * q[0] - s * q[1], s * q[0] + c * q[1]];
-            for k in 0..2 {
-                lo[k] = lo[k].min(r[k]);
-                hi[k] = hi[k].max(r[k]);
-            }
-        }
-        hi[0] - lo[0] <= width + tolerance && hi[1] - lo[1] <= depth + tolerance
-    };
-    if fits(0.0) {
+    if fits_turned(poly, width, depth, 0.0) {
         return Some(0.0);
     }
     (1..=180).find_map(|step| {
         let deg = step as f64 * 0.5;
-        [deg, -deg].into_iter().find(|&d| fits(d))
+        [deg, -deg]
+            .into_iter()
+            .find(|&d| fits_turned(poly, width, depth, d))
     })
+}
+
+/// The turn about the vertical, in degrees within (−90°, 90°], that lays a
+/// convex polygon square: its smallest bounding rectangle (one side along a
+/// polygon edge) ends up along the axes, the long side along X, or along Y
+/// when `long_along_y`. The smallest turn wins among equals.
+pub(crate) fn square_turn_deg(poly: &[[f64; 2]], long_along_y: bool) -> f64 {
+    let n = poly.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let normal = |deg: f64| {
+        let d = deg.rem_euclid(180.0);
+        if d > 90.0 { d - 180.0 } else { d }
+    };
+    let mut best: Option<(f64, f64)> = None;
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        if dx == 0.0 && dy == 0.0 {
+            continue;
+        }
+        let along = -dy.atan2(dx).to_degrees();
+        let [w, d] = turned_extent(poly, along);
+        let quarter = if (w < d) != long_along_y { 90.0 } else { 0.0 };
+        let turn = normal(along + quarter);
+        let area = w * d;
+        let better = match best {
+            None => true,
+            Some((best_area, best_turn)) => {
+                area < best_area * (1.0 - 1e-9)
+                    || (area <= best_area * (1.0 + 1e-9) && turn.abs() < best_turn.abs())
+            }
+        };
+        if better {
+            best = Some((area, turn));
+        }
+    }
+    best.map_or(0.0, |(_, turn)| if turn.abs() < 1e-9 { 0.0 } else { turn })
 }
 
 #[cfg(test)]
@@ -471,5 +522,29 @@ mod tests {
         let turn = fit_turn_deg(&rod, 100.0, 60.0).expect("fits diagonally");
         assert!(turn.abs() > 10.0 && turn.abs() < 40.0, "{turn}");
         assert_eq!(fit_turn_deg(&rod, 50.0, 50.0), None);
+    }
+
+    #[test]
+    fn a_turned_rectangle_is_laid_square() {
+        let rect = |deg: f64| {
+            let (s, c) = deg.to_radians().sin_cos();
+            hull_2d(
+                [[0.0, 0.0], [40.0, 0.0], [40.0, 10.0], [0.0, 10.0]]
+                    .iter()
+                    .map(|p| [c * p[0] - s * p[1] + 7.0, s * p[0] + c * p[1] - 3.0])
+                    .collect(),
+            )
+        };
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        // Turned 30°: 30° back lays it along X, 60° more along Y.
+        assert!(close(square_turn_deg(&rect(30.0), false), -30.0));
+        assert!(close(square_turn_deg(&rect(30.0), true), 60.0));
+        assert!(close(square_turn_deg(&rect(-20.0), false), 20.0));
+        // Already square: no turn.
+        assert_eq!(square_turn_deg(&rect(0.0), false), 0.0);
+        // Along Y already, wanted along X: a quarter turn.
+        assert!(close(square_turn_deg(&rect(90.0), false).abs(), 90.0));
+        let [w, d] = turned_extent(&rect(30.0), square_turn_deg(&rect(30.0), false));
+        assert!(close(w, 40.0) && close(d, 10.0), "{w} × {d}");
     }
 }

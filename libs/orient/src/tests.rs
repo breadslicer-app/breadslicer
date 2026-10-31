@@ -469,3 +469,104 @@ fn pruned_minima_match_a_full_scan() {
         }
     }
 }
+
+#[test]
+fn a_full_search_judges_more_finalists_and_is_never_worse_than_the_current_pose() {
+    for mesh in [lopsided(), mini()] {
+        let quick = search(&mesh, &balanced());
+        let full_ctx = OrientContext {
+            mode: SearchMode::Full,
+            ..balanced()
+        };
+        let full = search(&mesh, &full_ctx);
+        assert_eq!(full.options.len(), 3);
+        for (i, a) in full.options.iter().enumerate() {
+            for b in &full.options[i + 1..] {
+                assert!(angle_deg(a.up, b.up) >= DIVERSE_DEG - 1e-9);
+            }
+        }
+        assert!(full.timings.stage1_poses > 3 * quick.timings.stage1_poses);
+        assert_eq!(full.timings.verdict_poses, FULL_FINALISTS + 1);
+        assert!(full.recommended().cost.total <= full.current.cost.total + 1e-9);
+        // The same pose, scored the same way: what it finds is as good as
+        // what Quick finds, give or take the margin within which poses tie.
+        let (q, f) = (quick.options[0].cost.total, full.options[0].cost.total);
+        assert!(f <= q * (1.0 + KEEP_MARGIN), "Full {f} against Quick {q}");
+        // Deterministic too.
+        let again = search(&mesh, &full_ctx);
+        assert_eq!(
+            again.options.iter().map(|c| c.up).collect::<Vec<_>>(),
+            full.options.iter().map(|c| c.up).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_max_tilt_keeps_every_option_near_the_current_pose() {
+    for mode in [SearchMode::Quick, SearchMode::Full] {
+        let ctx = OrientContext {
+            mode,
+            max_tilt_deg: Some(30.0),
+            ..balanced()
+        };
+        let o = search(&lopsided(), &ctx);
+        assert!(!o.options.is_empty());
+        for c in &o.options {
+            assert!(c.tilt_deg <= 30.0 + 1e-6, "{mode:?}: {}°", c.tilt_deg);
+        }
+        // Without the limit the best pose of this shape tilts further.
+        let free = search(&lopsided(), &OrientContext { mode, ..balanced() });
+        assert!(free.options.iter().any(|c| c.tilt_deg > 30.0));
+    }
+}
+
+#[test]
+fn aligning_to_the_plate_lays_the_shadow_square() {
+    // A flat 40 × 10 bar turned 30° about the vertical.
+    let bar = Shape::default()
+        .boxed([0.0; 3], [40.0, 10.0, 4.0], 4)
+        .mesh();
+    let bar = rotated(&bar, &axis_angle([0.0, 0.0, 1.0], 30f64.to_radians()));
+    let a = analyse(&bar);
+    let keep = a.evaluate(
+        [0.0, 0.0, 1.0],
+        &OrientContext {
+            build_volume_mm: Some([120.0, 70.0, 150.0]),
+            ..balanced()
+        },
+    );
+    assert_eq!(keep.fit, Fit::Fits { turn_deg: 0.0 });
+    let ctx = OrientContext {
+        build_volume_mm: Some([120.0, 70.0, 150.0]),
+        align_to_plate: true,
+        ..balanced()
+    };
+    let square = a.evaluate([0.0, 0.0, 1.0], &ctx);
+    let Fit::Fits { turn_deg } = square.fit else {
+        panic!("{:?}", square.fit);
+    };
+    assert!((turn_deg + 30.0).abs() < 1e-4, "{turn_deg}");
+    // The options turn the same way, so the bar ends up along X.
+    let o = search(&bar, &ctx);
+    let best = o.recommended();
+    let along = mul(
+        &best.rotation,
+        mul(
+            &axis_angle([0.0, 0.0, 1.0], 30f64.to_radians()),
+            [1.0, 0.0, 0.0],
+        ),
+    );
+    assert!(
+        along[0].abs() > 0.999 || along[2].abs() > 0.999,
+        "the bar's length lies along X or stands up: {along:?}"
+    );
+    // A plate deeper than wide takes the long side along Y.
+    let tall = OrientContext {
+        build_volume_mm: Some([70.0, 120.0, 150.0]),
+        ..ctx
+    };
+    let Fit::Fits { turn_deg } = a.evaluate([0.0, 0.0, 1.0], &tall).fit else {
+        panic!("fits");
+    };
+    assert!((turn_deg - 60.0).abs() < 1e-4, "{turn_deg}");
+}

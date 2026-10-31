@@ -95,6 +95,9 @@ export component MeshViewer inherits Rectangle {
     // A plain letter the active workspace tab may claim for its own tools
     // (A / X support tools, L layer view); returns whether it did.
     callback tab-tool-key(string) -> bool;
+    // Escape for the open tab tool (the Orient tool, #182): true when it
+    // took the key, before Escape clears the selection.
+    callback tool-escape() -> bool;
     property <bool> modal-click-pending: false;
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
@@ -231,7 +234,7 @@ export component MeshViewer inherits Rectangle {
             }
             if (event.text == Key.Escape) {
                 if (root.modal-transform-active) { root.modal-transform-finish(false); }
-                else { root.selection-cleared(); }
+                else if (!root.tool-escape()) { root.selection-cleared(); }
                 return accept;
             }
             if (event.text == Key.Home || event.text == "f" || event.text == "F") {

@@ -5327,6 +5327,7 @@ dependencies = [
  "sc-mesh-formats",
  "sc-mesh-spatial",
  "sc-message-catalog",
+ "sc-orient",
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
