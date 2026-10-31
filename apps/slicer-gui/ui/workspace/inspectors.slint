@@ -10,7 +10,7 @@
 import { CheckBox, ComboBox, LineEdit, ProgressIndicator, ScrollView, Slider } from "std-widgets.slint";
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
-import { ButtonKind, Card, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
+import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
 export struct ReviewRow {
@@ -450,11 +450,11 @@ export component OrientCard inherits Card {
         HorizontalLayout {
             spacing: 6px;
 
-            Text {
-                text: root.advanced ? "▾" : "▸";
-                font-size: Theme.font-sm;
+            DisclosureChevron {
+                open: root.advanced;
                 color: Theme.text-muted;
-                vertical-alignment: center;
+                size: 9px;
+                y: (parent.height - self.height) / 2;
             }
             Text {
                 text: @tr("Inspector" => "Advanced");

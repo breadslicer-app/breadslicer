@@ -774,7 +774,29 @@ fn the_card_holds_its_last_row_with_advanced_open_and_three_options() {
         )
         .next()
         .expect("the Orient card");
-        let card_bottom = card.absolute_position().y + card.size().height;
+        let card_top = card.absolute_position().y;
+        let card_bottom = card_top + card.size().height;
+        // The Advanced toggle draws its chevron, open, rather than a glyph
+        // the font may not have.
+        let (advanced_top, advanced_bottom) = drawn_span(&f.window, "Advanced");
+        let chevron = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+            &f.window,
+            "DisclosureChevron",
+        )
+        .find(|e| {
+            let y = e.absolute_position().y;
+            e.size().height > 0.0 && y >= advanced_top && y < advanced_bottom
+        })
+        .expect("a chevron beside Advanced");
+        assert!(chevron.absolute_position().y >= card_top);
+        for glyph in ["▸", "▾"] {
+            assert!(
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(&f.window, glyph)
+                    .next()
+                    .is_none(),
+                "no {glyph} text"
+            );
+        }
         let (apply_top, apply_bottom) = drawn_span(&f.window, "Apply A");
         let (_, close_bottom) = drawn_span(&f.window, "Close");
         let (objects_top, _) = drawn_span(&f.window, "OBJECTS");
