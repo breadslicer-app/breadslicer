@@ -847,19 +847,35 @@ impl SceneDocument {
     }
 
     pub(crate) fn set_selection(&self, sel: Selection) {
-        if self.selection.current() == sel {
+        if self.selection.is(&sel) {
             return;
         }
         self.selection.set(sel);
         self.notify(SceneEvent::SelectionChanged);
     }
 
-    /// Returns the currently-selected leaf's stable [`NodeId`], or `None` when
+    /// Returns the primary selected leaf's stable [`NodeId`], or `None` when
     /// no selection exists. Equivalent to
     /// `self.selection().primary().map(LeafId::node_id)` but cheaper to call
     /// repeatedly.
     pub(crate) fn selection_primary_node_id(&self) -> Option<NodeId> {
         self.selection.primary_node_id()
+    }
+
+    /// Every selected leaf's [`NodeId`], in the order they were selected; the
+    /// primary is the last.
+    pub(crate) fn selection_node_ids(&self) -> Vec<NodeId> {
+        self.selection.node_ids()
+    }
+
+    /// How many leaves are selected.
+    pub(crate) fn selection_len(&self) -> usize {
+        self.selection.len()
+    }
+
+    /// Whether the leaf `id` is among the selected.
+    pub(crate) fn is_selected(&self, id: NodeId) -> bool {
+        self.selection.contains(id)
     }
 
     /// Applies a typed scene edit. The single mutation choke-point on
@@ -901,7 +917,7 @@ impl SceneDocument {
         // moving the edit into spatial.apply_edit: the typed-edit enum is not
         // `Copy`, and `RemoveLeaf` may be nested under a `Compound` produced by
         // paste-undo, so a plain `match` post-apply is not enough.
-        let drops_selection = edit_removes_selected_leaf(&edit, &self.selection);
+        let removed = selected_leaves_removed_by(&edit, &self.selection);
         let event = if edit.is_structural() {
             SceneEvent::Restructured
         } else {
@@ -909,15 +925,20 @@ impl SceneDocument {
         };
         spatial.apply_edit(edit).map_err(EditNotApplied::Rejected)?;
         drop(slot);
-        // If the edit tombstoned the currently-selected leaf, drop the
-        // now-dangling selection so observers don't keep pointing at an empty
-        // arena slot. Fires SelectionChanged after the mutation event so
-        // listeners that recompute on mutation see the updated selection.
-        let selection_cleared = if drops_selection {
-            self.selection.set(Selection::None);
-            true
-        } else {
+        // If the edit tombstoned selected leaves, drop them from the selection
+        // so observers don't keep pointing at an empty arena slot; the other
+        // selected leaves stay selected. Fires SelectionChanged after the
+        // mutation event so listeners that recompute on mutation see the
+        // updated selection.
+        let selection_cleared = if removed.is_empty() {
             false
+        } else {
+            let kept = self
+                .selection
+                .current()
+                .retained(|id| !removed.contains(&id));
+            self.selection.set(kept);
+            true
         };
         self.notify(event);
         if selection_cleared {
@@ -1132,8 +1153,8 @@ impl SceneDocument {
             .collect()
     }
 
-    /// Deletes the currently-selected leaf, recording the operation as 1 undo
-    /// entry.
+    /// Deletes every selected leaf, recording the operation as 1 undo entry
+    /// however many were selected (#13).
     ///
     /// Works on any leaf the loaders or paste flow can produce:
     /// - inline-mesh and mesh-resource payloads alike;
@@ -1142,26 +1163,49 @@ impl SceneDocument {
     ///   and position are recorded in the edit so undo restores sibling order.
     ///
     /// Bails with `Ok(false)` (no scene mutation, no undo push) when no scene
-    /// is loaded, the selection is `Selection::None`, or the selected node is
-    /// not a leaf; errs, recording nothing, when the scene rejected the edit.
+    /// is loaded, the selection is `Selection::None`, or no selected node is
+    /// a leaf; errs, recording nothing, when the scene rejected the edit.
     ///
     /// When a mesh-resource leaf was the last live reference to its
-    /// `MeshResourceId`, the recorded edit is a `Compound` that also tombstones
-    /// the resource so the arena stays in sync with the live-leaf population.
-    /// Inline-mesh leaves carry their own `Arc`, so removal of an inline-mesh
-    /// leaf never produces a Compound.
+    /// `MeshResourceId`, the recorded edit also tombstones the resource so the
+    /// arena stays in sync with the live-leaf population; with several leaves
+    /// sharing a resource, the last of them removed takes it. Each removal is
+    /// worked out on a copy of the graph with the ones before it already
+    /// gone, so Undo, which reverses them in turn, puts every leaf back in
+    /// its place. Inline-mesh leaves carry their own `Arc`, so removal of a
+    /// lone inline-mesh leaf never produces a Compound.
     ///
     /// Returns `Ok(true)` on a successful deletion. Selection clearing and the
     /// `Restructured` event are handled by [`Self::apply_edit`].
     pub(crate) fn delete_selected_leaf(&self) -> Result<bool, SceneError> {
-        let Some(node_id) = self.selection_primary_node_id() else {
+        let ids = self.selection_node_ids();
+        if ids.is_empty() {
             return Ok(false);
-        };
-        let edit = self
-            .with_scene(|spatial| SceneEdit::remove_leaf_with_gc(spatial.graph(), node_id))
-            .flatten();
-        let Some(edit) = edit else {
-            return Ok(false);
+        }
+        let edits = self
+            .with_scene(|spatial| {
+                if let [id] = ids[..] {
+                    return SceneEdit::remove_leaf_with_gc(spatial.graph(), id)
+                        .into_iter()
+                        .collect();
+                }
+                let mut scratch = spatial.graph().clone();
+                let mut edits = Vec::new();
+                for id in ids {
+                    let Some(edit) = SceneEdit::remove_leaf_with_gc(&scratch, id) else {
+                        continue;
+                    };
+                    if edit.apply_to_scene(&mut scratch).is_ok() {
+                        edits.push(edit);
+                    }
+                }
+                edits
+            })
+            .unwrap_or_default();
+        let edit = match <[SceneEdit; 1]>::try_from(edits) {
+            Ok([edit]) => edit,
+            Err(edits) if edits.is_empty() => return Ok(false),
+            Err(edits) => SceneEdit::Compound(edits),
         };
         match self.apply_edit(edit.clone()) {
             Ok(()) => {
@@ -1563,26 +1607,35 @@ pub(crate) enum EditNotApplied {
     Rejected(SceneError),
 }
 
-/// Reports whether applying `edit` would tombstone the leaf the document's
-/// `selection` currently points at. Handles the nested case where a
-/// `RemoveLeaf` is inside a `Compound` (the shape paste-undo produces).
-fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> bool {
-    let Some(selected) = selection.primary_node_id() else {
-        return false;
-    };
-    fn touches(edit: &SceneEdit, selected: NodeId) -> bool {
+/// The selected leaves that applying `edit` would tombstone. Handles the
+/// nested case where a `RemoveLeaf` is inside a `Compound` (the shape
+/// paste-undo and a several-object Delete produce).
+fn selected_leaves_removed_by(edit: &SceneEdit, selection: &SelectionState) -> Vec<NodeId> {
+    fn collect(edit: &SceneEdit, selection: &SelectionState, out: &mut Vec<NodeId>) {
         match edit {
-            SceneEdit::RemoveLeaf { node_id, .. } => *node_id == selected,
-            SceneEdit::Compound(edits) => edits.iter().any(|e| touches(e, selected)),
+            SceneEdit::RemoveLeaf { node_id, .. } => {
+                if selection.contains(*node_id) {
+                    out.push(*node_id);
+                }
+            }
+            SceneEdit::Compound(edits) => {
+                for e in edits {
+                    collect(e, selection, out);
+                }
+            }
             SceneEdit::SetLocalTransform { .. }
             | SceneEdit::AddLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
             | SceneEdit::RemoveMeshResource { .. }
             | SceneEdit::ReplaceMeshResource { .. }
-            | SceneEdit::ReplaceLeafMesh { .. } => false,
+            | SceneEdit::ReplaceLeafMesh { .. } => {}
         }
     }
-    touches(edit, selected)
+    let mut out = Vec::new();
+    if selection.len() > 0 {
+        collect(edit, selection, &mut out);
+    }
+    out
 }
 
 /// What `edit` does, in a few words for the events: its kind and how many

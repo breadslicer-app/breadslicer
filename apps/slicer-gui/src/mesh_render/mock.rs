@@ -40,9 +40,9 @@ pub(crate) struct MockRenderArgs {
     /// `true` when `render` was called with `Some(SceneRender { .. })`,
     /// `false` for the no-scene fallback call.
     pub(crate) scene_present: bool,
-    /// The selection passed in via `SceneRender::selection`, or `None`
-    /// when no scene was present.
-    pub(crate) selection: Option<NodeId>,
+    /// The selection passed in via `SceneRender::selection`; empty when no
+    /// scene was present.
+    pub(crate) selection: Vec<NodeId>,
     /// `true` when `SceneRender::gizmo` was `Some(_)` for this call.
     pub(crate) gizmo_present: bool,
     pub(crate) build_volume: BuildVolume,
@@ -184,8 +184,8 @@ impl MeshRenderer for MockRenderer {
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError> {
         let (scene_present, selection, gizmo_present) = match scene_render.as_ref() {
-            Some(sr) => (true, sr.selection, sr.gizmo.is_some()),
-            None => (false, None, false),
+            Some(sr) => (true, sr.selection.to_vec(), sr.gizmo.is_some()),
+            None => (false, Vec::new(), false),
         };
         let mut s = self.state.borrow_mut();
         s.render_calls.push(MockRenderArgs {
@@ -286,7 +286,7 @@ mod mock_smoke_tests {
         let s = state.borrow();
         assert_eq!(s.render_calls.len(), 1);
         assert!(!s.render_calls[0].scene_present);
-        assert_eq!(s.render_calls[0].selection, None);
+        assert!(s.render_calls[0].selection.is_empty());
         assert!(!s.render_calls[0].gizmo_present);
         assert_eq!(s.render_calls[0].width, 800);
         assert_eq!(s.render_calls[0].height, 600);

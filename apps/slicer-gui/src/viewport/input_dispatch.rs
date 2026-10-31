@@ -31,6 +31,7 @@ use std::rc::Rc;
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
 
+use super::gizmo_drag::GizmoState;
 use super::gizmo_fsm::{
     GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
 };
@@ -42,7 +43,6 @@ use crate::camera::OrbitCamera;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
 use crate::scene_document::SceneDocument;
-use crate::selection::Selection;
 
 /// Outcome of [`InputDispatch::on_pointer_up`] the coordinator must
 /// act on:
@@ -54,18 +54,24 @@ use crate::selection::Selection;
 ///   and did not commit a drag. The caller dispatches the picker via
 ///   [`InputDispatch::pick_at`] and applies the result through the
 ///   coordinator's selection setters.
+/// - `BoxSelect { from, to }`: a left drag that began with Shift held and
+///   grabbed no gizmo handle (#13). The caller selects what the box between
+///   the press and the release touches, on top of the selection.
 /// - `Nothing`: the release did not match a prior press (e.g. lost
 ///   focus before mouse-up, or a release synthesised by Slint).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum PointerUpOutcome {
     DragCommitted,
     Click(ScreenPoint),
+    BoxSelect { from: ScreenPoint, to: ScreenPoint },
     Nothing,
 }
 
 pub(super) struct InputDispatch {
     pub(super) modal: Cell<Option<super::modal_transform::ModalGesture>>,
     pub(super) modal_revision: Cell<Option<crate::scene_document::SceneRevision>>,
+    /// The leaves `G` moves when several are selected (#13); `None` for one.
+    pub(super) modal_group: RefCell<Option<Rc<super::group_move::GroupMove>>>,
     /// Logical-pixel position at which the left button was last
     /// pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     /// `on_pointer_up` reads it to disambiguate click from drag.
@@ -89,6 +95,9 @@ pub(super) struct InputDispatch {
     /// viewport-centre placement rather than landing where the
     /// cursor was when it left.
     hovering: Cell<bool>,
+    /// Where a Shift+left press that grabbed no gizmo handle went down:
+    /// the corner a selection box starts from (#13). `None` otherwise.
+    box_from: Cell<Option<ScreenPoint>>,
 }
 
 impl InputDispatch {
@@ -96,11 +105,13 @@ impl InputDispatch {
         Self {
             modal: Cell::new(None),
             modal_revision: Cell::new(None),
+            modal_group: RefCell::new(None),
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
             last_cursor: Cell::new(None),
             hovering: Cell::new(false),
+            box_from: Cell::new(None),
         }
     }
 
@@ -123,6 +134,7 @@ impl InputDispatch {
     pub(super) fn reset(&self) {
         self.modal.set(None);
         self.modal_revision.set(None);
+        self.modal_group.replace(None);
         self.gizmo_fsm.set_idle();
         self.gizmo_fsm.clear_hover();
         self.input_state.set_idle();
@@ -130,6 +142,7 @@ impl InputDispatch {
         self.kbd_drive.reset();
         self.last_cursor.set(None);
         self.hovering.set(false);
+        self.box_from.set(None);
     }
 
     /// Latch a right-button press position. The release path
@@ -176,7 +189,8 @@ impl InputDispatch {
     /// transitions the FSM into `Drag` capturing the original
     /// transform and the world-space anchor. `modifiers.shift` at
     /// press time captures into the resulting `ScaleAxis.proportional`
-    /// flag.
+    /// flag. A Shift press that grabs no handle starts a selection box
+    /// instead (#13); returns whether it did, so the viewport draws it.
     pub(super) fn on_pointer_down(
         &self,
         document: &Rc<SceneDocument>,
@@ -185,23 +199,31 @@ impl InputDispatch {
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
         allow_transforms: bool,
-    ) {
+    ) -> bool {
         self.input_state.set_pressed(cursor);
+        self.box_from.set(None);
+        let shift = modifiers.shift;
         // The gizmo can only be grabbed in the Transform section. The
         // press is still recorded above so a click without a drag
         // still selects / picks on release in any section.
-        if !allow_transforms {
-            return;
+        if allow_transforms {
+            let group = document.selection_node_ids();
+            let ctx = GizmoStartCtx {
+                document,
+                camera,
+                viewport,
+                selection_id: document.selection_primary_node_id(),
+                group: &group,
+                press: cursor,
+                modifiers,
+            };
+            self.gizmo_fsm.try_start_drag(ctx);
         }
-        let ctx = GizmoStartCtx {
-            document,
-            camera,
-            viewport,
-            selection_id: document.selection_primary_node_id(),
-            press: cursor,
-            modifiers,
-        };
-        self.gizmo_fsm.try_start_drag(ctx);
+        let boxing = shift && !matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. });
+        if boxing {
+            self.box_from.set(Some(cursor));
+        }
+        boxing
     }
 
     /// Drives the gizmo drag for `pointer-moved`, recomputes the
@@ -240,11 +262,13 @@ impl InputDispatch {
         // listener schedules the redraw.
         let _ = self.gizmo_fsm.on_move(move_ctx);
 
+        let group = document.selection_node_ids();
         let hover_ctx = GizmoHoverCtx {
             document,
             camera,
             viewport,
             selection_id: document.selection_primary_node_id(),
+            group: &group,
             cursor,
         };
         self.gizmo_fsm.update_hover(hover_ctx)
@@ -261,13 +285,15 @@ impl InputDispatch {
         cursor: ScreenPoint,
     ) -> PointerUpOutcome {
         let outcome = self.input_state.click_or_drag(cursor);
+        let box_from = self.box_from.take();
         if self.gizmo_fsm.commit_drag(document) {
             return PointerUpOutcome::DragCommitted;
         }
-        if outcome == ClickOrDrag::Click {
-            return PointerUpOutcome::Click(cursor);
+        match (outcome, box_from) {
+            (ClickOrDrag::Click, _) => PointerUpOutcome::Click(cursor),
+            (ClickOrDrag::Drag, Some(from)) => PointerUpOutcome::BoxSelect { from, to: cursor },
+            _ => PointerUpOutcome::Nothing,
         }
-        PointerUpOutcome::Nothing
     }
 
     /// Builds the ray at `(x, y)` and finds the leaf a click there
@@ -323,7 +349,12 @@ impl InputDispatch {
         document: &Rc<SceneDocument>,
         focus: KbdFocus,
     ) -> Option<KbdFocus> {
-        let has_selection = !matches!(document.selection(), Selection::None);
+        // Several selected objects move together (#13); turning or scaling
+        // them together is #218.
+        let has_selection = match focus {
+            KbdFocus::Translate => document.selection_len() > 0,
+            _ => document.selection_len() == 1,
+        };
         if self.kbd_drive.try_set_focus(document, focus, has_selection) {
             Some(focus)
         } else {

@@ -55,6 +55,9 @@ component ObjectRow inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
     callback clicked();
+    // Shift+click or Ctrl+click (#13).
+    callback toggled();
+    property <bool> extend: false;
 
     height: 30px;
     border-radius: Theme.radius;
@@ -90,8 +93,17 @@ component ObjectRow inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: pointer;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.extend = event.modifiers.shift || event.modifiers.control || event.modifiers.meta;
+            }
+        }
         clicked => {
-            root.clicked();
+            if (root.extend) {
+                root.toggled();
+            } else {
+                root.clicked();
+            }
         }
     }
 }
@@ -635,6 +647,9 @@ export component OrientCard inherits Card {
 export component TransformInspector inherits VerticalLayout {
     in property <[StandardListViewItem]> objects;
     in property <int> selected-index: -1;
+    // Every selected row, and how many objects are selected (#13).
+    in property <[bool]> selected-rows;
+    in property <int> selected-count;
     in property <bool> needs-repair;
     // What the MESH CHECK card says when a mesh does not slice: its short
     // status and which objects, why, and what to do (see `mesh_check.rs`).
@@ -657,6 +672,8 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> rot-z;
     in property <float> scale;
     callback object-picked(int);
+    // Shift+click or Ctrl+click on a row.
+    callback object-toggled(int);
     callback repair-requested();
     // A typed value: the field code (NumericEdit::from_ui) and the value.
     callback numeric-edit(int, float);
@@ -711,9 +728,12 @@ export component TransformInspector inherits VerticalLayout {
 
             for item[i] in root.objects: ObjectRow {
                 text: item.text;
-                selected: i == root.selected-index;
+                selected: i == root.selected-index || root.selected-rows[i];
                 clicked => {
                     root.object-picked(i);
+                }
+                toggled => {
+                    root.object-toggled(i);
                 }
             }
         }
@@ -804,7 +824,15 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    if root.selection-valid: Card {
+    if root.selection-valid && root.selected-count > 1: Card {
+        title: @tr("Inspector" => "TRANSFORM");
+        note: root.selected-count;
+        Note {
+            text: @tr("Inspector" => "{} objects selected. Move them together with the gizmo arrows or G. To rotate, scale or type values, select one.", root.selected-count);
+        }
+    }
+
+    if root.selection-valid && root.selected-count <= 1: Card {
         title: @tr("Inspector" => "MOVE");
         note: "G";
 
@@ -852,7 +880,7 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    if root.selection-valid: Card {
+    if root.selection-valid && root.selected-count <= 1: Card {
         title: @tr("Inspector" => "ROTATE");
         note: "R";
 
@@ -893,7 +921,7 @@ export component TransformInspector inherits VerticalLayout {
         }
     }
 
-    if root.selection-valid: Card {
+    if root.selection-valid && root.selected-count <= 1: Card {
         title: @tr("Inspector" => "SIZE");
         note: "S";
 

@@ -31,6 +31,27 @@ pub(crate) fn build_gizmo_frame(
     drag_visual: Option<GizmoDragVisual>,
 ) -> Option<GizmoFrame> {
     let pivot = pivot_for_leaf(spatial, selection)?;
+    build_gizmo_frame_at(
+        pivot,
+        camera,
+        viewport_h_logical,
+        visibility,
+        hover,
+        drag_visual,
+    )
+}
+
+/// [`build_gizmo_frame`] for a gizmo standing at `pivot`: the shared centre
+/// of several selected objects (#13). `None` when the pivot is not in front
+/// of the eye.
+pub(crate) fn build_gizmo_frame_at(
+    pivot: glam::Vec3,
+    camera: &OrbitCamera,
+    viewport_h_logical: f32,
+    visibility: GizmoVisibility,
+    hover: Option<GizmoHover>,
+    drag_visual: Option<GizmoDragVisual>,
+) -> Option<GizmoFrame> {
     let fov_y = default_fov_y();
     let scale = gizmo_scale(camera, pivot, fov_y, viewport_h_logical)?;
     // The camera forward direction stands in for every ray through the gizmo in

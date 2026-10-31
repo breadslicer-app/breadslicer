@@ -73,15 +73,14 @@ use targets::{MsaaTargets, TargetPool};
 /// outline post-pass and the gizmo overlay drives the gizmo pass; both are
 /// meaningful only when a scene is loaded, so they live alongside the scene
 /// reference rather than on [`Renderer::render`]'s top-level signature where
-/// the type system would let a caller pass `selection: Some(_)` against `scene:
-/// None`.
+/// the type system would let a caller pass a selection against `scene: None`.
 #[derive(Clone, Copy, Debug)]
 pub struct SceneRender<'a> {
     pub graph: &'a Scene,
-    /// Stable [`NodeId`] whose stencil mask the outline post-pass dilates.
-    /// `None` skips the outline pass; a `NodeId` that does not name a reachable
-    /// leaf is treated the same as `None`.
-    pub selection: Option<NodeId>,
+    /// Stable [`NodeId`]s, sorted, whose stencil mask the outline post-pass
+    /// dilates: every selected leaf (#13). Empty skips the outline pass; a
+    /// `NodeId` that does not name a reachable leaf is ignored.
+    pub selection: &'a [NodeId],
     /// Gizmo overlay parameters; the gizmo pass runs only when this is `Some`.
     pub gizmo: Option<GizmoFrame>,
     /// World-space Z (mm) above which mesh fragments are discarded, so the
@@ -739,7 +738,7 @@ impl Renderer {
     ) -> Result<Option<wgpu::Texture>, RenderError> {
         let scene_render = SceneRender {
             graph,
-            selection: None,
+            selection: &[],
             gizmo: None,
             clip_z: None,
         };
@@ -796,7 +795,7 @@ impl Renderer {
 
         let (graph, selection, gizmo, clip_z) = match scene_render {
             Some(sr) => (Some(sr.graph), sr.selection, sr.gizmo, sr.clip_z),
-            None => (None, None, None, None),
+            None => (None, &[][..], None, None),
         };
 
         self.ensure_msaa(width, height)?;
@@ -958,7 +957,7 @@ impl Renderer {
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
             }
         }
-        if selection.is_some() && scene_for_draws {
+        if !selection.is_empty() && scene_for_draws {
             self.record_outline_post_pass(&mut encoder, &target_view, msaa);
         }
         if let Some(frame) = gizmo {
@@ -1066,7 +1065,7 @@ impl Renderer {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         inst: &InstalledScene,
-        selection: Option<NodeId>,
+        selection: &[NodeId],
     ) {
         pass.set_pipeline(&self.pipelines.mesh.pipeline);
         pass.set_bind_group(
@@ -1083,7 +1082,7 @@ impl Renderer {
             );
             pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
             pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_stencil_reference(if Some(obj.node_id()) == selection {
+            pass.set_stencil_reference(if selection.binary_search(&obj.node_id()).is_ok() {
                 1
             } else {
                 0
@@ -1142,7 +1141,7 @@ impl Renderer {
 
     /// Outline post-pass: dilate the stencil set by the mesh pass to draw a
     /// 1-pixel halo around the selected leaf. Caller must gate on
-    /// `selection.is_some() && scene_for_draws`: without a scene the stencil is
+    /// `!selection.is_empty() && scene_for_draws`: without a scene the stencil is
     /// all zeroes and the dilate would be a no-op; without a selection the mesh
     /// pass left the stencil at 0 too. Loads the resolved colour from the main
     /// pass and discards non-edge fragments, so existing pixels survive.
@@ -1208,7 +1207,9 @@ impl Renderer {
         // data.
         let render_translate = matches!(
             frame.visibility,
-            GizmoVisibility::Idle | GizmoVisibility::DraggingTranslate { .. }
+            GizmoVisibility::Idle
+                | GizmoVisibility::IdleMoveOnly
+                | GizmoVisibility::DraggingTranslate { .. }
         );
         let render_rotate = matches!(
             frame.visibility,

@@ -17,9 +17,10 @@ use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
 
 use super::gizmo_drag::{DragOp, GizmoState};
+use super::group_move::group_pivot;
 use super::input_dispatch::InputDispatch;
 use crate::camera::OrbitCamera;
-use crate::gizmo::frame::build_gizmo_frame;
+use crate::gizmo::frame::{build_gizmo_frame, build_gizmo_frame_at};
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoVisibility};
 
 pub(super) struct GizmoFrameComposer;
@@ -30,12 +31,14 @@ impl GizmoFrameComposer {
     /// `selection` names a reachable leaf) builds the
     /// [`GizmoFrame`] the renderer's gizmo pass consumes. Returns
     /// `None` when no leaf is selected or the selection has no
-    /// pickable geometry.
+    /// pickable geometry. With several leaves in `group` (#13), the
+    /// gizmo stands at their shared centre and shows its arrows only.
     pub(super) fn compose(
         input: &InputDispatch,
         spatial: &SceneSpatial,
         camera: &OrbitCamera,
         selection: Option<NodeId>,
+        group: &[NodeId],
         viewport_h_logical: f32,
     ) -> Option<GizmoFrame> {
         let drag_state = input.gizmo_fsm().current();
@@ -76,6 +79,20 @@ impl GizmoFrameComposer {
         };
         let hover = input.gizmo_fsm().current_hover();
         let sel = selection?;
+        if group.len() > 1 {
+            let visibility = match visibility {
+                GizmoVisibility::Idle => GizmoVisibility::IdleMoveOnly,
+                other => other,
+            };
+            return build_gizmo_frame_at(
+                group_pivot(spatial, group)?,
+                camera,
+                viewport_h_logical,
+                visibility,
+                hover,
+                drag_visual,
+            );
+        }
         build_gizmo_frame(
             spatial,
             camera,

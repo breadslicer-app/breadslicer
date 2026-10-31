@@ -4634,3 +4634,8 @@ msgid "One left out: it does not reach the cavity."
 msgid_plural "{n} left out: they do not reach the cavity."
 msgstr[0] "Uno quedó afuera: no llega a la cavidad."
 msgstr[1] "{n} quedaron afuera: no llegan a la cavidad."
+
+#: ui/workspace/inspectors.slint:831
+msgctxt "Inspector"
+msgid "{} objects selected. Move them together with the gizmo arrows or G. To rotate, scale or type values, select one."
+msgstr "{} objetos seleccionados. Movelos juntos con las flechas del gizmo o con G. Para rotar, escalar o escribir valores, seleccioná uno solo."
