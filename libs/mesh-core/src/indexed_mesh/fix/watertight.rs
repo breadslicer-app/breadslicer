@@ -299,10 +299,13 @@ fn closed_volume(vertices: &[Vertex], faces: &[IndexedTriangle]) -> f64 {
 }
 
 /// Moves each used vertex that shares its exact position with another used
-/// vertex by `offset` mm into its own part, against the area-weighted normal
-/// of its faces. A file format that merges vertices by position then keeps
-/// them apart. The move is at least 4 steps of `f32` at the vertex, so that it
-/// survives the rounding far from the origin.
+/// vertex by `offset` mm into its own part: toward the centroid of the other
+/// corners of its faces, which lies in its own part (2 parts that touch have
+/// their faces on different sides), and against the normal of its faces. A
+/// file format that merges vertices by
+/// position then keeps them apart. The move is at least 4 steps of `f32` at
+/// the vertex, so that it survives the rounding far from the origin; copies
+/// that would still land together move 1 step further each.
 fn offset_coincident_vertices(vertices: &mut [Vertex], faces: &[IndexedTriangle], offset: f64) {
     if offset <= 0.0 {
         return;
@@ -330,35 +333,85 @@ fn offset_coincident_vertices(vertices: &mut [Vertex], faces: &[IndexedTriangle]
     if normal_index.is_empty() {
         return;
     }
+    // Per vertex: the area-weighted normal of its faces, the sum of the other
+    // corners of its faces, and how many there are.
     let mut normals = vec![[0.0f64; 3]; normal_index.len()];
+    let mut corners = vec![([0.0f64; 3], 0u32); normal_index.len()];
     for face in faces {
         let r = raw(face);
         if !r.iter().any(|v| normal_index.contains_key(v)) {
             continue;
         }
-        let [a, b, c] = r.map(|v| position(vertices, v));
+        let points = r.map(|v| position(vertices, v));
+        let [a, b, c] = points;
         let n = cross(sub(b, a), sub(c, a));
-        for v in r {
+        for (k, v) in r.into_iter().enumerate() {
             if let Some(&i) = normal_index.get(&v) {
-                for k in 0..3 {
-                    normals[i][k] += n[k];
+                for j in 0..3 {
+                    normals[i][j] += n[j];
+                }
+                for other in [(k + 1) % 3, (k + 2) % 3] {
+                    for j in 0..3 {
+                        corners[i].0[j] += points[other][j];
+                    }
+                    corners[i].1 += 1;
                 }
             }
         }
     }
-    for (&v, &i) in &normal_index {
-        let n = normals[i];
-        let length = norm(n);
-        if length == 0.0 {
+    let unit = |d: [f64; 3]| {
+        let length = norm(d);
+        if length > 0.0 {
+            d.map(|c| c / length)
+        } else {
+            [0.0; 3]
+        }
+    };
+    // A moved vertex must not land on another used vertex either: `by_place`
+    // holds the places before the moves, `moved_to` the places after.
+    let mut moved_to: HashSet<[u32; 3]> = HashSet::new();
+    // In place order, so the result does not depend on hashing.
+    for run in by_place.chunk_by(|a, b| a.0 == b.0) {
+        if run.len() < 2 {
             continue;
         }
-        let p = position(vertices, v);
-        let step = p
-            .iter()
-            .map(|c| 4.0 * f64::from(f32::EPSILON) * c.abs())
-            .fold(offset, f64::max);
-        let moved = [0, 1, 2].map(|k| (p[k] - n[k] / length * step) as f32);
-        vertices[v as usize] = Vertex::new(moved);
+        for &(_, v) in run {
+            let i = normal_index[&v];
+            let p = position(vertices, v);
+            let (sum, count) = corners[i];
+            let toward = if count > 0 {
+                unit(sub(sum.map(|c| c / f64::from(count)), p))
+            } else {
+                [0.0; 3]
+            };
+            // Toward the centroid and against the normal, together: copies on
+            // 2 sides of 1 sheet share the centroid but not the normal, and
+            // copies of 2 parallel fans share the normal but not the centroid.
+            let inward = unit(normals[i].map(|c| -c));
+            let mut direction = unit([0, 1, 2].map(|k| toward[k] + inward[k]));
+            if direction == [0.0; 3] {
+                direction = [0.0, 0.0, 1.0];
+            }
+            let step = p
+                .iter()
+                .map(|c| 4.0 * f64::from(f32::EPSILON) * c.abs())
+                .fold(offset, f64::max);
+            // 2 copies whose faces lie on the same surface the same way round
+            // move alike, and a move can land on a vertex that was there; the
+            // later one goes 1 step further.
+            for multiple in 1..=8 {
+                let moved =
+                    [0, 1, 2].map(|k| (p[k] + direction[k] * step * f64::from(multiple)) as f32);
+                let bits = moved.map(f32::to_bits);
+                let free = !moved_to.contains(&bits)
+                    && by_place.binary_search_by_key(&bits, |r| r.0).is_err();
+                if free || multiple == 8 {
+                    moved_to.insert(bits);
+                    vertices[v as usize] = Vertex::new(moved);
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1501,10 +1554,16 @@ mod watertight_helper_tests {
         .to_vec();
         let faces = [[0, 1, 2], [3, 5, 4]].map(IndexedTriangle::from_raw_indices);
         offset_coincident_vertices(&mut vertices, &faces, 0.001);
-        // Each copy moves against its face's normal: down for the 1st (+z),
-        // up for the 2nd (-z).
-        assert_eq!(vertices[0].coords(), [0.0, 0.0, -0.001]);
-        assert_eq!(vertices[3].coords(), [0.0, 0.0, 0.001]);
+        // Each copy moves 0.001 into its own triangle's side (toward its
+        // other corners, against its normal), so they part.
+        let moved = |v: usize| vertices[v].coords().map(f64::from);
+        for (v, toward) in [(0, [1.0, 1.0]), (3, [-1.0, -1.0])] {
+            let p = moved(v);
+            assert!((norm(p) - 0.001).abs() < 1e-7, "{p:?}");
+            assert!(p[0] * toward[0] + p[1] * toward[1] > 0.0, "{p:?}");
+        }
+        assert_eq!(moved(0)[2], -moved(3)[2]);
+        assert_ne!(vertices[0], vertices[3]);
         assert_eq!(vertices[1].coords(), [1.0, 0.0, 0.0]);
     }
 
