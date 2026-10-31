@@ -26,8 +26,8 @@ struct ModelEntry {
     //             interior wash so the object reads as "offending"
     //             even on fragments that are still inside)
     //   flags.z = overlay tint (0 = a scene object; 1 valid preview,
-    //             2 invalid preview, 3 hollow cavity, 4 drain), read by
-    //             `fs_overlay` only
+    //             2 invalid preview, 3 hollow cavity, 4 drain, 5 preview
+    //             not known yet), read by `fs_overlay` only
     // Remaining lanes are free for later phases (hover, gizmo focus, ...).
     flags: vec4<u32>,
 };
@@ -129,6 +129,9 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 4u) {
         // The interface's amber: a drain reads apart from the blue cavity.
         color = vec4<f32>(1.00, 0.62, 0.18, 0.85);
+    } else if (in.tint == 5u) {
+        // Neither green nor red: not known yet whether it works.
+        color = vec4<f32>(0.80, 0.80, 0.84, 0.60);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }

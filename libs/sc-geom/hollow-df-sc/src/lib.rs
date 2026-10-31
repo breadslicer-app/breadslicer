@@ -166,8 +166,9 @@ impl LeafFrame {
         apply(&transpose(&self.rotation), d.map(f64::from)).map(|v| v as f32)
     }
 
-    /// The stretch quantized, for session keys.
-    fn key(&self) -> [i64; 9] {
+    /// The stretch quantized: two poses with the same key share a voxel
+    /// session (and a cavity); a move or a rotation keeps it, a scale not.
+    pub fn stretch_key(&self) -> [i64; 9] {
         let mut out = [0i64; 9];
         for i in 0..3 {
             for j in 0..3 {
@@ -199,6 +200,28 @@ impl PreparedHollow {
     pub fn session(&self) -> &Session {
         &self.session
     }
+
+    /// What `drain` (in world coordinates at the pose `world`) would do on
+    /// the hollow `settings` make: [`Session::drain_report`] in the leaf's
+    /// frame, the check an apply makes before it cuts, so a drain reported
+    /// not reaching the cavity is one that apply leaves out. The caller says
+    /// the session is this leaf mesh's (by identity: hashing the mesh per
+    /// ask would cost more than the ask).
+    ///
+    /// `None` while the session holds no cavity for `settings`, or `world`
+    /// scales the model otherwise than this session was voxelized for.
+    pub fn drain_report(
+        &self,
+        world: &Transform3D,
+        settings: &HollowSettings,
+        drain: &WorldDrain,
+    ) -> Option<DrainReport> {
+        let frame = LeafFrame::of(world).ok()?;
+        if frame.stretch_key() != self.key.stretch {
+            return None;
+        }
+        self.session.drain_report(settings, &drain.in_frame(&frame))
+    }
 }
 
 /// A drain at the current pose, in world coordinates.
@@ -224,6 +247,18 @@ impl WorldDrain {
             radius_y_mm: None,
             depth: hole.depth,
             outside_mm: hole.outside_mm,
+        }
+    }
+
+    /// The engine's drain, in the leaf's physical frame.
+    fn in_frame(&self, frame: &LeafFrame) -> DrainHole {
+        DrainHole {
+            center: frame.world_to_frame(self.center),
+            direction: frame.world_dir_to_frame(self.direction),
+            radius_mm: self.radius_mm,
+            radius_y_mm: self.radius_y_mm,
+            depth: self.depth,
+            outside_mm: self.outside_mm,
         }
     }
 }
@@ -415,7 +450,7 @@ fn run_hollow(
     let key = SessionKey {
         mesh: mesh_hash(mesh),
         triangles: mesh.faces().len(),
-        stretch: frame.key(),
+        stretch: frame.stretch_key(),
         voxel_bits: request.grid.voxel_size_mm.to_bits(),
         max_resolution: request.grid.max_resolution,
     };
@@ -487,18 +522,7 @@ fn run_hollow(
             )
         }
         HollowKind::Apply => {
-            let drains: Vec<DrainHole> = request
-                .drains
-                .iter()
-                .map(|d| DrainHole {
-                    center: frame.world_to_frame(d.center),
-                    direction: frame.world_dir_to_frame(d.direction),
-                    radius_mm: d.radius_mm,
-                    radius_y_mm: d.radius_y_mm,
-                    depth: d.depth,
-                    outside_mm: d.outside_mm,
-                })
-                .collect();
+            let drains: Vec<DrainHole> = request.drains.iter().map(|d| d.in_frame(frame)).collect();
             let applied = session.apply(&settings, &drains, ctl).map_err(to_job)?;
             (
                 applied.stats,
