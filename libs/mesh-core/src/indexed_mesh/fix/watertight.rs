@@ -665,6 +665,21 @@ fn weld_boundary_vertices(
     });
 }
 
+/// Separates closed solids that touch along edges, for the slicer's own copy
+/// of a mesh: steps 2 and 3 of a round on a mesh whose only bad edges have
+/// more than 2 faces. Returns whether every such edge resolved into pairs that
+/// walk it opposite ways and no face had to go or turn; the caller then checks
+/// the result with the edge check. The faces keep their order and winding;
+/// each new vertex is a copy at the same position.
+pub(crate) fn separate_touching_solids(
+    vertices: &mut Vec<Vertex>,
+    faces: &mut [IndexedTriangle],
+) -> bool {
+    let mut stats = Stats::default();
+    let dropped = pair_split_and_orient(vertices, faces, true, &mut stats);
+    dropped.is_none() && stats.reoriented_faces == 0
+}
+
 /// Marks a pair whose 2 faces walk their shared edge the same way.
 const SAME_WAY: u32 = 1 << 31;
 

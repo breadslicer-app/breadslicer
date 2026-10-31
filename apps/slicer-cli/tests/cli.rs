@@ -1281,7 +1281,9 @@ mod fix_tests {
             .stderr(predicate::str::contains(
                 "Resolved 1 edges shared by more than 2 faces (added 2 vertices)",
             ))
-            .stderr(predicate::str::contains("Sliceable: yes (was no)"));
+            // The slicer separates such cubes on its own copy, so they slice
+            // before the repair too.
+            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
 
         // STL merges vertices by position on load; the copies at the shared
         // edge moved 1 um into their cubes, so the cubes stay apart.
@@ -2042,6 +2044,45 @@ mod slice_repair_tests {
             .stderr(predicate::str::contains(
                 "Flipped 1 faces to orient each piece",
             ));
+    }
+
+    fn write_repair_fixture(path: &Path, name: &str) {
+        let corpus = sc_mesh_fixtures::repair_corpus::repair_corpus();
+        let fixture = corpus
+            .iter()
+            .find(|f| f.name == name)
+            .expect("corpus fixture");
+        write_stla_to(path, &fixture.mesh());
+    }
+
+    /// Pins that solids touching along an edge (4 faces on it) slice without
+    /// a repair: the slicer separates them on its own copy.
+    #[test]
+    fn slice_without_repair_on_cubes_sharing_an_edge_slices() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("cubes.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_repair_fixture(&source, "s09-cubes-sharing-edge");
+
+        run_slice(&source, &output, &[])
+            .success()
+            .stderr(no_panic_in_stderr().not());
+    }
+
+    /// Pins that an edge with 3 faces is still rejected, with the same report.
+    #[test]
+    fn slice_without_repair_on_a_fin_on_an_edge_fails_validation() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("fin.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_repair_fixture(&source, "s12-fin-on-edge");
+
+        run_slice(&source, &output, &[])
+            .failure()
+            .stderr(predicate::str::contains("mesh manifold validation failed"))
+            .stderr(predicate::str::contains("1x NonManifoldEdge"));
     }
 
     /// Pins that a repair refusal does not abort the slice: it becomes a
