@@ -52,6 +52,7 @@ use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
+use crate::split_bodies::SplitBodies;
 use crate::support_gen_run::GenSupportRun;
 use crate::ui_language::UiLanguage;
 use crate::viewport::ViewportController;
@@ -239,6 +240,9 @@ struct WindowDrivers {
     _support_gen_run: Rc<GenSupportRun>,
     _df_support_run: Rc<DfSupportRun>,
     _hollow_run: Rc<HollowRun>,
+    /// Edit > Split into Bodies and Keep Only This Body. Held so its Slint
+    /// callbacks and document subscription live as long as the window.
+    _split_bodies: Rc<SplitBodies>,
 }
 
 /// Owns the app-wide state:
@@ -708,8 +712,10 @@ impl AppState {
             ctrl.dialogs(),
             review_panel.clone(),
         );
+        let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         WindowDrivers {
             _hollow_run: hollow_run,
+            _split_bodies: split_bodies,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
             _review_panel: review_panel,

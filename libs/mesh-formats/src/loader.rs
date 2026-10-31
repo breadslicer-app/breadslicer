@@ -7,12 +7,12 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
-use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene::{NodeId, Scene};
 
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
-use crate::messages::{LoadMeshWarning, SceneLoadWarning, SharedVertexLeaf};
+use crate::messages::{DuplicateFacesLeaf, LoadMeshWarning, SceneLoadWarning, SharedVertexLeaf};
 use crate::obj::Obj;
 use crate::ports::MeshReader;
 use crate::stl::{Stl, StlAscii, StlBin};
@@ -115,21 +115,44 @@ pub fn scene_shared_vertices_warning(graph: &Scene) -> Option<SceneLoadWarning> 
     }
     let leaves = ids
         .into_iter()
-        .map(|node_id| {
-            let object_name = graph.node(node_id).and_then(|node| match &node.kind {
-                NodeKind::Leaf(LeafPayload::Mesh(arc)) => {
-                    arc.meta().as_ref().and_then(|m| m.name.clone())
-                }
-                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => graph
-                    .mesh_resource(*rid)
-                    .and_then(|mesh| mesh.meta().as_ref().and_then(|m| m.name.clone())),
-                _ => None,
-            });
-            SharedVertexLeaf {
-                node_id,
-                object_name,
-            }
+        .map(|node_id| SharedVertexLeaf {
+            node_id,
+            object_name: leaf_object_name(graph, node_id),
         })
         .collect();
     Some(SceneLoadWarning::SharedVertices { leaves })
+}
+
+/// Removes the exact duplicate faces of every mesh in `graph` (see
+/// [`Scene::drop_duplicate_faces`]) and returns the scene-level warning that
+/// reports them, or `None` when no mesh had any. Importing a file runs it, so
+/// files that store a body twice slice without a repair; a mesh without
+/// duplicates is left untouched.
+pub fn drop_scene_duplicate_faces(graph: &mut Scene) -> Option<SceneLoadWarning> {
+    let dropped = graph.drop_duplicate_faces();
+    if dropped.is_empty() {
+        return None;
+    }
+    let leaves = dropped
+        .into_iter()
+        .filter_map(|entry| {
+            let node_id = *graph.leaves_referencing(entry.target).first()?;
+            Some(DuplicateFacesLeaf {
+                node_id,
+                object_name: leaf_object_name(graph, node_id),
+                faces: entry.faces,
+            })
+        })
+        .collect();
+    Some(SceneLoadWarning::DuplicateFacesDropped { leaves })
+}
+
+fn leaf_object_name(graph: &Scene, node_id: NodeId) -> Option<String> {
+    graph.node(node_id).and_then(|node| match &node.kind {
+        NodeKind::Leaf(LeafPayload::Mesh(arc)) => arc.meta().as_ref().and_then(|m| m.name.clone()),
+        NodeKind::Leaf(LeafPayload::MeshResource(rid)) => graph
+            .mesh_resource(*rid)
+            .and_then(|mesh| mesh.meta().as_ref().and_then(|m| m.name.clone())),
+        _ => None,
+    })
 }

@@ -18,9 +18,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_scene::NodeId;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
-use super::translation_clamp::clamp_translate_edit;
 use super::types::ViewportSize;
-use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
 use crate::mesh_render::default_fov_y;
@@ -182,10 +180,6 @@ pub(super) struct IntegrationCtx<'a> {
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_id: Option<NodeId>,
-    /// Build envelope used by the post-step clamp on `Translate` focus (rotate
-    /// / scale focuses ignore it). Carried by value since `BuildVolume` is
-    /// `Copy` and small.
-    pub(super) build_volume: BuildVolume,
 }
 
 /// Tracks the in-progress "keyboard burst": the user holds one or more arrow /
@@ -448,16 +442,11 @@ impl KeyboardDriveState {
             return false;
         };
 
-        // Same policy as mouse drags: explicit Z stays free; rotate/scale lift
-        // their bounding box above the plate without creating another undo step.
-        let new_transform = if focus == KbdFocus::Translate && (arrows.z_pos || arrows.z_neg) {
+        // Same policy as mouse drags: translation is free, also out of the
+        // plate; rotate/scale lift their bounding box above the plate without
+        // creating another undo step.
+        let new_transform = if focus == KbdFocus::Translate {
             new_transform
-        } else if focus == KbdFocus::Translate {
-            ctx.document
-                .with_scene(|spatial| {
-                    clamp_translate_edit(spatial, node_id, running, new_transform, ctx.build_volume)
-                })
-                .unwrap_or(new_transform)
         } else {
             ctx.document
                 .with_scene(|spatial| {
@@ -744,7 +733,6 @@ mod integrate_tests {
             camera: &RefCell::new(Some(camera.clone())),
             viewport: ViewportSize::new(400.0, 200.0),
             selection_id: Some(node_id),
-            build_volume: BuildVolume::new(100.0, 100.0, 100.0),
         })
     }
 

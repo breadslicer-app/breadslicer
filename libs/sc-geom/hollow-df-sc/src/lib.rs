@@ -239,7 +239,7 @@ pub enum WorldSolidArea {
     },
 }
 
-/// Preview (fast, visual) or apply (printable).
+/// Preview (the cavity, as apply builds it) or apply (printable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HollowKind {
     Preview,
@@ -250,7 +250,7 @@ pub enum HollowKind {
 pub struct HollowRequest {
     pub kind: HollowKind,
     pub grid: GridRequest,
-    /// Wall, fill and smoothing. Its `solid_areas` are ignored: use
+    /// Wall and fill. Its `solid_areas` are ignored: use
     /// [`HollowRequest::solid_areas`].
     pub settings: HollowSettings,
     pub solid_areas: Vec<WorldSolidArea>,
@@ -421,8 +421,8 @@ fn run_hollow(
     };
     let reuse = request.prepared.as_ref().filter(|p| p.key == key).cloned();
     let stages = match request.kind {
-        HollowKind::Preview => 2,
-        HollowKind::Apply => 4 + u32::from(!request.drains.is_empty()),
+        HollowKind::Preview => 3,
+        HollowKind::Apply => 5 + u32::from(!request.drains.is_empty()),
     } + if reuse.is_some() { 0 } else { 4 };
     let done = AtomicU32::new(0);
     let progress = |stage: Stage| {

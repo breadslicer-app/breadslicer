@@ -968,7 +968,6 @@ export component HollowInspector inherits VerticalLayout {
     in property <int> fill-index;
     in property <float> cell;
     in property <float> beam;
-    in property <bool> smooth;
     in property <float> drain-radius;
     callback apply-requested();
     callback cancel-requested();
@@ -1101,13 +1100,6 @@ export component HollowInspector inherits VerticalLayout {
             value: root.voxel;
             committed(v) => {
                 root.option-changed(1, v);
-            }
-        }
-        CheckBox {
-            text: @tr("Inspector" => "Smooth the inner surface");
-            checked: root.smooth;
-            toggled => {
-                root.option-changed(2, self.checked ? 1 : 0);
             }
         }
         LabeledRow {

@@ -24,6 +24,7 @@ mod error;
 mod frame;
 mod gizmo_buffers;
 mod gizmo_entries;
+mod hull_points;
 #[cfg(test)]
 pub(crate) mod mock;
 mod overlay;

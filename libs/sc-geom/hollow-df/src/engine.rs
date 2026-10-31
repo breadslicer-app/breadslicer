@@ -7,16 +7,34 @@
 //! `support-gen-df-sc`'s hollow adapter). A session then answers two
 //! questions:
 //!
-//! - [`Session::preview`]: the inward cavity surface of the same voxel mask
-//!   the final mesh uses, without smoothing, stabilization or merging. Fast,
-//!   for feedback; never printable.
-//! - [`Session::apply`]: the printable mesh. The source shell plus the
-//!   smoothed cavity wall (and infill), checked edge-manifold with
-//!   DragonFruit's smoothing back-off ladder, then the drain holes cut
-//!   exactly. Fails explicitly when the result cannot be made closed.
+//! - [`Session::preview`]: the inward cavity wall (and infill) the hollow
+//!   will have, for the person to see and place drains on;
+//! - [`Session::apply`]: the printable mesh: the source shell plus that same
+//!   cavity, then the drain holes cut exactly. Fails explicitly when the
+//!   result cannot be made closed.
+//!
+//! Both read one cavity (#29): the session builds it once per settings and
+//! keeps the last one, so the hollow carries exactly the cavity the preview
+//! showed, vertex for vertex, and an apply after its preview does not
+//! compute it again. Drains are measured against it too: a drain that opens
+//! into the cavity on screen opens into the hollow's.
 //!
 //! Differences from DragonFruit's front end, all on purpose:
 //!
+//! - the wall is cut from each voxel's exact distance to the source's
+//!   triangles, measured within the wall plus [`WALL_BAND_MARGIN_VOXELS`] of
+//!   the surface; DragonFruit cuts it from a chamfer distance that runs up to
+//!   12.8 % long and starts half a voxel off the surface, so its wall comes
+//!   out thicker than asked on average and thinner in places;
+//! - the cavity is the contour of that exact field, unsmoothed: over exact
+//!   distances the contour is already even, and smoothing only thickened
+//!   the wall (#266, #29). DragonFruit blurs the field and Taubin-smooths the
+//!   mesh, which moves it into the wall too, retries with less smoothing when
+//!   the result does not close, and without smoothing chamfers the voxels,
+//!   which thins the wall; none of that runs here;
+//! - DragonFruit's preview is a separate, unsmoothed surface, so its result
+//!   can differ from what the preview showed; here they are one cavity, and
+//!   its edges are contoured closed (no hairline cracks to repair);
 //! - the voxel size it actually used is reported ([`GridInfo`]), including when
 //!   the resolution bound changed it (DragonFruit clamps to 24..=192 silently);
 //!   the upper bound is a setting ([`GridRequest::max_resolution`]);
@@ -32,15 +50,19 @@
 //!   model;
 //! - the result reports volumes in mm³ from the meshes themselves.
 
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+
 use crate::bvh::Bvh;
 use crate::control::{Cancelled, Control, Stage};
 use crate::drain::{ConvexCutter, CutError, subtract_convex_closed};
 use crate::hollowing::{
-    GridSpec, HollowMode, HollowOptions, HollowSession, InfillMode, MIN_VOXEL_RESOLUTION, OpenFace,
-    vec3_normalize,
+    ExactCavity, GridSpec, HollowMode, HollowOptions, HollowSession, InfillMode,
+    MIN_VOXEL_RESOLUTION, OpenFace, merge_meshes, normalize_mesh_for_boolean,
+    normalize_mesh_for_boolean_with_weld, vec3_normalize,
 };
 use crate::mesh::{IndexedMesh, Vec3};
-use crate::topology::{EdgeManifoldDefects, edge_manifold_defects};
+use crate::topology::{EdgeManifoldDefects, edge_manifold_defects, is_edge_manifold};
+use crate::wall::WallDistances;
 
 /// DragonFruit's default voxel size in its Hollow panel.
 pub const DEFAULT_VOXEL_SIZE_MM: f32 = 0.65;
@@ -48,9 +70,14 @@ pub const DEFAULT_VOXEL_SIZE_MM: f32 = 0.65;
 pub const DEFAULT_WALL_THICKNESS_MM: f32 = 2.0;
 /// The finest grid a request may ask for along the model's largest extent.
 pub const RESOLUTION_LIMIT: u16 = 512;
-/// Bytes per grid cell a session holds at its peak (masks, distances, void
-/// labels, the cavity scalar field and its scratch copy).
-pub const BYTES_PER_CELL: usize = 24;
+/// Bytes per grid cell a session holds at its peak (masks, chamfer and exact
+/// distances and the copy a run reads, void labels, the cavity scalar
+/// field).
+pub const BYTES_PER_CELL: usize = 28;
+/// How far past the wall, in voxels, distances are exact: the cavity wall is
+/// interpolated along the edges of the grid's tetrahedra, the longest a
+/// cube's diagonal, so a voxel it reads is at most √3 voxels past the wall.
+pub const WALL_BAND_MARGIN_VOXELS: f32 = 2.0;
 
 /// How fine a grid to build.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,10 +172,6 @@ pub enum SolidArea {
 pub struct HollowSettings {
     pub fill: HollowFill,
     pub wall_thickness_mm: f32,
-    /// Blur and Taubin-smooth the cavity wall (DragonFruit default on).
-    pub smooth_internal_surfaces: bool,
-    /// Voxel chamfer passes when not smoothing (DragonFruit default 2).
-    pub internal_chamfer_passes: u8,
     pub solid_areas: Vec<SolidArea>,
 }
 
@@ -157,8 +180,6 @@ impl Default for HollowSettings {
         Self {
             fill: HollowFill::Cavity,
             wall_thickness_mm: DEFAULT_WALL_THICKNESS_MM,
-            smooth_internal_surfaces: true,
-            internal_chamfer_passes: 2,
             solid_areas: Vec::new(),
         }
     }
@@ -250,11 +271,10 @@ pub struct HollowStats {
     pub output_volume_mm3: Option<f64>,
     /// Apply only: `source - output`, the resin saved.
     pub removed_volume_mm3: Option<f64>,
-    /// Apply only: cavity rebuilds with reduced smoothing it took.
-    pub smoothing_retries: usize,
 }
 
-/// The visual cavity of [`Session::preview`].
+/// The cavity of [`Session::preview`]: the one [`Session::apply`] builds
+/// the hollow from with the same settings.
 #[derive(Debug, Clone)]
 pub struct HollowPreview {
     /// The cavity wall, facing inward (into the cavity).
@@ -273,7 +293,8 @@ pub struct HollowPreview {
 pub struct HollowApplied {
     /// Edge-manifold: the source shell, the cavity wall (and infill), drains cut.
     pub mesh: IndexedMesh,
-    /// The cavity wall alone, facing inward.
+    /// The cavity wall (and the infill beams), facing inward: the
+    /// preview's, as it is.
     pub cavity: IndexedMesh,
     pub drains: Vec<DrainReport>,
     pub stats: HollowStats,
@@ -289,8 +310,8 @@ pub enum HollowError {
         cells: usize,
         limit_cells: usize,
     },
-    /// The hollow mesh stayed open even without smoothing (typically an open
-    /// or self-intersecting source).
+    /// The hollow mesh would not be closed (typically an open or
+    /// self-intersecting source).
     NotClosed(EdgeManifoldDefects),
     /// Drain `index` could not be cut.
     Drain {
@@ -325,11 +346,71 @@ impl From<Cancelled> for HollowError {
 }
 
 /// A voxelized mesh, ready for any number of previews and applies.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Session {
     inner: HollowSession,
     grid: GridInfo,
     source_volume_mm3: f64,
+    /// The exact wall distances measured so far: the widest band a preview
+    /// or an apply has needed. It only grows; a narrower wall reads it
+    /// clamped, so the result does not depend on what was measured before.
+    wall: Mutex<Option<Arc<WallDistances>>>,
+    /// The cavity built last, and the settings it was built for: a
+    /// preview's, which the apply that follows it reuses.
+    cavity: Mutex<Option<(HollowSettings, Arc<ExactCavity>)>>,
+    /// The source as a result carries it, prepared on the first apply.
+    shell: OnceLock<SourceShell>,
+}
+
+impl Clone for Session {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            grid: self.grid,
+            source_volume_mm3: self.source_volume_mm3,
+            wall: Mutex::new(self.measured_wall()),
+            cavity: Mutex::new(self.cached_cavity()),
+            shell: self.shell.clone(),
+        }
+    }
+}
+
+/// The source as a result carries it: welded and without degenerate
+/// triangles, as the hollow always had it, and its edge defects.
+#[derive(Debug, Clone)]
+struct SourceShell {
+    /// `None` when that is the session's source as it is (the usual case).
+    mesh: Option<IndexedMesh>,
+    defects: EdgeManifoldDefects,
+}
+
+impl SourceShell {
+    fn of(source: &IndexedMesh) -> Self {
+        let mut mesh = normalize_mesh_for_boolean(source.clone());
+        let mut defects = edge_manifold_defects(&mesh);
+        // The weld ladder, for hairline cracks: welding never repairs an
+        // edge of more than two faces nor the winding.
+        if defects.boundary > 0 && defects.overloaded == 0 && defects.same_direction == 0 {
+            for weld_epsilon in [2e-6_f32, 5e-6_f32, 1e-5_f32] {
+                let candidate = normalize_mesh_for_boolean_with_weld(source.clone(), weld_epsilon);
+                let candidate_defects = edge_manifold_defects(&candidate);
+                if candidate_defects.is_clean() {
+                    (mesh, defects) = (candidate, candidate_defects);
+                    break;
+                }
+            }
+        }
+        // Welding a clean, compact source changes only its vertex order:
+        // keep the session's copy rather than a second one.
+        let same = mesh.triangles.len() == source.triangles.len()
+            && mesh.positions.len() == source.positions.len()
+            && defects.is_clean()
+            && is_edge_manifold(source);
+        Self {
+            mesh: (!same).then_some(mesh),
+            defects,
+        }
+    }
 }
 
 impl Session {
@@ -384,7 +465,78 @@ impl Session {
             grid: GridInfo::of(&inner.grid(), requested, resolution, bound),
             inner,
             source_volume_mm3,
+            wall: Mutex::new(None),
+            cavity: Mutex::new(None),
+            shell: OnceLock::new(),
         })
+    }
+
+    fn cached_cavity(&self) -> Option<(HollowSettings, Arc<ExactCavity>)> {
+        self.cavity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The cavity of `settings`: the one built last when it was for these
+    /// settings, else built now (and kept in its place). Reports the wall,
+    /// keep-mask and surface stages either way.
+    fn cavity(
+        &self,
+        settings: &HollowSettings,
+        ctl: Control<'_>,
+    ) -> Result<Arc<ExactCavity>, Cancelled> {
+        if let Some((built_for, cavity)) = self.cached_cavity()
+            && built_for == *settings
+        {
+            for stage in [Stage::WallDistance, Stage::KeepMask, Stage::CavitySurface] {
+                ctl.stage(stage)?;
+            }
+            return Ok(cavity);
+        }
+        let options = self.options(settings);
+        let dist = self.wall_distances(settings.wall_thickness_mm, ctl)?;
+        let cavity = Arc::new(self.inner.exact_cavity(&options, &dist, ctl)?);
+        *self.cavity.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((settings.clone(), cavity.clone()));
+        Ok(cavity)
+    }
+
+    fn measured_wall(&self) -> Option<Arc<WallDistances>> {
+        self.wall
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The wall distances a wall of `wall_mm` reads, in voxels: exact within
+    /// the wall plus [`WALL_BAND_MARGIN_VOXELS`] of the surface. Measured
+    /// once per session and kept: a thinner wall reuses them, a thicker one
+    /// measures only the voxels it adds.
+    fn wall_distances(&self, wall_mm: f32, ctl: Control<'_>) -> Result<Vec<f32>, Cancelled> {
+        ctl.stage(Stage::WallDistance)?;
+        let band = wall_mm.max(0.2) / self.grid.voxel_mm + WALL_BAND_MARGIN_VOXELS;
+        let measured = match self.measured_wall() {
+            Some(known) if known.band() >= band => known,
+            previous => {
+                // Whole voxels, so dragging the wall measures in fewer steps.
+                let measured = Arc::new(WallDistances::measure(
+                    &self.inner,
+                    band.ceil(),
+                    previous.as_deref(),
+                    ctl,
+                )?);
+                let mut slot = self.wall.lock().unwrap_or_else(PoisonError::into_inner);
+                if slot
+                    .as_ref()
+                    .is_none_or(|kept| kept.band() < measured.band())
+                {
+                    *slot = Some(measured.clone());
+                }
+                measured
+            }
+        };
+        Ok(measured.clamped(band))
     }
 
     pub fn grid(&self) -> &GridInfo {
@@ -463,11 +615,13 @@ impl Session {
             open_face: OpenFace::ZMax,
             drain_holes: Vec::new(),
             preview_cavity_only: false,
-            smooth_internal_surfaces: settings.smooth_internal_surfaces,
-            internal_chamfer_passes: settings.internal_chamfer_passes,
+            // The exact wall is neither smoothed nor chamfered.
+            smooth_internal_surfaces: false,
+            internal_chamfer_passes: 0,
             preview_voxel_spheres: false,
             preview_surface_only: false,
             rotation_quat: [0.0, 0.0, 0.0, 1.0],
+            exact_wall: true,
         }
     }
 
@@ -491,34 +645,29 @@ impl Session {
             cavity_volume_mm3: -cavity.signed_volume(),
             output_volume_mm3: None,
             removed_volume_mm3: None,
-            smoothing_retries: 0,
         }
     }
 
-    /// The fast visual cavity (DragonFruit's surface-only preview).
+    /// The cavity `settings` carve, as [`Session::apply`] builds it.
     pub fn preview(
         &self,
         settings: &HollowSettings,
         ctl: Control<'_>,
     ) -> Result<HollowPreview, HollowError> {
-        let mut options = self.options(settings);
-        options.preview_cavity_only = true;
-        options.preview_surface_only = true;
-        let shell_voxels_f = options.shell_thickness_mm.max(0.2) / self.grid.voxel_mm;
-        let outcome = self.inner.run_with(&options, shell_voxels_f, ctl)?;
+        let cavity = self.cavity(settings, ctl)?;
         let stats = self.stats(
             settings,
-            outcome.report.removed_voxels,
-            outcome.mesh.triangle_count(),
-            &outcome.mesh,
+            cavity.removed_voxels,
+            cavity.wall.triangle_count(),
+            &cavity.wall,
         );
         Ok(HollowPreview {
-            cavity: outcome.mesh,
-            infill: outcome.preview_infill_mesh,
-            removed_voxel_centers: outcome.removed_voxel_centers,
-            removed_voxel_indices: outcome.removed_voxel_indices,
-            blocked_voxel_centers: outcome.blocked_voxel_centers,
-            blocked_voxel_indices: outcome.blocked_voxel_indices,
+            cavity: cavity.wall.clone(),
+            infill: cavity.infill.clone(),
+            removed_voxel_centers: cavity.removed_voxel_centers.clone(),
+            removed_voxel_indices: cavity.removed_voxel_indices.clone(),
+            blocked_voxel_centers: cavity.blocked_voxel_centers.clone(),
+            blocked_voxel_indices: cavity.blocked_voxel_indices.clone(),
             stats,
         })
     }
@@ -530,18 +679,31 @@ impl Session {
         drains: &[DrainHole],
         ctl: Control<'_>,
     ) -> Result<HollowApplied, HollowError> {
-        let options = self.options(settings);
-        let fin = self.inner.final_mesh(&options, ctl)?;
-        if !fin.stabilized {
-            return Err(HollowError::NotClosed(edge_manifold_defects(&fin.mesh)));
+        let cavity = self.cavity(settings, ctl)?;
+        ctl.stage(Stage::Stabilize)?;
+        let added = match &cavity.infill {
+            Some(infill) => merge_meshes(&cavity.wall, infill),
+            None => cavity.wall.clone(),
+        };
+        if !cavity.closed {
+            return Err(HollowError::NotClosed(edge_manifold_defects(&added)));
         }
-        let mut mesh = fin.mesh;
+        let shell = self
+            .shell
+            .get_or_init(|| SourceShell::of(self.source_mesh()));
+        if !shell.defects.is_clean() {
+            return Err(HollowError::NotClosed(shell.defects));
+        }
+        // The cavity goes in as it is, on its own vertices: no weld across
+        // it and the source, which could move or merge them. Two closed
+        // meshes on separate vertices make a closed one.
+        let mut mesh = merge_meshes(shell.mesh.as_ref().unwrap_or(self.source_mesh()), &added);
         let mut reports = Vec::with_capacity(drains.len());
         if !drains.is_empty() {
             ctl.stage(Stage::Drains)?;
             let source = self.source_mesh();
-            let source_bvh = Bvh::build(source);
-            let cavity_bvh = Bvh::build(&fin.cavity);
+            let source_bvh = self.inner.source_bvh();
+            let cavity_bvh = Bvh::build(&added);
             // Every drain is measured before any is cut, so drains do not
             // depend on their order.
             let mut cutters = Vec::with_capacity(drains.len());
@@ -550,8 +712,8 @@ impl Session {
                 let (cutter, report) = drain_cutter(
                     hole,
                     settings.wall_thickness_mm,
-                    (source, &source_bvh),
-                    (&fin.cavity, &cavity_bvh),
+                    (source, source_bvh),
+                    (&added, &cavity_bvh),
                 );
                 cutters.push(report.reaches_cavity.then_some(cutter));
                 reports.push(report);
@@ -567,22 +729,22 @@ impl Session {
             }
         }
         // Every step that produced `mesh` checked it edge-manifold (the
-        // stabilization, then each cut); the stage marks the hand-over.
+        // source and the cavity on their own, then each cut); the stage
+        // marks the hand-over.
         ctl.stage(Stage::Validate)?;
-        debug_assert!(edge_manifold_defects(&mesh).is_clean());
+        debug_assert!(is_edge_manifold(&mesh));
         let output_volume = mesh.signed_volume();
         let mut stats = self.stats(
             settings,
-            fin.removed_voxels,
+            cavity.removed_voxels,
             mesh.triangle_count(),
-            &fin.cavity,
+            &added,
         );
         stats.output_volume_mm3 = Some(output_volume);
         stats.removed_volume_mm3 = Some(self.source_volume_mm3 - output_volume);
-        stats.smoothing_retries = fin.smoothing_retries;
         Ok(HollowApplied {
             mesh,
-            cavity: fin.cavity,
+            cavity: added,
             drains: reports,
             stats,
         })
