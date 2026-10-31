@@ -118,9 +118,8 @@ pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut d
                 "Unable to fix mesh, there are invalid vertices.".to_string()
             }
             RepairRefusal::UnfixableFaceErrors(_) => {
-                "Unable to fix mesh. Face errors correction is not implemented (yet).".to_string()
+                "Unable to fix mesh, there are invalid faces and their pass is off.".to_string()
             }
-            RepairRefusal::OrientationFixFailed(err) => format!("Unable to fix mesh: {err}"),
         };
         write_target_warning(out, idx, total, &message);
     }
@@ -129,15 +128,20 @@ pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut d
 
 /// Renders 1 warning line per target of a
 /// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes) run whose mesh has
-/// faces with zero area after a completed run, and 1 per target with holes
-/// left open because they are too large to fill. Names the target as
-/// [`show_refusal_warnings`] does. Shared between the `fix` subcommand and the
-/// `slice --repair` path.
+/// no faces, 1 per target whose mesh has faces with zero area after a
+/// completed run, and 1 per target with holes left open because they are too
+/// large to fill. Names the target as [`show_refusal_warnings`] does. Shared
+/// between the `fix` subcommand and the `slice --repair` path.
 pub(crate) fn show_zero_area_warnings(outcomes: &[SceneRepairOutcome], out: &mut dyn Write) {
     let total = outcomes.len();
     for (idx, outcome) in outcomes.iter().enumerate() {
-        let RepairEnd::Completed(state) = &outcome.report.end else {
-            continue;
+        let state = match &outcome.report.end {
+            RepairEnd::Completed(state) => state,
+            RepairEnd::NoFaces => {
+                write_target_warning(out, idx, total, "This mesh has no faces");
+                continue;
+            }
+            RepairEnd::Refused(_) => continue,
         };
         let message = match state.zero_area_face_count {
             0 => None,
@@ -210,8 +214,11 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
                     "\t- Removed face with ID '{face_idx}' (had zero-length edge)"
                 );
             }
-            MeshFix::FlippedFaceOrientation { face_idx } => {
-                let _ = writeln!(out, "\t- Flipped orientation of face with ID '{face_idx}'");
+            MeshFix::RemovedOutOfRangeFace { face_idx } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Removed face with ID '{face_idx}' (named a vertex that does not exist)"
+                );
             }
             MeshFix::RemovedCollinearFaceByMerge {
                 collinear,
@@ -245,6 +252,12 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
                 let _ = writeln!(
                     out,
                     "\t- Removed {faces} duplicate faces (1 copy of each stays)"
+                );
+            }
+            MeshFix::RemovedOppositeFaces { faces } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Removed {faces} faces that cancelled out with an opposite copy"
                 );
             }
             MeshFix::WeldedBoundaryVertices {
@@ -322,7 +335,7 @@ mod show_applied_fixes_tests {
             MeshFix::RemovedZeroLengthEdgeFace {
                 face_idx: FaceIndex::from(4_usize),
             },
-            MeshFix::FlippedFaceOrientation {
+            MeshFix::RemovedOutOfRangeFace {
                 face_idx: FaceIndex::from(5_usize),
             },
             MeshFix::RemovedCollinearFaceByMerge {
@@ -354,7 +367,7 @@ mod show_applied_fixes_tests {
             lines[1]
         );
         assert!(
-            lines[2].contains("Flipped orientation") && lines[2].contains("'5'"),
+            lines[2].contains("does not exist") && lines[2].contains("'5'"),
             "{}",
             lines[2]
         );
@@ -365,7 +378,7 @@ mod show_applied_fixes_tests {
 mod show_zero_area_warnings_tests {
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
-    use sc_mesh_core::indexed_mesh::{MeshFixError, MeshRepairReport, RepairRefusal};
+    use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairRefusal};
     use sc_scene::Scene;
     use sc_scene::mesh_targets::MeshTarget;
     use sc_scene::repair::SceneRepairOutcome;
@@ -399,8 +412,8 @@ mod show_zero_area_warnings_tests {
     }
 
     fn refused() -> SceneRepairOutcome {
-        outcome(RepairEnd::Refused(RepairRefusal::OrientationFixFailed(
-            MeshFixError::TooManyFlippedFaces,
+        outcome(RepairEnd::Refused(RepairRefusal::InvalidVertices(
+            Vec::new(),
         )))
     }
 
@@ -434,6 +447,20 @@ mod show_zero_area_warnings_tests {
     #[test]
     fn a_refused_target_and_a_target_with_no_zero_area_face_do_not_warn() {
         assert_eq!(render(&[refused(), completed(0)]), "");
+    }
+
+    #[test]
+    fn a_target_without_faces_says_so() {
+        assert_eq!(
+            render(&[outcome(RepairEnd::NoFaces)]),
+            "warning: This mesh has no faces
+"
+        );
+        assert_eq!(
+            render(&[completed(0), outcome(RepairEnd::NoFaces)]),
+            "warning (mesh 2 of 2): This mesh has no faces
+"
+        );
     }
 }
 

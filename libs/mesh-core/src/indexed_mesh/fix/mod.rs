@@ -7,98 +7,15 @@ pub(super) mod collinear_faces;
 pub(super) mod records;
 pub(super) mod watertight;
 
-use std::collections::HashMap;
-use std::fmt;
-
 use crate::primitives::FaceIndex;
 
 use super::mesh::IndexedMesh;
 use super::validate::MeshFaceError;
-use super::validated::MeshEdgeManifoldError;
 
 use records::MeshFix;
 
 #[cfg(test)]
 use crate::primitives::{IndexedTriangle, Vertex, VertexIndex};
-
-/// Failure modes of `fix_faces_orientation`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MeshFixError {
-    /// The input manifold-error set names this face in more than 3
-    /// `InconsistentWindingOrder` entries. A triangle has only 3 edges, so the
-    /// input is self-inconsistent.
-    FaceWithTooManyWindingErrors { face_idx: FaceIndex },
-    /// At least half of the mesh's faces, rounded down, would have to be
-    /// flipped. The routine takes this to mean that the whole mesh is inside
-    /// out, and refuses the per-face fix.
-    TooManyFlippedFaces,
-}
-
-impl fmt::Display for MeshFixError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::FaceWithTooManyWindingErrors { face_idx } => {
-                write!(f, "face {face_idx} has more than 3 winding-order errors")
-            }
-            Self::TooManyFlippedFaces => f.write_str("too many flipped faces"),
-        }
-    }
-}
-
-impl std::error::Error for MeshFixError {}
-
-/// Plans the orientation fix, then applies it. On `Err` the mesh is unchanged.
-pub(super) fn fix_faces_orientation_impl(
-    mesh: &mut IndexedMesh,
-    manifold_errors: &[MeshEdgeManifoldError],
-) -> Result<Vec<MeshFix>, MeshFixError> {
-    let faces_to_flip = plan_faces_orientation_impl(mesh, manifold_errors)?;
-    Ok(apply_orientation_plan(mesh, faces_to_flip))
-}
-
-/// Returns the faces the orientation fix would flip, the ones named in 2 or 3
-/// `InconsistentWindingOrder` entries, or the reason it would refuse.
-pub(super) fn plan_faces_orientation_impl(
-    mesh: &IndexedMesh,
-    manifold_errors: &[MeshEdgeManifoldError],
-) -> Result<Vec<FaceIndex>, MeshFixError> {
-    let mut possibly_flipped_faces: HashMap<FaceIndex, u8> = HashMap::new();
-    for error in manifold_errors {
-        if let MeshEdgeManifoldError::InconsistentWindingOrder {
-            edge: _,
-            face_indices,
-        } = error
-        {
-            *possibly_flipped_faces.entry(face_indices[0]).or_insert(0) += 1;
-            *possibly_flipped_faces.entry(face_indices[1]).or_insert(0) += 1;
-        }
-    }
-
-    let mut faces_to_flip: Vec<FaceIndex> = Vec::new();
-    for (&face_idx, &n_errors) in &possibly_flipped_faces {
-        match n_errors {
-            2 | 3 => faces_to_flip.push(face_idx),
-            4.. => return Err(MeshFixError::FaceWithTooManyWindingErrors { face_idx }),
-            _ => {}
-        }
-    }
-
-    if faces_to_flip.len() >= mesh.faces.len() / 2 {
-        return Err(MeshFixError::TooManyFlippedFaces);
-    }
-    Ok(faces_to_flip)
-}
-
-fn apply_orientation_plan(mesh: &mut IndexedMesh, faces_to_flip: Vec<FaceIndex>) -> Vec<MeshFix> {
-    faces_to_flip
-        .into_iter()
-        .map(|face_idx| {
-            let face = &mut mesh.faces[face_idx.get()];
-            face.vertices.reverse();
-            MeshFix::FlippedFaceOrientation { face_idx }
-        })
-        .collect()
-}
 
 /// Removes from `mesh.faces` every face that a `ZeroLengthEdge` error in
 /// `face_errors` names, and returns 1 fix per such error; other errors are
@@ -141,354 +58,39 @@ pub(super) fn fix_zero_length_edges_impl(
     fixes
 }
 
-#[cfg(test)]
-mod indexed_mesh_fix_faces_orientation_tests {
-    use super::*;
-
-    /// Shortens `VertexIndex::from(n)`, to keep the dense
-    /// `MeshEdgeManifoldError::*` literals readable.
-    fn vi(n: u32) -> VertexIndex {
-        VertexIndex::from(n)
-    }
-
-    /// Builds a tetrahedron with consistent winding.
-    fn tetrahedron() -> IndexedMesh {
-        let vertices = vec![
-            Vertex::new([1.0, 1.0, 1.0]),
-            Vertex::new([1.0, -1.0, -1.0]),
-            Vertex::new([-1.0, 1.0, -1.0]),
-            Vertex::new([-1.0, -1.0, 1.0]),
-        ];
-        let faces_data: [[u32; 3]; 4] = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
-
-        let faces = faces_data
-            .iter()
-            .map(|indices| IndexedTriangle::from_raw_indices(*indices))
-            .collect();
-
-        IndexedMesh {
-            meta: None,
-            vertices,
-            faces,
+/// Removes from `mesh.faces` every face that an error in `face_errors` names,
+/// and returns the fixes: 1 per `ZeroLengthEdge` error, as
+/// [`fix_zero_length_edges_impl`] gives them, and 1 per other face with an
+/// `OutOfRangeVertexIndex` error. Every face that stays has its indices in
+/// range and 3 distinct vertices when `face_errors` holds every face error of
+/// the mesh.
+pub(super) fn fix_invalid_faces_impl(
+    mesh: &mut IndexedMesh,
+    face_errors: &[MeshFaceError],
+) -> Vec<MeshFix> {
+    let mut fixes: Vec<MeshFix> = Vec::new();
+    let mut remove = vec![false; mesh.faces.len()];
+    for error in face_errors {
+        if let MeshFaceError::ZeroLengthEdge { face_idx, .. } = error {
+            fixes.push(MeshFix::RemovedZeroLengthEdgeFace {
+                face_idx: *face_idx,
+            });
+            remove[face_idx.get()] = true;
         }
     }
-
-    /// Returns the tetrahedron with the winding of face 0 reversed.
-    fn tetrahedron_with_face_0_inside_out() -> IndexedMesh {
-        let mut mesh = tetrahedron();
-        let face = &mut mesh.faces[0];
-        face.vertices.reverse();
-        mesh
-    }
-
-    #[test]
-    fn no_op_when_no_errors() {
-        let mut mesh = tetrahedron();
-        let original = mesh.clone();
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&[])
-            .unwrap();
-        assert_eq!(mesh, original);
-    }
-
-    #[test]
-    fn fixes_a_single_flipped_face() {
-        let mut mesh = tetrahedron_with_face_0_inside_out();
-
-        // Gather errors as the real workflow would
-        let manifold_errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_edge_manifold()
-            .unwrap_err();
-
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-
-        assert_eq!(mesh, tetrahedron());
-    }
-
-    #[test]
-    fn fixes_a_flipped_face_with_the_highest_index() {
-        // The validator lists the 2 faces of an error in ascending order, so
-        // face 3 is the 2nd face of each of its 3 errors.
-        let mut mesh = tetrahedron();
-        mesh.faces[3].vertices.reverse();
-        let manifold_errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_edge_manifold()
-            .unwrap_err();
-
-        let fixes = mesh
-            .validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-
-        assert_eq!(
-            fixes,
-            vec![MeshFix::FlippedFaceOrientation {
-                face_idx: 3_usize.into()
-            }]
-        );
-        assert_eq!(mesh, tetrahedron());
-    }
-
-    #[test]
-    fn does_not_modify_correct_faces() {
-        let mut mesh = tetrahedron();
-
-        mesh.faces[0].vertices.reverse();
-
-        let expected = tetrahedron();
-
-        let manifold_errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_edge_manifold()
-            .unwrap_err();
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-
-        for i in 1..4 {
-            assert_eq!(
-                mesh.faces[i].vertices, expected.faces[i].vertices,
-                "face {} vertices changed unexpectedly",
-                i
-            );
+    for error in face_errors {
+        if let MeshFaceError::OutOfRangeVertexIndex { face_idx, .. } = error
+            && !std::mem::replace(&mut remove[face_idx.get()], true)
+        {
+            fixes.push(MeshFix::RemovedOutOfRangeFace {
+                face_idx: *face_idx,
+            });
         }
     }
-
-    #[test]
-    fn errors_when_face_has_more_than_3_winding_errors() {
-        let mut mesh = tetrahedron();
-
-        // Craft manifold errors where face 0 appears in 4
-        // InconsistentWindingOrder entries
-        let manifold_errors = vec![
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(1)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(1), vi(2)),
-                face_indices: [0_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(0)),
-                face_indices: [0_usize.into(), 3_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(3)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-        ];
-
-        let result = mesh
-            .validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors);
-        assert!(matches!(
-            result,
-            Err(MeshFixError::FaceWithTooManyWindingErrors { face_idx }) if face_idx == FaceIndex::from(0_usize)
-        ));
-    }
-
-    #[test]
-    fn errors_when_too_many_faces_need_flipping() {
-        // The errors below name each of the 4 faces 3 times, so 4 faces need
-        // flipping, at or above the threshold of 4 / 2 = 2.
-        let mut mesh = tetrahedron();
-
-        let manifold_errors = vec![
-            // Face 0: 3 errors
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(1)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(1), vi(2)),
-                face_indices: [0_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(0)),
-                face_indices: [0_usize.into(), 3_usize.into()],
-            },
-            // Face 1: 2 more errors (already has 1 from above)
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(3)),
-                face_indices: [1_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(3), vi(1)),
-                face_indices: [1_usize.into(), 3_usize.into()],
-            },
-            // Face 2: 1 more error (already has 2 from above)
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(3)),
-                face_indices: [2_usize.into(), 3_usize.into()],
-            },
-        ];
-
-        let result = mesh
-            .validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors);
-        assert!(matches!(result, Err(MeshFixError::TooManyFlippedFaces)));
-    }
-
-    #[test]
-    fn ignores_non_winding_manifold_errors() {
-        let mut mesh = tetrahedron();
-        let original = mesh.clone();
-
-        let manifold_errors = vec![
-            MeshEdgeManifoldError::BoundaryEdge {
-                edge: (vi(0), vi(1)),
-                face_idx: 0_usize.into(),
-            },
-            MeshEdgeManifoldError::NonManifoldEdge {
-                edge: (vi(1), vi(2)),
-                face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into()],
-            },
-        ];
-
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-        assert_eq!(mesh, original);
-    }
-
-    #[test]
-    fn face_with_one_winding_error_is_not_flipped() {
-        let mut mesh = tetrahedron();
-        let original = mesh.clone();
-
-        // Only 1 winding error for face 0, below threshold of 2
-        let manifold_errors = vec![MeshEdgeManifoldError::InconsistentWindingOrder {
-            edge: (vi(0), vi(1)),
-            face_indices: [0_usize.into(), 1_usize.into()],
-        }];
-
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-        assert_eq!(mesh.faces[0].vertices, original.faces[0].vertices);
-    }
-
-    #[test]
-    fn mesh_is_valid_after_fixing_flipped_face() {
-        let mut mesh = tetrahedron_with_face_0_inside_out();
-
-        let manifold_errors = mesh
-            .validated_faces()
-            .unwrap()
-            .validate_edge_manifold()
-            .unwrap_err();
-        mesh.validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors)
-            .unwrap();
-
-        // After the fix, the mesh passes the face, edge-manifold and face-area
-        // validations.
-        assert!(
-            mesh.validated_faces()
-                .unwrap()
-                .validate_edge_manifold()
-                .is_ok()
-        );
-        assert!(
-            mesh.validated_faces()
-                .unwrap()
-                .validate_face_areas()
-                .is_ok()
-        );
-    }
-
-    /// Pins that the refusal of a face with more than 3 winding errors leaves
-    /// the mesh unchanged.
-    #[test]
-    fn fix_faces_orientation_is_atomic_when_face_has_more_than_3_winding_errors() {
-        let mut mesh = tetrahedron();
-        let original = mesh.clone();
-
-        let manifold_errors = vec![
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(1)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(1), vi(2)),
-                face_indices: [0_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(0)),
-                face_indices: [0_usize.into(), 3_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(3)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-        ];
-
-        let result = mesh
-            .validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors);
-        assert!(result.is_err());
-        assert_eq!(mesh, original);
-    }
-
-    /// Pins that the refusal for too many flipped faces leaves the mesh
-    /// unchanged.
-    #[test]
-    fn fix_faces_orientation_is_atomic_when_too_many_faces_need_flipping() {
-        let mut mesh = tetrahedron();
-        let original = mesh.clone();
-
-        let manifold_errors = vec![
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(1)),
-                face_indices: [0_usize.into(), 1_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(1), vi(2)),
-                face_indices: [0_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(0)),
-                face_indices: [0_usize.into(), 3_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(0), vi(3)),
-                face_indices: [1_usize.into(), 2_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(3), vi(1)),
-                face_indices: [1_usize.into(), 3_usize.into()],
-            },
-            MeshEdgeManifoldError::InconsistentWindingOrder {
-                edge: (vi(2), vi(3)),
-                face_indices: [2_usize.into(), 3_usize.into()],
-            },
-        ];
-
-        let result = mesh
-            .validated_faces_mut()
-            .unwrap()
-            .fix_faces_orientation(&manifold_errors);
-        assert!(result.is_err());
-        assert_eq!(mesh, original);
-    }
+    let mut flags = remove.iter();
+    mesh.faces
+        .retain(|_| !*flags.next().expect("1 flag per face"));
+    fixes
 }
 
 #[cfg(test)]
@@ -637,27 +239,5 @@ mod indexed_mesh_fix_zero_length_edges_tests {
                 .iter()
                 .all(|f| matches!(f, MeshFix::RemovedZeroLengthEdgeFace { .. }))
         );
-    }
-}
-
-#[cfg(test)]
-mod mesh_fix_error_display_tests {
-    use super::*;
-
-    #[test]
-    fn face_with_too_many_winding_errors_renders_face_id() {
-        let msg = format!(
-            "{}",
-            MeshFixError::FaceWithTooManyWindingErrors {
-                face_idx: 7_usize.into(),
-            }
-        );
-        assert_eq!(msg, "face 7 has more than 3 winding-order errors");
-    }
-
-    #[test]
-    fn too_many_flipped_faces_renders_short_phrase() {
-        let msg = format!("{}", MeshFixError::TooManyFlippedFaces);
-        assert_eq!(msg, "too many flipped faces");
     }
 }

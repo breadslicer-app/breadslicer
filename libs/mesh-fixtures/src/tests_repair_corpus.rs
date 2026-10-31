@@ -6,8 +6,8 @@
 //! The sliceable metric on the synthetic repair corpus: what each mesh is as
 //! built, and how many broken ones Repair makes sliceable.
 
-use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, assess_repair};
+use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
 
 use super::repair_corpus::{RepairExpectation, repair_corpus};
 use super::*;
@@ -135,4 +135,76 @@ fn repair_makes_the_baseline_count_of_broken_fixtures_sliceable() {
         BROKEN_MADE_SLICEABLE,
         "Repair now makes these broken fixtures sliceable: {fixed:?}; update the baseline"
     );
+}
+
+/// Runs Repair as the button does and returns its fixes.
+fn repair_fixes(mesh: &mut IndexedMesh) -> Vec<MeshFix> {
+    let passes = RepairPasses::default_repair();
+    match assess_repair(mesh, passes) {
+        RepairAssessment::Work => mesh.repair(passes).fixes,
+        _ => Vec::new(),
+    }
+}
+
+/// The faces of `mesh` by vertex position, each rotated so its smallest
+/// position comes first, sorted: equal for 2 meshes exactly when they have the
+/// same faces, each wound the same way, however their vertices are numbered.
+fn windings(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
+    let mut faces: Vec<[[u32; 3]; 3]> = mesh
+        .faces
+        .iter()
+        .map(|face| {
+            let [a, b, c] = face
+                .vertices
+                .map(|v| mesh.vertices[v.get() as usize].coords().map(f32::to_bits));
+            [[a, b, c], [b, c, a], [c, a, b]]
+                .into_iter()
+                .min()
+                .expect("3 rotations")
+        })
+        .collect();
+    faces.sort_unstable();
+    faces
+}
+
+fn fixture(name: &str) -> IndexedMesh {
+    repair_corpus()
+        .iter()
+        .find(|f| f.name == name)
+        .expect("fixture")
+        .mesh()
+}
+
+/// #249: the orientation comes back face for face, whatever share of the
+/// sphere is flipped and however it is spread. The old per-face rule flipped
+/// 1151 faces where 1024 were wrong (5 % scattered), 64 of 6144 (a 30 %
+/// patch), and took a mesh entirely inside out for a clean one.
+#[test]
+fn flipped_spheres_come_back_face_for_face() {
+    let clean = fixture("s01-clean-sphere");
+    for (name, wrong) in [
+        ("s05-flipped-patch-30pct", None),
+        ("s06-flipped-patch-60pct", None),
+        ("s07-inside-out", None),
+        ("s08-flipped-scattered-5pct", Some(1024)),
+    ] {
+        let mut mesh = fixture(name);
+        let fixes = repair_fixes(&mut mesh);
+        assert!(windings(&mesh) == windings(&clean), "{name}: {fixes:?}");
+        if let Some(wrong) = wrong {
+            assert_eq!(fixes, [MeshFix::ReorientedFaces { faces: wrong }], "{name}");
+        }
+    }
+}
+
+/// #249: a cavity stays a cavity, and a shell wound outward is never turned
+/// inward, even when it sits inside another (it may be meant as a solid).
+#[test]
+fn hollow_spheres_are_left_alone() {
+    for name in ["s17-hollow-cavity-outward", "s18-hollow-cavity-ok"] {
+        let mut mesh = fixture(name);
+        let before = mesh.clone();
+        assert_eq!(repair_fixes(&mut mesh), [], "{name}");
+        assert_eq!(mesh, before, "{name}");
+    }
 }
