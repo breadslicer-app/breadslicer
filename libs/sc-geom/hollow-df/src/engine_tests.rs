@@ -818,18 +818,9 @@ fn drains_open_through_infill() {
         Control::none(),
     )
     .unwrap();
-    // The fin's tip drains moved off the diagonal of its top: on it, a
-    // corner of the second cutter lies exactly on the first cut's sliver,
-    // which leaves a fold over the hole with or without infill.
-    let mut drains: Vec<DrainHole> = drains_around_the_fin()
-        .into_iter()
-        .map(|mut d| {
-            if d.center[2] == 50.0 {
-                d.center[0] += 0.1;
-            }
-            d
-        })
-        .collect();
+    // The fin's tip drains have a cutter corner on the diagonal of its top
+    // (#330).
+    let mut drains: Vec<DrainHole> = drains_around_the_fin();
     // Short of the 2 mm wall: beams run up to 1.2 mm into it, and must not
     // pass for the cavity.
     for x in [10.0, 30.0] {
@@ -976,4 +967,262 @@ fn a_drain_report_needs_the_cavity_built() {
         ..HollowSettings::default()
     };
     assert_eq!(session.drain_report(&thick, &drain), None);
+}
+
+/// Every axis-parallel ray through `hole` (its axis, and six at half its
+/// radius) that the preview's cavity wall meets within the drain's depth
+/// goes clear through `out` up to that wall: nothing covers the hole.
+/// Returns how many rays were checked.
+fn assert_drain_open(
+    hole: &DrainHole,
+    report: &DrainReport,
+    cavity: (&IndexedMesh, &Bvh),
+    out: (&IndexedMesh, &Bvh),
+    case: &str,
+) -> usize {
+    let (center, axis) = drain_axis(hole);
+    let helper = if axis.z.abs() < 0.95 {
+        Vec3::new(0.0, 0.0, 1.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let u = vec3_normalize(helper.cross(axis)).unwrap();
+    let v = axis.cross(u);
+    let mut checked = 0;
+    for k in 0..7 {
+        let offset = if k == 0 {
+            Vec3::ZERO
+        } else {
+            let a = std::f32::consts::TAU * k as f32 / 6.0 + 0.3;
+            u.scale(a.cos())
+                .add(v.scale(a.sin()))
+                .scale(hole.radius_mm * 0.5)
+        };
+        let origin = center.add(offset).sub(axis.scale(0.5));
+        let Some(&to_wall) = cavity.1.ray_hit_distances(cavity.0, origin, axis).first() else {
+            continue;
+        };
+        if to_wall > report.depth_mm {
+            continue;
+        }
+        let first = out
+            .1
+            .ray_hit_distances(out.0, origin, axis)
+            .first()
+            .copied()
+            .unwrap_or(f32::INFINITY);
+        assert!(
+            first > to_wall + 0.02,
+            "{case}: {hole:?} ray {k} is blocked at {first} (wall at {to_wall}), {report:?}"
+        );
+        checked += 1;
+    }
+    checked
+}
+
+/// No triangle has two corners at the same point: the slicer refuses a
+/// zero-length edge.
+fn no_zero_length_edges(mesh: &IndexedMesh) -> bool {
+    mesh.triangles.iter().all(|t| {
+        let [a, b, c] = t.map(|i| mesh.positions[i as usize]);
+        a != b && b != c && c != a
+    })
+}
+
+/// #330: on the fin's top, a corner of each drain's cutter lies exactly on
+/// the diagonal of the face. The first cut left a zero-area triangle there
+/// and the second a fold over its hole; each now opens clear through, alone
+/// or together, and the mesh stays closed.
+#[test]
+fn a_cutter_corner_on_a_face_diagonal_still_opens() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let a = DrainHole::new([20.0, 10.0, 50.0], [0.0, 0.0, -1.0], 0.5);
+    let b = DrainHole::new([20.0, 20.0, 50.0], [0.0, 0.0, -1.0], 0.5);
+    for wall in [1.0, 2.0] {
+        let settings = HollowSettings {
+            wall_thickness_mm: wall,
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let cavity_bvh = Bvh::build(&preview.cavity);
+        for drains in [vec![a], vec![b], vec![a, b], vec![b, a]] {
+            let case = format!("wall {wall}, {} drains", drains.len());
+            let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+            assert!(is_edge_manifold(&applied.mesh), "{case}");
+            assert!(no_zero_length_edges(&applied.mesh), "{case}");
+            let out_bvh = Bvh::build(&applied.mesh);
+            for (hole, report) in drains.iter().zip(&applied.drains) {
+                assert!(report.reaches_cavity, "{case}");
+                let rays = assert_drain_open(
+                    hole,
+                    report,
+                    (&preview.cavity, &cavity_bvh),
+                    (&applied.mesh, &out_bvh),
+                    &case,
+                );
+                assert!(rays > 0, "{case}");
+            }
+        }
+    }
+}
+
+/// #330, swept: drains whose cutter has a corner exactly on a diagonal of
+/// the finned block's faces, or whose axis runs through one, or that sit a
+/// hair off one, several cut in one apply, with assorted radii. Every one
+/// that opens is open along every ray through it that meets the cavity, the
+/// mesh stays closed without zero-length edges, and the drain report (#302)
+/// is what apply did.
+#[test]
+fn drains_on_face_diagonals_open() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    // The diagonals of the faces, as (one end, other end, outward normal,
+    // largest radius that fits around the middle of the diagonal).
+    let p = Vec3::new;
+    let diagonals: Vec<(Vec3, Vec3, Vec3, f32)> = vec![
+        (p(0.0, 0.0, 0.0), p(40.0, 30.0, 0.0), p(0.0, 0.0, -1.0), 2.0),
+        (
+            p(40.0, 0.0, 0.0),
+            p(40.0, 30.0, 30.0),
+            p(1.0, 0.0, 0.0),
+            2.0,
+        ),
+        (p(0.0, 0.0, 30.0), p(0.0, 30.0, 0.0), p(-1.0, 0.0, 0.0), 2.0),
+        (
+            p(40.0, 0.0, 30.0),
+            p(21.5, 30.0, 30.0),
+            p(0.0, 0.0, 1.0),
+            2.0,
+        ),
+        (
+            p(18.5, 0.0, 30.0),
+            p(0.0, 30.0, 30.0),
+            p(0.0, 0.0, 1.0),
+            2.0,
+        ),
+        (
+            p(21.5, 0.0, 30.0),
+            p(21.5, 30.0, 50.0),
+            p(1.0, 0.0, 0.0),
+            1.0,
+        ),
+        (
+            p(18.5, 0.0, 50.0),
+            p(18.5, 30.0, 30.0),
+            p(-1.0, 0.0, 0.0),
+            1.0,
+        ),
+        (
+            p(21.5, 0.0, 50.0),
+            p(18.5, 30.0, 50.0),
+            p(0.0, 0.0, 1.0),
+            0.6,
+        ),
+        (p(0.0, 0.0, 0.0), p(40.0, 0.0, 30.0), p(0.0, -1.0, 0.0), 2.0),
+        (p(0.0, 0.0, 0.0), p(18.5, 0.0, 30.0), p(0.0, -1.0, 0.0), 2.0),
+        (
+            p(0.0, 30.0, 0.0),
+            p(21.5, 30.0, 30.0),
+            p(0.0, 1.0, 0.0),
+            2.0,
+        ),
+        (
+            p(18.5, 30.0, 30.0),
+            p(21.5, 30.0, 50.0),
+            p(0.0, 1.0, 0.0),
+            0.6,
+        ),
+    ];
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut random = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 40) as f32 / (1u64 << 24) as f32
+    };
+    let (mut opened, mut rays) = (0, 0);
+    for wall in [1.0, 2.0] {
+        let settings = HollowSettings {
+            wall_thickness_mm: wall,
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let cavity_bvh = Bvh::build(&preview.cavity);
+        for round in 0..8 {
+            // One drain on each of a few diagonals, cut in one apply.
+            let mut drains = Vec::new();
+            for (d, &(a, b, normal, max_radius)) in diagonals.iter().enumerate() {
+                if (d + round) % 3 != 0 {
+                    continue;
+                }
+                let on = a.add(b.sub(a).scale(0.3 + 0.4 * random()));
+                let radius = 0.4 + (max_radius - 0.4) * random();
+                let axis = normal.scale(-1.0);
+                let center = match round % 4 {
+                    // A corner of the cutter on the diagonal, placed as the
+                    // cutter places its corners.
+                    0 | 1 => {
+                        let helper = if axis.z.abs() < 0.95 {
+                            Vec3::new(0.0, 0.0, 1.0)
+                        } else {
+                            Vec3::new(0.0, 1.0, 0.0)
+                        };
+                        let u = vec3_normalize(helper.cross(axis)).unwrap();
+                        let v = vec3_normalize(axis.cross(u)).unwrap();
+                        let segments =
+                            ((std::f32::consts::TAU * radius / 0.7).ceil() as usize).clamp(16, 80);
+                        let corner = (random() * segments as f32) as usize % segments;
+                        let theta = std::f32::consts::TAU * corner as f32 / segments as f32;
+                        on.sub(
+                            u.scale(theta.cos() * radius)
+                                .add(v.scale(theta.sin() * radius)),
+                        )
+                    }
+                    // The axis through the diagonal.
+                    2 => on,
+                    // A hair off it.
+                    _ => {
+                        let along = vec3_normalize(b.sub(a)).unwrap();
+                        on.add(normal.cross(along).scale((random() - 0.5) * 2e-4))
+                    }
+                };
+                drains.push(DrainHole::new(center.to_array(), axis.to_array(), radius));
+            }
+            let case = format!("wall {wall}, round {round}");
+            let asked: Vec<DrainReport> = drains
+                .iter()
+                .map(|hole| session.drain_report(&settings, hole).unwrap())
+                .collect();
+            let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+            assert_eq!(asked, applied.drains, "{case}");
+            assert!(is_edge_manifold(&applied.mesh), "{case}");
+            assert!(no_zero_length_edges(&applied.mesh), "{case}");
+            let out_bvh = Bvh::build(&applied.mesh);
+            for (hole, report) in drains.iter().zip(&applied.drains) {
+                if !report.reaches_cavity {
+                    continue;
+                }
+                opened += 1;
+                rays += assert_drain_open(
+                    hole,
+                    report,
+                    (&preview.cavity, &cavity_bvh),
+                    (&applied.mesh, &out_bvh),
+                    &case,
+                );
+            }
+        }
+    }
+    assert!(opened >= 40 && rays >= 200, "{opened} drains, {rays} rays");
 }
