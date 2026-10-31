@@ -480,13 +480,10 @@ mod apply_drag_move_tests {
         let right = run((100.0 + HANDLE_PIXEL_LENGTH, 100.0));
         let up = run((100.0, 100.0 - HANDLE_PIXEL_LENGTH));
         let left = run((100.0 - HANDLE_PIXEL_LENGTH, 100.0));
-        for m in [right, up] {
-            for i in 0..3 {
-                assert_approx_eq!(f64, m[i][i], 2.0, epsilon = 1e-4);
+        for (m, expected) in [(right, 2.0), (up, 2.0), (left, 0.5)] {
+            for (i, row) in m.iter().enumerate() {
+                assert_approx_eq!(f64, row[i], expected, epsilon = 1e-4);
             }
-        }
-        for i in 0..3 {
-            assert_approx_eq!(f64, left[i][i], 0.5, epsilon = 1e-4);
         }
     }
 
