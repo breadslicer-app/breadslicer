@@ -38,20 +38,26 @@ const TOP: [usize; 2] = [2, 3];
 /// The 2 faces of the box's +X side.
 const RIGHT: [usize; 2] = [10, 11];
 /// The 2 faces of the box's -X side.
-const LEFT: [usize; 2] = [8, 9];
+pub(super) const LEFT: [usize; 2] = [8, 9];
 
 /// A triangle soup builder: boxes appended one after another, each with its
 /// own vertices.
 #[derive(Default)]
-struct Soup {
-    vertices: Vec<[f32; 3]>,
-    faces: Vec<[u32; 3]>,
+pub(super) struct Soup {
+    pub(super) vertices: Vec<[f32; 3]>,
+    pub(super) faces: Vec<[u32; 3]>,
 }
 
 impl Soup {
     /// Appends a box from `lo` to `hi`, without the faces in `skip`, wound
     /// inward when `inward`.
-    fn add_box(mut self, lo: [f32; 3], hi: [f32; 3], skip: &[usize], inward: bool) -> Self {
+    pub(super) fn add_box(
+        mut self,
+        lo: [f32; 3],
+        hi: [f32; 3],
+        skip: &[usize],
+        inward: bool,
+    ) -> Self {
         let base = self.vertices.len() as u32;
         for corner in 0..8u32 {
             self.vertices.push([
@@ -72,7 +78,7 @@ impl Soup {
 
     /// Builds the mesh, merging vertices at exactly the same position, as the
     /// STL reader does: boxes that touch then share their vertices.
-    fn mesh(self) -> IndexedMesh {
+    pub(super) fn mesh(self) -> IndexedMesh {
         let mut index: Vec<u32> = Vec::with_capacity(self.vertices.len());
         let mut vertices: Vec<[f32; 3]> = Vec::new();
         for v in &self.vertices {
@@ -97,7 +103,14 @@ impl Soup {
     }
 }
 
-fn volume(mesh: &IndexedMesh) -> f64 {
+/// Whether every edge has exactly 2 consistently wound faces, as the mesh is:
+/// the slicer's gate before it separates solids that touch.
+pub(super) fn edge_manifold(mesh: &IndexedMesh) -> bool {
+    mesh.validated_faces()
+        .is_ok_and(|faces| faces.validate_edge_manifold().is_ok())
+}
+
+pub(super) fn volume(mesh: &IndexedMesh) -> f64 {
     mesh.validated_faces()
         .expect("valid faces")
         .signed_volume_mm3()
@@ -186,7 +199,7 @@ fn boxes_that_share_an_edge_become_2_closed_shells() {
         .add_box([1.0, 1.0, 0.0], [2.0, 2.0, 1.0], &[], false)
         .mesh();
     assert_eq!(mesh.vertices.len(), 14);
-    assert!(!mesh.is_sliceable());
+    assert!(!edge_manifold(&mesh));
     let report = repair(&mut mesh);
     assert!(mesh.is_sliceable());
     // The copies at the shared edge moved 1 um into their boxes.
@@ -209,7 +222,7 @@ fn boxes_that_share_a_face_become_1_box() {
         .add_box([0.0; 3], [1.0; 3], &[], false)
         .add_box([1.0, 0.0, 0.0], [2.0, 1.0, 1.0], &[], false)
         .mesh();
-    assert!(!mesh.is_sliceable());
+    assert!(!edge_manifold(&mesh));
     let report = repair(&mut mesh);
     assert!(mesh.is_sliceable());
     // The 2 copies of the shared wall cancel out: 1 solid, nothing split.
@@ -506,7 +519,7 @@ fn a_part_stored_twice_keeps_1_copy() {
         .add_box([5.0, 0.0, 0.0], [6.0, 1.0, 1.0], &[], false)
         .mesh();
     assert_eq!(mesh.faces.len(), 20);
-    assert!(!mesh.is_sliceable());
+    assert!(!edge_manifold(&mesh));
     let report = repair(&mut mesh);
     assert!(mesh.is_sliceable());
     assert_eq!(mesh.faces.len(), 16);

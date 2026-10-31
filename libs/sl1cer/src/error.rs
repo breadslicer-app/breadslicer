@@ -13,7 +13,8 @@
 use std::fmt;
 
 use sc_mesh_core::indexed_mesh::{
-    MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, MeshVertexError, group_errors_by_variant,
+    MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, MeshVertexError, SliceableError,
+    group_errors_by_variant,
 };
 use sc_scene::SceneError;
 use sc_scene::node::NodeId;
@@ -185,6 +186,16 @@ pub enum InvalidLeafGeometry {
     Faces(Vec<MeshFaceError>),
     /// The mesh passed face validation but is not a closed manifold.
     Manifold(Vec<MeshEdgeManifoldError>),
+}
+
+impl From<SliceableError> for InvalidLeafGeometry {
+    fn from(error: SliceableError) -> Self {
+        match error {
+            SliceableError::Vertices(errors) => Self::Vertices(errors),
+            SliceableError::Faces(errors) => Self::Faces(errors),
+            SliceableError::Manifold(errors) => Self::Manifold(errors),
+        }
+    }
 }
 
 impl From<InvalidLeafGeometry> for SliceError {

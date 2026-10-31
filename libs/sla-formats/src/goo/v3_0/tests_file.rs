@@ -377,3 +377,38 @@ fn a_write_failure_carries_its_io_error() {
         .is_none(),
     );
 }
+
+#[test]
+fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
+    // #309: a machine can stall on a dark layer, so a gap and a dark top
+    // each carry one pixel, on a pixel the layer below lights fully.
+    let program = program(vec![
+        layer(0.1, 30.0),
+        layer(0.2, 2.5),
+        layer(0.3, 2.5),
+        layer(0.4, 2.5),
+    ]);
+    let stack = ContourStack::new_unchecked(vec![
+        rect_layer(0.05, (-4.0, 4.0), (-4.0, 4.0)),
+        ContourLayer::new(0.15, Vec::new()),
+        rect_layer(0.25, (-1.0, 1.0), (-1.0, 1.0)),
+        ContourLayer::new(0.35, Vec::new()),
+    ]);
+    let bytes = written(&program, &stack);
+    let (starts, _) = walk_records(&bytes, program.layers.len());
+    let images: Vec<Vec<u8>> = starts
+        .iter()
+        .map(|&start| pixels_of(image_of(&bytes, start)))
+        .collect();
+
+    for (dark, below) in [(1, 0), (3, 2)] {
+        let lit: Vec<(usize, u8)> = images[dark]
+            .iter()
+            .enumerate()
+            .filter(|&(_, &grey)| grey > 0)
+            .map(|(at, &grey)| (at, grey))
+            .collect();
+        let under = images[below].iter().position(|&grey| grey == 255).unwrap();
+        assert_eq!(lit, [(under, crate::layer_images::PLACEHOLDER_GREY)]);
+    }
+}

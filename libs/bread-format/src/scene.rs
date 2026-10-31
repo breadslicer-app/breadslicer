@@ -14,8 +14,10 @@
 //! through the scene's own checked API. Node and resource ids are renumbered
 //! in that order; the graph, names, transforms and child order come back as
 //! they were. Nodes no root or reference reaches are not part of the scene
-//! and are not stored. Leaves whose mesh the application rebuilds (supports)
-//! can be stored with an empty mesh ([`encode_scene_emptying`]).
+//! and are not stored, and neither are mesh resources no stored leaf shows.
+//! Leaves whose mesh the application rebuilds (supports) can be stored with
+//! an empty mesh ([`encode_scene_emptying`]); a mesh resource only such leaves
+//! show is not stored either.
 //!
 //! ```text
 //! metadata    u8 0 | 1, then name and comment (u8 0 | 1, u32 length, UTF-8)
@@ -153,19 +155,11 @@ pub fn encode_scene_emptying(
         meshes: Vec::new(),
         mesh_index: HashMap::new(),
         resources: HashMap::new(),
+        resource_meshes: Vec::new(),
     };
     let mut out = Out::default();
     write_meta(&mut out, scene.meta().as_ref());
 
-    let mut resources = Vec::new();
-    for (id, _) in scene.mesh_resources_iter() {
-        let arc = scene
-            .mesh_resource_arc(id)
-            .ok_or(EncodeSceneError::Inconsistent)?;
-        let mesh = encoder.mesh(arc);
-        encoder.resources.insert(id, resources.len());
-        resources.push(mesh);
-    }
     let roots = scene
         .roots()
         .iter()
@@ -173,8 +167,8 @@ pub fn encode_scene_emptying(
         .collect::<Result<Vec<_>, _>>()?;
 
     out.len(encoder.meshes.len());
-    out.len(resources.len());
-    for mesh in resources {
+    out.len(encoder.resource_meshes.len());
+    for &mesh in &encoder.resource_meshes {
         out.len(mesh);
     }
     out.len(encoder.record_count);
@@ -201,6 +195,8 @@ struct Encoder<'s> {
     meshes: Vec<Arc<IndexedMesh>>,
     mesh_index: HashMap<*const IndexedMesh, usize>,
     resources: HashMap<MeshResourceId, usize>,
+    /// The mesh index of each stored resource, in the order they are listed.
+    resource_meshes: Vec<usize>,
 }
 
 impl Encoder<'_> {
@@ -209,6 +205,23 @@ impl Encoder<'_> {
             self.meshes.push(Arc::clone(arc));
             self.meshes.len() - 1
         })
+    }
+
+    /// Lists the mesh resource `id` the first time a stored leaf shows it;
+    /// returns its index.
+    fn resource(&mut self, id: MeshResourceId) -> Result<usize, EncodeSceneError> {
+        if let Some(&index) = self.resources.get(&id) {
+            return Ok(index);
+        }
+        let arc = self
+            .scene
+            .mesh_resource_arc(id)
+            .ok_or(EncodeSceneError::Inconsistent)?;
+        let mesh = self.mesh(arc);
+        let index = self.resource_meshes.len();
+        self.resource_meshes.push(mesh);
+        self.resources.insert(id, index);
+        Ok(index)
     }
 
     /// Lists `id` after everything it names; returns its node index.
@@ -251,12 +264,7 @@ impl Encoder<'_> {
             }
             NodeKind::Leaf(LeafPayload::MeshResource(resource)) => {
                 let mut tail = Out::default();
-                tail.len(
-                    *self
-                        .resources
-                        .get(resource)
-                        .ok_or(EncodeSceneError::Inconsistent)?,
-                );
+                tail.len(self.resource(*resource)?);
                 (LEAF_RESOURCE, tail)
             }
             NodeKind::Reference { resource } => {

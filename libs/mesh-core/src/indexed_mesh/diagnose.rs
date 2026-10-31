@@ -75,16 +75,4 @@ impl IndexedMesh {
             faces,
         }
     }
-
-    /// Returns whether the slicer accepts this mesh: finite vertices, valid
-    /// faces, and every edge shared by exactly 2 consistently wound faces. It
-    /// is the gate `sc-sl1cer` runs on each baked leaf before slicing, so a
-    /// mesh that fails it makes the whole plate fail. Zero-area faces do not
-    /// block slicing and are not checked. Stops at the first failing stage.
-    pub fn is_sliceable(&self) -> bool {
-        self.validate_vertices().is_ok()
-            && self
-                .validated_faces()
-                .is_ok_and(|faces| faces.validate_edge_manifold().is_ok())
-    }
 }

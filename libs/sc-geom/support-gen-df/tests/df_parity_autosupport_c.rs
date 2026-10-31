@@ -14,6 +14,8 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+mod df_analytics;
+
 use support_gen_df::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use support_gen_df::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
 use support_gen_df::supports::auto_support::auto_place::plan::{
@@ -219,11 +221,9 @@ fn auto_support_plans_match_dragonfruit() {
                     &plan.support.collections,
                     &expected["support"],
                 );
-                check(
-                    &format!("{path}.analytics"),
-                    &plan.analytics,
-                    &expected["analytics"],
-                );
+                let (analytics, oracle) =
+                    df_analytics::comparable(&plan.analytics, &expected["analytics"]);
+                check(&format!("{path}.analytics"), analytics, &oracle);
             }
         }
     }

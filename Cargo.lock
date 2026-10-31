@@ -5295,6 +5295,7 @@ dependencies = [
  "sc-sla-formats",
  "sc-sla-formats-uvtools",
  "serde_json",
+ "support-gen-df",
  "tempfile",
  "windows-sys 0.61.2",
 ]
