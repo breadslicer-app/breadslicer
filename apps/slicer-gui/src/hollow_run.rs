@@ -39,6 +39,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
+use sc_geom::df_hollow::hollow_df::engine::DRAIN_PAST_WALL_MM;
 use sc_geom::df_hollow::hollow_df::{GridRequest, HollowFill, HollowSettings, InfillMode, Stage};
 use sc_geom::df_hollow::{
     HollowKind, HollowOutcome, HollowRequest, HollowResult, LeafFrame, PreparedHollow, WorldDrain,
@@ -357,6 +358,36 @@ struct PreviewKey {
     /// another cavity; a move or a rotation keeps it.
     stretch: [i64; 9],
     options: HollowOptions,
+    /// The model's drains ([`drains_key`]) when it has infill: they clear
+    /// their channels through it, and the preview shows that (#339). 0
+    /// without infill, where they change nothing shown.
+    drains: u64,
+}
+
+impl PreviewKey {
+    /// Whether `other` is the same cavity: drains measured on one are
+    /// measured on the other.
+    fn same_cavity(&self, other: &PreviewKey) -> bool {
+        PreviewKey { drains: 0, ..*self }
+            == PreviewKey {
+                drains: 0,
+                ..*other
+            }
+    }
+}
+
+/// A hash of `drains`, to tell drain sets apart; 0 when there are none.
+fn drains_key(drains: &[LocalDrain]) -> u64 {
+    if drains.is_empty() {
+        return 0;
+    }
+    drains
+        .iter()
+        .flat_map(|d| d.center.into_iter().chain(d.direction).chain([d.radius_mm]))
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, c| {
+            (h ^ u64::from(c.to_bits())).wrapping_mul(0x0100_0000_01b3)
+        })
+        | 1
 }
 
 /// The cavity preview: the job computing one, the last one computed (in the
@@ -370,14 +401,20 @@ struct CavityPreview {
     ready: Option<(PreviewKey, Arc<IndexedMesh>, Arc<PreparedHollow>)>,
     cavity_piece: Option<(CavityPieceKey, Arc<OverlayMesh>)>,
     drains_piece: Option<(DrainsPieceKey, Arc<OverlayMesh>)>,
+    /// How deep the drawn drains go, as the engine measures them on the
+    /// ready cavity, and what for (#315).
+    depths: Option<(DepthsKey, Vec<f32>)>,
     /// What the shown overlay was drawn from, and the overlay.
     shown: Option<(ShownKey, Overlay)>,
 }
 
 /// A drawn cavity: which cavity mesh, at which pose.
 type CavityPieceKey = (usize, [[f64; 4]; 4]);
-/// Drawn drains: which, at which pose, how deep (bits of the depth).
-type DrainsPieceKey = (Vec<LocalDrain>, [[f64; 4]; 4], u32);
+/// Drawn drains: which, at which pose, how deep (bits of each depth).
+type DrainsPieceKey = (Vec<LocalDrain>, [[f64; 4]; 4], Vec<u32>);
+/// Measured drain depths: which drains, at which pose, on which session,
+/// with which settings.
+type DepthsKey = (Vec<LocalDrain>, [[f64; 4]; 4], usize, PreviewKey);
 
 /// Everything the overlay is drawn from.
 #[derive(Debug, Clone, PartialEq)]
@@ -387,7 +424,8 @@ struct ShownKey {
     hover: Option<(DrainHover, DrainReach)>,
     world: [[f64; 4]; 4],
     radius: f32,
-    wall: f32,
+    /// Bits of the depth the drain under the cursor is drawn to.
+    hover_depth: u32,
 }
 
 impl HollowRun {
@@ -1114,23 +1152,35 @@ impl HollowRun {
                 drain_radius_mm: 0.0,
                 ..options
             },
+            drains: if options.fill == 0 {
+                0
+            } else {
+                drains_key(&drains)
+            },
         };
         let show_cavity = ui.get_hollow_show_cavity();
         if show_cavity {
-            self.advance_cavity_job(key, &original, &world, ui.get_hollow_drain_tool());
+            self.advance_cavity_job(key, &original, &world, ui.get_hollow_drain_tool(), &drains);
         }
         let matrix = matrix_of(&world);
-        let depth = options.wall_mm + 1.0;
+        // Until the engine has measured a drain, the depth it gets on a
+        // flat wall (#315).
+        let fallback_depth = options.wall_mm + DRAIN_PAST_WALL_MM;
         let mut preview = self.preview.borrow_mut();
+        let mut hover_depth = fallback_depth;
         let hover = self
             .hover
             .get()
             .filter(|_| ui.get_hollow_drain_tool())
             .map(|hover| {
-                let reach = drain_reach(preview.ready.as_ref(), key, hover, &world, &options);
+                let (reach, depth) =
+                    drain_reach(preview.ready.as_ref(), key, hover, &world, &options);
+                hover_depth = depth.unwrap_or(fallback_depth);
                 (hover, reach)
             });
         ui.set_hollow_drain_reach(hover.map_or(0, |(_, reach)| reach.code()));
+        let depths = drain_depths(&mut preview, &drains, key, &world, matrix, &options)
+            .unwrap_or_else(|| vec![fallback_depth; drains.len()]);
 
         // The cavity of this model, current or the last one while the next
         // is computed.
@@ -1155,12 +1205,16 @@ impl HollowRun {
             }
         });
         let drains_piece = (!drains.is_empty()).then(|| {
-            let id = (drains.clone(), matrix, depth.to_bits());
+            let id = (
+                drains.clone(),
+                matrix,
+                depths.iter().map(|d| d.to_bits()).collect::<Vec<_>>(),
+            );
             match &preview.drains_piece {
                 Some((k, piece)) if *k == id => piece.clone(),
                 _ => {
                     let mut mesh = (Vec::new(), Vec::new());
-                    for drain in &drains {
+                    for (drain, &depth) in drains.iter().zip(&depths) {
                         let w = drain.to_world(&world);
                         cylinder(w.center, w.direction, w.radius_mm, depth, &mut mesh);
                     }
@@ -1180,7 +1234,7 @@ impl HollowRun {
             hover,
             world: matrix,
             radius: options.drain_radius_mm,
-            wall: options.wall_mm,
+            hover_depth: hover_depth.to_bits(),
         };
         if let Some((k, shown)) = &preview.shown
             && *k == shown_key
@@ -1200,7 +1254,7 @@ impl HollowRun {
                 hover.point,
                 direction,
                 options.drain_radius_mm,
-                depth,
+                hover_depth,
                 &mut next,
             );
             pieces.push(Arc::new(OverlayMesh {
@@ -1233,6 +1287,7 @@ impl HollowRun {
         original: &Arc<IndexedMesh>,
         world: &Transform3D,
         drain_tool: bool,
+        drains: &[LocalDrain],
     ) {
         let mut preview = self.preview.borrow_mut();
         if let Some((handle, job_key)) = &preview.job {
@@ -1273,6 +1328,12 @@ impl HollowRun {
                 ..GridRequest::default()
             },
             settings: key.options.settings(),
+            // With infill, the drains clear their channels through it.
+            drains: if key.drains == 0 {
+                Vec::new()
+            } else {
+                drains.iter().map(|d| d.to_world(world)).collect()
+            },
             prepared: self.prepared.borrow().clone(),
             ..HollowRequest::default()
         };
@@ -1286,26 +1347,68 @@ impl HollowRun {
 /// What a drain at `hover` would do on the selected model, posed by
 /// `world`, with the tab's `options`: the engine's own check (the one
 /// Hollow makes before it drills) on the cavity of `ready`, when that is the
-/// cavity of `key`. The drain is built as a click there builds it.
+/// cavity of `key`, and how deep it goes (#315). The drain is built as a
+/// click there builds it.
 fn drain_reach(
     ready: Option<&(PreviewKey, Arc<IndexedMesh>, Arc<PreparedHollow>)>,
     key: PreviewKey,
     hover: DrainHover,
     world: &Transform3D,
     options: &HollowOptions,
-) -> DrainReach {
-    let Some((_, _, prepared)) = ready.filter(|(k, _, _)| *k == key && hover.on_selected) else {
-        return DrainReach::Unknown;
+) -> (DrainReach, Option<f32>) {
+    let Some((_, _, prepared)) = ready.filter(|(k, _, _)| k.same_cavity(&key) && hover.on_selected)
+    else {
+        return (DrainReach::Unknown, None);
     };
     let Some(drain) = LocalDrain::at(hover.point, hover.normal, options.drain_radius_mm, world)
     else {
-        return DrainReach::Unknown;
+        return (DrainReach::Unknown, None);
     };
     match prepared.drain_report(world, &options.settings(), &drain.to_world(world)) {
-        Some(report) if report.reaches_cavity => DrainReach::Opens,
-        Some(_) => DrainReach::Misses,
-        None => DrainReach::Unknown,
+        Some(report) if report.reaches_cavity => (DrainReach::Opens, Some(report.depth_mm)),
+        Some(report) => (DrainReach::Misses, Some(report.depth_mm)),
+        None => (DrainReach::Unknown, None),
     }
+}
+
+/// How deep each of `drains` goes, as the engine measures it on the ready
+/// cavity when that is the cavity of `key` (#315): the drawn drain is the
+/// one Hollow drills. Kept while the drains, the pose and the cavity hold.
+fn drain_depths(
+    preview: &mut CavityPreview,
+    drains: &[LocalDrain],
+    key: PreviewKey,
+    world: &Transform3D,
+    matrix: [[f64; 4]; 4],
+    options: &HollowOptions,
+) -> Option<Vec<f32>> {
+    let (_, _, prepared) = preview
+        .ready
+        .as_ref()
+        .filter(|(k, _, _)| k.same_cavity(&key))?;
+    let id = (
+        drains.to_vec(),
+        matrix,
+        Arc::as_ptr(prepared) as usize,
+        PreviewKey { drains: 0, ..key },
+    );
+    if let Some((k, depths)) = &preview.depths
+        && *k == id
+    {
+        return Some(depths.clone());
+    }
+    let settings = options.settings();
+    let depths: Option<Vec<f32>> = drains
+        .iter()
+        .map(|d| {
+            prepared
+                .drain_report(world, &settings, &d.to_world(world))
+                .map(|r| r.depth_mm)
+        })
+        .collect();
+    let depths = depths?;
+    preview.depths = Some((id, depths.clone()));
+    Some(depths)
 }
 
 /// Builds what measuring a drain on the cavity of `key` reads, off the
@@ -1873,5 +1976,130 @@ mod tests {
         );
         assert_eq!(kept, Some(vec![[40.0, 15.0, 13.0]]), "the green drain only");
         assert_eq!(notices, vec!["Drain not drilled".to_owned()]);
+    }
+
+    /// What is drawn is what Hollow makes: the drain under the cursor is
+    /// drawn as deep as the engine drills it (#315), a placed one too, and
+    /// with pillars the cavity shown is computed again with the placed
+    /// drains, which clear their channels through the infill (#339).
+    #[test]
+    fn the_drawn_drains_go_as_deep_as_hollow_drills() {
+        use crate::selection::{LeafId, Selection};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        let (hover, placed, with_drains) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(
+                        sc_mesh_core::transform::AffineTransform3D::from_translation([
+                            30.0, 35.0, 0.0,
+                        ]),
+                    ),
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(finned_block())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("aleta.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            window.set_hollow_drain_tool(true);
+            let run = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            run.on_option(0, 2.0);
+            run.on_option(3, 2.0);
+            run.on_option(4, 6.0);
+            run.on_option(5, 0.6);
+            let wait = |done: &dyn Fn() -> bool| {
+                let waited = std::time::Instant::now();
+                while !done() && waited.elapsed() < Duration::from_secs(30) {
+                    std::thread::sleep(Duration::from_millis(10));
+                    run.tick_preview();
+                }
+                assert!(done(), "the preview lands");
+            };
+            // The cavity of the last settings, not of one on the way.
+            let options = *run.options.borrow();
+            wait(&|| {
+                run.preview
+                    .borrow()
+                    .ready
+                    .as_ref()
+                    .is_some_and(|(k, _, _)| {
+                        k.options
+                            == HollowOptions {
+                                drain_radius_mm: 0.0,
+                                ..options
+                            }
+                    })
+            });
+            // Into the body's side, 2 mm wall: the engine's depth.
+            let (point, normal) = ([70.0, 50.0, 13.0], [1.0, 0.0, 0.0]);
+            run.hover.set(Some(DrainHover {
+                point,
+                normal,
+                on_selected: true,
+            }));
+            run.tick_preview();
+            let world = Transform3D::Affine(
+                sc_mesh_core::transform::AffineTransform3D::from_translation([30.0, 35.0, 0.0]),
+            );
+            let drain = LocalDrain::at(point, normal, options.drain_radius_mm, &world).unwrap();
+            let measured = {
+                let preview = run.preview.borrow();
+                let (_, _, prepared) = preview.ready.as_ref().unwrap();
+                prepared
+                    .drain_report(&world, &options.settings(), &drain.to_world(&world))
+                    .unwrap()
+                    .depth_mm
+            };
+            // How far in each piece of that tint reaches, from the surface.
+            let reach = |tint: OverlayTint| {
+                run.preview
+                    .borrow()
+                    .shown
+                    .as_ref()
+                    .and_then(|(_, overlay)| {
+                        overlay.iter().find(|p| p.tint == tint).map(|p| {
+                            p.positions
+                                .iter()
+                                .map(|q| point[0] - q[0])
+                                .fold(f32::MIN, f32::max)
+                        })
+                    })
+            };
+            let hover = (reach(OverlayTint::Valid), measured);
+            // Placed on the solid model: drawn as deep, and the cavity
+            // shown is computed again with it.
+            run.on_drain_click(point, normal);
+            run.hover.set(None);
+            run.tick_preview();
+            wait(&|| {
+                run.preview
+                    .borrow()
+                    .ready
+                    .as_ref()
+                    .is_some_and(|(k, _, _)| k.drains == drains_key(&[drain]))
+            });
+            run.tick_preview();
+            let placed = (reach(OverlayTint::Drain), measured);
+            let with_drains = run
+                .preview
+                .borrow()
+                .ready
+                .as_ref()
+                .map(|(k, _, _)| k.drains != 0);
+            (hover, placed, with_drains)
+        });
+        for (drawn, measured) in [hover, placed] {
+            let drawn = drawn.expect("the drain is drawn");
+            assert!(
+                (2.1..=2.3).contains(&measured) && (drawn - measured).abs() < 1e-3,
+                "drawn {drawn}, measured {measured}"
+            );
+        }
+        assert_eq!(with_drains, Some(true));
     }
 }
