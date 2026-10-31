@@ -14,7 +14,7 @@ use super::*;
 
 /// How many of the 12 broken corpus meshes Repair makes sliceable today. Each
 /// repair step that raises it updates this number in the same change.
-const BROKEN_MADE_SLICEABLE: usize = 0;
+const BROKEN_MADE_SLICEABLE: usize = 12;
 
 /// Runs Repair as the Repair button does (`Scene::repair_meshes`): the passes
 /// run only when the assessment finds work.

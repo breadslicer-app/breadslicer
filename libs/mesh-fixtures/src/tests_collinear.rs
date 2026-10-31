@@ -257,6 +257,7 @@ fn the_default_repair_removes_every_zero_area_face_of_the_collinear_variants() {
             RepairEnd::Completed(MeshStateAfterRepair {
                 edge_manifold: true,
                 zero_area_face_count: 0,
+                holes_left_open: 0,
             }),
             "{name}"
         );
