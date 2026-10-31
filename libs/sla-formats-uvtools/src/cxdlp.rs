@@ -475,6 +475,7 @@ pub fn write_file(
     write_layer_images(
         stack,
         &program.raster,
+        1,
         |index, runs| encode_layer(runs, res_x, largest_outlines[index]),
         |_, record| out.write_all(&record),
     )?;

@@ -700,7 +700,7 @@ impl DfSupportSession {
         if outcome.kind.is_none() {
             let why = outcome
                 .rejected_reason
-                .map_or_else(|| "rejected".to_owned(), |r| format!("{r:?}"));
+                .map_or_else(|| "rejected".to_owned(), |r| r.as_str().to_owned());
             return Err(EditError::NoRoute(why));
         }
         self.hand_edited = true;

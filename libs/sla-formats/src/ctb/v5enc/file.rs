@@ -147,6 +147,7 @@ pub fn write_file(
     write_layer_images(
         stack,
         &program.raster,
+        rle7::DIMMEST_STORED,
         |index, rows| {
             let mut image = Vec::new();
             rle7::encode_layer(rows, &mut image);

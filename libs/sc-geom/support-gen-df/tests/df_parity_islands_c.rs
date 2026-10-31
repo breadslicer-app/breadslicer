@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+mod df_analytics;
+
 use support_gen_df::native::mesh_minima::CombinedIslandScanResult;
 use support_gen_df::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
@@ -194,11 +196,9 @@ fn mesh_to_braced_forest_matches_dragonfruit() {
                     &expected["support"],
                     &format!("{path}.support"),
                 );
-                assert_same(
-                    &serde_json::to_value(&plan.analytics).unwrap(),
-                    &expected["analytics"],
-                    &format!("{path}.analytics"),
-                );
+                let (analytics, oracle) =
+                    df_analytics::comparable(&plan.analytics, &expected["analytics"]);
+                assert_same(&analytics, &oracle, &format!("{path}.analytics"));
             }
         }
     }

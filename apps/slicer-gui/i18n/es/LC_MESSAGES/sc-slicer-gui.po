@@ -1937,6 +1937,32 @@ msgctxt "RepairDialog"
 msgid "Mesh {}"
 msgstr "Malla {}"
 
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "{n} mesh has no faces"
+msgid_plural "{n} meshes have no faces"
+msgstr[0] "{n} malla no tiene caras"
+msgstr[1] "{n} mallas no tienen caras"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "this mesh has no faces"
+msgstr "esta malla no tiene caras"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "removed {n} face of a double wall"
+msgid_plural "removed {n} faces of double walls"
+msgstr[0] "se quitó {n} cara de una pared doble"
+msgstr[1] "se quitaron {n} caras de paredes dobles"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "removed {n} face that named a missing vertex"
+msgid_plural "removed {n} faces that named a missing vertex"
+msgstr[0] "se quitó {n} cara que apuntaba a un vértice inexistente"
+msgstr[1] "se quitaron {n} caras que apuntaban a un vértice inexistente"
+
 #: src/slice_run.rs:372
 msgctxt "ErrorDialog"
 msgid "Cannot slice"

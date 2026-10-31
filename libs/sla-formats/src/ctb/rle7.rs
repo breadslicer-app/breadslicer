@@ -30,6 +30,10 @@ const MAX_COUNT_3_BYTES: u32 = 0x1F_FFFF;
 /// Longest pixel run a single record expresses.
 pub const MAX_RUN_LENGTH: u32 = 0x0FFF_FFFF;
 
+/// The dimmest grey a record stores lit: it keeps a grey's top 7 bits,
+/// so a grey of 1 is stored dark.
+pub const DIMMEST_STORED: u8 = 2;
+
 /// Append `runs` to `out` as one layer image, in the order they
 /// arrive.
 ///

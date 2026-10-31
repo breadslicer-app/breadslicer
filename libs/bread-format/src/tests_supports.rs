@@ -9,8 +9,10 @@ use sc_mesh_core::indexed_mesh::{IndexedMesh, MeshMetadata};
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 
+use crate::container::{BreadReader, BreadWriter};
 use crate::file::{BreadProject, ReadProjectError, WriteBreadError, read_project, write_project};
-use crate::scene::{decode_scene, encode_scene};
+use crate::mesh::{MESH_TAG, MESH_VERSION, encode_mesh};
+use crate::scene::{SCENE_TAG, decode_scene, encode_scene};
 use crate::supports::{
     DecodeSupportsError, SUPPORTS_TAG, SupportDocument, decode_supports, encode_supports,
 };
@@ -159,4 +161,143 @@ fn a_damaged_supports_chunk_is_reported() {
         read_project(cut.as_slice()),
         Err(ReadProjectError::Supports(DecodeSupportsError::Malformed))
     ));
+}
+
+/// The test scene plus a root leaf that shows supports through a mesh
+/// resource, as the application adds them.
+fn with_support_resource() -> (Scene, NodeId) {
+    let mut scene = scene();
+    let resource = scene.add_mesh_resource(grid(30));
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::MeshResource(resource),
+        )
+        .unwrap();
+    scene.add_root(leaf).unwrap();
+    (scene, leaf)
+}
+
+fn stored_vertices(bytes: &[u8]) -> usize {
+    let back = read_project(bytes).unwrap();
+    back.scene
+        .mesh_resources_iter()
+        .map(|(_, mesh)| mesh.vertices().len())
+        .sum()
+}
+
+#[test]
+fn a_support_mesh_resource_is_not_stored() {
+    let (scene, leaf) = with_support_resource();
+    let project = BreadProject {
+        scene,
+        supports: vec![document(leaf)],
+        ..Default::default()
+    };
+    let bytes = write_project(&project, Vec::new()).unwrap();
+    let without = write_project(
+        &BreadProject {
+            scene: crate::tests_scene::scene(),
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+    .unwrap();
+    let back = read_project(bytes.as_slice()).unwrap();
+    // Only the test scene's own resource comes back.
+    assert_eq!(back.scene.mesh_resources_iter().count(), 1);
+    assert_eq!(stored_vertices(&bytes), stored_vertices(&without));
+    let leaf = back.supports[0].leaf;
+    assert!(leaf_mesh(&back.scene, leaf).vertices().is_empty());
+
+    // Opening and saving again stores the same file: nothing piles up.
+    let again = write_project(&back, Vec::new()).unwrap();
+    assert_eq!(again, bytes);
+}
+
+#[test]
+fn a_resource_also_shown_by_a_model_leaf_is_kept() {
+    let (mut scene, leaf) = with_support_resource();
+    let NodeKind::Leaf(LeafPayload::MeshResource(resource)) = scene.node(leaf).unwrap().kind else {
+        unreachable!()
+    };
+    let model = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::MeshResource(resource),
+        )
+        .unwrap();
+    scene.add_root(model).unwrap();
+    let project = BreadProject {
+        scene,
+        supports: vec![document(leaf)],
+        ..Default::default()
+    };
+    let back = read_project(write_project(&project, Vec::new()).unwrap().as_slice()).unwrap();
+    assert_eq!(back.scene.mesh_resources_iter().count(), 2);
+    let model = *back.scene.roots().last().unwrap();
+    let NodeKind::Leaf(LeafPayload::MeshResource(resource)) = back.scene.node(model).unwrap().kind
+    else {
+        panic!("the model leaf still shows a resource")
+    };
+    let mesh = back.scene.mesh_resource(resource).unwrap();
+    assert_eq!(mesh.vertices().len(), grid(30).vertices().len());
+}
+
+/// `bytes` as a build before #220 wrote it: plus a mesh resource, listed
+/// last, that no leaf shows. The scene must have no metadata.
+fn with_leftover_resource(bytes: &[u8], mesh: &IndexedMesh) -> Vec<u8> {
+    let field = |payload: &[u8], at: usize| {
+        u32::from_le_bytes(payload[at..at + 4].try_into().unwrap()) as usize
+    };
+    let mut reader = BreadReader::new(bytes).unwrap();
+    let mut writer = BreadWriter::new(Vec::new()).unwrap();
+    while let Some(mut chunk) = reader.next_chunk().unwrap() {
+        if chunk.tag == SCENE_TAG {
+            // metadata (u8 0), meshes, resources, then one u32 per resource.
+            let payload = &mut chunk.payload;
+            assert_eq!(payload[0], 0, "no scene metadata");
+            let (meshes, resources) = (field(payload, 1), field(payload, 5));
+            payload[1..5].copy_from_slice(&(meshes as u32 + 1).to_le_bytes());
+            payload[5..9].copy_from_slice(&(resources as u32 + 1).to_le_bytes());
+            let end = 9 + 4 * resources;
+            payload.splice(end..end, (meshes as u32).to_le_bytes());
+        }
+        writer
+            .chunk(chunk.tag, chunk.version, &chunk.payload)
+            .unwrap();
+    }
+    writer
+        .chunk(MESH_TAG, MESH_VERSION, &encode_mesh(mesh))
+        .unwrap();
+    writer.finish().unwrap()
+}
+
+#[test]
+fn a_file_with_a_leftover_support_mesh_drops_it_on_save() {
+    let (mut scene, leaf) = with_supports();
+    scene.set_meta(None);
+    let project = BreadProject {
+        scene,
+        supports: vec![document(leaf)],
+        ..Default::default()
+    };
+    let current = write_project(&project, Vec::new()).unwrap();
+    let old = with_leftover_resource(&current, &grid(30));
+    let opened = read_project(old.as_slice()).unwrap();
+    assert_eq!(
+        opened.scene.mesh_resources_iter().count(),
+        2,
+        "the leftover mesh comes back as a resource"
+    );
+
+    // Saving drops it: the file is the one this build writes, and stays so.
+    let saved = write_project(&opened, Vec::new()).unwrap();
+    assert_eq!(saved, current);
+    let back = read_project(saved.as_slice()).unwrap();
+    assert_eq!(back.scene.mesh_resources_iter().count(), 1);
+    assert_eq!(back.supports, opened.supports);
+    assert_eq!(write_project(&back, Vec::new()).unwrap(), saved);
 }

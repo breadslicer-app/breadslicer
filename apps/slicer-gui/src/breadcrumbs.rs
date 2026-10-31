@@ -10,7 +10,9 @@
 //! - the diagnostic log (Preferences > Privacy, off at every launch) appends
 //!   every event to `logs/session.log` in the app's data folder as it
 //!   happens, until the app closes; the previous one, or the first part of a
-//!   long one, is kept as `session.prev.log`;
+//!   long one, is kept as `session.prev.log`. A log is never emptied before
+//!   it is kept aside: when another program holds it open so it can't be,
+//!   the new one goes in a file of its own, `session-<stamp>.log`;
 //! - a panic writes the last events into `crash.log` with the backtrace, so a
 //!   crash says which step it died in even with the log off;
 //! - Help > Export Diagnostics puts them in the file the person saves.
@@ -21,7 +23,7 @@
 //! home folder, user name or file names.
 
 use std::collections::VecDeque;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -47,13 +49,31 @@ struct LogFile {
 
 impl LogFile {
     /// Starts a new `session.log` in `dir`, keeping the last one as
-    /// `session.prev.log`.
+    /// `session.prev.log`: moved there, or copied when another program holds
+    /// it open. When the last one can't be kept aside, or `session.log` can't
+    /// be written, the new log goes in a file of its own instead
+    /// (`session-<stamp>.log`), so no log is ever emptied. Fails only when
+    /// `dir` can't be written.
     fn start(dir: &Path, limit: u64) -> std::io::Result<Self> {
         let path = dir.join("session.log");
-        let _ = std::fs::rename(&path, dir.join("session.prev.log"));
+        let file = if !path.exists() {
+            OpenOptions::new().write(true).create_new(true).open(&path)
+        } else if set_aside(&path, &dir.join("session.prev.log")) {
+            // Moved away, or copied: either way it is safe to start over.
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)
+        } else {
+            Err(std::io::ErrorKind::AlreadyExists.into())
+        };
         Ok(Self {
             dir: dir.to_owned(),
-            file: File::create(&path)?,
+            file: match file {
+                Ok(file) => file,
+                Err(_) => own_file(dir)?,
+            },
             written: 0,
             limit,
         })
@@ -73,6 +93,34 @@ impl LogFile {
             self.written += size;
         }
         let _ = self.file.flush();
+    }
+}
+
+/// Keeps the log at `path` as `prev`: moves it, or copies it when another
+/// program holds it open. Whether it is kept.
+fn set_aside(path: &Path, prev: &Path) -> bool {
+    std::fs::rename(path, prev).is_ok() || std::fs::copy(path, prev).is_ok()
+}
+
+/// A new log file in `dir` with a name of its own, `session-<stamp>.log`.
+fn own_file(dir: &Path) -> std::io::Result<File> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let mut n = 0;
+    loop {
+        let name = match n {
+            0 => format!("session-{stamp}.log"),
+            n => format!("session-{stamp}-{n}.log"),
+        };
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(name))
+        {
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && n < 1000 => n += 1,
+            opened => return opened,
+        }
     }
 }
 
@@ -286,6 +334,207 @@ mod tests {
         log.append("abc");
         assert_eq!(read("session.log"), "abc\n");
         assert_eq!(read("session.prev.log"), "0123456789\n0123456789\n");
+    }
+
+    /// The files of `dir` other than `session.log` and `session.prev.log`.
+    fn own_files(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                let name = path.file_name().unwrap();
+                name != "session.log" && name != "session.prev.log"
+            })
+            .collect()
+    }
+
+    /// #223: another program holds the last `session.log` open, sharing
+    /// `share` (Windows share flags), when the log starts.
+    #[cfg(windows)]
+    fn start_while_held(share: u32) -> (tempfile::TempDir, Vec<PathBuf>) {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.log");
+        std::fs::write(
+            dir.path().join("session.prev.log"),
+            "older session
+",
+        )
+        .unwrap();
+        std::fs::write(
+            &path,
+            "last session
+",
+        )
+        .unwrap();
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(share)
+            .open(&path)
+            .unwrap();
+        let mut log = LogFile::start(dir.path(), MAX_LOG_BYTES).expect("the log starts");
+        log.append("new session");
+        drop(log);
+        drop(held);
+        let own = own_files(dir.path());
+        (dir, own)
+    }
+
+    #[cfg(windows)]
+    const SHARE_READ: u32 = 1;
+    #[cfg(windows)]
+    const SHARE_WRITE: u32 = 2;
+    #[cfg(windows)]
+    const SHARE_DELETE: u32 = 4;
+
+    #[cfg(windows)]
+    fn read(dir: &tempfile::TempDir, name: &str) -> String {
+        std::fs::read_to_string(dir.path().join(name)).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_open_with_delete_shared_is_moved_aside() {
+        let (dir, own) = start_while_held(SHARE_READ | SHARE_WRITE | SHARE_DELETE);
+        assert_eq!(
+            read(&dir, "session.prev.log"),
+            "last session
+"
+        );
+        assert_eq!(
+            read(&dir, "session.log"),
+            "new session
+"
+        );
+        assert!(own.is_empty(), "{own:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_open_for_writing_is_copied_aside_before_it_is_emptied() {
+        let (dir, own) = start_while_held(SHARE_READ | SHARE_WRITE);
+        assert_eq!(
+            read(&dir, "session.prev.log"),
+            "last session
+"
+        );
+        assert_eq!(
+            read(&dir, "session.log"),
+            "new session
+"
+        );
+        assert!(own.is_empty(), "{own:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_open_for_reading_only_is_kept_and_the_new_one_has_its_own_file() {
+        let (dir, own) = start_while_held(SHARE_READ);
+        assert_eq!(
+            read(&dir, "session.prev.log"),
+            "last session
+"
+        );
+        assert_eq!(
+            read(&dir, "session.log"),
+            "last session
+"
+        );
+        let [own] = own.as_slice() else {
+            panic!("one file of its own: {own:?}");
+        };
+        assert_eq!(
+            std::fs::read_to_string(own).unwrap(),
+            "new session
+"
+        );
+        let name = own.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.starts_with("session-") && name.ends_with(".log"),
+            "{name}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_that_cannot_even_be_read_is_left_alone() {
+        let (dir, own) = start_while_held(0);
+        assert_eq!(
+            read(&dir, "session.log"),
+            "last session
+"
+        );
+        assert_eq!(
+            read(&dir, "session.prev.log"),
+            "older session
+"
+        );
+        let [own] = own.as_slice() else {
+            panic!("one file of its own: {own:?}");
+        };
+        assert_eq!(
+            std::fs::read_to_string(own).unwrap(),
+            "new session
+"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_whose_aside_file_is_held_is_not_emptied() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("session.prev.log"),
+            "older session
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("session.log"),
+            "last session
+",
+        )
+        .unwrap();
+        // session.prev.log can be neither replaced nor written.
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(SHARE_READ)
+            .open(dir.path().join("session.prev.log"))
+            .unwrap();
+        let mut log = LogFile::start(dir.path(), MAX_LOG_BYTES).expect("the log starts");
+        log.append("new session");
+        drop((log, held));
+        assert_eq!(
+            read(&dir, "session.log"),
+            "last session
+"
+        );
+        assert_eq!(
+            read(&dir, "session.prev.log"),
+            "older session
+"
+        );
+        let own = own_files(dir.path());
+        let [own] = own.as_slice() else {
+            panic!("one file of its own: {own:?}");
+        };
+        assert_eq!(
+            std::fs::read_to_string(own).unwrap(),
+            "new session
+"
+        );
+    }
+
+    #[test]
+    fn two_own_files_in_the_same_second_get_different_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = own_file(dir.path()).unwrap();
+        let second = own_file(dir.path()).unwrap();
+        drop((first, second));
+        assert_eq!(own_files(dir.path()).len(), 2);
     }
 
     #[test]

@@ -781,7 +781,7 @@ fn a_gap_in_the_middle_is_an_error() {
     assert_eq!(findings[0].title, "Gap in the print");
     assert_eq!(
         findings[0].detail,
-        "2 empty layers leave a 0.10 mm gap, so everything above it has nothing to rest on."
+        "2 empty layers leave a 0.10 mm gap, so everything above it has nothing to rest on. The printer file still lights a pixel on every layer, so the printer does not stall on them."
     );
     assert_focus(&fixture, &findings[0], [60, 44], 3);
 }
@@ -823,7 +823,7 @@ fn an_unlit_layer_at_the_top_is_info() {
     assert_eq!(findings[0].title, "Empty layer at the top");
     assert_eq!(
         findings[0].detail,
-        "The last layer is empty (0.05 mm), which adds print time and prints nothing."
+        "The last layer is empty (0.05 mm): it prints nothing, so the printer file leaves it out."
     );
     assert_focus(&fixture, &findings[0], [60, 44], 7);
 }
