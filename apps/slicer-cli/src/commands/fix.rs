@@ -241,6 +241,12 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
                     format_triangle(second)
                 );
             }
+            MeshFix::RemovedDuplicateFaces { faces } => {
+                let _ = writeln!(
+                    out,
+                    "\t- Removed {faces} duplicate faces (1 copy of each stays)"
+                );
+            }
             MeshFix::WeldedBoundaryVertices {
                 vertices,
                 collapsed_faces,

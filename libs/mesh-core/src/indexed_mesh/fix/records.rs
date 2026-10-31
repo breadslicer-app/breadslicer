@@ -31,6 +31,9 @@ pub enum MeshFix {
         opposite: IndexedTriangle,
         halves: [IndexedTriangle; 2],
     },
+    /// Faces that repeated an earlier face (same 3 positions, same winding:
+    /// a part stored twice) were removed; 1 copy of each stays.
+    RemovedDuplicateFaces { faces: usize },
     /// Boundary vertices closer than the weld tolerance were merged, which
     /// closes cracks; faces the merge collapsed were removed. The watertight
     /// pass rebuilds the face list, so its records are counts, not indices.

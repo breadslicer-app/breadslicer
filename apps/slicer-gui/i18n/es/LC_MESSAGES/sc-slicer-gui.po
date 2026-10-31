@@ -1834,6 +1834,13 @@ msgstr[1] "{n} mallas todavía tienen caras de área cero"
 
 #, rust-format
 msgctxt "RepairDialog"
+msgid "removed {n} duplicate face"
+msgid_plural "removed {n} duplicate faces"
+msgstr[0] "se quitó {n} cara duplicada"
+msgstr[1] "se quitaron {n} caras duplicadas"
+
+#, rust-format
+msgctxt "RepairDialog"
 msgid "removed {n} leftover face"
 msgid_plural "removed {n} leftover faces"
 msgstr[0] "se quitó {n} cara sobrante"

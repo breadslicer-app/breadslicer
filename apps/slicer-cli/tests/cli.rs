@@ -1282,6 +1282,23 @@ mod fix_tests {
                 "Resolved 1 edges shared by more than 2 faces (added 2 vertices)",
             ))
             .stderr(predicate::str::contains("Sliceable: yes (was no)"));
+
+        // STL merges vertices by position on load; the copies at the shared
+        // edge moved 1 um into their cubes, so the cubes stay apart.
+        let again = tmp.path().join("again.stla");
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                target.to_str().unwrap(),
+                "-t",
+                again.to_str().unwrap(),
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("No fixes were applied."))
+            .stderr(predicate::str::contains("Sliceable: yes (was yes)"));
     }
 
     #[test]

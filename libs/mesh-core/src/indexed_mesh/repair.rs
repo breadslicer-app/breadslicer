@@ -67,6 +67,7 @@ impl RepairPasses {
             max_fill_area_fraction: MAX_AUTO_FILL_AREA_FRACTION,
             min_area_fill_max_edges: MIN_AREA_FILL_MAX_EDGES,
             max_rounds: MAX_WATERTIGHT_ROUNDS,
+            split_vertex_offset_mm: SPLIT_VERTEX_OFFSET_MM,
         }
     }
 }
@@ -95,6 +96,13 @@ pub const MIN_AREA_FILL_MAX_EDGES: usize = 200;
 /// How many rounds the watertight pass runs at most: a later round settles
 /// what a fill of an earlier one left.
 pub const MAX_WATERTIGHT_ROUNDS: usize = 3;
+
+/// How far, in mm, the watertight pass moves a vertex that shares its exact
+/// position with another (the copies it makes to separate parts that touch at
+/// an edge) into its own part, so that saving as STL, which merges vertices by
+/// position, keeps the parts apart. A tenth of the smallest pixel among the
+/// bundled printer profiles (10.5 um): no printer sees it.
+pub const SPLIT_VERTEX_OFFSET_MM: f64 = 0.001;
 
 /// Why [`IndexedMesh::repair`] refused to run, or to finish, its passes.
 #[derive(Clone, Debug, PartialEq)]

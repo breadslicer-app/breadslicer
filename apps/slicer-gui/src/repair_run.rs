@@ -401,6 +401,7 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
             let mut notes: Vec<String> = Vec::new();
             let mut removed = 0usize;
             let mut leftover = 0usize;
+            let mut duplicate = 0usize;
             let mut reoriented = 0usize;
             let mut collinear = 0usize;
             let mut welded = 0usize;
@@ -416,6 +417,7 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
                     MeshFix::WeldedBoundaryVertices { vertices, .. } => welded += vertices,
                     MeshFix::SplitNonManifoldEdges { edges, .. } => separated += edges,
                     MeshFix::RemovedUnpairedFaces { faces } => leftover += faces,
+                    MeshFix::RemovedDuplicateFaces { faces } => duplicate += faces,
                     MeshFix::ReorientedFaces { faces } => reoriented += faces,
                     MeshFix::FilledHoles { holes, .. } => filled += holes,
                     MeshFix::TurnedShellsOutward { shells, .. } => turned_outward += shells,
@@ -450,6 +452,17 @@ fn dialog_lines(outcomes: &[SceneRepairOutcome], names: &[Option<String>]) -> Ve
                         "welded {n} vertex of a crack",
                         "welded {n} vertices of cracks",
                         welded
+                    )
+                    .to_string(),
+                );
+            }
+            if duplicate > 0 {
+                notes.push(
+                    ctr!(
+                        "RepairDialog",
+                        "removed {n} duplicate face",
+                        "removed {n} duplicate faces",
+                        duplicate
                     )
                     .to_string(),
                 );

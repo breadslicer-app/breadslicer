@@ -21,6 +21,10 @@
 //! - `REPAIR_CORPUS_OUT`: writes 1 TSV row per mesh there.
 //! - `REPAIR_CORPUS_STL_DIR`: writes the synthetic corpus there as binary STL,
 //!   to measure it with other tools.
+//!
+//! Each repaired mesh is also saved as binary STL in memory and read back as
+//! importing a file does (vertices merged by position, duplicate faces
+//! dropped), to tell whether the repair survives the format.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -30,7 +34,8 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
 use sc_mesh_fixtures::repair_corpus::{RepairExpectation, repair_corpus};
-use sc_mesh_formats::stl::write_stlb;
+use sc_mesh_formats::loader::drop_scene_duplicate_faces;
+use sc_mesh_formats::stl::{read_stl, write_stlb};
 use sc_project_formats::loader::{LoadedContent, load_scene};
 use sc_scene::Scene;
 
@@ -42,6 +47,8 @@ struct Row {
     faces: usize,
     before: bool,
     after: bool,
+    /// Sliceable after Repair, saved as STL and read back.
+    after_stl: bool,
     end: String,
     repair_ms: f64,
 }
@@ -55,6 +62,7 @@ struct Totals {
     meshes: usize,
     broken: usize,
     made_sliceable: usize,
+    made_sliceable_through_stl: usize,
     healthy_broken_by_repair: usize,
 }
 
@@ -71,6 +79,7 @@ impl Totals {
                 (false, true) => {
                     t.broken += 1;
                     t.made_sliceable += 1;
+                    t.made_sliceable_through_stl += usize::from(row.after_stl);
                 }
                 (false, false) => t.broken += 1,
                 (true, false) => t.healthy_broken_by_repair += 1,
@@ -83,11 +92,13 @@ impl Totals {
     fn summary(&self) -> String {
         format!(
             "{} meshes ({} empty ones skipped), {} not sliceable when opened, {} of them \
-             sliceable after Repair; {} sliceable meshes broken by Repair",
+             sliceable after Repair ({} after saving as STL and reopening); {} sliceable meshes \
+             broken by Repair",
             self.meshes,
             self.empty,
             self.broken,
             self.made_sliceable,
+            self.made_sliceable_through_stl,
             self.healthy_broken_by_repair
         )
     }
@@ -102,6 +113,22 @@ fn end_label(end: &RepairEnd) -> String {
         }) => "completed: edge-manifold".into(),
         RepairEnd::Completed(_) => "completed: not edge-manifold".into(),
     }
+}
+
+/// Saves `mesh` as binary STL in memory, reads it back as importing does, and
+/// returns whether the result is sliceable.
+fn sliceable_through_stl(mesh: &IndexedMesh) -> bool {
+    let mut bytes = Vec::new();
+    write_stlb(mesh, &mut bytes).expect("write stl");
+    let Ok((mut scene, _)) = read_stl(&mut std::io::Cursor::new(bytes)) else {
+        return false;
+    };
+    drop_scene_duplicate_faces(&mut scene);
+    let targets = scene.mesh_targets();
+    !targets.is_empty()
+        && targets
+            .into_iter()
+            .all(|t| scene.target_mesh(t).is_some_and(IndexedMesh::is_sliceable))
 }
 
 /// Repairs every mesh of `scene` as the Repair button does and returns 1 row
@@ -130,6 +157,9 @@ fn measure_scene(corpus: &'static str, file: &str, scene: &mut Scene) -> Vec<Row
             after: scene
                 .target_mesh(outcome.target)
                 .is_some_and(IndexedMesh::is_sliceable),
+            after_stl: scene
+                .target_mesh(outcome.target)
+                .is_some_and(|m| m.faces.is_empty() || sliceable_through_stl(m)),
             end: end_label(&outcome.report.end),
             // The run covers the whole scene; it is reported on each mesh.
             repair_ms,
@@ -150,11 +180,12 @@ fn read_list(list: &Path) -> Vec<PathBuf> {
 fn print_rows(rows: &[Row]) {
     for row in rows {
         println!(
-            "{:>4}  {:>9} faces  {:<3} -> {:<3}  {:>9.1} ms  {}  {}",
+            "{:>4}  {:>9} faces  {:<3} -> {:<3} (stl {:<3})  {:>9.1} ms  {}  {}",
             row.mesh,
             row.faces,
             if row.before { "yes" } else { "no" },
             if row.after { "yes" } else { "no" },
+            if row.after_stl { "yes" } else { "no" },
             row.repair_ms,
             row.end,
             row.file
@@ -164,18 +195,19 @@ fn print_rows(rows: &[Row]) {
 
 fn tsv(rows: &[Row]) -> String {
     let mut out = String::from(
-        "corpus\tfile\tmesh\tfaces\tsliceable_before\tsliceable_after\tend\trepair_ms\n",
+        "corpus\tfile\tmesh\tfaces\tsliceable_before\tsliceable_after\tsliceable_after_stl\tend\trepair_ms\n",
     );
     for row in rows {
         let _ = writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1}",
             row.corpus,
             row.file,
             row.mesh,
             row.faces,
             row.before,
             row.after,
+            row.after_stl,
             row.end,
             row.repair_ms
         );

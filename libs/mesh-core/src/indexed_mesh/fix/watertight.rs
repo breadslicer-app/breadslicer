@@ -8,6 +8,8 @@
 //!
 //! 1 round runs these steps in order:
 //!
+//! 0. Drop duplicate faces (1st round only): of each group of faces with the
+//!    same 3 positions in the same winding (a part stored twice), 1 stays.
 //! 1. Weld open boundaries (1st round only): a vertex on a boundary edge is
 //!    merged into an earlier boundary vertex within the weld tolerance. Only
 //!    boundary vertices move, so closed parts that touch on purpose (supports
@@ -38,7 +40,15 @@
 //! Rounds repeat while the mesh still fails the edge check, up to
 //! [`WatertightOptions::max_rounds`]: the 2nd round settles what a fill of the
 //! 1st left. A round is kept only when it leaves fewer bad edges than before
-//! (never worse); the 1st round that does not ends the run.
+//! and loses no material: every part of the input keeps at least half of its
+//! vertices, and the closed parts do not lose volume (never worse). The 1st
+//! round that fails this ends the run.
+//!
+//! Last, every used vertex that shares its exact position with another (the
+//! copies step 3 makes, or parts that touch) moves
+//! [`WatertightOptions::split_vertex_offset_mm`] into its own part, so that a
+//! file format that merges vertices by position (STL) does not join the parts
+//! again.
 
 use std::collections::{HashMap, HashSet};
 
@@ -47,7 +57,9 @@ use rayon::prelude::*;
 use crate::primitives::{IndexedTriangle, Vertex, VertexIndex};
 
 use super::super::half_edges;
+use super::super::mesh::IndexedMesh;
 use super::records::MeshFix;
+use crate::shells::FaceShells;
 
 /// The tunables of the watertight pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,7 +79,14 @@ pub(crate) struct WatertightOptions {
     pub(crate) min_area_fill_max_edges: usize,
     /// How many rounds run at most.
     pub(crate) max_rounds: usize,
+    /// How far, in mm, a vertex that shares its position with another moves
+    /// into its own part at the end.
+    pub(crate) split_vertex_offset_mm: f64,
 }
+
+/// How far, in mm, a vertex of the input may end from every vertex of the
+/// output and still count as kept: twice the largest weld.
+const KEPT_VERTEX_TOLERANCE_MM: f64 = 0.01;
 
 /// What the watertight pass did to a mesh, or would do.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +122,7 @@ pub(crate) fn plan_watertight(
             holes_left_open,
         };
     }
+    let guard = MaterialGuard::of(vertices, faces);
     let mut current: Option<(Vec<Vertex>, Vec<IndexedTriangle>)> = None;
     let mut total = Stats::default();
     for round in 0..options.max_rounds {
@@ -116,7 +136,7 @@ pub(crate) fn plan_watertight(
             break;
         }
         let errors = count_bad_edges(&round_faces);
-        if errors >= best_errors {
+        if errors >= best_errors || !guard.keeps_material(&round_vertices, &round_faces) {
             if current.is_none() {
                 holes_left_open = stats.holes_left_open;
             }
@@ -131,12 +151,214 @@ pub(crate) fn plan_watertight(
         }
     }
     WatertightOutcome {
-        repaired: current.map(|(vertices, faces)| WatertightMesh {
-            vertices,
-            faces,
-            fixes: total.into_fixes(),
+        repaired: current.map(|(mut vertices, faces)| {
+            offset_coincident_vertices(&mut vertices, &faces, options.split_vertex_offset_mm);
+            WatertightMesh {
+                vertices,
+                faces,
+                fixes: total.into_fixes(),
+            }
         }),
         holes_left_open,
+    }
+}
+
+/// What the input holds, to tell whether a round lost material.
+struct MaterialGuard {
+    /// The input positions.
+    vertices: Vec<[f64; 3]>,
+    /// Per input vertex, its shell when the shell has at least 4 faces (a
+    /// part that can hold a volume), else `u32::MAX`.
+    vertex_shell: Vec<u32>,
+    /// Per shell, how many vertices it uses.
+    shell_vertices: Vec<u32>,
+    /// The volume of the closed shells.
+    closed_volume: f64,
+}
+
+impl MaterialGuard {
+    fn of(vertices: &[Vertex], faces: &[IndexedTriangle]) -> Self {
+        let shells = FaceShells::build(vertices, faces);
+        let mut shell_faces = vec![0u32; shells.count() as usize];
+        for &s in shells.labels() {
+            shell_faces[s as usize] += 1;
+        }
+        let mut vertex_shell = vec![u32::MAX; vertices.len()];
+        for (face, &s) in faces.iter().zip(shells.labels()) {
+            if shell_faces[s as usize] > 3 {
+                for v in raw(face) {
+                    vertex_shell[v as usize] = s;
+                }
+            }
+        }
+        let mut shell_vertices = vec![0u32; shell_faces.len()];
+        for &s in &vertex_shell {
+            if s != u32::MAX {
+                shell_vertices[s as usize] += 1;
+            }
+        }
+        Self {
+            vertices: vertices.iter().map(|v| v.coords().map(f64::from)).collect(),
+            vertex_shell,
+            shell_vertices,
+            closed_volume: closed_volume(vertices, faces),
+        }
+    }
+
+    /// Whether `faces` keep the material of the input: every part keeps at
+    /// least half of its vertices (a vertex is kept when a used vertex of
+    /// the output lies within [`KEPT_VERTEX_TOLERANCE_MM`] of it), and the
+    /// closed parts hold at least the volume they held.
+    fn keeps_material(&self, vertices: &[Vertex], faces: &[IndexedTriangle]) -> bool {
+        if closed_volume(vertices, faces) < self.closed_volume * (1.0 - 1e-3) {
+            return false;
+        }
+        let mut used = vec![false; vertices.len()];
+        for face in faces {
+            for v in raw(face) {
+                used[v as usize] = true;
+            }
+        }
+        let tolerance = KEPT_VERTEX_TOLERANCE_MM;
+        let near = |a: [f64; 3], b: [f64; 3]| {
+            let d = sub(a, b);
+            dot(d, d) <= tolerance * tolerance
+        };
+        // Most vertices keep their index; the others are looked up by place.
+        let mut missing: Vec<u32> = (0..self.vertices.len() as u32)
+            .filter(|&v| {
+                self.vertex_shell[v as usize] != u32::MAX
+                    && !(used.get(v as usize).copied().unwrap_or(false)
+                        && near(position(vertices, v), self.vertices[v as usize]))
+            })
+            .collect();
+        if !missing.is_empty() {
+            let cell = |p: [f64; 3]| p.map(|c| (c / tolerance).floor() as i64);
+            let mut grid: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+            for (i, &v) in missing.iter().enumerate() {
+                grid.entry(cell(self.vertices[v as usize]))
+                    .or_default()
+                    .push(i);
+            }
+            let mut found = vec![false; missing.len()];
+            for (w, _) in used.iter().enumerate().filter(|(_, u)| **u) {
+                let p = position(vertices, w as u32);
+                let c = cell(p);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            if let Some(list) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
+                                for &i in list {
+                                    found[i] |= near(p, self.vertices[missing[i] as usize]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut idx = 0;
+            missing.retain(|_| {
+                let keep = !found[idx];
+                idx += 1;
+                keep
+            });
+        }
+        let mut lost = vec![0u32; self.shell_vertices.len()];
+        for &v in &missing {
+            lost[self.vertex_shell[v as usize] as usize] += 1;
+        }
+        lost.iter()
+            .zip(&self.shell_vertices)
+            .all(|(&lost, &total)| lost * 2 <= total)
+    }
+}
+
+/// The volume enclosed by the closed shells of a mesh: the sum of their
+/// absolute volumes. A shell is closed when each edge of its faces has 2
+/// faces that wind it opposite ways.
+fn closed_volume(vertices: &[Vertex], faces: &[IndexedTriangle]) -> f64 {
+    if faces.is_empty() {
+        return 0.0;
+    }
+    let shells = FaceShells::build(vertices, faces);
+    let mut open = vec![false; shells.count() as usize];
+    let records = half_edges::sorted_half_edge_records(faces);
+    for run in records.chunk_by(|a, b| a.0 == b.0) {
+        let closed = run.len() == 2
+            && half_edges::is_reversed(run[0].1) != half_edges::is_reversed(run[1].1);
+        if !closed {
+            for &(_, value) in run {
+                open[shells.labels()[half_edges::face_of(value).get()] as usize] = true;
+            }
+        }
+    }
+    (0..shells.count())
+        .filter(|&s| !open[s as usize])
+        .map(|s| shells.volume(s).abs())
+        .sum()
+}
+
+/// Moves each used vertex that shares its exact position with another used
+/// vertex by `offset` mm into its own part, against the area-weighted normal
+/// of its faces. A file format that merges vertices by position then keeps
+/// them apart. The move is at least 4 steps of `f32` at the vertex, so that it
+/// survives the rounding far from the origin.
+fn offset_coincident_vertices(vertices: &mut [Vertex], faces: &[IndexedTriangle], offset: f64) {
+    if offset <= 0.0 {
+        return;
+    }
+    let mut used = vec![false; vertices.len()];
+    for face in faces {
+        for v in raw(face) {
+            used[v as usize] = true;
+        }
+    }
+    let mut by_place: Vec<([u32; 3], u32)> = (0..vertices.len() as u32)
+        .filter(|&v| used[v as usize])
+        .map(|v| (vertices[v as usize].coords().map(f32::to_bits), v))
+        .collect();
+    by_place.par_sort_unstable();
+    let mut normal_index: HashMap<u32, usize> = HashMap::new();
+    for run in by_place.chunk_by(|a, b| a.0 == b.0) {
+        if run.len() > 1 {
+            for &(_, v) in run {
+                let next = normal_index.len();
+                normal_index.insert(v, next);
+            }
+        }
+    }
+    if normal_index.is_empty() {
+        return;
+    }
+    let mut normals = vec![[0.0f64; 3]; normal_index.len()];
+    for face in faces {
+        let r = raw(face);
+        if !r.iter().any(|v| normal_index.contains_key(v)) {
+            continue;
+        }
+        let [a, b, c] = r.map(|v| position(vertices, v));
+        let n = cross(sub(b, a), sub(c, a));
+        for v in r {
+            if let Some(&i) = normal_index.get(&v) {
+                for k in 0..3 {
+                    normals[i][k] += n[k];
+                }
+            }
+        }
+    }
+    for (&v, &i) in &normal_index {
+        let n = normals[i];
+        let length = norm(n);
+        if length == 0.0 {
+            continue;
+        }
+        let p = position(vertices, v);
+        let step = p
+            .iter()
+            .map(|c| 4.0 * f64::from(f32::EPSILON) * c.abs())
+            .fold(offset, f64::max);
+        let moved = [0, 1, 2].map(|k| (p[k] - n[k] / length * step) as f32);
+        vertices[v as usize] = Vertex::new(moved);
     }
 }
 
@@ -159,6 +381,7 @@ fn count_bad_edges(faces: &[IndexedTriangle]) -> usize {
 /// The counts of 1 round, or of all kept rounds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Stats {
+    duplicate_faces: usize,
     welded_vertices: usize,
     collapsed_faces: usize,
     non_manifold_edges: usize,
@@ -175,7 +398,8 @@ struct Stats {
 
 impl Stats {
     fn changed(&self) -> bool {
-        self.welded_vertices > 0
+        self.duplicate_faces > 0
+            || self.welded_vertices > 0
             || self.collapsed_faces > 0
             || self.split_vertices > 0
             || self.removed_faces > 0
@@ -185,6 +409,7 @@ impl Stats {
     }
 
     fn add(&mut self, other: &Self) {
+        self.duplicate_faces += other.duplicate_faces;
         self.welded_vertices += other.welded_vertices;
         self.collapsed_faces += other.collapsed_faces;
         self.non_manifold_edges += other.non_manifold_edges;
@@ -200,6 +425,11 @@ impl Stats {
 
     fn into_fixes(self) -> Vec<MeshFix> {
         let mut fixes = Vec::new();
+        if self.duplicate_faces > 0 {
+            fixes.push(MeshFix::RemovedDuplicateFaces {
+                faces: self.duplicate_faces,
+            });
+        }
         if self.welded_vertices > 0 || self.collapsed_faces > 0 {
             fixes.push(MeshFix::WeldedBoundaryVertices {
                 vertices: self.welded_vertices,
@@ -248,6 +478,13 @@ fn run_round(
     let mut stats = Stats::default();
     if options.close_holes && first && options.weld_tolerance_mm > 0.0 {
         weld_boundary_vertices(vertices, faces, options.weld_tolerance_mm, &mut stats);
+    }
+    if first {
+        // A part stored twice keeps 1 copy; dropping both would lose it.
+        let mut mesh = IndexedMesh::new(None, std::mem::take(vertices), std::mem::take(faces));
+        stats.duplicate_faces += mesh.drop_duplicate_faces();
+        *vertices = mesh.vertices;
+        *faces = mesh.faces;
     }
     let dropped = pair_split_and_orient(vertices, faces, options.resolve_non_manifold, &mut stats);
     if let Some(dropped) = dropped {
@@ -1182,6 +1419,93 @@ mod watertight_helper_tests {
         for t in triangles {
             assert!(!(t.contains(&0) && t.contains(&2)), "{t:?}");
         }
+    }
+
+    fn tetrahedron_and_box() -> (Vec<Vertex>, Vec<IndexedTriangle>) {
+        let mut vertices: Vec<Vertex> = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+        .map(Vertex::new)
+        .to_vec();
+        let mut faces: Vec<IndexedTriangle> = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]
+            .map(IndexedTriangle::from_raw_indices)
+            .to_vec();
+        for c in 0..8u32 {
+            vertices.push(Vertex::new([
+                5.0 + (c & 1) as f32,
+                ((c >> 1) & 1) as f32,
+                ((c >> 2) & 1) as f32,
+            ]));
+        }
+        for f in [
+            [0, 2, 3],
+            [0, 3, 1],
+            [4, 5, 7],
+            [4, 7, 6],
+            [0, 1, 5],
+            [0, 5, 4],
+            [2, 6, 7],
+            [2, 7, 3],
+            [0, 4, 6],
+            [0, 6, 2],
+            [1, 3, 7],
+            [1, 7, 5],
+        ] {
+            faces.push(IndexedTriangle::from_raw_indices(f.map(|v| v + 4)));
+        }
+        (vertices, faces)
+    }
+
+    #[test]
+    fn the_guard_refuses_a_round_that_loses_a_part() {
+        let (vertices, faces) = tetrahedron_and_box();
+        let guard = MaterialGuard::of(&vertices, &faces);
+        assert!(guard.keeps_material(&vertices, &faces));
+        // Only the box is left: the tetrahedron's vertices are all gone.
+        assert!(!guard.keeps_material(&vertices, &faces[4..]));
+        // A vertex that moves by less than the tolerance is still kept.
+        let mut nudged = vertices.clone();
+        nudged[3] = Vertex::new([0.0, 0.0, 1.004]);
+        assert!(guard.keeps_material(&nudged, &faces));
+    }
+
+    #[test]
+    fn the_guard_refuses_a_round_that_loses_closed_volume() {
+        let (vertices, faces) = tetrahedron_and_box();
+        let guard = MaterialGuard::of(&vertices, &faces);
+        // The box squashed to half its height: no vertex is lost, but half
+        // of its volume is.
+        let mut squashed = vertices.clone();
+        for v in &mut squashed[4..] {
+            let [x, y, z] = v.coords();
+            *v = Vertex::new([x, y, z * 0.5]);
+        }
+        assert!(!guard.keeps_material(&squashed, &faces));
+    }
+
+    #[test]
+    fn coincident_vertices_move_apart_into_their_own_part() {
+        // 2 triangles of 2 parts meet at a copy of vertex 0 (vertex 3).
+        let mut vertices: Vec<Vertex> = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ]
+        .map(Vertex::new)
+        .to_vec();
+        let faces = [[0, 1, 2], [3, 5, 4]].map(IndexedTriangle::from_raw_indices);
+        offset_coincident_vertices(&mut vertices, &faces, 0.001);
+        // Each copy moves against its face's normal: down for the 1st (+z),
+        // up for the 2nd (-z).
+        assert_eq!(vertices[0].coords(), [0.0, 0.0, -0.001]);
+        assert_eq!(vertices[3].coords(), [0.0, 0.0, 0.001]);
+        assert_eq!(vertices[1].coords(), [1.0, 0.0, 0.0]);
     }
 
     #[test]

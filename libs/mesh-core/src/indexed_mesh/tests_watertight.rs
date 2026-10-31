@@ -187,7 +187,8 @@ fn boxes_that_share_an_edge_become_2_closed_shells() {
     assert!(!mesh.is_sliceable());
     let report = repair(&mut mesh);
     assert!(mesh.is_sliceable());
-    assert!((volume(&mesh) - 2.0).abs() < 1e-6);
+    // The copies at the shared edge moved 1 um into their boxes.
+    assert!((1.99..2.0).contains(&volume(&mesh)), "{}", volume(&mesh));
     // The 2 ends of the shared edge got a copy each; no face was lost.
     assert_eq!(mesh.vertices.len(), 16);
     assert_eq!(mesh.faces.len(), 24);
@@ -209,7 +210,8 @@ fn boxes_that_share_a_face_slice_as_their_union() {
     assert!(!mesh.is_sliceable());
     repair(&mut mesh);
     assert!(mesh.is_sliceable());
-    assert!((volume(&mesh) - 2.0).abs() < 1e-6);
+    // The copies at the shared face moved 1 um into their boxes.
+    assert!((1.99..2.0).contains(&volume(&mesh)), "{}", volume(&mesh));
 }
 
 #[test]
@@ -353,4 +355,72 @@ fn the_repair_is_deterministic() {
     assert_eq!(a, b);
     assert_eq!(ra, rb);
     assert!(a.is_sliceable());
+}
+
+/// Merges vertices at exactly the same position, as reading an STL does.
+fn reweld_by_position(mesh: &IndexedMesh) -> IndexedMesh {
+    let mut soup = Soup::default();
+    for face in &mesh.faces {
+        let base = soup.vertices.len() as u32;
+        for v in face.vertices {
+            soup.vertices.push(mesh.vertices[usize::from(v)].coords());
+        }
+        soup.faces.push([base, base + 1, base + 2]);
+    }
+    soup.mesh()
+}
+
+/// A tetrahedron wound outward, from the origin to 1 along each axis.
+fn add_tetrahedron(mut soup: Soup) -> Soup {
+    let base = soup.vertices.len() as u32;
+    soup.vertices.extend([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]);
+    for f in [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]] {
+        soup.faces.push(f.map(|v| v + base));
+    }
+    soup
+}
+
+#[test]
+fn a_part_stored_twice_keeps_1_copy() {
+    // The tetrahedron comes twice, the same way round, next to a box: every
+    // edge of it has 4 faces. Dropping both copies would lose it.
+    let mut mesh = add_tetrahedron(add_tetrahedron(Soup::default()))
+        .add_box([5.0, 0.0, 0.0], [6.0, 1.0, 1.0], &[], false)
+        .mesh();
+    assert_eq!(mesh.faces.len(), 20);
+    assert!(!mesh.is_sliceable());
+    let report = repair(&mut mesh);
+    assert!(mesh.is_sliceable());
+    assert_eq!(mesh.faces.len(), 16);
+    assert!(
+        (volume(&mesh) - (1.0 + 1.0 / 6.0)).abs() < 1e-6,
+        "{}",
+        volume(&mesh)
+    );
+    assert_eq!(
+        report.fixes,
+        vec![MeshFix::RemovedDuplicateFaces { faces: 4 }]
+    );
+}
+
+#[test]
+fn parts_separated_at_an_edge_stay_apart_through_an_stl() {
+    let mut mesh = Soup::default()
+        .add_box([0.0; 3], [1.0; 3], &[], false)
+        .add_box([1.0, 1.0, 0.0], [2.0, 2.0, 1.0], &[], false)
+        .mesh();
+    repair(&mut mesh);
+    assert!(mesh.is_sliceable());
+    let reopened = reweld_by_position(&mesh);
+    assert!(reopened.is_sliceable());
+    assert_eq!(reopened.vertices.len(), 16);
+    // The copies moved by about 1 um, into their own box.
+    assert!((1.99..2.0).contains(&volume(&reopened)));
+    let bounds = reopened.local_aabb().expect("vertices");
+    assert_eq!(bounds, mesh.local_aabb().expect("vertices"));
 }
