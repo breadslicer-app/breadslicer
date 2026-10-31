@@ -184,3 +184,110 @@ fn dragonfruit_punch_specs_cut_like_its_manifold_path() {
         out.mesh.signed_volume()
     );
 }
+
+/// Two boxes overlapping in `x` 10..14, the cut of #321 in miniature: a
+/// cutter edge through the overlap enters the second box while still inside
+/// the first, which one cut of the union refuses. Cut box by box, the union
+/// loses exactly the prism from each, and a box no cutter reaches stays as
+/// it was, in place.
+#[test]
+fn overlapping_shells_are_cut_one_by_one() {
+    let left = tessellated_box([0.0; 3], [14.0, 10.0, 10.0], 4);
+    let right = tessellated_box([10.0, 0.0, 0.0], [24.0, 10.0, 10.0], 4);
+    let far = tessellated_box([40.0, 0.0, 0.0], [44.0, 4.0, 4.0], 2);
+    let union = merged(&[far.clone(), left.clone(), right.clone()]);
+    // Along x through the overlap, at mid height.
+    let cutter = ConvexCutter::prism(
+        Vec3::new(-2.0, 5.3, 4.7),
+        Vec3::new(1.0, 0.0, 0.0),
+        1.5,
+        1.5,
+        30.0,
+        20,
+        0.0,
+    );
+    assert!(matches!(
+        subtract_convex(&union, &cutter),
+        Err(CutError::Inconsistent(_))
+    ));
+
+    let shells = OverlappingShells::new(&union);
+    assert_eq!(shells.len(), 3);
+    let out = shells.subtract_convex(&[&cutter]).unwrap();
+    assert!(is_edge_manifold(&out));
+    assert_eq!(face_shells(&out).1, 3);
+    let hole = prism_area(1.5, 20) * 14.0;
+    let expected = far.signed_volume() + left.signed_volume() + right.signed_volume() - 2.0 * hole;
+    assert!(
+        (out.signed_volume() - expected).abs() < 1e-2,
+        "volume {}, expected {expected}",
+        out.signed_volume()
+    );
+    // Untouched, the far box keeps its vertices and faces, first as before.
+    assert_eq!(out.positions[..far.positions.len()], far.positions[..]);
+    assert_eq!(out.triangles[..far.triangles.len()], far.triangles[..]);
+
+    // No cutter reaches a shell: the mesh comes back as it was.
+    let away = ConvexCutter::prism(
+        Vec3::new(0.0, 0.0, 50.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        1.0,
+        1.0,
+        1.0,
+        16,
+        0.0,
+    );
+    assert_eq!(shells.subtract_convex(&[&away]).unwrap(), union);
+}
+
+/// The first cutter that fails is the one reported, whatever the shell.
+#[test]
+fn overlapping_shells_report_the_failing_cutter() {
+    let mut open = cube(0.0, 10.0, false);
+    open.triangles.pop();
+    let block = cube(20.0, 30.0, false);
+    let union = merged(&[block, open]);
+    let shells = OverlappingShells::new(&union);
+    let through = |x: f32| {
+        ConvexCutter::prism(
+            Vec3::new(x, x, -1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            1.0,
+            1.0,
+            40.0,
+            16,
+            0.0,
+        )
+    };
+    let (on_block, on_open) = (through(25.3), through(5.3));
+    let (index, _) = shells.subtract_convex(&[&on_block, &on_open]).unwrap_err();
+    assert_eq!(index, 1);
+}
+
+/// Two closed tubes welded at one vertex are two components by edges, one by
+/// vertices.
+#[test]
+fn edge_components_split_shells_that_share_only_a_vertex() {
+    use crate::topology::edge_components;
+    let a = cube(0.0, 1.0, false);
+    let b = cube(1.0, 2.0, false);
+    // Weld `b`'s corner at (1, 1, 1) onto `a`'s.
+    let at = |m: &IndexedMesh| {
+        m.positions
+            .iter()
+            .position(|p| *p == Vec3::new(1.0, 1.0, 1.0))
+            .unwrap() as u32
+    };
+    let (shared, corner) = (at(&a), at(&b) + a.positions.len() as u32);
+    let mut union = merged(&[a, b]);
+    for v in union.triangles[12..].iter_mut().flatten() {
+        if *v == corner {
+            *v = shared;
+        }
+    }
+    assert_eq!(face_shells(&union).1, 1);
+    let (labels, count) = edge_components(&union);
+    assert_eq!(count, 2);
+    assert!(labels[..12].iter().all(|&l| l == 0));
+    assert!(labels[12..].iter().all(|&l| l == 1));
+}

@@ -277,6 +277,49 @@ fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
     assert_eq!((polygons, holes), (1, 1), "a ring: wall around the cavity");
 }
 
+/// With infill, drains that open are cut (#321): the result is one the
+/// slicer takes, and the drain from below is a hole in the floor.
+#[test]
+fn an_applied_hollow_with_infill_and_drains_slices() {
+    use hollow_df::{HollowFill, InfillMode};
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                settings: HollowSettings {
+                    fill: HollowFill::Infill {
+                        pattern,
+                        cell_mm: 6.0,
+                        beam_radius_mm: 0.6,
+                    },
+                    ..HollowSettings::default()
+                },
+                drains: vec![
+                    WorldDrain::new([50.0, 50.0, 0.0], [0.0, 0.0, 1.0], 1.5),
+                    WorldDrain::new([35.0, 50.0, 15.0], [1.0, 0.0, 0.0], 1.0),
+                    WorldDrain::new([50.0, 65.0, 15.0], [0.0, -1.0, 0.0], 1.0),
+                ],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { mesh, drains } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
+        assert!(mesh.is_sliceable(), "{pattern:?}");
+        let world = bake_mesh_to_world_of(&scene, leaf, mesh);
+        let (polygons, holes) = holes_at_mid_height(world, 1.0);
+        assert_eq!(
+            (polygons, holes),
+            (1, 1),
+            "{pattern:?}: the drain in the floor"
+        );
+    }
+}
+
 /// `mesh` (a leaf's local mesh) under that leaf's world transform.
 fn bake_mesh_to_world_of(scene: &Scene, leaf: NodeId, mesh: &IndexedMesh) -> IndexedMesh {
     let world = scene.world_transform_of(leaf).unwrap();

@@ -3,13 +3,18 @@
 //!
 //! ```text
 //! SC_BENCH_STL=C:/path/model.stl [SC_BENCH_HEIGHT=90] [SC_BENCH_VOXEL=0.65] \
-//!   [SC_BENCH_MAX_RES=192] [SC_BENCH_WALL=2.0] \
+//!   [SC_BENCH_MAX_RES=192] [SC_BENCH_WALL=2.0] [SC_BENCH_FILL=lattice|pillar] \
+//!   [SC_BENCH_REPEAT=1] \
 //!   cargo test --release -p hollow-df --test bench_real_model -- --ignored --nocapture
 //! ```
 //!
 //! The model is welded, centred and scaled to `SC_BENCH_HEIGHT` mm (as the
 //! parity test does). The drain goes in from below, straight up, under the
-//! cavity's lowest point.
+//! cavity's lowest point; then `SC_BENCH_MANY` (8) drains that open, spread
+//! over the model, are applied together. With `SC_BENCH_FILL` the hollow has that infill
+//! (6 mm cells, 0.6 mm beams). Applies run `SC_BENCH_REPEAT` times (the
+//! fastest is reported), and each result's fingerprint is printed, to tell
+//! two builds' meshes apart.
 
 use std::time::Instant;
 
@@ -17,7 +22,10 @@ use hollow_df::bvh::Bvh;
 use hollow_df::mesh::{IndexedMesh, Vec3};
 use hollow_df::shapes::read_binary_stl;
 use hollow_df::topology::{face_shells, is_edge_manifold};
-use hollow_df::{Control, DrainHole, GridRequest, HollowSettings, Session};
+use hollow_df::{
+    Control, DrainHole, GridRequest, HollowApplied, HollowError, HollowFill, HollowSettings,
+    InfillMode, Session,
+};
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name)
@@ -51,6 +59,56 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3
 }
 
+/// The hollow `SC_BENCH_FILL` asks for.
+fn bench_fill() -> HollowFill {
+    let pattern = match std::env::var("SC_BENCH_FILL").as_deref() {
+        Ok("lattice") => InfillMode::Lattice,
+        Ok("pillar") => InfillMode::Pillar,
+        _ => return HollowFill::Cavity,
+    };
+    HollowFill::Infill {
+        pattern,
+        cell_mm: 6.0,
+        beam_radius_mm: 0.6,
+    }
+}
+
+/// FNV-1a over the positions' bits and the triangles.
+fn fingerprint(mesh: &IndexedMesh) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |x: u32| {
+        for b in x.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for p in &mesh.positions {
+        for c in [p.x, p.y, p.z] {
+            eat(c.to_bits());
+        }
+    }
+    for &v in mesh.triangles.iter().flatten() {
+        eat(v);
+    }
+    h
+}
+
+/// The fastest of `SC_BENCH_REPEAT` applies, and its result.
+fn timed_apply(
+    session: &Session,
+    settings: &HollowSettings,
+    drains: &[DrainHole],
+) -> (f64, Result<HollowApplied, HollowError>) {
+    let mut best = f64::INFINITY;
+    let mut result = None;
+    for _ in 0..env_or("SC_BENCH_REPEAT", 1usize).max(1) {
+        let t = Instant::now();
+        let out = session.apply(settings, drains, Control::none());
+        best = best.min(ms(t));
+        result = Some(out);
+    }
+    (best, result.unwrap())
+}
+
 #[test]
 #[ignore = "a report on a local model, not a check"]
 fn real_model_hollow_timings() {
@@ -65,6 +123,7 @@ fn real_model_hollow_timings() {
     };
     let settings = HollowSettings {
         wall_thickness_mm: env_or("SC_BENCH_WALL", 2.0f32),
+        fill: bench_fill(),
         ..HollowSettings::default()
     };
 
@@ -99,9 +158,7 @@ fn real_model_hollow_timings() {
     let preview = session.preview(&settings, Control::none()).unwrap();
     let preview_ms = ms(t);
 
-    let t = Instant::now();
-    let applied = session.apply(&settings, &[], Control::none());
-    let apply_ms = ms(t);
+    let (apply_ms, applied) = timed_apply(&session, &settings, &[]);
 
     // Under the cavity's lowest point: the first surface straight down.
     let floor = *preview
@@ -115,10 +172,37 @@ fn real_model_hollow_timings() {
     let skin = Bvh::build(source).ray_hit_distances(source, floor, down)[0];
     let entry = floor.add(down.scale(skin));
     let drain = DrainHole::new(entry.to_array(), [0.0, 0.0, 1.0], 1.5);
-    let t = Instant::now();
-    let drained = session.apply(&settings, &[drain], Control::none());
-    let drained_ms = ms(t);
+    let (drained_ms, drained) = timed_apply(&session, &settings, &[drain]);
 
+    // Spread over the model, into it against each triangle's normal, at
+    // least 10 mm apart: the drains the report says open.
+    let many = env_or("SC_BENCH_MANY", 8usize);
+    let mut spread: Vec<DrainHole> = Vec::new();
+    let step = (source.triangle_count() / (many * 50)).max(1);
+    for i in (0..source.triangle_count()).step_by(step) {
+        if spread.len() == many {
+            break;
+        }
+        let [a, b, c] = source.triangles[i].map(|v| source.positions[v as usize]);
+        let center = a.add(b).add(c).scale(1.0 / 3.0);
+        let n = b.sub(a).cross(c.sub(a));
+        let len = n.dot(n).sqrt().max(1e-12);
+        let hole = DrainHole::new(center.to_array(), n.scale(-1.0 / len).to_array(), 1.5);
+        let apart = spread.iter().all(|d| {
+            let d = Vec3::new(d.center[0], d.center[1], d.center[2]).sub(center);
+            d.dot(d) > 100.0
+        });
+        if apart
+            && session
+                .drain_report(&settings, &hole)
+                .is_some_and(|r| r.reaches_cavity)
+        {
+            spread.push(hole);
+        }
+    }
+    let (spread_ms, spread_out) = timed_apply(&session, &settings, &spread);
+
+    eprintln!("fill: {:?}", settings.fill);
     eprintln!(
         "session {session_ms:.0} ms | preview {preview_ms:.0} ms | apply {apply_ms:.0} ms | apply + 1 drain {drained_ms:.0} ms"
     );
@@ -131,9 +215,10 @@ fn real_model_hollow_timings() {
     );
     match &applied {
         Ok(a) => eprintln!(
-            "apply: {} triangles, edge-manifold {}, source {:.2} ml -> {:.2} ml (removed {:.2} ml)",
+            "apply: {} triangles, edge-manifold {}, fingerprint {:016x}, source {:.2} ml -> {:.2} ml (removed {:.2} ml)",
             a.mesh.triangle_count(),
             is_edge_manifold(&a.mesh),
+            fingerprint(&a.mesh),
             a.stats.source_volume_mm3 / 1000.0,
             a.stats.output_volume_mm3.unwrap() / 1000.0,
             a.stats.removed_volume_mm3.unwrap() / 1000.0,
@@ -142,13 +227,28 @@ fn real_model_hollow_timings() {
     }
     match &drained {
         Ok(a) => eprintln!(
-            "apply + drain: {} triangles, edge-manifold {}, shells {}, drain {:?}",
+            "apply + drain: {} triangles, edge-manifold {}, fingerprint {:016x}, shells {}, drain {:?}",
             a.mesh.triangle_count(),
             is_edge_manifold(&a.mesh),
+            fingerprint(&a.mesh),
             face_shells(&a.mesh).1,
             a.drains[0]
         ),
         Err(e) => eprintln!("apply + drain failed: {e}"),
+    }
+    match &spread_out {
+        Ok(a) => eprintln!(
+            "apply + {} drains {spread_ms:.0} ms: {} triangles, edge-manifold {}, fingerprint {:016x}, all cut {}",
+            spread.len(),
+            a.mesh.triangle_count(),
+            is_edge_manifold(&a.mesh),
+            fingerprint(&a.mesh),
+            a.drains.iter().all(|d| d.reaches_cavity),
+        ),
+        Err(e) => eprintln!(
+            "apply + {} drains {spread_ms:.0} ms: failed: {e}",
+            spread.len()
+        ),
     }
 }
 

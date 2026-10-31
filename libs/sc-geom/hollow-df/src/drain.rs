@@ -313,6 +313,152 @@ fn subtract_convex_attempts(
     Err(last)
 }
 
+/// Which cutter failed (its index), and why.
+pub type CutFailure = (usize, CutError);
+
+/// Closed edge-manifold shells that may overlap one another, such as infill
+/// beams, which cross each other and run into the cavity wall: the solid is
+/// their union. One cut across overlapping shells sees a cutter edge enter
+/// the solid twice in a row, and its crossings do not alternate (#321);
+/// since `(A ∪ B) − C = (A − C) ∪ (B − C)`, the cutters are subtracted from
+/// each shell on its own instead. Shells are the edge-connected components
+/// of the mesh; only those whose box meets a cutter's are cut.
+#[derive(Debug)]
+pub struct OverlappingShells<'a> {
+    mesh: &'a IndexedMesh,
+    /// The shell of each face.
+    labels: Vec<u32>,
+    /// Each shell's faces, in mesh order.
+    faces: Vec<Vec<u32>>,
+    bounds: Vec<(P3, P3)>,
+}
+
+impl<'a> OverlappingShells<'a> {
+    /// Splits `mesh`, whose components are each closed and edge-manifold,
+    /// into its shells.
+    pub fn new(mesh: &'a IndexedMesh) -> Self {
+        let (labels, count) = crate::topology::edge_components(mesh);
+        let mut faces = vec![Vec::new(); count];
+        let mut bounds = vec![([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]); count];
+        for (f, (&label, tri)) in labels.iter().zip(&mesh.triangles).enumerate() {
+            faces[label as usize].push(f as u32);
+            let (min, max) = &mut bounds[label as usize];
+            for &v in tri {
+                let p = to64(mesh.positions[v as usize]);
+                for k in 0..3 {
+                    min[k] = min[k].min(p[k]);
+                    max[k] = max[k].max(p[k]);
+                }
+            }
+        }
+        Self {
+            mesh,
+            labels,
+            faces,
+            bounds,
+        }
+    }
+
+    /// How many shells there are.
+    pub fn len(&self) -> usize {
+        self.faces.len()
+    }
+
+    /// Whether there is no shell.
+    pub fn is_empty(&self) -> bool {
+        self.faces.is_empty()
+    }
+
+    /// The union less every cutter: each shell is cut by the cutters whose
+    /// box meets its own, in order, and the shells no cutter reaches stay as
+    /// they are, in place. On failure, the index of the first cutter that
+    /// failed on some shell, and why.
+    pub fn subtract_convex(&self, cutters: &[&ConvexCutter]) -> Result<IndexedMesh, CutFailure> {
+        use rayon::prelude::*;
+        let results: Vec<(usize, Result<IndexedMesh, CutFailure>)> = (0..self.len())
+            .into_par_iter()
+            .filter_map(|s| {
+                let mut shell: Option<IndexedMesh> = None;
+                for (i, cutter) in cutters.iter().enumerate() {
+                    if !boxes_meet(self.bounds[s], (cutter.min, cutter.max)) {
+                        continue;
+                    }
+                    let current = shell.get_or_insert_with(|| self.shell_mesh(s));
+                    if current.triangles.is_empty() {
+                        break; // a cutter took it all
+                    }
+                    match subtract_convex_closed(current, cutter) {
+                        Ok(out) => *current = out,
+                        Err(e) => return Some((s, Err((i, e)))),
+                    }
+                }
+                shell.map(|m| (s, Ok(m)))
+            })
+            .collect();
+        if results.is_empty() {
+            return Ok(self.mesh.clone());
+        }
+        let mut failed: Option<CutFailure> = None;
+        let mut cut = vec![false; self.len()];
+        let mut shells = Vec::with_capacity(results.len());
+        for (s, result) in results {
+            match result {
+                Ok(mesh) => {
+                    cut[s] = true;
+                    shells.push(mesh);
+                }
+                Err((i, e)) => {
+                    if failed.as_ref().is_none_or(|(j, _)| i < *j) {
+                        failed = Some((i, e));
+                    }
+                }
+            }
+        }
+        if let Some(failure) = failed {
+            return Err(failure);
+        }
+        let triangles = self
+            .mesh
+            .triangles
+            .iter()
+            .zip(&self.labels)
+            .filter(|&(_, &label)| !cut[label as usize])
+            .map(|(&tri, _)| tri)
+            .collect();
+        let mut out = IndexedMesh::new(self.mesh.positions.clone(), triangles);
+        compact_unreferenced_vertices(&mut out);
+        for shell in shells {
+            let offset = out.positions.len() as u32;
+            out.positions.extend_from_slice(&shell.positions);
+            out.triangles
+                .extend(shell.triangles.iter().map(|t| t.map(|v| v + offset)));
+        }
+        Ok(out)
+    }
+
+    /// Shell `s` as a mesh of its own.
+    fn shell_mesh(&self, s: usize) -> IndexedMesh {
+        let mut local: HashMap<u32, u32> = HashMap::new();
+        let mut positions = Vec::new();
+        let triangles = self.faces[s]
+            .iter()
+            .map(|&f| {
+                self.mesh.triangles[f as usize].map(|v| {
+                    *local.entry(v).or_insert_with(|| {
+                        positions.push(self.mesh.positions[v as usize]);
+                        (positions.len() - 1) as u32
+                    })
+                })
+            })
+            .collect();
+        IndexedMesh::new(positions, triangles)
+    }
+}
+
+fn boxes_meet(a: (P3, P3), b: (P3, P3)) -> bool {
+    (0..3).all(|k| a.0[k] <= b.1[k] && b.0[k] <= a.1[k])
+}
+
 /// A named point of the cut (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Key {
