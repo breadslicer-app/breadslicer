@@ -112,8 +112,9 @@ fn an_auto_drain_opens_the_cavity() {
     assert!(is_edge_manifold(&applied.mesh));
     let report = applied.drains[0];
     assert!(report.auto_depth, "{report:?}");
-    // About the 2 mm wall plus 1 mm (icosphere facets sit inside the radius).
-    assert!((2.0..=4.5).contains(&report.depth_mm), "{report:?}");
+    // About the 2 mm wall plus 0.2 mm (icosphere facets sit inside the
+    // radius).
+    assert!((2.0..=3.0).contains(&report.depth_mm), "{report:?}");
     assert!(report.reaches_cavity);
     assert_eq!(
         face_shells(&applied.mesh).1,
@@ -216,7 +217,7 @@ fn an_axis_between_two_triangles_stops_at_the_cavity() {
         .unwrap();
     let report = applied.drains[0];
     assert!(report.reaches_cavity, "{report:?}");
-    assert!((2.0..=4.5).contains(&report.depth_mm), "{report:?}");
+    assert!((2.0..=3.0).contains(&report.depth_mm), "{report:?}");
     assert!(is_edge_manifold(&applied.mesh));
     assert_eq!(face_shells(&applied.mesh).1, 1);
 }
@@ -1002,7 +1003,8 @@ fn assert_drain_open(
         let Some(&to_wall) = cavity.1.ray_hit_distances(cavity.0, origin, axis).first() else {
             continue;
         };
-        if to_wall > report.depth_mm {
+        // From half a millimetre out, as the depth is from the surface.
+        if to_wall - 0.5 > report.depth_mm {
             continue;
         }
         let first = out
@@ -1225,4 +1227,264 @@ fn drains_on_face_diagonals_open() {
         }
     }
     assert!(opened >= 40 && rays >= 200, "{opened} drains, {rays} rays");
+}
+
+/// Where rays along `axis` from `start` plus each of `offsets` first meet
+/// `cavity` (0 when they start inside it), the deepest of them.
+fn deepest_entrance(
+    cavity: (&IndexedMesh, &Bvh),
+    start: Vec3,
+    axis: Vec3,
+    offsets: &[Vec3],
+) -> f32 {
+    offsets
+        .iter()
+        .filter_map(|&offset| {
+            let hits = cavity
+                .1
+                .ray_hit_distances_closed(cavity.0, start.add(offset), axis);
+            let first = *hits.first()?;
+            let walls = 1 + hits.windows(2).filter(|w| w[1] - w[0] > 0.05).count();
+            Some(if walls % 2 == 1 { 0.0 } else { first })
+        })
+        .fold(0.0, f32::max)
+}
+
+/// #315: on a flat wall an automatic drain goes the wall plus 0.2 mm, on
+/// every face of the cube, centred or not, for thin and thick walls, and the
+/// hole is open clear through.
+#[test]
+fn an_auto_drain_goes_just_through_a_flat_wall() {
+    let session = cube_session();
+    let mut drains = Vec::new();
+    for k in 0..3 {
+        for sign in [-1.0f32, 1.0] {
+            for (a, b) in [(0.0, 0.0), (3.3, -5.1)] {
+                let mut center = [a, b, a - b];
+                center[k] = 20.0 * sign;
+                let mut direction = [0.0; 3];
+                direction[k] = -sign;
+                drains.push(DrainHole::new(center, direction, 1.5));
+            }
+        }
+    }
+    for wall in [1.0, 2.0, 3.0] {
+        let settings = HollowSettings {
+            wall_thickness_mm: wall,
+            ..HollowSettings::default()
+        };
+        let preview = session.preview(&settings, Control::none()).unwrap();
+        let cavity_bvh = Bvh::build(&preview.cavity);
+        let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+        assert!(is_edge_manifold(&applied.mesh));
+        let out_bvh = Bvh::build(&applied.mesh);
+        for (hole, report) in drains.iter().zip(&applied.drains) {
+            let case = format!("wall {wall}, {hole:?}, {report:?}");
+            assert!(report.reaches_cavity && report.auto_depth, "{case}");
+            let (center, axis) = drain_axis(hole);
+            let to_wall =
+                deepest_entrance((&preview.cavity, &cavity_bvh), center, axis, &[Vec3::ZERO]);
+            let past = report.depth_mm - to_wall;
+            assert!(
+                (0.199..=0.211).contains(&past),
+                "{case}: {past} past the wall"
+            );
+            assert!(
+                (report.depth_mm - (wall + 0.2)).abs() <= 0.1,
+                "{case}: the wall is the one asked"
+            );
+            assert!(
+                assert_drain_open(
+                    hole,
+                    report,
+                    (&preview.cavity, &cavity_bvh),
+                    (&applied.mesh, &out_bvh),
+                    &case,
+                ) == 7,
+                "{case}"
+            );
+        }
+    }
+}
+
+/// #315's report: the side drain of the finned block, whose axis runs
+/// along a box face of the cavity's BVH, used to slip past the near wall to
+/// the far one and get 39 mm. It goes the 2 mm wall and 0.2 mm, with and
+/// without infill.
+#[test]
+fn an_axis_along_a_box_face_meets_the_near_wall() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let hole = DrainHole::new([40.0, 25.0, 7.0], [-1.0, 0.0, 0.0], 1.5);
+    for fill in [
+        HollowFill::Cavity,
+        HollowFill::Infill {
+            pattern: InfillMode::Pillar,
+            cell_mm: 6.0,
+            beam_radius_mm: 0.6,
+        },
+    ] {
+        let settings = HollowSettings {
+            fill,
+            ..HollowSettings::default()
+        };
+        session.preview(&settings, Control::none()).unwrap();
+        let report = session.drain_report(&settings, &hole).unwrap();
+        assert!(report.reaches_cavity, "{report:?}");
+        assert!((2.1..=2.3).contains(&report.depth_mm), "{report:?}");
+    }
+}
+
+/// #315 on a curve: on the sphere, straight in and at a slant, every ray
+/// across the hole (48 just inside its prism, 24 halfway out) meets the
+/// cavity wall before the drain ends, and the drain ends about 0.2 mm past
+/// the deepest of them (the engine measures at the prism's corners, a
+/// little further out): the least depth that opens the whole hole.
+#[test]
+fn an_auto_drain_opens_its_whole_hole_on_a_curve() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let cavity_bvh = Bvh::build(&preview.cavity);
+    let cavity = (&preview.cavity, &cavity_bvh);
+    let mut drains = Vec::new();
+    for (i, (theta, phi)) in [(0.3f32, 0.2f32), (1.2, 2.0), (2.2, 4.1), (1.6, 5.3)]
+        .into_iter()
+        .enumerate()
+    {
+        let normal = Vec3::new(
+            theta.sin() * phi.cos(),
+            theta.sin() * phi.sin(),
+            theta.cos(),
+        );
+        // On the facets, just inside the 20 mm sphere.
+        let center = normal.scale(19.9);
+        let tilt = if i % 2 == 0 { 0.0 } else { 0.5 };
+        let side = vec3_normalize(normal.cross(Vec3::new(0.3, 0.9, 0.1))).unwrap();
+        let axis = vec3_normalize(normal.scale(-1.0).add(side.scale(tilt))).unwrap();
+        for radius in [0.8, 2.5] {
+            drains.push(DrainHole::new(center.to_array(), axis.to_array(), radius));
+        }
+    }
+    let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+    assert!(is_edge_manifold(&applied.mesh));
+    let out_bvh = Bvh::build(&applied.mesh);
+    let mut spread = 0.0f32;
+    for (hole, report) in drains.iter().zip(&applied.drains) {
+        let case = format!("{hole:?}, {report:?}");
+        assert!(report.reaches_cavity, "{case}");
+        let (center, axis) = drain_axis(hole);
+        let helper = if axis.z.abs() < 0.95 {
+            Vec3::new(0.0, 0.0, 1.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = vec3_normalize(helper.cross(axis)).unwrap();
+        let v = vec3_normalize(axis.cross(u)).unwrap();
+        // Inside the prism however a retry turned it: within the circle its
+        // sides touch, just inside, and a ring halfway out.
+        let inscribed = hole.radius_mm * (std::f32::consts::PI / report.segments as f32).cos();
+        let mut offsets = Vec::new();
+        for (count, radius) in [(48, inscribed * 0.995), (24, hole.radius_mm * 0.5)] {
+            for i in 0..count {
+                let a = std::f32::consts::TAU * i as f32 / count as f32;
+                offsets.push(u.scale(a.cos()).add(v.scale(a.sin())).scale(radius));
+            }
+        }
+        let start = center.sub(axis.scale(0.5));
+        let deepest = deepest_entrance(cavity, start, axis, &offsets) - 0.5;
+        let past = report.depth_mm - deepest;
+        assert!(
+            (0.17..=0.24).contains(&past),
+            "{case}: {past} past the deepest ray"
+        );
+        spread = spread.max(deepest - deepest_entrance(cavity, start, axis, &[Vec3::ZERO]) + 0.5);
+        // Open along every one of them.
+        for offset in offsets {
+            let origin = start.add(offset);
+            let Some(&to_wall) = cavity.1.ray_hit_distances(cavity.0, origin, axis).first() else {
+                continue;
+            };
+            let first = out_bvh
+                .ray_hit_distances(&applied.mesh, origin, axis)
+                .first()
+                .copied()
+                .unwrap_or(f32::INFINITY);
+            assert!(
+                first > to_wall + 0.02,
+                "{case}: blocked at {first}, wall at {to_wall}"
+            );
+        }
+    }
+    // The slant and the curve do make the rim deeper than the axis.
+    assert!(spread > 0.3, "{spread}");
+}
+
+/// #315 keeps #264: an automatic drain never reaches the cavity's far side.
+/// Into the 1 mm channel in the fin, from either face, it stops in the
+/// channel, and the channel's far wall is untouched.
+#[test]
+fn an_auto_drain_stops_short_of_the_far_side() {
+    let session = Session::build(
+        finned_block(),
+        &GridRequest::default(),
+        None,
+        Control::none(),
+    )
+    .unwrap();
+    let settings = HollowSettings {
+        wall_thickness_mm: 1.0,
+        ..HollowSettings::default()
+    };
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let cavity_bvh = Bvh::build(&preview.cavity);
+    let mut drains = Vec::new();
+    for y in [5.0, 15.0, 25.0] {
+        for z in [33.0, 39.0, 45.0] {
+            drains.push(DrainHole::new([21.5, y, z], [-1.0, 0.0, 0.0], 0.5));
+            drains.push(DrainHole::new([18.5, y + 2.0, z], [1.0, 0.0, 0.0], 0.5));
+        }
+    }
+    let applied = session.apply(&settings, &drains, Control::none()).unwrap();
+    let out_bvh = Bvh::build(&applied.mesh);
+    for (hole, report) in drains.iter().zip(&applied.drains) {
+        let case = format!("{hole:?}, {report:?}");
+        assert!(report.reaches_cavity, "{case}");
+        let (center, axis) = drain_axis(hole);
+        let origin = center.sub(axis.scale(0.5));
+        let walls = cavity_bvh.ray_hit_distances_closed(&preview.cavity, origin, axis);
+        let (near, far) = (walls[0] - 0.5, walls[walls.len() - 1] - 0.5);
+        assert!(far - near < 2.0, "{case}: across the channel {walls:?}");
+        assert!(report.depth_mm <= far - 0.09, "{case}: far side at {far}");
+        let first = out_bvh.ray_hit_distances(&applied.mesh, origin, axis)[0] - 0.5;
+        assert!((first - far).abs() < 0.01, "{case}: {first} against {far}");
+    }
+}
+
+/// Where the cavity is thinner than the overshoot, the drain still ends
+/// inside it, short of the far side.
+#[test]
+fn an_auto_drain_ends_inside_a_thin_cavity() {
+    for (enter, leave) in [(2.0, 2.15), (2.0, 2.4), (1.0, 1.02)] {
+        let opening = DrainOpening {
+            cavity_mm: enter,
+            cavity_end_mm: leave,
+            open_mm: enter,
+            far_mm: leave,
+        };
+        let depth = opening.auto_depth_mm();
+        assert!(depth > enter && depth < leave, "{opening:?}: {depth}");
+    }
+    let wide = DrainOpening {
+        cavity_mm: 2.0,
+        cavity_end_mm: 30.0,
+        open_mm: 2.6,
+        far_mm: 30.0,
+    };
+    assert_eq!(wide.auto_depth_mm(), 2.8);
 }

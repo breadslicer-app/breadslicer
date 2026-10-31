@@ -182,6 +182,10 @@ impl Prism {
     }
 }
 
+/// How far into the cutter a triangle of the cut must reach to be a fold
+/// over the hole: a micrometre, well above `f32` rounding.
+const FOLD_MM: f64 = 1e-3;
+
 /// How far each retry moves a prism's ends (see [`Prism::retry`]).
 const RETRY_END_SHIFT_MM: f64 = 1e-3;
 
@@ -227,9 +231,38 @@ impl ConvexCutter {
         .cutter()
     }
 
-    /// Whether `p` is inside, `margin` from every face.
-    fn contains(&self, p: P3, margin: f64) -> bool {
-        self.planes.iter().all(|pl| pl.signed(p) < -margin)
+    /// Whether triangle `tri` reaches [`FOLD_MM`] or more into the cutter:
+    /// what is left of it clipped to the cutter shrunk by that much has an
+    /// area. A triangle that only touches a face (the hole's wall, a cut's
+    /// edge) does not, even rounded to `f32`.
+    fn overlaps(&self, tri: [P3; 3]) -> bool {
+        let mut poly: Vec<P3> = tri.to_vec();
+        for plane in &self.planes {
+            let side = |p: P3| plane.signed(p) + FOLD_MM;
+            let mut next = Vec::with_capacity(poly.len() + 1);
+            for i in 0..poly.len() {
+                let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+                let (sp, sq) = (side(p), side(q));
+                if sp < 0.0 {
+                    next.push(p);
+                }
+                if (sp < 0.0) != (sq < 0.0) {
+                    next.push(lerp(p, q, sp / (sp - sq)));
+                }
+            }
+            poly = next;
+            if poly.len() < 3 {
+                return false;
+            }
+        }
+        let mut twice_area = [0.0; 3];
+        for i in 1..poly.len() - 1 {
+            let n = cross(sub(poly[i], poly[0]), sub(poly[i + 1], poly[0]));
+            for k in 0..3 {
+                twice_area[k] += n[k];
+            }
+        }
+        dot(twice_area, twice_area).sqrt() > FOLD_MM * FOLD_MM
     }
 
     /// The cutter edges, as corner pairs.
@@ -435,24 +468,14 @@ fn subtract_convex_attempts(
 }
 
 /// No triangle of `fresh` (those a cut made, in `out`) has a zero-length
-/// edge once in `f32`, which the slicer refuses, nor lies inside `cutter`,
-/// which only a fold over the hole does.
+/// edge once in `f32`, which the slicer refuses, nor reaches into
+/// `cutter`, which only a fold over the hole does.
 fn clean_triangles(out: &IndexedMesh, fresh: &[usize], cutter: &ConvexCutter) -> bool {
     fresh.iter().all(|&t| {
         let [a, b, c] = out.triangles[t].map(|v| out.positions[v as usize]);
-        if a == b || b == c || c == a {
-            return false;
-        }
-        let [a, b, c] = [a, b, c].map(to64);
-        let centroid = [
-            (a[0] + b[0] + c[0]) / 3.0,
-            (a[1] + b[1] + c[1]) / 3.0,
-            (a[2] + b[2] + c[2]) / 3.0,
-        ];
-        !cutter.contains(centroid, GENERAL_POSITION_MM)
+        a != b && b != c && c != a && !cutter.overlaps([a, b, c].map(to64))
     })
 }
-
 /// Which cutter failed (its index), and why.
 pub type CutFailure = (usize, CutError);
 
