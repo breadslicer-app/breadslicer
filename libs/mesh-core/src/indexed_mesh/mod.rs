@@ -10,6 +10,7 @@ pub mod fix;
 mod half_edges;
 mod mesh;
 pub mod repair;
+pub mod repair_report;
 pub mod topology;
 pub mod validate;
 pub mod validated;
@@ -29,6 +30,8 @@ mod tests_fingerprint;
 mod tests_mesh;
 #[cfg(test)]
 mod tests_repair;
+#[cfg(test)]
+mod tests_repair_report;
 #[cfg(test)]
 mod tests_validated_faces;
 #[cfg(test)]

@@ -8,6 +8,7 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
@@ -18,12 +19,12 @@ use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };
 use sc_mesh_formats::load_mesh_from_path;
-use sc_scene::mesh_targets::MeshTarget;
 use sc_scene::repair::SceneRepairOutcome;
 
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
+use crate::commands::repair_report::{mesh_names, show_repair_report};
 use crate::filesystem::{
     ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
 };
@@ -53,32 +54,11 @@ pub(crate) fn fix(
     display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 
-    let sliceable_before: Vec<(MeshTarget, bool)> = graph
-        .mesh_targets()
-        .into_iter()
-        .filter_map(|target| Some((target, graph.target_mesh(target)?.is_sliceable())))
-        .collect();
+    let start = Instant::now();
     let outcomes = graph.repair_meshes(passes);
+    let elapsed = start.elapsed();
     let refused = show_refusal_warnings(&outcomes, out);
-
-    let all_fixes: Vec<MeshFix> = outcomes
-        .iter()
-        .flat_map(|outcome| outcome.report.fixes.iter().cloned())
-        .collect();
-    if all_fixes.is_empty() {
-        let _ = writeln!(out, "No fixes were applied.");
-    } else {
-        show_applied_fixes(&all_fixes, out);
-    }
-    show_zero_area_warnings(&outcomes, out);
-    let sliceable: Vec<SliceableChange> = sliceable_before
-        .into_iter()
-        .map(|(target, before)| SliceableChange {
-            before,
-            after: graph.target_mesh(target).is_some_and(|m| m.is_sliceable()),
-        })
-        .collect();
-    show_sliceable(&sliceable, out);
+    show_repair_report(&outcomes, &mesh_names(&graph, &outcomes), elapsed, out);
 
     // The unconditional write leans on the repair driver's never-worse
     // guarantee: refused meshes are byte-identical to their input and applied
@@ -159,38 +139,6 @@ pub(crate) fn show_zero_area_warnings(outcomes: &[SceneRepairOutcome], out: &mut
             }
         };
         write_target_warning(out, idx, total, &message);
-    }
-}
-
-/// Whether a mesh passed the slicer's gate
-/// ([`IndexedMesh::is_sliceable`](sc_mesh_core::IndexedMesh::is_sliceable))
-/// before and after a repair run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SliceableChange {
-    pub(crate) before: bool,
-    pub(crate) after: bool,
-}
-
-/// Renders whether each mesh can be sliced after the repair run, and whether
-/// it could before: 1 line for a single mesh, else a count and 1 line per mesh
-/// by its 1-based position, in the order of the repair outcomes.
-pub(crate) fn show_sliceable(meshes: &[SliceableChange], out: &mut dyn Write) {
-    let yes_no = |sliceable: bool| if sliceable { "yes" } else { "no" };
-    let line = |change: &SliceableChange| {
-        format!("{} (was {})", yes_no(change.after), yes_no(change.before))
-    };
-    match meshes {
-        [] => {}
-        [single] => {
-            let _ = writeln!(out, "Sliceable: {}", line(single));
-        }
-        _ => {
-            let count = meshes.iter().filter(|change| change.after).count();
-            let _ = writeln!(out, "Sliceable: {count} of {} meshes", meshes.len());
-            for (idx, change) in meshes.iter().enumerate() {
-                let _ = writeln!(out, "\t- mesh {}: {}", idx + 1, line(change));
-            }
-        }
     }
 }
 
@@ -288,6 +236,7 @@ pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
                 holes,
                 added_faces,
                 largest_hole_edges,
+                ..
             } => {
                 let _ = writeln!(
                     out,
@@ -378,6 +327,7 @@ mod show_applied_fixes_tests {
 mod show_zero_area_warnings_tests {
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::indexed_mesh::repair::{MeshStateAfterRepair, RepairEnd};
+    use sc_mesh_core::indexed_mesh::repair_report::{MeshFigures, RepairDetails};
     use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairRefusal};
     use sc_scene::Scene;
     use sc_scene::mesh_targets::MeshTarget;
@@ -400,8 +350,22 @@ mod show_zero_area_warnings_tests {
                 fixes: Vec::new(),
                 end,
             },
+            details: RepairDetails {
+                before: FIGURES,
+                after: FIGURES,
+                stages: Vec::new(),
+                elapsed: std::time::Duration::ZERO,
+                leftovers: None,
+            },
         }
     }
+
+    /// The figures of the outcomes: the warnings do not read them.
+    const FIGURES: MeshFigures = MeshFigures {
+        faces: 0,
+        sliceable: false,
+        volume_mm3: None,
+    };
 
     fn completed(zero_area_face_count: usize) -> SceneRepairOutcome {
         outcome(RepairEnd::Completed(MeshStateAfterRepair {
@@ -461,51 +425,5 @@ mod show_zero_area_warnings_tests {
             "warning (mesh 2 of 2): This mesh has no faces
 "
         );
-    }
-}
-
-#[cfg(test)]
-mod show_sliceable_tests {
-    use super::{SliceableChange, show_sliceable};
-
-    fn render(meshes: &[SliceableChange]) -> String {
-        let mut buf = Vec::new();
-        show_sliceable(meshes, &mut buf);
-        String::from_utf8(buf).expect("show_sliceable emits valid UTF-8")
-    }
-
-    const FIXED: SliceableChange = SliceableChange {
-        before: false,
-        after: true,
-    };
-    const STILL_BROKEN: SliceableChange = SliceableChange {
-        before: false,
-        after: false,
-    };
-    const CLEAN: SliceableChange = SliceableChange {
-        before: true,
-        after: true,
-    };
-
-    #[test]
-    fn a_single_mesh_gets_1_line() {
-        assert_eq!(render(&[FIXED]), "Sliceable: yes (was no)\n");
-        assert_eq!(render(&[STILL_BROKEN]), "Sliceable: no (was no)\n");
-    }
-
-    #[test]
-    fn several_meshes_get_a_count_and_1_line_each() {
-        assert_eq!(
-            render(&[CLEAN, STILL_BROKEN, FIXED]),
-            "Sliceable: 2 of 3 meshes\n\
-             \t- mesh 1: yes (was yes)\n\
-             \t- mesh 2: no (was no)\n\
-             \t- mesh 3: yes (was no)\n"
-        );
-    }
-
-    #[test]
-    fn no_mesh_renders_nothing() {
-        assert_eq!(render(&[]), "");
     }
 }

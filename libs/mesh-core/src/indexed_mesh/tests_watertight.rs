@@ -142,8 +142,9 @@ fn a_box_without_its_top_is_closed() {
         MeshFix::FilledHoles {
             holes: 1,
             added_faces: 2,
-            largest_hole_edges: 4
-        }
+            largest_hole_edges: 4,
+            largest_hole_area_mm2,
+        } if (largest_hole_area_mm2 - 1.0).abs() < 1e-9
     )));
     // A square needs no new vertex.
     assert_eq!(mesh.vertices.len(), 8);

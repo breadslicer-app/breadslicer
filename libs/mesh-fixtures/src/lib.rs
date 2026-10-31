@@ -38,6 +38,8 @@ mod tests_flipped;
 mod tests_pinch;
 #[cfg(test)]
 mod tests_repair_corpus;
+#[cfg(test)]
+mod tests_repair_report;
 
 /// Returns a closed unit cube centred at the origin (side 1), manifold by
 /// construction.

@@ -12,7 +12,7 @@
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
-use sc_mesh_core::indexed_mesh::repair::repaired_copy;
+use sc_mesh_core::indexed_mesh::repair_report::{RepairDetails, repaired_copy_with_details};
 use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairPasses};
 
 /// Everything a repair run did, and did not do, to 1 stored mesh.
@@ -24,6 +24,9 @@ pub struct SceneRepairOutcome {
     /// assessment finds clean, refused or without faces gets no run: its
     /// report has no fixes, and ends as the assessment says.
     pub report: MeshRepairReport,
+    /// The mesh before and after, the time of each stage, and what is left
+    /// when it still does not slice.
+    pub details: RepairDetails,
 }
 
 impl Scene {
@@ -42,14 +45,18 @@ impl Scene {
                 // total.
                 continue;
             };
-            let (report, repaired) = repaired_copy(mesh, passes);
+            let (report, repaired, details) = repaired_copy_with_details(mesh, passes);
             if let Some(repaired) = repaired {
                 let Some(mesh) = self.target_mesh_mut(target) else {
                     continue;
                 };
                 *mesh = repaired;
             }
-            outcomes.push(SceneRepairOutcome { target, report });
+            outcomes.push(SceneRepairOutcome {
+                target,
+                report,
+                details,
+            });
         }
         outcomes
     }
