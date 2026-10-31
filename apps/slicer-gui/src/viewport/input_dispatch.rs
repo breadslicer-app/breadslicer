@@ -38,7 +38,6 @@ use super::input_state::{ClickOrDrag, InputState, RightUpOutcome};
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::types::{ScreenPoint, ViewportSize};
 use crate::PointerModifiers;
-use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
@@ -226,7 +225,6 @@ impl InputDispatch {
         document: &Rc<SceneDocument>,
         camera: &RefCell<Option<OrbitCamera>>,
         viewport: Option<ViewportSize>,
-        build_volume: BuildVolume,
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
     ) -> bool {
@@ -236,7 +234,6 @@ impl InputDispatch {
             viewport,
             cursor,
             modifiers,
-            build_volume,
         };
         // The bool return is intentionally discarded, a successful
         // drag move routes through `apply_command` and the `Mutated`
@@ -367,14 +364,12 @@ impl InputDispatch {
         document: &Rc<SceneDocument>,
         camera: &RefCell<Option<OrbitCamera>>,
         viewport: Option<ViewportSize>,
-        build_volume: BuildVolume,
     ) {
         let ctx = IntegrationCtx {
             document,
             camera,
             viewport,
             selection_id: document.selection_primary_node_id(),
-            build_volume,
         };
         let _ = self.kbd_drive.integrate(ctx);
     }
