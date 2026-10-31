@@ -203,6 +203,9 @@ pub(crate) enum PreferencesChange {
     SliceControlPanel,
     SliceViewPanel,
     LastOpenDir,
+    /// A profile was saved, imported or deleted in a library. The snapshot is
+    /// unchanged; what the profiles resolve to may not be.
+    Profiles,
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;

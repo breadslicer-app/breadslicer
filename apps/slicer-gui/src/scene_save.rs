@@ -1017,6 +1017,7 @@ mod scene_save_tests {
             // project can show them.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
+            use crate::test_support::projects::resolved_scale;
             use sc_print_glue::{PlateContours, slice_input_fingerprint};
             use sc_print_primitives::AaLevel;
             use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -1038,9 +1039,10 @@ mod scene_save_tests {
 
             let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
                 .expect("the bundled default profiles resolve a schedule");
-            let token = slice_input_fingerprint(&scene, &schedule)
-                .expect("the scene has sliceable geometry")
-                .to_token();
+            let token =
+                slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
+                    .expect("the scene has sliceable geometry")
+                    .to_token();
             let layers: Vec<ContourLayer> = (0..schedule.total_layers())
                 .map(|_| ContourLayer::new(0.05, vec![]))
                 .collect();
@@ -1077,6 +1079,7 @@ mod scene_save_tests {
             // slices.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
+            use crate::test_support::projects::resolved_scale;
             use sc_print_glue::{PlateContours, slice_input_fingerprint};
             use sc_print_primitives::AaLevel;
             use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -1097,9 +1100,10 @@ mod scene_save_tests {
 
             let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
                 .expect("the bundled profiles resolve a schedule");
-            let token = slice_input_fingerprint(&scene, &schedule)
-                .expect("the scene has sliceable geometry")
-                .to_token();
+            let token =
+                slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
+                    .expect("the scene has sliceable geometry")
+                    .to_token();
             let layers: Vec<ContourLayer> = (0..schedule.total_layers())
                 .map(|_| ContourLayer::new(0.05, vec![]))
                 .collect();
@@ -1144,6 +1148,7 @@ mod scene_save_tests {
             // held slice's, and the save would drop the slices.
             use crate::slice_projection::resolve_current_schedule;
             use crate::slice_result::{SliceParams, SliceResult};
+            use crate::test_support::projects::resolved_scale;
             use sc_print_glue::{PlateContours, slice_input_fingerprint};
             use sc_print_primitives::{AaLevel, PositiveFiniteMm};
             use sc_sl1cer::contour::{ContourLayer, ContourStack};
@@ -1165,9 +1170,10 @@ mod scene_save_tests {
 
             let schedule = resolve_current_schedule(&printer, &resin, Some(height), &scene)
                 .expect("the bundled profiles resolve a schedule");
-            let token = slice_input_fingerprint(&scene, &schedule)
-                .expect("the scene has sliceable geometry")
-                .to_token();
+            let token =
+                slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
+                    .expect("the scene has sliceable geometry")
+                    .to_token();
             let layers: Vec<ContourLayer> = (0..schedule.total_layers())
                 .map(|_| ContourLayer::new(0.05, vec![]))
                 .collect();

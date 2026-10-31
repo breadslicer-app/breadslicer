@@ -41,7 +41,7 @@ use std::time::Duration;
 use sc_print_glue::{
     PlateContours, SlicingParams, SupportOwners, slice_input_fingerprint, slice_plate,
 };
-use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId, ScaleCompensation};
 use sc_review::{CavityFill, fill_stack};
 use sc_scene::Scene;
 use sc_sl1cer::{CancelToken, SliceProgress};
@@ -549,24 +549,27 @@ fn run_slice(
             if cancel.is_cancelled() {
                 return Ok(SliceRunOutcome::Cancelled);
             }
+            let scale = plate.scale_compensation();
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
-            capture(scene, contours, review, layers).map(SliceRunOutcome::Completed)
+            capture(scene, contours, scale, review, layers).map(SliceRunOutcome::Completed)
         }
     }
 }
 
-/// Fingerprints the slice inputs off the event loop and wraps the merged plate
-/// contours and their review for the UI hand-off. The review's outcome never
-/// decides whether the slice completes.
+/// Fingerprints the slice inputs off the event loop, with the scale
+/// compensation the leaves were cut under, and wraps the merged plate contours
+/// and their review for the UI hand-off. The review's outcome never decides
+/// whether the slice completes.
 fn capture(
     scene: &Scene,
     contours: PlateContours,
+    scale: ScaleCompensation,
     review: ReviewOutcome,
     layers: Option<LayerValues>,
 ) -> Result<CompletedSlice, SliceFailure> {
-    let token = slice_input_fingerprint(scene, contours.schedule())
+    let token = slice_input_fingerprint(scene, contours.schedule(), scale)
         .map_err(SliceFailure::Fingerprint)?
         .to_token();
     Ok(CompletedSlice {
@@ -585,7 +588,11 @@ mod capture_tests {
     use sc_sl1cer::geom2d::Point2D;
     use sc_sl1cer::profile::LayerSchedule;
 
+    use sc_print_primitives::ScaleCompensationPercent;
+
     use crate::test_support::scenes::cube_scene;
+
+    const NONE: ScaleCompensation = ScaleCompensation::NONE;
 
     fn schedule() -> LayerSchedule {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
@@ -624,22 +631,49 @@ mod capture_tests {
     #[test]
     fn capture_carries_the_stack_and_fingerprints_the_scene() {
         let scene = cube_scene();
-        let completed = capture(&scene, contours(), clean_review(), None).expect("capture");
+        let completed = capture(&scene, contours(), NONE, clean_review(), None).expect("capture");
         assert_eq!(completed.contours.stack().layers().len(), 2);
         assert_eq!(completed.contours.schedule(), &schedule());
         assert_eq!(
             completed.token,
-            slice_input_fingerprint(&scene, &schedule())
+            slice_input_fingerprint(&scene, &schedule(), NONE)
                 .expect("the cube fingerprints")
                 .to_token(),
         );
     }
 
     #[test]
+    fn capture_fingerprints_the_scale_the_leaves_were_cut_under() {
+        // A reopened project compares the token against the compensation the
+        // profiles hold then (#295), so the token must carry the run's own.
+        let scene = cube_scene();
+        let percent = |value| ScaleCompensationPercent::new(value).expect("within +-10 %");
+        let scale = ScaleCompensation {
+            x: percent(0.5),
+            y: percent(0.5),
+            z: percent(0.0),
+        };
+        let completed = capture(&scene, contours(), scale, clean_review(), None).expect("capture");
+        assert_eq!(
+            completed.token,
+            slice_input_fingerprint(&scene, &schedule(), scale)
+                .expect("the cube fingerprints")
+                .to_token(),
+        );
+        assert_ne!(
+            completed.token,
+            capture(&scene, contours(), NONE, clean_review(), None)
+                .expect("a capture without compensation")
+                .token,
+        );
+    }
+
+    #[test]
     fn capture_is_deterministic() {
         let scene = cube_scene();
-        let first = capture(&scene, contours(), clean_review(), None).expect("first capture");
-        let second = capture(&scene, contours(), clean_review(), None).expect("second capture");
+        let first = capture(&scene, contours(), NONE, clean_review(), None).expect("first capture");
+        let second =
+            capture(&scene, contours(), NONE, clean_review(), None).expect("second capture");
         assert_eq!(first.token, second.token);
     }
 
@@ -647,7 +681,7 @@ mod capture_tests {
     fn capture_fails_when_the_scene_has_no_geometry() {
         // An empty scene has no sliceable leaf, so the fingerprint, and thus
         // the capture, cannot be computed.
-        let result = capture(&Scene::new(), contours(), clean_review(), None);
+        let result = capture(&Scene::new(), contours(), NONE, clean_review(), None);
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
     }
 
@@ -655,12 +689,13 @@ mod capture_tests {
     fn a_failed_review_still_completes_the_slice() {
         let scene = cube_scene();
         let failed = ReviewOutcome::Failed("the checks fell over".to_owned());
-        let completed = capture(&scene, contours(), failed.clone(), None).expect("the slice lands");
+        let completed =
+            capture(&scene, contours(), NONE, failed.clone(), None).expect("the slice lands");
         assert_eq!(completed.contours.stack().layers().len(), 2);
         assert_eq!(completed.review, failed);
         assert_eq!(
             completed.token,
-            capture(&scene, contours(), clean_review(), None)
+            capture(&scene, contours(), NONE, clean_review(), None)
                 .expect("a reviewed capture")
                 .token,
         );

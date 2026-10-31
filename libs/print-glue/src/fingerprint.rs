@@ -8,9 +8,10 @@
 //! [`slice_input_fingerprint`] hashes exactly the data that decides how a scene
 //! slices, so 2 computations agree when and only when nothing that could change
 //! the sliced geometry has changed: the source mesh of every sliceable leaf,
-//! the transform chain that places it, and the layer schedule. It bakes nothing
-//! and reads no rasterisation parameters, since those never reach the vector
-//! slice. The digest is an opaque token; callers store it and compare it, they
+//! the transform chain that places it, the layer schedule, and the material's
+//! scale compensation, which scales every leaf before it is cut. It bakes
+//! nothing and reads no rasterisation parameters, since those never reach the
+//! vector slice. The digest is an opaque token; callers store it and compare it, they
 //! do not interpret it. [`validate_persisted_slices`] is that comparison at
 //! load time: it recomputes the token from the loaded inputs and reports
 //! whether persisted slices still describe them.
@@ -18,6 +19,7 @@
 use std::fmt;
 
 use sc_mesh_core::transform::Transform3D;
+use sc_print_primitives::ScaleCompensation;
 use sc_scene::{Scene, SceneError};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
@@ -27,7 +29,11 @@ use sha2::{Digest, Sha384};
 /// Bump when the hashed byte layout changes, including the mesh encoding of
 /// `IndexedMesh::encode_geometry`, so a token produced by an older scheme
 /// cannot compare equal to one from a newer scheme.
-const SCHEME_VERSION: u32 = 1;
+///
+/// Version 2 adds the scale compensation. A version 1 token, saved before it,
+/// never matches, so its slices read as stale: the token cannot tell which
+/// compensation they were cut with.
+const SCHEME_VERSION: u32 = 2;
 
 /// A SHA-2/384 digest over a scene's slicing inputs. Equal values mean equal
 /// slicing inputs.
@@ -84,18 +90,32 @@ impl std::error::Error for SliceInputFingerprintError {
     }
 }
 
-/// Fingerprints the inputs that decide how `scene` slices under `schedule`:
-/// every sliceable leaf's source geometry and placement, then the schedule
-/// itself. Leaves are taken in [`sliceable_leaves`] order, so the fingerprint
-/// spans exactly the set the slicer would visit.
+/// Fingerprints the inputs that decide how `scene` slices under `schedule` and
+/// `scale`: every sliceable leaf's source geometry and placement, then the
+/// schedule and the scale compensation themselves. Leaves are taken in
+/// [`sliceable_leaves`] order, so the fingerprint spans exactly the set the
+/// slicer would visit.
 pub fn slice_input_fingerprint(
     scene: &Scene,
     schedule: &LayerSchedule,
+    scale: ScaleCompensation,
+) -> Result<SliceInputFingerprint, SliceInputFingerprintError> {
+    fingerprint_under_scheme(SCHEME_VERSION, scene, schedule, Some(scale))
+}
+
+/// Hashes the inputs under scheme `version`. A `scale` of `None` leaves the
+/// scale compensation out, as version 1 did; the tests use it to produce the
+/// token of a project saved before version 2.
+pub(crate) fn fingerprint_under_scheme(
+    version: u32,
+    scene: &Scene,
+    schedule: &LayerSchedule,
+    scale: Option<ScaleCompensation>,
 ) -> Result<SliceInputFingerprint, SliceInputFingerprintError> {
     let leaves = sliceable_leaves(scene).map_err(SliceInputFingerprintError::Enumeration)?;
 
     let mut hasher = Sha384::new();
-    hasher.update(SCHEME_VERSION.to_le_bytes());
+    hasher.update(version.to_le_bytes());
     hasher.update((leaves.len() as u64).to_le_bytes());
 
     for leaf in leaves {
@@ -114,6 +134,9 @@ pub fn slice_input_fingerprint(
     }
 
     hash_schedule(&mut hasher, schedule);
+    if let Some(scale) = scale {
+        hash_scale(&mut hasher, scale);
+    }
 
     let mut bytes = [0u8; 48];
     bytes.copy_from_slice(&hasher.finalize());
@@ -139,8 +162,9 @@ pub fn validate_persisted_slices(
     stored_token: &str,
     scene: &Scene,
     schedule: &LayerSchedule,
+    scale: ScaleCompensation,
 ) -> PersistedSliceValidity {
-    match slice_input_fingerprint(scene, schedule) {
+    match slice_input_fingerprint(scene, schedule, scale) {
         Ok(fingerprint) if fingerprint.to_token() == stored_token => PersistedSliceValidity::InSync,
         _ => PersistedSliceValidity::Stale,
     }
@@ -176,5 +200,13 @@ fn hash_schedule(hasher: &mut Sha384, schedule: &LayerSchedule) {
             hasher.update(uniform.first_layer_height().value().to_bits().to_le_bytes());
             hasher.update(uniform.total_layers().get().to_le_bytes());
         }
+    }
+}
+
+/// Feeds the scale compensation into the hasher: its X, Y and Z percentages as
+/// little-endian bit patterns.
+fn hash_scale(hasher: &mut Sha384, scale: ScaleCompensation) {
+    for percent in [scale.x, scale.y, scale.z] {
+        hasher.update(percent.value().to_bits().to_le_bytes());
     }
 }

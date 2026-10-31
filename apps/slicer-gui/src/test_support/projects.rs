@@ -10,7 +10,8 @@ use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_print_glue::slice_input_fingerprint;
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PrinterId, ScaleCompensation};
+use sc_print_profiles::resolve_scale_compensation;
 use sc_project_formats::{
     EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload,
     infer_project_file_type_from_extension, write_project,
@@ -20,7 +21,15 @@ use sc_scene::node::LeafPayload;
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 
-use crate::slice_projection::resolve_current_schedule;
+use crate::slice_projection::{load_selected_profiles, resolve_current_schedule};
+
+/// Returns the scale compensation that the installed `printer` and `resin`
+/// resolve to, which a slice of them is cut under and fingerprinted with.
+pub(crate) fn resolved_scale(printer: &PrinterId, resin: &MaterialId) -> ScaleCompensation {
+    let (printer, resin) =
+        load_selected_profiles(printer, resin).expect("the installed profiles load");
+    resolve_scale_compensation(&printer, &resin)
+}
 
 /// Returns the corners of a 2 mm cube on the floor, meshed by its 2 floor
 /// triangles only.
@@ -86,7 +95,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
 
     let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
         .expect("the bundled default profiles resolve a schedule");
-    let token = slice_input_fingerprint(&scene, &schedule)
+    let token = slice_input_fingerprint(&scene, &schedule, resolved_scale(&printer, &resin))
         .expect("the scene has sliceable geometry")
         .to_token();
 
