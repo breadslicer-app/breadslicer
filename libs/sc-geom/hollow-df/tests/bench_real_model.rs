@@ -151,3 +151,103 @@ fn real_model_hollow_timings() {
         Err(e) => eprintln!("apply + drain failed: {e}"),
     }
 }
+
+/// What a hover with the drain tool costs (#302): building what drains are
+/// measured against, once per cavity, then one [`Session::drain_report`]
+/// per surface point, on `SC_BENCH_DRAINS` points spread over the model
+/// (into it against each triangle's normal). A few of them are applied
+/// one by one, to check the report is what apply does.
+#[test]
+#[ignore = "a report on a local model, not a check"]
+fn real_model_drain_report_timings() {
+    let Ok(path) = std::env::var("SC_BENCH_STL") else {
+        eprintln!("set SC_BENCH_STL to a binary STL");
+        return;
+    };
+    let height = env_or("SC_BENCH_HEIGHT", 90.0f32);
+    let request = GridRequest {
+        voxel_size_mm: env_or("SC_BENCH_VOXEL", 0.65f32),
+        max_resolution: env_or("SC_BENCH_MAX_RES", 192u16),
+    };
+    let settings = HollowSettings {
+        wall_thickness_mm: env_or("SC_BENCH_WALL", 2.0f32),
+        ..HollowSettings::default()
+    };
+    let count = env_or("SC_BENCH_DRAINS", 5000usize);
+    let mesh = posed(
+        read_binary_stl(&std::fs::read(&path).unwrap()).expect("binary STL"),
+        height,
+    );
+    let session = Session::build(mesh, &request, None, Control::none()).unwrap();
+    let t = Instant::now();
+    session.preview(&settings, Control::none()).unwrap();
+    let preview_ms = ms(t);
+
+    let drain = |source: &IndexedMesh, i: usize| {
+        let tri = source.triangles[i];
+        let [a, b, c] = tri.map(|v| source.positions[v as usize]);
+        let center = a.add(b).add(c).scale(1.0 / 3.0);
+        let n = b.sub(a).cross(c.sub(a));
+        let len = n.dot(n).sqrt().max(1e-12);
+        DrainHole::new(center.to_array(), n.scale(-1.0 / len).to_array(), 1.5)
+    };
+    let source = session.source_mesh();
+    let step = (source.triangle_count() / count).max(1);
+    let holes: Vec<DrainHole> = (0..source.triangle_count())
+        .step_by(step)
+        .map(|i| drain(source, i))
+        .collect();
+
+    let t = Instant::now();
+    assert!(session.prepare_drain_reports(&settings));
+    let prepare_ms = ms(t);
+    let mut times = Vec::with_capacity(holes.len());
+    let mut opens = 0;
+    for hole in &holes {
+        let t = Instant::now();
+        let report = session.drain_report(&settings, hole).unwrap();
+        times.push(ms(t));
+        opens += usize::from(report.reaches_cavity);
+    }
+    times.sort_by(f64::total_cmp);
+    let at = |q: f64| times[((times.len() - 1) as f64 * q) as usize];
+    eprintln!(
+        "preview {preview_ms:.0} ms | prepare (BVH of the cavity) {prepare_ms:.1} ms | {} reports: median {:.4} ms, p99 {:.4} ms, max {:.4} ms | {opens} open, {} miss",
+        holes.len(),
+        at(0.5),
+        at(0.99),
+        at(1.0),
+        holes.len() - opens
+    );
+
+    // Some of each, applied alone: the report is what apply does.
+    let sample: Vec<&DrainHole> = holes
+        .iter()
+        .filter(|h| session.drain_report(&settings, h).unwrap().reaches_cavity)
+        .step_by((opens / 5).max(1))
+        .take(5)
+        .chain(
+            holes
+                .iter()
+                .filter(|h| !session.drain_report(&settings, h).unwrap().reaches_cavity)
+                .step_by(((holes.len() - opens) / 5).max(1))
+                .take(5),
+        )
+        .collect();
+    for hole in sample {
+        let asked = session.drain_report(&settings, hole).unwrap();
+        match session.apply(&settings, &[*hole], Control::none()) {
+            Ok(applied) => {
+                assert_eq!(applied.drains[0], asked, "{hole:?}");
+                eprintln!(
+                    "applied at {:?}: reaches {}, depth {:.1} mm, shells {}",
+                    hole.center,
+                    asked.reaches_cavity,
+                    asked.depth_mm,
+                    face_shells(&applied.mesh).1
+                );
+            }
+            Err(e) => eprintln!("apply at {:?} failed: {e}", hole.center),
+        }
+    }
+}
