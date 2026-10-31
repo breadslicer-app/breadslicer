@@ -35,7 +35,7 @@ pub const DF_SUPPORT_DOCUMENT_VERSION: u32 = 2;
 /// How far a model's bounds may drift through a save and reopen, in mm.
 const BOUNDS_TOLERANCE_MM: f32 = 1e-3;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     recipe: SettingsRecipe,
@@ -45,11 +45,23 @@ struct Document {
     state: SupportState,
 }
 
+/// A session's [`Document`] as it is written, borrowing what the session
+/// holds instead of copying its state.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentView<'a> {
+    recipe: &'a SettingsRecipe,
+    id_prefix: &'a str,
+    next_id: u64,
+    models: Vec<ModelPrint>,
+    state: &'a SupportState,
+}
+
 /// What tells a model apart: its id in the state, its size and its world
 /// bounds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ModelPrint {
+pub(crate) struct ModelPrint {
     id: String,
     vertices: usize,
     triangles: usize,
@@ -58,7 +70,7 @@ struct ModelPrint {
 }
 
 impl ModelPrint {
-    fn of(model: &ModelInput) -> Self {
+    pub(crate) fn of(model: &ModelInput) -> Self {
         let position = model.geometry.position.as_deref().unwrap_or_default();
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
@@ -174,24 +186,43 @@ impl DfSupportSession {
         let Ok(models) = scene_models(scene) else {
             return false;
         };
-        let (saved, ..) = self.parts();
-        let saved: Vec<ModelPrint> = saved.iter().map(ModelPrint::of).collect();
-        match_models(&saved, &models).is_some()
+        match_models(&self.model_prints(), &models).is_some()
     }
 
     /// The session as a document of [`DF_SUPPORT_DOCUMENT_VERSION`], or
     /// `None` when it cannot be kept as data: its run was given its settings
     /// outright, so there is no recipe to make them again.
     pub fn to_document(&self) -> Option<Vec<u8>> {
-        let (models, recipe, id_prefix, next_id) = self.parts();
-        let document = Document {
-            recipe: recipe?.clone(),
-            id_prefix: id_prefix.to_owned(),
+        serde_json::to_vec(&self.document_view()?).ok()
+    }
+
+    /// What [`Self::to_document`] writes, or `None` when it writes nothing.
+    fn document_view(&self) -> Option<DocumentView<'_>> {
+        let (_, recipe, id_prefix, next_id) = self.parts();
+        Some(DocumentView {
+            recipe: recipe?,
+            id_prefix,
             next_id,
-            models: models.iter().map(ModelPrint::of).collect(),
-            state: self.state().clone(),
+            models: self.model_prints(),
+            state: self.state(),
+        })
+    }
+
+    /// Whether `other` keeps the same supports as this session, made the
+    /// same way on the same models (#287, #304): their documents match but
+    /// for the ids, which each run names under a prefix of its own. A
+    /// session that cannot be kept as data matches none.
+    ///
+    /// The verdict is the one comparing the two documents would give once
+    /// `other`'s id prefix reads as this one's, without writing them out.
+    pub fn same_supports_as(&self, other: &DfSupportSession) -> bool {
+        let (Some(kept), Some(fresh)) = (self.document_view(), other.document_view()) else {
+            return false;
         };
-        serde_json::to_vec(&document).ok()
+        if kept.id_prefix.is_empty() || fresh.id_prefix.is_empty() {
+            return false;
+        }
+        crate::compare::same_except_prefix(&kept, kept.id_prefix, &fresh, fresh.id_prefix)
     }
 
     /// Rebuilds a session from a document of `version`, on the models of

@@ -229,3 +229,95 @@ fn a_newer_or_damaged_document_is_refused() {
         Err(RestoreError::Malformed(_))
     ));
 }
+
+/// How #287 told two sessions apart before #304: their documents compared as
+/// text once `fresh`'s id prefix reads as `kept`'s.
+fn same_documents(kept: &DfSupportSession, fresh: &DfSupportSession) -> bool {
+    let document = |session: &DfSupportSession| {
+        let text = String::from_utf8(session.to_document()?).ok()?;
+        let key = "\"idPrefix\":\"";
+        let start = text.find(key)? + key.len();
+        let prefix = text[start..].split('"').next()?.to_owned();
+        (!prefix.is_empty()).then_some((prefix, text))
+    };
+    let (Some((kept_prefix, kept)), Some((fresh_prefix, fresh))) =
+        (document(kept), document(fresh))
+    else {
+        return false;
+    };
+    fresh.replace(&fresh_prefix, &kept_prefix) == kept
+}
+
+/// `kept.same_supports_as(fresh)`, checked against the documents' text.
+fn same(kept: &DfSupportSession, fresh: &DfSupportSession) -> bool {
+    let verdict = kept.same_supports_as(fresh);
+    assert_eq!(verdict, same_documents(kept, fresh), "as the documents say");
+    verdict
+}
+
+/// Two runs of the same settings on the same model are the same supports
+/// under other ids (#304).
+#[test]
+fn the_same_run_again_is_the_same_supports_but_for_its_ids() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let first = run_on(&scene);
+    let second = run_on(&scene);
+    assert_ne!(
+        first.to_document(),
+        second.to_document(),
+        "each run names its supports its own way"
+    );
+    assert!(same(&first, &second));
+    assert!(same(&second, &first));
+    assert!(same(&first, &first.clone()));
+}
+
+/// Other settings, a hand edit or another model are other supports (#304).
+#[test]
+fn other_settings_edits_or_models_are_other_supports() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let first = run_on(&scene);
+
+    let coarser = start_df_supports(
+        &scene,
+        DfSupportRequest {
+            layer_height_mm: 0.1,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .join()
+    .unwrap()
+    .sets
+    .remove(0)
+    .session;
+    assert!(!same(&first, &coarser));
+
+    let mut edited = run_on(&scene);
+    edited
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    assert!(!same(&first, &edited));
+    assert!(!same(&edited, &first));
+
+    let moved = run_on(&scene_with(vec![(cube(), [5.0, 0.0, 8.0])]));
+    assert!(!same(&first, &moved));
+
+    // Settings given outright leave no recipe: nothing to compare.
+    let outright = start_df_supports(
+        &scene,
+        DfSupportRequest {
+            settings: Some(support_gen_df::pipeline::PipelineSettings::defaults(0.05)),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .join()
+    .unwrap()
+    .sets
+    .remove(0)
+    .session;
+    assert!(outright.to_document().is_none());
+    assert!(!same(&first, &outright));
+    assert!(!same(&outright, &outright.clone()));
+}

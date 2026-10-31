@@ -298,26 +298,6 @@ fn session_key(drawn: &DrawnSet) -> (NodeId, usize) {
     (drawn.leaf, Arc::as_ptr(&drawn.session) as usize)
 }
 
-/// Whether `kept` and `fresh` save as the same data (#287): the documents a
-/// save writes as `SUPP` match once `fresh`'s ids carry `kept`'s prefix.
-/// Every run names its supports under a prefix of its own, so two runs of
-/// the same settings on the same model differ only there.
-fn same_session_data(kept: &DfSupportSession, fresh: &DfSupportSession) -> bool {
-    let document = |session: &DfSupportSession| {
-        let text = String::from_utf8(session.to_document()?).ok()?;
-        let key = "\"idPrefix\":\"";
-        let start = text.find(key)? + key.len();
-        let prefix = text[start..].split('"').next()?.to_owned();
-        (!prefix.is_empty()).then_some((prefix, text))
-    };
-    let (Some((kept_prefix, kept)), Some((fresh_prefix, fresh))) =
-        (document(kept), document(fresh))
-    else {
-        return false;
-    };
-    fresh.replace(&fresh_prefix, &kept_prefix) == kept
-}
-
 /// A computed preview.
 struct HoverAnswer {
     generation: u64,
@@ -2077,7 +2057,7 @@ impl DfSupportRun {
                         return false;
                     };
                     let (_, _, session) = unmatched.swap_remove(at);
-                    same_session_data(&drawn.session, session)
+                    drawn.session.same_supports_as(session)
                 })
             })
             .unwrap_or(false)
