@@ -93,7 +93,109 @@ pub struct ConvexCutter {
     faces: Vec<Vec<u32>>,
     min: P3,
     max: P3,
+    /// How it was built, when it is a prism: a retry turns it about its own
+    /// axis instead of tilting it.
+    prism: Option<Prism>,
 }
+
+/// A prism's construction, in `f64`.
+#[derive(Debug, Clone, Copy)]
+struct Prism {
+    origin: P3,
+    /// The basis: `u` and `v` across, `w` along the axis.
+    u: P3,
+    v: P3,
+    w: P3,
+    radius: [f64; 2],
+    length: f64,
+    segments: usize,
+    phase: f64,
+}
+
+impl Prism {
+    fn cutter(self) -> ConvexCutter {
+        let Prism {
+            origin: o,
+            u,
+            v,
+            w,
+            radius,
+            length,
+            segments: segs,
+            phase,
+        } = self;
+        let top = [
+            o[0] + w[0] * length,
+            o[1] + w[1] * length,
+            o[2] + w[2] * length,
+        ];
+        let mut corners = Vec::with_capacity(segs * 2);
+        for i in 0..segs {
+            let theta = phase + std::f64::consts::TAU * i as f64 / segs as f64;
+            let (s, c) = theta.sin_cos();
+            let r = [
+                u[0] * c * radius[0] + v[0] * s * radius[1],
+                u[1] * c * radius[0] + v[1] * s * radius[1],
+                u[2] * c * radius[0] + v[2] * s * radius[1],
+            ];
+            corners.push([o[0] + r[0], o[1] + r[1], o[2] + r[2]]);
+            corners.push([top[0] + r[0], top[1] + r[1], top[2] + r[2]]);
+        }
+        let b = |i: usize| (2 * (i % segs)) as u32;
+        let t = |i: usize| (2 * (i % segs) + 1) as u32;
+        let mut faces: Vec<Vec<u32>> = (0..segs)
+            .map(|i| vec![b(i), b(i + 1), t(i + 1), t(i)])
+            .collect();
+        faces.push((0..segs).rev().map(b).collect());
+        faces.push((0..segs).map(t).collect());
+        let mut cutter = ConvexCutter::from_faces(corners, faces);
+        cutter.prism = Some(self);
+        cutter
+    }
+
+    /// The prism of retry `attempt`: turned about its axis by a fraction of
+    /// a side (½, ¼, ¾, ⅛…, so each turn lands between the earlier ones), and
+    /// both ends moved out by a micrometre per attempt. The hole is the same
+    /// to any print resolution; every corner, side and end is somewhere new.
+    fn retry(self, attempt: usize) -> Self {
+        let mut fraction = 0.0;
+        let (mut bits, mut weight) = (attempt, 0.5);
+        while bits > 0 {
+            if bits & 1 == 1 {
+                fraction += weight;
+            }
+            bits >>= 1;
+            weight *= 0.5;
+        }
+        let side = std::f64::consts::TAU / self.segments as f64;
+        let out = RETRY_END_SHIFT_MM * attempt as f64;
+        Prism {
+            origin: [
+                self.origin[0] - self.w[0] * out,
+                self.origin[1] - self.w[1] * out,
+                self.origin[2] - self.w[2] * out,
+            ],
+            length: self.length + 2.0 * out,
+            phase: self.phase + side * fraction,
+            ..self
+        }
+    }
+}
+
+/// How far into the cutter a triangle of the cut must reach to be a fold
+/// over the hole: a micrometre, well above `f32` rounding.
+const FOLD_MM: f64 = 1e-3;
+
+/// How far each retry moves a prism's ends (see [`Prism::retry`]).
+const RETRY_END_SHIFT_MM: f64 = 1e-3;
+
+/// Closer than this, a mesh vertex and a cutter plane, a mesh edge and a
+/// cutter edge, or a cutter corner and a mesh triangle count as touching: a
+/// cut there would name one point twice (a zero-length edge once rounded to
+/// `f32`, or a fold, #330), so the cutter is moved instead. A tenth of a
+/// micrometre: above `f32` rounding up to a metre, far below any print
+/// resolution.
+const GENERAL_POSITION_MM: f64 = 1e-4;
 
 impl ConvexCutter {
     /// A prism over an ellipse with `segments` sides, from `origin` along
@@ -116,30 +218,65 @@ impl ConvexCutter {
         };
         let u = to64(vec3_normalize(helper.cross(axis)).unwrap_or(Vec3::new(1.0, 0.0, 0.0)));
         let v = to64(vec3_normalize(axis.cross(to32(u))).unwrap_or(Vec3::new(0.0, 1.0, 0.0)));
-        let w = to64(axis);
-        let o = to64(origin);
-        let top = lerp(o, [o[0] + w[0], o[1] + w[1], o[2] + w[2]], length as f64);
-        let segs = segments.max(8);
-        let mut corners = Vec::with_capacity(segs * 2);
-        for i in 0..segs {
-            let theta = phase + std::f64::consts::TAU * i as f64 / segs as f64;
-            let (s, c) = theta.sin_cos();
-            let r = [
-                u[0] * c * radius_x as f64 + v[0] * s * radius_y as f64,
-                u[1] * c * radius_x as f64 + v[1] * s * radius_y as f64,
-                u[2] * c * radius_x as f64 + v[2] * s * radius_y as f64,
-            ];
-            corners.push([o[0] + r[0], o[1] + r[1], o[2] + r[2]]);
-            corners.push([top[0] + r[0], top[1] + r[1], top[2] + r[2]]);
+        Prism {
+            origin: to64(origin),
+            u,
+            v,
+            w: to64(axis),
+            radius: [radius_x as f64, radius_y as f64],
+            length: length as f64,
+            segments: segments.max(8),
+            phase,
         }
-        let b = |i: usize| (2 * (i % segs)) as u32;
-        let t = |i: usize| (2 * (i % segs) + 1) as u32;
-        let mut faces: Vec<Vec<u32>> = (0..segs)
-            .map(|i| vec![b(i), b(i + 1), t(i + 1), t(i)])
-            .collect();
-        faces.push((0..segs).rev().map(b).collect());
-        faces.push((0..segs).map(t).collect());
-        Self::from_faces(corners, faces)
+        .cutter()
+    }
+
+    /// Whether triangle `tri` reaches [`FOLD_MM`] or more into the cutter:
+    /// what is left of it clipped to the cutter shrunk by that much has an
+    /// area. A triangle that only touches a face (the hole's wall, a cut's
+    /// edge) does not, even rounded to `f32`.
+    pub(crate) fn overlaps(&self, tri: [P3; 3]) -> bool {
+        let mut poly: Vec<P3> = tri.to_vec();
+        for plane in &self.planes {
+            let side = |p: P3| plane.signed(p) + FOLD_MM;
+            let mut next = Vec::with_capacity(poly.len() + 1);
+            for i in 0..poly.len() {
+                let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+                let (sp, sq) = (side(p), side(q));
+                if sp < 0.0 {
+                    next.push(p);
+                }
+                if (sp < 0.0) != (sq < 0.0) {
+                    next.push(lerp(p, q, sp / (sp - sq)));
+                }
+            }
+            poly = next;
+            if poly.len() < 3 {
+                return false;
+            }
+        }
+        let mut twice_area = [0.0; 3];
+        for i in 1..poly.len() - 1 {
+            let n = cross(sub(poly[i], poly[0]), sub(poly[i + 1], poly[0]));
+            for k in 0..3 {
+                twice_area[k] += n[k];
+            }
+        }
+        dot(twice_area, twice_area).sqrt() > FOLD_MM * FOLD_MM
+    }
+
+    /// The cutter edges, as corner pairs.
+    fn edges(&self) -> Vec<(u32, u32)> {
+        let mut edges = Vec::new();
+        for face in &self.faces {
+            for c in 0..face.len() {
+                let (a, b) = (face[c], face[(c + 1) % face.len()]);
+                if a < b {
+                    edges.push((a, b));
+                }
+            }
+        }
+        edges
     }
 
     fn from_faces(corners: Vec<P3>, faces: Vec<Vec<u32>>) -> Self {
@@ -180,6 +317,7 @@ impl ConvexCutter {
             faces,
             min,
             max,
+            prism: None,
         }
     }
 
@@ -237,18 +375,17 @@ pub fn subtract_convex_closed(
     mesh: &IndexedMesh,
     cutter: &ConvexCutter,
 ) -> Result<IndexedMesh, CutError> {
-    subtract_convex_attempts(mesh, |attempt| {
-        if attempt == 0 {
-            cutter.clone()
-        } else {
-            jitter(cutter, attempt)
-        }
+    subtract_convex_attempts(mesh, |attempt| match cutter.prism {
+        _ if attempt == 0 => cutter.clone(),
+        Some(prism) => prism.retry(attempt).cutter(),
+        None => jitter(cutter, attempt),
     })
 }
 
 /// Turns the cutter about its centroid by a small irrational angle and grows
 /// it by `1e-5` per attempt: enough to move every tie off a plane, far below
-/// any print resolution.
+/// any print resolution. Prisms are turned about their own axis instead
+/// ([`Prism::retry`]).
 fn jitter(cutter: &ConvexCutter, attempt: usize) -> ConvexCutter {
     let n = cutter.corners.len() as f64;
     let mut c = [0.0; 3];
@@ -288,8 +425,14 @@ fn jitter(cutter: &ConvexCutter, attempt: usize) -> ConvexCutter {
     ConvexCutter::from_faces(corners, cutter.faces.clone())
 }
 
-const ATTEMPTS: usize = 4;
+const ATTEMPTS: usize = 8;
 
+/// Cuts with the cutter of each attempt in turn until one is clean: in
+/// general position against the mesh (no tie a rounding could break, #330),
+/// closed, and without a sliver or a fold (a new triangle with a
+/// zero-length edge, or inside the cutter, over the hole). A cutter not in
+/// general position is not even tried, but on the last attempt. When none is
+/// clean, the first closed result is returned, as before such checks.
 fn subtract_convex_attempts(
     mesh: &IndexedMesh,
     cutter_for: impl Fn(usize) -> ConvexCutter,
@@ -297,22 +440,101 @@ fn subtract_convex_attempts(
     // Built only when a corner's side cannot be read from the cut itself.
     let parity = OnceCell::new();
     let mut last = CutError::Inconsistent("no attempt");
+    let mut closed: Option<IndexedMesh> = None;
     for attempt in 0..ATTEMPTS {
         let cutter = cutter_for(attempt);
-        match Cut::new(mesh, &parity, &cutter).run() {
-            Ok(out) => {
-                let defects = edge_manifold_defects(&out);
-                if defects.is_clean() {
+        let cut = Cut::new(mesh, &parity, &cutter);
+        let (touching, near) = cut.candidates();
+        let general = cut.in_general_position(&touching, &near);
+        if !general && attempt + 1 < ATTEMPTS {
+            continue;
+        }
+        match cut.run(&touching) {
+            Ok((out, fresh, is_closed)) => {
+                debug_assert_eq!(is_closed, edge_manifold_defects(&out).is_clean());
+                if !is_closed {
+                    last = CutError::ResultNotManifold(edge_manifold_defects(&out));
+                    continue;
+                }
+                if general && clean_triangles(&out, &fresh, &cutter) {
                     return Ok(out);
                 }
-                last = CutError::ResultNotManifold(defects);
+                closed.get_or_insert(out);
             }
             Err(e) => last = e,
         }
     }
-    Err(last)
+    closed.ok_or(last)
 }
 
+/// Whether `out`, the cut of the closed edge-manifold `mesh` that replaced
+/// its triangles `replaced` with the triangles `fresh` of `out`, is closed
+/// and edge-manifold too: what `edge_manifold_defects` says of it, read
+/// only where the cut changed something. Every other edge still has the
+/// two faces it had; an edge of a replaced or a fresh triangle must now
+/// have one face each way, or none at all (cut away whole). A full check
+/// sorts every half-edge of the mesh, millions on a figure, for each cut.
+fn closed_where_cut(
+    mesh: &IndexedMesh,
+    replaced: &[u32],
+    out: &[[u32; 3]],
+    fresh: &[usize],
+) -> bool {
+    let mut is_fresh = vec![false; out.len()];
+    for &t in fresh {
+        is_fresh[t] = true;
+    }
+    let mut touched = vec![false; mesh.positions.len()];
+    // Each changed edge, and its faces each way.
+    let mut faces: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for &t in replaced {
+        let tri = mesh.triangles[t as usize];
+        for c in 0..3 {
+            touched[tri[c] as usize] = true;
+            faces.insert(canon(tri[c], tri[(c + 1) % 3]), (0, 0));
+        }
+    }
+    for &t in fresh {
+        let [a, b, c] = out[t];
+        if a == b || b == c || a == c {
+            return false;
+        }
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            faces.insert(canon(u, v), (0, 0));
+        }
+    }
+    let original = mesh.positions.len() as u32;
+    for (t, tri) in out.iter().enumerate() {
+        // A kept triangle shares a changed edge only through vertices of
+        // the triangles the cut replaced.
+        if !is_fresh[t] && !tri.iter().any(|&v| v < original && touched[v as usize]) {
+            continue;
+        }
+        for c in 0..3 {
+            let (u, v) = (tri[c], tri[(c + 1) % 3]);
+            if let Some(count) = faces.get_mut(&canon(u, v)) {
+                if u < v {
+                    count.0 += 1;
+                } else {
+                    count.1 += 1;
+                }
+            }
+        }
+    }
+    faces
+        .values()
+        .all(|&count| count == (1, 1) || count == (0, 0))
+}
+
+/// No triangle of `fresh` (those a cut made, in `out`) has a zero-length
+/// edge once in `f32`, which the slicer refuses, nor reaches into
+/// `cutter`, which only a fold over the hole does.
+fn clean_triangles(out: &IndexedMesh, fresh: &[usize], cutter: &ConvexCutter) -> bool {
+    fresh.iter().all(|&t| {
+        let [a, b, c] = out.triangles[t].map(|v| out.positions[v as usize]);
+        a != b && b != c && c != a && !cutter.overlaps([a, b, c].map(to64))
+    })
+}
 /// Which cutter failed (its index), and why.
 pub type CutFailure = (usize, CutError);
 
@@ -374,6 +596,21 @@ impl<'a> OverlappingShells<'a> {
     /// they are, in place. On failure, the index of the first cutter that
     /// failed on some shell, and why.
     pub fn subtract_convex(&self, cutters: &[&ConvexCutter]) -> Result<IndexedMesh, CutFailure> {
+        let cut = self.subtract_convex_apart(cutters)?;
+        let mut out = cut.untouched;
+        for shell in &cut.shells {
+            append(&mut out, shell);
+        }
+        Ok(out)
+    }
+
+    /// [`OverlappingShells::subtract_convex`], with the shells a cutter
+    /// reached kept apart, in shell order: a cut can split one in pieces,
+    /// and the caller may want to tell them apart.
+    pub fn subtract_convex_apart(
+        &self,
+        cutters: &[&ConvexCutter],
+    ) -> Result<CutShells, CutFailure> {
         use rayon::prelude::*;
         let results: Vec<(usize, Result<IndexedMesh, CutFailure>)> = (0..self.len())
             .into_par_iter()
@@ -396,7 +633,10 @@ impl<'a> OverlappingShells<'a> {
             })
             .collect();
         if results.is_empty() {
-            return Ok(self.mesh.clone());
+            return Ok(CutShells {
+                untouched: self.mesh.clone(),
+                shells: Vec::new(),
+            });
         }
         let mut failed: Option<CutFailure> = None;
         let mut cut = vec![false; self.len()];
@@ -425,19 +665,51 @@ impl<'a> OverlappingShells<'a> {
             .filter(|&(_, &label)| !cut[label as usize])
             .map(|(&tri, _)| tri)
             .collect();
+        let mut untouched = IndexedMesh::new(self.mesh.positions.clone(), triangles);
+        compact_unreferenced_vertices(&mut untouched);
+        Ok(CutShells { untouched, shells })
+    }
+
+    /// Which shells reach into any of `cutters` by more than a hair
+    /// ([`ConvexCutter::overlaps`]): a shell only touching one stays.
+    pub fn reached_by(&self, cutters: &[&ConvexCutter]) -> Vec<bool> {
+        use rayon::prelude::*;
+        (0..self.len())
+            .into_par_iter()
+            .map(|s| {
+                cutters.iter().any(|cutter| {
+                    boxes_meet(self.bounds[s], (cutter.min, cutter.max))
+                        && self.faces[s].iter().any(|&f| {
+                            let tri = self.mesh.triangles[f as usize];
+                            cutter.overlaps(tri.map(|v| to64(self.mesh.positions[v as usize])))
+                        })
+                })
+            })
+            .collect()
+    }
+
+    /// The mesh without the shells `drop` marks, the rest in mesh order.
+    pub fn without(&self, drop: &[bool]) -> IndexedMesh {
+        let triangles = self
+            .mesh
+            .triangles
+            .iter()
+            .zip(&self.labels)
+            .filter(|&(_, &label)| !drop[label as usize])
+            .map(|(&tri, _)| tri)
+            .collect();
         let mut out = IndexedMesh::new(self.mesh.positions.clone(), triangles);
         compact_unreferenced_vertices(&mut out);
-        for shell in shells {
-            let offset = out.positions.len() as u32;
-            out.positions.extend_from_slice(&shell.positions);
-            out.triangles
-                .extend(shell.triangles.iter().map(|t| t.map(|v| v + offset)));
-        }
-        Ok(out)
+        out
+    }
+
+    /// Whether the boxes of shells `a` and `b` meet.
+    pub fn boxes_meet(&self, a: usize, b: usize) -> bool {
+        boxes_meet(self.bounds[a], self.bounds[b])
     }
 
     /// Shell `s` as a mesh of its own.
-    fn shell_mesh(&self, s: usize) -> IndexedMesh {
+    pub fn shell_mesh(&self, s: usize) -> IndexedMesh {
         let mut local: HashMap<u32, u32> = HashMap::new();
         let mut positions = Vec::new();
         let triangles = self.faces[s]
@@ -455,8 +727,166 @@ impl<'a> OverlappingShells<'a> {
     }
 }
 
+/// Shells after [`OverlappingShells::subtract_convex_apart`].
+#[derive(Debug, Clone)]
+pub struct CutShells {
+    /// The shells no cutter reached, as one mesh, in place.
+    pub untouched: IndexedMesh,
+    /// Each shell a cutter reached, less the cutters (maybe in pieces, maybe
+    /// empty), in shell order.
+    pub shells: Vec<IndexedMesh>,
+}
+
+/// `extra`'s triangles added to `mesh`, on vertices of their own.
+pub(crate) fn append(mesh: &mut IndexedMesh, extra: &IndexedMesh) {
+    let offset = mesh.positions.len() as u32;
+    mesh.positions.extend_from_slice(&extra.positions);
+    mesh.triangles
+        .extend(extra.triangles.iter().map(|t| t.map(|v| v + offset)));
+}
+
+/// Whether the surfaces of two meshes cross: an edge of one passes through
+/// a triangle of the other. For closed solids that are not one inside the
+/// other, whether they overlap. Brute force over the triangles whose boxes
+/// meet: meant for small pieces.
+pub(crate) fn surfaces_cross(a: &IndexedMesh, b: &IndexedMesh) -> bool {
+    let triangles = |m: &IndexedMesh| -> Vec<([P3; 3], (P3, P3))> {
+        m.triangles
+            .iter()
+            .map(|t| {
+                let pts = t.map(|v| to64(m.positions[v as usize]));
+                (pts, grown_box(&pts, 0.0))
+            })
+            .collect()
+    };
+    let (ta, tb) = (triangles(a), triangles(b));
+    let pierces = |edges: &[([P3; 3], (P3, P3))], faces: &[([P3; 3], (P3, P3))]| {
+        edges.iter().any(|(e, ebox)| {
+            faces.iter().any(|(f, fbox)| {
+                boxes_meet(*ebox, *fbox)
+                    && (0..3).any(|k| segment_hits_triangle(e[k], e[(k + 1) % 3], *f))
+            })
+        })
+    };
+    pierces(&ta, &tb) || pierces(&tb, &ta)
+}
+
+/// Whether segment `pq` passes through triangle `tri` (Möller–Trumbore,
+/// both ends included).
+fn segment_hits_triangle(p: P3, q: P3, tri: [P3; 3]) -> bool {
+    let dir = sub(q, p);
+    let (e1, e2) = (sub(tri[1], tri[0]), sub(tri[2], tri[0]));
+    let h = cross(dir, e2);
+    let det = dot(e1, h);
+    if det.abs() <= 1e-12 * dot(e1, e1).sqrt() * dot(h, h).sqrt() {
+        return false;
+    }
+    let s = sub(p, tri[0]);
+    let u = dot(s, h) / det;
+    if !(0.0..=1.0).contains(&u) {
+        return false;
+    }
+    let qv = cross(s, e1);
+    let v = dot(dir, qv) / det;
+    if v < 0.0 || u + v > 1.0 {
+        return false;
+    }
+    (0.0..=1.0).contains(&(dot(e2, qv) / det))
+}
+
 fn boxes_meet(a: (P3, P3), b: (P3, P3)) -> bool {
     (0..3).all(|k| a.0[k] <= b.1[k] && b.0[k] <= a.1[k])
+}
+
+/// The box of `points`, grown by `grow`.
+fn grown_box(points: &[P3], grow: f64) -> (P3, P3) {
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for p in points {
+        for k in 0..3 {
+            min[k] = min[k].min(p[k] - grow);
+            max[k] = max[k].max(p[k] + grow);
+        }
+    }
+    (min, max)
+}
+
+/// The squared distance between segments `pq` and `cd` (Ericson, *Real-Time
+/// Collision Detection*, 5.1.9).
+fn segments_distance2(p: P3, q: P3, c: P3, d: P3) -> f64 {
+    let (d1, d2, r) = (sub(q, p), sub(d, c), sub(p, c));
+    let (a, e, f) = (dot(d1, d1), dot(d2, d2), dot(d2, r));
+    let (s, t) = if a <= f64::MIN_POSITIVE && e <= f64::MIN_POSITIVE {
+        (0.0, 0.0)
+    } else if a <= f64::MIN_POSITIVE {
+        (0.0, (f / e).clamp(0.0, 1.0))
+    } else {
+        let cc = dot(d1, r);
+        if e <= f64::MIN_POSITIVE {
+            ((-cc / a).clamp(0.0, 1.0), 0.0)
+        } else {
+            let b = dot(d1, d2);
+            let denom = a * e - b * b;
+            let mut s = if denom > 0.0 {
+                ((b * f - cc * e) / denom).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let mut t = (b * s + f) / e;
+            if t < 0.0 {
+                t = 0.0;
+                s = (-cc / a).clamp(0.0, 1.0);
+            } else if t > 1.0 {
+                t = 1.0;
+                s = ((b - cc) / a).clamp(0.0, 1.0);
+            }
+            (s, t)
+        }
+    };
+    let gap = sub(lerp(p, q, s), lerp(c, d, t));
+    dot(gap, gap)
+}
+
+/// The squared distance from `p` to triangle `abc` (Ericson, 5.1.5).
+fn point_triangle_distance2(p: P3, a: P3, b: P3, c: P3) -> f64 {
+    let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
+    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+    let closest = if d1 <= 0.0 && d2 <= 0.0 {
+        a
+    } else {
+        let bp = sub(p, b);
+        let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+        let cp = sub(p, c);
+        let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+        let vc = d1 * d4 - d3 * d2;
+        let vb = d5 * d2 - d1 * d6;
+        let va = d3 * d6 - d5 * d4;
+        if d3 >= 0.0 && d4 <= d3 {
+            b
+        } else if d6 >= 0.0 && d5 <= d6 {
+            c
+        } else if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+            lerp(a, b, d1 / (d1 - d3))
+        } else if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+            lerp(a, c, d2 / (d2 - d6))
+        } else if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+            lerp(b, c, (d4 - d3) / ((d4 - d3) + (d5 - d6)))
+        } else {
+            let denom = va + vb + vc;
+            if denom.abs() <= f64::MIN_POSITIVE {
+                a
+            } else {
+                let (v, w) = (vb / denom, vc / denom);
+                [
+                    a[0] + ab[0] * v + ac[0] * w,
+                    a[1] + ab[1] * v + ac[1] * w,
+                    a[2] + ab[2] * v + ac[2] * w,
+                ]
+            }
+        }
+    };
+    let gap = sub(p, closest);
+    dot(gap, gap)
 }
 
 /// A named point of the cut (see the module docs).
@@ -638,34 +1068,132 @@ impl<'a> Cut<'a> {
         ))
     }
 
-    fn run(mut self) -> Result<IndexedMesh, CutError> {
+    /// The triangles that may touch the cutter (in mesh order): every other
+    /// one is outside its box or wholly outside one of its planes, and is
+    /// kept as it is. Second, those that do not but come within
+    /// [`GENERAL_POSITION_MM`] of it, where a tie can still be.
+    fn candidates(&self) -> (Vec<u32>, Vec<u32>) {
+        let eps = GENERAL_POSITION_MM;
         let (cmin, cmax) = (self.cutter.min, self.cutter.max);
-        let mut out: Vec<[u32; 3]> = Vec::with_capacity(self.mesh.triangles.len());
-        for (t, &tri) in self.mesh.triangles.iter().enumerate() {
+        let planes = &self.cutter.planes;
+        let (mut touching, mut near) = (Vec::new(), Vec::new());
+        for (t, tri) in self.mesh.triangles.iter().enumerate() {
             let pts = tri.map(|v| self.pos[v as usize]);
-            let outside_box = (0..3)
-                .any(|k| pts.iter().all(|p| p[k] < cmin[k]) || pts.iter().all(|p| p[k] > cmax[k]));
-            let outside = outside_box
-                || self
-                    .cutter
-                    .planes
+            let outside_box = |grow: f64| {
+                (0..3).any(|k| {
+                    pts.iter().all(|p| p[k] < cmin[k] - grow)
+                        || pts.iter().all(|p| p[k] > cmax[k] + grow)
+                })
+            };
+            if outside_box(eps) {
+                continue;
+            }
+            let outside_plane = |grow: f64| {
+                planes
                     .iter()
-                    .any(|pl| pts.iter().all(|&p| pl.signed(p) >= 0.0));
-            if outside {
+                    .any(|pl| pts.iter().all(|&p| pl.signed(p) >= grow))
+            };
+            if !outside_box(0.0) && !outside_plane(0.0) {
+                touching.push(t as u32);
+            } else if !outside_plane(eps) {
+                near.push(t as u32);
+            }
+        }
+        (touching, near)
+    }
+
+    /// Whether nothing of the mesh near the cutter lies on it by a tie
+    /// ([`GENERAL_POSITION_MM`]): no vertex on a face, no edge through a
+    /// cutter edge, no cutter corner on a triangle. Ties are what break a
+    /// cut: one point gets two names (a sliver whose edge rounds to zero
+    /// length) and the triangulation around it can fold over the hole
+    /// (#330). Checks the triangles [`Cut::candidates`] found.
+    fn in_general_position(&self, touching: &[u32], near: &[u32]) -> bool {
+        let eps = GENERAL_POSITION_MM;
+        let planes = &self.cutter.planes;
+        let corners = &self.cutter.corners;
+        let triangles: Vec<[u32; 3]> = touching
+            .iter()
+            .chain(near)
+            .map(|&t| self.mesh.triangles[t as usize])
+            .collect();
+        // A vertex on a face: on its plane, and within every other.
+        let mut seen: HashSet<u32> = HashSet::new();
+        for &v in triangles.iter().flatten() {
+            if !seen.insert(v) {
+                continue;
+            }
+            let p = self.pos[v as usize];
+            let signed: Vec<f64> = planes.iter().map(|pl| pl.signed(p)).collect();
+            if signed.iter().all(|&s| s < eps) && signed.iter().any(|&s| s > -eps) {
+                return false;
+            }
+        }
+        // An edge through a cutter edge.
+        let cutter_edges: Vec<(P3, P3)> = self
+            .cutter
+            .edges()
+            .into_iter()
+            .map(|(a, b)| (corners[a as usize], corners[b as usize]))
+            .collect();
+        let mut edges: HashSet<(u32, u32)> = HashSet::new();
+        for tri in &triangles {
+            for c in 0..3 {
+                let (a, b) = canon(tri[c], tri[(c + 1) % 3]);
+                if !edges.insert((a, b)) {
+                    continue;
+                }
+                let (p, q) = (self.pos[a as usize], self.pos[b as usize]);
+                if cutter_edges.iter().any(|&(c, d)| {
+                    boxes_meet(grown_box(&[p, q], eps), grown_box(&[c, d], 0.0))
+                        && segments_distance2(p, q, c, d) < eps * eps
+                }) {
+                    return false;
+                }
+            }
+        }
+        // A cutter corner on a triangle.
+        for tri in &triangles {
+            let [a, b, d] = tri.map(|v| self.pos[v as usize]);
+            let around = grown_box(&[a, b, d], eps);
+            for &c in corners {
+                if boxes_meet(around, (c, c)) && point_triangle_distance2(c, a, b, d) < eps * eps {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The cut, which of its triangles it made (indices into it), and
+    /// whether it is closed and edge-manifold ([`closed_where_cut`]).
+    fn run(mut self, candidates: &[u32]) -> Result<(IndexedMesh, Vec<usize>, bool), CutError> {
+        let mut out: Vec<[u32; 3]> = Vec::with_capacity(self.mesh.triangles.len());
+        let mut fresh: Vec<usize> = Vec::new();
+        let mut next = candidates.iter().copied().peekable();
+        for (t, &tri) in self.mesh.triangles.iter().enumerate() {
+            if next.next_if_eq(&(t as u32)).is_none() {
                 out.push(tri);
                 continue;
             }
+            let start = out.len();
             self.clip_triangle(t as u32, tri, &mut out)?;
+            if out[start..] != [tri] {
+                fresh.extend(start..out.len());
+            }
         }
         self.resolve_corners()?;
         for k in 0..self.cutter.faces.len() {
+            let start = out.len();
             self.cap_face(k, &mut out)?;
+            fresh.extend(start..out.len());
         }
+        let closed = closed_where_cut(self.mesh, candidates, &out, &fresh);
         let mut positions: Vec<Vec3> = self.mesh.positions.clone();
         positions.extend(self.extra.iter().map(|&p| to32(p)));
         let mut mesh = IndexedMesh::new(positions, out);
         compact_unreferenced_vertices(&mut mesh);
-        Ok(mesh)
+        Ok((mesh, fresh, closed))
     }
 
     /// Keeps the part of triangle `t` outside the cutter and records its cut

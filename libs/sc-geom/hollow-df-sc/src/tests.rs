@@ -370,3 +370,165 @@ fn a_cancelled_job_reports_cancelled() {
     handle.cancel();
     assert!(matches!(handle.join(), Err(JobError::Cancelled)));
 }
+
+/// Every triangle of `part` is in `whole`, corner for corner.
+fn has_every_triangle(whole: &IndexedMesh, part: &IndexedMesh) -> bool {
+    let key = |mesh: &IndexedMesh, f: &IndexedTriangle| -> [u32; 9] {
+        let corners = f.vertices.map(|v| {
+            mesh.vertices()[u32::from(v) as usize]
+                .as_array()
+                .map(f32::to_bits)
+        });
+        let first = (0..3).min_by_key(|&k| corners[k]).unwrap();
+        std::array::from_fn(|i| corners[(first + i / 3) % 3][i % 3])
+    };
+    let all: std::collections::HashSet<[u32; 9]> =
+        whole.faces().iter().map(|f| key(whole, f)).collect();
+    part.faces().iter().all(|f| all.contains(&key(part, f)))
+}
+
+/// #339 through the adapter: a preview with the model's drains shows the
+/// infill with their channels cleared, exactly as the apply carries it.
+#[test]
+fn a_preview_with_drains_shows_the_infill_the_hollow_gets() {
+    use hollow_df::{HollowFill, InfillMode};
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
+        let settings = HollowSettings {
+            fill: HollowFill::Infill {
+                pattern,
+                cell_mm: 6.0,
+                beam_radius_mm: 0.6,
+            },
+            ..HollowSettings::default()
+        };
+        let plain = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: settings.clone(),
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Preview { infill, .. } = &plain.result else {
+            panic!("preview");
+        };
+        // Straight down onto the highest beam end (local frame: the sphere
+        // is centred on the origin).
+        let top = infill
+            .as_ref()
+            .unwrap()
+            .vertices()
+            .iter()
+            .map(|v| *v.as_array())
+            .max_by(|a, b| a[2].total_cmp(&b[2]))
+            .unwrap();
+        let surface = (225.0 - top[0] * top[0] - top[1] * top[1]).sqrt();
+        let request = HollowRequest {
+            settings,
+            drains: vec![
+                WorldDrain::new(
+                    [50.0 + top[0], 50.0 + top[1], 15.0 + surface],
+                    [0.0, 0.0, -1.0],
+                    1.5,
+                ),
+                WorldDrain::new([35.0, 50.0, 15.0], [1.0, 0.0, 0.0], 1.0),
+            ],
+            ..HollowRequest::default()
+        };
+        let shown = run(&scene, leaf, request.clone());
+        let applied = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                ..request
+            },
+        );
+        let infill = |out: &HollowOutcome| match &out.result {
+            HollowResult::Preview { infill, .. } => infill.clone().unwrap(),
+            HollowResult::Apply { .. } => panic!("preview"),
+        };
+        let (whole, cleared) = (infill(&plain), infill(&shown));
+        assert!(
+            cleared != whole,
+            "{pattern:?}: the drains clear some infill"
+        );
+        let HollowResult::Apply { mesh, .. } = &applied.result else {
+            panic!("apply");
+        };
+        assert!(mesh.is_sliceable(), "{pattern:?}");
+        assert!(has_every_triangle(mesh, &cleared), "{pattern:?}");
+    }
+}
+
+/// #330 through the adapter: on a fin 3 mm wide, drains whose cutter
+/// corner lies on the diagonal of the fin's top give a mesh the slicer
+/// takes, and the top of the fin is open at both.
+#[test]
+fn drains_on_a_face_diagonal_slice() {
+    let outline: [(f32, f32); 8] = [
+        (0.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 30.0),
+        (21.5, 30.0),
+        (21.5, 50.0),
+        (18.5, 50.0),
+        (18.5, 30.0),
+        (0.0, 30.0),
+    ];
+    let n = outline.len() as u32;
+    let mut vertices = Vec::new();
+    for y in [0.0, 30.0] {
+        vertices.extend(outline.iter().map(|&(x, z)| Vertex::new([x, y, z])));
+    }
+    let mut faces = Vec::new();
+    for [a, b, c] in [
+        [0, 1, 2],
+        [0, 2, 3],
+        [6, 3, 4],
+        [6, 4, 5],
+        [0, 3, 6],
+        [0, 6, 7],
+    ] {
+        faces.push(IndexedTriangle::from_raw_indices([a, b, c]));
+        faces.push(IndexedTriangle::from_raw_indices([a + n, c + n, b + n]));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        faces.push(IndexedTriangle::from_raw_indices([i, j + n, j]));
+        faces.push(IndexedTriangle::from_raw_indices([i, i + n, j + n]));
+    }
+    let block = IndexedMesh::new(None, vertices, faces);
+    assert!(block.is_sliceable());
+    let (scene, leaf) = scene_with(block, Transform3D::Identity);
+    for wall in [1.0, 2.0] {
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                settings: HollowSettings {
+                    wall_thickness_mm: wall,
+                    ..HollowSettings::default()
+                },
+                drains: vec![
+                    WorldDrain::new([20.0, 10.0, 50.0], [0.0, 0.0, -1.0], 0.5),
+                    WorldDrain::new([20.0, 20.0, 50.0], [0.0, 0.0, -1.0], 0.5),
+                ],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { mesh, drains } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
+        assert!(mesh.is_sliceable(), "wall {wall}");
+        let (polygons, holes) = holes_at_mid_height(mesh.clone(), 49.9);
+        assert_eq!(
+            (polygons, holes),
+            (1, 2),
+            "wall {wall}: two drains in the tip"
+        );
+    }
+}

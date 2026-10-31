@@ -104,6 +104,22 @@ impl Bvh {
         hits
     }
 
+    /// [`Bvh::ray_hit_distances`] for a closed mesh, without gaps: a ray
+    /// through an edge or a vertex hits every triangle there (so the same
+    /// distance can come more than once) instead of slipping between them,
+    /// which the exact test can do by rounding.
+    pub fn ray_hit_distances_closed(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+    ) -> Vec<f32> {
+        let mut hits = Vec::new();
+        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t| hits.push(t));
+        hits.sort_by(f32::total_cmp);
+        hits
+    }
+
     /// Distance from `p` to the closest triangle of `mesh`, if one is closer
     /// than `max_distance`. Nearer boxes are visited first, and boxes no
     /// closer than the best triangle so far are skipped.
@@ -152,7 +168,18 @@ impl Bvh {
         found.then(|| best.sqrt())
     }
 
-    fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, mut hit: impl FnMut(f32)) {
+    fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, hit: impl FnMut(f32)) {
+        self.traverse_with(mesh, origin, dir, ray_tri, hit);
+    }
+
+    fn traverse_with(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+        test: impl Fn(Vec3, Vec3, Vec3, Vec3, Vec3) -> Option<f32>,
+        mut hit: impl FnMut(f32),
+    ) {
         if self.nodes.is_empty() {
             return;
         }
@@ -170,7 +197,7 @@ impl Bvh {
                 for k in 0..node.face_count() {
                     let face = self.faces[node.a as usize + k];
                     let [a, b, c] = mesh.tri_positions(face);
-                    if let Some(t) = ray_tri(origin, dir, a, b, c) {
+                    if let Some(t) = test(origin, dir, a, b, c) {
                         hit(t);
                     }
                 }
@@ -280,14 +307,27 @@ fn inverse_direction(dir: Vec3) -> Vec3 {
 /// or enters beyond `max_distance`.
 #[inline]
 fn node_entry(origin: Vec3, inv_dir: Vec3, node: &FlatNode, max_distance: f32) -> f32 {
-    let t1 = (node.min[0] - origin.x) * inv_dir.x;
-    let t2 = (node.max[0] - origin.x) * inv_dir.x;
-    let t3 = (node.min[1] - origin.y) * inv_dir.y;
-    let t4 = (node.max[1] - origin.y) * inv_dir.y;
-    let t5 = (node.min[2] - origin.z) * inv_dir.z;
-    let t6 = (node.max[2] - origin.z) * inv_dir.z;
-    let tmin = t1.min(t2).max(t3.min(t4)).max(t5.min(t6)).max(0.0);
-    let tmax = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
+    // A ray parallel to a slab is in it or misses it: with the inverse at
+    // infinity, `(bound - origin) * inv` would be NaN for an origin on the
+    // bound, and the box would be skipped (a ray along an axis through a
+    // box face slipped past every triangle in it, #315).
+    let slab = |min: f32, max: f32, o: f32, inv: f32| -> (f32, f32) {
+        if inv.is_infinite() {
+            if (min..=max).contains(&o) {
+                (f32::NEG_INFINITY, f32::INFINITY)
+            } else {
+                (f32::INFINITY, f32::NEG_INFINITY)
+            }
+        } else {
+            let (a, b) = ((min - o) * inv, (max - o) * inv);
+            (a.min(b), a.max(b))
+        }
+    };
+    let (x0, x1) = slab(node.min[0], node.max[0], origin.x, inv_dir.x);
+    let (y0, y1) = slab(node.min[1], node.max[1], origin.y, inv_dir.y);
+    let (z0, z1) = slab(node.min[2], node.max[2], origin.z, inv_dir.z);
+    let tmin = x0.max(y0).max(z0).max(0.0);
+    let tmax = x1.min(y1).min(z1);
     if tmax < tmin || tmin > max_distance {
         f32::INFINITY
     } else {
@@ -314,6 +354,36 @@ pub fn ray_tri(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32
     let q = s.cross(e1);
     let v = dir.dot(q) * inv_det;
     if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let t = e2.dot(q) * inv_det;
+    if t >= 0.0 { Some(t) } else { None }
+}
+
+/// [`ray_tri`] with the triangle grown by a hair in barycentric terms
+/// (`1e-4` of its size), so a ray through a shared edge or vertex hits the
+/// triangles on both sides rather than slipping between them, and tiny
+/// triangles counted.
+pub fn ray_tri_closed(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+    const GROW: f32 = 1e-4;
+    let e1 = b.sub(a);
+    let e2 = c.sub(a);
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    // Relative to the triangle's size: a tiny triangle (a contour through a
+    // grid corner makes them) is still hit; one edge-on to the ray is not.
+    if det.abs() <= 1e-7 * e1.dot(e1).sqrt() * p.dot(p).sqrt() {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    let s = origin.sub(a);
+    let u = s.dot(p) * inv_det;
+    if !(-GROW..=1.0 + GROW).contains(&u) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let v = dir.dot(q) * inv_det;
+    if v < -GROW || u + v > 1.0 + GROW {
         return None;
     }
     let t = e2.dot(q) * inv_det;
