@@ -17,3 +17,7 @@ libs/sc-geom/support-need-analysis/upstream/*.rs -text
 docs/sc/evidence/supports-p1-analysis/*.log -text whitespace=-blank-at-eof,cr-at-eol
 # Rust test stdout can end a progress line in spaces before concurrent output.
 docs/sc/evidence/supports-wolverine-query/*.log -text whitespace=-blank-at-eof,-blank-at-eol,cr-at-eol
+
+# Bundled profiles are checked byte-for-byte against the profile writer's
+# LF output; keep them LF on every checkout (binaries stay auto-detected).
+assets/profiles/** text=auto eol=lf

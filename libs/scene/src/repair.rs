@@ -21,8 +21,8 @@ pub struct SceneRepairOutcome {
     /// The storage place this outcome describes.
     pub target: MeshTarget,
     /// The report of the run on the mesh of the target. A target that the
-    /// assessment finds clean or refused gets no run: its report has no fixes,
-    /// and ends with the state or the refusal of the assessment.
+    /// assessment finds clean, refused or without faces gets no run: its
+    /// report has no fixes, and ends as the assessment says.
     pub report: MeshRepairReport,
 }
 

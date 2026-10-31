@@ -850,3 +850,126 @@ mod overlapping_shell_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod touching_solid_tests {
+    use super::*;
+
+    /// 2 cubes on the plate (`z in [0, 1]`) given by their XY centres and
+    /// sides, each with its own vertices.
+    fn cubes(boxes: &[([f32; 2], f32)]) -> IndexedMesh {
+        let cube = unit_cube_mesh();
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for &([cx, cy], side) in boxes {
+            let base = vertices.len() as u32;
+            for v in &cube.vertices {
+                let [x, y, z] = *v.as_array();
+                vertices.push(Vertex::new([cx + x * side, cy + y * side, z + 0.5]));
+            }
+            for f in &cube.faces {
+                faces.push(IndexedTriangle::from_raw_indices(
+                    f.vertices.map(|i| i.get() + base),
+                ));
+            }
+        }
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    /// `mesh` with the vertices at exactly the same position merged, as the
+    /// STL reader does: cubes that touch then share their vertices.
+    fn welded(mesh: &IndexedMesh) -> IndexedMesh {
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let index: Vec<u32> = mesh
+            .vertices
+            .iter()
+            .map(|v| match vertices.iter().position(|w| w == v) {
+                Some(i) => i as u32,
+                None => {
+                    vertices.push(*v);
+                    (vertices.len() - 1) as u32
+                }
+            })
+            .collect();
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces: mesh
+                .faces
+                .iter()
+                .map(|f| {
+                    IndexedTriangle::from_raw_indices(f.vertices.map(|v| index[v.get() as usize]))
+                })
+                .collect(),
+        }
+    }
+
+    /// 2 unit cubes that touch along the vertical edge at (0.5, 0.5).
+    const SHARING_AN_EDGE: [([f32; 2], f32); 2] = [([0.0, 0.0], 1.0), ([1.0, 1.0], 1.0)];
+
+    fn slice(mesh: IndexedMesh) -> Result<crate::contour::ContourStack, SliceSceneError> {
+        let mut scene = Scene::new();
+        add_root_mesh(&mut scene, "cubes", mesh);
+        slice_scene(&scene, &four_layer_profile())
+            .map(|leaves| leaves.into_iter().next().expect("1 leaf").into_stack())
+    }
+
+    #[test]
+    fn cubes_that_share_an_edge_slice_as_the_2_cubes_apart() {
+        let apart = cubes(&SHARING_AN_EDGE);
+        let shared = welded(&apart);
+        assert_eq!(shared.vertices.len(), apart.vertices.len() - 2);
+        let stack = slice(shared).expect("2+2 edges slice");
+        assert_eq!(stack, slice(apart).expect("cubes apart slice"));
+        for layer in stack.layers() {
+            assert_eq!(layer.polygons().len(), 2, "at z {}", layer.z_mm());
+        }
+    }
+
+    #[test]
+    fn slicing_leaves_the_scene_mesh_as_it_was() {
+        let shared = welded(&cubes(&SHARING_AN_EDGE));
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "cubes", shared.clone());
+        slice_leaf(&scene, leaf, &four_layer_profile()).expect("2+2 edges slice");
+        assert_eq!(*scene.mesh_at_leaf(leaf).expect("leaf mesh"), shared);
+    }
+
+    #[test]
+    fn an_edge_with_3_faces_is_rejected_with_the_errors_of_the_mesh() {
+        // A single face glued to an edge of a cube.
+        let mut fin = unit_cube_mesh();
+        let [a, b] = [0usize, 1].map(|k| fin.faces[0].vertices[k].get());
+        fin.vertices.push(Vertex::new([0.0, 0.0, 3.0]));
+        let apex = fin.vertices.len() as u32 - 1;
+        fin.faces
+            .push(IndexedTriangle::from_raw_indices([a, b, apex]));
+        let lifted = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.5]));
+        let expected = fin
+            .validated_faces()
+            .expect("valid faces")
+            .validate_edge_manifold()
+            .expect_err("a 3-face edge");
+
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(None, lifted, LeafPayload::Mesh(Arc::new(fin)))
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("fresh leaf becomes a root");
+        let err = slice_scene(&scene, &four_layer_profile()).unwrap_err();
+        let SliceSceneError::LeavesValidationFailed(failures) = err else {
+            panic!("expected LeavesValidationFailed, got {err:?}");
+        };
+        let InvalidLeafGeometry::Manifold(errors) = &failures[0].geometry else {
+            panic!(
+                "expected a manifold failure, got {:?}",
+                failures[0].geometry
+            );
+        };
+        assert_eq!(*errors, expected);
+    }
+}

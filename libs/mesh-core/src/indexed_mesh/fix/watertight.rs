@@ -8,8 +8,10 @@
 //!
 //! 1 round runs these steps in order:
 //!
-//! 0. Drop duplicate faces (1st round only): of each group of faces with the
-//!    same 3 positions in the same winding (a part stored twice), 1 stays.
+//! 0. Drop duplicate and opposite faces (1st round only): of each group of
+//!    faces with the same 3 positions in the same winding (a part stored
+//!    twice), 1 stays; then a face and a copy in the opposite winding (the
+//!    double wall of 2 parts glued face to face) cancel out.
 //! 1. Weld open boundaries (1st round only): a vertex on a boundary edge is
 //!    merged into an earlier boundary vertex within the weld tolerance. Only
 //!    boundary vertices move, so closed parts that touch on purpose (supports
@@ -161,6 +163,81 @@ pub(crate) fn plan_watertight(
         }),
         holes_left_open,
     }
+}
+
+/// Plans the orientation pass on a mesh whose face indices are in range:
+/// orients each piece connected across edges with 2 faces as a whole,
+/// flipping its smaller side (step 4 without resolving edges or dropping
+/// seams), then turns closed inside-out shells outward unless they are
+/// cavities (step 7). The 1st step is kept only when it leaves fewer bad edges
+/// than it found (never worse); the 2nd flips whole closed shells, which
+/// changes no edge. Returns the faces and the fixes, or `None` when nothing
+/// changes.
+pub(crate) fn plan_orientation(
+    vertices: &[Vertex],
+    faces: &[IndexedTriangle],
+) -> Option<(Vec<IndexedTriangle>, Vec<MeshFix>)> {
+    plan_orientation_with_records(vertices, faces, half_edges::sorted_half_edge_records(faces))
+}
+
+/// [`plan_orientation`] with the sorted half-edge `records` of `faces`, which
+/// the edge check already has. Most meshes Repair sees are clean: they cost
+/// no other sort and no copy.
+pub(crate) fn plan_orientation_with_records(
+    vertices: &[Vertex],
+    faces: &[IndexedTriangle],
+    records: Vec<(u64, u32)>,
+) -> Option<(Vec<IndexedTriangle>, Vec<MeshFix>)> {
+    let mut stats = Stats::default();
+    let mut oriented: Option<Vec<IndexedTriangle>> = None;
+    if let Some(pairs) = pairs_with_a_same_way_one(&records) {
+        let mut copy = faces.to_vec();
+        orient_pieces(&mut copy, &pairs, &mut stats);
+        if stats.reoriented_faces > 0 && count_bad_edges(&copy) < count_bad_edge_records(&records) {
+            oriented = Some(copy);
+        } else {
+            stats = Stats::default();
+        }
+    }
+    let records = match &oriented {
+        Some(copy) => half_edges::sorted_half_edge_records(copy),
+        None => records,
+    };
+    let current = oriented.as_deref().unwrap_or(faces);
+    let flips = plan_shells_outward(vertices, current, records, &mut stats);
+    if !stats.changed() {
+        return None;
+    }
+    let mut faces = oriented.unwrap_or_else(|| faces.to_vec());
+    for f in flips {
+        faces[f as usize].vertices.reverse();
+    }
+    Some((faces, stats.into_fixes()))
+}
+
+/// The pairs of faces across the edges with 2 faces, each marked when its 2
+/// faces walk the edge the same way, or `None` when no pair is: then step 4
+/// has nothing to orient.
+fn pairs_with_a_same_way_one(records: &[(u64, u32)]) -> Option<Vec<(u32, u32)>> {
+    let same_way =
+        |run: &[(u64, u32)]| half_edges::is_reversed(run[0].1) == half_edges::is_reversed(run[1].1);
+    let edges_with_2_faces = || {
+        records
+            .chunk_by(|a, b| a.0 == b.0)
+            .filter(|run| run.len() == 2)
+    };
+    if !edges_with_2_faces().any(same_way) {
+        return None;
+    }
+    Some(
+        edges_with_2_faces()
+            .map(|run| {
+                let f = half_edges::face_of(run[0].1).get() as u32;
+                let g = half_edges::face_of(run[1].1).get() as u32;
+                (f, g | if same_way(run) { SAME_WAY } else { 0 })
+            })
+            .collect(),
+    )
 }
 
 /// What the input holds, to tell whether a round lost material.
@@ -422,7 +499,12 @@ fn count_bad_edges(faces: &[IndexedTriangle]) -> usize {
     if faces.is_empty() {
         return 1;
     }
-    let records = half_edges::sorted_half_edge_records(faces);
+    count_bad_edge_records(&half_edges::sorted_half_edge_records(faces))
+}
+
+/// [`count_bad_edges`] over the sorted half-edge records of a mesh with
+/// faces.
+pub(crate) fn count_bad_edge_records(records: &[(u64, u32)]) -> usize {
     records
         .chunk_by(|a, b| a.0 == b.0)
         .filter(|run| {
@@ -434,6 +516,7 @@ fn count_bad_edges(faces: &[IndexedTriangle]) -> usize {
 /// The counts of 1 round, or of all kept rounds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Stats {
+    opposite_faces: usize,
     duplicate_faces: usize,
     welded_vertices: usize,
     collapsed_faces: usize,
@@ -451,7 +534,8 @@ struct Stats {
 
 impl Stats {
     fn changed(&self) -> bool {
-        self.duplicate_faces > 0
+        self.opposite_faces > 0
+            || self.duplicate_faces > 0
             || self.welded_vertices > 0
             || self.collapsed_faces > 0
             || self.split_vertices > 0
@@ -462,6 +546,7 @@ impl Stats {
     }
 
     fn add(&mut self, other: &Self) {
+        self.opposite_faces += other.opposite_faces;
         self.duplicate_faces += other.duplicate_faces;
         self.welded_vertices += other.welded_vertices;
         self.collapsed_faces += other.collapsed_faces;
@@ -481,6 +566,11 @@ impl Stats {
         if self.duplicate_faces > 0 {
             fixes.push(MeshFix::RemovedDuplicateFaces {
                 faces: self.duplicate_faces,
+            });
+        }
+        if self.opposite_faces > 0 {
+            fixes.push(MeshFix::RemovedOppositeFaces {
+                faces: self.opposite_faces,
             });
         }
         if self.welded_vertices > 0 || self.collapsed_faces > 0 {
@@ -534,8 +624,11 @@ fn run_round(
     }
     if first {
         // A part stored twice keeps 1 copy; dropping both would lose it.
+        // Then opposite copies, which enclose nothing, cancel out: after the
+        // duplicates, so a glued wall that is also stored twice goes whole.
         let mut mesh = IndexedMesh::new(None, std::mem::take(vertices), std::mem::take(faces));
         stats.duplicate_faces += mesh.drop_duplicate_faces();
+        stats.opposite_faces += mesh.drop_opposite_face_pairs();
         *vertices = mesh.vertices;
         *faces = mesh.faces;
     }
@@ -665,6 +758,21 @@ fn weld_boundary_vertices(
     });
 }
 
+/// Separates closed solids that touch along edges, for the slicer's own copy
+/// of a mesh: steps 2 and 3 of a round on a mesh whose only bad edges have
+/// more than 2 faces. Returns whether every such edge resolved into pairs that
+/// walk it opposite ways and no face had to go or turn; the caller then checks
+/// the result with the edge check. The faces keep their order and winding;
+/// each new vertex is a copy at the same position.
+pub(crate) fn separate_touching_solids(
+    vertices: &mut Vec<Vertex>,
+    faces: &mut [IndexedTriangle],
+) -> bool {
+    let mut stats = Stats::default();
+    let dropped = pair_split_and_orient(vertices, faces, true, &mut stats);
+    dropped.is_none() && stats.reoriented_faces == 0
+}
+
 /// Marks a pair whose 2 faces walk their shared edge the same way.
 const SAME_WAY: u32 = 1 << 31;
 
@@ -778,10 +886,19 @@ fn corner_of(face: &IndexedTriangle, v: u32) -> u32 {
     }
 }
 
+/// How many steps of `f32`, at the size of the coordinates, 2 faces of an edge
+/// may lie apart around it and still count as lying on each other.
+const COINCIDENT_FACE_STEPS: f64 = 8.0;
+
 /// Pairs the faces of 1 edge with more than 2 faces, sorted by angle around
 /// it: a solid wedge lies between a face that walks the edge from its higher
 /// vertex to its lower one and the next face that walks it back. Faces left
 /// over pair in sorted order; an odd one stays unpaired.
+///
+/// Faces that lie on each other (2 parts that touch along a face, whose
+/// walls coincide; the same angle within the rounding of `f32`) are ordered so
+/// that no solid wedge lies between them: the parts stay apart rather than
+/// joined by a wedge of no thickness.
 fn radial_pairs(
     vertices: &[Vertex],
     faces: &[IndexedTriangle],
@@ -800,8 +917,12 @@ fn radial_pairs(
     let u = cross(axis, helper);
     let u = u.map(|c| c / norm(u));
     let w = cross(axis, u);
-    // (angle, face, walks lo to hi)
-    let mut ring: Vec<(f64, u32, bool)> = run
+    let mut scale = base
+        .iter()
+        .chain(&position(vertices, hi.get()))
+        .fold(0.0f64, |m, c| m.max(c.abs()));
+    // (angle, face, walks lo to hi, distance of the apex from the edge)
+    let mut ring: Vec<(f64, u32, bool, f64)> = run
         .iter()
         .map(|&(_, value)| {
             let face = half_edges::face_of(value).get() as u32;
@@ -809,17 +930,24 @@ fn radial_pairs(
                 .into_iter()
                 .find(|&v| v != lo.get() && v != hi.get())
                 .unwrap_or(lo.get());
-            let q = sub(position(vertices, apex), base);
+            let p = position(vertices, apex);
+            scale = p.iter().fold(scale, |m, c| m.max(c.abs()));
+            let q = sub(p, base);
             let along = dot(q, axis);
             let q = sub(q, axis.map(|c| c * along));
             (
                 dot(q, w).atan2(dot(q, u)),
                 face,
                 !half_edges::is_reversed(value),
+                norm(q),
             )
         })
         .collect();
     ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+    order_coincident_faces(
+        &mut ring,
+        COINCIDENT_FACE_STEPS * f64::from(f32::EPSILON) * scale,
+    );
     let k = ring.len();
     let mut used = vec![false; k];
     let mut pairs = Vec::with_capacity(k / 2);
@@ -837,6 +965,42 @@ fn radial_pairs(
         pairs.push((ring[a].1, ring[b].1, ring[a].2 == ring[b].2));
     }
     pairs
+}
+
+/// Within each run of faces of `ring` (sorted by angle) that lie on each other
+/// (apexes less than `slack` mm apart across the angle between them), puts
+/// the faces that walk the edge from its lower vertex first, so that no solid
+/// wedge of no thickness lies between 2 of them. A run across the wrap of the
+/// angle turns the ring first so that it starts after a real gap. Rings
+/// without such runs keep their order.
+fn order_coincident_faces(ring: &mut [(f64, u32, bool, f64)], slack: f64) {
+    use std::f64::consts::TAU;
+    let k = ring.len();
+    let coincident = |a: &(f64, u32, bool, f64), b: &(f64, u32, bool, f64)| {
+        let turn = (b.0 - a.0).rem_euclid(TAU);
+        turn.min(TAU - turn) * a.3.min(b.3) <= slack
+    };
+    if k < 2 {
+        return;
+    }
+    if coincident(&ring[k - 1], &ring[0]) {
+        let Some(start) = (1..k).find(|&i| !coincident(&ring[i - 1], &ring[i])) else {
+            return;
+        };
+        ring.rotate_left(start);
+    }
+    let mut i = 0;
+    while i < k {
+        let mut j = i + 1;
+        while j < k && coincident(&ring[j - 1], &ring[j]) {
+            j += 1;
+        }
+        if j - i > 1 {
+            // Stable: faces walking the same way keep their order.
+            ring[i..j].sort_by_key(|entry| !entry.2);
+        }
+        i = j;
+    }
 }
 
 /// A union-find over face corners (`face * 3 + corner`), only over the
@@ -1220,8 +1384,21 @@ fn turn_inside_out_shells_outward(
     faces: &mut [IndexedTriangle],
     stats: &mut Stats,
 ) {
-    let face_count = faces.len();
     let records = half_edges::sorted_half_edge_records(faces);
+    for f in plan_shells_outward(vertices, faces, records, stats) {
+        faces[f as usize].vertices.reverse();
+    }
+}
+
+/// Step 7, planned on `faces` and their sorted half-edge `records`: returns
+/// the faces to reverse, and counts them in `stats`.
+fn plan_shells_outward(
+    vertices: &[Vertex],
+    faces: &[IndexedTriangle],
+    records: Vec<(u64, u32)>,
+    stats: &mut Stats,
+) -> Vec<u32> {
+    let face_count = faces.len();
     let mut parent: Vec<u32> = (0..face_count as u32).collect();
     let mut open = vec![false; face_count];
     for run in records.chunk_by(|a, b| a.0 == b.0) {
@@ -1242,14 +1419,14 @@ fn turn_inside_out_shells_outward(
     // Group the faces by shell.
     let mut shell_of = vec![u32::MAX; face_count];
     let mut shell_count = 0u32;
-    let mut root_shell: HashMap<u32, u32> = HashMap::new();
+    let mut root_shell = vec![u32::MAX; face_count];
     for f in 0..face_count as u32 {
-        let root = find_face(&mut parent, f);
-        let shell = *root_shell.entry(root).or_insert_with(|| {
+        let root = find_face(&mut parent, f) as usize;
+        if root_shell[root] == u32::MAX {
+            root_shell[root] = shell_count;
             shell_count += 1;
-            shell_count - 1
-        });
-        shell_of[f as usize] = shell;
+        }
+        shell_of[f as usize] = root_shell[root];
     }
     drop(root_shell);
     drop(parent);
@@ -1270,39 +1447,76 @@ fn turn_inside_out_shells_outward(
     drop(fill);
     let shell_faces = |s: usize| &members[start[s] as usize..start[s + 1] as usize];
 
+    #[derive(Clone, Copy)]
     struct Shell {
         closed: bool,
         volume: f64,
         lo: [f64; 3],
         hi: [f64; 3],
     }
-    let faces_ro: &[IndexedTriangle] = faces;
-    let shells: Vec<Shell> = (0..shell_count)
-        .into_par_iter()
-        .map(|s| {
-            let mut volume = 0.0;
-            let mut lo = [f64::INFINITY; 3];
-            let mut hi = [f64::NEG_INFINITY; 3];
-            let mut closed = true;
-            for &f in shell_faces(s) {
-                closed &= !open[f as usize];
-                let [a, b, c] = raw(&faces_ro[f as usize]).map(|v| position(vertices, v));
-                volume += dot(a, cross(b, c)) / 6.0;
-                for p in [a, b, c] {
-                    for k in 0..3 {
-                        lo[k] = lo[k].min(p[k]);
-                        hi[k] = hi[k].max(p[k]);
-                    }
+    impl Shell {
+        const EMPTY: Shell = Shell {
+            closed: true,
+            volume: 0.0,
+            lo: [f64::INFINITY; 3],
+            hi: [f64::NEG_INFINITY; 3],
+        };
+
+        fn add_face(&mut self, open: bool, [a, b, c]: [[f64; 3]; 3]) {
+            self.closed &= !open;
+            self.volume += dot(a, cross(b, c)) / 6.0;
+            for p in [a, b, c] {
+                self.grow(p, p);
+            }
+        }
+
+        fn add(&mut self, other: &Shell) {
+            self.closed &= other.closed;
+            self.volume += other.volume;
+            self.grow(other.lo, other.hi);
+        }
+
+        fn grow(&mut self, lo: [f64; 3], hi: [f64; 3]) {
+            self.lo = std::array::from_fn(|k| self.lo[k].min(lo[k]));
+            self.hi = std::array::from_fn(|k| self.hi[k].max(hi[k]));
+        }
+    }
+    let faces_ro = faces;
+    let corners = |f: usize| raw(&faces_ro[f]).map(|v| position(vertices, v));
+    let shells: Vec<Shell> = if shell_count <= FEW_SHELLS {
+        // Few shells, often 1 large one: split the faces instead of the
+        // shells, then add the chunks up in order, so the sums do not depend
+        // on the threads.
+        let chunks: Vec<Vec<Shell>> = (0..face_count.div_ceil(SHELL_CHUNK_FACES))
+            .into_par_iter()
+            .map(|chunk| {
+                let start = chunk * SHELL_CHUNK_FACES;
+                let mut shells = vec![Shell::EMPTY; shell_count];
+                for f in start..face_count.min(start + SHELL_CHUNK_FACES) {
+                    shells[shell_of[f] as usize].add_face(open[f], corners(f));
                 }
+                shells
+            })
+            .collect();
+        let mut shells = vec![Shell::EMPTY; shell_count];
+        for chunk in &chunks {
+            for (shell, part) in shells.iter_mut().zip(chunk) {
+                shell.add(part);
             }
-            Shell {
-                closed,
-                volume,
-                lo,
-                hi,
-            }
-        })
-        .collect();
+        }
+        shells
+    } else {
+        (0..shell_count)
+            .into_par_iter()
+            .map(|s| {
+                let mut shell = Shell::EMPTY;
+                for &f in shell_faces(s) {
+                    shell.add_face(open[f as usize], corners(f as usize));
+                }
+                shell
+            })
+            .collect()
+    };
     // A closed shell with no volume (an open sheet the fill doubled) is
     // neither inside out nor outward.
     let has_volume = |s: &Shell| {
@@ -1313,7 +1527,7 @@ fn turn_inside_out_shells_outward(
         .filter(|&s| shells[s].closed && shells[s].volume < 0.0 && has_volume(&shells[s]))
         .collect();
     if negative.is_empty() {
-        return;
+        return Vec::new();
     }
     let contains = |outer: &Shell, inner: &Shell| {
         (0..3).all(|k| outer.lo[k] <= inner.lo[k] && outer.hi[k] >= inner.hi[k])
@@ -1342,14 +1556,19 @@ fn turn_inside_out_shells_outward(
             !is_cavity
         })
         .collect();
+    let mut flips = Vec::new();
     for s in to_flip {
         stats.shells_outward += 1;
-        for &f in shell_faces(s) {
-            faces[f as usize].vertices.reverse();
-            stats.shell_faces_outward += 1;
-        }
+        stats.shell_faces_outward += shell_faces(s).len();
+        flips.extend_from_slice(shell_faces(s));
     }
+    flips
 }
+
+/// Up to how many shells step 7 sums the shells over chunks of faces.
+const FEW_SHELLS: usize = 4096;
+/// How many faces 1 chunk of that sum holds.
+const SHELL_CHUNK_FACES: usize = 1 << 16;
 
 fn find_face(parent: &mut [u32], mut x: u32) -> u32 {
     while parent[x as usize] != x {

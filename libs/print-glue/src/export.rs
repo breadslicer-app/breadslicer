@@ -8,6 +8,7 @@
 //! program a printer file carries.
 
 use std::fmt;
+use std::num::NonZeroU32;
 use std::path::Path;
 
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
@@ -17,8 +18,9 @@ use sc_print_profiles::{
 };
 use sc_scene::Scene;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode};
+use sc_sla_formats::layer_images::lit_layer_count;
 use sc_sla_formats::{
-    PrintPreviews, PrintProgram, PrinterFileFormat, WriterError, write_printer_file,
+    PrintPreviews, PrintProgram, PrinterFileFormat, RasterSetup, WriterError, write_printer_file,
 };
 
 use crate::print_program::{UnprojectablePrint, creation_time_now, project_to_print_program};
@@ -128,6 +130,11 @@ impl std::error::Error for UnexportableSlice {
 /// rasterise with. A caller that holds a slice from an earlier run checks first
 /// that the profiles and the scene still give the same contours.
 ///
+/// The layers above the last one that lights a pixel are left out of the job
+/// (#309): they print nothing, and a machine can stall on a dark last layer.
+/// A plate that lights no pixel at all keeps its layers, which the writers
+/// fill with a placeholder pixel each.
+///
 /// # Errors
 ///
 /// [`UnexportableSlice`] when the full configuration does not resolve, when it
@@ -158,14 +165,25 @@ pub fn prepare_export(
             nearest,
         });
     }
-    let profile = project_hardware_to_slice_profile(
-        &printer.hardware,
-        sliced,
-        aa_level,
-        PackingMode::None,
-        first_layer,
-        grid.total_layers(),
-    );
+    let profile_for = |layers: NonZeroU32| {
+        project_hardware_to_slice_profile(
+            &printer.hardware,
+            sliced,
+            aa_level,
+            PackingMode::None,
+            first_layer,
+            layers,
+        )
+    };
+    let mut profile = profile_for(grid.total_layers());
+    let lit = lit_layer_count(contours.stack(), &RasterSetup::from_profile(&profile));
+    let contours = match u32::try_from(lit).ok().and_then(NonZeroU32::new) {
+        Some(lit) if lit < grid.total_layers() => {
+            profile = profile_for(lit);
+            contours.truncated(lit)
+        }
+        _ => contours,
+    };
     let program = project_to_print_program(
         scene,
         &config,

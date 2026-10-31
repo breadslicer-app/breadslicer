@@ -95,15 +95,13 @@ impl LayerStats {
     }
 }
 
-/// The contour figures of one layer, in square millimetres: how many separate
-/// outlines it has, the area inside the largest one (holes included, as CXDLP
-/// records it) and the largest area one outline encloses once its holes are
-/// taken out (as the Anycubic ZIP scene records it).
+/// The contour figures of one layer: how many separate outlines it has and the
+/// area inside the largest one in square millimetres (holes included, as CXDLP
+/// records it).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct ContourStats {
     pub outline_count: u32,
     pub largest_outline_mm2: f64,
-    pub largest_solid_mm2: f64,
 }
 
 impl ContourStats {
@@ -113,21 +111,9 @@ impl ContourStats {
             .iter()
             .map(|polygon| polygon.outer().signed_area().abs())
             .fold(0.0_f64, f64::max);
-        let largest_solid_mm2 = polygons
-            .iter()
-            .map(|polygon| {
-                let holes: f64 = polygon
-                    .holes()
-                    .iter()
-                    .map(|hole| hole.signed_area().abs())
-                    .sum();
-                (polygon.outer().signed_area().abs() - holes).max(0.0)
-            })
-            .fold(0.0_f64, f64::max);
         Self {
             outline_count: u32::try_from(polygons.len()).unwrap_or(u32::MAX),
             largest_outline_mm2,
-            largest_solid_mm2,
         }
     }
 }

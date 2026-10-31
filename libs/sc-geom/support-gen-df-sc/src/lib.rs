@@ -380,8 +380,10 @@ pub fn start_df_supports(
 }
 
 /// The pipeline settings a request runs with: its explicit `settings`, or
-/// SoulCrafted's defaults with the person's `options` applied.
-fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
+/// SoulCrafted's defaults with the person's `options` applied. Public for a
+/// caller that runs the pipeline itself with the settings a run would use,
+/// as the support scorecard does to read the plan's analytics (#234).
+pub fn settings_for(request: &DfSupportRequest) -> PipelineSettings {
     match &request.settings {
         Some(settings) => settings.clone(),
         None => SettingsRecipe::of(request).settings(),

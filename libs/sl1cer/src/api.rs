@@ -80,8 +80,8 @@ pub fn slice_leaf(
         }
     }
 
-    let baked = bake_leaf_to_world(scene, leaf)?;
-    let mesh = validate_baked(&baked).map_err(SliceError::from)?;
+    let mut baked = bake_leaf_to_world(scene, leaf)?;
+    let mesh = validate_baked(&mut baked).map_err(SliceError::from)?;
     slice_manifold_mesh(&mesh, profile)
 }
 
@@ -274,13 +274,13 @@ where
         if cancel.is_cancelled() {
             return Ok(SliceOutcome::Cancelled);
         }
-        let baked =
+        let mut baked =
             bake_leaf_to_world(scene, leaf).map_err(|err| SliceSceneError::LeafSlicingFailed {
                 leaf,
                 leaf_name: leaf_name.clone(),
                 error: SliceError::BakeFailed(err),
             })?;
-        let mesh = match validate_baked(&baked) {
+        let mesh = match validate_baked(&mut baked) {
             Ok(mesh) => mesh,
             Err(geometry) => {
                 failures.push(LeafValidationFailure {
@@ -381,27 +381,21 @@ fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
         })
 }
 
-/// Runs the 3 geometry validation stages on a baked mesh, in order: vertices
-/// (NaN or infinite coordinates), faces (index range, collapsed edges),
-/// edge-manifoldness. Each stage short-circuits, so a leaf reports the errors
-/// of exactly 1 stage.
+/// Runs the slicer's gate ([`IndexedMesh::make_sliceable`]) on a baked mesh:
+/// vertices (NaN or infinite coordinates), faces (index range, collapsed
+/// edges), edge-manifoldness. Each stage short-circuits, so a leaf reports the
+/// errors of exactly 1 stage. The baked mesh is the slicer's own copy, so the
+/// gate may separate solids that touch along an edge in it; the scene's mesh
+/// never changes.
 ///
 /// The vertex stage runs on the baked vertices on purpose: the f64 transform
 /// chain downcasts to f32 per vertex, and a finite transform can saturate
 /// coordinates to infinity, so validating the source mesh alone would miss
 /// overflow introduced by the bake.
 fn validate_baked(
-    baked: &IndexedMesh,
+    baked: &mut IndexedMesh,
 ) -> Result<ValidatedEdgeManifoldMesh<'_>, InvalidLeafGeometry> {
-    baked
-        .validate_vertices()
-        .map_err(InvalidLeafGeometry::Vertices)?;
-    let faces = baked
-        .validated_faces()
-        .map_err(InvalidLeafGeometry::Faces)?;
-    faces
-        .validated_edge_manifold()
-        .map_err(InvalidLeafGeometry::Manifold)
+    baked.make_sliceable().map_err(InvalidLeafGeometry::from)
 }
 
 /// Runs the shared per-leaf pipeline: intersects every scheduled Z plane with

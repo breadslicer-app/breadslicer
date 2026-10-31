@@ -135,12 +135,50 @@ pub(crate) fn stack(layers: usize) -> ContourStack {
     )
 }
 
+/// The layers [`gapped_stack`] leaves without contours.
+pub(crate) const DARK_LAYERS: [usize; 2] = [2, 5];
+
+/// [`stack`] of 6 layers with a gap: layer 2 and the top layer, 5, have no
+/// contours (#309).
+pub(crate) fn gapped_stack() -> ContourStack {
+    ContourStack::new_unchecked(
+        stack(6)
+            .layers()
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                if DARK_LAYERS.contains(&index) {
+                    ContourLayer::new(layer.z_mm(), Vec::new())
+                } else {
+                    layer.clone()
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Checks that every layer read back from a file of [`gapped_stack`] lights a
+/// pixel, and that the layers without contours light exactly one, at
+/// `placeholder` once read back.
+pub(crate) fn assert_no_dark_layer(layers: &[Vec<u8>], placeholder: u8) {
+    assert_eq!(layers.len(), 6);
+    for (index, image) in layers.iter().enumerate() {
+        let lit: Vec<u8> = image.iter().copied().filter(|&grey| grey > 0).collect();
+        if DARK_LAYERS.contains(&index) {
+            assert_eq!(lit, [placeholder], "layer {index}");
+        } else {
+            assert!(lit.len() > 1, "layer {index}");
+        }
+    }
+}
+
 /// The slicer's own layer images: rows in file order, one grey per pixel.
 pub(crate) fn expected_images(stack: &ContourStack, raster: &RasterSetup) -> Vec<Vec<u8>> {
     let mut images = Vec::new();
     write_layer_images(
         stack,
         raster,
+        1,
         |_, runs| {
             let mut image = Vec::new();
             for run in runs {

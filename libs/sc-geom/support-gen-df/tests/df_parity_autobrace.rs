@@ -14,6 +14,8 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+mod df_analytics;
+
 use support_gen_df::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_bracing::settings::AutoBracingSettings;
@@ -263,11 +265,9 @@ fn auto_bracing_matches_dragonfruit() {
                     &plan.support.collections,
                     &expected["support"],
                 );
-                check(
-                    &format!("{path}.analytics"),
-                    &plan.analytics,
-                    &expected["analytics"],
-                );
+                let (analytics, oracle) =
+                    df_analytics::comparable(&plan.analytics, &expected["analytics"]);
+                check(&format!("{path}.analytics"), analytics, &oracle);
                 drop(ctx);
                 // Brace the committed forest twice in a row. Each pass reads
                 // the store as DragonFruit's commit normalised it.

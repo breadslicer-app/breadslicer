@@ -12,8 +12,8 @@ use crate::primitives::{FaceIndex, IndexedTriangle};
 pub enum MeshFix {
     /// A face was removed because it had a zero-length edge.
     RemovedZeroLengthEdgeFace { face_idx: FaceIndex },
-    /// A face's winding order was flipped (vertices reversed).
-    FlippedFaceOrientation { face_idx: FaceIndex },
+    /// A face was removed because it named a vertex that does not exist.
+    RemovedOutOfRangeFace { face_idx: FaceIndex },
     /// A collinear face (zero area, 3 distinct vertices, 1 edge longer than the
     /// other 2) was removed, and the 2 faces beside its short edges became 1
     /// face, which took the place of the 1st of `merged_neighbours`. The record
@@ -31,6 +31,10 @@ pub enum MeshFix {
         opposite: IndexedTriangle,
         halves: [IndexedTriangle; 2],
     },
+    /// Faces that cancelled out with a copy in the opposite winding (same 3
+    /// positions: the double wall of 2 parts glued face to face) were
+    /// removed, both copies.
+    RemovedOppositeFaces { faces: usize },
     /// Faces that repeated an earlier face (same 3 positions, same winding:
     /// a part stored twice) were removed; 1 copy of each stays.
     RemovedDuplicateFaces { faces: usize },
