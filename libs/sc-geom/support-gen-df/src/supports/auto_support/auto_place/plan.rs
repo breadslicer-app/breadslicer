@@ -191,6 +191,60 @@ pub struct PlanInput<'a> {
     pub brace_meshes: &'a BraceMeshes<'a>,
 }
 
+/// A tip within this of an island's contact covers it (islands without
+/// contact voxels); the base of the radius for those with them.
+pub const SUPPORT_COVERAGE_RADIUS_MM: f64 = 4.0;
+
+/// Which islands the tips cover: an island is covered when at least 90 % of
+/// its contact region lies within reach of a tip.
+struct IslandCoverage {
+    supported_ids: HashSet<String>,
+    covered_area: f64,
+    total_area: f64,
+}
+
+impl IslandCoverage {
+    fn area_fraction(&self) -> f64 {
+        if self.total_area > 0.0 {
+            self.covered_area / self.total_area
+        } else {
+            0.0
+        }
+    }
+}
+
+fn island_coverage(islands: &[DetectedIsland], tips: &[Vec3]) -> IslandCoverage {
+    let cov_r2 = SUPPORT_COVERAGE_RADIUS_MM * SUPPORT_COVERAGE_RADIUS_MM;
+    let mut out = IslandCoverage {
+        supported_ids: HashSet::new(),
+        covered_area: 0.0,
+        total_area: 0.0,
+    };
+    for island in islands {
+        let area = island.area_mm2.unwrap_or(0.0);
+        out.total_area += area;
+        let fraction = if island.contact_voxels.as_ref().is_some_and(|v| v.count > 0) {
+            compute_region_coverage(
+                island,
+                tips,
+                coverage_radius_for_area(area, SUPPORT_COVERAGE_RADIUS_MM),
+            )
+        } else {
+            let c = island.contact;
+            let hit = tips.iter().any(|t| {
+                let (dx, dy, dz) = (c.x - t.x, c.y - t.y, c.z - t.z);
+                dx * dx + dy * dy + dz * dz <= cov_r2
+            });
+            if hit { 1.0 } else { 0.0 }
+        };
+        out.covered_area += area * fraction;
+        if fraction >= 0.9 {
+            out.supported_ids.insert(island.id.clone());
+        }
+    }
+    out
+}
+
 fn empty_placed_counts() -> IndexMap<SupportTypeId, i64> {
     SupportTypeId::ALL.into_iter().map(|t| (t, 0)).collect()
 }
@@ -754,34 +808,11 @@ pub fn compute_auto_support_plan(
     perf::measure("auto:gap-fill");
     perf::mark("auto:analytics");
     // ── Coverage analytics ───────────────────────────────────────────
-    const SUPPORT_COVERAGE_RADIUS_MM: f64 = 4.0;
-    let cov_r2 = SUPPORT_COVERAGE_RADIUS_MM * SUPPORT_COVERAGE_RADIUS_MM;
-    let all_tips = collect_contact_positions(&run.draft);
-    let mut supported_ids: HashSet<String> = HashSet::new();
-    let mut covered_area = 0.0;
-    let mut total_area = 0.0;
-    for island in islands {
-        let area = island.area_mm2.unwrap_or(0.0);
-        total_area += area;
-        let fraction = if island.contact_voxels.as_ref().is_some_and(|v| v.count > 0) {
-            compute_region_coverage(
-                island,
-                &all_tips,
-                coverage_radius_for_area(area, SUPPORT_COVERAGE_RADIUS_MM),
-            )
-        } else {
-            let c = island.contact;
-            let hit = all_tips.iter().any(|t| {
-                let (dx, dy, dz) = (c.x - t.x, c.y - t.y, c.z - t.z);
-                dx * dx + dy * dy + dz * dz <= cov_r2
-            });
-            if hit { 1.0 } else { 0.0 }
-        };
-        covered_area += area * fraction;
-        if fraction >= 0.9 {
-            supported_ids.insert(island.id.clone());
-        }
-    }
+    let IslandCoverage {
+        mut supported_ids,
+        mut covered_area,
+        total_area,
+    } = island_coverage(islands, &collect_contact_positions(&run.draft));
 
     let sizing_debug = model_ctx
         .as_ref()
@@ -1186,7 +1217,12 @@ pub fn compute_auto_support_plan(
                         false,
                     );
                     match result.kind {
-                        None => run.rejected_count += 1,
+                        None => {
+                            run.rejected_count += 1;
+                            if let Some(reason) = result.rejected_reason {
+                                bump_reason(&mut run.rejection_reasons, reason);
+                            }
+                        }
                         Some(kind) => *run.placed.get_mut(&kind).expect("every type") += 1,
                     }
                     if let Some(preset) = result.preset {
@@ -1298,6 +1334,25 @@ pub fn compute_auto_support_plan(
         run.draft = braced;
     }
     perf::measure("auto:bracing");
+    perf::mark("auto:final-coverage");
+    // ── 6. Coverage of the supports the plan hands back ─────────────
+    // The counts above drive the fanning and stop there; the cull may still
+    // take tips away, so the analytics report what is left at the end.
+    let end = island_coverage(islands, &collect_contact_positions(&run.draft));
+    analytics.islands_covered = end.supported_ids.len() as i64;
+    analytics.islands_uncovered = islands.len() as i64 - end.supported_ids.len() as i64;
+    analytics.area_coverage = end.area_fraction();
+    analytics.rejection_reasons = run.rejection_reasons.clone();
+    if let Some(scan) = analytics
+        .forest_report
+        .as_mut()
+        .and_then(|f| f.scan.as_mut())
+    {
+        scan.coverage_percent = analytics.area_coverage * 100.0;
+        scan.uncovered_islands = analytics.islands_uncovered.max(0) as usize;
+        scan.rejection_reasons = Some(run.rejection_reasons.clone());
+    }
+    perf::measure("auto:final-coverage");
 
     let result = AutoPlaceResult {
         placed: run.placed,

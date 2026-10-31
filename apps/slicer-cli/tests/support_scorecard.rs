@@ -42,10 +42,14 @@
 //! - **The engine's own islands**: how many, how many rest on the model
 //!   already, and how many are left without a tip within their radius
 //!   + 2 mm once the plan is done (coverage counted after the cull).
+//! - **The engine's coverage analytics** (islands it leaves uncovered and the
+//!   share of island area covered, both counted after the cull), recounted
+//!   here from each plan's supports with the same rule: the two must agree.
 //! - **Tips**: count, per cm² of overhang (down-facing area, projected), tip
 //!   pairs closer than 0.8 mm, contacts that rest on model material, and
 //!   supports that stand on the model (sticks, stumps and twigs).
-//! - **Rejections and culls** by reason, as the plan reports them.
+//! - **Rejections and culls** by reason, as the plan reports them (the
+//!   reasons must add up to the rejections).
 //! - **Support pieces inside the model**: each support tessellated alone,
 //!   every vertex checked against the model's exact distance field, confirmed
 //!   by ray parity.
@@ -96,6 +100,10 @@ use support_gen_df::features::slicing::support_world_triangles::{
 use support_gen_df::pipeline::{
     CancelToken, ModelInput, PipelineOutput, PipelineSettings, plan_supports_with, world_soup,
 };
+use support_gen_df::supports::auto_support::auto_place::plan::SUPPORT_COVERAGE_RADIUS_MM;
+use support_gen_df::supports::auto_support::coverage::{
+    compute_region_coverage, coverage_radius_for_area,
+};
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_primitives::contact_cone::types::ContactCone;
@@ -103,6 +111,7 @@ use support_gen_df::supports::types::{SupportCollections, SupportState, Vec3};
 use support_gen_df::three::Matrix4;
 use support_gen_df::three::ray::Ray;
 use support_gen_df::three_mesh_bvh::{MeshBvh, Side};
+use support_gen_df::volume_analysis::islands::types::DetectedIsland;
 
 /// The printer and material every scene is measured with.
 const PRINTER: &str = "printers/anycubic-photon-mono-m7-pro.toml";
@@ -747,6 +756,13 @@ struct Placement {
     islands: usize,
     islands_on_solid: usize,
     islands_without_tip: usize,
+    /// Islands the engine reports uncovered at the end of its plans.
+    islands_uncovered: i64,
+    /// The share of island area the engine reports covered (all models).
+    area_coverage: f64,
+    /// The same two, recounted here from each plan's supports.
+    recount_uncovered: i64,
+    recount_coverage: f64,
     tips: usize,
     tips_by_kind: Vec<(&'static str, usize)>,
     close_pairs: usize,
@@ -762,6 +778,26 @@ struct Placement {
     through_model: usize,
     buried_tips: usize,
     tessellation_errors: usize,
+}
+
+/// The share of an island the tips cover, by the engine's rule: its contact
+/// region within reach of a tip, or, for an island without one, a tip within
+/// the coverage radius of its contact. Covered from 90 % up.
+fn island_coverage(island: &DetectedIsland, tips: &[Vec3]) -> f64 {
+    let area = island.area_mm2.unwrap_or(0.0);
+    if island.contact_voxels.as_ref().is_some_and(|v| v.count > 0) {
+        return compute_region_coverage(
+            island,
+            tips,
+            coverage_radius_for_area(area, SUPPORT_COVERAGE_RADIUS_MM),
+        );
+    }
+    let c = island.contact;
+    let near = tips.iter().any(|t| {
+        let (dx, dy, dz) = (c.x - t.x, c.y - t.y, c.z - t.z);
+        dx * dx + dy * dy + dz * dz <= SUPPORT_COVERAGE_RADIUS_MM * SUPPORT_COVERAGE_RADIUS_MM
+    });
+    if near { 1.0 } else { 0.0 }
 }
 
 fn sorted_counts<K: Ord + Clone>(map: HashMap<K, usize>) -> Vec<(K, usize)> {
@@ -860,6 +896,37 @@ fn placement(
     }
     p.rejection_reasons = sorted_counts(rejections);
     p.cull_reasons = sorted_counts(culls);
+
+    // The engine's coverage, area-weighted over the models, and the same
+    // rule applied here to the supports each plan hands back (a plan builds
+    // on the earlier models' supports, so it sees their tips too).
+    let (mut engine_area, mut recount_area, mut total_area) = (0.0, 0.0, 0.0);
+    for m in &out.models {
+        let Some(plan) = &m.plan else { continue };
+        let islands = &m.islands.filtered;
+        let area: f64 = islands.iter().map(|i| i.area_mm2.unwrap_or(0.0)).sum();
+        total_area += area;
+        engine_area += plan.analytics.area_coverage * area;
+        p.islands_uncovered += plan.analytics.islands_uncovered;
+        let tips: Vec<Vec3> = tips_of(&plan.support.collections)
+            .iter()
+            .map(|t| t.pos)
+            .collect();
+        let fractions: Vec<f64> = islands
+            .par_iter()
+            .map(|i| island_coverage(i, &tips))
+            .collect();
+        recount_area += islands
+            .iter()
+            .zip(&fractions)
+            .map(|(i, f)| i.area_mm2.unwrap_or(0.0) * f)
+            .sum::<f64>();
+        p.recount_uncovered += fractions.iter().filter(|f| **f < 0.9).count() as i64;
+    }
+    if total_area > 0.0 {
+        p.area_coverage = engine_area / total_area;
+        p.recount_coverage = recount_area / total_area;
+    }
 
     // Each support tessellated alone, every vertex against every model.
     let mut raft = settings.rafts.global;
@@ -1257,7 +1324,7 @@ fn run_scene(
 const HEADER: &str = "scene\tmodels\ttriangles\tmodel_top_mm\toverhang_mm2\t\
 review_unsupported\treview_weak\treview_floating_support\treview_weak_support\treview_island_errors\t\
 floating_parts\tmodel_in_raft\t\
-islands\tislands_on_solid\tislands_without_tip\t\
+islands\tislands_on_solid\tislands_without_tip\tislands_uncovered\tarea_coverage\t\
 tips\ttips_per_cm2\tclose_tip_pairs\tresting_on_model\tstanding_on_model\t\
 through_model\tburied_tips\ttessellation_errors\t\
 rejected\trejection_reasons\tculled\tcull_reasons\t\
@@ -1304,10 +1371,12 @@ fn row(s: &Score) -> String {
     }
     write!(
         r,
-        "{}\t{}\t{}\t{}\t{:.2}\t{}\t{}\t{}\t{}\t{}\t{}\t",
+        "{}\t{}\t{}\t{}\t{:.4}\t{}\t{:.2}\t{}\t{}\t{}\t{}\t{}\t{}\t",
         p.islands,
         p.islands_on_solid,
         p.islands_without_tip,
+        p.islands_uncovered,
+        p.area_coverage,
         p.tips,
         per_cm2,
         p.close_pairs,
@@ -1387,8 +1456,8 @@ fn row(s: &Score) -> String {
 /// The scorecard's headline, 1 line per scene, for the log.
 fn summary(scores: &[Score]) -> String {
     let mut out = String::from(
-        "| scene | review islands (unsupported/weak) | floating supports | engine islands | without tip | tips | tips/cm² | pairs <0.8 | resting | through | rejected | culled | support length mm | support mm³ (raft) | resin mm³ | height mm | peak peel N | gen s | deterministic |\n\
-         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+        "| scene | review islands (unsupported/weak) | floating supports | engine islands | without tip | uncovered | area covered | tips | tips/cm² | pairs <0.8 | resting | through | rejected | culled | support length mm | support mm³ (raft) | resin mm³ | height mm | peak peel N | gen s | deterministic |\n\
+         |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for s in scores {
         let p = &s.placement;
@@ -1417,12 +1486,14 @@ fn summary(scores: &[Score]) -> String {
         };
         writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {:.1} | {} | {} | {} | {} | {} | {:.0} | {} | {} | {} | {} | {:.1} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {:.1} % | {} | {:.1} | {} | {} | {} | {} | {} | {:.0} | {} | {} | {} | {} | {:.1} | {} |",
             s.name,
             review,
             floating,
             p.islands,
             p.islands_without_tip,
+            p.islands_uncovered,
+            p.area_coverage * 100.0,
             p.tips,
             per_cm2,
             p.close_pairs,
@@ -1500,6 +1571,13 @@ fn support_scorecard() {
             p.on_model
         );
         eprintln!(
+            "  engine coverage: {} islands uncovered, {:.2} % of the area covered (recount: {}, {:.2} %)",
+            p.islands_uncovered,
+            p.area_coverage * 100.0,
+            p.recount_uncovered,
+            p.recount_coverage * 100.0
+        );
+        eprintln!(
             "  rejected {} ({}); culled {} ({}); through the model {}, tips buried {}, tessellation errors {}",
             p.rejected,
             joined(&p.rejection_reasons),
@@ -1573,6 +1651,22 @@ fn support_scorecard() {
         disagreeing.is_empty(),
         "runs disagree on: {}",
         disagreeing.join(", ")
+    );
+    let miscounted: Vec<&str> = scores
+        .iter()
+        .filter(|s| {
+            let p = &s.placement;
+            let reasons: usize = p.rejection_reasons.iter().map(|(_, n)| n).sum();
+            p.islands_uncovered != p.recount_uncovered
+                || (p.area_coverage - p.recount_coverage).abs() > 1e-9
+                || reasons != p.rejected
+        })
+        .map(|s| s.name.as_str())
+        .collect();
+    assert!(
+        miscounted.is_empty(),
+        "the engine's analytics disagree with the recount on: {}",
+        miscounted.join(", ")
     );
 }
 
