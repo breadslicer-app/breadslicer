@@ -148,10 +148,6 @@ pub enum GizmoHover {
 ///   The named axis is the active drag target and renders bright;
 ///   other axes in the same category render dim.
 //
-// `IdleMoveOnly` is `Idle` with several objects selected: only the
-// translate arrows show, since they alone move a group (#13; turning and
-// scaling one is #218).
-//
 // `DraggingRotate` / `DraggingScaleAxis` have no controller-side
 // producer until the FSM extension lands; they're consumed by tests
 // today.
@@ -161,7 +157,6 @@ pub enum GizmoVisibility {
     DraggingTranslate { axis: Axis },
     DraggingRotate { axis: Axis },
     DraggingScaleAxis { axis: Axis },
-    IdleMoveOnly,
 }
 
 /// Translate / scale per-axis colours (full saturation). The renderer

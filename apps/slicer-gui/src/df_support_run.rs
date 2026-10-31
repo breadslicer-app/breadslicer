@@ -3705,6 +3705,87 @@ mod hand_edit_tests {
         });
     }
 
+    /// #13, #218: `R` about Z with two supported models selected turns them
+    /// together about their shared centre and their sets follow, redrawn and
+    /// editable; `S` scales them together and takes the sets away for new
+    /// ones (#153). Each is one Undo step.
+    #[test]
+    fn turning_and_scaling_several_supported_models_together_treats_their_sets_as_one_models() {
+        use crate::camera::{AxisView, OrbitCamera};
+        use crate::selection::{LeafId, Selection};
+        use crate::viewport::ScreenPoint;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, run, leaves) =
+                supported_in(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let document = ctrl.document();
+            let before: Vec<Transform3D> = leaves
+                .iter()
+                .map(|&l| leaf_transform(&document, l))
+                .collect();
+            let meshes: Vec<_> = leaves
+                .iter()
+                .map(|&l| set_of(&document, &run, l).1)
+                .collect();
+            ctrl.set_section(WorkspaceSection::Transform);
+            ctrl.set_viewport_for_test(400.0, 200.0);
+            let mut camera = OrbitCamera::new(glam::Vec3::new(35.0, 20.0, 8.0), 100.0);
+            camera.set_axis_view(AxisView::Top);
+            ctrl.set_camera_for_test(camera.clone());
+            let centre = crate::picking::project_world_to_screen(
+                &camera,
+                crate::mesh_render::default_fov_y(),
+                400.0,
+                200.0,
+                glam::Vec3::new(35.0, 20.0, 8.0),
+            )
+            .expect("in view");
+            document.set_selection(Selection::of(leaves.iter().map(|&l| LeafId(l))));
+            let mods = crate::PointerModifiers::default;
+
+            // R, Z, a quarter turn of the cursor about the centre.
+            ctrl.on_modal_transform_start(1, centre.0 + 40.0, centre.1);
+            ctrl.on_modal_transform_axis(2, centre.0 + 40.0, centre.1);
+            ctrl.on_pointer_move(ScreenPoint::new(centre.0, centre.1 - 40.0), mods());
+            ctrl.on_modal_transform_finish(true);
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_ne!(leaf_transform(&document, l), before[i], "turned");
+                assert!(
+                    !Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
+                    "its set redrawn where it turned to"
+                );
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(leaf_transform(&document, l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]));
+            }
+
+            // S: twice the size, about the shared centre.
+            document.set_selection(Selection::of(leaves.iter().map(|&l| LeafId(l))));
+            ctrl.on_modal_transform_start(2, centre.0 + 40.0, centre.1);
+            ctrl.on_pointer_move(ScreenPoint::new(centre.0 + 80.0, centre.1), mods());
+            ctrl.on_modal_transform_finish(true);
+            let (_, wanted) = document.supports_wanted().expect("new supports wanted");
+            let mut ids = wanted.ids();
+            ids.sort();
+            let mut expected = leaves.clone();
+            expected.sort();
+            assert_eq!(ids, expected, "both models wait for new supports");
+            assert!(run.sets_in_force().is_empty(), "the old sets went");
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(leaf_transform(&document, l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]));
+            }
+        });
+    }
+
     /// #182: an Orient option that tilts a supported model takes its set
     /// away in the same Undo step and leaves the model waiting for new
     /// supports (#153); one Undo puts the pose and the set back.

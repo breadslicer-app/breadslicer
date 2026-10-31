@@ -1207,9 +1207,7 @@ impl Renderer {
         // data.
         let render_translate = matches!(
             frame.visibility,
-            GizmoVisibility::Idle
-                | GizmoVisibility::IdleMoveOnly
-                | GizmoVisibility::DraggingTranslate { .. }
+            GizmoVisibility::Idle | GizmoVisibility::DraggingTranslate { .. }
         );
         let render_rotate = matches!(
             frame.visibility,

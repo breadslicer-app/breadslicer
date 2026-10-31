@@ -1081,7 +1081,7 @@ export component MainWindow inherits Window {
                         icon: Icons.rotate;
                         label: @tr("Inspector" => "Rotate");
                         shortcut: "R";
-                        enabled: root.has-scene && root.selected-object-index >= 0 && root.selected-object-count <= 1;
+                        enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
                             root.orient-close-requested();
                             root.gizmo-focus-rotate-pressed();
@@ -1091,7 +1091,7 @@ export component MainWindow inherits Window {
                         icon: Icons.scale;
                         label: @tr("Inspector" => "Scale");
                         shortcut: "S";
-                        enabled: root.has-scene && root.selected-object-index >= 0 && root.selected-object-count <= 1;
+                        enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
                             root.orient-close-requested();
                             root.gizmo-focus-scale-pressed();

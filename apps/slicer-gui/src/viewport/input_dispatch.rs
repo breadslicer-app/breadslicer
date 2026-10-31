@@ -262,6 +262,13 @@ impl InputDispatch {
         // listener schedules the redraw.
         let _ = self.gizmo_fsm.on_move(move_ctx);
 
+        // While a selection box is drawn, the gizmo under it does not light
+        // up: a hover change would redraw the whole scene, and the box must
+        // cost next to nothing to follow the cursor (#13).
+        if self.box_from.get().is_some() {
+            return self.gizmo_fsm.clear_hover();
+        }
+
         let group = document.selection_node_ids();
         let hover_ctx = GizmoHoverCtx {
             document,
@@ -349,12 +356,7 @@ impl InputDispatch {
         document: &Rc<SceneDocument>,
         focus: KbdFocus,
     ) -> Option<KbdFocus> {
-        // Several selected objects move together (#13); turning or scaling
-        // them together is #218.
-        let has_selection = match focus {
-            KbdFocus::Translate => document.selection_len() > 0,
-            _ => document.selection_len() == 1,
-        };
+        let has_selection = document.selection_len() > 0;
         if self.kbd_drive.try_set_focus(document, focus, has_selection) {
             Some(focus)
         } else {

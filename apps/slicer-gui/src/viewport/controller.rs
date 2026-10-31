@@ -1415,13 +1415,10 @@ impl ViewportController {
         let Some(node_id) = document.selection_primary_node_id() else {
             return;
         };
-        // Several objects move together (#13); turning or scaling them
-        // together is #218.
+        // Several objects move, turn and scale together about their shared
+        // centre (#13, #218).
         let group = document.selection_node_ids();
         let group_move = if group.len() > 1 {
-            if op != ModalOp::Move {
-                return;
-            }
             let Some(group_move) = GroupMove::capture(document, &group) else {
                 return;
             };
@@ -1554,20 +1551,34 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// One step of `G` with several objects selected: each moves by the
-    /// offset `proposed` gives the primary one, lifted as one so that none
-    /// sinks below the plate (unless it is moved along Z).
+    /// One step of `G`, `R` or `S` with several objects selected: each gets
+    /// the world transform `proposed` gives the primary one about their
+    /// shared centre. A move is lifted as one so that none sinks below the
+    /// plate (unless it is along Z); a turn or a scale keeps the group on the
+    /// plate as one object is kept.
     fn update_modal_group(&self, gesture: &ModalGesture, group: &GroupMove, proposed: Transform3D) {
-        let at = |t: &Transform3D| match gesture.parent.compose(t) {
-            Transform3D::Identity => [0.0; 3],
-            Transform3D::Affine(a) => *a.translation(),
+        let document = self.session.document();
+        let applied = if gesture.op == ModalOp::Move {
+            let at = |t: &Transform3D| match gesture.parent.compose(t) {
+                Transform3D::Identity => [0.0; 3],
+                Transform3D::Affine(a) => *a.translation(),
+            };
+            let (a, b) = (at(&gesture.original), at(&proposed));
+            let mut d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            if gesture.axis != Some(2) {
+                d[2] += group.floor_lift(document, d);
+            }
+            group.apply(document, d)
+        } else {
+            let Some(delta) = super::group_move::world_delta(
+                &gesture.parent.compose(&gesture.original),
+                &gesture.parent.compose(&proposed),
+            ) else {
+                return;
+            };
+            group.apply_world(document, group.kept_on_bed(document, delta))
         };
-        let (a, b) = (at(&gesture.original), at(&proposed));
-        let mut d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        if gesture.axis != Some(2) {
-            d[2] += group.floor_lift(self.session.document(), d);
-        }
-        if let Err(error) = group.apply(self.session.document(), d) {
+        if let Err(error) = applied {
             self.on_modal_transform_finish(false);
             if let EditNotApplied::Rejected(reason) = error {
                 self.show_edit_rejected(reason);

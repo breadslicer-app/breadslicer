@@ -359,9 +359,7 @@ impl KeyboardDriveState {
             return;
         };
         self.burst.arm(node_id, before);
-        let group = (self.focus.get() == KbdFocus::Translate)
-            .then(|| GroupMove::capture(document, &document.selection_node_ids()))
-            .flatten();
+        let group = GroupMove::capture(document, &document.selection_node_ids());
         self.group.replace(group.map(Rc::new));
     }
 
@@ -462,18 +460,24 @@ impl KeyboardDriveState {
             return false;
         };
 
-        // Several objects: each moves by the offset the burst has given the
-        // primary one since it began.
+        // Several objects: each gets the world transform the burst has given
+        // the primary one since it began, about their shared centre; a turn
+        // or a scale keeps the group on the plate.
         if let Some(group) = group
             && let Some((_, start)) = self.burst.armed.get()
         {
-            let at = |t: Transform3D| match parent_world.compose(&t) {
-                Transform3D::Identity => [0.0; 3],
-                Transform3D::Affine(a) => *a.translation(),
+            let Some(delta) = super::group_move::world_delta(
+                &parent_world.compose(&start),
+                &parent_world.compose(&new_transform),
+            ) else {
+                return false;
             };
-            let (a, b) = (at(start), at(new_transform));
-            let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            return group.apply(ctx.document, d).is_ok();
+            let delta = if focus == KbdFocus::Translate {
+                delta
+            } else {
+                group.kept_on_bed(ctx.document, delta)
+            };
+            return group.apply_world(ctx.document, delta).is_ok();
         }
 
         // Same policy as mouse drags: translation is free, also out of the

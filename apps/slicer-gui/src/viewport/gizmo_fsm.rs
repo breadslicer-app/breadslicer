@@ -27,7 +27,7 @@ use crate::scene_document::{SceneDocument, SceneEdit};
 use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
 };
-use super::group_move::{GroupMove, group_pivot};
+use super::group_move::{GroupMove, group_pivot, world_delta};
 use super::types::{ScreenPoint, ViewportSize};
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
@@ -37,7 +37,8 @@ pub(super) struct StartCtx<'a> {
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_id: Option<NodeId>,
     /// Every selected leaf. With more than one, the gizmo stands at their
-    /// shared centre and only its arrows grab, moving them all (#13).
+    /// shared centre and moves, turns or scales them all about it (#13,
+    /// #218).
     pub(super) group: &'a [NodeId],
     pub(super) press: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
@@ -174,7 +175,7 @@ impl GizmoFsm {
                 let camera = camera_slot.as_ref()?;
                 let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
-                let (winner, _) = handle_under(&ray, camera, pivot, fov_y, h, several)?;
+                let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
                 let original = spatial.leaf(sel_id)?.local_transform();
 
                 let op = match winner {
@@ -269,6 +270,7 @@ impl GizmoFsm {
 
         let x = ctx.cursor.x;
         let y = ctx.cursor.y;
+        let mut reanchored = false;
 
         // Compute the new transform and the (possibly mutated) op state inside
         // the document's read borrow + camera borrow. Both drop at the
@@ -299,6 +301,7 @@ impl GizmoFsm {
                     {
                         op = re_anchored.0;
                         original = re_anchored.1;
+                        reanchored = true;
                     }
                 }
                 let ray =
@@ -314,6 +317,40 @@ impl GizmoFsm {
         let Some((new_transform, new_op)) = result else {
             return false;
         };
+
+        // Several objects: each gets the world transform the handle gives the
+        // primary one about their shared centre. The cell is not borrowed
+        // while the edit notifies the listeners.
+        let group = self.group.borrow().clone();
+        if let Some(group) = group {
+            if reanchored {
+                group.rebase(ctx.document);
+            }
+            self.state.set(GizmoState::Drag {
+                op: new_op,
+                original,
+                pivot,
+                node_id,
+            });
+            let delta = ctx
+                .document
+                .with_scene(|spatial| {
+                    let parent = spatial.leaf(node_id)?.parent_world();
+                    world_delta(&parent.compose(&original), &parent.compose(&new_transform))
+                })
+                .flatten();
+            let Some(delta) = delta else {
+                return false;
+            };
+            // As for one object: a move is free, a turn or a scale keeps the
+            // group on the plate.
+            let delta = if matches!(new_op, DragOp::Translate { .. }) {
+                delta
+            } else {
+                group.kept_on_bed(ctx.document, delta)
+            };
+            return group.apply_world(ctx.document, delta).is_ok();
+        }
 
         // Translation is free, also out of the plate: the out-of-volume
         // warning marks it instead of holding it back. Rotation and scale
@@ -338,21 +375,6 @@ impl GizmoFsm {
             pivot,
             node_id,
         });
-
-        // Several objects: each moves by the offset the arrow gives the
-        // primary one.
-        // The cell is not borrowed while the edit notifies the listeners.
-        let group = self.group.borrow().clone();
-        if let Some(group) = group {
-            let offset = ctx
-                .document
-                .with_scene(|spatial| {
-                    let parent = spatial.leaf(node_id)?.parent_world();
-                    world_offset(&parent.compose(&original), &parent.compose(&new_transform))
-                })
-                .flatten();
-            return offset.is_some_and(|d| group.apply(ctx.document, d).is_ok());
-        }
 
         ctx.document
             .apply_edit(SceneEdit::SetLocalTransform {
@@ -458,26 +480,6 @@ fn front_most_handle(
     best
 }
 
-/// [`front_most_handle`], or the front-most arrow alone when `move_only`:
-/// with several objects selected the arrows are the only handles drawn,
-/// since turning and scaling them together waits for #218.
-fn handle_under(
-    ray: &picking::Ray,
-    camera: &OrbitCamera,
-    pivot: glam::Vec3,
-    fov_y: f32,
-    h: f32,
-    move_only: bool,
-) -> Option<(HandleHit, f32)> {
-    if !move_only {
-        return front_most_handle(ray, camera, pivot, fov_y, h);
-    }
-    let scale = gizmo::gizmo_scale(camera, pivot, fov_y, h)?;
-    let cyl_radius = gizmo::hit_radius_world(camera, pivot, fov_y, h)?;
-    gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius)
-        .map(|(axis, t)| (HandleHit::Translate(axis), t))
-}
-
 /// Pure-data hover computation: derives the front-most handle under the cursor
 /// without touching FSM state. `None` whenever the prereqs (selection / scene /
 /// camera / viewport / pivot) are missing or the cursor isn't over any handle.
@@ -495,7 +497,7 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
                 return None;
             }
             let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
-            let (hit, _) = handle_under(&ray, camera, pivot, fov_y, h, ctx.group.len() > 1)?;
+            let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
             Some(handle_hit_to_hover(hit))
         })
         .flatten()
@@ -513,18 +515,6 @@ pub(super) fn gizmo_pivot(
     } else {
         gizmo::pivot_for_leaf(spatial, primary)
     }
-}
-
-/// The offset in the world between two world transforms with the same
-/// linear part, as a translate drag makes.
-fn world_offset(from: &Transform3D, to: &Transform3D) -> Option<[f64; 3]> {
-    let at = |t: &Transform3D| match t {
-        Transform3D::Identity => [0.0; 3],
-        Transform3D::Affine(a) => *a.translation(),
-    };
-    let (a, b) = (at(from), at(to));
-    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    d.iter().all(|c| c.is_finite()).then_some(d)
 }
 
 /// Returns `false` when the cursor is far enough from the gizmo's projected

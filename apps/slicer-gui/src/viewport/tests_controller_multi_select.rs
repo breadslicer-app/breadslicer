@@ -3,8 +3,9 @@
 
 //! Selecting several objects (#13): Shift+click adds an object or takes it
 //! out, Shift+left drag selects with a box on top of what was selected, the
-//! object list agrees with the viewport, and Delete, `G` and the gizmo's
-//! arrows act on all of them, each as one undo step.
+//! object list agrees with the viewport, and Delete, the gizmo, `G`, `R` and
+//! `S` act on all of them about their shared centre (#218), each as one
+//! undo step.
 
 use std::sync::Arc;
 
@@ -65,6 +66,14 @@ fn models(n: usize, section: WorkspaceSection) -> ViewportController {
         .map(|i| (Piece::Model, [i as f64 * 6.0 - 6.0, 0.0, 0.0]))
         .collect();
     plate(&pieces, section)
+}
+
+/// [`models`], standing on the plate.
+fn resting_models(n: usize) -> ViewportController {
+    let pieces: Vec<(Piece, [f64; 3])> = (0..n)
+        .map(|i| (Piece::Model, [i as f64 * 6.0 - 6.0, 0.0, 0.5]))
+        .collect();
+    plate(&pieces, WorkspaceSection::Transform)
 }
 
 fn top_camera() -> OrbitCamera {
@@ -196,6 +205,22 @@ fn a_shift_drag_adds_what_its_box_touches_to_the_selection() {
     select_rows(&ctrl, &[1]);
     drag(&ctrl, [-4.0, 4.0, 0.0], [-2.0, 2.0, 0.0], shift());
     assert_eq!(selected(&ctrl), vec![1]);
+}
+
+#[test]
+fn a_box_drag_redraws_nothing_while_it_follows_the_cursor() {
+    // With objects selected the gizmo stands under the box's path; lighting
+    // its handles up would redraw the whole scene on the way.
+    let ctrl = models(3, WorkspaceSection::Transform);
+    select_rows(&ctrl, &[0, 2]);
+    let from = pixel([-9.0, 3.0, 0.0]);
+    ctrl.on_pointer_down(from, shift());
+    for i in 0..200 {
+        ctrl.clear_frame_state_for_test();
+        let p = ScreenPoint::new(from.x + i as f32 * 0.9, from.y + i as f32 * 0.35);
+        ctrl.on_pointer_move(p, shift());
+        assert!(!ctrl.redraw_owed_for_test(), "move {i} redrew the scene");
+    }
 }
 
 #[test]
@@ -360,20 +385,117 @@ fn cancelling_g_puts_every_selected_object_back_and_records_nothing() {
     assert!(!ctrl.document().can_undo());
 }
 
+fn linear(ctrl: &ViewportController, row: usize) -> [[f64; 3]; 3] {
+    let id = leaf(ctrl, row);
+    match ctrl
+        .document()
+        .with_scene(|s| s.leaf(id).map(|q| q.world_transform()))
+        .flatten()
+        .expect("a leaf")
+    {
+        Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        Transform3D::Affine(a) => *a.linear(),
+    }
+}
+
 #[test]
-fn r_and_s_wait_for_one_object_with_several_selected() {
+fn r_turns_every_selected_object_about_their_shared_centre_in_one_undo_step() {
+    let ctrl = resting_models(3);
+    select_rows(&ctrl, &[0, 2]);
+    let before: Vec<[f64; 3]> = (0..3).map(|r| translation(&ctrl, r)).collect();
+    // The shared centre is the middle cube's. R, then Z: a turn about the
+    // vertical, a quarter turn of the cursor about the centre.
+    let centre = pixel([0.0, 0.0, 0.5]);
+    ctrl.on_modal_transform_start(1, centre.x + 30.0, centre.y);
+    ctrl.on_modal_transform_axis(2, centre.x + 30.0, centre.y);
+    ctrl.on_pointer_move(
+        ScreenPoint::new(centre.x, centre.y - 30.0),
+        PointerModifiers::default(),
+    );
+    ctrl.on_modal_transform_finish(true);
+    let (a, b) = (translation(&ctrl, 0), translation(&ctrl, 2));
+    assert!(
+        (a[0].hypot(a[1]) - 6.0).abs() < 1e-4,
+        "still 6 mm out: {a:?}"
+    );
+    assert!(
+        (b[0].hypot(b[1]) - 6.0).abs() < 1e-4,
+        "still 6 mm out: {b:?}"
+    );
+    assert!(
+        (a[0] + b[0]).abs() < 1e-4 && (a[1] + b[1]).abs() < 1e-4,
+        "opposite"
+    );
+    assert!(a[1].abs() > 5.0, "a quarter turn: {a:?}");
+    assert!(
+        (a[2] - 0.5).abs() < 1e-9 && (b[2] - 0.5).abs() < 1e-9,
+        "on the plate as they were: {a:?} {b:?}"
+    );
+    assert!(
+        close(translation(&ctrl, 1), before[1]),
+        "the unselected one stays"
+    );
+    // Each one turned on itself as well, as a rigid group does.
+    assert!(linear(&ctrl, 0)[0][0].abs() < 1e-4);
+    let document = ctrl.document();
+    assert!(document.undo().unwrap());
+    assert!(!document.can_undo(), "one step");
+    for (r, &b) in before.iter().enumerate() {
+        assert!(close(translation(&ctrl, r), b));
+    }
+}
+
+#[test]
+fn s_scales_every_selected_object_about_their_shared_centre_in_one_undo_step() {
+    let ctrl = models(3, WorkspaceSection::Transform);
+    select_rows(&ctrl, &[0, 2]);
+    let before: Vec<[f64; 3]> = (0..3).map(|r| translation(&ctrl, r)).collect();
+    let centre = pixel([0.0, 0.0, 0.0]);
+    // Twice as far from the centre: twice the size.
+    ctrl.on_modal_transform_start(2, centre.x + 30.0, centre.y);
+    ctrl.on_pointer_move(
+        ScreenPoint::new(centre.x + 60.0, centre.y),
+        PointerModifiers::default(),
+    );
+    ctrl.on_modal_transform_finish(true);
+    let (a, b) = (translation(&ctrl, 0), translation(&ctrl, 2));
+    assert!((a[0] + 12.0).abs() < 1e-3, "twice as far: {a:?}");
+    assert!((b[0] - 12.0).abs() < 1e-3, "twice as far: {b:?}");
+    assert!((linear(&ctrl, 0)[0][0] - 2.0).abs() < 1e-3);
+    assert!((linear(&ctrl, 2)[1][1] - 2.0).abs() < 1e-3);
+    assert!((a[2] - b[2]).abs() < 1e-9, "lifted as one");
+    assert!(
+        close(translation(&ctrl, 1), before[1]),
+        "the unselected one stays"
+    );
+    let document = ctrl.document();
+    assert!(document.undo().unwrap());
+    assert!(!document.can_undo(), "one step");
+    for (r, &b) in before.iter().enumerate() {
+        assert!(close(translation(&ctrl, r), b));
+    }
+}
+
+#[test]
+fn cancelling_r_puts_every_selected_object_back() {
     let ctrl = models(2, WorkspaceSection::Transform);
     select_rows(&ctrl, &[0, 1]);
-    let start = pixel([0.0, 0.0, 0.0]);
-    for code in [1, 2] {
-        ctrl.on_modal_transform_start(code, start.x, start.y);
-        ctrl.on_pointer_move(
-            ScreenPoint::new(start.x + 30.0, start.y + 10.0),
-            PointerModifiers::default(),
-        );
-        ctrl.on_modal_transform_finish(true);
+    let before: Vec<[f64; 3]> = (0..2).map(|r| translation(&ctrl, r)).collect();
+    let centre = pixel([-3.0, 0.0, 0.0]);
+    ctrl.on_modal_transform_start(1, centre.x + 30.0, centre.y);
+    ctrl.on_pointer_move(
+        ScreenPoint::new(centre.x, centre.y + 30.0),
+        PointerModifiers::default(),
+    );
+    assert!(
+        !close(translation(&ctrl, 0), before[0]),
+        "turned while live"
+    );
+    ctrl.on_modal_transform_finish(false);
+    for (r, &b) in before.iter().enumerate() {
+        assert_eq!(translation(&ctrl, r), b);
     }
-    assert!(!ctrl.document().can_undo(), "nothing turned or scaled");
+    assert!(!ctrl.document().can_undo());
 }
 
 #[test]
@@ -382,12 +504,25 @@ fn the_gizmo_arrow_moves_every_selected_object_in_one_undo_step() {
     select_rows(&ctrl, &[0, 2]);
     let before: Vec<[f64; 3]> = (0..3).map(|r| translation(&ctrl, r)).collect();
     // The gizmo stands at the centre of the two cubes' box, the middle
-    // one's centre. Its X arrow runs right from there, the cone grabbing.
-    let camera = top_camera();
+    // one's centre. Its X arrow runs right from there, the cone grabbing; seen
+    // from the front, clear of the rotate handles.
+    let mut camera = OrbitCamera::new(Vec3::ZERO, 30.0);
+    camera.set_axis_view(AxisView::Front);
+    ctrl.set_camera_for_test(camera.clone());
+    // A viewport the whole gizmo fits in.
+    let (w, h) = (400.0, 200.0);
+    ctrl.set_viewport_for_test(w, h);
     let pivot = Vec3::ZERO;
-    let scale =
-        crate::gizmo::gizmo_scale(&camera, pivot, default_fov_y(), VIEW.1).expect("in view");
-    let on_arrow = pixel((pivot + Vec3::X * scale * 1.1).to_array());
+    let scale = crate::gizmo::gizmo_scale(&camera, pivot, default_fov_y(), h).expect("in view");
+    let (x, y) = crate::picking::project_world_to_screen(
+        &camera,
+        default_fov_y(),
+        w,
+        h,
+        pivot + Vec3::X * scale * 1.12,
+    )
+    .expect("in view");
+    let on_arrow = ScreenPoint::new(x, y);
     ctrl.on_pointer_down(on_arrow, PointerModifiers::default());
     ctrl.on_pointer_move(
         ScreenPoint::new(on_arrow.x + 10.0, on_arrow.y),
@@ -399,7 +534,12 @@ fn the_gizmo_arrow_moves_every_selected_object_in_one_undo_step() {
     );
     let moved: Vec<[f64; 3]> = (0..3).map(|r| translation(&ctrl, r)).collect();
     let dx = moved[0][0] - before[0][0];
-    assert!(dx > 0.1, "moved along X: {dx}");
+    assert!(
+        dx > 0.1,
+        "moved along X: {dx}; {moved:?} {:?} {:?}",
+        linear(&ctrl, 0),
+        linear(&ctrl, 2)
+    );
     assert!((moved[2][0] - before[2][0] - dx).abs() < 1e-6);
     assert!(close(moved[1], before[1]), "the unselected one stays");
     assert_eq!(selected(&ctrl), vec![0, 2], "the selection stays");
@@ -434,4 +574,90 @@ fn arrange_selection_moves_every_selected_model_and_nothing_else() {
     let document = ctrl.document();
     assert!(document.undo().unwrap());
     assert!(!document.can_undo(), "one step");
+}
+
+/// A flat grid of `n` x `n` quads, 2 n^2 triangles, a few mm across.
+fn grid_mesh(n: u32) -> sc_mesh_core::IndexedMesh {
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+    let mut vertices = Vec::new();
+    for j in 0..=n {
+        for i in 0..=n {
+            let (x, y) = (i as f32 / n as f32 - 0.5, j as f32 / n as f32 - 0.5);
+            vertices.push(Vertex::new([x * 4.0, y * 4.0, (x * 9.0).sin() * 0.3]));
+        }
+    }
+    let at = |i: u32, j: u32| j * (n + 1) + i;
+    let mut faces = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            faces.push(IndexedTriangle::from_raw_indices([
+                at(i, j),
+                at(i + 1, j),
+                at(i + 1, j + 1),
+            ]));
+            faces.push(IndexedTriangle::from_raw_indices([
+                at(i, j),
+                at(i + 1, j + 1),
+                at(i, j + 1),
+            ]));
+        }
+    }
+    sc_mesh_core::IndexedMesh::new(None, vertices, faces)
+}
+
+#[test]
+#[ignore]
+fn measure_box_drag_moves() {
+    let mesh = Arc::new(grid_mesh(700));
+    for (label, shared, preselected) in [
+        ("nothing selected", false, 0usize),
+        ("one selected", false, 1),
+        ("three selected, own meshes", false, 3),
+        ("three selected, one shared mesh turned", true, 3),
+    ] {
+        let mut scene = Scene::new();
+        let rid = scene.add_mesh_resource_arc(mesh.clone());
+        for k in 0..3 {
+            let place = AffineTransform3D::from_translation([k as f64 * 6.0 - 6.0, 0.0, 0.0])
+                .compose(&AffineTransform3D::from_rotation_z(k as f64 * 0.4));
+            let payload = if shared {
+                LeafPayload::MeshResource(rid)
+            } else {
+                LeafPayload::Mesh(Arc::new((*mesh).clone()))
+            };
+            let leaf = scene
+                .add_leaf(None, Transform3D::Affine(place), payload)
+                .expect("a leaf");
+            scene.add_root(leaf).expect("a root");
+        }
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_graph_for_test(scene);
+        ctrl.set_viewport_for_test(VIEW.0, VIEW.1);
+        ctrl.set_section(WorkspaceSection::Transform);
+        ctrl.set_camera_for_test(top_camera());
+        let rows: Vec<usize> = (0..preselected).collect();
+        select_rows(&ctrl, &rows);
+        let from = pixel([-9.0, 3.0, 0.0]);
+        // A first hover warms the caches, as the cursor does before a press.
+        ctrl.on_pointer_move(from, PointerModifiers::default());
+        ctrl.on_pointer_down(from, shift());
+        let mut dirty = 0;
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            ctrl.clear_frame_state_for_test();
+            let p = ScreenPoint::new(from.x + i as f32 * 1.6, from.y + i as f32 * 0.6);
+            ctrl.on_pointer_move(p, shift());
+            if ctrl.redraw_owed_for_test() {
+                dirty += 1;
+            }
+        }
+        let per_move = start.elapsed() / 100;
+        let release = std::time::Instant::now();
+        let to = ScreenPoint::new(from.x + 160.0, from.y + 60.0);
+        ctrl.on_pointer_up(to, shift());
+        eprintln!(
+            "{label}: {per_move:?} per move, {dirty}/100 owed a redraw; release {:?}",
+            release.elapsed()
+        );
+    }
 }

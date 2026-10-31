@@ -32,7 +32,7 @@ impl GizmoFrameComposer {
     /// [`GizmoFrame`] the renderer's gizmo pass consumes. Returns
     /// `None` when no leaf is selected or the selection has no
     /// pickable geometry. With several leaves in `group` (#13), the
-    /// gizmo stands at their shared centre and shows its arrows only.
+    /// gizmo stands at their shared centre.
     pub(super) fn compose(
         input: &InputDispatch,
         spatial: &SceneSpatial,
@@ -80,10 +80,6 @@ impl GizmoFrameComposer {
         let hover = input.gizmo_fsm().current_hover();
         let sel = selection?;
         if group.len() > 1 {
-            let visibility = match visibility {
-                GizmoVisibility::Idle => GizmoVisibility::IdleMoveOnly,
-                other => other,
-            };
             return build_gizmo_frame_at(
                 group_pivot(spatial, group)?,
                 camera,

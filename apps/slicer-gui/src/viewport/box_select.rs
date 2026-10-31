@@ -113,23 +113,14 @@ fn touches(spatial: &SceneSpatial, id: NodeId, projector: &Projector, rect: Scre
         return false;
     };
     let world = query.world_transform();
-    let Some(aabb) = query.transformed_aabb(world) else {
+    let Some(corners) = super::group_move::world_box_corners(&query) else {
         return false;
     };
-    let (lo, hi) = (
-        Vec3::from(aabb.min().coords()),
-        Vec3::from(aabb.max().coords()),
-    );
-    let corners = (0..8).map(|k| {
-        Vec3::new(
-            if k & 1 == 0 { lo.x } else { hi.x },
-            if k & 2 == 0 { lo.y } else { hi.y },
-            if k & 4 == 0 { lo.z } else { hi.z },
-        )
-    });
-    // The box's picture holds the object's. With a corner behind the eye it
-    // says nothing, and the triangles decide.
+    // The picture of the object's own box, carried into the world, holds the
+    // object's: off the box it is out, wholly inside it is in. With a corner
+    // behind the eye it says nothing, and the triangles decide.
     if let Some(shadow) = corners
+        .into_iter()
         .map(|c| projector.project(c))
         .collect::<Option<Vec<_>>>()
     {
