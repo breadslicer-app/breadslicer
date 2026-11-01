@@ -5202,6 +5202,9 @@ mod hand_edit_tests {
         });
     }
 
+    /// A face's centre (world mm) and whether the face looks down.
+    type FaceCentre = ([f32; 3], bool);
+
     /// A big real model (`path`, scaled to `height` mm tall when set) on the
     /// plate with its supports generated, as the measurements use it: the
     /// window, the run, and the centre of every face with whether it looks
@@ -5209,8 +5212,8 @@ mod hand_edit_tests {
     fn real_model_run(
         path: &str,
         height: Option<f32>,
-    ) -> (MainWindow, Rc<DfSupportRun>, Vec<([f32; 3], bool)>) {
-        let bytes = std::fs::read(&path).unwrap();
+    ) -> (MainWindow, Rc<DfSupportRun>, Vec<FaceCentre>) {
+        let bytes = std::fs::read(path).unwrap();
         let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
         let leaf = loaded.roots()[0];
         let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();

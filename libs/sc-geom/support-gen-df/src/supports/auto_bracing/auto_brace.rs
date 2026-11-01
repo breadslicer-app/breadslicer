@@ -888,7 +888,7 @@ fn lay_ladder(
             &brace_pairs,
             stack,
             settings.initial_distance_mm,
-            &arena,
+            arena,
             ladder,
             min_rise,
             settings.brace_diameter_mm,
