@@ -41,6 +41,10 @@ struct Document {
     recipe: SettingsRecipe,
     id_prefix: String,
     next_id: u64,
+    /// Whether supports were added or removed by hand. Documents written
+    /// before #3 leave it out and tell only additions, by their ids.
+    #[serde(default)]
+    hand_edited: Option<bool>,
     models: Vec<ModelPrint>,
     state: SupportState,
 }
@@ -53,6 +57,7 @@ struct DocumentView<'a> {
     recipe: &'a SettingsRecipe,
     id_prefix: &'a str,
     next_id: u64,
+    hand_edited: bool,
     models: Vec<ModelPrint>,
     state: &'a SupportState,
 }
@@ -203,6 +208,7 @@ impl DfSupportSession {
             recipe: recipe?,
             id_prefix,
             next_id,
+            hand_edited: self.hand_edited(),
             models: self.model_prints(),
             state: self.state(),
         })
@@ -261,6 +267,9 @@ impl DfSupportSession {
             ids.push(leaf);
         }
         let settings = document.recipe.settings();
+        let hand_edited = document
+            .hand_edited
+            .unwrap_or(document.next_id > crate::session::HAND_IDS_FROM);
         let session = DfSupportSession::restored(
             models,
             settings,
@@ -268,6 +277,7 @@ impl DfSupportSession {
             document.state,
             document.id_prefix,
             document.next_id,
+            hand_edited,
         );
         Ok((session, ids))
     }
