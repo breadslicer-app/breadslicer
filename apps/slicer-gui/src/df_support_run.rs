@@ -44,8 +44,9 @@ use sc_geom::JobError;
 use sc_geom::JobHandle;
 use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
-    DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, DfSupportSession, EditError,
-    EditPreview, RaftMode, ScanCache, start_df_prescan, start_df_supports,
+    AddNote, AddOptions, DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest,
+    DfSupportSession, EditError, EditPreview, RaftMode, ScanCache, start_df_prescan,
+    start_df_supports,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_print_profiles::resolve_layer_height;
@@ -171,6 +172,14 @@ pub(crate) struct DfSupportRun {
     last_preview: RefCell<Option<HoverAnswer>>,
     /// The worker's last ghost, kept on screen while the next is computed.
     last_ghost: RefCell<Option<Arc<OverlayMesh>>>,
+    /// The last point hovered with a hand tool, and whether Shift was held:
+    /// a new tip size previews there again.
+    hover_at: Cell<Option<([f32; 3], bool)>>,
+    /// The hand click being made off the UI thread, those that came while it
+    /// was, and the timer that looks for it.
+    pending_click: RefCell<Option<PendingClick>>,
+    queued_clicks: RefCell<std::collections::VecDeque<QueuedClick>>,
+    click_poll: slint::Timer,
     /// The raft warning (#131) is shown from a Generate press until a new
     /// scene is installed or closed; the scene subscription lowers it.
     raft_armed: Rc<Cell<bool>>,
@@ -258,9 +267,64 @@ impl HandTool {
     }
 }
 
+/// The zone sizes (#360) keys 1 to 4 pick for a support added by hand,
+/// smallest first: the Add tool's tip size 1 to 4 (0 is the preset's).
+const HAND_TIP_SIZES: [&str; 4] = ["extrasmall", "small", "medium", "large"];
+
+/// The size id of the Add tool's tip size `code` (the `support-tip-size`
+/// property), `None` for the preset's own.
+fn hand_tip_size(code: i32) -> Option<String> {
+    let i = usize::try_from(code).ok()?.checked_sub(1)?;
+    HAND_TIP_SIZES.get(i).map(|id| (*id).to_owned())
+}
+
+/// Why an addition does not hang from a support, or cannot be placed, in
+/// the person's words.
+fn note_text(note: AddNote) -> slint::SharedString {
+    match note {
+        AddNote::TooFar => ctr!("DfSupportDialog", "no support close enough to hang from"),
+        AddNote::NoneBelow => ctr!("DfSupportDialog", "no support below the tip to hang from"),
+        AddNote::TooSteep => ctr!(
+            "DfSupportDialog",
+            "hanging from the supports nearby would lean too far"
+        ),
+        AddNote::HitsModel => ctr!("DfSupportDialog", "it hits the model"),
+        AddNote::CrossesSupport => ctr!("DfSupportDialog", "it would cross another support"),
+        AddNote::HostsFull => ctr!("DfSupportDialog", "the supports nearby carry all they can"),
+        AddNote::SteepSurface => ctr!(
+            "DfSupportDialog",
+            "the surface there is too steep for a tip"
+        ),
+    }
+}
+
+/// The Add tool's line for a hover preview: what a click there does when it
+/// does not simply hang the support from another, and whether that warns.
+/// Empty for a support that hangs as asked.
+fn preview_line(preview: &EditPreview, attach: bool) -> (slint::SharedString, bool) {
+    let note = preview.note.map(note_text);
+    match (preview.valid, preview.attached, note) {
+        (true, true, _) => Default::default(),
+        (true, false, Some(why)) => (ctr!("DfSupportDialog", "Its own trunk: {}.", why), false),
+        (true, false, None) => Default::default(),
+        (false, _, Some(why)) if attach => {
+            (ctr!("DfSupportDialog", "Cannot hang it: {}.", why), true)
+        }
+        (false, _, Some(why)) => (ctr!("DfSupportDialog", "Cannot place it: {}.", why), true),
+        (false, _, None) => (
+            ctr!(
+                "DfSupportDialog",
+                "Cannot place it: no support can reach that point."
+            ),
+            true,
+        ),
+    }
+}
+
 /// Why the engine refused an edit, in the person's words.
 fn refusal(err: &EditError) -> slint::SharedString {
     match err {
+        EditError::CannotAttach(note) => note_text(*note),
         EditError::NothingThere => ctr!(
             "DfSupportDialog",
             "there is no model or support within reach of that point"
@@ -279,6 +343,145 @@ fn refusal(err: &EditError) -> slint::SharedString {
     }
 }
 
+/// The tip `id` draws for `session`, in mm: its preset's size of that id,
+/// else that of the shipped sizes (#360).
+fn tip_mm(session: Option<&DfSupportSession>, id: &str) -> Option<f64> {
+    session
+        .and_then(|s| s.options())
+        .and_then(|o| o.zones.as_ref())
+        .and_then(|z| z.rules.sizes.iter().find(|s| s.id == id))
+        .map(|s| s.tip_diameter_mm)
+        .or_else(|| {
+            sc_geom::df_supports::zone_presets::support_sizes()
+                .into_iter()
+                .find(|s| s.id == id)
+                .map(|s| s.tip_diameter_mm)
+        })
+}
+
+/// Where a set's share of a hand edit starts.
+enum EditStart {
+    /// The set's session as drawn: the edit is made on a copy.
+    Base(Arc<DfSupportSession>),
+    /// The session the preview of the very click left, the edit in it.
+    Previewed(Box<DfSupportSession>),
+}
+
+/// One set's share of a hand edit: where it starts and its points.
+struct EditJob {
+    start: EditStart,
+    points: Vec<IndexedPoint>,
+}
+
+/// A hand edit ready for the engine: the sets it edits and, in the same
+/// order, each one's share.
+struct Prepared {
+    sets: Vec<DrawnSet>,
+    jobs: Vec<EditJob>,
+}
+
+/// How a set's share of a hand edit came out.
+enum JobOutcome {
+    /// The engine panicked: an edit that failed, not lost work.
+    Panicked,
+    /// The supports could not be drawn.
+    Failed(EditError),
+    /// None of the set's points took.
+    Untouched,
+    /// The edit took the set's last support.
+    Emptied,
+    /// The edited session and its mesh.
+    Done(Box<DfSupportSession>, Arc<sc_mesh_core::IndexedMesh>),
+}
+
+/// A hand edit as the engine left it, for the UI thread to put in the scene.
+struct Computed {
+    outcomes: Vec<JobOutcome>,
+    /// The points the engine refused, by index, with why.
+    refused: Vec<(usize, EditError)>,
+    /// A preview's edit was taken.
+    reused: bool,
+}
+
+/// The engine's part of a hand edit, the slow one (placing, then drawing
+/// the whole set again): it runs on any thread.
+fn compute_edit(jobs: Vec<EditJob>, tool: HandTool, how: &AddOptions) -> Computed {
+    let mut refused = Vec::new();
+    let mut reused = false;
+    let outcomes = jobs
+        .into_iter()
+        .map(|EditJob { start, points }| {
+            let (mut edited, from_preview) = match start {
+                EditStart::Base(base) => (DfSupportSession::clone(&base), false),
+                EditStart::Previewed(edited) => (*edited, true),
+            };
+            reused |= from_preview;
+            // The port is DragonFruit's code on hand-picked input: a panic in
+            // it is an edit that failed, not a reason to lose the person's
+            // work.
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut took = from_preview;
+                if !from_preview {
+                    for (i, point) in &points {
+                        let p = point.map(f64::from);
+                        let edit = match tool {
+                            HandTool::Add => edited.add_at(p, how),
+                            HandTool::AddNear => {
+                                edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ())
+                            }
+                            HandTool::Remove => edited.remove_near(p).map(|_| ()),
+                        };
+                        match edit {
+                            Ok(()) => took = true,
+                            Err(err) => {
+                                crate::breadcrumbs::note(&format!(
+                                    "supports: point {i} refused: {err}"
+                                ));
+                                refused.push((*i, err));
+                            }
+                        }
+                    }
+                }
+                if !took {
+                    return Ok(None);
+                }
+                edited.mesh().map(Some)
+            }));
+            match done {
+                Err(_) => JobOutcome::Panicked,
+                Ok(Err(err)) => JobOutcome::Failed(err),
+                Ok(Ok(None)) => JobOutcome::Untouched,
+                Ok(Ok(Some(None))) => JobOutcome::Emptied,
+                Ok(Ok(Some(Some(mesh)))) => JobOutcome::Done(Box::new(edited), Arc::new(mesh)),
+            }
+        })
+        .collect();
+    Computed {
+        outcomes,
+        refused,
+        reused,
+    }
+}
+
+/// A hand click being made off the UI thread (#3).
+struct PendingClick {
+    /// The scene it was made on: one that moved on before the edit is ready
+    /// (another edit, a run) drops it.
+    revision: SceneRevision,
+    /// The sets it edits, in the order of the outcomes.
+    sets: Vec<DrawnSet>,
+    /// Points no set took, already told.
+    refused: Refusals,
+    done: std::sync::mpsc::Receiver<Computed>,
+}
+
+/// A click that came while another was being made: made once that one is in.
+struct QueuedClick {
+    tool: HandTool,
+    point: [f32; 3],
+    how: AddOptions,
+}
+
 /// A preview to compute: the session to edit, where, and with which tool.
 struct HoverAsk {
     generation: u64,
@@ -289,6 +492,8 @@ struct HoverAsk {
     from: (NodeId, usize),
     point: [f32; 3],
     tool: i32,
+    /// For an Add: how the support is made.
+    how: AddOptions,
     /// For a warm-up (`tool` 0): the other sets' sessions, warmed with it.
     others: Vec<Arc<DfSupportSession>>,
 }
@@ -305,6 +510,7 @@ struct HoverAnswer {
     from: (NodeId, usize),
     point: [f32; 3],
     tool: i32,
+    how: AddOptions,
     preview: Option<EditPreview>,
     /// For an Add that goes through: the session the click leaves.
     edited: Option<DfSupportSession>,
@@ -342,7 +548,7 @@ impl HoverWorker {
                     let p = ask.point.map(f64::from);
                     let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         if ask.tool == 1 {
-                            ask.base.preview_add(p)
+                            ask.base.preview_add_with(p, &ask.how)
                         } else {
                             ask.base.preview_remove_at(p).map(|v| (v, None))
                         }
@@ -357,6 +563,7 @@ impl HoverWorker {
                             from: ask.from,
                             point: ask.point,
                             tool: ask.tool,
+                            how: ask.how,
                             preview,
                             edited,
                         });
@@ -575,6 +782,10 @@ impl DfSupportRun {
             hover_poll: slint::Timer::default(),
             last_preview: RefCell::new(None),
             last_ghost: RefCell::new(None),
+            hover_at: Cell::new(None),
+            pending_click: RefCell::new(None),
+            queued_clicks: RefCell::new(std::collections::VecDeque::new()),
+            click_poll: slint::Timer::default(),
             raft_armed,
             raft_ignored: Cell::new(false),
             raft_layer_height_mm: Cell::new(DfSupportRequest::default().layer_height_mm),
@@ -584,15 +795,35 @@ impl DfSupportRun {
         });
         {
             let weak = Rc::downgrade(&run);
-            ui.on_support_tool_hover(move |x, y, z, hit| {
+            ui.on_support_tool_hover(move |x, y, z, hit, shift| {
                 if let Some(run) = weak.upgrade() {
-                    run.on_tool_hover(hit.then_some([x, y, z]));
+                    run.on_tool_hover_with(hit.then_some([x, y, z]), shift);
                 }
             });
         }
         {
-            let run = run.clone();
-            ui.on_support_tool_clicked(move |x, y, z| run.on_tool_click([x, y, z]));
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tool_clicked(move |x, y, z, forced| {
+                if let Some(run) = weak.upgrade() {
+                    run.on_tool_click_with([x, y, z], forced);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tool_changed(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.on_tool_changed();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tip_size_changed(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.on_tip_size_changed();
+                }
+            });
         }
         run.reload_presets();
         run.push_options(ui);
@@ -677,6 +908,11 @@ impl DfSupportRun {
         if ui.get_loading() || ui.get_support_gen_in_progress() || self.handle.borrow().is_some() {
             return;
         }
+        // A run replaces the supports a hand click being made would edit.
+        self.drop_click(ctr!(
+            "DfSupportDialog",
+            "Supports are being generated; the click was dropped."
+        ));
         self.raft_layer_height_mm
             .set(self.request_for_printer().layer_height_mm);
         self.raft_armed.set(true);
@@ -1418,9 +1654,18 @@ impl DfSupportRun {
     }
 
     /// The cursor moved over the model (`Some`) or off it with a hand tool
-    /// armed: the newest point goes to the preview worker; the UI never
-    /// waits for it.
+    /// armed, without Shift.
+    #[cfg(test)]
     fn on_tool_hover(self: &Rc<Self>, point: Option<[f32; 3]>) {
+        self.on_tool_hover_with(point, false);
+    }
+
+    /// The cursor moved over the model (`Some`) or off it with a hand tool
+    /// armed, `shift` held or not: the newest point goes to the preview
+    /// worker; the UI never waits for it. With Shift, Add previews hanging
+    /// the support from the nearest one (#3).
+    fn on_tool_hover_with(self: &Rc<Self>, point: Option<[f32; 3]>, shift: bool) {
+        self.hover_at.set(point.map(|p| (p, shift)));
         let generation = self.hover_generation.get() + 1;
         self.hover_generation.set(generation);
         let ask = point.and_then(|point| {
@@ -1429,18 +1674,18 @@ impl DfSupportRun {
             if tool == 0 || self.handle.borrow().is_some() {
                 return None;
             }
-            let hand = if tool == 1 {
-                HandTool::Add
-            } else {
-                HandTool::Remove
-            };
+            let (hand, how) = self.click_tool(&ui, tool, shift);
             let drawn = self.set_at(point, hand)?;
+            if hand == HandTool::Add {
+                self.refresh_tip_label(&ui, Some(&drawn.session));
+            }
             Some(HoverAsk {
                 generation,
                 base: drawn.session.clone(),
                 from: session_key(&drawn),
                 point,
                 tool,
+                how,
                 others: Vec::new(),
             })
         });
@@ -1449,6 +1694,7 @@ impl DfSupportRun {
             self.hover_shown.set(generation);
             *self.last_ghost.borrow_mut() = None;
             self.ctrl.set_preview_overlay(None);
+            self.show_add_note(Default::default());
             return;
         };
         if self.hover_worker.asks.send(ask).is_err() {
@@ -1461,6 +1707,78 @@ impl DfSupportRun {
                     run.take_hover_answer();
                 }
             });
+    }
+
+    /// The tool a click of the Supports tab's tool code `tool` is, and how
+    /// an Add makes its support: hung from the nearest one with `shift`, at
+    /// the tip size picked.
+    fn click_tool(&self, ui: &MainWindow, tool: i32, shift: bool) -> (HandTool, AddOptions) {
+        if tool == 1 {
+            let how = AddOptions {
+                attach: shift,
+                size: hand_tip_size(ui.get_support_tip_size()),
+            };
+            (HandTool::Add, how)
+        } else {
+            (HandTool::Remove, AddOptions::default())
+        }
+    }
+
+    /// A hand tool was armed or put away: a hover before it is no point to
+    /// preview again, and the Add card says which tip it places.
+    fn on_tool_changed(&self) {
+        self.hover_at.set(None);
+        self.show_add_note(Default::default());
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh_tip_label(&ui, None);
+        }
+    }
+
+    /// The tip size changed: the card says which, and the preview under the
+    /// cursor is made again with it.
+    fn on_tip_size_changed(self: &Rc<Self>) {
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh_tip_label(&ui, None);
+        }
+        if let Some((point, shift)) = self.hover_at.get() {
+            self.on_tool_hover_with(Some(point), shift);
+        }
+    }
+
+    /// The Add card's line on the tip it places, for `session`'s preset (the
+    /// first set in force's when `None`).
+    fn refresh_tip_label(&self, ui: &MainWindow, session: Option<&DfSupportSession>) {
+        let first = session
+            .is_none()
+            .then(|| self.sets_in_force().into_iter().next())
+            .flatten();
+        let session = session.or(first.as_ref().map(|d| d.session.as_ref()));
+        let label = match hand_tip_size(ui.get_support_tip_size()) {
+            Some(id) => match tip_mm(session, &id) {
+                Some(mm) => ctr!("Inspector", "{} mm tip", mm_text(mm)),
+                None => Default::default(),
+            },
+            None => match session
+                .and_then(|s| s.preset_hand_size().map(|id| (s, id)))
+                .and_then(|(s, id)| tip_mm(Some(s), id))
+            {
+                Some(mm) => ctr!("Inspector", "{} mm tip, the preset's", mm_text(mm)),
+                None => ctr!("Inspector", "Tip sized by the preset"),
+            },
+        };
+        if ui.get_support_tip_label() != label {
+            ui.set_support_tip_label(label);
+        }
+    }
+
+    /// The Add tool's line under the cursor, and whether it warns.
+    fn show_add_note(&self, (line, warns): (slint::SharedString, bool)) {
+        if let Some(ui) = self.ui.upgrade() {
+            if ui.get_support_add_note() != line {
+                ui.set_support_add_note(line);
+            }
+            ui.set_support_add_note_warns(warns);
+        }
     }
 
     /// Draws the worker's newest answer: the support a click adds (green, or
@@ -1493,6 +1811,11 @@ impl DfSupportRun {
             };
             Arc::new(overlay_of(&preview.mesh, tint))
         });
+        let line = match (&answer.preview, answer.tool) {
+            (Some(preview), 1) => preview_line(preview, answer.how.attach),
+            _ => Default::default(),
+        };
+        self.show_add_note(line);
         *self.last_ghost.borrow_mut() = piece;
         self.show_hover_overlay();
         *self.last_preview.borrow_mut() = Some(answer);
@@ -1518,11 +1841,20 @@ impl DfSupportRun {
             from: session_key(&first),
             point: [0.0; 3],
             tool: 0,
+            how: AddOptions::default(),
             others: sets.map(|drawn| drawn.session).collect(),
         });
     }
 
+    /// A click of the armed tool, made then and there: what the tests drive.
+    #[cfg(test)]
     fn on_tool_click(&self, point: [f32; 3]) {
+        self.on_tool_click_now(point, false);
+    }
+
+    /// [`Self::on_tool_click`], with Shift held or not.
+    #[cfg(test)]
+    fn on_tool_click_now(&self, point: [f32; 3], forced: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -1530,7 +1862,161 @@ impl DfSupportRun {
         if tool == 0 {
             return;
         }
-        self.hand_edit(&ui, tool, point);
+        let (tool, how) = self.click_tool(&ui, tool, forced);
+        self.hand_edits(&ui, tool, &[point], &how);
+    }
+
+    /// A click of the armed tool at `point`, `forced` for a Shift+click of
+    /// Add (#3). The edit is made off the UI thread: drawing a big set again
+    /// takes a good part of a second. A click that comes while another is
+    /// being made waits for it.
+    fn on_tool_click_with(self: &Rc<Self>, point: [f32; 3], forced: bool) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let tool = ui.get_support_tool();
+        if tool == 0 {
+            return;
+        }
+        let (tool, how) = self.click_tool(&ui, tool, forced);
+        if self.pending_click.borrow().is_some() {
+            self.queued_clicks
+                .borrow_mut()
+                .push_back(QueuedClick { tool, point, how });
+            return;
+        }
+        self.start_click(&ui, tool, point, how);
+    }
+
+    /// Starts the edit of a click on a worker thread; [`Self::poll_click`]
+    /// puts it in the scene once it is made, if the scene is still the one
+    /// clicked. Undo before then drops it ([`Self::drop_click`]).
+    fn start_click(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        tool: HandTool,
+        point: [f32; 3],
+        how: AddOptions,
+    ) {
+        let mut refused = Vec::new();
+        let Ok(Prepared { sets, jobs }) = self.prepare_edit(ui, tool, &[point], &how, &mut refused)
+        else {
+            self.queued_clicks.borrow_mut().clear();
+            return;
+        };
+        let (send, done) = std::sync::mpsc::channel();
+        let job = move || {
+            let _ = send.send(compute_edit(jobs, tool, &how));
+        };
+        // DragonFruit's router recurses: the same room as the hover worker.
+        let spawned = std::thread::Builder::new()
+            .name("support-hand-edit".into())
+            .stack_size(16 << 20)
+            .spawn(job);
+        if spawned.is_err() {
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "That edit failed inside the support engine; nothing was changed."
+            ));
+            return;
+        }
+        *self.pending_click.borrow_mut() = Some(PendingClick {
+            revision: self.document.scene_revision(),
+            sets,
+            refused,
+            done,
+        });
+        let weak = Rc::downgrade(self);
+        self.document.set_pending_edit(Some(Rc::new(move || {
+            if let Some(run) = weak.upgrade() {
+                run.drop_click(ctr!(
+                    "DfSupportDialog",
+                    "Undone before it was placed; nothing was changed."
+                ));
+            }
+        })));
+        // The preview stays on screen until the edit replaces it.
+        self.show_hover_overlay();
+        let weak = Rc::downgrade(self);
+        self.click_poll
+            .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
+                if let Some(run) = weak.upgrade() {
+                    run.poll_click();
+                }
+            });
+    }
+
+    /// Puts a click's edit in the scene once it is made, as one undoable
+    /// step, or drops it when the scene moved on meanwhile; then starts the
+    /// next click waiting.
+    fn poll_click(self: &Rc<Self>) {
+        let made = {
+            let pending = self.pending_click.borrow();
+            let Some(pending) = pending.as_ref() else {
+                self.click_poll.stop();
+                return;
+            };
+            match pending.done.try_recv() {
+                Ok(computed) => Some(computed),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+            }
+        };
+        self.click_poll.stop();
+        self.document.set_pending_edit(None);
+        let Some(pending) = self.pending_click.borrow_mut().take() else {
+            return;
+        };
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let Some(computed) = made else {
+            self.queued_clicks.borrow_mut().clear();
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "That edit failed inside the support engine; nothing was changed."
+            ));
+            return;
+        };
+        if self.document.scene_revision() != pending.revision || self.handle.borrow().is_some() {
+            // Another edit, or a run, came first: this one was made on a
+            // scene that is gone.
+            crate::breadcrumbs::note("supports: click dropped, the scene moved on");
+            self.queued_clicks.borrow_mut().clear();
+            *self.last_ghost.borrow_mut() = None;
+            self.ctrl.set_preview_overlay(None);
+            ui.set_supports_last_run(ctr!(
+                "DfSupportDialog",
+                "The scene changed before the support was placed; nothing was changed."
+            ));
+            return;
+        }
+        let mut refused = pending.refused;
+        self.commit_edit(&ui, pending.sets, computed, &mut refused);
+        // The edit is in: its preview would lie over it.
+        *self.last_ghost.borrow_mut() = None;
+        self.ctrl.set_preview_overlay(None);
+        let next = self.queued_clicks.borrow_mut().pop_front();
+        if let Some(next) = next {
+            self.start_click(&ui, next.tool, next.point, next.how);
+        }
+    }
+
+    /// Drops the click being made and those waiting, saying why: nothing of
+    /// them reaches the scene.
+    fn drop_click(&self, why: slint::SharedString) {
+        self.click_poll.stop();
+        self.queued_clicks.borrow_mut().clear();
+        if self.pending_click.borrow_mut().take().is_none() {
+            return;
+        }
+        self.document.set_pending_edit(None);
+        *self.last_ghost.borrow_mut() = None;
+        self.ctrl.set_preview_overlay(None);
+        crate::breadcrumbs::note("supports: click dropped");
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_supports_last_run(why);
+        }
     }
 
     /// Adds a support at every point of `points` (world mm), whose tip
@@ -1544,49 +2030,51 @@ impl DfSupportRun {
         let Some(ui) = self.ui.upgrade() else {
             return (HandEdit::Notified, Vec::new());
         };
-        self.hand_edits(&ui, HandTool::AddNear, points)
+        self.hand_edits(&ui, HandTool::AddNear, points, &AddOptions::default())
     }
 
-    /// Adds (tool 1) or removes (tool 2) a support at `point`. The outcome
-    /// also goes to the Supports tab's last-run line.
-    fn hand_edit(&self, ui: &MainWindow, tool: i32, point: [f32; 3]) -> HandEdit {
-        let tool = if tool == 1 {
-            HandTool::Add
-        } else {
-            HandTool::Remove
-        };
-        self.hand_edits(ui, tool, &[point]).0
-    }
-
-    /// Edits the supports at every point of `points` with `tool`, as one
-    /// undoable edit. A point the engine refuses is skipped and returned, by
-    /// index, with why; the edit fails when none took.
+    /// Edits the supports at every point of `points` with `tool`, an Add
+    /// made as `how` says, as one undoable edit, then and there. A point the
+    /// engine refuses is skipped and returned, by index, with why; the edit
+    /// fails when none took.
     fn hand_edits(
         &self,
         ui: &MainWindow,
         tool: HandTool,
         points: &[[f32; 3]],
+        how: &AddOptions,
     ) -> (HandEdit, Refusals) {
         if points.is_empty() {
             return (HandEdit::Notified, Vec::new());
         }
         let mut refused = Vec::new();
-        let outcome = self.hand_edits_counted(ui, tool, points, &mut refused);
+        let outcome = match self.prepare_edit(ui, tool, points, how, &mut refused) {
+            Ok(Prepared { sets, jobs }) => {
+                let computed = compute_edit(jobs, tool, how);
+                self.commit_edit(ui, sets, computed, &mut refused)
+            }
+            Err(outcome) => outcome,
+        };
         (outcome, refused)
     }
 
-    fn hand_edits_counted(
+    /// The part of a hand edit made on the UI thread before the engine
+    /// works: each point goes to the set it acts on, and a click on the point
+    /// last previewed takes the preview's edit. Points no set takes are
+    /// refused; with none taken, the edit ends here, told.
+    fn prepare_edit(
         &self,
         ui: &MainWindow,
         tool: HandTool,
         points: &[[f32; 3]],
+        how: &AddOptions,
         refused: &mut Refusals,
-    ) -> HandEdit {
+    ) -> Result<Prepared, HandEdit> {
         if self.handle.borrow().is_some() {
-            return HandEdit::Failed(ctr!(
+            return Err(HandEdit::Failed(ctr!(
                 "DfSupportDialog",
                 "Supports are being generated; try again when they are done."
-            ));
+            )));
         }
         let failed = |message: slint::SharedString| {
             ui.set_supports_last_run(message.clone());
@@ -1608,8 +2096,10 @@ impl DfSupportRun {
         // No borrow of the sessions is held across the edit: the scene events
         // it fires, and the hover preview, read them.
         crate::breadcrumbs::note(&format!(
-            "supports: click tool={tool:?} points={}",
-            points.len()
+            "supports: click tool={tool:?} points={} attach={} size={:?}",
+            points.len(),
+            how.attach,
+            how.size
         ));
         // Each point goes to the set it acts on.
         let mut groups: Vec<(DrawnSet, Vec<IndexedPoint>)> = Vec::new();
@@ -1626,82 +2116,78 @@ impl DfSupportRun {
         }
         if groups.is_empty() {
             let (key, heading, message) = self.no_set_notice(tool, points[0]);
-            match heading {
-                Some(heading) => notice(key, heading, message.to_string()),
-                None => return failed(message),
-            }
-            return HandEdit::Notified;
+            return Err(match heading {
+                Some(heading) => {
+                    notice(key, heading, message.to_string());
+                    HandEdit::Notified
+                }
+                None => failed(message),
+            });
         }
         for i in unset {
             refused.push((i, refusal(&EditError::NothingThere)));
         }
-        // The preview of this very point already placed it: take that.
-        let previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
+        // The preview of this very point, made the same way, already placed
+        // it: take that.
+        let mut previewed = self.last_preview.borrow_mut().take().and_then(|answer| {
             (points == [answer.point]
                 && tool.click() == Some(answer.tool)
+                && answer.how == *how
                 && answer.from == session_key(&groups[0].0))
             .then_some(answer.edited)
             .flatten()
         });
-        let reused = previewed.is_some();
-        let mut previewed = previewed;
-        let mut edits = Vec::with_capacity(groups.len());
-        let mut last = None;
-        for (drawn, group) in &groups {
-            let reuse = previewed.take();
-            let from_preview = reuse.is_some();
-            let mut edited = reuse.unwrap_or_else(|| DfSupportSession::clone(&drawn.session));
-            // The port is DragonFruit's code on hand-picked input: a panic in
-            // it is an edit that failed, not a reason to lose the person's
-            // work.
-            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut took = from_preview;
-                if !from_preview {
-                    for (i, point) in group {
-                        let p = point.map(f64::from);
-                        let edit = match tool {
-                            HandTool::Add => edited.add_trunk_at(p),
-                            HandTool::AddNear => {
-                                edited.add_trunk_near(p, REVIEW_NUDGE_MM).map(|_| ())
-                            }
-                            HandTool::Remove => edited.remove_near(p).map(|_| ()),
-                        };
-                        match edit {
-                            Ok(()) => took = true,
-                            Err(err) => {
-                                crate::breadcrumbs::note(&format!(
-                                    "supports: point {i} refused: {err}"
-                                ));
-                                refused.push((*i, refusal(&err)));
-                                last = Some(err);
-                            }
-                        }
-                    }
-                }
-                if !took {
-                    return Ok(None);
-                }
-                edited.mesh().map(Some)
-            }));
-            let mesh = match done {
-                Err(_) => {
+        let mut sets = Vec::with_capacity(groups.len());
+        let mut jobs = Vec::with_capacity(groups.len());
+        for (drawn, points) in groups {
+            let start = match previewed.take() {
+                Some(edited) => EditStart::Previewed(Box::new(edited)),
+                None => EditStart::Base(drawn.session.clone()),
+            };
+            jobs.push(EditJob { start, points });
+            sets.push(drawn);
+        }
+        Ok(Prepared { sets, jobs })
+    }
+
+    /// The part of a hand edit made on the UI thread once the engine is
+    /// done: the edited sets go into the scene as one undoable step, and the
+    /// Supports tab's last-run line says how it went. `refused` gains the
+    /// points the engine refused.
+    fn commit_edit(
+        &self,
+        ui: &MainWindow,
+        sets: Vec<DrawnSet>,
+        computed: Computed,
+        refused: &mut Refusals,
+    ) -> HandEdit {
+        let failed = |message: slint::SharedString| {
+            ui.set_supports_last_run(message.clone());
+            HandEdit::Failed(message)
+        };
+        let last = computed.refused.last().map(|(_, err)| err.clone());
+        refused.extend(computed.refused.iter().map(|(i, err)| (*i, refusal(err))));
+        let reused = computed.reused;
+        let mut edits = Vec::with_capacity(sets.len());
+        for (drawn, outcome) in sets.into_iter().zip(computed.outcomes) {
+            match outcome {
+                JobOutcome::Panicked => {
                     return failed(ctr!(
                         "DfSupportDialog",
                         "That edit failed inside the support engine; nothing was changed."
                     ));
                 }
-                Ok(Err(err)) => return failed(refusal(&err)),
+                JobOutcome::Failed(err) => return failed(refusal(&err)),
                 // Nothing of this set took.
-                Ok(Ok(None)) => continue,
-                Ok(Ok(Some(Some(mesh)))) => mesh,
-                Ok(Ok(Some(None))) => {
+                JobOutcome::Untouched => continue,
+                JobOutcome::Emptied => {
                     return failed(ctr!(
                         "DfSupportDialog",
                         "That was the last support; use Undo to bring it back."
                     ));
                 }
-            };
-            edits.push((drawn.clone(), edited, mesh));
+                JobOutcome::Done(edited, mesh) => edits.push((drawn, *edited, mesh)),
+            }
         }
         if edits.is_empty() {
             return failed(refusal(&last.unwrap_or(EditError::NothingThere)));
@@ -1714,9 +2200,7 @@ impl DfSupportRun {
             .iter()
             .map(|(drawn, _, mesh)| {
                 self.document
-                    .with_scene(|spatial| {
-                        leaf_mesh_swap(spatial.graph(), drawn.leaf, Arc::new(mesh.clone()))
-                    })
+                    .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), drawn.leaf, mesh.clone()))
                     .flatten()
             })
             .collect();
@@ -4514,5 +4998,307 @@ mod hand_edit_tests {
         assert!(after_add.contains("edited by hand"), "{after_add}");
         assert!(after_undo, "Undo lands on the reopened session");
         assert!(after_remove.contains("edited by hand"), "{after_remove}");
+    }
+
+    /// The tip of every support of `session` that touches the model, in mm.
+    fn tips(session: &DfSupportSession) -> Vec<f64> {
+        let c = &session.state().collections;
+        c.trunks
+            .values()
+            .filter_map(|t| t.contact_cone.as_ref())
+            .chain(c.branches.values().filter_map(|b| b.contact_cone.as_ref()))
+            .chain(c.leaves.values().map(|l| &l.contact_cone))
+            .map(|cone| cone.profile.contact_diameter_mm)
+            .collect()
+    }
+
+    /// The Add tool's tip size and Shift reach the engine (#3): a large tip
+    /// is drawn large, a Shift+click hangs its support from another, and each
+    /// click is one undo.
+    #[test]
+    fn tip_sizes_and_shift_click_reach_the_engine() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let generated = in_force_session(&run).expect("editable");
+            assert!(!tips(&generated).contains(&0.40));
+            window.set_support_tool(1);
+
+            // Key 4: large.
+            window.set_support_tip_size(4);
+            run.on_tip_size_changed();
+            run.on_tool_click([20.2, 20.2, 7.5]);
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            let large = in_force_session(&run).unwrap();
+            assert!(tips(&large).contains(&0.40), "{:?}", tips(&large));
+            assert!(window.get_support_tip_label().contains("0.4"));
+
+            // Shift+click: hung from a support, no root of its own.
+            window.set_support_tip_size(0);
+            run.on_tool_click_now([19.8, 19.8, 7.5], true);
+            let hung = in_force_session(&run).unwrap();
+            let c = &hung.state().collections;
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            assert_eq!(c.roots.len(), large.state().collections.roots.len());
+            assert_eq!(c.knots.len(), large.state().collections.knots.len() + 1);
+
+            // One undo per click.
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &large));
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+        });
+    }
+
+    /// The hover line (#3): nothing when the support hangs as asked, why it
+    /// stands on its own, why it cannot be placed or hung, and only the
+    /// last two warn. The hover preview puts it under the cursor.
+    #[test]
+    fn the_hover_line_says_why_a_support_stands_on_its_own() {
+        on_fresh_slint_thread(|| {
+            let preview = |valid, attached, note| EditPreview {
+                mesh: sc_mesh_core::IndexedMesh::new(None, Vec::new(), Vec::new()),
+                valid,
+                attached,
+                note,
+            };
+            assert_eq!(
+                preview_line(&preview(true, true, None), false),
+                Default::default()
+            );
+            let (line, warns) = preview_line(&preview(true, false, Some(AddNote::TooFar)), false);
+            assert_eq!(line, "Its own trunk: no support close enough to hang from.");
+            assert!(!warns);
+            let (line, warns) = preview_line(&preview(false, false, Some(AddNote::TooFar)), true);
+            assert_eq!(
+                line,
+                "Cannot hang it: no support close enough to hang from."
+            );
+            assert!(warns);
+            let (line, warns) =
+                preview_line(&preview(false, false, Some(AddNote::HitsModel)), false);
+            assert_eq!(line, "Cannot place it: it hits the model.");
+            assert!(warns);
+            assert!(preview_line(&preview(false, false, None), false).1);
+            for note in [
+                AddNote::TooFar,
+                AddNote::NoneBelow,
+                AddNote::TooSteep,
+                AddNote::HitsModel,
+                AddNote::CrossesSupport,
+                AddNote::HostsFull,
+                AddNote::SteepSurface,
+            ] {
+                assert!(!note_text(note).is_empty());
+            }
+
+            // The worker's answer puts its line under the cursor.
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            window.set_support_tool(1);
+            window.set_support_add_note("stale".into());
+            run.on_tool_hover_with(Some([20.2, 20.2, 7.5]), true);
+            let started = Instant::now();
+            while run.hover_shown.get() < run.hover_generation.get() {
+                assert!(started.elapsed() < Duration::from_secs(60), "no answer");
+                std::thread::sleep(Duration::from_millis(5));
+                run.take_hover_answer();
+            }
+            let answer = run.last_preview.borrow();
+            let answer = answer.as_ref().expect("an answer");
+            assert!(answer.how.attach, "Shift previews a forced attach");
+            let preview = answer.preview.as_ref().expect("a preview");
+            assert_eq!(window.get_support_add_note(), preview_line(preview, true).0);
+        });
+    }
+
+    /// Waits for the click being made off the UI thread to land.
+    fn settle_click(run: &Rc<DfSupportRun>) {
+        let started = Instant::now();
+        while run.pending_click.borrow().is_some() {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "the click hangs"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+            run.poll_click();
+        }
+    }
+
+    /// A click is made off the UI thread (#3) and lands as one undoable
+    /// step; a click while one is being made waits for it; Undo meanwhile
+    /// drops it, and so does any other edit that comes first.
+    #[test]
+    fn a_click_made_off_the_ui_thread_lands_whole_or_not_at_all() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let generated = in_force_session(&run).expect("editable");
+            window.set_support_tool(1);
+
+            // Two clicks in a row: the second waits, each is one undo.
+            run.on_tool_click_with([20.2, 20.2, 7.5], false);
+            run.on_tool_click_with([19.8, 19.8, 7.5], false);
+            assert!(run.pending_click.borrow().is_some());
+            assert!(
+                Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated),
+                "nothing in the scene before it is made"
+            );
+            settle_click(&run);
+            assert!(window.get_supports_last_run().contains("edited by hand"));
+            let first = {
+                assert!(document.undo().unwrap());
+                in_force_session(&run).unwrap()
+            };
+            assert!(!Arc::ptr_eq(&first, &generated));
+            assert!(document.undo().unwrap());
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // Undo while it is made drops it, and undoes nothing else.
+            let before = document.scene_revision();
+            run.on_tool_click_with([20.2, 20.2, 7.5], false);
+            assert!(document.undo().unwrap());
+            assert!(run.pending_click.borrow().is_none());
+            assert!(window.get_supports_last_run().contains("Undone before"));
+            assert_eq!(document.scene_revision(), before);
+            std::thread::sleep(Duration::from_millis(50));
+            run.poll_click();
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+
+            // Another edit first: the click is dropped whole.
+            run.on_tool_click_with([20.2, 20.2, 7.5], false);
+            document.set_pending_edit(None);
+            assert!(document.redo().unwrap(), "the hand edits come back");
+            settle_click(&run);
+            assert!(
+                window.get_supports_last_run().contains("scene changed"),
+                "{}",
+                window.get_supports_last_run()
+            );
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &first));
+        });
+    }
+
+    /// Measurement, not a gate (#3): what a hand click holds the UI thread
+    /// for on a big real scene, now that the engine's part runs on a worker:
+    /// handing the click over, then putting the edit in the scene.
+    /// `SC_STRESS_STL` is the model, scaled to `SC_STRESS_HEIGHT_MM` tall
+    /// when set. `cargo test --profile quick-release -p sc-slicer-gui --lib
+    /// -- --ignored --nocapture ui_thread_cost_of_a_click`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn ui_thread_cost_of_a_click() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let bytes = std::fs::read(&path).unwrap();
+            let (loaded, _) =
+                sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+            let leaf = loaded.roots()[0];
+            let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+            let bounds = |mesh: &sc_mesh_core::IndexedMesh| {
+                let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+                for v in mesh.vertices() {
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(v.as_array()[k]);
+                        hi[k] = hi[k].max(v.as_array()[k]);
+                    }
+                }
+                (lo, hi)
+            };
+            if let Some(h) = height {
+                let (lo, hi) = bounds(&mesh);
+                let s = h / (hi[2] - lo[2]);
+                let vertices = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| sc_mesh_core::Vertex::new(v.as_array().map(|c| c * s)))
+                    .collect();
+                mesh = sc_mesh_core::IndexedMesh::new(None, vertices, mesh.faces().to_vec());
+            }
+            let (lo, hi) = bounds(&mesh);
+            let shift = [
+                60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+                40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+                5.0 - f64::from(lo[2]),
+            ];
+            let points: Vec<[f32; 3]> = mesh
+                .faces()
+                .iter()
+                .filter_map(|f| {
+                    let [a, b, c] = f
+                        .vertices
+                        .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+                    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                    let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                    let nz = u[0] * w[1] - u[1] * w[0];
+                    let len = ((u[1] * w[2] - u[2] * w[1]).powi(2)
+                        + (u[2] * w[0] - u[0] * w[2]).powi(2)
+                        + nz * nz)
+                        .sqrt();
+                    (len > 1e-12 && nz / len < -0.5).then(|| {
+                        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k] as f32)
+                    })
+                })
+                .collect();
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(None, translation(shift), LeafPayload::Mesh(Arc::new(mesh)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            window.set_support_tool(1);
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            let (mut hand_over, mut put_in, mut waits) = (Vec::new(), Vec::new(), Vec::new());
+            let step = (points.len() / 10).max(1);
+            for p in points.iter().step_by(step).take(10) {
+                let t = Instant::now();
+                run.on_tool_click_with(*p, false);
+                hand_over.push(ms(t));
+                if run.pending_click.borrow().is_none() {
+                    continue;
+                }
+                let waited = Instant::now();
+                loop {
+                    std::thread::sleep(Duration::from_millis(1));
+                    let t = Instant::now();
+                    run.poll_click();
+                    if run.pending_click.borrow().is_none() {
+                        put_in.push(ms(t));
+                        break;
+                    }
+                }
+                waits.push(ms(waited));
+            }
+            let stats = |v: &[f64]| {
+                let mut v = v.to_vec();
+                v.sort_by(f64::total_cmp);
+                format!(
+                    "median {:.1} ms, max {:.1} ms (n {})",
+                    v.get(v.len() / 2).copied().unwrap_or(0.0),
+                    v.last().copied().unwrap_or(0.0),
+                    v.len()
+                )
+            };
+            println!("{}", window.get_supports_last_run());
+            println!("UI thread, the click handed over: {}", stats(&hand_over));
+            println!("worker, the edit made: {}", stats(&waits));
+            println!("UI thread, the edit put in the scene: {}", stats(&put_in));
+        });
     }
 }

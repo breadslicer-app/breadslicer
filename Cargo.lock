@@ -5934,6 +5934,7 @@ dependencies = [
 name = "support-gen-df-sc"
 version = "0.0.1"
 dependencies = [
+ "ahash",
  "indexmap",
  "rayon",
  "sc-geom-transport-inprocess",

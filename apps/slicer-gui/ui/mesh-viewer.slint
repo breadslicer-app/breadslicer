@@ -248,6 +248,17 @@ export component MeshViewer inherits Rectangle {
                 });
                 return accept;
             }
+            // Shift alone over the view: the hover goes again, so a tool's
+            // preview shows what a Shift+click does.
+            if (event.text == Key.Shift && !event.repeat && ta.has-hover && root.active-gesture == 0) {
+                root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                    shift: true,
+                    control: event.modifiers.control,
+                    alt: event.modifiers.alt,
+                    meta: event.modifiers.meta,
+                });
+                return reject;
+            }
             if (root.is-view-key(event.text) && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 if (!root.modal-transform-active && root.active-gesture == 0 && !root.left-pressed && !root.view-wheel-key-held) {
                     root.view-wheel-x = ta.mouse-x;
@@ -448,6 +459,15 @@ export component MeshViewer inherits Rectangle {
                     meta: event.modifiers.meta,
                 });
                 return accept;
+            }
+            if (event.text == Key.Shift && ta.has-hover && root.active-gesture == 0) {
+                root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                    shift: false,
+                    control: event.modifiers.control,
+                    alt: event.modifiers.alt,
+                    meta: event.modifiers.meta,
+                });
+                return reject;
             }
             if (root.is-view-key(event.text)) {
                 root.view-wheel-key-held = false;

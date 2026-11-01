@@ -106,6 +106,92 @@ fn a_document_rebuilds_the_same_supports_and_they_stay_editable() {
     assert_eq!(rebuilt.state().collections.roots.len(), roots);
 }
 
+/// Hand edits survive a save and reopen (#3): a support added and one the
+/// run placed taken away stay that way, and the session still reads as
+/// edited by hand, a removal alone included.
+#[test]
+fn hand_additions_and_removals_survive_a_document() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let mut session = run_on(&scene);
+    let ids = |s: &DfSupportSession| -> std::collections::BTreeSet<String> {
+        let c = &s.state().collections;
+        c.roots
+            .keys()
+            .chain(c.trunks.keys())
+            .chain(c.branches.keys())
+            .chain(c.leaves.keys())
+            .chain(c.knots.keys())
+            .cloned()
+            .collect()
+    };
+    let generated = ids(&session);
+    // A support the run placed, by the tip of the trunk farthest from where
+    // one is added below (one added may hang from a trunk, and goes with it).
+    let tip = session
+        .state()
+        .collections
+        .trunks
+        .values()
+        .filter_map(|t| t.contact_cone.as_ref().map(|c| c.pos))
+        .max_by(|a, b| {
+            (a.x - 1.5)
+                .hypot(a.y - 1.5)
+                .total_cmp(&(b.x - 1.5).hypot(b.y - 1.5))
+        })
+        .expect("a trunk with a tip");
+    let reopen = |session: &DfSupportSession| {
+        let document = session.to_document().expect("a run from options is data");
+        DfSupportSession::from_document(&scene, DF_SUPPORT_DOCUMENT_VERSION, &document)
+            .expect("the same models")
+    };
+
+    // A removal alone.
+    let mut removed = session.clone();
+    removed
+        .remove_near([tip.x, tip.y, tip.z - 0.1])
+        .expect("a support there");
+    let gone: Vec<String> = generated.difference(&ids(&removed)).cloned().collect();
+    assert!(!gone.is_empty());
+    let back = reopen(&removed);
+    assert_eq!(ids(&back), ids(&removed), "the removal stays");
+    assert!(back.hand_edited(), "a removal alone is a hand edit too");
+    assert!(!reopen(&session).hand_edited(), "the run as it came");
+
+    // An addition and a removal.
+    session
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    session
+        .remove_near([tip.x, tip.y, tip.z - 0.1])
+        .expect("a support there");
+    let back = reopen(&session);
+    assert_eq!(back.state(), session.state());
+    assert!(gone.iter().all(|id| !ids(&back).contains(id)));
+    assert!(ids(&back).iter().any(|id| !generated.contains(id)), "added");
+    assert!(back.hand_edited());
+}
+
+/// A document written before #3 tells hand edits by the ids alone.
+#[test]
+fn an_older_document_tells_hand_edits_by_their_ids() {
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);
+    let mut session = run_on(&scene);
+    let older = |session: &DfSupportSession| {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&session.to_document().unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("handEdited");
+        serde_json::to_vec(&value).unwrap()
+    };
+    let open = |bytes: &[u8]| {
+        DfSupportSession::from_document(&scene, DF_SUPPORT_DOCUMENT_VERSION, bytes).unwrap()
+    };
+    assert!(!open(&older(&session)).hand_edited());
+    session
+        .add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    assert!(open(&older(&session)).hand_edited());
+}
+
 #[test]
 fn a_document_for_other_models_is_refused() {
     let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0])]);

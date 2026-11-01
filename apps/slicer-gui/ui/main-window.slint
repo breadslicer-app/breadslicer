@@ -245,18 +245,37 @@ export component MainWindow inherits Window {
     // The Supports tab manual tool: 0 none, 1 add a support where the model
     // is clicked, 2 remove the support clicked.
     in-out property <int> support-tool: 0;
-    callback support-tool-clicked(float, float, float);
-    // The cursor over the model with a tab tool armed: the world point and
-    // whether there is one (false clears the preview).
-    callback support-tool-hover(float, float, float, bool);
+    // A click of the tool at a world point; with Shift, Add hangs the
+    // support from the nearest one or places nothing.
+    callback support-tool-clicked(float, float, float, bool);
+    // The cursor over the model with a tab tool armed: the world point,
+    // whether there is one (false clears the preview) and whether Shift is
+    // held.
+    callback support-tool-hover(float, float, float, bool, bool);
+    // The tip size a support added by hand takes (#3): 0 the preset's,
+    // 1 to 4 extra small, small, medium and large (keys 1 to 4).
+    in-out property <int> support-tip-size: 0;
+    callback support-tip-size-changed();
+    changed support-tip-size => {
+        root.support-tip-size-changed();
+    }
+    // The Add tool card: the tip it places, and the hover preview's line
+    // (why the support stands on its own, or cannot be placed), with
+    // whether that line warns.
+    in property <string> support-tip-label;
+    in property <string> support-add-note;
+    in property <bool> support-add-note-warns;
     // The drain tool's hover: point, surface normal (world), whether on the model.
     // The point and normal under the cursor, whether the cursor is on a
     // model, and whether that model is the selected one.
     callback hollow-drain-hover(float, float, float, float, float, float, bool, bool);
     // A tab tool was armed or put away, or the tab changed.
     callback tab-tools-changed();
+    // The Supports tab's tool was armed or put away.
+    callback support-tool-changed();
     changed support-tool => {
         root.tab-tools-changed();
+        root.support-tool-changed();
     }
     changed hollow-drain-tool => {
         root.tab-tools-changed();
@@ -1302,6 +1321,12 @@ export component MainWindow inherits Window {
                                 root.support-tool = root.support-tool == 2 ? 0 : 2;
                                 return true;
                             }
+                            // The tip size while Add is armed; the view keys
+                            // otherwise.
+                            if root.support-tool == 1 && (key == "1" || key == "2" || key == "3" || key == "4") {
+                                root.support-tip-size = key.to-float();
+                                return true;
+                            }
                         }
                         if root.workspace-section == WorkspaceSection.Transform && root.has-scene
                             && root.selection-valid && (key == "o" || key == "O") {
@@ -1846,6 +1871,14 @@ export component MainWindow inherits Window {
                             raft-ignore => {
                                 root.support-raft-ignore-requested();
                             }
+                            add-tool-on: root.support-tool == 1;
+                            tip-size: root.support-tip-size;
+                            tip-label: root.support-tip-label;
+                            add-note: root.support-add-note;
+                            add-note-warns: root.support-add-note-warns;
+                            tip-size-picked(i) => {
+                                root.support-tip-size = i;
+                            }
                             selection-valid: root.selection-valid;
                             lift: root.selection-pos-z;
                             option-changed(code, value) => {
@@ -1924,13 +1957,17 @@ export component MainWindow inherits Window {
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 4 ? @tr("Workspace" => "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollow the selected model to save resin, then place its drains with D.")
-                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 && root.support-add-note != "" ? root.support-add-note
+                        : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it; Shift+click hangs it from the nearest support. 1–4 set the tip size. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 2 ? @tr("Workspace" => "Click a support to remove it and everything hanging from it.")
                         : root.workspace-section == WorkspaceSection.Supports ? @tr("Workspace" => "Generate supports for every model on the plate.")
                         : root.workspace-section == WorkspaceSection.Slice ? @tr("Workspace" => "Drag the layer slider to inspect the slice.")
                         : @tr("Workspace" => "The printer file uses the printer and resin in force.");
                     font-size: Theme.font-xs;
-                    color: root.drain-misses ? Theme.danger : Theme.text-muted;
+                    color: root.drain-misses
+                        || (root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1
+                            && root.support-add-note != "" && root.support-add-note-warns)
+                        ? Theme.danger : Theme.text-muted;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;

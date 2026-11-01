@@ -1803,7 +1803,12 @@ impl ViewportController {
         }
     }
 
-    pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+    pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
+        // Shift+click with Add armed hangs the support from the nearest one
+        // (#3): the press is the tool's, not the start of a selection box.
+        if modifiers.shift && self.add_support_armed() {
+            modifiers.shift = false;
+        }
         let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -1822,7 +1827,7 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
-        self.tab_tool_hover(cursor);
+        self.tab_tool_hover(cursor, modifiers.shift);
         if self.input.modal.get().is_some() {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
@@ -1851,9 +1856,10 @@ impl ViewportController {
         match self.input.on_pointer_up(self.session.document(), cursor) {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
-                if modifiers.shift {
+                let forced = modifiers.shift && self.add_support_armed();
+                if modifiers.shift && !forced {
                     self.run_toggle_pick_at(cursor);
-                } else if !self.support_tool_click(cursor) {
+                } else if !self.support_tool_click(cursor, forced) {
                     self.run_pick_at(cursor);
                 }
             }
@@ -1919,6 +1925,13 @@ impl ViewportController {
         document.set_selection(next);
     }
 
+    /// Whether the Supports tab's Add tool is armed.
+    fn add_support_armed(&self) -> bool {
+        self.ui
+            .upgrade()
+            .is_some_and(|ui| self.tab_tool(&ui) == Some(TabTool::AddSupport))
+    }
+
     /// The tab tool armed in the current section, if any.
     fn tab_tool(&self, ui: &MainWindow) -> Option<TabTool> {
         match self.session.section() {
@@ -1966,10 +1979,11 @@ impl ViewportController {
     }
 
     /// A click with a tab tool (the Supports tab's Add or Delete, the Hollow
-    /// tab's drain): hands the world point under the cursor to its driver.
-    /// The drain tool selects the model it hit first. Returns whether the
-    /// click was the tool's (a miss with a tool on is still the tool's).
-    fn support_tool_click(&self, cursor: ScreenPoint) -> bool {
+    /// tab's drain): hands the world point under the cursor to its driver,
+    /// with `forced` for a Shift+click of Add. The drain tool selects the
+    /// model it hit first. Returns whether the click was the tool's (a miss
+    /// with a tool on is still the tool's).
+    fn support_tool_click(&self, cursor: ScreenPoint, forced: bool) -> bool {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
@@ -1985,7 +1999,7 @@ impl ViewportController {
                     .set_selection(Selection::One(LeafId(id)));
                 ui.invoke_hollow_drain_clicked(p.x, p.y, p.z, n.x, n.y, n.z);
             } else {
-                ui.invoke_support_tool_clicked(p.x, p.y, p.z);
+                ui.invoke_support_tool_clicked(p.x, p.y, p.z, forced);
             }
             self.mark_dirty();
         }
@@ -1993,9 +2007,9 @@ impl ViewportController {
     }
 
     /// The cursor moved with no button down: an armed tab tool previews what
-    /// a click there would do (its driver draws it, debounced); off the
-    /// model, or with no tool, the preview goes.
-    fn tab_tool_hover(&self, cursor: ScreenPoint) {
+    /// a click there would do (its driver draws it, debounced), a Shift+click
+    /// with `shift` held; off the model, or with no tool, the preview goes.
+    fn tab_tool_hover(&self, cursor: ScreenPoint, shift: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -2012,7 +2026,7 @@ impl ViewportController {
             });
             ui.invoke_hollow_drain_hover(p.x, p.y, p.z, n.x, n.y, n.z, hit.is_some(), on_selected);
         } else {
-            ui.invoke_support_tool_hover(p.x, p.y, p.z, hit.is_some());
+            ui.invoke_support_tool_hover(p.x, p.y, p.z, hit.is_some(), shift);
         }
     }
 
