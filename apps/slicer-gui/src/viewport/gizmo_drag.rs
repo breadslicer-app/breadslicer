@@ -59,11 +59,22 @@ pub(super) enum GizmoState {
 /// - `ScaleUniform` (the centre ball) composes a uniform scale from the
 ///   cursor travel since `press`: right or up grows, left or down
 ///   shrinks.
+/// - `Plane` composes a translation in the plane through `origin`
+///   perpendicular to `normal`: a plane handle (#207), through the pivot, or
+///   the body of a model pressed and dragged (#209, `body`), horizontal
+///   through the grabbed point so that point stays under the cursor.
+///   `anchor` is where the press ray cut the plane.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum DragOp {
     Translate {
         axis: Axis,
         anchor: Vec3,
+    },
+    Plane {
+        normal: Axis,
+        origin: Vec3,
+        anchor: Vec3,
+        body: bool,
     },
     Rotate {
         axis: Axis,
@@ -93,6 +104,8 @@ pub(super) enum DragOp {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum HandleHit {
     Translate(Axis),
+    /// The plane square perpendicular to the axis (#207).
+    Plane(Axis),
     Rotate(Axis),
     ScaleAxis(Axis),
     ScaleUniform,
@@ -131,6 +144,25 @@ pub(super) fn apply_drag_move(
             let new_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis)?;
             let along = modifiers.distance((new_anchor - anchor).dot(axis.world_dir()));
             let delta = axis.world_dir() * along;
+            let translation = AffineTransform3D::from_translation([
+                delta.x as f64,
+                delta.y as f64,
+                delta.z as f64,
+            ]);
+            Some((Transform3D::Affine(translation).compose(original), op))
+        }
+        DragOp::Plane {
+            normal,
+            origin,
+            anchor,
+            ..
+        } => {
+            let hit = gizmo::drag_math::ray_hits_drag_plane(ray, origin, normal)?;
+            let d = hit - anchor;
+            let (u, v) = normal.plane_axes();
+            let delta = [u, v].iter().fold(Vec3::ZERO, |acc, a| {
+                acc + a.world_dir() * modifiers.distance(d.dot(a.world_dir()))
+            });
             let translation = AffineTransform3D::from_translation([
                 delta.x as f64,
                 delta.y as f64,
@@ -361,6 +393,86 @@ mod apply_drag_move_tests {
         assert_approx_eq!(f64, m[0][0], 1.0, epsilon = 1e-6);
         assert_approx_eq!(f64, m[1][1], 1.0, epsilon = 1e-6);
         assert_approx_eq!(f64, m[2][2], 1.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn a_plane_drag_moves_in_its_two_axes_and_keeps_the_grab_under_the_cursor() {
+        // The XZ square (normal Y), pressed at (1, 0, 1) from the front.
+        let original = Transform3D::Affine(AffineTransform3D::from_translation([5.0, 7.0, 3.0]));
+        let op = DragOp::Plane {
+            normal: Axis::Y,
+            origin: Vec3::ZERO,
+            anchor: Vec3::new(1.0, 0.0, 1.0),
+            body: false,
+        };
+        let target = Vec3::new(2.5, 0.0, -0.5);
+        let ray = ray_from(Vec3::new(0.3, -10.0, 0.2), target);
+        let (t, _) = apply_drag_move(
+            op,
+            &ray,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            &original,
+            (0.0, 0.0),
+            NO_KEYS,
+        )
+        .unwrap();
+        let moved = read_translation_t(&t);
+        assert_approx_eq!(f64, moved[0], 5.0 + 1.5, epsilon = 1e-4);
+        assert_approx_eq!(f64, moved[1], 7.0, epsilon = 1e-9);
+        assert_approx_eq!(f64, moved[2], 3.0 - 1.5, epsilon = 1e-4);
+        // The grabbed point moved exactly to where the cursor ray cuts the
+        // plane: it stays under the cursor.
+        let grabbed = Vec3::new(1.0, 0.0, 1.0)
+            + Vec3::new(
+                (moved[0] - 5.0) as f32,
+                (moved[1] - 7.0) as f32,
+                (moved[2] - 3.0) as f32,
+            );
+        assert!((grabbed - target).length() < 1e-4);
+    }
+
+    #[test]
+    fn a_body_drag_stays_level_and_ctrl_snaps_each_axis() {
+        let op = DragOp::Plane {
+            normal: Axis::Z,
+            origin: Vec3::new(0.0, 0.0, 4.0),
+            anchor: Vec3::new(1.0, 1.0, 4.0),
+            body: true,
+        };
+        let ray = ray_from(Vec3::new(0.0, -20.0, 30.0), Vec3::new(3.3, 2.6, 4.0));
+        let snap = DragModifiers {
+            snap: true,
+            fine: false,
+        };
+        let (t, _) = apply_drag_move(
+            op,
+            &ray,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            &Transform3D::Identity,
+            (0.0, 0.0),
+            snap,
+        )
+        .unwrap();
+        let moved = read_translation_t(&t);
+        assert_approx_eq!(f64, moved[0], 2.0, epsilon = 1e-5);
+        assert_approx_eq!(f64, moved[1], 2.0, epsilon = 1e-5);
+        assert_eq!(moved[2], 0.0);
+        // A ray almost level with the plate keeps the last pose.
+        let level = ray_from(Vec3::new(0.0, -50.0, 4.5), Vec3::new(0.0, 0.0, 4.4));
+        assert!(
+            apply_drag_move(
+                op,
+                &level,
+                Vec3::ZERO,
+                &Transform3D::Identity,
+                &Transform3D::Identity,
+                (0.0, 0.0),
+                NO_KEYS,
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::picking::Ray;
 
 use super::axis::{Axis, axis_basis};
 use super::dimensions::{HANDLE_PIXEL_LENGTH, ROTATE_ARC_RADIUS_FRACTION};
-use super::tolerances::{EPS_SCALE, LOCKOUT_COS};
+use super::tolerances::{EPS_SCALE, LOCKOUT_COS, PLANE_DRAG_MIN};
 
 /// Minimum value of `1 - (axis · ray_dir)²` (= `sin²(angle)`) for the
 /// closest-point formula to be well-conditioned: matches the 8°
@@ -69,6 +69,24 @@ fn ray_hits_axis_plane(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
     }
     let t = (pivot - ray.origin).dot(a) / denom;
     if t <= 0.0 {
+        return None;
+    }
+    Some(ray.origin + ray.direction * t)
+}
+
+/// Where `ray` cuts the plane through `origin` perpendicular to `normal`,
+/// for a drag in that plane (a plane handle, #207, or the body of a model,
+/// #209). `None` while the ray runs too close to the plane to give a usable
+/// point (see `PLANE_DRAG_MIN`) or cuts it behind the eye: the drag then keeps
+/// its last pose instead of jumping.
+pub(crate) fn ray_hits_drag_plane(ray: &Ray, origin: Vec3, normal: Axis) -> Option<Vec3> {
+    let n = normal.world_dir();
+    let denom = ray.direction.dot(n);
+    if denom.abs() < PLANE_DRAG_MIN {
+        return None;
+    }
+    let t = (origin - ray.origin).dot(n) / denom;
+    if t <= 0.0 || !t.is_finite() {
         return None;
     }
     Some(ray.origin + ray.direction * t)
@@ -577,5 +595,35 @@ mod screen_turn_tests {
     fn a_ring_facing_the_camera_turns_against_the_screen_angle() {
         assert_approx_eq!(f32, screen_turn_sign(Axis::Z, Vec3::Z), -1.0);
         assert_approx_eq!(f32, screen_turn_sign(Axis::Z, -Vec3::Z), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod drag_plane_tests {
+    use super::*;
+
+    #[test]
+    fn a_ray_cuts_the_plane_through_its_origin() {
+        let ray = Ray {
+            origin: Vec3::new(1.0, 2.0, 10.0),
+            direction: Vec3::new(0.0, 0.6, -0.8),
+        };
+        let p = ray_hits_drag_plane(&ray, Vec3::new(0.0, 0.0, 2.0), Axis::Z).unwrap();
+        assert!((p.z - 2.0).abs() < 1e-5);
+        assert!((p - Vec3::new(1.0, 8.0, 2.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn a_level_ray_or_a_plane_behind_gives_nothing() {
+        let level = Ray {
+            origin: Vec3::new(0.0, 0.0, 1.0),
+            direction: Vec3::new(1.0, 0.0, -0.02).normalize(),
+        };
+        assert!(ray_hits_drag_plane(&level, Vec3::ZERO, Axis::Z).is_none());
+        let up = Ray {
+            origin: Vec3::new(0.0, 0.0, 1.0),
+            direction: Vec3::Z,
+        };
+        assert!(ray_hits_drag_plane(&up, Vec3::ZERO, Axis::Z).is_none());
     }
 }

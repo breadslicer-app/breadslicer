@@ -4656,3 +4656,35 @@ msgstr[1] "{n} quedaron afuera: no llegan a la cavidad."
 msgctxt "Inspector"
 msgid "{} objects selected. Move, rotate or scale them together about their shared centre with the gizmo, G, R or S. To type values, select one."
 msgstr "{} objetos seleccionados. Movelos, rotalos o escalalos juntos alrededor de su centro común con el gizmo, G, R o S. Para escribir valores, seleccioná uno solo."
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Gizmo style"
+msgstr "Estilo del gizmo"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Outline: every handle at once"
+msgstr "Contorno: todas las manijas a la vez"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Focused: the tool picked on the left rail"
+msgstr "Enfocado: la herramienta elegida en el riel izquierdo"
+
+#: ui/preferences/appearance.slint
+msgctxt "AppearancePreferences"
+msgid "Gizmo size"
+msgstr "Tamaño del gizmo"
+
+#: src/viewport/controller.rs
+#, rust-format
+msgctxt "MeshViewer"
+msgid "Each object's own pivot ({}: shared)"
+msgstr "Pivote propio de cada objeto ({}: común)"
+
+#: src/viewport/controller.rs
+#, rust-format
+msgctxt "MeshViewer"
+msgid "Shared pivot ({}: each object's own)"
+msgstr "Pivote común ({}: el propio de cada objeto)"

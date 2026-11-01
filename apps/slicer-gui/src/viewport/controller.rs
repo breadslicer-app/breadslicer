@@ -128,8 +128,16 @@ impl ViewportController {
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
         // A new window starts with the projection that the user last chose.
-        let orthographic = bus.snapshot().orthographic_view;
+        let snapshot = bus.snapshot();
+        let orthographic = snapshot.orthographic_view;
         ui.set_orthographic_view(orthographic);
+        let input = InputDispatch::new();
+        input.set_gizmo_look(gizmo::look::GizmoLook {
+            style: snapshot.gizmo_style,
+            size: gizmo::look::clamp_size(snapshot.gizmo_size) as f32 / 100.0,
+            tool: gizmo::look::GizmoTool::Move,
+        });
+        ui.set_gizmo_focused_style(snapshot.gizmo_style == gizmo::look::GizmoStyle::Focused);
         Self {
             ui: ui.as_weak(),
             session: SessionState::new(
@@ -142,7 +150,7 @@ impl ViewportController {
             ),
             camera: CameraController::new(orthographic),
             render: RenderHost::new(ui),
-            input: InputDispatch::new(),
+            input,
             slice_view_key: Cell::new(None),
             plate_printer_name: RefCell::new(None),
             readout_owed: Cell::new(true),
@@ -1381,13 +1389,30 @@ impl ViewportController {
         if let Some(ui) = self.ui.upgrade() {
             let gesture = self.input.modal.get();
             ui.set_modal_transform_active(gesture.is_some());
+            let several = self.input.modal_group.borrow().is_some();
             let label = gesture
                 .map(|g| {
                     let axis = g.axis.map(|i| ["X", "Y", "Z"][i]).unwrap_or(match g.op {
                         ModalOp::Scale => "Uniform",
                         _ => "View",
                     });
-                    format!("{} | {}", g.op.key(), axis)
+                    if !several || g.op == ModalOp::Move {
+                        return format!("{} | {}", g.op.key(), axis);
+                    }
+                    // Several objects: which pivot they turn or scale about,
+                    // and that the key again switches it (#218).
+                    let key = g.op.key();
+                    if g.individual {
+                        format!(
+                            "{key} {key} | {axis} | {}",
+                            ctr!("MeshViewer", "Each object's own pivot ({}: shared)", key)
+                        )
+                    } else {
+                        format!(
+                            "{key} | {axis} | {}",
+                            ctr!("MeshViewer", "Shared pivot ({}: each object's own)", key)
+                        )
+                    }
                 })
                 .unwrap_or_default();
             ui.set_modal_transform_status(label.into());
@@ -1405,7 +1430,17 @@ impl ViewportController {
         {
             return;
         }
-        if self.input.modal.get().is_some_and(|g| g.op == op) {
+        if let Some(mut gesture) = self.input.modal.get()
+            && gesture.op == op
+        {
+            // R R and S S with several objects selected: each turns or scales
+            // about its own pivot, and the key again goes back (#218).
+            if op != ModalOp::Move && self.input.modal_group.borrow().is_some() {
+                gesture.individual = !gesture.individual;
+                self.input.modal.set(Some(gesture));
+                self.mirror_modal_to_ui();
+                self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
+            }
             return;
         }
         self.on_modal_transform_finish(false);
@@ -1453,7 +1488,11 @@ impl ViewportController {
                     screen_pivot: [screen.0, screen.1],
                     right: inverse_view.transform_vector3(glam::Vec3::X).normalize(),
                     up: inverse_view.transform_vector3(glam::Vec3::Y).normalize(),
-                    view_axis: inverse_view.transform_vector3(glam::Vec3::Z).normalize(),
+                    // From an axis-aligned view, R without an axis turns
+                    // about that exact world axis (#351).
+                    view_axis: super::modal_transform::snap_view_axis(
+                        inverse_view.transform_vector3(glam::Vec3::Z).normalize(),
+                    ),
                     world_per_pixel: camera.world_per_pixel_at(pivot, fov, viewport.height())?,
                     op,
                     axis: None,
@@ -1462,6 +1501,7 @@ impl ViewportController {
                     precision: gizmo::modifiers::PrecisionCursor::new([x, y], false),
                     modifiers: Default::default(),
                     factor: 1.0,
+                    individual: false,
                 })
             })
             .flatten();
@@ -1563,7 +1603,10 @@ impl ViewportController {
     /// plate as one object is kept.
     fn update_modal_group(&self, gesture: &ModalGesture, group: &GroupMove, proposed: Transform3D) {
         let document = self.session.document();
-        let applied = if gesture.op == ModalOp::Move {
+        let each = gesture.individual.then(|| gesture.linear_delta()).flatten();
+        let applied = if let Some(m) = each {
+            group.apply_each(document, &m)
+        } else if gesture.op == ModalOp::Move {
             let at = |t: &Transform3D| match gesture.parent.compose(t) {
                 Transform3D::Identity => [0.0; 3],
                 Transform3D::Affine(a) => *a.translation(),
@@ -1637,20 +1680,73 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// Applies the gizmo style and size chosen in Preferences (#274, #276):
+    /// `size` in percent.
+    pub(crate) fn set_gizmo_prefs(&self, style: gizmo::look::GizmoStyle, size: u32) {
+        let look = gizmo::look::GizmoLook {
+            style,
+            size: gizmo::look::clamp_size(size) as f32 / 100.0,
+            ..self.input.gizmo_look()
+        };
+        if self.input.set_gizmo_look(look) {
+            self.mirror_gizmo_tool_to_ui();
+            self.mark_dirty();
+        }
+    }
+
+    /// The rail's tool (Move, Rotate, Scale): with the focused style, which
+    /// handles the gizmo shows (#274).
+    fn set_gizmo_tool(&self, tool: gizmo::look::GizmoTool) {
+        let look = gizmo::look::GizmoLook {
+            tool,
+            ..self.input.gizmo_look()
+        };
+        if self.input.set_gizmo_look(look) {
+            self.mirror_gizmo_tool_to_ui();
+            self.mark_dirty();
+        }
+    }
+
+    fn mirror_gizmo_tool_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let look = self.input.gizmo_look();
+            ui.set_gizmo_focused_style(look.style == gizmo::look::GizmoStyle::Focused);
+            ui.set_gizmo_tool(look.tool.index());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gizmo_look_for_test(&self) -> gizmo::look::GizmoLook {
+        self.input.gizmo_look()
+    }
+
+    #[cfg(test)]
+    pub(super) fn gizmo_state_for_test(&self) -> GizmoState {
+        self.input.gizmo_fsm().current()
+    }
+
+    #[cfg(test)]
+    pub(super) fn gizmo_hover_for_test(&self) -> Option<crate::mesh_render::GizmoHover> {
+        self.input.gizmo_fsm().current_hover()
+    }
+
     /// Arms the translate keyboard focus (`T`); `R` and `S` arm rotate and
     /// scale the same way. Each needs a selection; without one, the press does
     /// nothing. A press of the focus already armed does nothing, so autorepeat
     /// does not reset the integrator's tick clock.
     pub(crate) fn on_gizmo_focus_translate(&self) {
         self.on_modal_transform_finish(false);
+        self.set_gizmo_tool(gizmo::look::GizmoTool::Move);
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
 
     pub(crate) fn on_gizmo_focus_rotate(&self) {
+        self.set_gizmo_tool(gizmo::look::GizmoTool::Rotate);
         self.apply_keyboard_focus(KbdFocus::Rotate);
     }
 
     pub(crate) fn on_gizmo_focus_scale(&self) {
+        self.set_gizmo_tool(gizmo::look::GizmoTool::Scale);
         self.apply_keyboard_focus(KbdFocus::Scale);
     }
 
@@ -1703,6 +1799,7 @@ impl ViewportController {
             cursor,
             modifiers,
             self.allows_transform_gizmo(),
+            self.supports_selectable(),
         );
         if let Some(ui) = self.ui.upgrade() {
             ui.set_box_select_armed(boxing);
@@ -2195,7 +2292,7 @@ impl ViewportController {
             }
             (None, Some((op, original, _, node_id))) => {
                 let kind = match op {
-                    DragOp::Translate { .. } => GestureKind::Move,
+                    DragOp::Translate { .. } | DragOp::Plane { .. } => GestureKind::Move,
                     DragOp::Rotate { .. } => GestureKind::Rotate,
                     DragOp::ScaleAxis { .. } | DragOp::ScaleUniform { .. } => GestureKind::Scale,
                 };
@@ -2206,6 +2303,7 @@ impl ViewportController {
                 ui.set_gesture_readout(slint::SharedString::default());
                 ui.set_gesture_tag(slint::SharedString::default());
                 ui.set_axis_guide_visible(false);
+                ui.set_axis_guide_2_visible(false);
                 ui.set_move_trail_visible(false);
                 return;
             }
@@ -2231,6 +2329,7 @@ impl ViewportController {
                     camera,
                     width: viewport.width(),
                     height: viewport.height(),
+                    look: self.input.gizmo_look(),
                 };
                 let view = match (&modal, drag) {
                     (Some(gesture), _) => GestureView::Modal { gesture, pivot_now },
@@ -2248,6 +2347,7 @@ impl ViewportController {
             ui.set_gesture_readout(slint::SharedString::default());
             ui.set_gesture_tag(slint::SharedString::default());
             ui.set_axis_guide_visible(false);
+            ui.set_axis_guide_2_visible(false);
             ui.set_move_trail_visible(false);
             return;
         };
@@ -2267,6 +2367,14 @@ impl ViewportController {
                 ui.set_axis_guide_visible(true);
             }
             None => ui.set_axis_guide_visible(false),
+        }
+        match aids.guide2 {
+            Some((commands, [r, g, b, a])) => {
+                ui.set_axis_guide_2_commands(commands.into());
+                ui.set_axis_guide_2_color(slint::Color::from_argb_u8(a, r, g, b).into());
+                ui.set_axis_guide_2_visible(true);
+            }
+            None => ui.set_axis_guide_2_visible(false),
         }
         match aids.trail {
             Some((commands, (x, y))) => {

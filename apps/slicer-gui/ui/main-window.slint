@@ -200,6 +200,11 @@ export component MainWindow inherits Window {
     // colour (SVG path commands in viewport pixels).
     in property <string> gesture-readout: "";
     in property <bool> axis-guide-visible: false;
+    // A move in a plane (#207) or of a model's body (#209) draws a line along
+    // each of its two axes: this is the second one.
+    in property <bool> axis-guide-2-visible: false;
+    in property <string> axis-guide-2-commands: "";
+    in property <brush> axis-guide-2-color: #ffffff;
     // The figure next to the dragged handle (or the cursor, in G/R/S), left
     // of its anchor point in viewport pixels; empty when none.
     in property <string> gesture-tag: "";
@@ -580,6 +585,10 @@ export component MainWindow inherits Window {
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
     callback gizmo-focus-scale-pressed();
+    // The focused gizmo style (#274): the rail's Move, Rotate and Scale pick
+    // which handles show; the button of the tool in use stays lit.
+    in property <bool> gizmo-focused-style: false;
+    in property <int> gizmo-tool: 0;
     callback gizmo-arrow-pressed(int);
     callback gizmo-arrow-released(int);
     // Tab / Shift+Tab selection cycling, the property gates whether
@@ -1082,6 +1091,7 @@ export component MainWindow inherits Window {
                         icon: Icons.move;
                         label: @tr("Inspector" => "Move");
                         shortcut: "G";
+                        active: root.gizmo-focused-style && root.gizmo-tool == 0;
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
                             root.orient-close-requested();
@@ -1092,6 +1102,7 @@ export component MainWindow inherits Window {
                         icon: Icons.rotate;
                         label: @tr("Inspector" => "Rotate");
                         shortcut: "R";
+                        active: root.gizmo-focused-style && root.gizmo-tool == 1;
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
                             root.orient-close-requested();
@@ -1102,6 +1113,7 @@ export component MainWindow inherits Window {
                         icon: Icons.scale;
                         label: @tr("Inspector" => "Scale");
                         shortcut: "S";
+                        active: root.gizmo-focused-style && root.gizmo-tool == 2;
                         enabled: root.has-scene && root.selected-object-index >= 0;
                         clicked => {
                             root.orient-close-requested();
@@ -1402,6 +1414,17 @@ export component MainWindow inherits Window {
                     viewbox-height: parent.height / 1px;
                     commands: root.axis-guide-commands;
                     stroke: root.axis-guide-color;
+                    stroke-width: 1.5px;
+                    fill: transparent;
+                }
+
+                if root.axis-guide-2-visible: Path {
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: parent.width / 1px;
+                    viewbox-height: parent.height / 1px;
+                    commands: root.axis-guide-2-commands;
+                    stroke: root.axis-guide-2-color;
                     stroke-width: 1.5px;
                     fill: transparent;
                 }

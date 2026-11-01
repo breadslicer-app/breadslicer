@@ -29,6 +29,8 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         prescan_supports,
         smooth_models,
         frame_rate,
+        gizmo_style,
+        gizmo_size,
         orthographic_view,
         silenced_messages,
         object_list,
@@ -68,6 +70,8 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         ),
         smooth_models: pick(&base.smooth_models, &ours.smooth_models, smooth_models),
         frame_rate: pick(&base.frame_rate, &ours.frame_rate, frame_rate),
+        gizmo_style: pick(&base.gizmo_style, &ours.gizmo_style, gizmo_style),
+        gizmo_size: pick(&base.gizmo_size, &ours.gizmo_size, gizmo_size),
         orthographic_view: pick(
             &base.orthographic_view,
             &ours.orthographic_view,

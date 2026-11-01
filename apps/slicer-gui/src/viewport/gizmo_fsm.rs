@@ -19,6 +19,8 @@ use sc_scene::NodeId;
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
+use crate::gizmo::axis::Axis;
+use crate::gizmo::look::{Family, GizmoLook};
 use crate::gizmo::modifiers::{DragModifiers, PrecisionCursor};
 use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
@@ -37,6 +39,22 @@ pub(super) struct StartCtx<'a> {
     /// Every selected leaf. With more than one, the gizmo stands at their
     /// shared centre and moves, turns or scales them all about it (#13,
     /// #218).
+    pub(super) group: &'a [NodeId],
+    pub(super) press: ScreenPoint,
+    pub(super) modifiers: PointerModifiers,
+    /// The gizmo the user picked: which handles show and how large.
+    pub(super) look: GizmoLook,
+}
+
+/// Inputs of [`GizmoFsm::start_body_drag`]: the model whose body was pressed
+/// (#209), where, and what moves with it.
+pub(super) struct BodyCtx<'a> {
+    pub(super) document: &'a Rc<SceneDocument>,
+    pub(super) node_id: NodeId,
+    /// The world point the press grabbed on the model.
+    pub(super) grab: glam::Vec3,
+    /// The selection once the press has selected the model: the model
+    /// alone, or the several selected objects it belongs to.
     pub(super) group: &'a [NodeId],
     pub(super) press: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
@@ -61,6 +79,7 @@ pub(super) struct HoverCtx<'a> {
     /// Every selected leaf, as in [`StartCtx::group`].
     pub(super) group: &'a [NodeId],
     pub(super) cursor: ScreenPoint,
+    pub(super) look: GizmoLook,
 }
 
 pub(super) struct GizmoFsm {
@@ -173,7 +192,7 @@ impl GizmoFsm {
                 let camera = camera_slot.as_ref()?;
                 let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
-                let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+                let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h, &ctx.look)?;
                 // The centre ball sits on the selection itself: a Shift press
                 // there starts a selection box (#13) rather than a scale.
                 if winner == HandleHit::ScaleUniform && ctx.modifiers.shift {
@@ -189,6 +208,16 @@ impl GizmoFsm {
                         // leaving the press as a click candidate.
                         let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis)?;
                         DragOp::Translate { axis, anchor }
+                    }
+                    HandleHit::Plane(normal) => {
+                        // The ray cut the square's plane to grab it.
+                        let anchor = gizmo::drag_math::ray_hits_drag_plane(&ray, pivot, normal)?;
+                        DragOp::Plane {
+                            normal,
+                            origin: pivot,
+                            anchor,
+                            body: false,
+                        }
                     }
                     HandleHit::Rotate(axis) => {
                         // `rotate_drag_angle` returns `None` only inside the
@@ -248,6 +277,53 @@ impl GizmoFsm {
             pivot,
             node_id: sel_id,
         });
+    }
+
+    /// Starts moving the body of a model pressed and dragged past the click
+    /// threshold (#209): in the horizontal plane through the grabbed point,
+    /// so that point stays under the cursor, with Z unchanged. With several
+    /// objects selected, they all move with it. Returns whether the drag
+    /// started.
+    pub(super) fn start_body_drag(&self, ctx: BodyCtx<'_>) -> bool {
+        if matches!(self.state.get(), GizmoState::Drag { .. }) {
+            return false;
+        }
+        let computed = ctx
+            .document
+            .with_scene(|spatial| {
+                let pivot = gizmo_pivot(spatial, ctx.node_id, ctx.group)?;
+                let original = spatial.leaf(ctx.node_id)?.local_transform();
+                Some((pivot, original))
+            })
+            .flatten();
+        let Some((pivot, original)) = computed else {
+            return false;
+        };
+        let group = if ctx.group.len() > 1 {
+            match GroupMove::capture(ctx.document, ctx.group) {
+                Some(group) => Some(Rc::new(group)),
+                None => return false,
+            }
+        } else {
+            None
+        };
+        self.group.replace(group);
+        self.cursor.set(PrecisionCursor::new(
+            [ctx.press.x, ctx.press.y],
+            ctx.modifiers.shift,
+        ));
+        self.state.set(GizmoState::Drag {
+            op: DragOp::Plane {
+                normal: Axis::Z,
+                origin: ctx.grab,
+                anchor: ctx.grab,
+                body: true,
+            },
+            original,
+            pivot,
+            node_id: ctx.node_id,
+        });
+        true
     }
 
     /// Pointer-move drag-update step. Branches on the active `DragOp`,
@@ -321,7 +397,7 @@ impl GizmoFsm {
             };
             // As for one object: a move is free, a turn or a scale keeps the
             // group on the plate.
-            let delta = if matches!(new_op, DragOp::Translate { .. }) {
+            let delta = if matches!(new_op, DragOp::Translate { .. } | DragOp::Plane { .. }) {
                 delta
             } else {
                 group.kept_on_bed(ctx.document, delta)
@@ -332,7 +408,7 @@ impl GizmoFsm {
         // Translation is free, also out of the plate: the out-of-volume
         // warning marks it instead of holding it back. Rotation and scale
         // receive only a floor lift, in the same undoable edit.
-        let new_transform = if matches!(new_op, DragOp::Translate { .. }) {
+        let new_transform = if matches!(new_op, DragOp::Translate { .. } | DragOp::Plane { .. }) {
             new_transform
         } else {
             ctx.document
@@ -412,10 +488,11 @@ impl GizmoFsm {
     }
 }
 
-/// Runs the gizmo hit-tests (arrows, rings, scale cubes, centre ball) against
-/// `ray` and returns the front-most candidate. Shared by `try_start_drag`
-/// (which converts the winner to a `DragOp`) and the hover path (which converts
-/// it to a `GizmoHover`).
+/// Runs the gizmo hit-tests (arrows, plane squares, rings, scale cubes,
+/// centre ball) against `ray` and returns the front-most candidate. Shared by
+/// `try_start_drag` (which converts the winner to a `DragOp`) and the hover
+/// path (which converts it to a `GizmoHover`). Only the handles `look` shows
+/// count, at its size.
 ///
 /// A scale cube sits on its own arrow's shaft and is smaller than the arrow's
 /// hit cylinder, so where both hit, the cube wins whatever the `t`.
@@ -425,30 +502,36 @@ fn front_most_handle(
     pivot: glam::Vec3,
     fov_y: f32,
     h: f32,
+    look: &GizmoLook,
 ) -> Option<(HandleHit, f32)> {
-    use gizmo::dimensions::{
-        AXIS_SCALE_CUBE_HIT_MARGIN_PIXELS, AXIS_SCALE_CUBE_PIXELS, CENTRE_BALL_HIT_PIXELS,
-        RING_HIT_PIXELS, ROTATE_ARC_RADIUS_FRACTION,
-    };
-    let scale = gizmo::gizmo_scale(camera, pivot, fov_y, h)?;
-    let cyl_radius = gizmo::hit_radius_world(camera, pivot, fov_y, h)?;
-    let world_per_pixel = camera.world_per_pixel_at(pivot, fov_y, h)?;
-    let ring_radius_world = scale * ROTATE_ARC_RADIUS_FRACTION;
+    use gizmo::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS, RING_HIT_PIXELS};
+    let m = look.metrics();
+    // One pixel of the gizmo, in world units at the pivot.
+    let world_per_pixel = camera.world_per_pixel_at(pivot, fov_y, h)? * look.size;
+    let scale = world_per_pixel * HANDLE_PIXEL_LENGTH;
+    let cyl_radius = world_per_pixel * HANDLE_PIXEL_RADIUS;
+    let ring_radius_world = scale * m.ring_radius;
     let toward_eye = if camera.orthographic {
         camera.eye() - camera.target
     } else {
         camera.eye() - pivot
     }
     .normalize_or_zero();
-    let cube_world = world_per_pixel * (AXIS_SCALE_CUBE_PIXELS + AXIS_SCALE_CUBE_HIT_MARGIN_PIXELS);
+    let cube_world = world_per_pixel * (m.cube_px + m.cube_hit_margin_px);
 
     let mut best: Option<(HandleHit, f32)> = None;
     let mut consider = |hit: HandleHit, t: f32| match best {
         Some((_, prev_t)) if prev_t <= t => {}
         _ => best = Some((hit, t)),
     };
-    let arrow = gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius);
-    let cube = gizmo::hit_test::scale_hit_test(ray, pivot, scale, cube_world);
+    let arrow = look
+        .shows(Family::Arrows)
+        .then(|| gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius))
+        .flatten();
+    let cube = look
+        .shows(Family::Cubes)
+        .then(|| gizmo::hit_test::scale_hit_test(ray, pivot, scale, cube_world, m.cube_at))
+        .flatten();
     match (arrow, cube) {
         (Some((a, _)), Some((c, t))) if a == c => consider(HandleHit::ScaleAxis(c), t),
         _ => {
@@ -460,22 +543,39 @@ fn front_most_handle(
             }
         }
     }
-    if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
-        ray,
-        pivot,
-        ring_radius_world,
-        world_per_pixel * RING_HIT_PIXELS,
-        toward_eye,
-    ) {
+    if look.shows(Family::Planes) {
+        let squares = gizmo::hit_test::PlaneSquares {
+            offset: world_per_pixel * m.plane_offset_px,
+            side: world_per_pixel * m.plane_size_px,
+            margin: world_per_pixel * PLANE_HIT_MARGIN_PIXELS,
+            view_dir: (camera.target - camera.eye()).normalize_or_zero(),
+        };
+        if let Some((normal, t)) = gizmo::hit_test::plane_hit_test(ray, pivot, squares) {
+            consider(HandleHit::Plane(normal), t);
+        }
+    }
+    if look.shows(Family::Rings)
+        && let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
+            ray,
+            pivot,
+            ring_radius_world,
+            world_per_pixel * RING_HIT_PIXELS,
+            toward_eye,
+        )
+    {
         consider(HandleHit::Rotate(axis), t);
     }
-    if let Some(t) =
-        gizmo::hit_test::centre_hit_test(ray, pivot, world_per_pixel * CENTRE_BALL_HIT_PIXELS)
+    if look.shows(Family::Ball)
+        && let Some(t) =
+            gizmo::hit_test::centre_hit_test(ray, pivot, world_per_pixel * m.ball_hit_px)
     {
         consider(HandleHit::ScaleUniform, t);
     }
     best
 }
+
+/// How far around a plane square, in pixels, a press still grabs it.
+const PLANE_HIT_MARGIN_PIXELS: f32 = 3.5;
 
 /// Pure-data hover computation: derives the front-most handle under the cursor
 /// without touching FSM state. `None` whenever the prereqs (selection / scene /
@@ -490,11 +590,12 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
             let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
-            if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
+            if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor, &ctx.look)
+            {
                 return None;
             }
             let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
-            let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+            let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h, &ctx.look)?;
             Some(handle_hit_to_hover(hit))
         })
         .flatten()
@@ -517,9 +618,10 @@ pub(super) fn gizmo_pivot(
 /// Returns `false` when the cursor is far enough from the gizmo's projected
 /// centre that no handle can be hit, allowing `compute_hover` to skip the three
 /// handle ray-tests. The radius covers the rotate arc (the outermost handle)
-/// plus `HANDLE_PIXEL_LENGTH` of slack so handles at the rim stay hit-able.
-/// Returns `true` when the projection fails (point behind camera) so the
-/// existing hit-test path runs and produces its own `None`.
+/// plus `HANDLE_PIXEL_LENGTH` of slack so handles at the rim stay hit-able,
+/// at the size of `look`. Returns `true` when the projection fails (point
+/// behind camera) so the existing hit-test path runs and produces its own
+/// `None`.
 fn cursor_within_gizmo_screen_radius(
     camera: &OrbitCamera,
     fov_y: f32,
@@ -527,15 +629,15 @@ fn cursor_within_gizmo_screen_radius(
     viewport_h: f32,
     pivot: glam::Vec3,
     cursor: ScreenPoint,
+    look: &GizmoLook,
 ) -> bool {
     let Some((px, py)) =
         picking::project_world_to_screen(camera, fov_y, viewport_w, viewport_h, pivot)
     else {
         return true;
     };
-    let arc_radius_px =
-        gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION * gizmo::dimensions::HANDLE_PIXEL_LENGTH;
-    let radius_px = arc_radius_px + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    let arc_radius_px = look.metrics().ring_radius * gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    let radius_px = (arc_radius_px + gizmo::dimensions::HANDLE_PIXEL_LENGTH) * look.size;
     let dx = cursor.x - px;
     let dy = cursor.y - py;
     dx * dx + dy * dy <= radius_px * radius_px
@@ -544,6 +646,7 @@ fn cursor_within_gizmo_screen_radius(
 fn handle_hit_to_hover(hit: HandleHit) -> GizmoHover {
     match hit {
         HandleHit::Translate(axis) => GizmoHover::Translate(axis),
+        HandleHit::Plane(axis) => GizmoHover::Plane(axis),
         HandleHit::Rotate(axis) => GizmoHover::Rotate(axis),
         HandleHit::ScaleAxis(axis) => GizmoHover::ScaleAxis(axis),
         HandleHit::ScaleUniform => GizmoHover::ScaleUniform,
@@ -579,6 +682,7 @@ mod hover_pre_check_tests {
             h,
             Vec3::ZERO,
             cursor,
+            &GizmoLook::default(),
         ));
     }
 
@@ -598,6 +702,7 @@ mod hover_pre_check_tests {
             h,
             Vec3::ZERO,
             cursor,
+            &GizmoLook::default(),
         ));
     }
 
@@ -622,6 +727,7 @@ mod hover_pre_check_tests {
             h,
             Vec3::ZERO,
             cursor,
+            &GizmoLook::default(),
         ));
     }
 
@@ -646,6 +752,7 @@ mod hover_pre_check_tests {
             h,
             Vec3::ZERO,
             cursor,
+            &GizmoLook::default(),
         ));
     }
 }
@@ -675,7 +782,7 @@ mod front_most_handle_tests {
         let fov_y = default_fov_y();
         let (px, py) = picking::project_world_to_screen(camera, fov_y, W, H, pivot).unwrap();
         let ray = picking::ray_from_pixel(camera, fov_y, W, H, px + offset.0, py + offset.1);
-        front_most_handle(&ray, camera, pivot, fov_y, H).map(|(hit, _)| hit)
+        front_most_handle(&ray, camera, pivot, fov_y, H, &GizmoLook::default()).map(|(hit, _)| hit)
     }
 
     #[test]
@@ -739,5 +846,57 @@ mod front_most_handle_tests {
         );
         // Between the ball and the ring, off the arrows: nothing.
         assert_eq!(pick_at(&camera, pivot, (0.4 * r, 0.4 * r)), None);
+    }
+
+    /// The CPU cost of a frame of the gizmo: the hover hit test under the
+    /// cursor, which runs on every pointer move, and the draws of the frame.
+    /// Run in release: `cargo test --release -p sc-slicer-gui -- --ignored
+    /// measure_gizmo_frame_cost --nocapture`.
+    #[test]
+    #[ignore]
+    fn measure_gizmo_frame_cost() {
+        use crate::gizmo::look::{GizmoStyle, GizmoTool};
+        use crate::mesh_render::{GizmoFrame, GizmoVisibility};
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.yaw = -2.4;
+        camera.pitch = 0.67;
+        let fov_y = default_fov_y();
+        let n = 200_000u32;
+        for style in [GizmoStyle::Outline, GizmoStyle::Focused] {
+            let look = GizmoLook {
+                style,
+                size: 1.0,
+                tool: GizmoTool::Move,
+            };
+            let started = std::time::Instant::now();
+            let mut hits = 0u32;
+            for i in 0..n {
+                let x = 412.0 + (i % 200) as f32;
+                let y = 284.0 + (i % 150) as f32;
+                let ray = picking::ray_from_pixel(&camera, fov_y, W, H, x, y);
+                hits +=
+                    front_most_handle(&ray, &camera, Vec3::ZERO, fov_y, H, &look).is_some() as u32;
+            }
+            let hover = started.elapsed() / n;
+            let frame = GizmoFrame {
+                pivot: Vec3::ZERO,
+                scale: 1.0,
+                view_dir: (camera.target - camera.eye()).normalize(),
+                visibility: GizmoVisibility::Idle,
+                hover: None,
+                drag_visual: None,
+                look,
+            };
+            let started = std::time::Instant::now();
+            let mut draws = 0usize;
+            for _ in 0..n {
+                draws += crate::mesh_render::gizmo_draw_count_for_test(&frame);
+            }
+            let build = started.elapsed() / n;
+            println!(
+                "{style:?}: hover hit test {hover:?} per move ({hits} hits), draws {build:?} per frame ({} draws)",
+                draws / n as usize
+            );
+        }
     }
 }

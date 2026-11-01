@@ -13,6 +13,7 @@ pub(crate) mod dimensions;
 pub(crate) mod drag_math;
 pub(crate) mod frame;
 pub(crate) mod hit_test;
+pub(crate) mod look;
 pub(crate) mod modifiers;
 pub(crate) mod style;
 mod tolerances;
@@ -24,7 +25,9 @@ use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 
-use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
+use self::dimensions::HANDLE_PIXEL_LENGTH;
+#[cfg(test)]
+use self::dimensions::HANDLE_PIXEL_RADIUS;
 
 /// Returns the world-space pivot for the gizmo: the local-AABB centre of the
 /// leaf, transformed by the leaf's world transform. Returns `None` when the
@@ -69,9 +72,21 @@ pub(crate) fn gizmo_scale(
         .map(|world_per_pixel| world_per_pixel * HANDLE_PIXEL_LENGTH)
 }
 
+/// [`gizmo_scale`] for a gizmo drawn at `size` (1 at 100 %, #276).
+pub(crate) fn gizmo_scale_sized(
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    fov_y: f32,
+    viewport_h: f32,
+    size: f32,
+) -> Option<f32> {
+    gizmo_scale(camera, pivot, fov_y, viewport_h).map(|s| s * size)
+}
+
 /// Returns the world-space radius of the translate hit cylinder that spans
 /// `HANDLE_PIXEL_RADIUS` pixels on screen at `pivot`. Returns `None` when
 /// `pivot` is not in front of the eye.
+#[cfg(test)]
 pub(crate) fn hit_radius_world(
     camera: &OrbitCamera,
     pivot: Vec3,

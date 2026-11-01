@@ -344,6 +344,8 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_prescan_supports(snap.prescan_supports);
     settings.set_smooth_models(snap.smooth_models);
     settings.set_frame_rate(snap.frame_rate);
+    settings.set_gizmo_style(snap.gizmo_style);
+    settings.set_gizmo_size(snap.gizmo_size);
     settings.set_orthographic_view(snap.orthographic_view);
     settings.set_silenced_messages(snap.silenced_messages.clone());
     settings.set_object_list_visible(snap.object_list_visible);
@@ -459,6 +461,9 @@ fn subscribe_window_preferences(
         if matches!(change, PreferencesChange::FrameRate) {
             crate::frame_rate::set_frame_rate_cap(snap.frame_rate);
         }
+        if matches!(change, PreferencesChange::Gizmo) {
+            controller.set_gizmo_prefs(snap.gizmo_style, snap.gizmo_size);
+        }
     })
 }
 
@@ -487,6 +492,8 @@ impl AppState {
             prescan_supports: settings.prescan_supports(),
             smooth_models: settings.smooth_models(),
             frame_rate: settings.frame_rate(),
+            gizmo_style: settings.gizmo_style(),
+            gizmo_size: settings.gizmo_size(),
             orthographic_view: settings.orthographic_view(),
             // Never stored: the log runs until the app closes and every launch
             // starts with it off (#74).
@@ -2284,6 +2291,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::PrescanSupports,
             PreferencesChange::SmoothModels,
             PreferencesChange::FrameRate,
+            PreferencesChange::Gizmo,
             PreferencesChange::Projection,
             PreferencesChange::DiagnosticLog,
             PreferencesChange::SilencedMessages,
