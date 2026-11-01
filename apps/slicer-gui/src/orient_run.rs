@@ -711,7 +711,7 @@ impl OrientRun {
         *self.shown.borrow_mut() = Some(Shown {
             leaf: target.leaf,
             revision: target.revision,
-            before: target.local.clone(),
+            before: target.local,
             afters,
         });
         self.selected.set(if outcome.keep_current { -1 } else { 0 });
@@ -802,7 +802,7 @@ impl OrientRun {
             let Some(after) = shown.afters.get(i) else {
                 return;
             };
-            (shown.leaf, after.clone())
+            (shown.leaf, *after)
         };
         if !self.set_pose(leaf, after) {
             return;
@@ -834,7 +834,7 @@ impl OrientRun {
             .shown
             .borrow()
             .as_ref()
-            .map(|shown| (shown.leaf, shown.before.clone()));
+            .map(|shown| (shown.leaf, shown.before));
         if let Some((leaf, before)) = back {
             self.set_pose(leaf, before);
         }
@@ -894,7 +894,7 @@ impl OrientRun {
             let Some(after) = shown.afters.get(i) else {
                 return false;
             };
-            (shown.leaf, shown.before.clone(), after.clone())
+            (shown.leaf, shown.before, *after)
         };
         let edit = SceneEdit::SetLocalTransform {
             node_id: leaf,
