@@ -281,7 +281,8 @@ export component MainWindow inherits Window {
     in-out property <bool> hollow-drain-tool: false;
     // What the drain under the cursor would do (#302): 0 no drain there,
     // 1 it opens into the cavity, 2 it does not reach it (left out), 3 not
-    // known yet (the cavity is not computed).
+    // known yet (the cavity is not computed), 4 it opens, shorter than its
+    // set depth, which would reach the cavity's far side (#316).
     in property <int> hollow-drain-reach: 0;
     property <bool> drain-misses: root.workspace-section == WorkspaceSection.Hollow
         && root.hollow-drain-tool && root.hollow-drain-reach == 2;
@@ -295,6 +296,13 @@ export component MainWindow inherits Window {
     in property <float> hollow-cell: 6;
     in property <float> hollow-beam: 0.8;
     in property <float> hollow-drain-radius: 1.5;
+    // The drain tool's shape: a set depth (#316), a cone (#317), a plug (#318).
+    in property <bool> hollow-drain-depth-set: false;
+    in property <float> hollow-drain-depth: 3;
+    in property <bool> hollow-drain-cone: false;
+    in property <float> hollow-drain-inner-radius: 1;
+    in property <bool> hollow-drain-plug: false;
+    in property <float> hollow-plug-clearance: 0.1;
     callback hollow-apply();
     callback hollow-cancel();
     callback hollow-restore();
@@ -1760,6 +1768,12 @@ export component MainWindow inherits Window {
                             cell: root.hollow-cell;
                             beam: root.hollow-beam;
                             drain-radius: root.hollow-drain-radius;
+                            drain-depth-set: root.hollow-drain-depth-set;
+                            drain-depth: root.hollow-drain-depth;
+                            drain-cone: root.hollow-drain-cone;
+                            drain-inner-radius: root.hollow-drain-inner-radius;
+                            drain-plug: root.hollow-drain-plug;
+                            plug-clearance: root.hollow-plug-clearance;
                             apply-requested => {
                                 root.hollow-drain-tool = false;
                                 root.hollow-apply();
@@ -1895,6 +1909,7 @@ export component MainWindow inherits Window {
                         : root.workspace-section == WorkspaceSection.Transform ? @tr("Workspace" => "G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, Shift is finer.")
                         : root.drain-misses ? @tr("Workspace" => "A drain here would not reach the cavity: hollowing leaves it out.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 3 ? @tr("Workspace" => "Not known yet whether a drain here reaches the cavity: the cavity is not computed.")
+                        : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool && root.hollow-drain-reach == 4 ? @tr("Workspace" => "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn.")
                         : root.workspace-section == WorkspaceSection.Hollow && root.hollow-drain-tool ? @tr("Workspace" => "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back.")
                         : root.workspace-section == WorkspaceSection.Hollow ? @tr("Workspace" => "Hollowing is on its way; supports can be generated before or after it.")
                         : root.workspace-section == WorkspaceSection.Supports && root.support-tool == 1 ? @tr("Workspace" => "Click the model where a support should touch it. Undo takes it back.")

@@ -1083,6 +1083,13 @@ export component HollowInspector inherits VerticalLayout {
     in property <float> cell;
     in property <float> beam;
     in property <float> drain-radius;
+    // The drain tool's shape (#316, #317, #318).
+    in property <bool> drain-depth-set;
+    in property <float> drain-depth;
+    in property <bool> drain-cone;
+    in property <float> drain-inner-radius;
+    in property <bool> drain-plug;
+    in property <float> plug-clearance;
     callback apply-requested();
     callback cancel-requested();
     callback restore-requested();
@@ -1259,12 +1266,68 @@ export component HollowInspector inherits VerticalLayout {
             }
         }
         NumberField {
-            label: @tr("Inspector" => "Drain radius");
+            label: root.drain-cone ? @tr("Inspector" => "Radius at the surface") : @tr("Inspector" => "Drain radius");
             unit: "mm";
             value: root.drain-radius;
             committed(v) => {
                 root.option-changed(6, v);
             }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Shape");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Cylinder"), @tr("Inspector" => "Cone")];
+                current: root.drain-cone ? 1 : 0;
+                picked(i) => {
+                    root.option-changed(9, i);
+                }
+            }
+        }
+        if root.drain-cone: NumberField {
+            label: @tr("Inspector" => "Radius at the end");
+            unit: "mm";
+            value: root.drain-inner-radius;
+            committed(v) => {
+                root.option-changed(10, v);
+            }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Depth");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Through the wall"), @tr("Inspector" => "Set")];
+                current: root.drain-depth-set ? 1 : 0;
+                picked(i) => {
+                    root.option-changed(7, i);
+                }
+            }
+        }
+        if root.drain-depth-set: NumberField {
+            label: @tr("Inspector" => "Depth from the surface");
+            unit: "mm";
+            value: root.drain-depth;
+            committed(v) => {
+                root.option-changed(8, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Make a plug for each new drain");
+            checked: root.drain-plug;
+            toggled => {
+                root.option-changed(11, self.checked ? 1 : 0);
+            }
+        }
+        if root.drain-plug: NumberField {
+            label: @tr("Inspector" => "Plug clearance (across)");
+            unit: "mm";
+            value: root.plug-clearance;
+            committed(v) => {
+                root.option-changed(12, v);
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning.");
         }
         if root.drain-count > 0: ScButton {
             text: @tr("Inspector" => "Remove all drains");
