@@ -301,32 +301,6 @@ impl GroupMove {
         document.apply_edit_unfollowed(SceneEdit::Compound(edits))
     }
 
-    /// Takes where every leaf stands now as the base the next `delta` applies
-    /// to: the gizmo re-anchors a scale when Shift flips mid-drag.
-    pub(super) fn rebase(&self, document: &SceneDocument) {
-        let now = document.with_scene(|spatial| {
-            let current = |id: NodeId, fallback: Transform3D| {
-                spatial.leaf(id).map_or(fallback, |q| q.local_transform())
-            };
-            let (base, rider_base) = &*self.base.borrow();
-            (
-                self.members
-                    .iter()
-                    .zip(base)
-                    .map(|(m, b)| current(m.node_id, *b))
-                    .collect(),
-                self.riders
-                    .iter()
-                    .zip(rider_base)
-                    .map(|(r, b)| current(r.node_id, *b))
-                    .collect(),
-            )
-        });
-        if let Some(now) = now {
-            *self.base.borrow_mut() = now;
-        }
-    }
-
     /// Ends the gesture: the supports go back where the history has them and
     /// the leaves' change is recorded as one undo entry, which takes the
     /// supports along or away.

@@ -1125,6 +1125,20 @@ msgctxt "MeshViewer"
 msgid "Enter / click: confirm | Esc / right click: cancel"
 msgstr "Intro / clic: confirmar | Esc / clic derecho: cancelar"
 
+#: ui/mesh-viewer.slint:584
+msgctxt "MeshViewer"
+msgid "Ctrl: snap | Shift: fine"
+msgstr "Ctrl: imantar | Shift: fino"
+
+#: ui/main-window.slint:1824
+msgctxt "Workspace"
+msgid ""
+"G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, "
+"Shift is finer."
+msgstr ""
+"G mover · R rotar · S escalar, después X / Y / Z para fijar un eje. Ctrl "
+"imanta, Shift afina."
+
 #: src/scene_save.rs:103
 msgctxt "ErrorDialog"
 msgid "Project files are saved as .3mf packages."

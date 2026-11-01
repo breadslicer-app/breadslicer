@@ -187,10 +187,10 @@ impl InputDispatch {
 
     /// Records the press and, if the cursor hits a gizmo handle,
     /// transitions the FSM into `Drag` capturing the original
-    /// transform and the world-space anchor. `modifiers.shift` at
-    /// press time captures into the resulting `ScaleAxis.proportional`
-    /// flag. A Shift press that grabs no handle starts a selection box
-    /// instead (#13); returns whether it did, so the viewport draws it.
+    /// transform and the world-space anchor. Shift held at press
+    /// starts the drag fine. A Shift press that grabs no handle starts
+    /// a selection box instead (#13); returns whether it did, so the
+    /// viewport draws it.
     pub(super) fn on_pointer_down(
         &self,
         document: &Rc<SceneDocument>,
@@ -293,6 +293,20 @@ impl InputDispatch {
     ) -> PointerUpOutcome {
         let outcome = self.input_state.click_or_drag(cursor);
         let box_from = self.box_from.take();
+        // A press and release on the centre ball without moving is a click
+        // on what lies under it: the ball means nothing without a drag.
+        if outcome == ClickOrDrag::Click
+            && matches!(
+                self.gizmo_fsm.current(),
+                GizmoState::Drag {
+                    op: super::gizmo_drag::DragOp::ScaleUniform { .. },
+                    ..
+                }
+            )
+        {
+            self.gizmo_fsm.abort(document);
+            return PointerUpOutcome::Click(cursor);
+        }
         if self.gizmo_fsm.commit_drag(document) {
             return PointerUpOutcome::DragCommitted;
         }

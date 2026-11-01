@@ -15,7 +15,6 @@ use slint::wgpu_30::wgpu;
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::front_label::LabelRaster;
-use crate::gizmo::axis::ALL_AXES;
 use crate::slice_cap::CapRaster;
 
 mod device_loss;
@@ -48,8 +47,7 @@ pub use error::{
 use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
-    GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries, build_scale_axis_entries,
-    build_translate_entries,
+    GIZMO_ENTRY_SLOTS, GizmoDrawEntry, GizmoLayer, GizmoMesh, GizmoUniformsGpu, build_gizmo_draws,
 };
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
 pub(crate) use overlay::{Overlay, OverlayMesh, OverlayTint};
@@ -100,10 +98,6 @@ enum FrameContents {
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-/// Format for the gizmo pass's private depth attachment. Stencil is not used by
-/// the gizmo pipeline, so a plain `Depth32Float` (default-limits supported,
-/// single-aspect) suffices.
-const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 // Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a single
 // attachment. The selection-outline post-pass writes `1` to stencil for the
 // selected object via per-draw stencil reference, then reads that stencil
@@ -903,12 +897,17 @@ impl Renderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("mesh-viewer encoder"),
                 });
+        // The last pass that draws into the multisampled target resolves it
+        // into `target`: the main pass, then the selection outline, then the
+        // gizmo, each when it runs.
+        let outline = !selection.is_empty() && scene_for_draws;
+        let resolve_main = !outline && gizmo.is_none();
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh-viewer pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &msaa.color_view,
-                    resolve_target: Some(&target_view),
+                    resolve_target: resolve_main.then_some(&target_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(frame::CLEAR_COLOR),
                         store: wgpu::StoreOp::Store,
@@ -957,8 +956,9 @@ impl Renderer {
                 self.record_front_label(&mut pass, plate_buffers, LABEL_UNDERSIDE);
             }
         }
-        if !selection.is_empty() && scene_for_draws {
-            self.record_outline_post_pass(&mut encoder, &target_view, msaa);
+        if outline {
+            let resolve = gizmo.is_none().then_some(&target_view);
+            self.record_outline_post_pass(&mut encoder, resolve, msaa);
         }
         if let Some(frame) = gizmo {
             self.record_gizmo_pass(&mut encoder, &target_view, msaa, &frame, view_proj, camera);
@@ -1143,19 +1143,20 @@ impl Renderer {
     /// 1-pixel halo around the selected leaf. Caller must gate on
     /// `!selection.is_empty() && scene_for_draws`: without a scene the stencil is
     /// all zeroes and the dilate would be a no-op; without a selection the mesh
-    /// pass left the stencil at 0 too. Loads the resolved colour from the main
-    /// pass and discards non-edge fragments, so existing pixels survive.
+    /// pass left the stencil at 0 too. Loads the multisampled colour from the
+    /// main pass and discards non-edge fragments, so existing pixels survive;
+    /// resolves into `resolve` when no gizmo pass follows.
     fn record_outline_post_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        target_view: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
         msaa: &MsaaTargets,
     ) {
         let mut outline_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("mesh-viewer outline pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
+                view: &msaa.color_view,
+                resolve_target: resolve,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -1176,12 +1177,13 @@ impl Renderer {
         outline_pass.draw(0..3, 0..1);
     }
 
-    /// Gizmo pass: drawn last so it sits on top of the mesh + the outline.
-    /// Depth is cleared at pass start so the gizmo is never occluded by the
-    /// mesh; depth-test stays enabled within the pass so the 3 axes order
-    /// correctly where they overlap near the pivot. Uploads the per-frame gizmo
-    /// uniforms and the active entry slots, then records draw calls for
-    /// whichever of translate / rotate / scale handles are visible this frame.
+    /// Gizmo pass: drawn last, into the multisampled colour target so the
+    /// handles are antialiased, over the mesh and the selection outline, and
+    /// resolved into `target_view`. It borrows the main depth attachment with
+    /// its depth cleared, so the gizmo is never hidden by the model while the
+    /// handles still order among themselves. Uploads the per-frame uniforms,
+    /// the draw entries (one upload) and, while rotating, the marks of the
+    /// turn, then records the draws in the order `build_gizmo_draws` gives.
     fn record_gizmo_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1191,63 +1193,48 @@ impl Renderer {
         view_proj: Mat4,
         camera: &OrbitCamera,
     ) {
+        let buffers = &self.pipelines.gizmo_buffers;
+        let eye = if camera.orthographic {
+            let toward = camera.eye() - camera.target;
+            [toward.x, toward.y, toward.z, 0.0]
+        } else {
+            let e = camera.eye();
+            [e.x, e.y, e.z, 1.0]
+        };
         let uniforms = GizmoUniformsGpu {
             view_proj: view_proj.to_cols_array_2d(),
             pivot_and_scale: [frame.pivot.x, frame.pivot.y, frame.pivot.z, frame.scale],
+            eye,
         };
-        self.core.queue.write_buffer(
-            &self.pipelines.gizmo_buffers.uniforms_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.core
+            .queue
+            .write_buffer(&buffers.uniforms_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Decide which categories to draw and write the matching entry slots.
-        // Other slots are not used this frame, so we skip writing them, the
-        // dynamic-offset bind only ever points at slots that received fresh
-        // data.
-        let render_translate = matches!(
-            frame.visibility,
-            GizmoVisibility::Idle | GizmoVisibility::DraggingTranslate { .. }
-        );
-        let render_rotate = matches!(
-            frame.visibility,
-            GizmoVisibility::Idle | GizmoVisibility::DraggingRotate { .. }
-        );
-        let render_scale = matches!(
-            frame.visibility,
-            GizmoVisibility::Idle | GizmoVisibility::DraggingScaleAxis { .. }
-        );
+        let draws = build_gizmo_draws(frame);
+        let entries: Vec<GizmoDrawEntry> = draws.iter().map(|d| d.entry).collect();
+        buffers.write_entries(&self.core.queue, &entries);
+        let (wedge, marks) = match frame.drag_visual {
+            Some(GizmoDragVisual::Rotate { axis, start, sweep }) => buffers.write_marks(
+                &self.core.queue,
+                &crate::gizmo_geometry::build_rotate_marks(axis, start, sweep),
+            ),
+            Some(GizmoDragVisual::ViewRotate {
+                right,
+                up,
+                start,
+                sweep,
+            }) => buffers.write_marks(
+                &self.core.queue,
+                &crate::gizmo_geometry::build_ring_marks(right, up, start, sweep),
+            ),
+            _ => (0..0, 0..0),
+        };
 
-        if render_translate {
-            let entries = build_translate_entries(frame);
-            self.pipelines.gizmo_buffers.write_entries(
-                &self.core.queue,
-                GIZMO_SLOTS.translate.start(),
-                &entries,
-            );
-        }
-        if render_rotate {
-            let entries = build_rotate_entries(frame, camera);
-            self.pipelines.gizmo_buffers.write_entries(
-                &self.core.queue,
-                GIZMO_SLOTS.rotate.start(),
-                &entries,
-            );
-        }
-        if render_scale {
-            let axis_entries = build_scale_axis_entries(frame);
-            self.pipelines.gizmo_buffers.write_entries(
-                &self.core.queue,
-                GIZMO_SLOTS.scale_axis.start(),
-                &axis_entries,
-            );
-        }
-
-        let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("mesh-viewer gizmo pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
+                view: &msaa.color_view,
+                resolve_target: Some(target_view),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -1255,177 +1242,60 @@ impl Renderer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &msaa.gizmo_depth_view,
+                view: &msaa.depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Discard,
                 }),
-                stencil_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Discard,
+                }),
             }),
             occlusion_query_set: None,
             timestamp_writes: None,
             multiview_mask: None,
         });
-        gizmo_pass.set_bind_group(
+        pass.set_bind_group(
             GizmoBindGroup::Uniforms.idx(),
             &self.pipelines.gizmo.uniforms_bind_group,
             &[],
         );
-
-        if render_translate {
-            // 1-pixel shaft line, 3 axes.
-            gizmo_pass.set_pipeline(&self.pipelines.gizmo.line_pipeline);
-            gizmo_pass.set_vertex_buffer(
-                0,
-                self.pipelines
-                    .gizmo_buffers
-                    .shaft_line_vertex_buffer
-                    .slice(..),
-            );
-            gizmo_pass.set_index_buffer(
-                self.pipelines
-                    .gizmo_buffers
-                    .shaft_line_index_buffer
-                    .slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
-                let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
-                    * self.pipelines.gizmo_buffers.entry_stride)
-                    as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.pipelines.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(
-                    0..self.pipelines.gizmo_buffers.shaft_line_index_count,
-                    0,
-                    0..1,
-                );
+        let mut bound_layer = None;
+        let mut bound_mesh = None;
+        for (slot, draw) in draws.iter().enumerate().take(GIZMO_ENTRY_SLOTS as usize) {
+            if bound_layer != Some(draw.layer) {
+                pass.set_pipeline(match draw.layer {
+                    GizmoLayer::Halo => &self.pipelines.gizmo.halo_pipeline,
+                    GizmoLayer::Core => &self.pipelines.gizmo.core_pipeline,
+                    GizmoLayer::Flat => &self.pipelines.gizmo.flat_pipeline,
+                });
+                bound_layer = Some(draw.layer);
             }
-            // Solid cone tip, the active translate handle.
-            gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
-            gizmo_pass.set_vertex_buffer(
-                0,
-                self.pipelines
-                    .gizmo_buffers
-                    .cone_tip_vertex_buffer
-                    .slice(..),
+            let offset = (slot as u64 * buffers.entry_stride) as u32;
+            pass.set_bind_group(
+                GizmoBindGroup::Entries.idx(),
+                &self.pipelines.gizmo.entries_bind_group,
+                &[offset],
             );
-            gizmo_pass.set_index_buffer(
-                self.pipelines.gizmo_buffers.cone_tip_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
-                let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
-                    * self.pipelines.gizmo_buffers.entry_stride)
-                    as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.pipelines.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(
-                    0..self.pipelines.gizmo_buffers.cone_tip_index_count,
-                    0,
-                    0..1,
-                );
+            if let Some(mesh) = buffers.mesh(draw.mesh) {
+                if bound_mesh != Some(draw.mesh) {
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    bound_mesh = Some(draw.mesh);
+                }
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                continue;
             }
-        }
-        if render_rotate {
-            // 1-pixel arc polyline.
-            gizmo_pass.set_pipeline(&self.pipelines.gizmo.line_pipeline);
-            gizmo_pass.set_vertex_buffer(
-                0,
-                self.pipelines
-                    .gizmo_buffers
-                    .arc_line_vertex_buffer
-                    .slice(..),
-            );
-            gizmo_pass.set_index_buffer(
-                self.pipelines.gizmo_buffers.arc_line_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
-                let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
-                    * self.pipelines.gizmo_buffers.entry_stride)
-                    as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.pipelines.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(
-                    0..self.pipelines.gizmo_buffers.arc_line_index_count,
-                    0,
-                    0..1,
-                );
-            }
-            // 2-cone spindle at the arc's midpoint, the active rotate handle.
-            // Shares the per-axis camera-rolled `axis_rotation` so it lands at
-            // the visual centre of the arc.
-            gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
-            gizmo_pass.set_vertex_buffer(
-                0,
-                self.pipelines
-                    .gizmo_buffers
-                    .rotate_cones_vertex_buffer
-                    .slice(..),
-            );
-            gizmo_pass.set_index_buffer(
-                self.pipelines
-                    .gizmo_buffers
-                    .rotate_cones_index_buffer
-                    .slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
-                let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
-                    * self.pipelines.gizmo_buffers.entry_stride)
-                    as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.pipelines.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(
-                    0..self.pipelines.gizmo_buffers.rotate_cones_index_count,
-                    0,
-                    0..1,
-                );
-            }
-        }
-        if render_scale {
-            gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
-            gizmo_pass.set_vertex_buffer(
-                0,
-                self.pipelines
-                    .gizmo_buffers
-                    .scale_cube_vertex_buffer
-                    .slice(..),
-            );
-            gizmo_pass.set_index_buffer(
-                self.pipelines
-                    .gizmo_buffers
-                    .scale_cube_index_buffer
-                    .slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
-                let offset = (GIZMO_SLOTS.scale_axis.slot(axis_idx as u64)
-                    * self.pipelines.gizmo_buffers.entry_stride)
-                    as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.pipelines.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(
-                    0..self.pipelines.gizmo_buffers.scale_cube_index_count,
-                    0,
-                    0..1,
-                );
+            let range = if draw.mesh == GizmoMesh::Wedge {
+                wedge.clone()
+            } else {
+                marks.clone()
+            };
+            if !range.is_empty() {
+                pass.set_vertex_buffer(0, buffers.marks_buffer.slice(..));
+                bound_mesh = None;
+                pass.draw(range, 0..1);
             }
         }
     }

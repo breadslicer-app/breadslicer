@@ -4,11 +4,16 @@
  */
 
 //! Gizmo overlay pipelines: draw the translate / rotate / scale
-//! handles on top of the resolved colour target with their own
-//! private depth attachment. Two pipelines share a shader, vertex
-//! layout, and bind-group layouts; they differ only in primitive
-//! topology (`LineList` vs `TriangleList`) and `cull_mode` (`None`
-//! vs `Back`). The renderer picks the right one per geometry.
+//! handles on top of the scene, into the multisampled colour target so
+//! they are antialiased, alpha-blended. Three pipelines share a shader,
+//! vertex layout, and bind-group layouts:
+//!
+//! - `halo`: back faces culled, no depth test or write. The dark outline
+//!   of every handle and the faint back halves of the rings, under all
+//!   handles.
+//! - `core`: back faces culled, depth-tested and written, so the handles
+//!   order among themselves where they overlap near the pivot.
+//! - `flat`: both faces, no depth. The flat marks of a turn.
 
 use std::borrow::Cow;
 use std::num::NonZeroU64;
@@ -18,7 +23,7 @@ use slint::wgpu_30::wgpu;
 use super::super::device_ops::scoped;
 use super::super::gizmo_buffers::GizmoBuffers;
 use super::super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GizmoUniformsGpu};
-use super::super::{GIZMO_DEPTH_FORMAT, TEXTURE_FORMAT};
+use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 use crate::gizmo_geometry::GizmoVertex;
 
 const GIZMO_SHADER_SOURCE: &str = include_str!("../shaders/gizmo.wgsl");
@@ -39,8 +44,9 @@ impl GizmoBindGroup {
 }
 
 pub(in crate::mesh_render) struct GizmoPipeline {
-    pub(in crate::mesh_render) triangle_pipeline: wgpu::RenderPipeline,
-    pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) halo_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) core_pipeline: wgpu::RenderPipeline,
+    pub(in crate::mesh_render) flat_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
     pub(in crate::mesh_render) entries_bind_group: wgpu::BindGroup,
 }
@@ -63,7 +69,7 @@ impl GizmoPipeline {
             label: Some("mesh-viewer gizmo uniforms bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -99,8 +105,8 @@ impl GizmoPipeline {
         });
 
         let make_pipeline = |label: &'static str,
-                             topology: wgpu::PrimitiveTopology,
-                             cull_mode: Option<wgpu::Face>|
+                             cull_mode: Option<wgpu::Face>,
+                             depth: bool|
          -> wgpu::RenderPipeline {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -112,11 +118,11 @@ impl GizmoPipeline {
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: size_of::<GizmoVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
                     })],
                 },
                 primitive: wgpu::PrimitiveState {
-                    topology,
+                    topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode,
@@ -124,16 +130,21 @@ impl GizmoPipeline {
                     unclipped_depth: false,
                     conservative: false,
                 },
+                // The pass borrows the main depth-stencil attachment with its
+                // depth cleared, so the gizmo is never hidden by the model.
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: GIZMO_DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(depth),
+                    depth_compare: Some(if depth {
+                        wgpu::CompareFunction::LessEqual
+                    } else {
+                        wgpu::CompareFunction::Always
+                    }),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                // Resolved (non-MSAA) target → 1-sample pipeline.
                 multisample: wgpu::MultisampleState {
-                    count: 1,
+                    count: SAMPLE_COUNT,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },
@@ -143,7 +154,7 @@ impl GizmoPipeline {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: TEXTURE_FORMAT,
-                        blend: None,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -152,16 +163,17 @@ impl GizmoPipeline {
             })
         };
 
-        let triangle_pipeline = make_pipeline(
-            "mesh-viewer gizmo triangle pipeline",
-            wgpu::PrimitiveTopology::TriangleList,
+        let halo_pipeline = make_pipeline(
+            "mesh-viewer gizmo halo pipeline",
             Some(wgpu::Face::Back),
+            false,
         );
-        let line_pipeline = make_pipeline(
-            "mesh-viewer gizmo line pipeline",
-            wgpu::PrimitiveTopology::LineList,
-            None,
+        let core_pipeline = make_pipeline(
+            "mesh-viewer gizmo core pipeline",
+            Some(wgpu::Face::Back),
+            true,
         );
+        let flat_pipeline = make_pipeline("mesh-viewer gizmo flat pipeline", None, false);
 
         let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh-viewer gizmo uniforms bg"),
@@ -181,8 +193,9 @@ impl GizmoPipeline {
         });
 
         Self {
-            triangle_pipeline,
-            line_pipeline,
+            halo_pipeline,
+            core_pipeline,
+            flat_pipeline,
             uniforms_bind_group,
             entries_bind_group,
         }

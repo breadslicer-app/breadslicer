@@ -7,11 +7,12 @@
 //! plane angle, scale-factor formulas. Renderer-agnostic so it can
 //! be unit-tested without a `wgpu::Device`.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use crate::picking::Ray;
 
 use super::axis::{Axis, axis_basis};
+use super::dimensions::{HANDLE_PIXEL_LENGTH, ROTATE_ARC_RADIUS_FRACTION};
 use super::tolerances::{EPS_SCALE, LOCKOUT_COS};
 
 /// Minimum value of `1 - (axis · ray_dir)²` (= `sin²(angle)`) for the
@@ -125,38 +126,78 @@ pub(crate) fn scale_factor_along_axis(
     (current_proj / start_proj).clamp(EPS_SCALE, 1.0 / EPS_SCALE)
 }
 
-/// Uniform scale factor for a drag of the per-axis cube with the
-/// proportional-scale modifier (Shift) held. Driven by the
-/// screen-space distance between the cursor and the projected pivot:
-/// the factor is the ratio of the current distance to the press
-/// distance, clamped into `[EPS_SCALE, 1/EPS_SCALE]`.
+/// Below this distance from the projected pivot, in pixels, the cursor angle
+/// around it jumps with every pixel: a rotate drag there reads the cursor's
+/// travel across its last direction instead.
+pub(crate) const SCREEN_TURN_MIN_RADIUS: f32 = 12.0;
+
+/// Pixels of travel across the last direction that turn one radian near the
+/// pivot: the ring's radius on screen.
+const SCREEN_TURN_REFERENCE: f32 = ROTATE_ARC_RADIUS_FRACTION * HANDLE_PIXEL_LENGTH;
+
+/// How far a rotate drag has turned, measured on screen: the angle of the
+/// cursor around the projected pivot, unwrapped, so a circle drawn on screen
+/// turns evenly whatever the tilt of the ring (cutting the cursor ray with the
+/// ring's plane turns unevenly on a tilted ring, which reads as an ellipse).
+/// Near the pivot it falls back to the travel across the last direction.
 ///
-/// `pivot_screen_*` must be the projection of the world-space
-/// pivot into the same logical-pixel coordinate space as the
-/// cursor positions. The controller computes that projection from
-/// its camera + viewport once per move event.
-///
-/// Returns `1.0` when the press lands within `1e-6` pixels of the
-/// projected pivot; the ratio is undefined there.
-pub(crate) fn uniform_scale_factor(
-    pivot_screen_x: f32,
-    pivot_screen_y: f32,
-    x_press: f32,
-    y_press: f32,
-    x_now: f32,
-    y_now: f32,
-) -> f32 {
-    let dx0 = x_press - pivot_screen_x;
-    let dy0 = y_press - pivot_screen_y;
-    let start_dist_sq = dx0 * dx0 + dy0 * dy0;
-    if start_dist_sq < 1e-12 {
-        return 1.0;
+/// The angle grows clockwise on screen (screen y grows downward).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScreenTurn {
+    pivot: Vec2,
+    last: Vec2,
+    /// The last direction from the pivot to the cursor, unit.
+    dir: Vec2,
+    turned: f32,
+}
+
+impl ScreenTurn {
+    /// Starts a turn pressed at `press` around the projected pivot `pivot`.
+    pub(crate) fn new(pivot: (f32, f32), press: (f32, f32)) -> Self {
+        let (pivot, press) = (Vec2::from(pivot), Vec2::from(press));
+        Self {
+            pivot,
+            last: press,
+            dir: (press - pivot).try_normalize().unwrap_or(Vec2::X),
+            turned: 0.0,
+        }
     }
-    let dx1 = x_now - pivot_screen_x;
-    let dy1 = y_now - pivot_screen_y;
-    let current_dist_sq = dx1 * dx1 + dy1 * dy1;
-    let raw = (current_dist_sq / start_dist_sq).sqrt();
-    raw.clamp(EPS_SCALE, 1.0 / EPS_SCALE)
+
+    /// The total turn, in radians, once the cursor is at `now`.
+    pub(crate) fn update(&mut self, now: (f32, f32)) -> f32 {
+        let now = Vec2::from(now);
+        if !now.is_finite() {
+            return self.turned;
+        }
+        let (r_now, r_last) = (now - self.pivot, self.last - self.pivot);
+        let step = if r_now.length() >= SCREEN_TURN_MIN_RADIUS
+            && r_last.length() >= SCREEN_TURN_MIN_RADIUS
+        {
+            let raw = r_now.y.atan2(r_now.x) - r_last.y.atan2(r_last.x);
+            (raw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+        } else {
+            (now - self.last).dot(self.dir.perp()) / SCREEN_TURN_REFERENCE
+        };
+        if r_now.length() >= SCREEN_TURN_MIN_RADIUS {
+            self.dir = r_now.normalize();
+        }
+        self.last = now;
+        self.turned += step;
+        self.turned
+    }
+}
+
+/// Sign that turns a [`ScreenTurn`] into a rotation about `axis`: a ring
+/// facing the camera turns counter-clockwise on screen for a positive
+/// (right-handed) rotation, so a clockwise screen turn is negative; a ring
+/// facing away turns the other way. `toward_eye` points from the pivot to the
+/// eye.
+pub(crate) fn screen_turn_sign(axis: Axis, toward_eye: Vec3) -> f32 {
+    if axis.world_dir().dot(toward_eye) >= 0.0 {
+        -1.0
+    } else {
+        1.0
+    }
 }
 
 #[cfg(test)]
@@ -486,51 +527,55 @@ mod scale_factor_along_axis_tests {
 }
 
 #[cfg(test)]
-mod uniform_scale_factor_tests {
+mod screen_turn_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
-    #[test]
-    fn ratio_of_distances_drives_factor() {
-        // Press 50 px away, now 100 px away → factor 2.
-        let factor = uniform_scale_factor(0.0, 0.0, 50.0, 0.0, 100.0, 0.0);
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    fn on_circle(centre: (f32, f32), r: f32, deg: f32) -> (f32, f32) {
+        let a = deg.to_radians();
+        (centre.0 + r * a.cos(), centre.1 + r * a.sin())
     }
 
     #[test]
-    fn factor_uses_euclidean_distance() {
-        // Press at (3, 4) → distance 5. Now at (6, 8) → distance 10.
-        // Factor = 10 / 5 = 2.
-        let factor = uniform_scale_factor(0.0, 0.0, 3.0, 4.0, 6.0, 8.0);
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    fn a_circle_on_screen_turns_evenly_and_unwraps_past_a_full_turn() {
+        let c = (300.0, 200.0);
+        let mut turn = ScreenTurn::new(c, on_circle(c, 80.0, 30.0));
+        let mut last = 0.0;
+        for k in 1..=40 {
+            let total = turn.update(on_circle(c, 80.0, 30.0 + 10.0 * k as f32));
+            assert_approx_eq!(f32, total - last, 10f32.to_radians(), epsilon = 1e-4);
+            last = total;
+        }
+        assert_approx_eq!(f32, last, 400f32.to_radians(), epsilon = 1e-3);
     }
 
     #[test]
-    fn pivot_offset_does_not_change_factor() {
-        let factor = uniform_scale_factor(100.0, 200.0, 150.0, 200.0, 200.0, 200.0);
-        // Press 50 px away, now 100 px away → factor 2.
-        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    fn the_radius_of_the_circle_does_not_change_the_turn() {
+        let c = (0.0, 0.0);
+        let mut near = ScreenTurn::new(c, on_circle(c, 30.0, 0.0));
+        let mut far = ScreenTurn::new(c, on_circle(c, 300.0, 0.0));
+        let a = near.update(on_circle(c, 30.0, 90.0));
+        let b = far.update(on_circle(c, 300.0, 90.0));
+        assert_approx_eq!(f32, a, b, epsilon = 1e-5);
     }
 
     #[test]
-    fn factor_clamps_at_lower_bound() {
-        // Cursor moves toward the pivot; ratio approaches zero,
-        // clamps at EPS_SCALE.
-        let factor = uniform_scale_factor(0.0, 0.0, 100.0, 0.0, 1e-9, 0.0);
-        assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
+    fn near_the_pivot_the_travel_across_the_last_direction_turns_without_jumps() {
+        // Pressed to the right of the pivot, the cursor drops onto it and
+        // moves down: no jump, and down (clockwise on screen) turns positive.
+        let c = (100.0, 100.0);
+        let mut turn = ScreenTurn::new(c, (200.0, 100.0));
+        let before = turn.update((150.0, 100.0));
+        assert_approx_eq!(f32, before, 0.0, epsilon = 1e-6);
+        let at_pivot = turn.update((101.0, 100.0));
+        assert_approx_eq!(f32, at_pivot, 0.0, epsilon = 1e-6);
+        let down = turn.update((101.0, 105.0));
+        assert!(down > 0.0 && down < 0.1, "{down}");
     }
 
     #[test]
-    fn factor_clamps_at_upper_bound() {
-        let factor = uniform_scale_factor(0.0, 0.0, 1e-3, 0.0, 1e6, 0.0);
-        assert_approx_eq!(f32, factor, 1.0 / EPS_SCALE, epsilon = 1e-3);
-    }
-
-    #[test]
-    fn press_at_pivot_returns_unit_factor() {
-        // Press lands exactly on the projected pivot → no defined
-        // factor; helper returns 1.0 so the drag is a no-op.
-        let factor = uniform_scale_factor(0.0, 0.0, 0.0, 0.0, 50.0, 0.0);
-        assert_approx_eq!(f32, factor, 1.0, epsilon = 1e-6);
+    fn a_ring_facing_the_camera_turns_against_the_screen_angle() {
+        assert_approx_eq!(f32, screen_turn_sign(Axis::Z, Vec3::Z), -1.0);
+        assert_approx_eq!(f32, screen_turn_sign(Axis::Z, -Vec3::Z), 1.0);
     }
 }

@@ -8,6 +8,7 @@ mod box_select;
 mod camera_controller;
 mod controller;
 mod frame_pacer;
+mod gesture_overlay;
 mod gizmo_drag;
 mod gizmo_frame_composer;
 mod gizmo_fsm;
@@ -33,6 +34,8 @@ mod tests_controller_multi_select;
 mod tests_controller_numeric;
 #[cfg(test)]
 mod tests_controller_orbit;
+#[cfg(test)]
+mod tests_controller_rotate;
 #[cfg(test)]
 mod tests_controller_section_gating;
 #[cfg(test)]

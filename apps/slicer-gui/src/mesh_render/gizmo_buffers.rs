@@ -3,158 +3,129 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Static gizmo VBO/IBO geometry plus the per-frame entry-buffer
-//! allocation. Five geometries are uploaded once at renderer
-//! construction and reused every frame:
+//! Static gizmo VBO/IBO geometry plus the per-frame buffers. Four handle
+//! meshes are uploaded once at renderer construction and reused every frame:
 //!
-//! - shaft line (LineList)
-//! - cone tip (TriangleList)
-//! - per-axis scale cube (TriangleList)
-//! - rotate arc polyline (LineList)
-//! - rotate-drag two-cone spindle (TriangleList)
+//! - the move arrow (shaft and cone)
+//! - the full rotate ring
+//! - the per-axis scale cube
+//! - the uniform-scale ball
 //!
-//! Only the per-axis draw-entry slots are written per frame, via
-//! `write_entries`.
+//! Per frame, the draw entries are written in one go (`write_entries`) and,
+//! while rotating, the marks of the turn (`write_marks`).
 
 use std::num::NonZeroU64;
+use std::ops::Range;
 
 use slint::wgpu_30::wgpu;
 
-use crate::gizmo_geometry;
+use crate::gizmo_geometry::{self, GizmoVertex, RotateMarks};
 
 use super::device_ops::{create_buffer_reporting, upload_static_buffer};
-use super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GizmoDrawEntry};
+use super::gizmo_entries::{
+    GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GizmoDrawEntry, GizmoMesh, GizmoUniformsGpu,
+};
 use super::scene_upload::align_up;
 
+/// Vertices the per-frame marks buffer holds: a full-turn slice (126
+/// triangles), 24 ticks and 2 spokes, with room to spare.
+const MARKS_CAPACITY: u64 = 1024;
+
+/// One static indexed mesh.
+pub(super) struct MeshBuffers {
+    pub(super) vertices: wgpu::Buffer,
+    pub(super) indices: wgpu::Buffer,
+    pub(super) index_count: u32,
+}
+
+impl MeshBuffers {
+    fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: &'static str,
+        (vertices, indices): (Vec<GizmoVertex>, Vec<u32>),
+    ) -> Result<Self, wgpu::Error> {
+        let vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            label,
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let index_buffer = upload_static_buffer(
+            device,
+            queue,
+            label,
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
+        Ok(Self {
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            index_count: indices.len() as u32,
+        })
+    }
+}
+
 pub(super) struct GizmoBuffers {
-    /// Axis shaft as a 1-pixel `LineList` segment from pivot to cone
-    /// base, in handle-local space.
-    pub(super) shaft_line_vertex_buffer: wgpu::Buffer,
-    pub(super) shaft_line_index_buffer: wgpu::Buffer,
-    pub(super) shaft_line_index_count: u32,
-    /// Translate cone tip (12-side solid cone). The active translate
-    /// click target.
-    pub(super) cone_tip_vertex_buffer: wgpu::Buffer,
-    pub(super) cone_tip_index_buffer: wgpu::Buffer,
-    pub(super) cone_tip_index_count: u32,
-    /// Per-axis scale midpoint cube.
-    pub(super) scale_cube_vertex_buffer: wgpu::Buffer,
-    pub(super) scale_cube_index_buffer: wgpu::Buffer,
-    pub(super) scale_cube_index_count: u32,
-    /// Rotate arc polyline (`LineList`) approximating a 90° sweep
-    /// around handle-local +X, centred on +Y. The per-frame X-roll
-    /// (baked into `axis_rotation`) swings the arc to face the camera
-    /// before the world-axis rotation maps it onto X/Y/Z. Decorative;
-    /// the click target is the cone spindle below.
-    pub(super) arc_line_vertex_buffer: wgpu::Buffer,
-    pub(super) arc_line_index_buffer: wgpu::Buffer,
-    pub(super) arc_line_index_count: u32,
-    /// Rotate-drag two-cone spindle.
-    pub(super) rotate_cones_vertex_buffer: wgpu::Buffer,
-    pub(super) rotate_cones_index_buffer: wgpu::Buffer,
-    pub(super) rotate_cones_index_count: u32,
+    arrow: MeshBuffers,
+    ring: MeshBuffers,
+    cube: MeshBuffers,
+    ball: MeshBuffers,
+    /// The marks of a turn in progress, rewritten each frame of a rotate
+    /// drag: the slice first, then the ticks and spokes.
+    pub(super) marks_buffer: wgpu::Buffer,
     pub(super) uniforms_buffer: wgpu::Buffer,
-    /// Per-frame draw-entry buffer with `GIZMO_ENTRY_SLOTS` slots.
-    /// Each pass binds a window of one entry via a dynamic offset:
-    /// translate occupies `[0, 3)`, rotate `[3, 6)`, scale-axis
-    /// `[6, 9)`.
+    /// Per-frame draw-entry buffer with `GIZMO_ENTRY_SLOTS` slots; each
+    /// draw binds a window of one entry via a dynamic offset.
     pub(super) entries_buffer: wgpu::Buffer,
     pub(super) entry_stride: u64,
+    /// Reused staging bytes for `write_entries`.
+    staging: std::cell::RefCell<Vec<u8>>,
 }
 
 impl GizmoBuffers {
     pub(super) fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, wgpu::Error> {
-        let (shaft_vertices, shaft_indices) = gizmo_geometry::build_axis_shaft_line_geometry();
-        let shaft_line_index_count = shaft_indices.len() as u32;
-        let shaft_line_vertex_buffer = upload_static_buffer(
+        let arrow = MeshBuffers::upload(
             device,
             queue,
-            "mesh-viewer gizmo shaft line vbo",
-            bytemuck::cast_slice(&shaft_vertices),
-            wgpu::BufferUsages::VERTEX,
+            "mesh-viewer gizmo arrow",
+            gizmo_geometry::build_arrow_geometry(),
         )?;
-        let shaft_line_index_buffer = upload_static_buffer(
+        let ring = MeshBuffers::upload(
             device,
             queue,
-            "mesh-viewer gizmo shaft line ibo",
-            bytemuck::cast_slice(&shaft_indices),
-            wgpu::BufferUsages::INDEX,
+            "mesh-viewer gizmo ring",
+            gizmo_geometry::build_ring_geometry(),
         )?;
-
-        let (cone_vertices, cone_indices) = gizmo_geometry::build_axis_cone_tip_geometry();
-        let cone_tip_index_count = cone_indices.len() as u32;
-        let cone_tip_vertex_buffer = upload_static_buffer(
+        let cube = MeshBuffers::upload(
             device,
             queue,
-            "mesh-viewer gizmo cone tip vbo",
-            bytemuck::cast_slice(&cone_vertices),
-            wgpu::BufferUsages::VERTEX,
+            "mesh-viewer gizmo scale cube",
+            gizmo_geometry::build_scale_cube_geometry(),
         )?;
-        let cone_tip_index_buffer = upload_static_buffer(
+        let ball = MeshBuffers::upload(
             device,
             queue,
-            "mesh-viewer gizmo cone tip ibo",
-            bytemuck::cast_slice(&cone_indices),
-            wgpu::BufferUsages::INDEX,
+            "mesh-viewer gizmo centre ball",
+            gizmo_geometry::build_centre_ball_geometry(),
         )?;
 
-        let (cube_vertices, cube_indices) = gizmo_geometry::build_axis_scale_cube_geometry();
-        let scale_cube_index_count = cube_indices.len() as u32;
-        let scale_cube_vertex_buffer = upload_static_buffer(
+        let marks_buffer = create_buffer_reporting(
             device,
-            queue,
-            "mesh-viewer gizmo scale cube vbo",
-            bytemuck::cast_slice(&cube_vertices),
-            wgpu::BufferUsages::VERTEX,
-        )?;
-        let scale_cube_index_buffer = upload_static_buffer(
-            device,
-            queue,
-            "mesh-viewer gizmo scale cube ibo",
-            bytemuck::cast_slice(&cube_indices),
-            wgpu::BufferUsages::INDEX,
-        )?;
-
-        let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_line_geometry();
-        let arc_line_index_count = arc_indices.len() as u32;
-        let arc_line_vertex_buffer = upload_static_buffer(
-            device,
-            queue,
-            "mesh-viewer gizmo arc line vbo",
-            bytemuck::cast_slice(&arc_vertices),
-            wgpu::BufferUsages::VERTEX,
-        )?;
-        let arc_line_index_buffer = upload_static_buffer(
-            device,
-            queue,
-            "mesh-viewer gizmo arc line ibo",
-            bytemuck::cast_slice(&arc_indices),
-            wgpu::BufferUsages::INDEX,
-        )?;
-
-        let (rotate_cones_vertices, rotate_cones_indices) =
-            gizmo_geometry::build_rotate_cones_geometry();
-        let rotate_cones_index_count = rotate_cones_indices.len() as u32;
-        let rotate_cones_vertex_buffer = upload_static_buffer(
-            device,
-            queue,
-            "mesh-viewer gizmo rotate cones vbo",
-            bytemuck::cast_slice(&rotate_cones_vertices),
-            wgpu::BufferUsages::VERTEX,
-        )?;
-        let rotate_cones_index_buffer = upload_static_buffer(
-            device,
-            queue,
-            "mesh-viewer gizmo rotate cones ibo",
-            bytemuck::cast_slice(&rotate_cones_indices),
-            wgpu::BufferUsages::INDEX,
+            &wgpu::BufferDescriptor {
+                label: Some("mesh-viewer gizmo rotate marks"),
+                size: MARKS_CAPACITY * size_of::<GizmoVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
         )?;
 
         let uniforms_buffer = create_buffer_reporting(
             device,
             &wgpu::BufferDescriptor {
                 label: Some("mesh-viewer gizmo uniforms"),
-                size: size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
+                size: size_of::<GizmoUniformsGpu>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             },
@@ -173,25 +144,27 @@ impl GizmoBuffers {
         )?;
 
         Ok(Self {
-            shaft_line_vertex_buffer,
-            shaft_line_index_buffer,
-            shaft_line_index_count,
-            cone_tip_vertex_buffer,
-            cone_tip_index_buffer,
-            cone_tip_index_count,
-            scale_cube_vertex_buffer,
-            scale_cube_index_buffer,
-            scale_cube_index_count,
-            arc_line_vertex_buffer,
-            arc_line_index_buffer,
-            arc_line_index_count,
-            rotate_cones_vertex_buffer,
-            rotate_cones_index_buffer,
-            rotate_cones_index_count,
+            arrow,
+            ring,
+            cube,
+            ball,
+            marks_buffer,
             uniforms_buffer,
             entries_buffer,
             entry_stride,
+            staging: std::cell::RefCell::new(Vec::new()),
         })
+    }
+
+    /// The static mesh behind `mesh`, `None` for the per-frame marks.
+    pub(super) fn mesh(&self, mesh: GizmoMesh) -> Option<&MeshBuffers> {
+        match mesh {
+            GizmoMesh::Arrow => Some(&self.arrow),
+            GizmoMesh::Ring => Some(&self.ring),
+            GizmoMesh::Cube => Some(&self.cube),
+            GizmoMesh::Ball => Some(&self.ball),
+            GizmoMesh::Wedge | GizmoMesh::Marks => None,
+        }
     }
 
     /// Resource window matching the gizmo entries BGL's
@@ -206,15 +179,53 @@ impl GizmoBuffers {
         })
     }
 
-    pub(super) fn write_entries(
+    /// Writes `entries` into consecutive slots from slot 0, in one upload.
+    /// Entries past `GIZMO_ENTRY_SLOTS` are dropped.
+    pub(super) fn write_entries(&self, queue: &wgpu::Queue, entries: &[GizmoDrawEntry]) {
+        let n = entries.len().min(GIZMO_ENTRY_SLOTS as usize);
+        if n == 0 {
+            return;
+        }
+        let stride = self.entry_stride as usize;
+        let mut staging = self.staging.borrow_mut();
+        staging.clear();
+        staging.resize(stride * n, 0);
+        for (i, entry) in entries[..n].iter().enumerate() {
+            let bytes = bytemuck::bytes_of(entry);
+            staging[i * stride..i * stride + bytes.len()].copy_from_slice(bytes);
+        }
+        queue.write_buffer(&self.entries_buffer, 0, &staging);
+    }
+
+    /// Uploads the marks of a turn and returns the vertex ranges of the slice
+    /// and of the ticks and spokes. Whatever does not fit is dropped.
+    pub(super) fn write_marks(
         &self,
         queue: &wgpu::Queue,
-        slot_base: u64,
-        entries: &[GizmoDrawEntry],
-    ) {
-        for (i, entry) in entries.iter().enumerate() {
-            let offset = (slot_base + i as u64) * self.entry_stride;
-            queue.write_buffer(&self.entries_buffer, offset, bytemuck::bytes_of(entry));
+        marks: &RotateMarks,
+    ) -> (Range<u32>, Range<u32>) {
+        let cap = MARKS_CAPACITY as usize;
+        let wedge = marks.wedge.len().min(cap);
+        let rest = marks.marks.len().min(cap - wedge);
+        let mut all = Vec::with_capacity(wedge + rest);
+        all.extend_from_slice(&marks.wedge[..wedge]);
+        all.extend_from_slice(&marks.marks[..rest]);
+        if !all.is_empty() {
+            queue.write_buffer(&self.marks_buffer, 0, bytemuck::cast_slice(&all));
         }
+        let wedge = wedge as u32;
+        (0..wedge, wedge..wedge + rest as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gizmo::axis::Axis;
+
+    #[test]
+    fn a_full_turn_of_marks_fits_the_buffer() {
+        let marks = gizmo_geometry::build_rotate_marks(Axis::X, 0.0, std::f32::consts::TAU * 3.0);
+        assert!((marks.wedge.len() + marks.marks.len()) as u64 <= MARKS_CAPACITY);
     }
 }

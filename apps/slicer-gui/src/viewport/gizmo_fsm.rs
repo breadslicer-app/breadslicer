@@ -6,10 +6,9 @@
 //! Owner of the gizmo drag FSM cell. Drives the press → drag-update → release →
 //! abort lifecycle by hit-testing on press, applying the per-op delta on move,
 //! and reverting the captured original on abort. The pure-data types
-//! (`GizmoState`, `DragOp`, `HandleHit`, `ReanchorCtx`) plus the per-frame
-//! compose helpers (`apply_drag_move`, `re_anchor_scale_axis`) live in
-//! `viewport::gizmo_drag`; this module hosts only the cell and the
-//! controller-side coordination glue.
+//! (`GizmoState`, `DragOp`, `HandleHit`) plus the per-frame compose helper
+//! (`apply_drag_move`) live in `viewport::gizmo_drag`; this module hosts only
+//! the cells and the controller-side coordination glue.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,13 +19,12 @@ use sc_scene::NodeId;
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
+use crate::gizmo::modifiers::{DragModifiers, PrecisionCursor};
 use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEdit};
 
-use super::gizmo_drag::{
-    DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
-};
+use super::gizmo_drag::{DragOp, GizmoState, HandleHit, apply_drag_move};
 use super::group_move::{GroupMove, group_pivot, world_delta};
 use super::types::{ScreenPoint, ViewportSize};
 
@@ -68,6 +66,8 @@ pub(super) struct HoverCtx<'a> {
 pub(super) struct GizmoFsm {
     state: Cell<GizmoState>,
     hover: Cell<Option<GizmoHover>>,
+    /// The cursor the drag in flight reads: slowed down while Shift is held.
+    cursor: Cell<PrecisionCursor>,
     /// The leaves a drag of several selected objects moves; `None` for a
     /// drag of one.
     group: RefCell<Option<Rc<GroupMove>>>,
@@ -78,6 +78,7 @@ impl GizmoFsm {
         Self {
             state: Cell::new(GizmoState::Idle),
             hover: Cell::new(None),
+            cursor: Cell::new(PrecisionCursor::new([0.0, 0.0], false)),
             group: RefCell::new(None),
         }
     }
@@ -142,17 +143,14 @@ impl GizmoFsm {
         self.state.set(state);
     }
 
-    /// Runs the three gizmo hit tests against the current camera + cursor ray
-    /// and, if a handle is grabbed, transitions the FSM into `Drag`. The
-    /// front-most candidate (smallest positive `t` along the press ray) wins
-    /// across translate cones, rotate arcs, and scale midpoint cubes. Bails on
-    /// missing camera / scene / no selection / zero viewport, in which case the
-    /// press behaves like a plain click candidate.
+    /// Runs the gizmo hit tests against the current camera + cursor ray and,
+    /// if a handle is grabbed, transitions the FSM into `Drag`. The front-most
+    /// candidate (smallest positive `t` along the press ray) wins across the
+    /// arrows, rings, scale cubes and the centre ball. Bails on missing camera
+    /// / scene / no selection / zero viewport, in which case the press behaves
+    /// like a plain click candidate.
     ///
-    /// `modifiers.shift` at press time captures into the resulting
-    /// `ScaleAxis.proportional` flag: a press on the per-axis cube with Shift
-    /// held starts uniformly; subsequent toggles re-anchor through the move
-    /// path.
+    /// Shift held at press starts the drag fine (see `PrecisionCursor`).
     pub(super) fn try_start_drag(&self, ctx: StartCtx<'_>) {
         let Some(sel_id) = ctx.selection_id else {
             return;
@@ -176,6 +174,11 @@ impl GizmoFsm {
                 let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
                 let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+                // The centre ball sits on the selection itself: a Shift press
+                // there starts a selection box (#13) rather than a scale.
+                if winner == HandleHit::ScaleUniform && ctx.modifiers.shift {
+                    return None;
+                }
                 let original = spatial.leaf(sel_id)?.local_transform();
 
                 let op = match winner {
@@ -193,32 +196,33 @@ impl GizmoFsm {
                         // rejected; but bail defensively if it slips through,
                         // leaving the press as a click candidate.
                         let start_angle = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)?;
+                        // The turn is measured on screen around the projected
+                        // pivot, so a circle drawn on screen turns evenly.
+                        let pivot_screen =
+                            picking::project_world_to_screen(camera, fov_y, w, h, pivot)?;
+                        let toward_eye = if camera.orthographic {
+                            camera.eye() - camera.target
+                        } else {
+                            camera.eye() - pivot
+                        };
                         DragOp::Rotate {
                             axis,
                             start_angle,
-                            last_raw: start_angle,
-                            current_unwrapped: start_angle,
+                            turn: gizmo::drag_math::ScreenTurn::new(pivot_screen, (x, y)),
+                            sign: gizmo::drag_math::screen_turn_sign(axis, toward_eye),
+                            applied: 0.0,
                         }
                     }
                     HandleHit::ScaleAxis(axis) => {
                         let start_anchor =
                             gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis)?;
-                        // The uniform-branch anchors are captured at press as
-                        // well, even when `proportional` starts false; that way
-                        // a mid-drag Shift press flips the formula through the
-                        // same `re_anchor_scale_axis` path either direction
-                        // without needing a "first-toggle" special case.
-                        let pivot_screen =
-                            picking::project_world_to_screen(camera, fov_y, w, h, pivot)?;
                         DragOp::ScaleAxis {
                             axis,
                             start_anchor,
                             current_anchor: start_anchor,
-                            proportional: ctx.modifiers.shift,
-                            press_screen: (x, y),
-                            pivot_screen,
                         }
                     }
+                    HandleHit::ScaleUniform => DragOp::ScaleUniform { press: (x, y) },
                 };
                 Some((op, original, pivot))
             })
@@ -236,6 +240,8 @@ impl GizmoFsm {
             None
         };
         self.group.replace(group);
+        self.cursor
+            .set(PrecisionCursor::new([x, y], ctx.modifiers.shift));
         self.state.set(GizmoState::Drag {
             op,
             original,
@@ -245,19 +251,16 @@ impl GizmoFsm {
     }
 
     /// Pointer-move drag-update step. Branches on the active `DragOp`,
-    /// recomputes the per-op delta from the current cursor ray, and composes
-    /// the resulting transform onto the captured original. If a `ScaleAxis`
-    /// drag is live and the live Shift state has flipped since the last frame,
-    /// re-anchors the drag (current transform → new `original`, current cursor
-    /// → new anchors) so the per-axis ↔ uniform formula switch is visually
-    /// snap-free.
+    /// recomputes the per-op delta from the gesture cursor (a tenth of the
+    /// travel while Shift is held), rounds it to steps while Ctrl is held, and
+    /// composes the resulting transform onto the captured original.
     ///
     /// Returns `true` if the scene's transform was updated. Callers mark the
     /// controller dirty on `true`.
     pub(super) fn on_move(&self, ctx: MoveCtx<'_>) -> bool {
         let GizmoState::Drag {
-            mut op,
-            mut original,
+            op,
+            original,
             pivot,
             node_id,
         } = self.state.get()
@@ -268,9 +271,10 @@ impl GizmoFsm {
             return false;
         };
 
-        let x = ctx.cursor.x;
-        let y = ctx.cursor.y;
-        let mut reanchored = false;
+        let modifiers = DragModifiers::from(ctx.modifiers);
+        let mut precision = self.cursor.get();
+        let [x, y] = precision.map([ctx.cursor.x, ctx.cursor.y], modifiers.fine);
+        self.cursor.set(precision);
 
         // Compute the new transform and the (possibly mutated) op state inside
         // the document's read borrow + camera borrow. Both drop at the
@@ -280,37 +284,13 @@ impl GizmoFsm {
             .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                // Live Shift toggle on a `ScaleAxis` drag re-anchors before the
-                // move's delta is computed: the running transform becomes the
-                // new `original`, the current cursor becomes the new press, so
-                // the per-axis ↔ uniform formula switch does not snap the
-                // object.
-                if let DragOp::ScaleAxis { proportional, .. } = op
-                    && proportional != ctx.modifiers.shift
-                    && let Some(running) = spatial.leaf(node_id).map(|q| q.local_transform())
-                {
-                    let reanchor_ctx = ReanchorCtx {
-                        camera,
-                        pivot,
-                        fov_y: default_fov_y(),
-                        viewport: (vp.width(), vp.height()),
-                        cursor: (x, y),
-                    };
-                    if let Some(re_anchored) =
-                        re_anchor_scale_axis(op, running, &reanchor_ctx, ctx.modifiers.shift)
-                    {
-                        op = re_anchored.0;
-                        original = re_anchored.1;
-                        reanchored = true;
-                    }
-                }
                 let ray =
                     picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
                 let parent_world = spatial
                     .leaf(node_id)
                     .map(|q| q.parent_world())
                     .unwrap_or(Transform3D::Identity);
-                apply_drag_move(op, &ray, pivot, &parent_world, &original, x, y)
+                apply_drag_move(op, &ray, pivot, &parent_world, &original, (x, y), modifiers)
             })
             .flatten();
 
@@ -323,9 +303,6 @@ impl GizmoFsm {
         // while the edit notifies the listeners.
         let group = self.group.borrow().clone();
         if let Some(group) = group {
-            if reanchored {
-                group.rebase(ctx.document);
-            }
             self.state.set(GizmoState::Drag {
                 op: new_op,
                 original,
@@ -367,8 +344,7 @@ impl GizmoFsm {
 
         // Persist the (possibly updated) drag state: Rotate's unwrap counter
         // mutates per move; the others' state is captured at press and stays
-        // put. `original` may also have been reset by a Shift re-anchor on this
-        // frame.
+        // put.
         self.state.set(GizmoState::Drag {
             op: new_op,
             original,
@@ -436,10 +412,13 @@ impl GizmoFsm {
     }
 }
 
-/// Runs the three gizmo hit-tests (translate cones, rotate cones, scale
-/// midpoint cubes) against `ray` and returns the front-most candidate. Shared
-/// by `try_start_drag` (which converts the winner to a `DragOp`) and the hover
-/// path (which converts it to a `GizmoHover`).
+/// Runs the gizmo hit-tests (arrows, rings, scale cubes, centre ball) against
+/// `ray` and returns the front-most candidate. Shared by `try_start_drag`
+/// (which converts the winner to a `DragOp`) and the hover path (which converts
+/// it to a `GizmoHover`).
+///
+/// A scale cube sits on its own arrow's shaft and is smaller than the arrow's
+/// hit cylinder, so where both hit, the cube wins whatever the `t`.
 fn front_most_handle(
     ray: &picking::Ray,
     camera: &OrbitCamera,
@@ -447,35 +426,53 @@ fn front_most_handle(
     fov_y: f32,
     h: f32,
 ) -> Option<(HandleHit, f32)> {
+    use gizmo::dimensions::{
+        AXIS_SCALE_CUBE_HIT_MARGIN_PIXELS, AXIS_SCALE_CUBE_PIXELS, CENTRE_BALL_HIT_PIXELS,
+        RING_HIT_PIXELS, ROTATE_ARC_RADIUS_FRACTION,
+    };
     let scale = gizmo::gizmo_scale(camera, pivot, fov_y, h)?;
     let cyl_radius = gizmo::hit_radius_world(camera, pivot, fov_y, h)?;
-    let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-    // Rotate cones and scale cubes scale with the gizmo: handle-local sizes (in
-    // `gizmo` constants) map to world space via the per-frame shaft length.
-    let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
-    let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
     let world_per_pixel = camera.world_per_pixel_at(pivot, fov_y, h)?;
-    let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
+    let ring_radius_world = scale * ROTATE_ARC_RADIUS_FRACTION;
+    let toward_eye = if camera.orthographic {
+        camera.eye() - camera.target
+    } else {
+        camera.eye() - pivot
+    }
+    .normalize_or_zero();
+    let cube_world = world_per_pixel * (AXIS_SCALE_CUBE_PIXELS + AXIS_SCALE_CUBE_HIT_MARGIN_PIXELS);
 
     let mut best: Option<(HandleHit, f32)> = None;
     let mut consider = |hit: HandleHit, t: f32| match best {
         Some((_, prev_t)) if prev_t <= t => {}
         _ => best = Some((hit, t)),
     };
-    if let Some((axis, t)) = gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius) {
-        consider(HandleHit::Translate(axis), t);
+    let arrow = gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius);
+    let cube = gizmo::hit_test::scale_hit_test(ray, pivot, scale, cube_world);
+    match (arrow, cube) {
+        (Some((a, _)), Some((c, t))) if a == c => consider(HandleHit::ScaleAxis(c), t),
+        _ => {
+            if let Some((axis, t)) = arrow {
+                consider(HandleHit::Translate(axis), t);
+            }
+            if let Some((axis, t)) = cube {
+                consider(HandleHit::ScaleAxis(axis), t);
+            }
+        }
     }
     if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
         ray,
         pivot,
-        arc_radius_world,
-        rotate_cone_length_world,
-        rotate_cone_radius_world,
+        ring_radius_world,
+        world_per_pixel * RING_HIT_PIXELS,
+        toward_eye,
     ) {
         consider(HandleHit::Rotate(axis), t);
     }
-    if let Some((axis, t)) = gizmo::hit_test::scale_hit_test(ray, pivot, scale, axis_cube_world) {
-        consider(HandleHit::ScaleAxis(axis), t);
+    if let Some(t) =
+        gizmo::hit_test::centre_hit_test(ray, pivot, world_per_pixel * CENTRE_BALL_HIT_PIXELS)
+    {
+        consider(HandleHit::ScaleUniform, t);
     }
     best
 }
@@ -549,6 +546,7 @@ fn handle_hit_to_hover(hit: HandleHit) -> GizmoHover {
         HandleHit::Translate(axis) => GizmoHover::Translate(axis),
         HandleHit::Rotate(axis) => GizmoHover::Rotate(axis),
         HandleHit::ScaleAxis(axis) => GizmoHover::ScaleAxis(axis),
+        HandleHit::ScaleUniform => GizmoHover::ScaleUniform,
     }
 }
 
@@ -657,25 +655,89 @@ mod front_most_handle_tests {
     use super::*;
     use crate::camera::AxisView;
     use crate::gizmo::axis::Axis;
-    use crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    use crate::gizmo::dimensions::{
+        HANDLE_PIXEL_LENGTH, MIDPOINT_FRACTION, ROTATE_ARC_RADIUS_FRACTION,
+    };
     use glam::Vec3;
+
+    const W: f32 = 1024.0;
+    const H: f32 = 768.0;
+
+    fn front_camera() -> OrbitCamera {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.set_axis_view(AxisView::Front);
+        camera
+    }
+
+    /// The handle under the screen point `offset` pixels from the projected
+    /// pivot (screen y grows downward).
+    fn pick_at(camera: &OrbitCamera, pivot: Vec3, offset: (f32, f32)) -> Option<HandleHit> {
+        let fov_y = default_fov_y();
+        let (px, py) = picking::project_world_to_screen(camera, fov_y, W, H, pivot).unwrap();
+        let ray = picking::ray_from_pixel(camera, fov_y, W, H, px + offset.0, py + offset.1);
+        front_most_handle(&ray, camera, pivot, fov_y, H).map(|(hit, _)| hit)
+    }
 
     #[test]
     fn x_cone_is_hit_where_it_is_drawn_off_the_orbit_target_plane() {
-        // Front view from (0, -3, 0). The X cone spans 1.0 to 1.18 shaft
-        // lengths along screen +x from the projected pivot. Pivots at y = -1
-        // and y = +1 are in front of and behind the plane through the orbit
-        // target.
-        let (w, h) = (1024.0, 768.0);
-        let fov_y = default_fov_y();
-        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        camera.set_axis_view(AxisView::Front);
+        // Front view from (0, -3, 0). Pivots at y = -1 and y = +1 are in front
+        // of and behind the plane through the orbit target.
+        let camera = front_camera();
         for pivot in [Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0)] {
-            let (px, py) = picking::project_world_to_screen(&camera, fov_y, w, h, pivot).unwrap();
-            let ray =
-                picking::ray_from_pixel(&camera, fov_y, w, h, px + 1.1 * HANDLE_PIXEL_LENGTH, py);
-            let hit = front_most_handle(&ray, &camera, pivot, fov_y, h).map(|(hit, _)| hit);
+            let hit = pick_at(&camera, pivot, (1.1 * HANDLE_PIXEL_LENGTH, 0.0));
             assert_eq!(hit, Some(HandleHit::Translate(Axis::X)), "pivot {pivot}");
         }
+    }
+
+    #[test]
+    fn the_shaft_grabs_along_its_length_and_the_cube_wins_where_it_sits() {
+        let camera = front_camera();
+        let pivot = Vec3::ZERO;
+        for f in [0.25, 0.4, 0.95] {
+            assert_eq!(
+                pick_at(&camera, pivot, (f * HANDLE_PIXEL_LENGTH, 0.0)),
+                Some(HandleHit::Translate(Axis::X)),
+                "{f}"
+            );
+        }
+        // Seen from the front, Z is up on screen: its cube sits above the pivot.
+        assert_eq!(
+            pick_at(
+                &camera,
+                pivot,
+                (0.0, -MIDPOINT_FRACTION * HANDLE_PIXEL_LENGTH)
+            ),
+            Some(HandleHit::ScaleAxis(Axis::Z))
+        );
+        assert_eq!(
+            pick_at(
+                &camera,
+                pivot,
+                (MIDPOINT_FRACTION * HANDLE_PIXEL_LENGTH, 0.0)
+            ),
+            Some(HandleHit::ScaleAxis(Axis::X))
+        );
+    }
+
+    #[test]
+    fn the_ring_grabs_anywhere_on_its_circle_and_the_ball_at_the_centre() {
+        // From the front the Y ring (in the XZ plane) faces the camera.
+        let camera = front_camera();
+        let pivot = Vec3::ZERO;
+        let r = ROTATE_ARC_RADIUS_FRACTION * HANDLE_PIXEL_LENGTH;
+        for deg in [20.0f32, 135.0, 200.0, 290.0] {
+            let a = deg.to_radians();
+            assert_eq!(
+                pick_at(&camera, pivot, (r * a.cos(), r * a.sin())),
+                Some(HandleHit::Rotate(Axis::Y)),
+                "{deg}°"
+            );
+        }
+        assert_eq!(
+            pick_at(&camera, pivot, (2.0, 1.0)),
+            Some(HandleHit::ScaleUniform)
+        );
+        // Between the ball and the ring, off the arrows: nothing.
+        assert_eq!(pick_at(&camera, pivot, (0.4 * r, 0.4 * r)), None);
     }
 }

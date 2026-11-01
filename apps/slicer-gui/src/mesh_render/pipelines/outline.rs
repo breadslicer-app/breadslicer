@@ -7,14 +7,15 @@
 //! stencil aspect written by the mesh pipeline. Fragments whose
 //! stencil neighbourhood crosses the selected/non-selected boundary
 //! (1↔0) keep their colour write; the rest `discard`, leaving the
-//! resolved mesh-pass colour intact.
+//! mesh-pass colour intact. It draws into the multisampled colour target,
+//! before the gizmo, so the gizmo sits on top of the outline.
 
 use std::borrow::Cow;
 
 use slint::wgpu_30::wgpu;
 
-use super::super::TEXTURE_FORMAT;
 use super::super::device_ops::scoped;
+use super::super::{SAMPLE_COUNT, TEXTURE_FORMAT};
 
 const OUTLINE_SHADER_SOURCE: &str = include_str!("../shaders/outline.wgsl");
 
@@ -94,13 +95,12 @@ impl OutlinePipeline {
                 unclipped_depth: false,
                 conservative: false,
             },
-            // The post-pass renders to the resolved (non-MSAA) target
-            // and samples the still-MSAA stencil as input, colour and
-            // attachment sample counts agree at 1, while the texture
-            // binding is multisampled.
+            // The post-pass renders into the multisampled colour target
+            // (each edge fragment fills every sample of its pixel) and
+            // samples the multisampled stencil as input.
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },

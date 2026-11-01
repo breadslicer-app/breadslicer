@@ -24,6 +24,7 @@ use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
 
 use super::camera_controller::{CameraController, OrbitDrag};
+use super::gesture_overlay::{GestureView, Screen};
 use super::gizmo_drag::DragOp;
 use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
@@ -48,6 +49,7 @@ use crate::clipboard;
 use crate::clipboard::Clipboard;
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::export_progress_panel::ExportProgressPanel;
+use crate::gizmo;
 use crate::gizmo::axis::Axis;
 use crate::hollow_persist::install_hollows;
 use crate::i18n::ctr;
@@ -1457,6 +1459,9 @@ impl ViewportController {
                     axis: None,
                     last_angle: (y - screen.1).atan2(x - screen.0),
                     angle: 0.0,
+                    precision: gizmo::modifiers::PrecisionCursor::new([x, y], false),
+                    modifiers: Default::default(),
+                    factor: 1.0,
                 })
             })
             .flatten();
@@ -1480,10 +1485,10 @@ impl ViewportController {
         gesture.axis = Some(axis as usize);
         self.input.modal.set(Some(gesture));
         self.mirror_modal_to_ui();
-        self.update_modal(ScreenPoint::new(x, y));
+        self.update_modal(ScreenPoint::new(x, y), gesture.modifiers);
     }
 
-    fn update_modal(&self, cursor: ScreenPoint) {
+    fn update_modal(&self, cursor: ScreenPoint, modifiers: gizmo::modifiers::DragModifiers) {
         if self.input.modal_revision.get() != Some(self.session.document().scene_revision()) {
             self.input.modal.set(None);
             self.input.modal_revision.set(None);
@@ -1494,7 +1499,7 @@ impl ViewportController {
         let Some(mut gesture) = self.input.modal.get() else {
             return;
         };
-        let Some(proposed) = gesture.propose([cursor.x, cursor.y]) else {
+        let Some(proposed) = gesture.propose([cursor.x, cursor.y], modifiers) else {
             return;
         };
         let group = self.input.modal_group.borrow().clone();
@@ -1710,7 +1715,7 @@ impl ViewportController {
         self.input.note_hover_cursor(cursor);
         self.tab_tool_hover(cursor);
         if self.input.modal.get().is_some() {
-            self.update_modal(cursor);
+            self.update_modal(cursor, modifiers.into());
             return;
         }
         if !self.allows_transform_gizmo() {
@@ -2103,6 +2108,13 @@ impl ViewportController {
     /// over the vertices, waits for the gesture to end.
     fn refresh_readout(&self) {
         if !self.readout_owed.replace(false) {
+            // The gesture aids are in screen space: they follow an orbit
+            // during a gesture even when the object did not change.
+            if self.gesture_active()
+                && let Some(ui) = self.ui.upgrade()
+            {
+                self.refresh_gesture_overlay(&ui);
+            }
             return;
         }
         let Some(ui) = self.ui.upgrade() else {
@@ -2156,9 +2168,10 @@ impl ViewportController {
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so
-    /// far (distance, degrees, scale) in the chip, and, for a modal G/R/S
-    /// locked to an axis, a line along that axis through the object in the
-    /// axis colour, as Blender draws it. Cleared when no gesture runs.
+    /// far (distance, degrees, scale) in the chip and next to the dragged
+    /// handle (or the cursor, in G/R/S), the line along the axis through the
+    /// start position in the axis colour, as Blender draws it, and while
+    /// moving a dashed line from the start. Cleared when no gesture runs.
     fn refresh_gesture_overlay(&self, ui: &MainWindow) {
         let document = self.session.document();
         let modal = self.input.modal.get();
@@ -2166,9 +2179,9 @@ impl ViewportController {
             GizmoState::Drag {
                 op,
                 original,
+                pivot,
                 node_id,
-                ..
-            } => Some((op, original, node_id)),
+            } => Some((op, original, pivot, node_id)),
             _ => None,
         };
         let (node, local_before, kind, axis, parent_known) = match (modal, drag) {
@@ -2180,66 +2193,89 @@ impl ViewportController {
                 };
                 (g.node_id, g.original, kind, g.axis, Some(g.parent))
             }
-            (None, Some((op, original, node_id))) => {
-                let (kind, axis) = match op {
-                    DragOp::Translate { axis, .. } => (GestureKind::Move, axis),
-                    DragOp::Rotate { axis, .. } => (GestureKind::Rotate, axis),
-                    DragOp::ScaleAxis { axis, .. } => (GestureKind::Scale, axis),
+            (None, Some((op, original, _, node_id))) => {
+                let kind = match op {
+                    DragOp::Translate { .. } => GestureKind::Move,
+                    DragOp::Rotate { .. } => GestureKind::Rotate,
+                    DragOp::ScaleAxis { .. } | DragOp::ScaleUniform { .. } => GestureKind::Scale,
                 };
-                (
-                    node_id,
-                    original,
-                    kind,
-                    Some(match axis {
-                        Axis::X => 0,
-                        Axis::Y => 1,
-                        Axis::Z => 2,
-                    }),
-                    None,
-                )
+                let axis = super::gesture_overlay::drag_axis(op).map(Axis::index);
+                (node_id, original, kind, axis, None)
             }
             (None, None) => {
                 ui.set_gesture_readout(slint::SharedString::default());
+                ui.set_gesture_tag(slint::SharedString::default());
                 ui.set_axis_guide_visible(false);
+                ui.set_move_trail_visible(false);
                 return;
             }
         };
-        let text = document
+        let computed = document
             .with_scene(|spatial| {
                 let query = spatial.leaf(node)?;
                 let parent = parent_known.unwrap_or_else(|| query.parent_world());
-                Some(gesture_delta_text(
+                let text = gesture_delta_text(
                     kind,
                     parent.compose(&local_before),
                     query.world_transform(),
                     axis,
-                ))
-            })
-            .flatten()
-            .unwrap_or_default();
-        ui.set_gesture_readout(text.into());
-
-        // The axis line: modal gestures carry the screen pivot and the
-        // camera's screen axes.
-        let guide = modal.and_then(|g| {
-            let k = g.axis?;
-            let world_axis = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][k];
-            let dir = glam::Vec2::new(world_axis.dot(g.right), -world_axis.dot(g.up));
-            (dir.length() > 1e-3).then(|| (k, g.screen_pivot, dir.normalize()))
-        });
-        match guide {
-            Some((k, [px, py], dir)) => {
-                let reach = 4000.0;
-                let (a, b) = (
-                    glam::Vec2::new(px, py) - dir * reach,
-                    glam::Vec2::new(px, py) + dir * reach,
                 );
-                ui.set_axis_guide_commands(format!("M {} {} L {} {}", a.x, a.y, b.x, b.y).into());
-                let [r, g, b] = [[235, 80, 80], [90, 205, 110], [90, 140, 255]][k];
-                ui.set_axis_guide_color(slint::Color::from_rgb_u8(r, g, b).into());
+                // With several objects selected the gizmo, and so the trail,
+                // follows their shared centre (#13).
+                let pivot_now =
+                    super::gizmo_fsm::gizmo_pivot(spatial, node, &document.selection_node_ids())?;
+                let camera_slot = self.camera.camera_cell().borrow();
+                let camera = camera_slot.as_ref()?;
+                let viewport = self.render.viewport()?;
+                let screen = Screen {
+                    camera,
+                    width: viewport.width(),
+                    height: viewport.height(),
+                };
+                let view = match (&modal, drag) {
+                    (Some(gesture), _) => GestureView::Modal { gesture, pivot_now },
+                    (None, Some((op, _, pivot_start, _))) => GestureView::Drag {
+                        op,
+                        pivot_start,
+                        pivot_now,
+                    },
+                    (None, None) => return None,
+                };
+                Some((text, super::gesture_overlay::compose(&view, &screen)))
+            })
+            .flatten();
+        let Some((text, aids)) = computed else {
+            ui.set_gesture_readout(slint::SharedString::default());
+            ui.set_gesture_tag(slint::SharedString::default());
+            ui.set_axis_guide_visible(false);
+            ui.set_move_trail_visible(false);
+            return;
+        };
+        match aids.tag_anchor {
+            Some((x, y)) if !text.is_empty() => {
+                ui.set_gesture_tag(super::gesture_overlay::tag_text(&text).into());
+                ui.set_gesture_tag_x(x);
+                ui.set_gesture_tag_y(y);
+            }
+            _ => ui.set_gesture_tag(slint::SharedString::default()),
+        }
+        ui.set_gesture_readout(text.into());
+        match aids.guide {
+            Some((commands, [r, g, b, a])) => {
+                ui.set_axis_guide_commands(commands.into());
+                ui.set_axis_guide_color(slint::Color::from_argb_u8(a, r, g, b).into());
                 ui.set_axis_guide_visible(true);
             }
             None => ui.set_axis_guide_visible(false),
+        }
+        match aids.trail {
+            Some((commands, (x, y))) => {
+                ui.set_move_trail_commands(commands.into());
+                ui.set_move_trail_start_x(x);
+                ui.set_move_trail_start_y(y);
+                ui.set_move_trail_visible(true);
+            }
+            None => ui.set_move_trail_visible(false),
         }
     }
 
@@ -3202,6 +3238,13 @@ mod viewport_click_tests {
     /// for the standard test setup. The cube sits at `pivot + axis_world *
     /// (scale * MIDPOINT_FRACTION)`; with the front camera, that lands on
     /// screen-y = viewport-centre.
+    /// Logical-pixel position of the gizmo pivot (the centre ball).
+    fn pivot_press_screen(ctrl: &ViewportController) -> (f32, f32) {
+        let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
+        let (vw, vh) = ctrl.viewport_for_test().unwrap();
+        picking::project_world_to_screen(&cam, default_fov_y(), vw, vh, Vec3::ZERO).unwrap()
+    }
+
     fn x_midpoint_press_screen(ctrl: &ViewportController) -> (f32, f32) {
         let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
         let (vw, vh) = ctrl.viewport_for_test().unwrap();
@@ -3513,186 +3556,90 @@ mod viewport_click_tests {
     }
 
     #[test]
-    fn pressing_axis_cube_with_shift_held_starts_proportional_drag() {
-        // Pressing the per-axis midpoint cube while Shift is already held
-        // captures `proportional = true` at once: the first move applies the
-        // uniform formula, with no toggle.
-        let ctrl = ViewportController::new_for_test();
-        install_single_object_at_origin(&ctrl);
-        let press = x_midpoint_press_screen(&ctrl);
-        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), shift_held());
-        match ctrl.input.gizmo_fsm().current() {
-            GizmoState::Drag {
-                op: DragOp::ScaleAxis {
-                    axis, proportional, ..
-                },
-                ..
-            } => {
-                assert_eq!(axis, Axis::X);
-                assert!(
-                    proportional,
-                    "proportional must capture from press-time Shift state"
-                );
+    fn pressing_axis_cube_starts_a_per_axis_drag_with_or_without_shift() {
+        // Shift no longer turns a cube drag uniform (the centre ball does
+        // that): it only slows the drag down.
+        for mods in [no_mods(), shift_held()] {
+            let ctrl = ViewportController::new_for_test();
+            install_single_object_at_origin(&ctrl);
+            let press = x_midpoint_press_screen(&ctrl);
+            ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), mods);
+            match ctrl.input.gizmo_fsm().current() {
+                GizmoState::Drag {
+                    op: DragOp::ScaleAxis { axis, .. },
+                    ..
+                } => assert_eq!(axis, Axis::X),
+                other => panic!("expected Drag(ScaleAxis, X), got {other:?}"),
             }
-            other => panic!("expected Drag(ScaleAxis, X, proportional=true), got {other:?}"),
         }
     }
 
     #[test]
-    fn pressing_axis_cube_without_shift_starts_per_axis_drag() {
-        // The inverse case: no Shift -> per-axis (proportional = false). This
-        // pins the default, so a capture of stale modifier state fails here.
+    fn pressing_the_centre_ball_scales_uniformly() {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        let press = x_midpoint_press_screen(&ctrl);
-        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
-        match ctrl.input.gizmo_fsm().current() {
+        let pivot = pivot_press_screen(&ctrl);
+        ctrl.on_pointer_down(ScreenPoint::new(pivot.0, pivot.1), no_mods());
+        assert!(matches!(
+            ctrl.input.gizmo_fsm().current(),
             GizmoState::Drag {
-                op: DragOp::ScaleAxis { proportional, .. },
+                op: DragOp::ScaleUniform { .. },
                 ..
-            } => assert!(
-                !proportional,
-                "no Shift at press -> proportional must be false"
-            ),
-            other => panic!("expected Drag(ScaleAxis, .., proportional=false), got {other:?}"),
-        }
+            }
+        ));
+        ctrl.on_pointer_move(ScreenPoint::new(pivot.0 + 30.0, pivot.1), no_mods());
+        let m = read_linear(&ctrl);
+        assert!(m[0][0] > 1.1, "{m:?}");
+        assert_approx_eq!(f64, m[0][0], m[1][1], epsilon = 1e-9);
+        assert_approx_eq!(f64, m[0][0], m[2][2], epsilon = 1e-9);
+        ctrl.on_pointer_up(ScreenPoint::new(pivot.0 + 30.0, pivot.1), no_mods());
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
     }
 
     #[test]
-    fn shift_toggle_during_axis_scale_flips_to_uniform_formula() {
-        // Press without Shift -> per-axis drag, move to grow X. Then press
-        // Shift on a subsequent move: re-anchor (running transform preserved).
-        // A *further* move with Shift held exercises the uniform formula: its
-        // `diag(f, f, f)` composes onto the captured running transform, so Y
-        // and Z both pick up the same `f` factor while X picks up an extra `f`
-        // on top of the per-axis stretch baked in by the first move.
+    fn shift_mid_drag_slows_it_down_without_a_jump() {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        let press = x_midpoint_press_screen(&ctrl);
-
-        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
-        let move_no_shift = (press.0 + 20.0, press.1);
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
         ctrl.on_pointer_move(
-            ScreenPoint::new(move_no_shift.0, move_no_shift.1),
+            ScreenPoint::new(X_CONE_PRESS.0 + 20.0, X_CONE_PRESS.1),
             no_mods(),
         );
-        let m_axis = read_linear(&ctrl);
-        assert!(
-            m_axis[0][0] > 1.0 + 1e-3,
-            "X should have grown, got m[0][0]={}",
-            m_axis[0][0]
+        let full = read_translation(&ctrl).x;
+        assert!(full > 0.0);
+        // Shift goes down without moving: nothing moves.
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 20.0, X_CONE_PRESS.1),
+            shift_held(),
         );
-        assert_approx_eq!(f64, m_axis[1][1], 1.0, epsilon = 1e-6);
-        assert_approx_eq!(f64, m_axis[2][2], 1.0, epsilon = 1e-6);
-
-        // Shift toggles on at the same cursor position and re-anchors without
-        // changing the running transform.
-        let toggle = (move_no_shift.0, move_no_shift.1);
-        ctrl.on_pointer_move(ScreenPoint::new(toggle.0, toggle.1), shift_held());
-
-        // Move further with Shift held: the uniform formula runs against the
-        // re-anchored press at `toggle`.
-        let further = (toggle.0 + 20.0, toggle.1);
-        ctrl.on_pointer_move(ScreenPoint::new(further.0, further.1), shift_held());
-        let m_uniform = read_linear(&ctrl);
-
-        // Uniform formula -> Y and Z scale by the same factor.
-        assert_approx_eq!(f64, m_uniform[1][1], m_uniform[2][2], epsilon = 1e-4);
-        // Both moved away from 1.0 (the formula did something).
-        assert!(
-            (m_uniform[1][1] - 1.0).abs() > 1e-3,
-            "Y should have scaled under uniform formula, got m[1][1]={}",
-            m_uniform[1][1]
+        assert_approx_eq!(f32, read_translation(&ctrl).x, full, epsilon = 1e-6);
+        // Another 20 px with Shift moves a tenth as far as the first 20.
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 40.0, X_CONE_PRESS.1),
+            shift_held(),
         );
-        // X carries the per-axis stretch on top of the uniform factor, so it
-        // differs from Y and Z.
-        assert!(
-            (m_uniform[0][0] - m_uniform[1][1]).abs() > 1e-3,
-            "X should differ from Y under uniform-after-per-axis: m[0][0]={} m[1][1]={}",
-            m_uniform[0][0],
-            m_uniform[1][1]
-        );
+        let fine = read_translation(&ctrl).x - full;
+        assert_approx_eq!(f32, fine, full * 0.1, epsilon = full * 0.02);
     }
 
     #[test]
-    fn shift_toggle_does_not_snap_running_transform() {
-        // Re-anchoring on a Shift toggle must preserve the running transform on
-        // the toggling frame: the scene's transform immediately after the
-        // toggle move equals the running transform from immediately before.
+    fn ctrl_mid_drag_snaps_and_esc_still_restores_the_original() {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
-
         ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
-        let move1 = (press.0 + 20.0, press.1);
-        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), no_mods());
-        let before_toggle = read_linear(&ctrl);
-        let translation_before = read_translation(&ctrl);
-
-        // Same cursor position, Shift toggles on. Re-anchor must preserve the
-        // running transform; a toggle without cursor motion is the simplest
-        // case in which the transform could jump.
-        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), shift_held());
-        let after_toggle = read_linear(&ctrl);
-        let translation_after = read_translation(&ctrl);
-
-        for r in 0..3 {
-            for c in 0..3 {
-                assert_approx_eq!(f64, after_toggle[r][c], before_toggle[r][c], epsilon = 1e-4);
-            }
-        }
-        assert_approx_eq!(
-            f32,
-            translation_after.x,
-            translation_before.x,
-            epsilon = 1e-4
-        );
-        assert_approx_eq!(
-            f32,
-            translation_after.y,
-            translation_before.y,
-            epsilon = 1e-4
-        );
-        assert_approx_eq!(
-            f32,
-            translation_after.z,
-            translation_before.z,
-            epsilon = 1e-4
-        );
-    }
-
-    #[test]
-    fn shift_toggle_off_returns_to_per_axis_formula() {
-        // Press with Shift held -> uniform. Move once. Release Shift on the
-        // next move (re-anchor again) -> per-axis formula should resume on
-        // subsequent moves: only X scales relative to the new anchor, while Y
-        // and Z stay at the value frozen at the toggle.
-        let ctrl = ViewportController::new_for_test();
-        install_single_object_at_origin(&ctrl);
-        let press = x_midpoint_press_screen(&ctrl);
-
-        // Start uniform.
-        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), shift_held());
-        let move1 = (press.0 + 20.0, press.1);
-        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), shift_held());
-
-        // Release Shift, re-anchor. Frozen Y and Z factors persist.
-        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), no_mods());
-        let frozen = read_linear(&ctrl);
-
-        // Move further along X: only m[0][0] should change.
-        let move2 = (move1.0 + 10.0, move1.1);
-        ctrl.on_pointer_move(ScreenPoint::new(move2.0, move2.1), no_mods());
-        let after = read_linear(&ctrl);
-
-        assert!(
-            (after[0][0] - frozen[0][0]).abs() > 1e-3,
-            "X should have scaled further: frozen={} after={}",
-            frozen[0][0],
-            after[0][0]
-        );
-        assert_approx_eq!(f64, after[1][1], frozen[1][1], epsilon = 1e-4);
-        assert_approx_eq!(f64, after[2][2], frozen[2][2], epsilon = 1e-4);
+        let ctrl_held = PointerModifiers {
+            control: true,
+            ..no_mods()
+        };
+        ctrl.on_pointer_move(ScreenPoint::new(press.0 + 23.0, press.1), ctrl_held);
+        let m = read_linear(&ctrl);
+        let tenths = m[0][0] * 10.0;
+        assert!(m[0][0] > 1.05, "{m:?}");
+        assert_approx_eq!(f64, tenths, tenths.round(), epsilon = 1e-4);
+        ctrl.on_clear_selection();
+        let m = read_linear(&ctrl);
+        assert_approx_eq!(f64, m[0][0], 1.0, epsilon = 1e-9);
     }
 
     /// Subscribes to the document and counts only `Mutated` events. Used by the

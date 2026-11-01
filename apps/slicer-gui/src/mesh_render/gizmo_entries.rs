@@ -3,216 +3,160 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+//! What the gizmo pass draws in a frame, in order: the faint back halves of
+//! the rotate rings, then the dark outline of every visible handle, then the
+//! handles themselves, then the marks of a turn in progress. Pure data, so the
+//! style rules (#208) are tested without a device.
+
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
-use crate::camera::OrbitCamera;
-use crate::gizmo::axis::Axis;
+use crate::gizmo::axis::{ALL_AXES, Axis};
+use crate::gizmo::dimensions::{MIDPOINT_FRACTION, OUTLINE_PIXELS, px};
+use crate::gizmo::style::{
+    ACTIVE_MIX, CENTRE_COLOR, HOVER_MIX, OUTLINE_ALPHA, OUTLINE_COLOR, REFERENCE_ALPHA,
+    RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, VIEW_RING_COLOR, WEDGE_ALPHA, axis_color, axis_fade,
+    lighten, ring_fade,
+};
 
-/// Per-frame uniform for the gizmo pass: the camera transform plus
-/// the world-space pivot and shaft-length, both packed into a vec4
-/// so the shader gets one contiguous load.
+/// Per-frame uniform for the gizmo pass: the camera transform, the
+/// world-space pivot and shaft length packed into a vec4, and the eye.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 pub(super) struct GizmoUniformsGpu {
     pub(super) view_proj: [[f32; 4]; 4],
     pub(super) pivot_and_scale: [f32; 4],
+    /// `w = 1`: the eye position; `w = 0` (orthographic): the direction
+    /// toward the eye.
+    pub(super) eye: [f32; 4],
 }
 
-/// Per-axis draw entry uploaded to the dynamic-offset uniform buffer.
+/// Per-draw entry uploaded to the dynamic-offset uniform buffer.
 /// Mirrors `DrawEntry` in `gizmo.wgsl` one-for-one.
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable, Debug)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq)]
 pub(super) struct GizmoDrawEntry {
-    axis_rotation: [[f32; 4]; 4],
-    tint: [f32; 4],
+    pub(super) axis_rotation: [[f32; 4]; 4],
+    pub(super) tint: [f32; 4],
+    /// `x`: outline growth in handle-local units; `y`: which half to keep
+    /// (0 all, 1 front, 2 back).
+    pub(super) params: [f32; 4],
 }
 
 pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = size_of::<GizmoDrawEntry>() as u64;
 
-/// Total number of per-frame draw entries reserved in
-/// `gizmo_entries_buffer`. See `GIZMO_SLOTS` for the per-category
-/// layout that fills it.
-pub(super) const GIZMO_ENTRY_SLOTS: u64 = 9;
+/// Draw entries reserved in `gizmo_entries_buffer`: at most 7 per axis
+/// (arrow, ring and cube outlines and bodies, ring back), 2 for the centre
+/// ball and 2 for the marks of a turn.
+pub(super) const GIZMO_ENTRY_SLOTS: u64 = 32;
 
-/// Range of `gizmo_entries_buffer` slots reserved for one handle
-/// category. `start` is the first slot index, `count` is how many
-/// consecutive slots belong to the category.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct GizmoSlotRange {
-    start: u64,
-    count: u64,
+/// Which static or per-frame mesh a draw uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GizmoMesh {
+    Arrow,
+    Ring,
+    Cube,
+    Ball,
+    /// The swept slice of a turn, built per frame.
+    Wedge,
+    /// The ticks and spokes of a turn, built per frame.
+    Marks,
 }
 
-impl GizmoSlotRange {
-    pub(super) const fn new(start: u64, count: u64) -> Self {
-        Self { start, count }
-    }
-    pub(super) fn start(self) -> u64 {
-        self.start
-    }
-    #[cfg(test)]
-    pub(super) fn count(self) -> u64 {
-        self.count
-    }
-    pub(super) fn slot(self, axis_ix: u64) -> u64 {
-        debug_assert!(axis_ix < self.count);
-        self.start + axis_ix
-    }
+/// Which pipeline a draw uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GizmoLayer {
+    /// Back faces culled, no depth: the outlines and the ring backs.
+    Halo,
+    /// Back faces culled, depth-tested so handles order among themselves.
+    Core,
+    /// Both faces, no depth: the flat marks of a turn.
+    Flat,
 }
 
-/// Static layout of `gizmo_entries_buffer`. Slots are contiguous and
-/// non-overlapping; the layout is a compile-time constant so the
-/// renderer never queries it at runtime.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct GizmoSlots {
-    pub(super) translate: GizmoSlotRange,
-    pub(super) rotate: GizmoSlotRange,
-    pub(super) scale_axis: GizmoSlotRange,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct GizmoDraw {
+    pub(super) mesh: GizmoMesh,
+    pub(super) layer: GizmoLayer,
+    pub(super) entry: GizmoDrawEntry,
 }
-
-pub(super) const GIZMO_SLOTS: GizmoSlots = GizmoSlots {
-    translate: GizmoSlotRange::new(0, 3),
-    rotate: GizmoSlotRange::new(3, 3),
-    scale_axis: GizmoSlotRange::new(6, 3),
-};
 
 /// Per-frame data the renderer needs to draw the gizmo. `pivot` is
 /// the world-space gizmo origin; `scale` is the world-unit length of
 /// the translate shaft (so the gizmo subtends a constant pixel size);
-/// `visibility` tells the renderer which handle types to draw and
-/// which axis (if any) is the currently-active drag target: handles
-/// matching the active axis render at full brightness, the rest at
-/// dim brightness. `locked_translate` / `locked_rotate` flag axes the
-/// user can't grab right now (matching `gizmo::axis_pickable` and
-/// `gizmo::arc_pickable` respectively); locked axes render greyed.
+/// `view_dir` is the unit direction the camera looks along, which fades
+/// the handles that point at it; `visibility` tells the renderer which
+/// handles to draw and which one is being dragged.
 #[derive(Copy, Clone, Debug)]
 pub struct GizmoFrame {
     pub pivot: Vec3,
     pub scale: f32,
+    pub view_dir: Vec3,
     pub visibility: GizmoVisibility,
-    /// Indexed [X, Y, Z]. Greys the translate cone *and* the per-axis
-    /// scale midpoint cube for that axis (both share the closest-
-    /// point-on-axis math and thus the same lock-out condition).
-    pub locked_translate: [bool; 3],
-    /// Indexed [X, Y, Z]. Greys the rotate arc for that axis.
-    pub locked_rotate: [bool; 3],
     /// Handle the cursor is currently hovering over (no button held),
-    /// or `None` when the cursor is off any handle. Renders that
-    /// handle at hover brightness, between inactive and active.
-    /// Ignored while `visibility` is `Dragging*` (the dragged handle
-    /// is already at full brightness).
+    /// or `None` when the cursor is off any handle. Ignored while
+    /// `visibility` is `Dragging*`.
     pub hover: Option<GizmoHover>,
-    /// Live drag visual. Drives the per-frame override that slides
-    /// the active scale cube along its axis (so the cube tracks the
-    /// cursor) or rolls the active rotate arc to the cursor angle
-    /// (so the cones at the arc midpoint follow the cursor). `None`
-    /// when no drag is in progress; carries the dragged axis plus
-    /// the live cursor-driven value when a drag is active.
+    /// Live drag visual: slides the dragged scale cube to the cursor,
+    /// or carries the turn so far for the rotate marks. `None` when no
+    /// drag is in progress.
     pub drag_visual: Option<GizmoDragVisual>,
 }
 
-/// Live cursor-driven drag state, used by the renderer to override
-/// the per-axis transform of the active handle so the gizmo provides
-/// real-time visual feedback during a drag.
+/// Live cursor-driven drag state, used by the renderer to give real-time
+/// visual feedback during a drag.
 #[derive(Copy, Clone, Debug)]
 pub enum GizmoDragVisual {
     /// Per-axis scale: signed distance from the pivot to the cursor's
     /// closest-point-on-axis, in world units. The renderer slides the
     /// `axis` cube along the axis to that distance.
     ScaleAxis { axis: Axis, axial_distance: f32 },
-    /// Rotate: signed angle of the cursor in the axis-perpendicular
-    /// plane, measured from the handle-local +Y reference (matches
-    /// `gizmo::drag_math::rotate_drag_angle`). The renderer rolls
-    /// the `axis` arc + cone-spindle to that angle so the cones
-    /// follow the cursor.
-    Rotate { axis: Axis, angle: f32 },
+    /// Rotate: the cursor angle at press (`start`, in the basis of
+    /// `gizmo::axis::axis_basis`, as `rotate_drag_angle` measures it) and
+    /// the turn applied so far (`sweep`, snapped when Ctrl is held).
+    Rotate { axis: Axis, start: f32, sweep: f32 },
+    /// A modal R without an axis turns about the view direction: the screen
+    /// ring lies in the camera plane spanned by the unit vectors `right` and
+    /// `up`; `start` and `sweep` are measured from `right` toward `up`.
+    ViewRotate {
+        right: Vec3,
+        up: Vec3,
+        start: f32,
+        sweep: f32,
+    },
 }
 
 /// Which handle the pointer is currently over, in `Idle` visibility.
-/// Used by the renderer to apply the hover-tint level on the matching
-/// axis without disturbing the active/inactive layout.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoHover {
     Translate(Axis),
     Rotate(Axis),
     ScaleAxis(Axis),
+    ScaleUniform,
 }
 
-/// Which gizmo handle category is currently visible (and which axis,
-/// if any, is the active drag target). The rule:
-/// - `Idle`: render all three handle categories (translate cones,
-///   rotate arcs, midpoint scale cubes). No axis is highlighted as
-///   "active".
-/// - `Dragging*`: render only the *category* the drag belongs to.
-///   The named axis is the active drag target and renders bright;
-///   other axes in the same category render dim.
-//
-// `DraggingRotate` / `DraggingScaleAxis` have no controller-side
-// producer until the FSM extension lands; they're consumed by tests
-// today.
+/// Which gizmo handles are visible, and which one is dragged:
+/// - `Idle`: every handle.
+/// - `Dragging*`: only the dragged handle; while moving, the other
+///   arrows stay as faint references.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoVisibility {
     Idle,
-    DraggingTranslate { axis: Axis },
-    DraggingRotate { axis: Axis },
-    DraggingScaleAxis { axis: Axis },
-}
-
-/// Translate / scale per-axis colours (full saturation). The renderer
-/// modulates these with a brightness factor that depends on the axis's
-/// active/locked state for the current handle category.
-const fn axis_base_color(axis: Axis) -> [f32; 3] {
-    match axis {
-        Axis::X => [1.0, 0.25, 0.25],
-        Axis::Y => [0.25, 1.0, 0.25],
-        Axis::Z => [0.35, 0.45, 1.0],
-    }
-}
-
-/// Rotation per-axis colours: complementaries of the translate
-/// palette so the rotate arcs and their cone spindles read as a
-/// distinct family from the translate shafts and the scale cubes.
-/// X-rotate / cyan, Y-rotate / magenta, Z-rotate / yellow-orange.
-const fn rotate_base_color(axis: Axis) -> [f32; 3] {
-    match axis {
-        Axis::X => [0.25, 0.85, 1.0],
-        Axis::Y => [1.0, 0.35, 0.85],
-        Axis::Z => [1.0, 0.85, 0.25],
-    }
-}
-
-/// Brightness multipliers for the four handle states. Active is the
-/// drag-target axis at full brightness; hover is the cursor-target axis
-/// at midway between inactive and active; inactive axes still render
-/// visibly so the user can see the gizmo at reduced contrast; locked
-/// axes render in a fixed grey.
-const TINT_ACTIVE: f32 = 1.0;
-const TINT_HOVER: f32 = (TINT_ACTIVE + TINT_INACTIVE) * 0.5;
-const TINT_INACTIVE: f32 = 0.65;
-const TINT_LOCKED: f32 = 0.35;
-
-fn tint_with(base: [f32; 3], active: bool, hover: bool, locked: bool) -> [f32; 4] {
-    if locked {
-        return [TINT_LOCKED, TINT_LOCKED, TINT_LOCKED, 1.0];
-    }
-    let brightness = if active {
-        TINT_ACTIVE
-    } else if hover {
-        TINT_HOVER
-    } else {
-        TINT_INACTIVE
-    };
-    let [r, g, b] = base;
-    [r * brightness, g * brightness, b * brightness, 1.0]
-}
-
-fn tint_for(axis: Axis, active: bool, hover: bool, locked: bool) -> [f32; 4] {
-    tint_with(axis_base_color(axis), active, hover, locked)
-}
-
-fn rotate_tint_for(axis: Axis, active: bool, hover: bool, locked: bool) -> [f32; 4] {
-    tint_with(rotate_base_color(axis), active, hover, locked)
+    DraggingTranslate {
+        axis: Axis,
+    },
+    DraggingRotate {
+        axis: Axis,
+    },
+    DraggingScaleAxis {
+        axis: Axis,
+    },
+    DraggingScaleUniform,
+    /// A modal G without an axis: every arrow lit, moving in the view plane.
+    MovingFree,
+    /// A modal R without an axis: only the screen ring, turning about the
+    /// view direction.
+    DraggingViewRotate,
 }
 
 /// Rotation that maps handle-local +X onto each world axis. Indexed
@@ -226,527 +170,539 @@ fn axis_world_rotations() -> [Mat4; 3] {
     ]
 }
 
-/// Three translate-pass entries (X/Y/Z), one shaft+cone draw each.
-pub(super) fn build_translate_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
-    let rotations = axis_world_rotations();
-    let axes = [Axis::X, Axis::Y, Axis::Z];
-    let active_axis = match frame.visibility {
-        GizmoVisibility::DraggingTranslate { axis } => Some(axis),
-        _ => None,
-    };
-    let hover_axis = match frame.hover {
-        Some(GizmoHover::Translate(axis)) => Some(axis),
-        _ => None,
-    };
-    let mut out = [GizmoDrawEntry {
-        axis_rotation: [[0.0; 4]; 4],
-        tint: [0.0; 4],
-    }; 3];
-    for (i, axis) in axes.into_iter().enumerate() {
-        let active = active_axis == Some(axis);
-        let hover = hover_axis == Some(axis);
-        out[i] = GizmoDrawEntry {
-            axis_rotation: rotations[i].to_cols_array_2d(),
-            tint: tint_for(axis, active, hover, frame.locked_translate[i]),
-        };
-    }
-    out
+/// The state of one handle in this frame.
+#[derive(Clone, Copy)]
+enum Look {
+    Rest,
+    Hover,
+    Active,
 }
 
-/// Three scale-axis-pass entries (X/Y/Z midpoint cubes), sharing
-/// the per-axis world rotation with translate. The cube sub-range
-/// of the axis IBO carries the geometry; only the tint differs from
-/// the translate entry. The scale-axis lock-out is the same as
-/// translate's (closest-point-on-axis math).
-///
-/// When a `ScaleAxis` drag is live, the dragged axis's matrix bakes
-/// in an additional handle-local +X translation that slides the cube
-/// from its default mid-shaft position to the cursor's projection on
-/// the axis, so the cube tracks the cursor as visual feedback.
-pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
+impl Look {
+    fn of(hovered: bool, active: bool) -> Self {
+        if active {
+            Look::Active
+        } else if hovered {
+            Look::Hover
+        } else {
+            Look::Rest
+        }
+    }
+
+    fn color(self, base: [f32; 3]) -> [f32; 3] {
+        match self {
+            Look::Rest => base,
+            Look::Hover => lighten(base, HOVER_MIX),
+            Look::Active => lighten(base, ACTIVE_MIX),
+        }
+    }
+}
+
+/// One visible handle: its mesh and placement, colour, opacity, and
+/// whether it is a ring split into a front and a faint back half.
+struct Handle {
+    mesh: GizmoMesh,
+    transform: Mat4,
+    color: [f32; 3],
+    alpha: f32,
+    split_ring: bool,
+}
+
+const HALF_ALL: f32 = 0.0;
+const HALF_FRONT: f32 = 1.0;
+const HALF_BACK: f32 = 2.0;
+/// Below this opacity a draw is skipped.
+const MIN_ALPHA: f32 = 0.01;
+
+fn entry(transform: Mat4, color: [f32; 3], alpha: f32, grow: f32, half: f32) -> GizmoDrawEntry {
+    GizmoDrawEntry {
+        axis_rotation: transform.to_cols_array_2d(),
+        tint: [color[0], color[1], color[2], alpha],
+        params: [grow, half, 0.0, 0.0],
+    }
+}
+
+/// Builds the draws of one frame, in drawing order.
+pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
+    let handles = visible_handles(frame);
+    let mut draws = Vec::with_capacity(GIZMO_ENTRY_SLOTS as usize);
+    let half_of = |h: &Handle| if h.split_ring { HALF_FRONT } else { HALF_ALL };
+    for h in handles.iter().filter(|h| h.split_ring) {
+        let alpha = RING_BACK_ALPHA * h.alpha;
+        if alpha >= MIN_ALPHA {
+            draws.push(GizmoDraw {
+                mesh: h.mesh,
+                layer: GizmoLayer::Halo,
+                entry: entry(h.transform, h.color, alpha, 0.0, HALF_BACK),
+            });
+        }
+    }
+    for h in &handles {
+        draws.push(GizmoDraw {
+            mesh: h.mesh,
+            layer: GizmoLayer::Halo,
+            entry: entry(
+                h.transform,
+                OUTLINE_COLOR,
+                OUTLINE_ALPHA * h.alpha,
+                px(OUTLINE_PIXELS),
+                half_of(h),
+            ),
+        });
+    }
+    for h in &handles {
+        draws.push(GizmoDraw {
+            mesh: h.mesh,
+            layer: GizmoLayer::Core,
+            entry: entry(h.transform, h.color, h.alpha, 0.0, half_of(h)),
+        });
+    }
+    let marks_color = match (frame.visibility, frame.drag_visual) {
+        (GizmoVisibility::DraggingRotate { axis }, Some(GizmoDragVisual::Rotate { .. })) => {
+            Some(axis_color(axis))
+        }
+        (GizmoVisibility::DraggingViewRotate, Some(GizmoDragVisual::ViewRotate { .. })) => {
+            Some(VIEW_RING_COLOR)
+        }
+        _ => None,
+    };
+    if let Some(base) = marks_color {
+        draws.push(GizmoDraw {
+            mesh: GizmoMesh::Wedge,
+            layer: GizmoLayer::Flat,
+            entry: entry(Mat4::IDENTITY, base, WEDGE_ALPHA, 0.0, HALF_ALL),
+        });
+        draws.push(GizmoDraw {
+            mesh: GizmoMesh::Marks,
+            layer: GizmoLayer::Flat,
+            entry: entry(
+                Mat4::IDENTITY,
+                lighten(base, TICK_MIX),
+                TICK_ALPHA,
+                0.0,
+                HALF_ALL,
+            ),
+        });
+    }
+    draws
+}
+
+fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
     let rotations = axis_world_rotations();
-    let axes = [Axis::X, Axis::Y, Axis::Z];
-    let active_axis = match frame.visibility {
-        GizmoVisibility::DraggingScaleAxis { axis } => Some(axis),
+    let hover = match frame.visibility {
+        GizmoVisibility::Idle => frame.hover,
         _ => None,
     };
-    let hover_axis = match frame.hover {
-        Some(GizmoHover::ScaleAxis(axis)) => Some(axis),
-        _ => None,
-    };
-    let drag = match frame.drag_visual {
-        Some(GizmoDragVisual::ScaleAxis {
-            axis,
-            axial_distance,
-        }) => Some((axis, axial_distance)),
-        _ => None,
-    };
-    let mut out = [GizmoDrawEntry {
-        axis_rotation: [[0.0; 4]; 4],
-        tint: [0.0; 4],
-    }; 3];
-    for (i, axis) in axes.into_iter().enumerate() {
-        let active = active_axis == Some(axis);
-        let hover = hover_axis == Some(axis);
-        // World-units offset along the handle-local +X direction.
-        // The cube's default vertex sits at handle-local
-        // `(MIDPOINT_FRACTION, 0, 0)` and is then scaled by
-        // `pivot_and_scale.w` (= world shaft length); to put the
-        // cube centre at world signed distance `d` from the pivot,
-        // shift by `(d - MIDPOINT_FRACTION * scale)` in the post-
-        // scale, pre-rotation handle-local frame. The per-frame
-        // shaft length is in `frame.scale` so we can compute the
-        // shift CPU-side and bake it into the matrix.
-        let translation_x = match drag {
-            Some((dragged, distance)) if dragged == axis => {
-                distance - frame.scale * MIDPOINT_FRACTION_LOCAL
+    let mut out = Vec::with_capacity(10);
+    for axis in ALL_AXES {
+        let i = axis.index();
+        let base = axis_color(axis);
+        let fade = axis_fade(axis, frame.view_dir);
+        let arrow = match frame.visibility {
+            GizmoVisibility::Idle => Some((
+                Look::of(hover == Some(GizmoHover::Translate(axis)), false),
+                fade,
+            )),
+            GizmoVisibility::DraggingTranslate { axis: dragged } if dragged == axis => {
+                Some((Look::Active, 1.0))
             }
-            _ => 0.0,
+            GizmoVisibility::DraggingTranslate { .. } => Some((Look::Rest, REFERENCE_ALPHA * fade)),
+            GizmoVisibility::MovingFree => Some((Look::Active, fade)),
+            _ => None,
         };
-        let translated = if translation_x.abs() > 0.0 {
-            rotations[i] * Mat4::from_translation(Vec3::new(translation_x, 0.0, 0.0))
-        } else {
-            rotations[i]
+        if let Some((look, alpha)) = arrow {
+            out.push(Handle {
+                mesh: GizmoMesh::Arrow,
+                transform: rotations[i],
+                color: look.color(base),
+                alpha,
+                split_ring: false,
+            });
+        }
+        let ring = match frame.visibility {
+            GizmoVisibility::Idle => Some((
+                Look::of(hover == Some(GizmoHover::Rotate(axis)), false),
+                true,
+            )),
+            GizmoVisibility::DraggingRotate { axis: dragged } if dragged == axis => {
+                Some((Look::Active, false))
+            }
+            _ => None,
         };
-        out[i] = GizmoDrawEntry {
-            axis_rotation: translated.to_cols_array_2d(),
-            tint: tint_for(axis, active, hover, frame.locked_translate[i]),
+        if let Some((look, split)) = ring {
+            out.push(Handle {
+                mesh: GizmoMesh::Ring,
+                transform: rotations[i],
+                color: look.color(base),
+                alpha: if split {
+                    ring_fade(axis, frame.view_dir)
+                } else {
+                    1.0
+                },
+                split_ring: split,
+            });
+        }
+        let cube = match frame.visibility {
+            GizmoVisibility::Idle => Some((
+                Look::of(hover == Some(GizmoHover::ScaleAxis(axis)), false),
+                fade,
+            )),
+            GizmoVisibility::DraggingScaleAxis { axis: dragged } if dragged == axis => {
+                Some((Look::Active, 1.0))
+            }
+            _ => None,
         };
+        if let Some((look, alpha)) = cube {
+            // While a scale drag is live, the cube slides along its axis to
+            // the cursor: shift it, in world units, from its rest position.
+            let slide = match frame.drag_visual {
+                Some(GizmoDragVisual::ScaleAxis {
+                    axis: dragged,
+                    axial_distance,
+                }) if dragged == axis => axial_distance - frame.scale * MIDPOINT_FRACTION,
+                _ => 0.0,
+            };
+            out.push(Handle {
+                mesh: GizmoMesh::Cube,
+                transform: rotations[i] * Mat4::from_translation(Vec3::new(slide, 0.0, 0.0)),
+                color: look.color(base),
+                alpha,
+                split_ring: false,
+            });
+        }
     }
+    if let (
+        GizmoVisibility::DraggingViewRotate,
+        Some(GizmoDragVisual::ViewRotate { right, up, .. }),
+    ) = (frame.visibility, frame.drag_visual)
+    {
+        // The ring mesh lies across handle-local +X: turn +X onto the
+        // direction toward the eye, so the ring faces the viewer.
+        let toward_eye = right.cross(up);
+        out.push(Handle {
+            mesh: GizmoMesh::Ring,
+            transform: Mat4::from_cols(
+                toward_eye.extend(0.0),
+                right.extend(0.0),
+                up.extend(0.0),
+                glam::Vec4::W,
+            ),
+            color: Look::Active.color(VIEW_RING_COLOR),
+            alpha: 1.0,
+            split_ring: false,
+        });
+    }
+    let ball = match frame.visibility {
+        GizmoVisibility::Idle => Some(Look::of(hover == Some(GizmoHover::ScaleUniform), false)),
+        GizmoVisibility::DraggingScaleUniform => Some(Look::Active),
+        _ => None,
+    };
+    if let Some(look) = ball {
+        out.push(Handle {
+            mesh: GizmoMesh::Ball,
+            transform: Mat4::IDENTITY,
+            color: look.color(CENTRE_COLOR),
+            alpha: 1.0,
+            split_ring: false,
+        });
+    }
+    out.retain(|h| h.alpha >= MIN_ALPHA);
     out
-}
-
-/// Mirror of `gizmo::dimensions::MIDPOINT_FRACTION`, kept here as a
-/// private const so `build_scale_axis_entries` doesn't need a fresh
-/// import path through the `gizmo` module.
-const MIDPOINT_FRACTION_LOCAL: f32 = crate::gizmo::dimensions::MIDPOINT_FRACTION;
-
-/// Per-axis offset between the rotate-drag angle frame and the X-roll
-/// frame (CCW about the rotation axis):
-/// - **X**: drag frame's 0° = world +Y; arc midpoint's 0° (after
-///   `axis_world_rotations[X]` = identity) = world +Y → offset 0.
-/// - **Y**: drag frame's 0° = world +Z; arc midpoint's 0° (after
-///   `Rz(+π/2)`) = world -X → offset +π/2.
-/// - **Z**: drag frame's 0° = world +X; arc midpoint's 0° (after
-///   `Ry(-π/2)`) = world +Y → offset -π/2.
-fn arc_drag_to_roll_offset(axis: Axis) -> f32 {
-    use std::f32::consts::FRAC_PI_2;
-    match axis {
-        Axis::X => 0.0,
-        Axis::Y => FRAC_PI_2,
-        Axis::Z => -FRAC_PI_2,
-    }
-}
-
-/// Three rotate-pass entries (X/Y/Z arcs). Each axis bakes a
-/// per-frame X-roll into its `axis_rotation` so the 90° arc faces
-/// the camera in handle-local space *before* the world-axis rotation
-/// maps it onto +X / +Y / +Z.
-pub(super) fn build_rotate_entries(
-    frame: &GizmoFrame,
-    camera: &OrbitCamera,
-) -> [GizmoDrawEntry; 3] {
-    let rotations = axis_world_rotations();
-    let axes = [Axis::X, Axis::Y, Axis::Z];
-    let active_axis = match frame.visibility {
-        GizmoVisibility::DraggingRotate { axis } => Some(axis),
-        _ => None,
-    };
-    let hover_axis = match frame.hover {
-        Some(GizmoHover::Rotate(axis)) => Some(axis),
-        _ => None,
-    };
-    let drag = match frame.drag_visual {
-        Some(GizmoDragVisual::Rotate { axis, angle }) => Some((axis, angle)),
-        _ => None,
-    };
-    let mut out = [GizmoDrawEntry {
-        axis_rotation: [[0.0; 4]; 4],
-        tint: [0.0; 4],
-    }; 3];
-    for (i, axis) in axes.into_iter().enumerate() {
-        // Default roll faces the camera; for the dragged axis,
-        // roll to the live cursor angle instead so the cone-spindle
-        // (anchored at the arc midpoint, handle-local +Y) tracks
-        // the cursor and the arc sweeps with the gesture.
-        //
-        // `rotate_drag_angle` measures the cursor angle in a
-        // *world-frame* basis whose 0° reference depends on the
-        // axis (`axis_basis`: X→+Y, Y→+Z, Z→+X). The handle-local
-        // arc midpoint, by contrast, is at handle-local +Y, which
-        // `axis_world_rotations` maps to world +Y / -X / +Y for
-        // X / Y / Z. Subtracting the handle midpoint's drag-frame
-        // angle from `last_raw` aligns the two reference frames so
-        // the cones land under the cursor on every axis.
-        let roll = match drag {
-            Some((dragged, angle)) if dragged == axis => angle + arc_drag_to_roll_offset(axis),
-            _ => arc_camera_roll(camera, frame.pivot, axis),
-        };
-        // Compose: world_axis_rotation × X-roll. The arc is laid out
-        // around handle-local +X, centred on +Y; rolling it around
-        // +X swings the centre onto the camera-facing direction
-        // before the world-axis rotation lifts it onto X/Y/Z.
-        let composed = rotations[i] * Mat4::from_rotation_x(roll);
-        let active = active_axis == Some(axis);
-        let hover = hover_axis == Some(axis);
-        out[i] = GizmoDrawEntry {
-            axis_rotation: composed.to_cols_array_2d(),
-            tint: rotate_tint_for(axis, active, hover, frame.locked_rotate[i]),
-        };
-    }
-    out
-}
-
-/// Per-axis X-roll in handle-local space that swings the rotate arc
-/// onto the camera-facing 90° quadrant.
-///
-/// In handle-local space the arc is centred on +Y, spanning ±π/4. We
-/// want the centre of the arc to align with the camera direction
-/// projected into the handle-local YZ plane. The roll is the angle
-/// from +Y to that projection, measured CCW about +X (right-hand
-/// rule). When the camera is on the axis itself (rotate lock-out),
-/// the projection is degenerate; the controller's lock-out should
-/// already have removed the axis from the visible set, but the
-/// geometry guards against div-by-zero with a fallback to `0.0`.
-fn arc_camera_roll(camera: &OrbitCamera, pivot: Vec3, axis: Axis) -> f32 {
-    // Camera direction in world space, then expressed in handle-
-    // local coords by inverting the world-axis rotation. The
-    // rotation matrix is orthogonal, so the inverse is the
-    // transpose, but glam's `inverse` on rigid rotations is cheap
-    // enough to avoid premature optimisation here.
-    let world_to_local = world_to_handle_local(axis);
-    let to_camera_world = camera.eye()
-        - if camera.orthographic {
-            camera.target
-        } else {
-            pivot
-        };
-    let to_camera_local = world_to_local.transform_vector3(to_camera_world);
-    // YZ-plane projection (drop +X axis component).
-    let y = to_camera_local.y;
-    let z = to_camera_local.z;
-    if y.hypot(z) < 1e-6 {
-        return 0.0;
-    }
-    z.atan2(y)
-}
-
-/// Inverse of the per-axis world rotation: maps world-space vectors
-/// into the axis's handle-local frame. The world rotation maps
-/// handle-local +X onto the world axis; the inverse undoes that.
-fn world_to_handle_local(axis: Axis) -> Mat4 {
-    use std::f32::consts::FRAC_PI_2;
-    match axis {
-        Axis::X => Mat4::IDENTITY,
-        // World rotation is Rz(+π/2); inverse is Rz(-π/2).
-        Axis::Y => Mat4::from_rotation_z(-FRAC_PI_2),
-        // World rotation is Ry(-π/2); inverse is Ry(+π/2).
-        Axis::Z => Mat4::from_rotation_y(FRAC_PI_2),
-    }
 }
 
 #[cfg(test)]
-mod gizmo_entry_tests {
+mod tests {
     use super::*;
+    use crate::gizmo::style::{AXIS_COLORS, RING_EDGE_ALPHA};
     use float_cmp::assert_approx_eq;
     use glam::Vec4;
 
-    fn frame_with(visibility: GizmoVisibility, locked_translate: [bool; 3]) -> GizmoFrame {
+    /// A view looking down at an angle, so no axis faces the camera.
+    fn oblique() -> Vec3 {
+        Vec3::new(-0.5, 0.6, -0.62).normalize()
+    }
+
+    fn frame(visibility: GizmoVisibility) -> GizmoFrame {
         GizmoFrame {
             pivot: Vec3::ZERO,
             scale: 1.0,
+            view_dir: oblique(),
             visibility,
-            locked_translate,
-            locked_rotate: [false; 3],
             hover: None,
             drag_visual: None,
         }
     }
 
-    fn idle_frame() -> GizmoFrame {
-        frame_with(GizmoVisibility::Idle, [false; 3])
+    fn cores(draws: &[GizmoDraw], mesh: GizmoMesh) -> Vec<GizmoDrawEntry> {
+        draws
+            .iter()
+            .filter(|d| d.mesh == mesh && d.layer == GizmoLayer::Core)
+            .map(|d| d.entry)
+            .collect()
     }
 
-    #[test]
-    fn translate_axis_rotations_map_handle_local_x_to_world_axes() {
-        let entries = build_translate_entries(&idle_frame());
-        let local_x = Vec4::new(1.0, 0.0, 0.0, 1.0);
-        let rx = Mat4::from_cols_array_2d(&entries[0].axis_rotation) * local_x;
-        let ry = Mat4::from_cols_array_2d(&entries[1].axis_rotation) * local_x;
-        let rz = Mat4::from_cols_array_2d(&entries[2].axis_rotation) * local_x;
-        assert_approx_eq!(f32, rx.x, 1.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, ry.y, 1.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, rz.z, 1.0, epsilon = 1e-5);
+    fn rgb(e: &GizmoDrawEntry) -> [f32; 3] {
+        [e.tint[0], e.tint[1], e.tint[2]]
     }
 
-    #[test]
-    fn idle_visibility_yields_inactive_brightness_for_all_translate_axes() {
-        let entries = build_translate_entries(&idle_frame());
-        // Inactive brightness multiplier is 0.65; X base is (1.0, 0.25, 0.25).
-        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
-        assert_approx_eq!(f32, entries[0].tint[1], 0.25 * 0.65, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn dragging_translate_renders_active_axis_at_full_brightness() {
-        let entries = build_translate_entries(&frame_with(
-            GizmoVisibility::DraggingTranslate { axis: Axis::X },
-            [false; 3],
-        ));
-        assert_approx_eq!(f32, entries[0].tint[0], 1.0, epsilon = 1e-5);
-        // Y stays inactive; only the dragging axis brightens.
-        assert_approx_eq!(f32, entries[1].tint[1], 1.0 * 0.65, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn locked_axis_renders_grey_regardless_of_active_state() {
-        let entries = build_translate_entries(&frame_with(
-            GizmoVisibility::DraggingTranslate { axis: Axis::X },
-            [true, false, false],
-        ));
-        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
-        assert_approx_eq!(f32, entries[0].tint[1], 0.35, epsilon = 1e-5);
-        assert_approx_eq!(f32, entries[0].tint[2], 0.35, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn dragging_rotate_does_not_brighten_translate_axes() {
-        // Visibility carries the active *for the rotate category*;
-        // the translate entries should see no active axis even
-        // though `axis: X` is named.
-        let entries = build_translate_entries(&frame_with(
-            GizmoVisibility::DraggingRotate { axis: Axis::X },
-            [false; 3],
-        ));
-        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn dragging_scale_axis_brightens_only_the_matching_midpoint_cube() {
-        let entries = build_scale_axis_entries(&frame_with(
-            GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
-            [false; 3],
-        ));
-        // Y axis is active.
-        assert_approx_eq!(f32, entries[1].tint[1], 1.0, epsilon = 1e-5);
-        // X / Z stay inactive.
-        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
-        assert_approx_eq!(f32, entries[2].tint[2], 0.65, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn scale_axis_inherits_translate_lockout() {
-        // The midpoint cubes share the closest-point-on-axis math
-        // with the translate cones, so they must grey together.
-        let entries = build_scale_axis_entries(&frame_with(
-            GizmoVisibility::DraggingScaleAxis { axis: Axis::X },
-            [true, false, false],
-        ));
-        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn rotate_arc_roll_aligns_with_camera_in_handle_local_yz_plane() {
-        // Camera at +Z above the pivot. For the X-axis arc (axis = +X
-        // in handle-local space), the camera-facing direction projects
-        // onto the YZ plane as +Z. The roll should bring +Y onto +Z,
-        // i.e. +π/2 about +X. Loose tolerance because `set_axis_view`
-        // uses a clamped pitch slightly less than π/2 to avoid the
-        // gimbal-lock degenerate, so the eye sits ~1e-3 off the +Z
-        // axis.
-        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        camera.set_axis_view(crate::camera::AxisView::Top);
-        let pivot = Vec3::ZERO;
-        let roll = arc_camera_roll(&camera, pivot, Axis::X);
-        assert_approx_eq!(f32, roll, std::f32::consts::FRAC_PI_2, epsilon = 1e-2);
-    }
-
-    #[test]
-    fn rotate_locked_axis_renders_grey() {
-        let mut frame = idle_frame();
-        frame.visibility = GizmoVisibility::DraggingRotate { axis: Axis::X };
-        frame.locked_rotate = [true, false, false];
-        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        let entries = build_rotate_entries(&frame, &camera);
-        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn rotate_palette_is_distinct_from_translate_palette() {
-        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        let translate = build_translate_entries(&idle_frame());
-        let rotate = build_rotate_entries(&idle_frame(), &camera);
-        // For each axis, at least one channel must differ: the
-        // rotate arcs and cones must not visually share a colour
-        // with the translate shafts/cones for the same axis.
+    fn assert_rgb(actual: [f32; 3], expected: [f32; 3]) {
         for i in 0..3 {
-            let t = translate[i].tint;
-            let r = rotate[i].tint;
-            let differs = (t[0] - r[0]).abs() > 1e-3
-                || (t[1] - r[1]).abs() > 1e-3
-                || (t[2] - r[2]).abs() > 1e-3;
-            assert!(differs, "axis {i} shares its translate tint with rotate");
+            assert_approx_eq!(f32, actual[i], expected[i], epsilon = 1e-6);
         }
     }
 
     #[test]
-    fn hover_brightness_sits_between_inactive_and_active() {
-        // X translate base = (1.0, 0.25, 0.25). At hover brightness
-        // the red channel = TINT_HOVER (0.825).
-        let mut frame = idle_frame();
-        frame.hover = Some(GizmoHover::Translate(Axis::X));
-        let entries = build_translate_entries(&frame);
-        assert_approx_eq!(f32, entries[0].tint[0], TINT_HOVER, epsilon = 1e-5);
-        // Y stays inactive; hover is per-axis.
-        assert_approx_eq!(f32, entries[1].tint[1], TINT_INACTIVE, epsilon = 1e-5);
-        // Hover sits strictly between inactive and active.
-        const _: () = {
-            assert!(TINT_INACTIVE < TINT_HOVER);
-            assert!(TINT_HOVER < TINT_ACTIVE);
-        };
+    fn idle_shows_every_handle_in_its_axis_colour() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        for mesh in [GizmoMesh::Arrow, GizmoMesh::Ring, GizmoMesh::Cube] {
+            let c = cores(&draws, mesh);
+            assert_eq!(c.len(), 3, "{mesh:?}");
+            for (i, e) in c.iter().enumerate() {
+                assert_rgb(rgb(e), AXIS_COLORS[i]);
+            }
+        }
+        assert_eq!(cores(&draws, GizmoMesh::Ball).len(), 1);
     }
 
     #[test]
-    fn hover_does_not_brighten_handle_in_a_different_category() {
-        // Hover marks a translate axis; rotate / scale-axis entries
-        // for the same axis must stay inactive.
-        let mut frame = idle_frame();
-        frame.hover = Some(GizmoHover::Translate(Axis::X));
-        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        let rotate = build_rotate_entries(&frame, &camera);
-        let scale = build_scale_axis_entries(&frame);
-        // Rotate X (cyan: 0.25, 0.85, 1.0). Inactive blue channel = 0.65.
-        assert_approx_eq!(f32, rotate[0].tint[2], 1.0 * TINT_INACTIVE, epsilon = 1e-5);
-        // Scale X red channel inactive = 0.65.
-        assert_approx_eq!(f32, scale[0].tint[0], 1.0 * TINT_INACTIVE, epsilon = 1e-5);
+    fn rings_use_their_axis_colour_like_the_arrows() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        for i in 0..3 {
+            assert_rgb(rgb(&rings[i]), rgb(&arrows[i]));
+        }
     }
 
     #[test]
-    fn locked_axis_ignores_hover() {
-        let mut frame = idle_frame();
-        frame.locked_translate = [true, false, false];
-        frame.hover = Some(GizmoHover::Translate(Axis::X));
-        let entries = build_translate_entries(&frame);
-        // Locked grey overrides hover.
-        assert_approx_eq!(f32, entries[0].tint[0], TINT_LOCKED, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn scale_axis_drag_slides_cube_along_axis() {
-        // Frame.scale = 1.0; default cube centre sits at handle-local
-        // x = MIDPOINT_FRACTION (0.5), so the entry's matrix should
-        // bake `axial_distance - 0.5` into a +X translation when the
-        // dragged axis matches.
-        let mut frame = frame_with(
-            GizmoVisibility::DraggingScaleAxis { axis: Axis::X },
-            [false; 3],
+    fn every_handle_has_a_dark_outline_drawn_before_any_handle() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        let first_core = draws
+            .iter()
+            .position(|d| d.layer == GizmoLayer::Core)
+            .unwrap();
+        let outlines: Vec<_> = draws
+            .iter()
+            .filter(|d| d.layer == GizmoLayer::Halo && d.entry.params[1] != HALF_BACK)
+            .collect();
+        assert_eq!(
+            outlines.len(),
+            cores(&draws, GizmoMesh::Arrow).len() * 3 + 1
         );
-        frame.drag_visual = Some(GizmoDragVisual::ScaleAxis {
+        for (i, d) in draws.iter().enumerate() {
+            if d.layer == GizmoLayer::Halo {
+                assert!(i < first_core);
+            }
+        }
+        for o in outlines {
+            assert_rgb(rgb(&o.entry), OUTLINE_COLOR);
+            assert_approx_eq!(f32, o.entry.tint[3], OUTLINE_ALPHA);
+            assert_approx_eq!(f32, o.entry.params[0], px(OUTLINE_PIXELS));
+        }
+    }
+
+    #[test]
+    fn idle_rings_split_into_a_grabbable_front_and_a_faint_back() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        let backs: Vec<_> = draws
+            .iter()
+            .filter(|d| d.entry.params[1] == HALF_BACK)
+            .collect();
+        assert_eq!(backs.len(), 3);
+        for b in &backs {
+            assert_eq!(b.mesh, GizmoMesh::Ring);
+            assert_approx_eq!(f32, b.entry.tint[3], RING_BACK_ALPHA);
+        }
+        for e in cores(&draws, GizmoMesh::Ring) {
+            assert_approx_eq!(f32, e.params[1], HALF_FRONT);
+        }
+    }
+
+    #[test]
+    fn hover_lightens_toward_white_only_the_hovered_handle() {
+        let mut f = frame(GizmoVisibility::Idle);
+        f.hover = Some(GizmoHover::Translate(Axis::X));
+        let draws = build_gizmo_draws(&f);
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_rgb(rgb(&arrows[0]), lighten(AXIS_COLORS[0], HOVER_MIX));
+        assert_rgb(rgb(&arrows[1]), AXIS_COLORS[1]);
+        // The X ring and cube are another handle: not lightened.
+        assert_rgb(rgb(&cores(&draws, GizmoMesh::Ring)[0]), AXIS_COLORS[0]);
+        assert_rgb(rgb(&cores(&draws, GizmoMesh::Cube)[0]), AXIS_COLORS[0]);
+    }
+
+    #[test]
+    fn moving_shows_the_active_arrow_and_the_others_faint() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::DraggingTranslate { axis: Axis::Y }));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 3);
+        assert_rgb(rgb(&arrows[1]), lighten(AXIS_COLORS[1], ACTIVE_MIX));
+        assert_approx_eq!(f32, arrows[1].tint[3], 1.0);
+        assert!(arrows[0].tint[3] <= REFERENCE_ALPHA + 1e-6);
+        assert!(arrows[2].tint[3] <= REFERENCE_ALPHA + 1e-6);
+        assert!(cores(&draws, GizmoMesh::Ring).is_empty());
+        assert!(cores(&draws, GizmoMesh::Cube).is_empty());
+        assert!(cores(&draws, GizmoMesh::Ball).is_empty());
+    }
+
+    #[test]
+    fn rotating_shows_only_the_whole_active_ring_and_its_marks() {
+        let mut f = frame(GizmoVisibility::DraggingRotate { axis: Axis::Z });
+        f.drag_visual = Some(GizmoDragVisual::Rotate {
+            axis: Axis::Z,
+            start: 0.0,
+            sweep: 0.6,
+        });
+        let draws = build_gizmo_draws(&f);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        assert_eq!(rings.len(), 1);
+        assert_approx_eq!(f32, rings[0].params[1], HALF_ALL);
+        assert!(draws.iter().all(|d| d.entry.params[1] != HALF_BACK));
+        assert!(cores(&draws, GizmoMesh::Arrow).is_empty());
+        let wedge: Vec<_> = draws
+            .iter()
+            .filter(|d| d.mesh == GizmoMesh::Wedge)
+            .collect();
+        assert_eq!(wedge.len(), 1);
+        assert_approx_eq!(f32, wedge[0].entry.tint[3], WEDGE_ALPHA);
+        assert_rgb(rgb(&wedge[0].entry), AXIS_COLORS[2]);
+        // The marks come last, over the ring.
+        assert_eq!(draws.last().unwrap().mesh, GizmoMesh::Marks);
+    }
+
+    #[test]
+    fn scaling_shows_only_the_dragged_cube_slid_to_the_cursor() {
+        let mut f = frame(GizmoVisibility::DraggingScaleAxis { axis: Axis::X });
+        f.drag_visual = Some(GizmoDragVisual::ScaleAxis {
             axis: Axis::X,
             axial_distance: 1.5,
         });
-        let entries = build_scale_axis_entries(&frame);
-        let m = Mat4::from_cols_array_2d(&entries[0].axis_rotation);
-        // Translation column for handle-local +X axis: m * (0, 0, 0, 1)
-        // = m's translation = the column-major last column.
-        let t = m.col(3);
-        // 1.5 - 0.5 = 1.0.
-        assert_approx_eq!(f32, t.x, 1.0, epsilon = 1e-5);
-        // Y / Z untouched: translation column (xyz) stays zero.
-        let m_y = Mat4::from_cols_array_2d(&entries[1].axis_rotation);
-        let ty = m_y.col(3);
-        assert_approx_eq!(f32, ty.x, 0.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, ty.y, 0.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, ty.z, 0.0, epsilon = 1e-5);
+        let draws = build_gizmo_draws(&f);
+        let cubes = cores(&draws, GizmoMesh::Cube);
+        assert_eq!(cubes.len(), 1);
+        let m = Mat4::from_cols_array_2d(&cubes[0].axis_rotation);
+        let centre = m * Vec4::new(MIDPOINT_FRACTION, 0.0, 0.0, 1.0);
+        assert_approx_eq!(f32, centre.x, 1.5, epsilon = 1e-5);
+        assert!(cores(&draws, GizmoMesh::Arrow).is_empty());
     }
 
     #[test]
-    fn rotate_drag_places_cone_spindle_under_cursor_on_every_axis() {
-        // For every axis, the cone-spindle midpoint (handle-local
-        // (0, R, 0)) must land in the rotation plane at the cursor's
-        // drag-frame angle. `rotate_drag_angle` reads angle in the
-        // world-frame `axis_basis` (X→+Y/+Z, Y→+Z/+X, Z→+X/+Y); the
-        // expected world position is `pivot + R*(cos(θ)*u + sin(θ)*v)`.
-        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        let r = 0.85; // ROTATE_ARC_RADIUS_FRACTION
-        let cursor_angle = std::f32::consts::FRAC_PI_3;
-        let basis = |axis: Axis| -> (Vec3, Vec3) {
-            match axis {
-                Axis::X => (Vec3::Y, Vec3::Z),
-                Axis::Y => (Vec3::Z, Vec3::X),
-                Axis::Z => (Vec3::X, Vec3::Y),
-            }
-        };
-        for axis in [Axis::X, Axis::Y, Axis::Z] {
-            let mut frame = frame_with(GizmoVisibility::DraggingRotate { axis }, [false; 3]);
-            frame.drag_visual = Some(GizmoDragVisual::Rotate {
-                axis,
-                angle: cursor_angle,
-            });
-            let entries = build_rotate_entries(&frame, &camera);
-            let i = match axis {
-                Axis::X => 0,
-                Axis::Y => 1,
-                Axis::Z => 2,
-            };
-            let m = Mat4::from_cols_array_2d(&entries[i].axis_rotation);
-            let p = m * Vec4::new(0.0, r, 0.0, 1.0);
-            let (u, v) = basis(axis);
-            let expected = u * (r * cursor_angle.cos()) + v * (r * cursor_angle.sin());
-            assert_approx_eq!(f32, p.x, expected.x, epsilon = 1e-5);
-            assert_approx_eq!(f32, p.y, expected.y, epsilon = 1e-5);
-            assert_approx_eq!(f32, p.z, expected.z, epsilon = 1e-5);
+    fn uniform_scaling_shows_only_the_centre_ball() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::DraggingScaleUniform));
+        assert_eq!(cores(&draws, GizmoMesh::Ball).len(), 1);
+        assert_eq!(
+            draws.iter().filter(|d| d.layer == GizmoLayer::Core).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn an_axis_pointing_at_the_camera_fades_out() {
+        let mut f = frame(GizmoVisibility::Idle);
+        f.view_dir = -Vec3::Z;
+        let draws = build_gizmo_draws(&f);
+        // The Z arrow and cube are gone; X and Y stay at full opacity.
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 2);
+        for e in arrows {
+            assert_approx_eq!(f32, e.tint[3], 1.0);
+        }
+        assert_eq!(cores(&draws, GizmoMesh::Cube).len(), 2);
+        // Seen along Z, the X and Y rings are edge-on: faded, still drawn.
+        let rings = cores(&draws, GizmoMesh::Ring);
+        assert_eq!(rings.len(), 3);
+        assert_approx_eq!(f32, rings[0].tint[3], RING_EDGE_ALPHA);
+        assert_approx_eq!(f32, rings[2].tint[3], 1.0);
+    }
+
+    #[test]
+    fn axis_rotations_map_handle_local_x_to_world_axes() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        let local_x = Vec4::new(1.0, 0.0, 0.0, 0.0);
+        for (i, e) in arrows.iter().enumerate() {
+            let w = Mat4::from_cols_array_2d(&e.axis_rotation) * local_x;
+            assert!((w.truncate() - ALL_AXES[i].world_dir()).length() < 1e-6);
         }
     }
 
     #[test]
-    fn active_axis_ignores_hover() {
-        // Dragging an axis pins it at TINT_ACTIVE; the hover field
-        // for the same axis should not pull it back down to hover.
-        let mut frame = frame_with(
-            GizmoVisibility::DraggingTranslate { axis: Axis::X },
-            [false; 3],
-        );
-        frame.hover = Some(GizmoHover::Translate(Axis::X));
-        let entries = build_translate_entries(&frame);
-        assert_approx_eq!(f32, entries[0].tint[0], TINT_ACTIVE, epsilon = 1e-5);
-    }
-}
-
-#[cfg(test)]
-mod gizmo_slots_tests {
-    use super::*;
-
-    #[test]
-    fn slots_are_contiguous_and_non_overlapping() {
-        assert_eq!(
-            GIZMO_SLOTS.translate.start() + GIZMO_SLOTS.translate.count(),
-            GIZMO_SLOTS.rotate.start()
-        );
-        assert_eq!(
-            GIZMO_SLOTS.rotate.start() + GIZMO_SLOTS.rotate.count(),
-            GIZMO_SLOTS.scale_axis.start()
-        );
-        assert_eq!(
-            GIZMO_SLOTS.scale_axis.start() + GIZMO_SLOTS.scale_axis.count(),
-            GIZMO_ENTRY_SLOTS
-        );
+    fn a_frame_never_needs_more_entries_than_reserved() {
+        let mut f = frame(GizmoVisibility::Idle);
+        assert!(build_gizmo_draws(&f).len() as u64 <= GIZMO_ENTRY_SLOTS);
+        f.visibility = GizmoVisibility::DraggingRotate { axis: Axis::X };
+        f.drag_visual = Some(GizmoDragVisual::Rotate {
+            axis: Axis::X,
+            start: 0.0,
+            sweep: 1.0,
+        });
+        assert!(build_gizmo_draws(&f).len() as u64 <= GIZMO_ENTRY_SLOTS);
     }
 
     #[test]
-    fn slot_returns_offset_within_range() {
-        assert_eq!(GIZMO_SLOTS.translate.slot(0), 0);
-        assert_eq!(GIZMO_SLOTS.translate.slot(2), 2);
-        assert_eq!(GIZMO_SLOTS.rotate.slot(0), 3);
-        assert_eq!(GIZMO_SLOTS.rotate.slot(2), 5);
-        assert_eq!(GIZMO_SLOTS.scale_axis.slot(0), 6);
-        assert_eq!(GIZMO_SLOTS.scale_axis.slot(2), 8);
+    fn a_modal_r_without_axis_shows_only_the_yellow_screen_ring_facing_the_viewer() {
+        let right = Vec3::new(0.6, 0.8, 0.0);
+        let up = Vec3::new(-0.8 * 0.5, 0.6 * 0.5, 0.75_f32.sqrt());
+        let mut f = frame(GizmoVisibility::DraggingViewRotate);
+        f.drag_visual = Some(GizmoDragVisual::ViewRotate {
+            right,
+            up,
+            start: 0.2,
+            sweep: 0.7,
+        });
+        let draws = build_gizmo_draws(&f);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        assert_eq!(rings.len(), 1);
+        assert_rgb(rgb(&rings[0]), lighten(VIEW_RING_COLOR, ACTIVE_MIX));
+        assert_approx_eq!(f32, rings[0].params[1], HALF_ALL);
+        // The ring's plane is the camera plane: its local axis maps onto the
+        // direction toward the eye, its local Y and Z onto right and up.
+        let m = Mat4::from_cols_array_2d(&rings[0].axis_rotation);
+        let normal = (m * Vec4::new(1.0, 0.0, 0.0, 0.0)).truncate();
+        assert!((normal - right.cross(up)).length() < 1e-5);
+        assert!(((m * Vec4::new(0.0, 1.0, 0.0, 0.0)).truncate() - right).length() < 1e-5);
+        assert!((m.determinant() - 1.0).abs() < 1e-4);
+        for mesh in [GizmoMesh::Arrow, GizmoMesh::Cube, GizmoMesh::Ball] {
+            assert!(cores(&draws, mesh).is_empty(), "{mesh:?}");
+        }
+        let wedge: Vec<_> = draws
+            .iter()
+            .filter(|d| d.mesh == GizmoMesh::Wedge)
+            .collect();
+        assert_eq!(wedge.len(), 1);
+        assert_rgb(rgb(&wedge[0].entry), VIEW_RING_COLOR);
+        assert_eq!(draws.last().unwrap().mesh, GizmoMesh::Marks);
     }
 
-    #[cfg(debug_assertions)]
     #[test]
-    #[should_panic]
-    fn slot_panics_when_axis_out_of_range() {
-        let _ = GIZMO_SLOTS.translate.slot(3);
+    fn the_screen_ring_yellow_stays_apart_from_the_axes_and_the_selection_amber() {
+        let amber = [
+            0xd7 as f32 / 255.0,
+            0xa7 as f32 / 255.0,
+            0x5a as f32 / 255.0,
+        ];
+        let distance = |a: [f32; 3], b: [f32; 3]| {
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+        };
+        for axis in AXIS_COLORS {
+            assert!(distance(VIEW_RING_COLOR, axis) > 0.3);
+        }
+        assert!(distance(VIEW_RING_COLOR, amber) > 0.15);
+        // No other mode draws the screen ring.
+        let idle = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        for d in idle {
+            assert_ne!(rgb(&d.entry), VIEW_RING_COLOR);
+        }
+    }
+
+    #[test]
+    fn a_free_modal_move_lights_every_arrow() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::MovingFree));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 3);
+        for (i, e) in arrows.iter().enumerate() {
+            assert_rgb(rgb(e), lighten(AXIS_COLORS[i], ACTIVE_MIX));
+        }
+        assert!(cores(&draws, GizmoMesh::Ring).is_empty());
     }
 }

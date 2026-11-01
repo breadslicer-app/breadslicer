@@ -22,6 +22,15 @@ impl Axis {
             Axis::Z => Vec3::Z,
         }
     }
+
+    /// Position in `[X, Y, Z]`.
+    pub const fn index(self) -> usize {
+        match self {
+            Axis::X => 0,
+            Axis::Y => 1,
+            Axis::Z => 2,
+        }
+    }
 }
 
 pub(crate) const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
@@ -32,7 +41,7 @@ pub(crate) const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 /// grows CCW about `+axis` (right-hand rule). Caller code that wants
 /// the user's "screen clockwise = +rotation" convention flips the
 /// sign at composition time, where the camera direction is also known.
-pub(super) fn axis_basis(axis: Axis) -> (Vec3, Vec3) {
+pub(crate) fn axis_basis(axis: Axis) -> (Vec3, Vec3) {
     match axis {
         Axis::X => (Vec3::Y, Vec3::Z),
         Axis::Y => (Vec3::Z, Vec3::X),

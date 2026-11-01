@@ -13,6 +13,8 @@ pub(crate) mod dimensions;
 pub(crate) mod drag_math;
 pub(crate) mod frame;
 pub(crate) mod hit_test;
+pub(crate) mod modifiers;
+pub(crate) mod style;
 mod tolerances;
 
 use glam::Vec3;
