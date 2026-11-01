@@ -418,9 +418,15 @@ export component NumberField inherits HorizontalLayout {
     in property <float> value;
     in property <int> decimals: 2;
     in property <bool> enabled: true;
+    // When set, a value of 0 or less shows as an empty field with this hint,
+    // and emptying the field commits 0.
+    in property <string> placeholder;
     callback committed(float);
 
     function shown() -> string {
+        if root.placeholder != "" && root.value <= 0 {
+            return "";
+        }
         return round(root.value * pow(10, root.decimals)) / pow(10, root.decimals);
     }
     changed value => {
@@ -467,6 +473,8 @@ export component NumberField inherits HorizontalLayout {
                 accepted => {
                     if self.text.is-float() {
                         root.committed(self.text.to-float());
+                    } else if self.text == "" && root.placeholder != "" {
+                        root.committed(0);
                     }
                     self.text = root.shown();
                     self.clear-focus();
@@ -494,6 +502,17 @@ export component NumberField inherits HorizontalLayout {
                 color: Theme.text-muted;
                 vertical-alignment: center;
             }
+        }
+        if root.placeholder != "" && input.text == "" && !input.has-focus: Text {
+            x: 8px;
+            width: parent.width - 16px;
+            height: parent.height;
+            text: root.placeholder;
+            font-size: Theme.font-xs;
+            color: Theme.text-faint;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
         }
     }
 }

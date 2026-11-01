@@ -9,8 +9,11 @@
 //! cargo run --release -p sc-arrange --example arrange_bench -- \
 //!     [--plate 223.642x126.976] [--copies N] [--shadow] [--turns N] \
 //!     [--cell MM] [--band MM] [--gap MM] [--margin MM] [--passes N] \
-//!     [--png top.png] model.stl...
+//!     [--png top.png] [--scale F] [--fill] [--limit N] model.stl...
 //! ```
+//!
+//! `--fill` arranges the files once and then fills the plate around them
+//! with copies of all of them (#356), `--limit` copies at most.
 //!
 //! Each file is one body, dropped to the plate (a presupported model with
 //! its supports and raft in the same file is one body). `--copies` repeats
@@ -34,6 +37,9 @@ struct Args {
     copies: usize,
     settings: Settings,
     png: Option<PathBuf>,
+    scale: f32,
+    fill: bool,
+    limit: Option<usize>,
     files: Vec<PathBuf>,
 }
 
@@ -46,6 +52,9 @@ fn parse() -> Args {
             ..Settings::default()
         },
         png: None,
+        scale: 1.0,
+        fill: false,
+        limit: None,
         files: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -66,6 +75,9 @@ fn parse() -> Args {
             "--margin" => args.settings.margin = value().parse().unwrap(),
             "--passes" => args.settings.passes = value().parse().unwrap(),
             "--png" => args.png = Some(PathBuf::from(value())),
+            "--scale" => args.scale = value().parse().unwrap(),
+            "--fill" => args.fill = true,
+            "--limit" => args.limit = Some(value().parse().unwrap()),
             _ => args.files.push(PathBuf::from(a)),
         }
     }
@@ -73,7 +85,7 @@ fn parse() -> Args {
 }
 
 /// The file's meshes as one, in world space, standing on z = 0.
-fn load(path: &std::path::Path) -> Arc<IndexedMesh> {
+fn load(path: &std::path::Path, scale: f32) -> Arc<IndexedMesh> {
     let loaded = sc_mesh_formats::load_mesh_from_path(path, None, None)
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut mesh = loaded
@@ -88,6 +100,9 @@ fn load(path: &std::path::Path) -> Arc<IndexedMesh> {
         .fold(f32::INFINITY, f32::min);
     for v in &mut mesh.vertices {
         v.as_array_mut()[2] -= floor;
+        for c in v.as_array_mut() {
+            *c *= scale;
+        }
     }
     Arc::new(mesh)
 }
@@ -100,7 +115,7 @@ fn main() {
         .iter()
         .map(|p| {
             let name = p.file_stem().unwrap().to_string_lossy().into_owned();
-            (name, load(p))
+            (name, load(p, args.scale))
         })
         .collect();
     let triangles: usize = meshes.iter().map(|(_, m)| m.faces().len()).sum();
@@ -127,6 +142,10 @@ fn main() {
     };
     let s = &args.settings;
     let out = arrange(&bodies, &plate, s, &AtomicBool::new(false)).expect("not cancelled");
+    if args.fill {
+        fill_plate(&args, &bodies, &out.placements, &plate);
+        return;
+    }
     let off = out.left_off();
     // The pile's extent, from the moved vertices.
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
@@ -319,5 +338,95 @@ fn fill(mask: &mut [bool], w: usize, h: usize, t: &[[f64; 2]]) {
                 mask[y * w + x] = true;
             }
         }
+    }
+}
+
+/// Fills the plate around the arranged `bodies` with copies of all of them,
+/// and reports how many fit and how long it took.
+fn fill_plate(
+    args: &Args,
+    bodies: &[Body],
+    placements: &[Option<sc_arrange::Placement>],
+    plate: &Plate,
+) {
+    let standing: Vec<Body> = bodies
+        .iter()
+        .zip(placements)
+        .filter_map(|(body, p)| {
+            let p = p.filter(|p| p.on_plate)?;
+            Some(Body {
+                parts: body
+                    .parts
+                    .iter()
+                    .map(|part| Part {
+                        mesh: part.mesh.clone(),
+                        world: p.motion().compose(&part.world),
+                    })
+                    .collect(),
+                fixed: true,
+            })
+        })
+        .collect();
+    let sources: Vec<usize> = (0..standing.len()).collect();
+    let placed = std::sync::atomic::AtomicUsize::new(0);
+    let t = Instant::now();
+    let filled = sc_arrange::fill(
+        &standing,
+        &sources,
+        plate,
+        &args.settings,
+        args.limit,
+        &placed,
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    let per_source: Vec<usize> = sources
+        .iter()
+        .map(|&i| filled.copies.iter().filter(|c| c.source == i).count())
+        .collect();
+    println!(
+        "fill: {} copies {:?} | footprints {:.0} ms, search {:.0} ms, total {:.0} ms",
+        filled.copies.len(),
+        per_source,
+        filled.timings.footprints.as_secs_f64() * 1e3,
+        filled.timings.search.as_secs_f64() * 1e3,
+        t.elapsed().as_secs_f64() * 1e3
+    );
+    if let Some(path) = &args.png {
+        let mut all = standing.clone();
+        let mut at: Vec<Option<sc_arrange::Placement>> = vec![
+            Some(sc_arrange::Placement {
+                angle: 0.0,
+                translation: [0.0, 0.0],
+                on_plate: true,
+            });
+            standing.len()
+        ];
+        for c in &filled.copies {
+            all.push(standing[c.source].clone());
+            at.push(Some(c.placement));
+        }
+        let baked: Vec<Body> = all
+            .iter()
+            .map(|b| Body {
+                parts: b
+                    .parts
+                    .iter()
+                    .map(|part| Part {
+                        mesh: {
+                            let mut mesh = (*part.mesh).clone();
+                            for v in &mut mesh.vertices {
+                                *v = part.world.apply_to_vertex(*v);
+                            }
+                            Arc::new(mesh)
+                        },
+                        world: AffineTransform3D::identity(),
+                    })
+                    .collect(),
+                fixed: true,
+            })
+            .collect();
+        draw(path, &baked, &at, plate, args.settings.margin);
+        println!("drew {}", path.display());
     }
 }

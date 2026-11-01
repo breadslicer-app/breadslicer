@@ -10,7 +10,8 @@
 //! for every body that may move, a turn about the vertical axis and a move
 //! in the plate plane, so that the bodies keep a gap from each other and
 //! from the plate's edge margin, in a pile as small as possible, near the
-//! plate's middle, with the peel balanced.
+//! plate's middle, with the peel balanced. [`fill`] leaves every body where
+//! it is and finds room for as many copies of some of them as fit.
 //!
 //! # How bodies keep apart
 //!
@@ -30,10 +31,13 @@
 //! did: a model and its supports turn together as one rigid piece, so
 //! nothing has to be generated again.
 
+mod fill;
 mod footprint;
 mod grid;
 mod plate;
 mod search;
+
+pub use fill::{FillCopy, Filled, fill};
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -164,6 +168,115 @@ impl Outcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cancelled;
 
+/// The plate grid, and the sizes footprints are drawn at, for a plate and
+/// its settings.
+#[derive(Debug)]
+struct Frame {
+    geo: Geometry,
+    /// The grid's corner (world mm). The grid reaches half the gap past the
+    /// margin: a body's footprint is grown by that much.
+    origin: [f64; 2],
+    width: usize,
+    height: usize,
+    /// The angles a body may take.
+    angles: Vec<f64>,
+}
+
+impl Frame {
+    fn new(plate: &Plate, settings: &Settings) -> Self {
+        let cell = settings.cell.max(0.05);
+        let gap = settings.gap.max(0.0);
+        let geo = Geometry {
+            gap,
+            cell,
+            fine: cell * 0.5,
+            band: (!settings.shadow_only).then_some(settings.band.max(0.1)),
+            floor: plate.floor,
+        };
+        let origin = [
+            plate.min[0] + settings.margin - gap * 0.5,
+            plate.min[1] + settings.margin - gap * 0.5,
+        ];
+        let size = |k: usize| {
+            let room = plate.max[k] - plate.min[k] - 2.0 * settings.margin + gap;
+            (room / cell).floor().max(0.0) as usize
+        };
+        let turns = settings.turns.max(1);
+        Self {
+            geo,
+            origin,
+            width: size(0),
+            height: size(1),
+            angles: (0..turns)
+                .map(|k| TAU * f64::from(k) / f64::from(turns))
+                .collect(),
+        }
+    }
+
+    /// The footprint of `body` at each of `angles`, turning about the
+    /// middle of its shadow; with `snap`, about the grid corner nearest it,
+    /// so its first angle can be stamped where it stands. `None` for no
+    /// triangles.
+    fn footprint(&self, body: &Body, snap: bool, angles: &[f64]) -> Option<Footprint> {
+        let parts: Vec<Placed<'_>> = body
+            .parts
+            .iter()
+            .map(|p| Placed {
+                mesh: &p.mesh,
+                world: &p.world,
+            })
+            .collect();
+        let snap = snap.then_some((self.origin, self.geo.cell));
+        Some(footprint::base(&parts, &self.geo, snap)?.turned(angles, &self.geo))
+    }
+
+    /// An empty plate as high as `bands`, with the first shape of each of
+    /// `standing`, snapped footprints, stamped where its body stands.
+    fn plate_with<'a>(
+        &self,
+        bands: usize,
+        standing: impl IntoIterator<Item = &'a Footprint>,
+    ) -> Occupancy {
+        let cell = self.geo.cell;
+        let mut occupancy = Occupancy::new(self.width, self.height, bands);
+        for fp in standing {
+            let at = [
+                ((fp.reference[0] - self.origin[0]) / cell).round() as i32 - fp.radius,
+                ((fp.reference[1] - self.origin[1]) / cell).round() as i32 - fp.radius,
+            ];
+            occupancy.stamp(&fp.shapes[0], at);
+        }
+        occupancy
+    }
+
+    /// Where a body goes with its footprint `fp` at its angle `angle` and
+    /// its frame's corner at plate cell `at`, then moved by `shift` (mm).
+    fn placement(&self, fp: &Footprint, angle: usize, at: [i32; 2], shift: [f64; 2]) -> Placement {
+        let cell = self.geo.cell;
+        let theta = fp.angles[angle];
+        let (s, c) = theta.sin_cos();
+        let q = [
+            self.origin[0] + f64::from(at[0] + fp.radius) * cell + shift[0],
+            self.origin[1] + f64::from(at[1] + fp.radius) * cell + shift[1],
+        ];
+        let [x, y] = fp.reference;
+        Placement {
+            angle: theta,
+            translation: [q[0] - (c * x - s * y), q[1] - (s * x + c * y)],
+            on_plate: true,
+        }
+    }
+}
+
+/// How many height bands `footprints` reach.
+fn bands_of<'a>(footprints: impl IntoIterator<Item = &'a Footprint>) -> usize {
+    footprints
+        .into_iter()
+        .flat_map(|fp| fp.peel.iter().map(|p| p.band + 1))
+        .max()
+        .unwrap_or(1)
+}
+
 /// Arranges `bodies` on `plate`. Checks `cancel` between steps.
 pub fn arrange(
     bodies: &[Body],
@@ -172,30 +285,8 @@ pub fn arrange(
     cancel: &AtomicBool,
 ) -> Result<Outcome, Cancelled> {
     let started = Instant::now();
-    let cell = settings.cell.max(0.05);
-    let gap = settings.gap.max(0.0);
-    let geo = Geometry {
-        gap,
-        cell,
-        fine: cell * 0.5,
-        band: (!settings.shadow_only).then_some(settings.band.max(0.1)),
-        floor: plate.floor,
-    };
-    // The grid reaches half the gap past the margin: a body's footprint is
-    // grown by that much.
-    let origin = [
-        plate.min[0] + settings.margin - gap * 0.5,
-        plate.min[1] + settings.margin - gap * 0.5,
-    ];
-    let size = |k: usize| {
-        let room = plate.max[k] - plate.min[k] - 2.0 * settings.margin + gap;
-        (room / cell).floor().max(0.0) as usize
-    };
-    let (width, height) = (size(0), size(1));
-    let turns = settings.turns.max(1);
-    let angles: Vec<f64> = (0..turns)
-        .map(|k| TAU * f64::from(k) / f64::from(turns))
-        .collect();
+    let frame = Frame::new(plate, settings);
+    let cell = frame.geo.cell;
     // A copy of a body (the same meshes, the same way up, only moved in
     // the plate plane) shares its footprint.
     let keys: Vec<Option<BodyKey>> = bodies.iter().map(BodyKey::of).collect();
@@ -214,21 +305,11 @@ pub fn arrange(
             if first_of[i] != i {
                 return None;
             }
-            let parts: Vec<Placed<'_>> = body
-                .parts
-                .iter()
-                .map(|p| Placed {
-                    mesh: &p.mesh,
-                    world: &p.world,
-                })
-                .collect();
-            let snap = body.fixed.then_some((origin, cell));
-            let base = footprint::base(&parts, &geo, snap)?;
-            Some(if body.fixed {
-                base.turned(&[0.0], &geo)
+            if body.fixed {
+                frame.footprint(body, true, &[0.0])
             } else {
-                base.turned(&angles, &geo)
-            })
+                frame.footprint(body, false, &frame.angles)
+            }
         })
         .collect();
     let footprints: Vec<Option<Footprint>> = (0..bodies.len())
@@ -246,30 +327,16 @@ pub fn arrange(
     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
         return Err(Cancelled);
     }
-    let bands = footprints
+    let fixed: Vec<&Footprint> = footprints
         .iter()
-        .flatten()
-        .flat_map(|fp| fp.peel.iter().map(|p| p.band + 1))
-        .max()
-        .unwrap_or(1);
-    let mut occupancy = Occupancy::new(width, height, bands);
-    let mut movable: Vec<usize> = Vec::new();
-    let mut fixed_any = false;
-    for (i, fp) in footprints.iter().enumerate() {
-        let Some(fp) = fp else {
-            continue;
-        };
-        if bodies[i].fixed {
-            fixed_any = true;
-            let at = [
-                ((fp.reference[0] - origin[0]) / cell).round() as i32 - fp.radius,
-                ((fp.reference[1] - origin[1]) / cell).round() as i32 - fp.radius,
-            ];
-            occupancy.stamp(&fp.shapes[0], at);
-        } else {
-            movable.push(i);
-        }
-    }
+        .zip(bodies)
+        .filter(|(_, body)| body.fixed)
+        .filter_map(|(fp, _)| fp.as_ref())
+        .collect();
+    let occupancy = frame.plate_with(bands_of(footprints.iter().flatten()), fixed.clone());
+    let movable: Vec<usize> = (0..bodies.len())
+        .filter(|&i| footprints[i].is_some() && !bodies[i].fixed)
+        .collect();
     let moving: Vec<Footprint> = movable
         .iter()
         .filter_map(|&i| footprints[i].clone())
@@ -277,33 +344,20 @@ pub fn arrange(
     let problem = Problem {
         footprints: &moving,
         plate: occupancy,
-        target: [width as i32 / 2, height as i32 / 2],
+        target: [frame.width as i32 / 2, frame.height as i32 / 2],
         cell,
-        origin,
-        balance: !fixed_any,
+        origin: frame.origin,
+        balance: fixed.is_empty(),
         passes: settings.passes,
         deadline: started + settings.time_limit,
     };
     let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
     let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
-    let mut parking = Parking::new(plate, gap);
+    let mut parking = Parking::new(plate, frame.geo.gap);
     for (k, &body) in movable.iter().enumerate() {
         let fp = &moving[k];
         placements[body] = Some(match layout.placed[k] {
-            Some((angle, at)) => {
-                let theta = fp.angles[angle];
-                let (s, c) = theta.sin_cos();
-                let q = [
-                    origin[0] + f64::from(at[0] + fp.radius) * cell + layout.shift[0],
-                    origin[1] + f64::from(at[1] + fp.radius) * cell + layout.shift[1],
-                ];
-                let [x, y] = fp.reference;
-                Placement {
-                    angle: theta,
-                    translation: [q[0] - (c * x - s * y), q[1] - (s * x + c * y)],
-                    on_plate: true,
-                }
-            }
+            Some((angle, at)) => frame.placement(fp, angle, at, layout.shift),
             None => parking.park(fp, cell),
         });
     }

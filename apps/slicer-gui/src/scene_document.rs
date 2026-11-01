@@ -1153,6 +1153,28 @@ impl SceneDocument {
             .collect()
     }
 
+    /// Reserves `leaves` leaf ids and `resources` mesh-resource ids, for an
+    /// edit the caller builds (Fill bed, #356). Empty when no scene is
+    /// loaded.
+    pub(crate) fn allocate_ids(
+        &self,
+        leaves: usize,
+        resources: usize,
+    ) -> (Vec<NodeId>, Vec<MeshResourceId>) {
+        let mut slot = self.spatial.borrow_mut();
+        let Some(spatial) = slot.as_mut() else {
+            return (Vec::new(), Vec::new());
+        };
+        (
+            (0..leaves)
+                .map(|_| spatial.allocate_unbound_node_id())
+                .collect(),
+            (0..resources)
+                .map(|_| spatial.allocate_unbound_mesh_resource_id())
+                .collect(),
+        )
+    }
+
     /// Deletes every selected leaf, recording the operation as 1 undo entry
     /// however many were selected (#13).
     ///
