@@ -184,6 +184,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
     }
     startup_timing::mark("user folders and event trail");
+    // Read while the graphics device starts, which takes longer (#359).
+    let catalog = profile_catalog::CatalogLoad::start(
+        sc_print_profiles::ProfileLibraries::platform_default(),
+    );
 
     // Build the wgpu Instance/Adapter/Device/Queue once up front and hand them
     // to Slint via `WGPUConfiguration::Manual` so every top-level Window shares
@@ -236,6 +240,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     startup_timing::mark("graphics adapter and device");
     diagnostics::system::record_graphics(&adapter.get_info());
     mesh_render::install_device_error_logger(&device);
+    // The first window's viewport pipelines compile while the window is made
+    // (#359).
+    mesh_render::prepare_pipelines(&device, &queue);
     let device_loss = mesh_render::DeviceLoss::default();
     {
         let marker = device_loss.clone();
@@ -323,7 +330,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // its busy cursor until it times out.
     slint::set_xdg_app_id(sc_app_paths::APP_ID)?;
 
-    let app = AppState::new(device_loss.clone())?;
+    let app = AppState::new(device_loss.clone(), catalog)?;
 
     // OS "Open With..." / file-association support on Linux + Windows: every
     // positional argument that names a supported mesh file gets its own window.

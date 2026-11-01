@@ -11,7 +11,6 @@ use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
-use sc_print_profiles::ProfileLibraries;
 use slint::winit_030::winit;
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -44,7 +43,7 @@ use crate::preferences_window::{
     WiredPreferencesWindow, build_preferences_window, wire_performance_test,
 };
 use crate::print_selection::PrintDefaults;
-use crate::profile_catalog::ProfileCatalog;
+use crate::profile_catalog::{CatalogLoad, ProfileCatalog};
 use crate::repair_run::RepairRun;
 use crate::review_panel::ReviewPanel;
 use crate::scene_document::SceneDocument;
@@ -468,16 +467,18 @@ fn subscribe_window_preferences(
 }
 
 impl AppState {
-    pub(crate) fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
+    /// The app, with the profile catalog that `catalog` reads.
+    pub(crate) fn new(
+        device_loss: DeviceLoss,
+        catalog: CatalogLoad,
+    ) -> Result<Rc<Self>, Box<dyn Error>> {
         let settings_file = SettingsFile::platform_default();
         let loaded = settings_file
             .as_ref()
             .map_or(LoadOutcome::NotRead, SettingsFile::load);
         let settings = loaded.settings();
         crate::startup_timing::mark("settings");
-        let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
-            &ProfileLibraries::platform_default(),
-        ))));
+        let catalog = Rc::new(RefCell::new(Rc::new(catalog.finish())));
         crate::startup_timing::mark("profile catalog");
         crate::mesh_render::set_smooth_models(settings.smooth_models());
         crate::frame_rate::set_frame_rate_cap(settings.frame_rate());

@@ -30,6 +30,7 @@ mod overlay;
 mod smooth_shading;
 pub(crate) use smooth_shading::set_smooth_models;
 mod pipelines;
+mod prepared;
 mod readback;
 mod render_size;
 mod renderer_trait;
@@ -63,6 +64,7 @@ use pipelines::label::LabelPipeline;
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
+pub use prepared::prepare_pipelines;
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
@@ -193,6 +195,34 @@ struct Pipelines {
     plate_buffers: Option<PlateBuffers>,
 }
 
+impl Pipelines {
+    /// Builds every pipeline of the viewport against `device`.
+    fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RendererInitError> {
+        let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
+        let mesh = MeshPipeline::create(device).map_err(at(RendererStage::Mesh))?;
+        let outline = OutlinePipeline::create(device).map_err(at(RendererStage::Outline))?;
+        let gizmo_buffers =
+            GizmoBuffers::create(device, queue).map_err(at(RendererStage::GizmoBuffers))?;
+        let gizmo =
+            GizmoPipeline::create(device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
+        let plate = PlatePipeline::create(device, &mesh).map_err(at(RendererStage::Plate))?;
+        let cap = CapPipeline::create(device, &mesh).map_err(at(RendererStage::Cap))?;
+        let label = LabelPipeline::create(device, &mesh).map_err(at(RendererStage::Label))?;
+        Ok(Self {
+            mesh,
+            outline,
+            gizmo,
+            gizmo_buffers,
+            plate,
+            cap,
+            cap_state: CapState::Off,
+            label,
+            label_state: LabelState::Off,
+            plate_buffers: None,
+        })
+    }
+}
+
 /// State of the slice-view cap texture, keyed by the layer it was last built
 /// for. The bind group keeps the texture and its view alive.
 enum CapState {
@@ -302,16 +332,12 @@ impl Renderer {
         queue: wgpu::Queue,
         device_loss: DeviceLoss,
     ) -> Result<Self, RendererInitError> {
-        let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
-        let mesh = MeshPipeline::create(&device).map_err(at(RendererStage::Mesh))?;
-        let outline = OutlinePipeline::create(&device).map_err(at(RendererStage::Outline))?;
-        let gizmo_buffers =
-            GizmoBuffers::create(&device, &queue).map_err(at(RendererStage::GizmoBuffers))?;
-        let gizmo =
-            GizmoPipeline::create(&device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
-        let plate = PlatePipeline::create(&device, &mesh).map_err(at(RendererStage::Plate))?;
-        let cap = CapPipeline::create(&device, &mesh).map_err(at(RendererStage::Cap))?;
-        let label = LabelPipeline::create(&device, &mesh).map_err(at(RendererStage::Label))?;
+        // Built ahead on a worker thread when [`prepare_pipelines`] was called
+        // for this device; built here otherwise.
+        let pipelines = match prepared::take(&device) {
+            Some(prepared) => prepared?,
+            None => Pipelines::create(&device, &queue)?,
+        };
         let max_texture_side = device.limits().max_texture_dimension_2d;
 
         Ok(Self {
@@ -322,18 +348,7 @@ impl Renderer {
                 device_loss,
                 max_texture_side,
             },
-            pipelines: Pipelines {
-                mesh,
-                outline,
-                gizmo,
-                gizmo_buffers,
-                plate,
-                cap,
-                cap_state: CapState::Off,
-                label,
-                label_state: LabelState::Off,
-                plate_buffers: None,
-            },
+            pipelines,
             scene: None,
             world_boxes: WorldBoxes::default(),
             overlay: overlay::OverlaySlot::default(),
