@@ -9,7 +9,7 @@
 //! from its own roots (`buildSupportAndRaftWorldTriangles`), welded by exact
 //! position into one [`IndexedMesh`], and the session that edits them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -269,7 +269,7 @@ pub const WELD_TOLERANCE_MM: f32 = 1e-5;
 /// a cell boundary still meet.
 #[derive(Default)]
 struct Welder {
-    cells: HashMap<[i64; 3], Vec<u32>>,
+    cells: HashMap<[i64; 3], Vec<u32>, ahash::RandomState>,
 }
 
 impl Welder {
@@ -298,6 +298,29 @@ impl Welder {
     }
 }
 
+/// One piece of a soup welded on its own: its vertices and its triangles,
+/// numbered from 0.
+fn weld_piece(piece: &[f32]) -> (Vec<Vertex>, Vec<[u32; 3]>) {
+    let mut vertices = Vec::new();
+    let mut faces = Vec::with_capacity(piece.len() / 9);
+    let mut welder = Welder::default();
+    for tri in piece.chunks_exact(9) {
+        let mut ids = [0u32; 3];
+        for (k, p) in tri.chunks_exact(3).enumerate() {
+            let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
+                0.0
+            } else {
+                p[2]
+            };
+            ids[k] = welder.index_of([p[0], p[1], z], &mut vertices);
+        }
+        if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+            faces.push(ids);
+        }
+    }
+    (vertices, faces)
+}
+
 /// A triangle soup welded into one mesh **piece by piece**: each closed piece
 /// of `parts` (`soup.len()` at each piece's end) gets its own vertices, welded
 /// within [`WELD_TOLERANCE_MM`] inside it, so pieces that touch or overlap never share
@@ -305,35 +328,58 @@ impl Welder {
 /// piece identical to an earlier one is dropped. Vertices a rounding error
 /// below the plate are put on it ([`PLATE_SNAP_MM`]); triangles the weld
 /// collapses are dropped.
+///
+/// The pieces being apart, they are welded in parallel and joined in their
+/// order (#3): the mesh is the one welding them in turn gives, several times
+/// sooner (a set of 600k triangles took ~0.6 s, the most of a hand click).
 pub fn weld_parts(soup: &[f32], parts: &[usize], name: &str) -> Option<IndexedMesh> {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut faces: Vec<IndexedTriangle> = Vec::new();
-    let mut seen: HashSet<Vec<u32>> = HashSet::new();
+    use rayon::prelude::*;
+    use std::hash::{BuildHasher, Hash, Hasher};
+
+    // The pieces in order, each exact repeat of an earlier one left out:
+    // pieces are told apart by their bits, through a hash of them.
+    let same_bits = |a: &[f32], b: &[f32]| {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+    };
+    let hasher = ahash::RandomState::with_seeds(1, 2, 3, 4);
+    let mut kept: Vec<&[f32]> = Vec::new();
+    let mut seen: HashMap<u64, Vec<usize>, ahash::RandomState> = HashMap::default();
     let mut start = 0;
     for &end in parts.iter().chain(std::iter::once(&soup.len())) {
         let piece = &soup[start..end.max(start)];
         start = end.max(start);
-        if piece.is_empty() || !seen.insert(piece.iter().map(|v| v.to_bits()).collect()) {
+        if piece.is_empty() {
             continue;
         }
-        let mut welder = Welder::default();
-        for tri in piece.chunks_exact(9) {
-            let mut ids = [0u32; 3];
-            for (k, p) in tri.chunks_exact(3).enumerate() {
-                let z = if p[2] <= 0.0 && p[2] > -PLATE_SNAP_MM {
-                    0.0
-                } else {
-                    p[2]
-                };
-                ids[k] = welder.index_of([p[0], p[1], z], &mut vertices);
-            }
-            if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
-                faces.push(IndexedTriangle::from_raw_indices(ids));
-            }
+        let mut h = hasher.build_hasher();
+        for v in piece {
+            v.to_bits().hash(&mut h);
         }
+        let same = seen.entry(h.finish()).or_default();
+        if same.iter().any(|&k| same_bits(kept[k], piece)) {
+            continue;
+        }
+        same.push(kept.len());
+        kept.push(piece);
     }
-    if faces.is_empty() {
+    let welded: Vec<(Vec<Vertex>, Vec<[u32; 3]>)> =
+        kept.par_iter().map(|piece| weld_piece(piece)).collect();
+    let (vertex_count, face_count) = welded
+        .iter()
+        .fold((0, 0), |(v, f), (vs, fs)| (v + vs.len(), f + fs.len()));
+    if face_count == 0 {
         return None;
+    }
+    let mut vertices: Vec<Vertex> = Vec::with_capacity(vertex_count);
+    let mut faces: Vec<IndexedTriangle> = Vec::with_capacity(face_count);
+    for (piece_vertices, piece_faces) in welded {
+        let offset = vertices.len() as u32;
+        vertices.extend(piece_vertices);
+        faces.extend(
+            piece_faces
+                .into_iter()
+                .map(|f| IndexedTriangle::from_raw_indices(f.map(|i| i + offset))),
+        );
     }
     Some(IndexedMesh::new(
         Some(MeshMetadata {

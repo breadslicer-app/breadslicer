@@ -1305,6 +1305,20 @@ mod session_tests {
     /// with `request`, its supports then cleared: the hand tools start from
     /// nothing.
     fn bare_slab(z: f64, request: crate::DfSupportRequest) -> DfSupportSession {
+        let mut session = crate::start_df_supports(&slab_scene(z), request)
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        session.state = SupportState::default();
+        session.removal_index = Arc::default();
+        session
+    }
+
+    /// A slab 50 × 10 × 2 mm whose underside is `z` mm above the plate.
+    fn slab_scene(z: f64) -> sc_scene::Scene {
         use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
         use sc_mesh_core::{IndexedTriangle, MeshMetadata, Vertex};
         use sc_scene::{LeafPayload, Scene};
@@ -1344,16 +1358,7 @@ mod session_tests {
             )
             .unwrap();
         scene.add_root(leaf).unwrap();
-        let mut session = crate::start_df_supports(&scene, request)
-            .unwrap()
-            .join()
-            .unwrap()
-            .sets
-            .remove(0)
-            .session;
-        session.state = SupportState::default();
-        session.removal_index = Arc::default();
-        session
+        scene
     }
 
     /// The slab with one trunk of its own under `[5, 5]`.
@@ -1494,6 +1499,105 @@ mod session_tests {
         assert_eq!(zoned.preset_hand_size(), Some("small"));
         zoned.add_trunk_at([5.0, 5.0, 12.0]).expect("a trunk");
         assert!((tip_of(&zoned) - 0.24).abs() < 1e-9, "{}", tip_of(&zoned));
+    }
+
+    /// What `weld_parts` did before #3, one piece after another: the
+    /// parallel weld must give the very same mesh.
+    fn weld_in_turn(soup: &[f32], parts: &[usize]) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+        let mut vertices: Vec<[f32; 3]> = Vec::new();
+        let mut faces = Vec::new();
+        let mut seen: HashSet<Vec<u32>> = HashSet::new();
+        let mut start = 0;
+        for &end in parts.iter().chain(std::iter::once(&soup.len())) {
+            let piece = &soup[start..end.max(start)];
+            start = end.max(start);
+            if piece.is_empty() || !seen.insert(piece.iter().map(|v| v.to_bits()).collect()) {
+                continue;
+            }
+            let first = vertices.len();
+            for tri in piece.chunks_exact(9) {
+                let mut ids = [0u32; 3];
+                for (k, p) in tri.chunks_exact(3).enumerate() {
+                    let z = if p[2] <= 0.0 && p[2] > -crate::PLATE_SNAP_MM {
+                        0.0
+                    } else {
+                        p[2]
+                    };
+                    let p = [p[0], p[1], z];
+                    let tol = crate::WELD_TOLERANCE_MM;
+                    let cell = p.map(|v| (v / tol).floor() as i64);
+                    // The earliest vertex of the piece within reach, in the
+                    // order the grid's neighbour cells were looked through.
+                    let near = |q: &[f32; 3]| {
+                        (0..3).map(|k| (q[k] - p[k]).powi(2)).sum::<f32>() <= tol * tol
+                    };
+                    let mut found = None;
+                    'cells: for dx in -1..=1 {
+                        for dy in -1..=1 {
+                            for dz in -1..=1 {
+                                let key = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+                                for (id, q) in vertices.iter().enumerate().skip(first) {
+                                    if q.map(|v| (v / tol).floor() as i64) == key && near(q) {
+                                        found = Some(id as u32);
+                                        break 'cells;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ids[k] = found.unwrap_or_else(|| {
+                        vertices.push(p);
+                        (vertices.len() - 1) as u32
+                    });
+                }
+                if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+                    faces.push(ids);
+                }
+            }
+        }
+        (vertices, faces)
+    }
+
+    #[test]
+    fn the_parallel_weld_is_the_weld_in_turn() {
+        let check = |soup: &[f32], parts: &[usize]| {
+            let mesh = weld_parts(soup, parts, "t").expect("a mesh");
+            let (vertices, faces) = weld_in_turn(soup, parts);
+            let got: Vec<[f32; 3]> = mesh.vertices().iter().map(|v| *v.as_array()).collect();
+            assert_eq!(got, vertices);
+            let got: Vec<[u32; 3]> = mesh
+                .faces()
+                .iter()
+                .map(|f| f.vertices.map(u32::from))
+                .collect();
+            assert_eq!(got, faces);
+        };
+        // A run's supports and raft.
+        let mut request = crate::DfSupportRequest::default();
+        request.options.zones = Some(crate::zone_presets::minis_30());
+        let session = crate::start_df_supports(&slab_scene(6.0), request)
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        let sink = support_soup(&session.state, &session.models, &session.settings).unwrap();
+        assert!(sink.parts.len() > 10);
+        check(&sink.floats, &sink.parts);
+        // Repeats, points either side of a cell, collapsed and sunk ones.
+        let tri = |o: f32| [o, 0.0, 0.0, o + 1.0, 0.0, 0.0, o, 1.0, -5e-5];
+        let tol = crate::WELD_TOLERANCE_MM;
+        let mut soup: Vec<f32> = Vec::new();
+        soup.extend(tri(0.0));
+        soup.extend([0.0, 0.0, 0.0, 0.4 * tol, 0.0, 0.0, 1.0, 1.0, 0.0]);
+        let first = soup.len();
+        soup.extend(tri(0.0));
+        soup.extend([0.0, 0.0, 0.0, 0.4 * tol, 0.0, 0.0, 1.0, 1.0, 0.0]);
+        let second = soup.len();
+        soup.extend(tri(3.0));
+        soup.extend([3.0 + 0.6 * tol, 0.0, 0.0, 9.0, 9.0, 9.0, 3.0, 1.0, -5e-5]);
+        check(&soup, &[first, second]);
     }
 
     #[test]

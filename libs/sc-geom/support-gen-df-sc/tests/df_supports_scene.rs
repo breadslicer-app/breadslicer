@@ -464,3 +464,138 @@ fn hand_edits_on_a_real_model() {
         }
     }
 }
+
+/// Measurement, not a gate (#3): what a hand click costs on a big real
+/// scene. `SC_STRESS_STL` is the model (scaled to `SC_STRESS_HEIGHT_MM` tall
+/// when set, lifted 5 mm); for clicks on its downward faces it times the
+/// hover preview (a worker computes it) and, apart, drawing the whole set
+/// again once the click takes the previewed edit (`mesh`, what the click
+/// runs on the UI thread), plus a click with no preview ready. `cargo test
+/// --release -p support-gen-df-sc --test df_supports_scene -- --ignored
+/// --nocapture click_cost_on_a_real_model`.
+#[test]
+#[ignore = "needs SC_STRESS_STL"]
+fn click_cost_on_a_real_model() {
+    let Ok(path) = std::env::var("SC_STRESS_STL") else {
+        return;
+    };
+    let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+        .ok()
+        .and_then(|h| h.parse().ok());
+    let bytes = std::fs::read(&path).unwrap();
+    let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+    let leaf = loaded
+        .roots()
+        .iter()
+        .copied()
+        .find(|id| loaded.leaf_mesh_arc(*id).is_some())
+        .expect("an STL loads as one leaf root");
+    let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+    let bounds = |mesh: &IndexedMesh| {
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for v in mesh.vertices() {
+            for k in 0..3 {
+                lo[k] = lo[k].min(v.as_array()[k]);
+                hi[k] = hi[k].max(v.as_array()[k]);
+            }
+        }
+        (lo, hi)
+    };
+    if let Some(h) = height {
+        let (lo, hi) = bounds(&mesh);
+        let s = h / (hi[2] - lo[2]);
+        let vertices = mesh
+            .vertices()
+            .iter()
+            .map(|v| Vertex::new(v.as_array().map(|c| c * s)))
+            .collect();
+        mesh = IndexedMesh::new(None, vertices, mesh.faces().to_vec());
+    }
+    let (lo, hi) = bounds(&mesh);
+    let shift = [
+        60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+        40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+        5.0 - f64::from(lo[2]),
+    ];
+    let points: Vec<[f64; 3]> = mesh
+        .faces()
+        .iter()
+        .filter_map(|f| {
+            let [a, b, c] = f.vertices.map(|v| {
+                mesh.vertices()[u32::from(v) as usize]
+                    .as_array()
+                    .map(f64::from)
+            });
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0],
+            ];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            (len > 1e-12 && n[2] / len < -0.5)
+                .then(|| std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k]))
+        })
+        .collect();
+    let faces = mesh.faces().len();
+    let scene = scene_with(vec![(mesh, shift)]);
+    let t = std::time::Instant::now();
+    let mut session = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap()
+        .sets
+        .remove(0)
+        .session;
+    let generate_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let set_faces = session.mesh().unwrap().map_or(0, |m| m.faces().len());
+    println!(
+        "{faces} faces, {} downward; generate {generate_ms:.0} ms; {} roots, set mesh {set_faces} triangles",
+        points.len(),
+        session.state().collections.roots.len()
+    );
+    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1000.0;
+    let (mut previews, mut draws, mut cold) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut attached, mut placed) = (0, 0);
+    let step = (points.len() / 20).max(1);
+    for p in points.iter().step_by(step).take(20) {
+        let t = std::time::Instant::now();
+        let Ok((preview, edited)) = session.preview_add(*p) else {
+            continue;
+        };
+        previews.push(ms(t));
+        let Some(edited) = edited else {
+            continue;
+        };
+        placed += 1;
+        attached += usize::from(preview.attached);
+        // The click on the previewed point: the set drawn again.
+        let t = std::time::Instant::now();
+        let drawn = edited.mesh().unwrap();
+        draws.push(ms(t));
+        assert!(drawn.is_some());
+        // A click before the preview came back: placed and drawn.
+        let t = std::time::Instant::now();
+        let mut copy = session.clone();
+        copy.add_trunk_at(*p).unwrap();
+        copy.mesh().unwrap();
+        cold.push(ms(t));
+        session = edited;
+    }
+    let stats = |v: &[f64]| {
+        let mut v = v.to_vec();
+        v.sort_by(f64::total_cmp);
+        let mean = v.iter().sum::<f64>() / v.len().max(1) as f64;
+        format!(
+            "mean {mean:.0} ms, median {:.0} ms, max {:.0} ms (n {})",
+            v.get(v.len() / 2).copied().unwrap_or(0.0),
+            v.last().copied().unwrap_or(0.0),
+            v.len()
+        )
+    };
+    println!("placed {placed}, hanging {attached}");
+    println!("hover preview (worker): {}", stats(&previews));
+    println!("click, preview taken (UI thread): {}", stats(&draws));
+    println!("click, no preview (UI thread): {}", stats(&cold));
+}
