@@ -47,6 +47,9 @@ exceptions = [
     { allow = ["AGPL-3.0-or-later"], crate = "sc-profiles-converter" },
     { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-cli" },
     { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-gui" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-gui-base" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-gui-render" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-gui-ui" },
     # Ported from UVtools (AGPL-3.0-or-later) and linked only by the app
     # crates above; sc-sla-formats stays Apache-2.0 and does not depend on it.
     { allow = ["AGPL-3.0-or-later"], crate = "sc-sla-formats-uvtools" },

@@ -21,7 +21,7 @@ use crate::camera::OrbitCamera;
 use crate::gizmo;
 use crate::gizmo::axis::Axis;
 use crate::gizmo::look::{Family, GizmoLook};
-use crate::gizmo::modifiers::{DragModifiers, PrecisionCursor};
+use crate::gizmo::modifiers::PrecisionCursor;
 use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEdit};
@@ -347,7 +347,7 @@ impl GizmoFsm {
             return false;
         };
 
-        let modifiers = DragModifiers::from(ctx.modifiers);
+        let modifiers = super::drag_modifiers(ctx.modifiers);
         let mut precision = self.cursor.get();
         let [x, y] = precision.map([ctx.cursor.x, ctx.cursor.y], modifiers.fine);
         self.cursor.set(precision);

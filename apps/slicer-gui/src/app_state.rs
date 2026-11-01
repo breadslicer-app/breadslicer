@@ -2391,7 +2391,7 @@ mod subscribe_window_preferences_tests {
         let dir = tempfile::tempdir().expect("a temporary folder");
         let log = on_fresh_slint_thread(|| {
             crate::breadcrumbs::write_log_into(dir.path());
-            crate::breadcrumbs::start();
+            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
             let subscribed = subscribed_window();
             let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
                 Vec::new(),

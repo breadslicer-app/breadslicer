@@ -1944,7 +1944,7 @@ mod diagnostic_log_tests {
         let _serial = crate::breadcrumbs::serial();
         on_fresh_slint_thread(move || {
             crate::breadcrumbs::write_log_into(logs);
-            crate::breadcrumbs::start();
+            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let window =
                 PreferencesWindow::new().expect("the headless platform creates components");
@@ -2028,7 +2028,7 @@ mod diagnostic_log_tests {
         let _serial = crate::breadcrumbs::serial();
         let shown = on_fresh_slint_thread(|| {
             crate::breadcrumbs::write_log_into(logs.path());
-            crate::breadcrumbs::start();
+            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
             crate::breadcrumbs::set_enabled(true).expect("the log starts");
             let mut snapshot = PreferencesSnapshot::for_tests();
             snapshot.diagnostic_log = true;

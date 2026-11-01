@@ -10,7 +10,7 @@
 #     cargo install cargo-tarpaulin
 #
 # On a machine without a wgpu adapter, tests in
-# apps/slicer-gui/src/mesh_render/ soft-skip and that area's numbers
+# apps/slicer-gui/crates/render/src/mesh_render/ soft-skip and that area's numbers
 # read lower than on a GPU-equipped machine.
 
 set -eu

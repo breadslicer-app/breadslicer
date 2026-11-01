@@ -1,0 +1,29 @@
+[package]
+name = "sc-slicer-gui-base"
+version = "0.3.1"
+edition.workspace = true
+license = "AGPL-3.0-or-later"
+description = "What every Breadslicer GUI crate shares: the event trail, the scrubbing of personal paths out of it, the startup timings and the translation macro."
+
+[lints]
+workspace = true
+
+[features]
+# The hooks the GUI's tests use to keep the event trail out of the person's
+# logs folder. Tests only: the GUI enables it as a dev-dependency.
+test-support = []
+
+[dependencies]
+sc-app-paths = { workspace = true }
+
+slint = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3.23.0"

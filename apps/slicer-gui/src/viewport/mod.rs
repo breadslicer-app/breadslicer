@@ -49,3 +49,12 @@ pub(crate) use object_list::build_object_list_names as object_names;
 pub(crate) use performance_probe::{ProbeResult, ProbeUpdate};
 pub(crate) use render_scheduler::RESIZE_SETTLE;
 pub(crate) use types::{ScreenDelta, ScreenPoint};
+
+/// The gesture modifiers of the keys held: Ctrl snaps a gesture to steps and
+/// Shift makes it fine.
+pub(super) fn drag_modifiers(m: crate::PointerModifiers) -> crate::gizmo::modifiers::DragModifiers {
+    crate::gizmo::modifiers::DragModifiers {
+        snap: m.control,
+        fine: m.shift,
+    }
+}
