@@ -18,7 +18,7 @@ use super::brace_diameter::build_brace_profile;
 use super::mesh_clearance::{BraceMeshes, line_passes_mesh_clearance};
 use super::patterns::{BracePair, apply_tier_pattern, run_zig_zag_chain};
 use super::settings::{
-    AutoBracingPattern, AutoBracingSettings, auto_bracing_hard_rules,
+    AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing, auto_bracing_hard_rules,
     normalize_auto_bracing_settings,
 };
 use super::two_axis_detection::{
@@ -600,16 +600,49 @@ impl Ladder<'_> {
         ) {
             return;
         }
+        self.commit(low, high, section, low_anchor, high_anchor);
+    }
 
+    /// Writes the brace from `low_anchor` to `high_anchor` and its knots.
+    fn commit(
+        &mut self,
+        low: usize,
+        high: usize,
+        section: BraceDebugSection,
+        low_anchor: AnchorPoint,
+        high_anchor: AnchorPoint,
+    ) {
+        let (low_s, high_s) = (&self.arena[low], &self.arena[high]);
+        // A bracing preset's brace keeps its end a diameter above where its
+        // shaft starts, or the end would hang below the shaft (SoulCrafted).
+        if self.settings.stacked.is_some() {
+            let clear = self.settings.brace_diameter_mm;
+            if low_anchor.pos.z < low_s.bottom_reference_z + clear
+                || high_anchor.pos.z < high_s.bottom_reference_z + clear
+            {
+                return;
+            }
+        }
+        let dx = high_anchor.pos.x - low_anchor.pos.x;
+        let dy = high_anchor.pos.y - low_anchor.pos.y;
         let s_id = self.knot_id_factory.next(&mut self.knot_ids);
         let e_id = self.knot_id_factory.next(&mut self.knot_ids);
         let b_id = self.brace_id_factory.next(&mut self.brace_ids);
+        // A bracing preset draws its braces at its own diameter (the
+        // tessellation reads a brace's width off its knots), never thicker
+        // than the thinner shaft it joins, or its end would stick out of it.
+        let exact = self.settings.stacked.is_some().then(|| {
+            self.settings
+                .brace_diameter_mm
+                .min(low_anchor.host_diameter_mm)
+                .min(high_anchor.host_diameter_mm)
+        });
         let knot = |id: &str, a: &AnchorPoint| Knot {
             id: id.to_owned(),
             parent_shaft_id: a.segment_id.clone(),
             t: Some(a.t),
             pos: a.pos,
-            diameter: Some(a.host_diameter_mm + JOINT_DIAMETER_OFFSET_MM),
+            diameter: Some(exact.unwrap_or(a.host_diameter_mm) + JOINT_DIAMETER_OFFSET_MM),
             ..Knot::default()
         };
         self.generated_knots
@@ -643,6 +676,74 @@ impl Ladder<'_> {
                     .entry(tid.clone())
                     .or_default()
                     .push(angle);
+            }
+        }
+    }
+}
+
+/// A bracing preset's chains (SoulCrafted, #360): per pair, links from
+/// `start_z` up, each rising by the pair's own span (never less than
+/// `min_rise_mm`) and `gap_mm` above the last, in the bottom, middle or top
+/// pattern by its place in the chain; then a ring (a cross) at every
+/// reinforcement height, with its diagonal.
+fn run_stacked_chain(
+    pairs: &[BracePair<usize>],
+    stack: &StackedBracing,
+    start_z: f64,
+    arena: &[SupportSample],
+    ladder: &mut Ladder<'_>,
+    min_rise_mm: f64,
+    brace_diameter_mm: f64,
+) {
+    let width = |s: &SupportSample| s.segments.iter().map(|g| g.diameter_mm).fold(0.0, js_max);
+    for (edge_index, edge) in pairs.iter().enumerate() {
+        // Only shafts with a real gap between them: a brace between two
+        // that touch is a stub inside them, and its ends hang in the open.
+        let gap = edge.h_dist - (width(&arena[edge.a]) + width(&arena[edge.b])) / 2.0;
+        if !(gap >= brace_diameter_mm) {
+            continue;
+        }
+        let rise = js_max(edge.h_dist, min_rise_mm);
+        let step = rise + stack.gap_mm;
+        let top = js_min(arena[edge.a].top_reference_z, arena[edge.b].top_reference_z) - 0.1;
+        if top <= start_z + rise {
+            continue;
+        }
+        let links = (((top - start_z - rise) / step).floor() + 1.0).max(0.0) as u32;
+        // Neighbouring pairs lean opposite ways, as the zigzag mirrors them.
+        let (low, high) = if edge_index % 2 == 0 {
+            (edge.a, edge.b)
+        } else {
+            (edge.b, edge.a)
+        };
+        for k in 0..links {
+            let z = start_z + f64::from(k) * step;
+            let section = if k == 0 {
+                BraceDebugSection::Initial
+            } else {
+                BraceDebugSection::Repeating
+            };
+            ladder.place(low, high, section, z, rise);
+            if stack.pattern_of(k, links) == AutoBracingPattern::CrossDiagonal {
+                ladder.place(high, low, section, z, rise);
+            }
+        }
+        for &h in &stack.reinforcement_heights_mm {
+            // A cross at the height: a level brace would start in mid-air
+            // (each layer of it lands on nothing). The ring's diagonal adds
+            // one more link above it.
+            ladder.place(low, high, BraceDebugSection::Repeating, h, rise);
+            ladder.place(high, low, BraceDebugSection::Repeating, h, rise);
+            let above = h + step;
+            match stack.reinforcement_diagonal {
+                GridDiagonal::None => {}
+                GridDiagonal::Single => {
+                    ladder.place(low, high, BraceDebugSection::Repeating, above, rise)
+                }
+                GridDiagonal::Cross => {
+                    ladder.place(low, high, BraceDebugSection::Repeating, above, rise);
+                    ladder.place(high, low, BraceDebugSection::Repeating, above, rise);
+                }
             }
         }
     }
@@ -1173,6 +1274,18 @@ pub fn build_auto_braced_snapshot(
             })
             .collect();
         let min_rise = auto_bracing_hard_rules::MIN_ZIG_ZAG_RISE_MM;
+        if let Some(stack) = &settings.stacked {
+            run_stacked_chain(
+                &brace_pairs,
+                stack,
+                settings.initial_distance_mm,
+                &arena,
+                &mut ladder,
+                min_rise,
+                settings.brace_diameter_mm,
+            );
+            continue;
+        }
         if settings.initial_pattern == AutoBracingPattern::ZigZag {
             run_zig_zag_chain(
                 &brace_pairs,

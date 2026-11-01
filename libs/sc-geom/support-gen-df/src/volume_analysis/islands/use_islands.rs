@@ -526,6 +526,9 @@ pub struct IslandPanelSettings {
     pub layer_height_mm: f64,
     pub plate_z: f64,
     pub filter_toggles: IslandFilterToggles,
+    /// SoulCrafted (#360): voxel islands an overhang region covers stay
+    /// islands (the zone rules size islands and overhangs apart).
+    pub keep_covered_voxel_islands: bool,
 }
 
 impl IslandPanelSettings {
@@ -542,6 +545,7 @@ impl IslandPanelSettings {
             layer_height_mm,
             plate_z: 0.0,
             filter_toggles: super::filtering::DEFAULT_FILTER_TOGGLES,
+            keep_covered_voxel_islands: false,
         }
     }
 }
@@ -579,6 +583,7 @@ pub fn derive_islands(
             base_z: v.base_z,
             area_mm2: Some(ipc32(v.area_mm2)),
             layer_span: Some([f64::from(v.layer_span[0]), f64::from(v.layer_span[1])]),
+            body: v.body.clone().map(std::sync::Arc::new),
             ..DetectedIsland::default()
         })
         .collect();
@@ -628,7 +633,13 @@ pub fn derive_islands(
         }
     }
     let classified = classify_intersection(&final_voxel, &minima, opts);
-    let merged = merge_overhang_regions(classified.islands, &overhang);
+    let merged = if settings.keep_covered_voxel_islands {
+        let mut all = classified.islands;
+        all.extend(overhang.iter().cloned());
+        all
+    } else {
+        merge_overhang_regions(classified.islands, &overhang)
+    };
     let grid = build_island_contact_grid(&merged);
     let annotated = annotate_and_count_supports(
         &merged,

@@ -112,6 +112,10 @@ pub struct Roots {
     /// Legacy spelling of `coneHeight`, read by `rootTop` when the latter is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
+    /// SoulCrafted (#360): a 45° join cone this tall from the shaft out,
+    /// standing on the disk or on the raft's plate, whichever is higher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_cone_mm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -3,6 +3,8 @@
 //! track islands across layers). The streaming variant is not used by the
 //! combined scan and is not copied.
 
+// SoulCrafted (#360): island bodies, for the zone rules.
+pub mod body;
 pub mod geometry;
 pub mod model;
 pub mod pipeline;
