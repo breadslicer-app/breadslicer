@@ -289,7 +289,7 @@ pub fn run_with_fills(
     let filled: Vec<&[RegionRef]> = cavities.iter().map(|(cavity, _)| cavity.members).collect();
     let fills: Vec<CavityFill> = air::cavity_runs(input, options.drain_width_px, &filled)
         .into_iter()
-        .map(|layers| CavityFill::from_runs(input, layers))
+        .map(|layers| CavityFill::with_rims(input, layers))
         .collect();
     let findings = cavities
         .iter()
