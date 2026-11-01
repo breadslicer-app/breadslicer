@@ -2144,7 +2144,7 @@ impl ViewportController {
             return false;
         };
         drop(camera_slot);
-        let Some(fragment_aabb) = clipboard::fragment_world_aabb(clipboard.fragment()) else {
+        let Some(fragment_aabb) = clipboard.world_aabb() else {
             return false;
         };
         let Some(obstacles) = self

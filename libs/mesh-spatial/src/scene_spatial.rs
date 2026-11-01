@@ -14,6 +14,8 @@
 //! and the spatial cache that belongs to that mesh; mismatched
 //! pairings are structurally impossible.
 
+use std::sync::Arc;
+
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
 use sc_scene::{
@@ -64,11 +66,17 @@ pub struct SceneSpatial {
     /// kind is `Leaf(LeafPayload::Mesh(_))`; `None` for groups, CSG
     /// nodes, references, mesh-resource-backed leaves (whose cache
     /// lives in `mesh_resources` below) and tombstoned slots.
-    leaves: Vec<Option<MeshSpatial>>,
+    leaves: Vec<Option<Arc<MeshSpatial>>>,
     /// Per-mesh-resource spatial caches. Indexed by
     /// `MeshResourceId::index()`, sized to
     /// [`Scene::mesh_resources_len`].
-    mesh_resources: Vec<MeshSpatial>,
+    ///
+    /// A resource added by an edit for a mesh another slot already
+    /// holds (the same `Arc`, as a paste of a copied object adds it)
+    /// shares that slot's cache: the caches are object-space, and a
+    /// mesh shared by two slots cannot change, so the copy starts
+    /// with everything the original already computed.
+    mesh_resources: Vec<Arc<MeshSpatial>>,
 }
 
 impl std::fmt::Debug for SceneSpatial {
@@ -188,7 +196,60 @@ impl SceneSpatial {
     pub fn apply_edit(&mut self, edit: SceneEdit) -> Result<(), SceneError> {
         edit.apply_to_scene(&mut self.graph)?;
         self.invalidate_for(&edit);
+        self.share_for(&edit);
         Ok(())
+    }
+
+    /// Point each mesh resource `edit` added at the cache of another
+    /// slot that holds the same mesh `Arc`, when there is one.
+    fn share_for(&mut self, edit: &SceneEdit) {
+        match edit {
+            SceneEdit::AddMeshResource { rid, .. } => self.share_resource_cache(*rid),
+            SceneEdit::Compound(edits) => {
+                for edit in edits {
+                    self.share_for(edit);
+                }
+            }
+            SceneEdit::SetLocalTransform { .. }
+            | SceneEdit::AddLeaf { .. }
+            | SceneEdit::RemoveLeaf { .. }
+            | SceneEdit::RemoveMeshResource { .. }
+            | SceneEdit::ReplaceMeshResource { .. }
+            | SceneEdit::ReplaceLeafMesh { .. } => {}
+        }
+    }
+
+    /// Give the resource `rid` the cache of another slot holding the
+    /// mesh `Arc` it holds now. No-op when no other slot holds it.
+    fn share_resource_cache(&mut self, rid: MeshResourceId) {
+        let Some(mesh) = self.graph.mesh_resource_arc(rid) else {
+            return;
+        };
+        let mut found: Option<Arc<MeshSpatial>> = None;
+        for (other, _) in self.graph.mesh_resources_iter() {
+            if other != rid
+                && let Some(arc) = self.graph.mesh_resource_arc(other)
+                && Arc::ptr_eq(arc, mesh)
+                && let Some(cache) = self.mesh_resources.get(other.index())
+            {
+                found = Some(Arc::clone(cache));
+                break;
+            }
+        }
+        if found.is_none() {
+            self.graph.for_each_reachable_node(|id, node| {
+                if found.is_none()
+                    && let NodeKind::Leaf(LeafPayload::Mesh(arc)) = &node.kind
+                    && Arc::ptr_eq(arc, mesh)
+                    && let Some(Some(cache)) = self.leaves.get(id.index())
+                {
+                    found = Some(Arc::clone(cache));
+                }
+            });
+        }
+        if let (Some(cache), Some(slot)) = (found, self.mesh_resources.get_mut(rid.index())) {
+            *slot = cache;
+        }
     }
 
     /// Clear the cache slots `edit` made stale: only the mesh-swap
@@ -219,7 +280,7 @@ impl SceneSpatial {
     /// mesh-resource arena.
     pub fn allocate_unbound_mesh_resource_id(&mut self) -> MeshResourceId {
         let rid = self.graph.allocate_unbound_mesh_resource_id();
-        self.mesh_resources.push(MeshSpatial::default());
+        self.mesh_resources.push(Arc::default());
         rid
     }
 
@@ -231,7 +292,7 @@ impl SceneSpatial {
         if let Some(slot) = self.leaves.get_mut(id.index())
             && slot.is_some()
         {
-            *slot = Some(MeshSpatial::default());
+            *slot = Some(Arc::default());
         }
     }
 
@@ -239,7 +300,7 @@ impl SceneSpatial {
     /// dangling id.
     pub fn invalidate_mesh_resource(&mut self, id: MeshResourceId) {
         if let Some(cache) = self.mesh_resources.get_mut(id.index()) {
-            *cache = MeshSpatial::default();
+            *cache = Arc::default();
         }
     }
 
@@ -271,9 +332,10 @@ impl SceneSpatial {
     fn build(graph: Scene) -> Self {
         #[cfg(debug_assertions)]
         Self::assert_supported_vocabulary(&graph);
-        let mut leaves: Vec<Option<MeshSpatial>> = (0..graph.nodes_len()).map(|_| None).collect();
-        let mesh_resources: Vec<MeshSpatial> = (0..graph.mesh_resources_len())
-            .map(|_| MeshSpatial::default())
+        let mut leaves: Vec<Option<Arc<MeshSpatial>>> =
+            (0..graph.nodes_len()).map(|_| None).collect();
+        let mesh_resources: Vec<Arc<MeshSpatial>> = (0..graph.mesh_resources_len())
+            .map(|_| Arc::default())
             .collect();
         Self::allocate_inline_cache_slots(&graph, &mut leaves);
         Self {
@@ -302,10 +364,10 @@ impl SceneSpatial {
         );
     }
 
-    fn allocate_inline_cache_slots(graph: &Scene, leaves: &mut [Option<MeshSpatial>]) {
+    fn allocate_inline_cache_slots(graph: &Scene, leaves: &mut [Option<Arc<MeshSpatial>>]) {
         graph.for_each_reachable_node(|id, node| {
             if let NodeKind::Leaf(LeafPayload::Mesh(_)) = &node.kind {
-                leaves[id.index()] = Some(MeshSpatial::default());
+                leaves[id.index()] = Some(Arc::default());
             }
         });
     }
