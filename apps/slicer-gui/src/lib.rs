@@ -86,6 +86,7 @@ mod slice_result;
 mod slice_run;
 mod slice_selection;
 mod split_bodies;
+mod startup_timing;
 mod startup_token;
 mod support_follow;
 mod support_gen_run;
@@ -171,6 +172,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // environment, which is only safe before wgpu and the drivers below it
     // start threads.
     let startup_token = startup_token::take_from_env();
+    startup_timing::mark("main");
     // The formats ported from UVtools write through `sc-sla-formats` once
     // installed. No threads start here.
     sc_sla_formats_uvtools::install();
@@ -181,6 +183,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     for dir in &migrated {
         breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
     }
+    startup_timing::mark("user folders and event trail");
 
     // Build the wgpu Instance/Adapter/Device/Queue once up front and hand them
     // to Slint via `WGPUConfiguration::Manual` so every top-level Window shares
@@ -207,6 +210,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         backends,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
+    startup_timing::mark("graphics instance");
     // Adapter choice goes through `graphics_adapter`: with default options,
     // `Instance::request_adapter` returns whatever the platform enumerated
     // first. See that module for why that matters on machines with 2 or more
@@ -229,6 +233,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             trace: wgpu::Trace::Off,
         },
     )?;
+    startup_timing::mark("graphics adapter and device");
     diagnostics::system::record_graphics(&adapter.get_info());
     mesh_render::install_device_error_logger(&device);
     let device_loss = mesh_render::DeviceLoss::default();
@@ -310,6 +315,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             queue,
         });
     startup_token::attach(selector, startup_token).select()?;
+    startup_timing::mark("window backend");
 
     // Winit calls `set_app_id` only when Slint hands it a name, and the Wayland
     // path has no argv[0] fallback like X11 does. With no id the shell cannot
@@ -342,6 +348,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // Scenes an earlier run left unsaved (#18).
     app.offer_recovery(empty_window);
+    startup_timing::mark("recovery scan");
 
     #[cfg(target_os = "macos")]
     install_finder_open_documents(&app, empty_window);

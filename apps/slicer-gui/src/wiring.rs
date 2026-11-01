@@ -123,7 +123,9 @@ fn install_rendering_notifier(
         .set_rendering_notifier(move |state, api| match state {
             slint::RenderingState::RenderingSetup => match api {
                 slint::GraphicsAPI::WGPU30 { device, queue, .. } => {
+                    crate::startup_timing::mark("window surface");
                     ctrl.handle_rendering_setup(device.clone(), queue.clone());
+                    crate::startup_timing::mark("viewport renderer");
                 }
                 // Slint hands over whatever API the surface it built runs on,
                 // and the viewport is drawn with wgpu, so any other API leaves
@@ -133,6 +135,9 @@ fn install_rendering_notifier(
             },
             slint::RenderingState::BeforeRendering => {
                 ctrl.handle_before_rendering();
+            }
+            slint::RenderingState::AfterRendering => {
+                crate::startup_timing::frame_presented();
             }
             slint::RenderingState::RenderingTeardown => {
                 ctrl.handle_rendering_teardown();

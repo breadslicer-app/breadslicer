@@ -474,9 +474,11 @@ impl AppState {
             .as_ref()
             .map_or(LoadOutcome::NotRead, SettingsFile::load);
         let settings = loaded.settings();
+        crate::startup_timing::mark("settings");
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
         ))));
+        crate::startup_timing::mark("profile catalog");
         crate::mesh_render::set_smooth_models(settings.smooth_models());
         crate::frame_rate::set_frame_rate_cap(settings.frame_rate());
         let snapshot = PreferencesSnapshot {
@@ -559,6 +561,7 @@ impl AppState {
             _settings_saver: settings_saver,
         });
         DEVICE_LOST_TARGET.with(|target| *target.borrow_mut() = Rc::downgrade(&app));
+        crate::startup_timing::mark("app state");
         Ok(app)
     }
 
@@ -594,8 +597,10 @@ impl AppState {
     /// Creates, wires and shows a new `MainWindow`, and returns its id.
     pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        crate::startup_timing::mark("main window component");
         crate::breadcrumbs::note("window: opened");
         self.on_first_window(&ui);
+        crate::startup_timing::mark("translations");
         // Static platform flag consumed by the View menu to show the correct
         // fullscreen accelerator (Cmd+Ctrl+F on macOS, F11 elsewhere). Slint
         // has no compile-time platform branch, so the choice is made here and
@@ -614,6 +619,7 @@ impl AppState {
             &self.prefs,
         ));
         ctrl.register_document_listener();
+        crate::startup_timing::mark("viewport controller");
         // Bus listeners run on `update` only, so the window gets the current
         // build volume here, and the subscription below delivers each later
         // change.
@@ -631,7 +637,9 @@ impl AppState {
                 }
             }),
         )?;
+        crate::startup_timing::mark("window wiring");
         let drivers = self.install_window_drivers(&ui, &ctrl);
+        crate::startup_timing::mark("window drivers");
         self.wire_app_level_menus(&ui, &ctrl);
 
         self.next_window_id.set(id.wrapping_add(1));
@@ -648,13 +656,16 @@ impl AppState {
             self.default_envelope.clone(),
         );
         self.wire_window_events(&ui, id);
+        crate::startup_timing::mark("window menus, autosave and events");
 
         ui.show()?;
+        crate::startup_timing::mark("window show");
         // The winit window only exists once shown; set the taskbar icon here so
         // the live window matches the executable resource.
         crate::window_icon::apply(ui.window());
         // Open at a share of the monitor, not the 600 x 400 floor.
         crate::window_placement::fit_to_screen(&ui);
+        crate::startup_timing::mark("window icon and placement");
         self.main_windows.borrow_mut().insert(
             id,
             WiredMainWindow {
