@@ -5341,9 +5341,11 @@ dependencies = [
  "sc-sl1cer",
  "sc-sla-formats",
  "sc-sla-formats-uvtools",
+ "sc-slicer-gui-base",
+ "sc-slicer-gui-render",
+ "sc-slicer-gui-ui",
  "serde",
  "slint",
- "slint-build",
  "swash",
  "sys-locale",
  "tempfile",
@@ -5352,6 +5354,53 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "zip",
+]
+
+[[package]]
+name = "sc-slicer-gui-base"
+version = "0.3.1"
+dependencies = [
+ "sc-app-paths",
+ "slint",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sc-slicer-gui-render"
+version = "0.3.1"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "float-cmp 0.10.0",
+ "glam",
+ "harfrust 0.8.4",
+ "image",
+ "pollster",
+ "sc-geom",
+ "sc-mesh-core",
+ "sc-mesh-fixtures",
+ "sc-mesh-formats",
+ "sc-mesh-spatial",
+ "sc-message-catalog",
+ "sc-print-primitives",
+ "sc-scene",
+ "sc-sl1cer",
+ "sc-sla-formats",
+ "sc-slicer-gui-base",
+ "sc-slicer-gui-ui",
+ "serde",
+ "slint",
+ "swash",
+ "wgpu",
+]
+
+[[package]]
+name = "sc-slicer-gui-ui"
+version = "0.3.1"
+dependencies = [
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

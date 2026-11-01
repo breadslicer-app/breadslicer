@@ -1824,7 +1824,7 @@ impl ViewportController {
         self.input.note_hover_cursor(cursor);
         self.tab_tool_hover(cursor);
         if self.input.modal.get().is_some() {
-            self.update_modal(cursor, modifiers.into());
+            self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
         if !self.allows_transform_gizmo() {

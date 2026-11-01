@@ -34,6 +34,9 @@ sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }
 sc-sla-formats = { workspace = true }
 sc-sla-formats-uvtools = { workspace = true }
+sc-slicer-gui-base = { workspace = true }
+sc-slicer-gui-render = { workspace = true }
+sc-slicer-gui-ui = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
@@ -50,20 +53,8 @@ swash = { version = "0.2.10", default-features = false, features = [
     "render",
     "scale",
 ] }
-# Slint's default feature set minus FemtoVG renderer.
-slint = { version = "1.18.1", default-features = false, features = [
-    "accessibility",
-    "backend-winit",
-    "compat-1-2",
-    "image-default-formats",
-    "renderer-skia",
-    "renderer-software",
-    "std",
-    "unstable-wgpu-30",
-    "unstable-winit-030",
-] }
-# Note: keep wgpu version in sync with that used by Sling.
-wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+slint = { workspace = true }
+wgpu = { workspace = true }
 pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
@@ -85,7 +76,6 @@ windows-sys = { version = "0.61", features = [
 
 [build-dependencies]
 sc-message-catalog = { workspace = true }
-slint-build = "1.18.1"
 toml = "1.1.2"
 
 [target.'cfg(windows)'.build-dependencies]
@@ -93,6 +83,8 @@ winresource = "0.1.31"
 
 [dev-dependencies]
 sc-message-catalog = { workspace = true }
+sc-slicer-gui-base = { workspace = true, features = ["test-support"] }
+sc-slicer-gui-render = { workspace = true, features = ["test-support"] }
 sc-mesh-fixtures = { workspace = true }
 sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
