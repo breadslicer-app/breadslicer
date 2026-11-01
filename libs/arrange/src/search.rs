@@ -142,6 +142,11 @@ enum Pull {
     /// Front row first, then left, as far as they slide: a pile that fills
     /// a crowded plate's corners.
     Corner,
+    /// On a lattice as large as the shape, in the plate's middle, row by
+    /// row: copies side by side in rows and columns, as on a tray (a fill
+    /// only). Sliding into the hollows of the row before can take one more
+    /// row, or lose a copy of each row after it.
+    Grid,
 }
 
 /// How a spot ranks, lowest first: the plate the pile needs, its area, and
@@ -176,6 +181,7 @@ impl Pass<'_, '_> {
         match self.pull {
             Pull::Centre => self.nearest(shape, cursor),
             Pull::Corner => self.cornered(shape, cursor),
+            Pull::Grid => self.lattice(shape, cursor),
         }
     }
 
@@ -204,6 +210,32 @@ impl Pass<'_, '_> {
             }
         }
         Some(best)
+    }
+
+    /// The first spot from the `cursor`-th on a lattice of `shape`'s own
+    /// size, row by row, where it fits. The lattice holds as many rows and
+    /// columns as the plate does, in its middle.
+    fn lattice(&self, shape: &Shape, cursor: &mut usize) -> Option<[i32; 2]> {
+        let size = [shape.hi[0] - shape.lo[0], shape.hi[1] - shape.lo[1]];
+        if size[0] <= 0 || size[1] <= 0 {
+            return None;
+        }
+        let (width, height) = (self.plate.width as i32, self.plate.height as i32);
+        let (cols, rows) = (width / size[0], height / size[1]);
+        let from = [(width - cols * size[0]) / 2, (height - rows * size[1]) / 2];
+        let count = (cols * rows).max(0) as usize;
+        while *cursor < count {
+            let (i, j) = (*cursor as i32 % cols, *cursor as i32 / cols);
+            let at = [
+                from[0] + i * size[0] - shape.lo[0],
+                from[1] + j * size[1] - shape.lo[1],
+            ];
+            if self.plate.fits(shape, at) {
+                return Some(at);
+            }
+            *cursor += 1;
+        }
+        None
     }
 
     /// The spot nearest the target where `shape` fits, from the `cursor`-th
@@ -278,7 +310,7 @@ impl Pass<'_, '_> {
                     .dist2([at[0] + anchor[0], at[1] + anchor[1]], self.problem.target)
             }
             // The lowest top, then the leftmost.
-            Pull::Corner => {
+            Pull::Corner | Pull::Grid => {
                 i64::from(at[1] + shape.hi[1]) * (1 << 20) + i64::from(at[0] + shape.lo[0])
             }
         };
@@ -393,10 +425,11 @@ impl Spots {
 enum Turns {
     /// Any the footprint has.
     All,
-    /// Only the way the body stands: copies in rows, as on a tray.
-    Own,
-    /// The way it stands, or half a turn from it: pairs that nest.
-    Half,
+    /// Only this one (an index into the footprint's angles), for every
+    /// copy: copies in rows, as on a tray, all turned alike.
+    One(usize),
+    /// This one, or half a turn from it: pairs that nest.
+    Half(usize),
 }
 
 /// A copy a fill placed: which body it copies, its angle, and where its
@@ -408,13 +441,16 @@ pub(crate) type Copied = (usize, usize, [i32; 2]);
 /// a copy of each body in turn, so each body gets as many as the others,
 /// give or take one. Several passes run side by side (pulled to the
 /// middle or to the corner, ranked by the pile or by nearness, with every
-/// angle, only the body's own, or its own and half a turn) and the one
+/// angle, every copy at one same angle, or at one and half a turn from
+/// it) and the one
 /// that places most wins, then the smallest pile. `placed` follows the
-/// count of the pass furthest along. `None` when cancelled.
+/// count of the pass furthest along, less `uncounted`. `None` when
+/// cancelled.
 pub(crate) fn fill(
     problem: &Problem<'_>,
     limit: Option<usize>,
     placed: &AtomicUsize,
+    uncounted: usize,
     cancel: &AtomicBool,
 ) -> Option<Vec<Copied>> {
     let bodies = problem.footprints.len();
@@ -431,17 +467,22 @@ pub(crate) fn fill(
     let mut variants: Vec<(Pull, bool, Turns)> = Vec::new();
     for pull in [Pull::Corner, Pull::Centre] {
         for nearest in [true, false] {
-            for t in [Turns::All, Turns::Own, Turns::Half] {
-                let useful = match t {
-                    Turns::Own => true,
-                    Turns::All => turns > 1,
-                    Turns::Half => turns > 2 && turns % 2 == 0,
-                };
-                if useful {
-                    variants.push((pull, nearest, t));
+            if turns > 1 {
+                variants.push((pull, nearest, Turns::All));
+            }
+            for a in 0..turns {
+                variants.push((pull, nearest, Turns::One(a)));
+            }
+            // Half a turn from the second half's angles is the first half's.
+            if turns > 2 && turns % 2 == 0 {
+                for a in 0..turns / 2 {
+                    variants.push((pull, nearest, Turns::Half(a)));
                 }
             }
         }
+    }
+    for a in 0..turns {
+        variants.push((Pull::Grid, true, Turns::One(a)));
     }
     let runs: Vec<Option<(Vec<Copied>, i64)>> = variants
         .par_iter()
@@ -455,8 +496,8 @@ pub(crate) fn fill(
                     let n = fp.shapes.len();
                     match t {
                         Turns::All => (0..n).collect(),
-                        Turns::Own => vec![0],
-                        Turns::Half => vec![0, n / 2],
+                        Turns::One(a) => vec![a % n],
+                        Turns::Half(a) => vec![a % n, (a + n / 2) % n],
                     }
                 })
                 .collect();
@@ -481,7 +522,7 @@ pub(crate) fn fill(
                         Some((angle, at)) => copies.push((k, angle, at)),
                         None => break 'fill,
                     }
-                    placed.fetch_max(copies.len(), Ordering::Relaxed);
+                    placed.fetch_max(copies.len().saturating_sub(uncounted), Ordering::Relaxed);
                 }
             }
             let extent = run.pile.map_or(0, |(lo, hi)| spots.metric.extent(lo, hi));

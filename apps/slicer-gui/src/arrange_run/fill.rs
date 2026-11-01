@@ -6,11 +6,14 @@
 //! Fill bed (#356): the room left on the plate filled with copies of the
 //! selected models.
 //!
-//! Everything on the plate stays where it is, the selected models too, and
+//! Everything on the plate but the selected models stays where it is, and
 //! the copies keep clear of it ([`sc_arrange::fill`]): with one model
 //! selected, copies of it; with several, copies of each in turn, so they
-//! get as many each, give or take one. The Arrange card's settings hold:
-//! the gap, the edge margin, turns about the vertical axis and Shadow only.
+//! get as many each, give or take one. The selected models stay too,
+//! unless moving them lets more copies in (one in the plate's middle splits
+//! it): then they move with the copies, their supports along, in the same
+//! step. The Arrange card's settings hold: the gap, the edge margin, turns
+//! about the vertical axis and Shadow only.
 //!
 //! A copy shows the very mesh of its model (the same `Arc`, hollowed or
 //! not), and its support set in force comes along as if the model had
@@ -42,13 +45,15 @@ use super::{ArrangeRun, affine, gather};
 use crate::error_dialog::ErrorTexts;
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
-use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
+use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision, leaf_mesh_swap};
 use crate::support_persist::{in_force, record};
 
 /// A mesh that goes along with its model as it is: where it stands and
 /// what its leaf is called.
 #[derive(Clone, Debug)]
 struct Piece {
+    /// The leaf that shows it.
+    leaf: NodeId,
     mesh: Arc<IndexedMesh>,
     world: AffineTransform3D,
     meta: Option<SceneMetadata>,
@@ -66,9 +71,9 @@ struct Source {
     set: Option<(Arc<DfSupportSession>, Piece)>,
 }
 
-/// What a fill made on the worker: the copies, and per copy the session
-/// and mesh of its support set, when its model has one in force and it
-/// could be drawn.
+/// What a fill made on the worker: the copies, and per copy, then per
+/// moved model, the session and mesh of its support set where it goes, when
+/// its model has one in force and it could be drawn.
 struct Made {
     filled: Filled,
     sets: Vec<Option<CopiedSet>>,
@@ -255,6 +260,52 @@ impl ArrangeRun {
     }
 }
 
+/// The edits that move the models `moved` to let more copies in: each
+/// model and its supports that go along as they are, and its set in force
+/// redrawn where it goes (`sets`, one per move, as a move in the plate
+/// plane takes it, #119, #153), which goes to `drawn`. A set that could not
+/// be redrawn goes along as it is. `None` when a leaf is gone.
+fn moved_models(
+    document: &SceneDocument,
+    sources: &[Source],
+    moved: &[sc_arrange::FillCopy],
+    sets: Vec<Option<CopiedSet>>,
+    drawn: &mut Vec<(NodeId, NodeId, Arc<DfSupportSession>)>,
+) -> Option<Vec<SceneEdit>> {
+    document
+        .with_scene(|spatial| {
+            let mut edits = Vec::new();
+            let shift = |leaf: NodeId, motion: &Transform3D| {
+                let query = spatial.leaf(leaf)?;
+                let up = query.parent_world().inverse().ok()?;
+                Some(SceneEdit::SetLocalTransform {
+                    node_id: leaf,
+                    before: query.local_transform(),
+                    after: up.compose(&motion.compose(&query.world_transform())),
+                })
+            };
+            for (m, set) in moved.iter().zip(sets) {
+                let source = sources.iter().find(|s| s.body == m.source)?;
+                let motion = Transform3D::Affine(m.placement.motion());
+                edits.push(shift(source.model.leaf, &motion)?);
+                for piece in &source.rigid {
+                    edits.push(shift(piece.leaf, &motion)?);
+                }
+                if let Some((_, piece)) = &source.set {
+                    match set {
+                        Some((session, mesh)) => {
+                            edits.push(leaf_mesh_swap(spatial.graph(), piece.leaf, mesh)?);
+                            drawn.push((piece.leaf, source.model.leaf, session));
+                        }
+                        None => edits.push(shift(piece.leaf, &motion)?),
+                    }
+                }
+            }
+            Some(edits)
+        })
+        .flatten()
+}
+
 /// What became of a fill's result.
 #[derive(Debug, PartialEq)]
 enum Landed {
@@ -303,6 +354,7 @@ fn gather_fill(document: &SceneDocument) -> Option<(Vec<Body>, Vec<Source>)> {
             let piece = |leaf: NodeId| {
                 let query = spatial.leaf(leaf)?;
                 Some(Piece {
+                    leaf,
                     mesh: graph.leaf_mesh_arc(leaf)?.clone(),
                     world: affine(&query.world_transform()),
                     meta: graph.node(leaf)?.meta.clone(),
@@ -359,9 +411,11 @@ fn make(
     )
     .ok()?;
     let source_of = |body: usize| sources.iter().find(|s| s.body == body);
+    // The copies, then the models that move to let more in.
     let todo: Vec<(usize, &Source, Placement)> = filled
         .copies
         .iter()
+        .chain(&filled.moved)
         .enumerate()
         .filter_map(|(i, copy)| {
             let source = source_of(copy.source)?;
@@ -370,7 +424,7 @@ fn make(
         .collect();
     progress.sets_total.store(todo.len(), Ordering::Relaxed);
     let drawing = Instant::now();
-    let mut sets = vec![None; filled.copies.len()];
+    let mut sets = vec![None; filled.copies.len() + filled.moved.len()];
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism()
         .map_or(4, usize::from)
@@ -478,7 +532,19 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
     if ids.len() != leaves || rids.len() != fresh {
         return Err("no scene".to_owned());
     }
-    let mut edits = Vec::with_capacity(leaves + fresh);
+    // The models that move to let more copies in go first.
+    let mut drawn: Vec<(NodeId, NodeId, Arc<DfSupportSession>)> = Vec::new();
+    let mut sets = made.sets;
+    let moved_sets = sets.split_off(made.filled.copies.len());
+    let mut edits = moved_models(
+        document,
+        sources,
+        &made.filled.moved,
+        moved_sets,
+        &mut drawn,
+    )
+    .ok_or("a moved model is gone")?;
+    edits.reserve(leaves + fresh);
     let mut resource: Vec<Option<MeshResourceId>> = existing;
     for (k, rid) in resource.iter_mut().enumerate() {
         if rid.is_none() && copied.contains(&k) {
@@ -504,12 +570,11 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
         position += 1;
         node_id
     };
-    let mut drawn: Vec<(NodeId, NodeId, Arc<DfSupportSession>)> = Vec::new();
     let copies = made
         .filled
         .copies
         .iter()
-        .zip(made.sets)
+        .zip(sets)
         .filter_map(|(copy, set)| Some((source_of(copy.source)?, copy, set)));
     for (k, copy, set) in copies {
         let source = &sources[k];

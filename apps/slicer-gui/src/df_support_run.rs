@@ -3822,6 +3822,64 @@ mod hand_edit_tests {
         });
     }
 
+    /// #356: a supported model in the plate's middle moves to let more
+    /// copies in: its set is redrawn where it goes and stays in force, in
+    /// the same step as the copies, and Undo puts both back.
+    #[test]
+    fn a_supported_model_moved_by_the_fill_takes_its_set() {
+        use crate::arrange_run::{ArrangeOptions, fill_now};
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (set_leaf, set_mesh) = set_of(&document, &run, model);
+            let start = leaf_transform(&document, model);
+            // The plate around it: room for two rows and four columns of it
+            // with its raft, so in its middle it splits the plate.
+            let size = set_mesh
+                .vertices()
+                .iter()
+                .fold([0.0f64; 2], |m, v| {
+                    let p = v.as_array();
+                    [
+                        m[0].max((f64::from(p[0]) - 20.0).abs()),
+                        m[1].max((f64::from(p[1]) - 20.0).abs()),
+                    ]
+                })
+                .map(|half| half * 2.0 + 1.6);
+            let plate = sc_arrange::Plate {
+                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
+                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
+                floor: 0.0,
+            };
+            document.set_selection(Selection::One(LeafId(model)));
+            let filled = fill_now(&document, &plate, ArrangeOptions::default())
+                .expect("filled")
+                .0;
+            assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
+            assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
+            assert_ne!(leaf_transform(&document, model), start);
+            let (leaf, mesh) = set_of(&document, &run, model);
+            assert_eq!(leaf, set_leaf, "the same set");
+            assert!(!Arc::ptr_eq(&mesh, &set_mesh), "redrawn where it went");
+            assert!(
+                matches!(leaf_transform(&document, leaf), Transform3D::Identity)
+                    || leaf_transform(&document, leaf)
+                        == Transform3D::Affine(AffineTransform3D::identity()),
+                "its leaf stays put: the set is drawn in world space"
+            );
+            let sets = run.sets_in_force();
+            assert!(sets.iter().any(|d| d.model == model), "still in force");
+            assert_eq!(sets.len(), 1 + filled.copies.len());
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, model), start);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, model).1, &set_mesh));
+            assert_eq!(run.sets_in_force().len(), 1);
+        });
+    }
+
     /// #356: a copy turned a quarter turn about the vertical axis gets its
     /// model's set turned with it, as a turn of the model takes it (#153).
     #[test]

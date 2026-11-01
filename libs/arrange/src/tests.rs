@@ -280,6 +280,9 @@ fn a_cancelled_arrangement_says_so() {
 fn filled_plate(bodies: &[Body], filled: &crate::Filled) -> (Vec<Body>, Vec<Option<Placement>>) {
     let mut all: Vec<Body> = bodies.to_vec();
     let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
+    for moved in &filled.moved {
+        placements[moved.source] = Some(moved.placement);
+    }
     for copy in &filled.copies {
         all.push(bodies[copy.source].clone());
         placements.push(Some(copy.placement));
@@ -380,6 +383,34 @@ fn a_fill_of_two_bodies_mixes_them_evenly() {
     assert!(a.abs_diff(b) <= 1, "{a} and {b}");
     let (all, placements) = filled_plate(&bodies, &filled);
     assert_kept_apart(&all, &placements, &plate, &settings);
+}
+
+/// A source in the plate's middle splits it: no row fits above or below
+/// it. Moved, it lets the copies in rows and columns, as on a tray; what
+/// is not copied still stays.
+#[test]
+fn a_source_in_the_middle_moves_to_let_more_copies_in() {
+    let mesh = cube();
+    let plate = plate(70.0, 36.0);
+    let bodies = [
+        body(vec![boxed(&mesh, [12.0, 12.0, 6.0], [29.0, 12.0, 0.0])]),
+        body(vec![boxed(&mesh, [3.0, 3.0, 3.0], [64.0, 2.0, 0.0])]),
+    ];
+    let settings = quarter_turns();
+    let filled = fill_now(&bodies, &[0], &plate, &settings, None);
+    assert_eq!(filled.moved.len(), 1, "the source moves");
+    assert_eq!(filled.moved[0].source, 0);
+    // 12 mm boxes and a 1 mm gap: 4 × 2 in the 60 × 26 mm inside the margin.
+    assert_eq!(filled.copies.len(), 7, "{:?}", filled.copies);
+    let (all, placements) = filled_plate(&bodies, &filled);
+    assert_eq!(placements[1], None, "the other one stays");
+    assert_kept_apart(&all, &placements, &plate, &settings);
+
+    // Where staying fits as many, the source stays.
+    let corner = [body(vec![boxed(&mesh, [12.0, 12.0, 6.0], [5.0, 5.0, 0.0])])];
+    let filled = fill_now(&corner, &[0], &plate, &settings, None);
+    assert!(filled.moved.is_empty());
+    assert_eq!(filled.copies.len(), 7);
 }
 
 #[test]

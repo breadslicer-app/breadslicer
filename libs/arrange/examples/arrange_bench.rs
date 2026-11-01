@@ -385,9 +385,14 @@ fn fill_plate(
         .map(|&i| filled.copies.iter().filter(|c| c.source == i).count())
         .collect();
     println!(
-        "fill: {} copies {:?} | footprints {:.0} ms, search {:.0} ms, total {:.0} ms",
+        "fill: {} copies {:?}, sources {} | footprints {:.0} ms, search {:.0} ms, total {:.0} ms",
         filled.copies.len(),
         per_source,
+        if filled.moved.is_empty() {
+            "stay"
+        } else {
+            "moved"
+        },
         filled.timings.footprints.as_secs_f64() * 1e3,
         filled.timings.search.as_secs_f64() * 1e3,
         t.elapsed().as_secs_f64() * 1e3
@@ -402,6 +407,9 @@ fn fill_plate(
             });
             standing.len()
         ];
+        for m in &filled.moved {
+            at[m.source] = Some(m.placement);
+        }
         for c in &filled.copies {
             all.push(standing[c.source].clone());
             at.push(Some(c.placement));

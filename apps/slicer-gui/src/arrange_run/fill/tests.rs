@@ -84,6 +84,46 @@ fn apart(a: &AffineTransform3D, b: &AffineTransform3D) -> bool {
         || (p[0] - q[0]).hypot(p[1] - q[1]) >= 4.0 * std::f64::consts::SQRT_2 + 1.0 - 1e-6
 }
 
+/// Whether the fill moved the model of body `body` to let more copies in.
+fn moved(filled: &sc_arrange::Filled, body: usize) -> bool {
+    filled.moved.iter().any(|m| m.source == body)
+}
+
+/// #356: a model in the plate's middle splits it; it moves to let the
+/// copies in rows, in the same step, and Undo puts it back.
+#[test]
+fn a_model_in_the_middle_moves_to_let_more_copies_in() {
+    let (document, leaves) = cubes(&[[25.0, 11.0]]);
+    select(&document, &leaves);
+    let before = models(&document);
+    // 4 mm cubes on a 50 x 22 mm plate: 12 mm high inside the margin, two
+    // rows of 5 mm; the cube in the middle leaves 3.5 mm above and below.
+    let plate = Plate {
+        min: [0.0, 0.0],
+        max: [50.0, 22.0],
+        floor: 0.0,
+    };
+    let filled = fill_now(&document, &plate, ArrangeOptions::default())
+        .expect("filled")
+        .0;
+    assert!(moved(&filled, 0), "it moves");
+    let after = models(&document);
+    assert_ne!(after[0].2, before[0].2);
+    assert_eq!(after.len(), 1 + filled.copies.len());
+    // Staying, only its own row takes copies: 6.
+    assert!(filled.copies.len() >= 12, "{}", filled.copies.len());
+    for (i, a) in after.iter().enumerate() {
+        for b in &after[i + 1..] {
+            assert!(apart(&a.2, &b.2), "{:?} {:?}", a.2, b.2);
+        }
+    }
+    assert!(document.undo().unwrap());
+    let back = models(&document);
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].2, before[0].2, "back where it was");
+    assert!(!document.can_undo(), "one step");
+}
+
 /// #356: one model selected; its copies fill the plate around it and the
 /// others, which stay where they are, share its mesh, and go in one step.
 #[test]
@@ -98,11 +138,12 @@ fn copies_of_one_model_fill_the_room_left_in_one_step() {
     let added = filled.copies.len();
     assert!(added > 10, "{added} copies");
     assert_eq!(after.len(), before.len() + added);
-    // What was there stays.
-    for (b, a) in before.iter().zip(&after) {
+    // What was there stays, the selected model too unless moving it lets
+    // more copies in.
+    for (row, (b, a)) in before.iter().zip(&after).enumerate() {
         assert_eq!(b.0, a.0);
         assert!(Arc::ptr_eq(&b.1, &a.1));
-        assert_eq!(b.2, a.2, "stays where it was");
+        assert_eq!(b.2 == a.2, !moved(&filled, row), "{row}");
     }
     // Each copy shows the selected model's mesh, never a duplicate, on the
     // plate, inside the margin, standing as it did.
@@ -145,8 +186,9 @@ fn copies_of_two_models_mix_evenly() {
     assert!(a.abs_diff(b) <= 1, "{a} and {b}");
     assert_eq!(count(1), 0, "the unselected one is not copied");
     let after = models(&document);
-    for (b, a) in before.iter().zip(&after) {
-        assert_eq!(b.2, a.2, "stays where it was");
+    assert_eq!(before[1].2, after[1].2, "the unselected one stays");
+    for (row, (b, a)) in before.iter().zip(&after).enumerate() {
+        assert_eq!(b.2 == a.2, !moved(&filled, row), "{row}");
     }
     let of = |mesh: &Arc<IndexedMesh>| {
         after[before.len()..]
