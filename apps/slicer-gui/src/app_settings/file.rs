@@ -525,6 +525,50 @@ mod settings_file_tests {
     }
 
     #[test]
+    fn the_gizmo_style_and_size_round_trip_and_the_defaults_are_omitted() {
+        use crate::gizmo::look::GizmoStyle;
+
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        file.save(&AppSettings::default()).unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            !written.contains("gizmo"),
+            "got:
+{written}"
+        );
+
+        let mut s = AppSettings::default();
+        s.set_gizmo_style(GizmoStyle::Focused);
+        s.set_gizmo_size(125);
+        file.save(&s).unwrap();
+        let loaded = file.load().settings();
+        assert_eq!(loaded.gizmo_style(), GizmoStyle::Focused);
+        assert_eq!(loaded.gizmo_size(), 125);
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(
+            written.contains("gizmo_style = \"focused\""),
+            "got:
+{written}"
+        );
+        assert!(
+            written.contains("gizmo_size = 125"),
+            "got:
+{written}"
+        );
+
+        // A hand-edited size out of range is held to the range offered.
+        fs::write(
+            &file.path,
+            "version = 1
+gizmo_size = 400
+",
+        )
+        .unwrap();
+        assert_eq!(file.load().settings().gizmo_size(), 150);
+    }
+
+    #[test]
     fn saved_toml_omits_default_aa_level() {
         // Off (the default) is `skip_serializing_if`; a fresh config shouldn't
         // carry a redundant `aa_level = "off"` line.

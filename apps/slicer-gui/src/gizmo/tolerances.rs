@@ -35,3 +35,14 @@ pub(super) const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
 /// the gizmo, so the bound also rejects sign flips. The user sees
 /// the gizmo "stick" at the limit.
 pub(super) const EPS_SCALE: f32 = 1e-3;
+
+/// A plane handle (#207) cannot be grabbed while `|normal · ray_dir|` is
+/// below this: seen this close to edge-on, the square is a sliver and the
+/// cursor ray cuts its plane far away. The square fades out from 0.24 down to
+/// 0.10 (`style::plane_fade`).
+pub(super) const PLANE_PICK_MIN: f32 = 0.15;
+
+/// While dragging in a plane (a plane handle or the body of a model, #209),
+/// a cursor ray closer than this to the plane (`|normal · ray_dir|`) gives no
+/// usable point: the model keeps its last pose instead of jumping.
+pub(crate) const PLANE_DRAG_MIN: f32 = 0.05;

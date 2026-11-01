@@ -25,6 +25,8 @@ mod render_host;
 mod render_scheduler;
 mod session_state;
 #[cfg(test)]
+mod tests_controller_gizmo_round2;
+#[cfg(test)]
 mod tests_controller_handle_before_rendering;
 #[cfg(test)]
 mod tests_controller_lifecycle;

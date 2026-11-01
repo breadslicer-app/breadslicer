@@ -909,6 +909,7 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         view_dir: Vec3::new(0.0, 0.0, -1.0),
         hover: None,
         drag_visual: None,
+        look: crate::gizmo::look::GizmoLook::default(),
     };
     let _ = renderer
         .render(
@@ -973,6 +974,7 @@ fn render_with_idle_gizmo_under_default_limits() {
         view_dir: Vec3::new(-0.5, 0.6, -0.62).normalize(),
         hover: None,
         drag_visual: None,
+        look: crate::gizmo::look::GizmoLook::default(),
     };
     let _ = renderer
         .render(
@@ -1029,6 +1031,7 @@ fn render_with_rotate_gizmo_under_default_limits() {
             start: 0.3,
             sweep: 1.2,
         }),
+        look: crate::gizmo::look::GizmoLook::default(),
     };
     let _ = renderer
         .render(
@@ -1078,6 +1081,7 @@ fn render_with_scale_gizmo_under_default_limits() {
         view_dir: Vec3::new(-0.5, 0.6, -0.62).normalize(),
         hover: None,
         drag_visual: None,
+        look: crate::gizmo::look::GizmoLook::default(),
     };
     let _ = renderer
         .render(
@@ -2109,14 +2113,36 @@ fn showcase_frame(
     hover: Option<GizmoHover>,
     drag_visual: Option<GizmoDragVisual>,
 ) -> GizmoFrame {
+    showcase_frame_in(
+        crate::gizmo::look::GizmoLook::default(),
+        camera,
+        pivot,
+        height,
+        visibility,
+        hover,
+        drag_visual,
+    )
+}
+
+/// [`showcase_frame`] in the gizmo style, size and tool of `look`.
+fn showcase_frame_in(
+    look: crate::gizmo::look::GizmoLook,
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    height: f32,
+    visibility: GizmoVisibility,
+    hover: Option<GizmoHover>,
+    drag_visual: Option<GizmoDragVisual>,
+) -> GizmoFrame {
     GizmoFrame {
         pivot,
-        scale: crate::gizmo::gizmo_scale(camera, pivot, default_fov_y(), height)
+        scale: crate::gizmo::gizmo_scale_sized(camera, pivot, default_fov_y(), height, look.size)
             .expect("pivot in front of the eye"),
         view_dir: (camera.target - camera.eye()).normalize(),
         visibility,
         hover,
         drag_visual,
+        look,
     }
 }
 
@@ -2200,8 +2226,79 @@ fn gizmo_pictures() {
             }),
         ),
     ];
-    for (name, visibility, hover, drag_visual) in shots {
-        let frame = showcase_frame(&camera, pivot, h as f32, visibility, hover, drag_visual);
+    use crate::gizmo::look::{GizmoLook, GizmoStyle, GizmoTool};
+    let focused = |tool| GizmoLook {
+        style: GizmoStyle::Focused,
+        size: 1.0,
+        tool,
+    };
+    let more: [(&str, GizmoLook, GizmoVisibility, Option<GizmoHover>); 7] = [
+        (
+            "8-mouse-encima-plano-xy",
+            GizmoLook::default(),
+            GizmoVisibility::Idle,
+            Some(GizmoHover::Plane(Axis::Z)),
+        ),
+        (
+            "9-moviendo-en-plano-xy",
+            GizmoLook::default(),
+            GizmoVisibility::DraggingPlane { normal: Axis::Z },
+            None,
+        ),
+        (
+            "10-enfocado-mover",
+            focused(GizmoTool::Move),
+            GizmoVisibility::Idle,
+            None,
+        ),
+        (
+            "11-enfocado-rotar",
+            focused(GizmoTool::Rotate),
+            GizmoVisibility::Idle,
+            None,
+        ),
+        (
+            "12-enfocado-escalar",
+            focused(GizmoTool::Scale),
+            GizmoVisibility::Idle,
+            None,
+        ),
+        (
+            "13-tamano-150",
+            GizmoLook {
+                size: 1.5,
+                ..GizmoLook::default()
+            },
+            GizmoVisibility::Idle,
+            None,
+        ),
+        (
+            "14-tamano-75",
+            GizmoLook {
+                size: 0.75,
+                ..GizmoLook::default()
+            },
+            GizmoVisibility::Idle,
+            None,
+        ),
+    ];
+    let shots = shots
+        .into_iter()
+        .map(|(name, v, hv, dv)| (name, GizmoLook::default(), v, hv, dv))
+        .chain(
+            more.into_iter()
+                .map(|(name, look, v, hv)| (name, look, v, hv, None)),
+        );
+    for (name, look, visibility, hover, drag_visual) in shots {
+        let frame = showcase_frame_in(
+            look,
+            &camera,
+            pivot,
+            h as f32,
+            visibility,
+            hover,
+            drag_visual,
+        );
         let texture = renderer
             .render(
                 Some(SceneRender {
@@ -2241,8 +2338,35 @@ fn gizmo_frame_cost() {
     let (graph, camera, pivot) = gizmo_showcase();
     renderer.upload_scene(&graph).expect("upload_scene");
     let (w, h) = (1920u32, 1080u32);
-    let cases: [(&str, Option<GizmoFrame>); 3] = [
+    let focused = crate::gizmo::look::GizmoLook {
+        style: crate::gizmo::look::GizmoStyle::Focused,
+        ..crate::gizmo::look::GizmoLook::default()
+    };
+    let cases: [(&str, Option<GizmoFrame>); 5] = [
         ("sin gizmo", None),
+        (
+            "gizmo enfocado (mover)",
+            Some(showcase_frame_in(
+                focused,
+                &camera,
+                pivot,
+                h as f32,
+                GizmoVisibility::Idle,
+                None,
+                None,
+            )),
+        ),
+        (
+            "gizmo moviendo en un plano",
+            Some(showcase_frame(
+                &camera,
+                pivot,
+                h as f32,
+                GizmoVisibility::DraggingPlane { normal: Axis::Z },
+                None,
+                None,
+            )),
+        ),
         (
             "gizmo en reposo",
             Some(showcase_frame(

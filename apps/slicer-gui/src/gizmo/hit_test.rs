@@ -12,8 +12,10 @@ use glam::Vec3;
 use crate::picking::{Ray, ray_hits_aabb_t};
 
 use super::axis::{ALL_AXES, Axis, axis_basis};
-use super::dimensions::{MIDPOINT_FRACTION, TRANSLATE_HIT_S_MAX, TRANSLATE_HIT_S_MIN};
-use super::tolerances::{LOCKOUT_COS, ROTATE_LOCKOUT_COS};
+#[cfg(test)]
+use super::dimensions::MIDPOINT_FRACTION;
+use super::dimensions::{TRANSLATE_HIT_S_MAX, TRANSLATE_HIT_S_MIN};
+use super::tolerances::{LOCKOUT_COS, PLANE_PICK_MIN, ROTATE_LOCKOUT_COS};
 
 /// Straight pieces a rotate ring is split into for its hit test.
 const RING_HIT_SEGMENTS: u32 = 128;
@@ -239,17 +241,18 @@ pub(crate) fn rotate_hit_test(
 }
 
 /// Ray-vs-AABB for one axis's scale cube. The cube is axis-aligned in world
-/// space, centred at `pivot + axis_dir * shaft_length_world *
-/// MIDPOINT_FRACTION`, with side length `cube_world`. Returns the entry
-/// parameter `t` when the ray hits, or `None`.
+/// space, centred at `pivot + axis_dir * shaft_length_world * cube_at`
+/// (`MIDPOINT_FRACTION` in the outline style), with side length
+/// `cube_world`. Returns the entry parameter `t` when the ray hits, or `None`.
 fn ray_hits_axis_cube(
     ray: &Ray,
     pivot: Vec3,
     axis: Axis,
     shaft_length_world: f32,
     cube_world: f32,
+    cube_at: f32,
 ) -> Option<f32> {
-    let centre = pivot + axis.world_dir() * (shaft_length_world * MIDPOINT_FRACTION);
+    let centre = pivot + axis.world_dir() * (shaft_length_world * cube_at);
     let half = Vec3::splat(cube_world * 0.5);
     ray_hits_aabb_t(ray, centre - half, centre + half)
 }
@@ -264,10 +267,81 @@ pub(crate) fn scale_hit_test(
     pivot: Vec3,
     shaft_length_world: f32,
     axis_cube_world: f32,
+    cube_at: f32,
 ) -> Option<(Axis, f32)> {
     front_most_axis(
         |a| axis_pickable(ray, a),
-        |a| ray_hits_axis_cube(ray, pivot, a, shaft_length_world, axis_cube_world),
+        |a| ray_hits_axis_cube(ray, pivot, a, shaft_length_world, axis_cube_world, cube_at),
+    )
+}
+
+/// Where a plane square sits and how far around it a press still grabs it,
+/// in world units: the centre of the square is `offset` along each of its two
+/// axes from the pivot, on the side of each that faces the camera looking
+/// along `view_dir` (see [`plane_quadrant`]), its side `side`, and `margin`
+/// more on each side grabs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlaneSquares {
+    pub offset: f32,
+    pub side: f32,
+    pub margin: f32,
+    pub view_dir: Vec3,
+}
+
+/// Below this `|axis · view|`, an axis counts as across the view and its
+/// square stays on the positive side: no flipping back and forth on a view
+/// along a plane of the axes (the presets).
+const PLANE_FLIP_DEAD_ZONE: f32 = 0.05;
+
+/// The quadrant of the plane perpendicular to `normal` where its square
+/// sits: for each of the plane's two axes (in [`Axis::plane_axes`] order),
+/// `-1` when that axis points away from the camera looking along `view_dir`,
+/// `1` otherwise. The square faces the camera, clear of the arrows, which
+/// keep to their positive axes: seen from the default view, a square in the
+/// positive quadrant would sit behind the Z arrow.
+pub(crate) fn plane_quadrant(normal: Axis, view_dir: Vec3) -> (f32, f32) {
+    let side = |a: Axis| {
+        if a.world_dir().dot(view_dir) > PLANE_FLIP_DEAD_ZONE {
+            -1.0
+        } else {
+            1.0
+        }
+    };
+    let (u, v) = normal.plane_axes();
+    (side(u), side(v))
+}
+
+/// Whether the plane square perpendicular to `normal` is grabbable: not while
+/// the ray runs close to its plane (see `PLANE_PICK_MIN`).
+pub(crate) fn plane_pickable(ray: &Ray, normal: Axis) -> bool {
+    normal.world_dir().dot(ray.direction).abs() >= PLANE_PICK_MIN
+}
+
+/// Hit-test the three plane squares (#207): the square of the plane through
+/// `pivot` perpendicular to each axis, in the quadrant of its plane that
+/// faces the camera ([`plane_quadrant`]). Returns the front-most grabbed
+/// square's normal and the ray parameter where the ray cuts its plane.
+pub(crate) fn plane_hit_test(ray: &Ray, pivot: Vec3, squares: PlaneSquares) -> Option<(Axis, f32)> {
+    front_most_axis(
+        |a| plane_pickable(ray, a),
+        |normal| {
+            let n = normal.world_dir();
+            let denom = ray.direction.dot(n);
+            if denom.abs() < 1e-6 {
+                return None;
+            }
+            let t = (pivot - ray.origin).dot(n) / denom;
+            if t <= 0.0 {
+                return None;
+            }
+            let at = ray.origin + ray.direction * t - pivot;
+            let (u, v) = normal.plane_axes();
+            let (su, sv) = plane_quadrant(normal, squares.view_dir);
+            let reach = squares.side * 0.5 + squares.margin;
+            let inside =
+                |a: Axis, sign: f32| (at.dot(a.world_dir()) - sign * squares.offset).abs() <= reach;
+            (inside(u, su) && inside(v, sv)).then_some(t)
+        },
     )
 }
 
@@ -704,8 +778,28 @@ mod ray_hits_axis_cube_tests {
             origin: Vec3::new(2.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_cube(&ray_at_cube, Vec3::ZERO, Axis::X, 2.0, 0.1).is_some());
-        assert!(ray_hits_axis_cube(&ray_at_tip, Vec3::ZERO, Axis::X, 2.0, 0.1).is_none());
+        assert!(
+            ray_hits_axis_cube(
+                &ray_at_cube,
+                Vec3::ZERO,
+                Axis::X,
+                2.0,
+                0.1,
+                MIDPOINT_FRACTION
+            )
+            .is_some()
+        );
+        assert!(
+            ray_hits_axis_cube(
+                &ray_at_tip,
+                Vec3::ZERO,
+                Axis::X,
+                2.0,
+                0.1,
+                MIDPOINT_FRACTION
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -714,7 +808,9 @@ mod ray_hits_axis_cube_tests {
             origin: Vec3::new(0.0, 4.0 * MIDPOINT_FRACTION, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::Y, 4.0, 0.1).is_some());
+        assert!(
+            ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::Y, 4.0, 0.1, MIDPOINT_FRACTION).is_some()
+        );
     }
 
     #[test]
@@ -723,7 +819,9 @@ mod ray_hits_axis_cube_tests {
             origin: Vec3::new(1.0, 5.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::X, 2.0, 0.1).is_none());
+        assert!(
+            ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::X, 2.0, 0.1, MIDPOINT_FRACTION).is_none()
+        );
     }
 
     #[test]
@@ -733,7 +831,7 @@ mod ray_hits_axis_cube_tests {
             origin: Vec3::new(10.0 + 2.0 * MIDPOINT_FRACTION, 20.0, 35.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_cube(&ray, pivot, Axis::X, 2.0, 0.1).is_some());
+        assert!(ray_hits_axis_cube(&ray, pivot, Axis::X, 2.0, 0.1, MIDPOINT_FRACTION).is_some());
     }
 }
 
@@ -748,7 +846,7 @@ mod scale_hit_test_tests {
             direction: -Vec3::Z,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, MIDPOINT_FRACTION).map(|(a, _)| a),
             Some(Axis::X)
         );
     }
@@ -759,7 +857,7 @@ mod scale_hit_test_tests {
             origin: Vec3::new(100.0, 100.0, 100.0),
             direction: -Vec3::Z,
         };
-        assert!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).is_none());
+        assert!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, MIDPOINT_FRACTION).is_none());
     }
 
     #[test]
@@ -773,7 +871,7 @@ mod scale_hit_test_tests {
             direction: dir,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, MIDPOINT_FRACTION).map(|(a, _)| a),
             Some(Axis::Y)
         );
     }
@@ -787,7 +885,7 @@ mod scale_hit_test_tests {
             direction: dir,
         };
         assert_ne!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, MIDPOINT_FRACTION).map(|(a, _)| a),
             Some(Axis::X)
         );
     }
@@ -811,5 +909,96 @@ mod centre_hit_test_tests {
         let t = centre_hit_test(&hit, pivot, 0.1).unwrap();
         assert!(t > 4.8 && t < 5.0);
         assert!(centre_hit_test(&miss, pivot, 0.1).is_none());
+    }
+}
+
+#[cfg(test)]
+mod plane_hit_test_tests {
+    use super::*;
+
+    /// Seen straight from above: every axis of a square is across the view
+    /// or toward the camera, so each square sits on the positive side.
+    const SQUARES: PlaneSquares = PlaneSquares {
+        offset: 0.3,
+        side: 0.2,
+        margin: 0.03,
+        view_dir: Vec3::new(0.0, 0.0, -1.0),
+    };
+
+    fn down_at(x: f32, y: f32) -> Ray {
+        Ray {
+            origin: Vec3::new(x, y, 5.0),
+            direction: -Vec3::Z,
+        }
+    }
+
+    #[test]
+    fn the_xy_square_grabs_inside_and_at_its_margin_only() {
+        // From above, the XY square (normal Z) spans 0.2..0.4 on X and Y.
+        let hit = plane_hit_test(&down_at(0.3, 0.3), Vec3::ZERO, SQUARES);
+        assert_eq!(hit.map(|(a, _)| a), Some(Axis::Z));
+        assert!((hit.unwrap().1 - 5.0).abs() < 1e-5);
+        assert!(plane_hit_test(&down_at(0.42, 0.25), Vec3::ZERO, SQUARES).is_some());
+        assert!(plane_hit_test(&down_at(0.45, 0.25), Vec3::ZERO, SQUARES).is_none());
+        // The other quadrants hold no square.
+        assert!(plane_hit_test(&down_at(-0.3, 0.3), Vec3::ZERO, SQUARES).is_none());
+        // Seen from above, the XZ and YZ squares are edge-on: not grabbed.
+        assert!(plane_hit_test(&down_at(0.3, 0.0), Vec3::ZERO, SQUARES).is_none());
+    }
+
+    #[test]
+    fn each_square_faces_the_camera() {
+        // From -X, -Y and above, looking toward +X, +Y and down: every
+        // square on the negative side of X and Y, and on +Z.
+        let view = Vec3::new(0.5, 0.6, -0.62).normalize();
+        assert_eq!(plane_quadrant(Axis::Z, view), (-1.0, -1.0));
+        assert_eq!(plane_quadrant(Axis::Y, view), (-1.0, 1.0));
+        assert_eq!(plane_quadrant(Axis::X, view), (-1.0, 1.0));
+        // A preset view keeps the positive side of the axes across it.
+        assert_eq!(plane_quadrant(Axis::Z, -Vec3::Z), (1.0, 1.0));
+        let top = Vec3::new(0.0, 1e-3, -1.0).normalize();
+        assert_eq!(plane_quadrant(Axis::Z, top), (1.0, 1.0));
+        let squares = PlaneSquares {
+            view_dir: view,
+            ..SQUARES
+        };
+        let ray = Ray {
+            origin: Vec3::new(-0.3, -0.3, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert_eq!(
+            plane_hit_test(&ray, Vec3::ZERO, squares).map(|(a, _)| a),
+            Some(Axis::Z)
+        );
+    }
+
+    #[test]
+    fn a_square_seen_almost_edge_on_is_not_grabbed() {
+        // 5° above the plate, aimed at the middle of the XY square.
+        let a = 5f32.to_radians();
+        let dir = Vec3::new(-a.cos(), 0.0, -a.sin());
+        let target = Vec3::new(0.3, 0.3, 0.0);
+        let ray = Ray {
+            origin: target - dir * 5.0,
+            direction: dir,
+        };
+        assert_ne!(
+            plane_hit_test(&ray, Vec3::ZERO, SQUARES).map(|(a, _)| a),
+            Some(Axis::Z)
+        );
+        assert!(!plane_pickable(&ray, Axis::Z));
+    }
+
+    #[test]
+    fn the_squares_follow_the_pivot() {
+        let pivot = Vec3::new(10.0, 20.0, 30.0);
+        let ray = Ray {
+            origin: pivot + Vec3::new(0.3, 5.0, 0.3),
+            direction: -Vec3::Y,
+        };
+        assert_eq!(
+            plane_hit_test(&ray, pivot, SQUARES).map(|(a, _)| a),
+            Some(Axis::Y)
+        );
     }
 }

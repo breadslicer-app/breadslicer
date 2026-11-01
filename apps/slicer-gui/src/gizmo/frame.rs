@@ -13,11 +13,13 @@ use sc_scene::NodeId;
 use crate::camera::OrbitCamera;
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
 
-use super::{gizmo_scale, pivot_for_leaf};
+use super::look::GizmoLook;
+use super::{gizmo_scale_sized, pivot_for_leaf};
 
 /// Builds the per-frame `GizmoFrame` for the renderer when a single leaf is
 /// selected. Returns `None` when `pivot_for_leaf` gives no pivot or the pivot
 /// is not in front of the eye.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_gizmo_frame(
     spatial: &SceneSpatial,
     camera: &OrbitCamera,
@@ -26,6 +28,7 @@ pub(crate) fn build_gizmo_frame(
     visibility: GizmoVisibility,
     hover: Option<GizmoHover>,
     drag_visual: Option<GizmoDragVisual>,
+    look: GizmoLook,
 ) -> Option<GizmoFrame> {
     let pivot = pivot_for_leaf(spatial, selection)?;
     build_gizmo_frame_at(
@@ -35,6 +38,7 @@ pub(crate) fn build_gizmo_frame(
         visibility,
         hover,
         drag_visual,
+        look,
     )
 }
 
@@ -48,9 +52,10 @@ pub(crate) fn build_gizmo_frame_at(
     visibility: GizmoVisibility,
     hover: Option<GizmoHover>,
     drag_visual: Option<GizmoDragVisual>,
+    look: GizmoLook,
 ) -> Option<GizmoFrame> {
     let fov_y = default_fov_y();
-    let scale = gizmo_scale(camera, pivot, fov_y, viewport_h_logical)?;
+    let scale = gizmo_scale_sized(camera, pivot, fov_y, viewport_h_logical, look.size)?;
     // The camera forward direction stands in for every ray through the gizmo
     // in the fades of the handles that face the camera: for a small gizmo
     // those rays are within a degree or so of it.
@@ -62,6 +67,7 @@ pub(crate) fn build_gizmo_frame_at(
         visibility,
         hover,
         drag_visual,
+        look,
     })
 }
 
@@ -135,6 +141,7 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         );
         assert!(frame.is_none());
     }
@@ -154,6 +161,7 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         );
         assert!(frame.is_none());
     }
@@ -175,12 +183,37 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         )
         .expect("frame produced for valid leaf");
 
         assert_approx_eq!(f32, frame.pivot.x, 11.0, epsilon = 1e-5);
         assert_approx_eq!(f32, frame.pivot.y, 21.0, epsilon = 1e-5);
         assert_approx_eq!(f32, frame.pivot.z, 31.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn the_gizmo_size_scales_the_frame() {
+        let spatial = unit_triangle_spatial();
+        let camera = default_camera();
+        let at = |size: f32| {
+            build_gizmo_frame(
+                &spatial,
+                &camera,
+                first_leaf(&spatial),
+                600.0,
+                GizmoVisibility::Idle,
+                None,
+                None,
+                GizmoLook {
+                    size,
+                    ..GizmoLook::default()
+                },
+            )
+            .unwrap()
+            .scale
+        };
+        assert_approx_eq!(f32, at(1.5), at(1.0) * 1.5, epsilon = 1e-6);
     }
 
     #[test]
@@ -192,7 +225,8 @@ mod build_gizmo_frame_tests {
         let camera = default_camera();
         let viewport_h = 720.0;
         let pivot = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
-        let expected = gizmo_scale(&camera, pivot, default_fov_y(), viewport_h).unwrap();
+        let expected =
+            super::super::gizmo_scale(&camera, pivot, default_fov_y(), viewport_h).unwrap();
 
         let frame = build_gizmo_frame(
             &spatial,
@@ -202,6 +236,7 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         )
         .expect("frame produced for valid leaf");
 
@@ -245,6 +280,7 @@ mod build_gizmo_frame_tests {
                     GizmoVisibility::Idle,
                     None,
                     None,
+                    GizmoLook::default(),
                 )
                 .expect("pivot is in front of the eye");
 
@@ -275,6 +311,7 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         );
         assert!(frame.is_none());
     }
@@ -299,6 +336,7 @@ mod build_gizmo_frame_tests {
             GizmoVisibility::Idle,
             None,
             None,
+            GizmoLook::default(),
         )
         .expect("frame produced for valid leaf");
 
@@ -324,6 +362,7 @@ mod build_gizmo_frame_tests {
             visibility,
             hover,
             drag_visual,
+            GizmoLook::default(),
         )
         .expect("frame produced for valid leaf");
 

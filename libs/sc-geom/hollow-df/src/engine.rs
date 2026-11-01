@@ -37,7 +37,10 @@
 //!   its edges are contoured closed (no hairline cracks to repair);
 //! - the voxel size it actually used is reported ([`GridInfo`]), including when
 //!   the resolution bound changed it (DragonFruit clamps to 24..=192 silently);
-//!   the upper bound is a setting ([`GridRequest::max_resolution`]);
+//!   the upper bound is a setting ([`GridRequest::max_resolution`], 512 by
+//!   default) and so is the memory the grid may take
+//!   ([`GridRequest::max_memory_bytes`]): a model too large for both gets a
+//!   larger voxel, reported as such, instead of exhausting the RAM;
 //! - solid areas can be given as spheres or boxes in millimetres, which survive
 //!   a change of voxel size, besides DragonFruit's voxel indices;
 //! - automatic drain depth measures the wall from the model's surface to
@@ -90,6 +93,13 @@ pub const RESOLUTION_LIMIT: u16 = 512;
 /// distances and the copy a run reads, void labels, the cavity scalar
 /// field).
 pub const BYTES_PER_CELL: usize = 28;
+/// The most memory a session's grid may take by default
+/// ([`GridRequest::max_memory_bytes`]): 1 GiB, about 38 M cells. A fixed
+/// figure, not one read from the free RAM, so a model hollows on the same
+/// grid on every machine and every run, the preview's and the hollow's. Any
+/// grid of up to 192 voxels per side (DragonFruit's bound) fits in it; a
+/// 512-voxel cube would take 3.8 GB.
+pub const GRID_MEMORY_LIMIT_BYTES: usize = 1 << 30;
 /// How far past the wall, in voxels, distances are exact: the cavity wall is
 /// interpolated along the edges of the grid's tetrahedra, the longest a
 /// cube's diagonal, so a voxel it reads is at most √3 voxels past the wall.
@@ -103,13 +113,17 @@ pub struct GridRequest {
     /// Most voxels along the largest extent (DragonFruit: 192). Capped at
     /// [`RESOLUTION_LIMIT`].
     pub max_resolution: u16,
+    /// Most memory the grid may take, at [`BYTES_PER_CELL`]: a grid larger
+    /// gets a larger voxel, the finest that fits.
+    pub max_memory_bytes: usize,
 }
 
 impl Default for GridRequest {
     fn default() -> Self {
         Self {
             voxel_size_mm: DEFAULT_VOXEL_SIZE_MM,
-            max_resolution: crate::hollowing::MAX_VOXEL_RESOLUTION,
+            max_resolution: RESOLUTION_LIMIT,
+            max_memory_bytes: GRID_MEMORY_LIMIT_BYTES,
         }
     }
 }
@@ -119,6 +133,10 @@ impl Default for GridRequest {
 pub enum ResolutionBound {
     /// The request wanted more voxels than `max_resolution`: voxels are larger.
     Coarsened { wanted: u32, max: u16 },
+    /// The grid would have taken more than `limit_bytes`
+    /// ([`GridRequest::max_memory_bytes`]): voxels are larger, the finest
+    /// that fit. `wanted` is the resolution the voxel asked for.
+    MemoryLimited { wanted: u32, limit_bytes: usize },
     /// The request wanted fewer than DragonFruit's 24: voxels are smaller.
     Refined { wanted: u32, min: u16 },
 }
@@ -521,7 +539,34 @@ impl Session {
         } else {
             (wanted as u16, None)
         };
-        let voxel_mm = (max_extent / resolution as f32).max(0.05);
+        let voxel_for = |resolution: u16| (max_extent / resolution as f32).max(0.05);
+        let cells_at = |resolution: u16| {
+            GridSpec::for_bbox_with_voxel(&bbox, voxel_for(resolution)).cell_count()
+        };
+        // Bound by memory before anything is allocated: the finest
+        // resolution whose grid fits (cells grow with the resolution).
+        let max_cells_by_memory = request.max_memory_bytes / BYTES_PER_CELL;
+        let (resolution, bound) = if cells_at(resolution) > max_cells_by_memory {
+            let (mut fits, mut too_big) = (MIN_VOXEL_RESOLUTION, resolution);
+            while too_big - fits > 1 {
+                let mid = fits + (too_big - fits) / 2;
+                if cells_at(mid) > max_cells_by_memory {
+                    too_big = mid;
+                } else {
+                    fits = mid;
+                }
+            }
+            (
+                fits,
+                Some(ResolutionBound::MemoryLimited {
+                    wanted,
+                    limit_bytes: request.max_memory_bytes,
+                }),
+            )
+        } else {
+            (resolution, bound)
+        };
+        let voxel_mm = voxel_for(resolution);
         let grid = GridSpec::for_bbox_with_voxel(&bbox, voxel_mm);
         if let Some(limit_cells) = max_cells
             && grid.cell_count() > limit_cells

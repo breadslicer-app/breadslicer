@@ -129,6 +129,14 @@ fn plane_motion(from: &Transform3D, to: &Transform3D) -> Option<PlaneMotion> {
         .then_some(PlaneMotion::Turn { angle, d: [dx, dy] })
 }
 
+/// Whether a model going from the world pose `from` to `to` keeps its
+/// supports, which move and turn with it (#153), instead of having them made
+/// again: the rule [`commit`] applies.
+#[cfg(test)]
+pub(crate) fn supports_follow(from: &Transform3D, to: &Transform3D) -> bool {
+    plane_motion(from, to).is_some()
+}
+
 /// The support set of the model `model` whose session is in force, with the
 /// model standing at `model_world`: its leaf and transform, when the leaf is
 /// a root (its mesh is in world space, as the session draws it).

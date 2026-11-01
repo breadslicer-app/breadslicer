@@ -26,6 +26,14 @@ export component AppearancePreferences inherits PreferencesPage {
     in-out property <bool> smooth-models: false;
     callback smooth-models-changed(bool);
 
+    // The gizmo style (#274) and size (#276). The combo orders must match
+    // `GizmoStyle::combo_index` (Outline, Focused) and `GIZMO_SIZES` in
+    // `gizmo/look.rs`.
+    in-out property <int> current-gizmo-style-index: 0;
+    callback gizmo-style-selected(int);
+    in-out property <int> current-gizmo-size-index: 2;
+    callback gizmo-size-selected(int);
+
     // The viewport's frame-rate cap (`frame_rate.rs`). The combo order must
     // match `FrameRateCap::combo_index`: Automatic, 30, 60, 120.
     in-out property <int> current-frame-rate-index: 0;
@@ -136,6 +144,51 @@ export component AppearancePreferences inherits PreferencesPage {
         toggled => {
             root.smooth-models = self.checked;
             root.smooth-models-changed(self.checked);
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Gizmo style");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: [
+                @tr("AppearancePreferences" => "Outline: every handle at once"),
+                @tr("AppearancePreferences" => "Focused: the tool picked on the left rail"),
+            ];
+            current-index: root.current-gizmo-style-index;
+            accessible-label: @tr("AppearancePreferences" => "Gizmo style");
+            selected(_value) => {
+                root.current-gizmo-style-index = self.current-index;
+                root.gizmo-style-selected(self.current-index);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Gizmo size");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: ["75 %", "90 %", "100 %", "110 %", "125 %", "150 %"];
+            current-index: root.current-gizmo-size-index;
+            accessible-label: @tr("AppearancePreferences" => "Gizmo size");
+            selected(_value) => {
+                root.current-gizmo-size-index = self.current-index;
+                root.gizmo-size-selected(self.current-index);
+            }
         }
     }
 

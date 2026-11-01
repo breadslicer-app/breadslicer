@@ -382,6 +382,26 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_gizmo_style_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.gizmo_style = crate::gizmo::look::GizmoStyle::from_combo_index(index);
+                PreferencesChange::Gizmo
+            });
+        }
+    });
+
+    prefs.on_gizmo_size_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.gizmo_size = crate::gizmo::look::size_from_combo_index(index);
+                PreferencesChange::Gizmo
+            });
+        }
+    });
+
     prefs.on_frame_rate_changed({
         let bus = bus.clone();
         move |index| {

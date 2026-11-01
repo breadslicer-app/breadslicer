@@ -277,12 +277,14 @@ export component MeshViewer inherits Rectangle {
                     root.modal-transform-start(0, ta.mouse-x, ta.mouse-y);
                     return accept;
                 }
+                // A held key repeats: R R and S S switch the pivot of several
+                // objects (#218), once per press.
                 if (event.text == "r" || event.text == "R") {
-                    root.modal-transform-start(1, ta.mouse-x, ta.mouse-y);
+                    if (!event.repeat) { root.modal-transform-start(1, ta.mouse-x, ta.mouse-y); }
                     return accept;
                 }
                 if (event.text == "s" || event.text == "S") {
-                    root.modal-transform-start(2, ta.mouse-x, ta.mouse-y);
+                    if (!event.repeat) { root.modal-transform-start(2, ta.mouse-x, ta.mouse-y); }
                     return accept;
                 }
                 if (!root.modal-transform-active && root.tab-tool-key(event.text)) {

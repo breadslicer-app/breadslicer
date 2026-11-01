@@ -359,11 +359,17 @@ mod progress_and_cancel_tests {
         // 2 leaves * 4 layers.
         assert_eq!(reports.len(), 8);
         assert!(reports.iter().all(|p| p.total == 8));
+        // The plate has the schedule's 4 layers, however many leaves cut them.
+        assert!(reports.iter().all(|p| p.layers == 4));
         // Layers slice in parallel, so reports can arrive out of order; the
         // counts over a completed run are a permutation of 1..=total.
         let mut counts: Vec<usize> = reports.iter().map(|p| p.completed).collect();
         counts.sort_unstable();
         assert_eq!(counts, (1..=8).collect::<Vec<_>>());
+        // In plate layers the run ends on exactly 4 of 4, never past it.
+        let last = reports.iter().max_by_key(|p| p.completed).unwrap();
+        assert_eq!(last.layers_completed(), 4);
+        assert!(reports.iter().all(|p| p.layers_completed() <= 4));
     }
 
     #[test]
@@ -436,6 +442,7 @@ mod progress_and_cancel_tests {
             SliceProgress {
                 completed: 0,
                 total: 0,
+                layers: 0,
             }
             .fraction(),
             0.0,
@@ -448,10 +455,40 @@ mod progress_and_cancel_tests {
             SliceProgress {
                 completed: 2,
                 total: 8,
+                layers: 4,
             }
             .fraction(),
             0.25,
         );
+    }
+
+    #[test]
+    fn layers_completed_counts_plate_layers_not_layer_slices() {
+        // 4 leaves over a 700-layer schedule: 2800 layer-slices, 700 layers.
+        let at = |completed| {
+            SliceProgress {
+                completed,
+                total: 2800,
+                layers: 700,
+            }
+            .layers_completed()
+        };
+        assert_eq!(at(0), 0);
+        assert_eq!(at(3), 0);
+        assert_eq!(at(4), 1);
+        assert_eq!(at(1400), 350);
+        assert_eq!(at(2799), 699);
+        assert_eq!(at(2800), 700);
+    }
+
+    #[test]
+    fn layers_completed_is_zero_when_there_is_no_work() {
+        let progress = SliceProgress {
+            completed: 0,
+            total: 0,
+            layers: 0,
+        };
+        assert_eq!(progress.layers_completed(), 0);
     }
 }
 
