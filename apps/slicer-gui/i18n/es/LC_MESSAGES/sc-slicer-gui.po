@@ -4639,6 +4639,18 @@ msgstr "Ahorra {} de {} ml ({} %). Pared de {} mm, vóxel de {} mm."
 #: src/hollow_run.rs
 #, rust-format
 msgctxt "HollowRun"
+msgid "The voxel was enlarged from {} mm: at most {} voxels per side."
+msgstr "El vóxel se agrandó desde {} mm: como mucho {} vóxeles por lado."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "The voxel was enlarged from {} mm so the hollow fits in {} GB of memory."
+msgstr "El vóxel se agrandó desde {} mm para que el ahuecado entre en {} GB de memoria."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
 msgid "One drain drilled."
 msgid_plural "{n} drains drilled."
 msgstr[0] "Un drenaje perforado."

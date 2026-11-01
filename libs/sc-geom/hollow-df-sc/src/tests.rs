@@ -142,6 +142,7 @@ fn the_wall_is_physical_under_a_non_uniform_scale() {
             grid: GridRequest {
                 voxel_size_mm: 0.25,
                 max_resolution: 192,
+                ..GridRequest::default()
             },
             ..HollowRequest::default()
         },
@@ -213,6 +214,40 @@ fn the_applied_hollow_carries_the_previewed_cavity() {
         mesh.faces().len(),
         sphere_leaf_mesh(12.0).faces().len() + cavity.faces().len()
     );
+}
+
+#[test]
+fn a_memory_limited_hollow_keeps_the_previewed_voxel() {
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), Transform3D::Identity);
+    let grid = GridRequest {
+        voxel_size_mm: 0.1,
+        max_memory_bytes: 200_000 * hollow_df::engine::BYTES_PER_CELL,
+        ..GridRequest::default()
+    };
+    let preview = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            grid,
+            ..HollowRequest::default()
+        },
+    );
+    assert!(matches!(
+        preview.stats.grid.bound,
+        Some(hollow_df::ResolutionBound::MemoryLimited { .. })
+    ));
+    let applied = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            grid,
+            prepared: Some(preview.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(applied.reused_session);
+    assert_eq!(applied.stats.grid, preview.stats.grid);
 }
 
 fn profile(layers: u32) -> SliceProfile {
@@ -362,6 +397,7 @@ fn a_cancelled_job_reports_cancelled() {
             grid: GridRequest {
                 voxel_size_mm: 0.1,
                 max_resolution: 400,
+                ..GridRequest::default()
             },
             ..HollowRequest::default()
         },
