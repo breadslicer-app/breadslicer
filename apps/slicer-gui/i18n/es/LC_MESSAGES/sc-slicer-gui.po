@@ -4976,3 +4976,118 @@ msgstr[1] "Los drenajes se perforaron, pero sus tapones no salieron como sólido
 msgctxt "HollowRun"
 msgid "Drain plug {}"
 msgstr "Tapón de drenaje {}"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click the model where a support should touch it; Shift+click hangs it from the nearest support. 1–4 set the tip size. Undo takes it back."
+msgstr "Hacé clic en el modelo donde el soporte tiene que tocarlo; con Shift+clic se cuelga del soporte más cercano. Las teclas 1–4 eligen el tamaño de la punta. Deshacer lo saca."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ADD SUPPORT"
+msgstr "AGREGAR SOPORTE"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Tip"
+msgstr "Punta"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Preset"
+msgstr "Preset"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Keys 1–4 pick the tip: extra small, small, medium, large. Shift+click hangs the support from the nearest one, or places nothing."
+msgstr "Las teclas 1–4 eligen la punta: extra chica, chica, mediana, grande. Shift+clic cuelga el soporte del más cercano, o no pone nada."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} mm tip"
+msgstr "Punta de {} mm"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "{} mm tip, the preset's"
+msgstr "Punta de {} mm, la del preset"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Tip sized by the preset"
+msgstr "Punta según el preset"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support close enough to hang from"
+msgstr "no hay ningún soporte lo bastante cerca para colgarlo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "no support below the tip to hang from"
+msgstr "no hay ningún soporte debajo de la punta para colgarlo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "hanging from the supports nearby would lean too far"
+msgstr "colgarlo de los soportes cercanos lo inclinaría demasiado"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "it hits the model"
+msgstr "choca con el modelo"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "it would cross another support"
+msgstr "cruzaría otro soporte"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the supports nearby carry all they can"
+msgstr "los soportes cercanos ya cargan todo lo que pueden"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the surface there is too steep for a tip"
+msgstr "ahí la superficie es demasiado empinada para una punta"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Its own trunk: {}."
+msgstr "Tronco propio: {}."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Cannot hang it: {}."
+msgstr "No se puede colgar: {}."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "DfSupportDialog"
+msgid "Cannot place it: {}."
+msgstr "No se puede poner: {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Cannot place it: no support can reach that point."
+msgstr "No se puede poner: ningún soporte llega a ese punto."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Undone before it was placed; nothing was changed."
+msgstr "Se deshizo antes de ponerlo; no cambió nada."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The scene changed before the support was placed; nothing was changed."
+msgstr "La escena cambió antes de poner el soporte; no cambió nada."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports are being generated; the click was dropped."
+msgstr "Se están generando soportes; el clic se descartó."

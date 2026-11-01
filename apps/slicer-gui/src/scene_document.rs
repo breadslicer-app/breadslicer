@@ -242,6 +242,10 @@ pub(crate) struct SceneDocument {
     /// Cleared whenever a fresh edit lands via `push_edit`: new history
     /// invalidates the redo trail.
     redo_stack: RefCell<VecDeque<HistoryEntry>>,
+    /// An edit being made off the UI thread (a hand click on the supports,
+    /// #3), with what drops it: Undo drops that edit instead of undoing the
+    /// one before it.
+    pending_edit: RefCell<Option<Rc<dyn Fn()>>>,
     /// Id source for [`HistoryEntry`]; the first committed edit gets 1.
     next_edit_id: Cell<u64>,
     /// Dirty-tracking save point: the id of the undo stack's top entry when the
@@ -341,6 +345,7 @@ impl SceneDocument {
             next_listener_id: Cell::new(0),
             undo_stack: RefCell::new(VecDeque::new()),
             redo_stack: RefCell::new(VecDeque::new()),
+            pending_edit: RefCell::new(None),
             next_edit_id: Cell::new(1),
             save_point: Cell::new(None),
             evicted_since_save: Cell::new(false),
@@ -1461,12 +1466,24 @@ impl SceneDocument {
         !self.redo_stack.borrow().is_empty()
     }
 
+    /// Notes an edit being made off the UI thread, with what drops it
+    /// (`None` once it is in, or dropped): Undo meanwhile drops it.
+    pub(crate) fn set_pending_edit(&self, drop_it: Option<Rc<dyn Fn()>>) {
+        *self.pending_edit.borrow_mut() = drop_it;
+    }
+
     /// Pops the most recent edit, applies its inverse, and moves the entry onto
     /// the redo stack. Returns `Ok(true)` if an edit was applied, `Ok(false)`
     /// if there was nothing to undo (empty stack or no scene loaded), and the
     /// scene's rejection otherwise; on anything but `Ok(true)` the stacks are
     /// left as they were.
     pub(crate) fn undo(&self) -> Result<bool, SceneError> {
+        // The edit being made is the last one asked for: Undo drops it.
+        let pending = self.pending_edit.borrow_mut().take();
+        if let Some(drop_it) = pending {
+            drop_it();
+            return Ok(true);
+        }
         self.end_live_preview();
         let was_dirty = self.is_dirty();
         // Before the pop: it moves the revision a live move is anchored to.
