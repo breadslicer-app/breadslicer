@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::defaults::*;
 use crate::supports::auto_bracing::settings::AutoBracingSettings;
 use crate::supports::auto_support::settings::AutoSupportSettings;
+use crate::supports::auto_support::zone_rules::BaseTip;
 use crate::supports::placement_logic::cone_axis_policy::ConeAngleMode;
 use crate::supports::support_primitives::contact_cone::types::TipPrimitive;
 
@@ -109,6 +110,10 @@ pub struct RootsProfile {
     pub neck_diameter_mm: f64,
     /// 0..1 blend factor
     pub neck_blend: f64,
+    /// SoulCrafted (#360): a 45° join cone of this height from the shaft
+    /// out, on the disk or on the raft (see `Roots::join_cone_mm`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_cone_mm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -141,6 +146,10 @@ pub struct GridSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct MeshToMeshSettings {
     pub stick_vs_twig_cutoff_mm: f64,
+    /// SoulCrafted (#360): the tip a stick ends in at its lower end, on the
+    /// model below; `None` ends it in the upper tip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_tip: Option<BaseTip>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -262,6 +271,7 @@ impl Default for RootsProfile {
             cone_height_mm: DEFAULT_ROOTS_CONE_HEIGHT_MM,
             neck_diameter_mm: DEFAULT_ROOTS_NECK_DIAMETER_MM,
             neck_blend: DEFAULT_ROOTS_NECK_BLEND,
+            join_cone_mm: None,
         }
     }
 }
@@ -302,6 +312,7 @@ impl Default for MeshToMeshSettings {
     fn default() -> Self {
         MeshToMeshSettings {
             stick_vs_twig_cutoff_mm: DEFAULT_MESH_TO_MESH_STICK_VS_TWIG_CUTOFF_MM,
+            base_tip: None,
         }
     }
 }

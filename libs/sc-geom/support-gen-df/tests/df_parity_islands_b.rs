@@ -120,7 +120,11 @@ fn island_derivation_matches_dragonfruit() {
             run["overhangPxMm"].as_f64().unwrap() as f32,
             run["hasRaft"].as_bool().unwrap(),
         );
-        let soup_scan = OverhangScan { regions, stability };
+        let soup_scan = OverhangScan {
+            regions,
+            stability,
+            steep_regions: Vec::new(),
+        };
         let s = &case["settings"];
         let num = |k: &str| s[k].as_f64().unwrap();
         let settings = IslandPanelSettings {
@@ -139,6 +143,7 @@ fn island_derivation_matches_dragonfruit() {
                     .unwrap(),
                 show_plate_contact: s["filterToggles"]["showPlateContact"].as_bool().unwrap(),
             },
+            keep_covered_voxel_islands: false,
         };
         let tips: Vec<TipInfo> = case["supportTips"]
             .as_array()

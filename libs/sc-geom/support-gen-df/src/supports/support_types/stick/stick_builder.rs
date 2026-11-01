@@ -125,6 +125,7 @@ pub fn build_stick(
                 .unwrap_or(std::f64::consts::PI / 4.0),
         ),
         sphere_radius_ratio: None,
+        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 
     let joint_diameter = get_joint_diameter(shaft_diameter);
@@ -179,17 +180,28 @@ pub fn build_stick(
     let cone_axis_a = clamp_axis(surface_normal_a, cone_axis_a);
     let cone_axis_b = clamp_axis(surface_normal_b, cone_axis_b);
 
+    // SoulCrafted (#360): the lower end may take a tip of its own.
+    let end_tip = |lower: bool| match settings.mesh_to_mesh.base_tip {
+        Some(base) if lower => SupportTipProfile {
+            contact_diameter_mm: base.diameter_mm,
+            length_mm: base.length_mm,
+            ..tip_profile
+        },
+        _ => tip_profile,
+    };
+    let a_is_lower = a_pos.z <= b_pos.z;
+    let (tip_a, tip_b) = (end_tip(a_is_lower), end_tip(!a_is_lower));
     let cone_length_a =
-        clamp_cone_length_to_free_gap(cone_start_a, cone_axis_a, tip_profile.length_mm, mesh);
+        clamp_cone_length_to_free_gap(cone_start_a, cone_axis_a, tip_a.length_mm, mesh);
     let cone_length_b =
-        clamp_cone_length_to_free_gap(cone_start_b, cone_axis_b, tip_profile.length_mm, mesh);
+        clamp_cone_length_to_free_gap(cone_start_b, cone_axis_b, tip_b.length_mm, mesh);
     let profile_a = SupportTipProfile {
         length_mm: cone_length_a,
-        ..tip_profile
+        ..tip_a
     };
     let profile_b = SupportTipProfile {
         length_mm: cone_length_b,
-        ..tip_profile
+        ..tip_b
     };
 
     let socket_a = get_socket_position(cone_start_a, cone_axis_a, Some(&profile_a));

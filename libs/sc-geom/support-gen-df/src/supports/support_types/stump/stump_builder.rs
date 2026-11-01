@@ -77,6 +77,7 @@ pub fn build_stump_data(
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
         sphere_radius_ratio: None,
+        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 
     // Sphere center Z = verticalOffset + effectiveDiskHeight + coneHeight
@@ -192,6 +193,7 @@ pub fn build_stump_data(
             disk_height: ANCHOR_DISK_HEIGHT_MM,
             cone_height: STUMP_ROOT_HEIGHT_MM,
             height: None,
+            join_cone_mm: None,
         }),
         segments: Vec::new(),
         contact_cone: Some(contact_cone),

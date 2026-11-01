@@ -8,10 +8,15 @@
 
 use serde::{Deserialize, Serialize};
 use support_gen_df::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use support_gen_df::native::islands::body::IslandBodyScan;
 use support_gen_df::pipeline::PipelineSettings;
+use support_gen_df::supports::auto_support::auto_place::helpers::apply_zone_size;
 use support_gen_df::supports::auto_support::settings::{SizingPreset, auto_support_constraints};
+use support_gen_df::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG;
 use support_gen_df::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
+
+use crate::zone_presets::ZonePreset;
 
 /// How high a model is lifted off the plate to leave room for its supports
 /// under it, in millimetres: the usual automatic lift of resin slicers, and
@@ -69,6 +74,12 @@ pub struct DfSupportOptions {
     pub raft_thickness_mm: f64,
     /// The crenelated wall around a solid raft.
     pub raft_wall: bool,
+    /// A zone preset (#360): when set, it sizes and spaces every support by
+    /// the zone it lands in, and its bracing replaces the default; sizing,
+    /// density, overhang angle, size scale, smallest island, coverage and
+    /// stabilization above are not read. The raft is still the raft above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zones: Option<ZonePreset>,
 }
 
 impl Default for DfSupportOptions {
@@ -88,6 +99,7 @@ impl Default for DfSupportOptions {
             raft: RaftMode::Solid,
             raft_thickness_mm: 0.5,
             raft_wall: true,
+            zones: None,
         }
     }
 }
@@ -122,8 +134,21 @@ impl DfSupportOptions {
             min_island_area_mm2: bound(self.min_island_area_mm2, &c::MIN_ISLAND_AREA_MM2),
             coverage_percent: bound(self.coverage_percent, &c::COVERAGE_TARGET_PERCENT).round(),
             raft_thickness_mm: clamp(self.raft_thickness_mm, 0.1, 3.0, d.raft_thickness_mm),
+            zones: self.zones.as_ref().map(|z| ZonePreset {
+                rules: z.rules.clamped(),
+                auto_lift_mm: clamp(z.auto_lift_mm, 0.0, 50.0, DEFAULT_SUPPORT_LIFT_MM),
+                bracing: z.bracing.clone(),
+            }),
             ..self.clone()
         }
+    }
+
+    /// How high a model should stand above the plate for these supports:
+    /// the zone preset's auto-lift, else the default support lift.
+    pub fn lift_mm(&self) -> f64 {
+        self.zones
+            .as_ref()
+            .map_or(DEFAULT_SUPPORT_LIFT_MM, |z| z.auto_lift_mm)
     }
 
     /// Writes these options into `settings`.
@@ -148,6 +173,9 @@ impl DfSupportOptions {
             RaftMode::Lines => RaftBottomMode::Line,
             RaftMode::Off => RaftBottomMode::Off,
         };
+        if let Some(zones) = &o.zones {
+            apply_zones(zones, settings);
+        }
         // Through the store, as DragonFruit's panel does, only when the raft
         // really changes: the store also resolves the rest of the raft.
         let g = settings.rafts.global;
@@ -165,6 +193,41 @@ impl DfSupportOptions {
             );
         }
     }
+}
+
+/// Writes a zone preset into `settings` (#360): its rules, the overhang
+/// angle the scans classify by, its default size for supports placed by
+/// hand, the scans its zones read, its bracing and its sizes drawn exactly.
+fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings) {
+    let rules = zones.rules.clamped();
+    let supports = &mut settings.supports;
+    let auto = &mut supports.auto_support;
+    auto.overhang_self_support_angle_deg = rules.self_support_angle_deg().clamp(
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
+    );
+    // The sizes are drawn as written: no model scaling.
+    auto.model_scale_enabled = false;
+    auto.size_scale = 1.0;
+    // The zones stand in for DragonFruit's pose anchors and minima rings.
+    auto.stabilization_enabled = false;
+    auto.minima_reinforcement_enabled = false;
+    auto.zone_rules = Some(rules.clone());
+    if let Some(i) = rules.default_size_index() {
+        apply_zone_size(supports, &rules, i);
+    }
+    supports.dev_tools.max_lateral_mm = rules.search_ground_mm;
+    zones.bracing.apply(&mut supports.auto_bracing);
+    settings.tip_drawing.per_support_penetration = true;
+    settings.scan.island_bodies = Some(IslandBodyScan::new(
+        &rules.section_heights_mm(),
+        rules.volume_cap_mm3(),
+    ));
+    settings.scan.steep_angle_deg = rules
+        .stabilization
+        .enabled
+        .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
+    settings.panel.keep_covered_voxel_islands = true;
 }
 
 impl DfSupportOptions {

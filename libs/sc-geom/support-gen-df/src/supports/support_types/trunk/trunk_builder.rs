@@ -201,6 +201,7 @@ fn build_tip_profile(
                 .unwrap_or(std::f64::consts::PI / 4.0),
         ),
         sphere_radius_ratio: None,
+        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     }
 }
 
@@ -624,6 +625,7 @@ pub fn build_trunk_data_from_placement(
         disk_height,
         cone_height,
         height: None,
+        join_cone_mm: settings.roots.join_cone_mm.filter(|j| *j > 0.0),
     };
 
     // Build ContactCone

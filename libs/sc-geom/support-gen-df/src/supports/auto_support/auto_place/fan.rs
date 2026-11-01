@@ -150,7 +150,19 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
     let mut nearest_steep_mm = f64::INFINITY;
     let mut steep_angle_deg = f64::INFINITY;
 
+    // The widest reach a sample can be taken at.
+    let reach = args.fan_radius_mm.max(args.grid_host_fan_radius_mm);
     for sp in args.shaft_points {
+        let ddx = sp.pos.x - target.x;
+        let ddy = sp.pos.y - target.y;
+        let ddz = sp.pos.z - target.z;
+        let lateral2 = ddx * ddx + ddy * ddy;
+        // SoulCrafted: a sample out of reach that is no nearer than the
+        // nearest host changes nothing below; skip it before the host
+        // lookups (the pool holds every host's samples, the lookups hash).
+        if lateral2 > reach * reach && lateral2.sqrt() >= nearest_host_mm {
+            continue;
+        }
         if host_entity_of(draft, sp.host_type_id, &sp.host_id).map(|h| h.base.model_id.as_str())
             != Some(model_id)
         {
@@ -161,11 +173,7 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
         } else {
             args.fan_radius_mm
         };
-        let ddx = sp.pos.x - target.x;
-        let ddy = sp.pos.y - target.y;
-        let ddz = sp.pos.z - target.z;
         let dist2 = ddx * ddx + ddy * ddy + ddz * ddz;
-        let lateral2 = ddx * ddx + ddy * ddy;
         let lateral_mm = lateral2.sqrt();
         if lateral_mm < nearest_host_mm {
             nearest_host_mm = lateral_mm;
@@ -287,7 +295,7 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
 
         // Long spans route to branches with real shafts, for every origin.
         if long_span {
-            let band = ctx.bands.active(ctx.live);
+            let band = ctx.bands.active(ctx.live());
             let built = build_hosted_branch(
                 &HostedBranchInput {
                     tip_pos: resolved_point,
@@ -358,11 +366,11 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
                     parent_knot: &parent_knot,
                     host_diameter_mm: sp.diameter,
                     tip_contact_diameter_mm: Some(
-                        ctx.bands.active(ctx.live).tip_contact_diameter_mm,
+                        ctx.bands.active(ctx.live()).tip_contact_diameter_mm,
                     ),
                     mesh: field.as_deref().map(|f| f as &dyn CollisionField),
                 },
-                ctx.live,
+                ctx.live(),
                 &mut || ctx.id(),
             )
         };
@@ -436,7 +444,7 @@ pub fn build_consolidation_branch(
     ctx: &PlanCtx<'_>,
 ) -> Option<(Knot, SupportEntityValue, String, SupportTypeId)> {
     let mesh = ctx.mesh.as_ref();
-    let max_link = js_min(50.0, member_max_angle_from_vertical_deg(ctx.live));
+    let max_link = js_min(50.0, member_max_angle_from_vertical_deg(ctx.live()));
     let mut best: Option<&FanShaftPoint> = None;
     let mut best_angle_deg = f64::INFINITY;
     for sp in pool {
@@ -472,7 +480,7 @@ pub fn build_consolidation_branch(
     }
 
     let parent_knot = knot_for(best, free_knot_id(pruned, knot_id));
-    let band = ctx.bands.active(ctx.live);
+    let band = ctx.bands.active(ctx.live());
     let mut built = build_hosted_branch(
         &HostedBranchInput {
             tip_pos: tip,
@@ -491,7 +499,7 @@ pub fn build_consolidation_branch(
         },
     )?;
     if branch_departure_angle_deg(&built.branch, parent_knot.pos)
-        > member_max_angle_from_vertical_deg(ctx.live)
+        > member_max_angle_from_vertical_deg(ctx.live())
     {
         return None;
     }

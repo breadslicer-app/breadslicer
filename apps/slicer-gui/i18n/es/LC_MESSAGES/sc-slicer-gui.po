@@ -4688,3 +4688,31 @@ msgstr "Pivote propio de cada objeto ({}: común)"
 msgctxt "MeshViewer"
 msgid "Shared pivot ({}: each object's own)"
 msgstr "Pivote común ({}: el propio de cada objeto)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Minis 30 mm+"
+msgstr "Minis 30 mm+"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Figures 70 mm+"
+msgstr "Figuras 70 mm+"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "This preset sets the size and spacing of every support by zone: island first layers, their reinforcement, overhangs past {}° and stabilization."
+msgstr "Este preset elige el tamaño y la separación de cada soporte según la zona: primera capa de las islas, su refuerzo, voladizos de más de {}° y estabilización."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tips: {} mm."
+msgstr "Puntas: {} mm."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Bracing: {} mm, from {} mm up."
+msgstr "Refuerzos: {} mm, desde {} mm de altura."

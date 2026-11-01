@@ -187,7 +187,11 @@ fn by_stage(
         let (regions, stability) = overhang_and_stability_from_soup(soup, angle, 0.25, has_raft);
         let derived = derive_islands(
             &combined,
-            &OverhangScan { regions, stability },
+            &OverhangScan {
+                regions,
+                stability,
+                steep_regions: Vec::new(),
+            },
             &[],
             &settings.panel,
         );
@@ -213,6 +217,7 @@ fn by_stage(
         );
         let plan = compute_auto_support_plan(
             &PlanInput {
+                zone: None,
                 islands: &derived.filtered,
                 model_id: &m.id,
                 settings_override: Some(&settings.supports.auto_support),

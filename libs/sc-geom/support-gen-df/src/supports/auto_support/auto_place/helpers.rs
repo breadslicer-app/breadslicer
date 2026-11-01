@@ -4,7 +4,7 @@
 //! the hosted-branch builder, the fan shaft pool, segment spans, legacy knot
 //! rehosting, cone/shaft diameter sync and the orphan cull.
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use indexmap::{IndexMap, IndexSet};
@@ -80,11 +80,15 @@ impl<'a> PlanMesh<'a> {
 /// What the whole plan shares: the live settings (`getSettings()`), the band
 /// table, the mesh, the run's one id source and the router counters.
 pub struct PlanCtx<'a> {
-    pub live: &'a SupportSettings,
+    base_live: &'a SupportSettings,
     pub bands: &'a SizingBands,
     pub mesh: Option<PlanMesh<'a>>,
     ids: RefCell<&'a mut dyn FnMut() -> String>,
     pub stats: RefCell<RouterStats>,
+    /// SoulCrafted (#360): the live settings of each zone size, and the one
+    /// the support being placed takes.
+    zone_lives: Vec<SupportSettings>,
+    active_zone: Cell<Option<usize>>,
 }
 
 impl<'a> PlanCtx<'a> {
@@ -95,18 +99,85 @@ impl<'a> PlanCtx<'a> {
         new_id: &'a mut dyn FnMut() -> String,
     ) -> Self {
         PlanCtx {
-            live,
+            base_live: live,
             bands,
             mesh,
             ids: RefCell::new(new_id),
             stats: RefCell::new(RouterStats::default()),
+            zone_lives: zone_lives(live),
+            active_zone: Cell::new(None),
         }
+    }
+
+    /// The live settings (`getSettings()`): those of the zone size the
+    /// support being placed takes, when one is set.
+    pub fn live(&self) -> &SupportSettings {
+        self.active_zone
+            .get()
+            .and_then(|i| self.zone_lives.get(i))
+            .unwrap_or(self.base_live)
+    }
+
+    /// Places what follows with zone size `size` (`None`: the run's own).
+    pub fn set_zone(&self, size: Option<usize>) {
+        self.active_zone.set(size);
+    }
+
+    /// The zone size whose tip a contact of `tip_diameter_mm` was drawn
+    /// with, when the run has zone rules.
+    pub fn zone_of_tip(&self, tip_diameter_mm: f64) -> Option<usize> {
+        let rules = self.base_live.auto_support.zone_rules.as_ref()?;
+        rules
+            .sizes
+            .iter()
+            .position(|s| (s.tip_diameter_mm - tip_diameter_mm).abs() < 1e-6)
     }
 
     /// `uuidv4()`.
     pub fn id(&self) -> String {
         (self.ids.borrow_mut())()
     }
+}
+
+/// The live settings of every zone size of `live`'s zone rules: `live` with
+/// the size's tip, trunk and base, and the size as its sizing preset (the
+/// band table knows it by that id). Empty without zone rules.
+pub fn zone_lives(live: &SupportSettings) -> Vec<SupportSettings> {
+    let Some(rules) = live.auto_support.zone_rules.as_ref() else {
+        return Vec::new();
+    };
+    (0..rules.sizes.len())
+        .map(|i| {
+            let mut sized = live.clone();
+            apply_zone_size(&mut sized, rules, i);
+            sized
+        })
+        .collect()
+}
+
+/// Writes zone size `index` of `rules` into `settings`' tip, shaft and roots.
+pub fn apply_zone_size(
+    settings: &mut SupportSettings,
+    rules: &crate::supports::auto_support::zone_rules::ZoneRules,
+    index: usize,
+) {
+    let size = &rules.sizes[index];
+    settings.tip.contact_diameter_mm = size.tip_diameter_mm;
+    settings.tip.body_diameter_mm = size.trunk_diameter_mm;
+    settings.tip.length_mm = size.tip_length_mm;
+    settings.tip.penetration_mm = size.penetration_mm;
+    settings.tip.breakpoint_mm = Some(size.break_point_mm);
+    settings.shaft.diameter_mm = size.trunk_diameter_mm;
+    settings.shaft.secondary_diameter_mm = Some(size.trunk_diameter_mm);
+    settings.roots.diameter_mm = size.base_diameter_mm;
+    settings.roots.disk_height_mm = size.base_thickness_mm;
+    // The base is a disk; its join cone is drawn on its own (on the raft
+    // when there is one).
+    settings.roots.cone_height_mm = 0.0;
+    settings.roots.join_cone_mm = Some(size.join_cone_mm);
+    settings.roots.neck_diameter_mm = size.trunk_diameter_mm;
+    settings.mesh_to_mesh.base_tip = size.base_tip;
+    settings.auto_support.sizing_preset = rules.band_id(index);
 }
 
 /// The steepest angle from vertical an auto member or chunk link may lean,
@@ -587,7 +658,15 @@ pub fn build_hosted_branch(
     ctx: &PlanCtx<'_>,
     rejected: &dyn Fn(&BranchBuildResult) -> bool,
 ) -> Option<BranchBuildResult> {
-    let host_ratio = ctx.live.auto_support.member_host_shaft_ratio;
+    let host_ratio = ctx.live().auto_support.member_host_shaft_ratio;
+    // SoulCrafted (#360): a zone size's trunk is its band, so a member at
+    // the band would be as thick as its host and its tilted end would stick
+    // out of it; it takes its share of the host instead.
+    let band_shaft_mm = if ctx.live().auto_support.zone_rules.is_some() {
+        band_shaft_mm.min(host_diameter_mm * host_ratio)
+    } else {
+        band_shaft_mm
+    };
     let floored_shaft_mm = member_shaft_diameter_mm(band_shaft_mm, host_diameter_mm, host_ratio);
     let build = |shaft_mm: f64| {
         let field = ctx.mesh.as_ref().map(|m| m.field());
@@ -604,7 +683,7 @@ pub fn build_hosted_branch(
                 settings: None,
                 tip_profile: None,
             },
-            ctx.live,
+            ctx.live(),
             &mut || ctx.id(),
         )
     };
@@ -913,6 +992,16 @@ pub fn rehost_legacy_knots(draft: &SupportState) -> SupportState {
 /// Enforce "contact cone body == the shaft it sits on" across the draft (the
 /// resize thickens shafts after cones are built). Only the body moves.
 pub fn sync_contact_cone_diameters(draft: &SupportState) -> SupportState {
+    sync_contact_cone_diameters_with(draft, 1.0)
+}
+
+/// [`sync_contact_cone_diameters`] with a leaf's cone body at
+/// `leaf_body_ratio` of its host segment (SoulCrafted, #360): a zone size's
+/// leaf narrower than its host, so its tilted base never sticks out of it.
+pub fn sync_contact_cone_diameters_with(
+    draft: &SupportState,
+    leaf_body_ratio: f64,
+) -> SupportState {
     let c = &draft.collections;
     let mut diameter_by_segment: HashMap<String, f64> = HashMap::new();
     let follows = |t: SupportTypeId| {
@@ -969,7 +1058,7 @@ pub fn sync_contact_cone_diameters(draft: &SupportState) -> SupportState {
         let Some(&d) = diameter_by_segment.get(knot.parent_shaft_id.as_str()) else {
             continue;
         };
-        sync(&mut l.contact_cone, d);
+        sync(&mut l.contact_cone, d * leaf_body_ratio);
     }
     for b in next.collections.branches.values_mut() {
         let first = b.segments.first().map(|s| s.diameter);

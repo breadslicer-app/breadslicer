@@ -55,7 +55,8 @@ pub(crate) fn raft_clash(
     Some(RaftClash {
         layers,
         raft_top_mm: top,
-        lift_to_mm: recommended_lift_mm(None).max(layers as f64 * layer_height_mm),
+        lift_to_mm: recommended_lift_mm(Some(options.lift_mm()))
+            .max(layers as f64 * layer_height_mm),
     })
 }
 

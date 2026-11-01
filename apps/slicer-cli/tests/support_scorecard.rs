@@ -26,6 +26,9 @@
 //! - `SUPPORT_SCORECARD_ONLY`: comma-separated scene names to measure.
 //! - `SUPPORT_SCORECARD_RUNS`: support runs per scene (default 2). The
 //!   generation time is the fastest run, and the runs must agree.
+//! - `SUPPORT_SCORECARD_PRESET`: `minis` or `figures` runs the zone preset
+//!   "Minis 30 mm+" or "Figures 70 mm+" (#360) instead of the default
+//!   options.
 //!
 //! Every scene is prepared as the app and `slice --df-supports` prepare it:
 //! centred on the plate of the Anycubic Photon Mono M7 Pro, lifted by the
@@ -72,7 +75,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use sc_geom::df_supports::{
     DF_SUPPORT_MESH_NAME, DfSupportOutcome, DfSupportRequest, is_support_mesh_name,
-    recommended_lift_mm, scene_model_leaves, settings_for, start_df_supports,
+    recommended_lift_mm, scene_model_leaves, settings_for, start_df_supports, zone_presets,
 };
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::transform::Transform3D;
@@ -951,6 +954,7 @@ fn placement(
                     plate_clearance_models: &[],
                     support_tip_shrink_percent: settings.support_tip_shrink_percent,
                     tip_penetration_mm: settings.tip_penetration_mm,
+                    tip_drawing: settings.tip_drawing,
                     shaft_style: settings.shaft_style,
                     robust_raft_geometry: settings.robust_raft_geometry,
                 }) else {
@@ -1230,11 +1234,17 @@ fn run_scene(
         })
         .fold(f64::NEG_INFINITY, f64::max);
     let pitch = printer.hardware.pixel_size_microns();
-    let request = DfSupportRequest {
+    let mut request = DfSupportRequest {
         layer_height_mm: LAYER_MM,
         pixel_pitch_mm: Some([pitch.x.value() / 1000.0, pitch.y.value() / 1000.0]),
         ..Default::default()
     };
+    match std::env::var("SUPPORT_SCORECARD_PRESET").as_deref() {
+        Ok("minis") => request.options.zones = Some(zone_presets::minis_30()),
+        Ok("figures") => request.options.zones = Some(zone_presets::figures_70()),
+        Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
+        Err(_) => {}
+    }
 
     // The job the Supports tab runs, `runs` times.
     let mut outcomes: Vec<(f64, DfSupportOutcome)> = Vec::new();

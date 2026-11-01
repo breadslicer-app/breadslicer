@@ -83,6 +83,13 @@ pub fn build_leaf_data(
         mesh,
         ..
     } = *input;
+    // SoulCrafted (#360): a zone size's leaf is narrower than its host where
+    // it meets it, or its tilted base would stick out of the host.
+    let host_diameter_mm = if settings.auto_support.zone_rules.is_some() {
+        host_diameter_mm * settings.auto_support.member_host_shaft_ratio
+    } else {
+        host_diameter_mm
+    };
     // Auto-support tier override — absent for manual placement (global band).
     let tip_contact_diameter_mm = input
         .tip_contact_diameter_mm
@@ -91,7 +98,7 @@ pub fn build_leaf_data(
         settings,
         Some(&SizeOverrides {
             tip_contact_diameter_mm: input.tip_contact_diameter_mm,
-            tip_body_diameter_mm: Some(input.host_diameter_mm),
+            tip_body_diameter_mm: Some(host_diameter_mm),
             ..SizeOverrides::default()
         }),
     ));
@@ -106,6 +113,7 @@ pub fn build_leaf_data(
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
         sphere_radius_ratio: None,
+        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 
     let LeafConeShape { axis, length_mm } = compute_leaf_cone_axis_and_length(

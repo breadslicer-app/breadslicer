@@ -233,6 +233,7 @@ fn auto_bracing_matches_dragonfruit() {
         let ctx = PlanCtx::new(&live, &bands, Some(mesh), &mut new_id);
         let plan = compute_auto_support_plan(
             &PlanInput {
+                zone: None,
                 islands: &islands,
                 model_id: name,
                 settings_override: Some(&auto),

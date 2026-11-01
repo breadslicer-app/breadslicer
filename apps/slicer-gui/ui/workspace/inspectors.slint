@@ -1228,6 +1228,9 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // A zone preset's summary (#360), empty without one: the preset sizes
+    // and spaces the supports itself, so the placement knobs give way to it.
+    in property <string> zone-summary;
     // The raft would take the models' first layers (#131): the warning, empty
     // when it does not, and the label of its lift button.
     in property <string> raft-clash-message;
@@ -1362,65 +1365,72 @@ export component SupportsInspector inherits VerticalLayout {
         title: @tr("Inspector" => "PLACEMENT");
         collapsible: true;
 
-        LabeledRow {
-            label: @tr("Inspector" => "Support size");
-            Segmented {
-                width: 190px;
-                options: [@tr("Inspector" => "Detail"), @tr("Inspector" => "Structure"), @tr("Inspector" => "Anchor")];
-                current: root.sizing-index;
-                picked(i) => {
-                    root.option-changed(0, i);
+        if root.zone-summary != "": Note {
+            text: root.zone-summary;
+        }
+        if root.zone-summary == "": VerticalLayout {
+            spacing: 10px;
+
+            LabeledRow {
+                label: @tr("Inspector" => "Support size");
+                Segmented {
+                    width: 190px;
+                    options: [@tr("Inspector" => "Detail"), @tr("Inspector" => "Structure"), @tr("Inspector" => "Anchor")];
+                    current: root.sizing-index;
+                    picked(i) => {
+                        root.option-changed(0, i);
+                    }
                 }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Area per support");
-            unit: "mm²";
-            decimals: 1;
-            value: root.density;
-            committed(v) => {
-                root.option-changed(1, v);
+            NumberField {
+                label: @tr("Inspector" => "Area per support");
+                unit: "mm²";
+                decimals: 1;
+                value: root.density;
+                committed(v) => {
+                    root.option-changed(1, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Overhang angle");
-            unit: "°";
-            decimals: 0;
-            value: root.angle;
-            committed(v) => {
-                root.option-changed(2, v);
+            NumberField {
+                label: @tr("Inspector" => "Overhang angle");
+                unit: "°";
+                decimals: 0;
+                value: root.angle;
+                committed(v) => {
+                    root.option-changed(2, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Size scale");
-            unit: "×";
-            value: root.size-scale;
-            committed(v) => {
-                root.option-changed(3, v);
+            NumberField {
+                label: @tr("Inspector" => "Size scale");
+                unit: "×";
+                value: root.size-scale;
+                committed(v) => {
+                    root.option-changed(3, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Smallest island");
-            unit: "mm²";
-            value: root.min-island;
-            committed(v) => {
-                root.option-changed(4, v);
+            NumberField {
+                label: @tr("Inspector" => "Smallest island");
+                unit: "mm²";
+                value: root.min-island;
+                committed(v) => {
+                    root.option-changed(4, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Coverage");
-            unit: "%";
-            decimals: 0;
-            value: root.coverage;
-            committed(v) => {
-                root.option-changed(5, v);
+            NumberField {
+                label: @tr("Inspector" => "Coverage");
+                unit: "%";
+                decimals: 0;
+                value: root.coverage;
+                committed(v) => {
+                    root.option-changed(5, v);
+                }
             }
-        }
-        CheckBox {
-            text: @tr("Inspector" => "Stabilize poses on a point or edge");
-            checked: root.stabilization;
-            toggled => {
-                root.option-changed(6, self.checked ? 1 : 0);
+            CheckBox {
+                text: @tr("Inspector" => "Stabilize poses on a point or edge");
+                checked: root.stabilization;
+                toggled => {
+                    root.option-changed(6, self.checked ? 1 : 0);
+                }
             }
         }
         CheckBox {

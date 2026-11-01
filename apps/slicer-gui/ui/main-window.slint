@@ -232,6 +232,8 @@ export component MainWindow inherits Window {
     in property <int> support-raft-index: 0;
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
+    // The zone preset's summary (#360), empty without one.
+    in property <string> support-zone-summary;
     callback support-option-changed(int, float);
     // The raft would take the models' first layers (#131): the warning and
     // the label of its lift button, both empty when it does not.
@@ -1788,6 +1790,7 @@ export component MainWindow inherits Window {
                             raft-index: root.support-raft-index;
                             raft-thickness: root.support-raft-thickness;
                             raft-wall: root.support-raft-wall;
+                            zone-summary: root.support-zone-summary;
                             raft-clash-message: root.support-raft-clash-message;
                             raft-lift-label: root.support-raft-lift-label;
                             raft-lift => {
