@@ -17,6 +17,10 @@
 //! physical mm³. Drains and solid areas are given in world coordinates at the
 //! current pose; [`LeafFrame`] converts for callers that persist them on the
 //! model instead.
+//!
+//! A drain's plug (#318) is a model of its own, not part of the leaf: it
+//! comes back standing up ([`HollowPlug`]), as it fits the hole at the
+//! current pose, turned so it goes in straight down.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -235,6 +239,10 @@ pub struct WorldDrain {
     pub radius_y_mm: Option<f32>,
     pub depth: hollow_df::DrainDepth,
     pub outside_mm: f32,
+    /// A cone's radius at the drain's end (#317); `None` a cylinder.
+    pub inner_radius_mm: Option<f32>,
+    /// Make a plug this much narrower across (#318); `None` none.
+    pub plug_clearance_mm: Option<f32>,
 }
 
 impl WorldDrain {
@@ -247,6 +255,8 @@ impl WorldDrain {
             radius_y_mm: None,
             depth: hole.depth,
             outside_mm: hole.outside_mm,
+            inner_radius_mm: hole.inner_radius_mm,
+            plug_clearance_mm: hole.plug_clearance_mm,
         }
     }
 
@@ -259,8 +269,100 @@ impl WorldDrain {
             radius_y_mm: self.radius_y_mm,
             depth: self.depth,
             outside_mm: self.outside_mm,
+            inner_radius_mm: self.inner_radius_mm,
+            plug_clearance_mm: self.plug_clearance_mm,
         }
     }
+}
+
+/// A drain's plug (#318), as a model of its own.
+#[derive(Debug, Clone)]
+pub struct HollowPlug {
+    /// Which drain, by its index in the request's.
+    pub drain: usize,
+    /// In world millimetres and orientation, as it fits the hole, turned so
+    /// the drain's direction points straight down: the end that meets the
+    /// cavity at the bottom, the one on the model's surface on top. Its
+    /// axis is on `x = y = 0` and its lowest point at `z = 0`, so a
+    /// translation stands it on the plate. `None` when it could not be made
+    /// closed.
+    pub mesh: Option<IndexedMesh>,
+}
+
+/// The orthogonal map that turns `from` (a unit vector) onto `to` (another),
+/// by the shortest turn; half a turn about an axis across them when they
+/// are opposite.
+fn turn_onto(from: [f64; 3], to: [f64; 3]) -> M3 {
+    let cross = [
+        from[1] * to[2] - from[2] * to[1],
+        from[2] * to[0] - from[0] * to[2],
+        from[0] * to[1] - from[1] * to[0],
+    ];
+    let cos = from[0] * to[0] + from[1] * to[1] + from[2] * to[2];
+    if cos < -1.0 + 1e-12 {
+        // Opposite: half a turn about any axis across `from`.
+        let helper = if from[0].abs() < 0.9 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        let d = helper[0] * from[0] + helper[1] * from[1] + helper[2] * from[2];
+        let a = [0, 1, 2].map(|k| helper[k] - d * from[k]);
+        let len = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        let a = a.map(|c| c / len);
+        return [0, 1, 2].map(|i| [0, 1, 2].map(|j| 2.0 * a[i] * a[j] - f64::from(i == j)));
+    }
+    // Rodrigues: I + [v]x + [v]x² / (1 + cos).
+    let v = cross;
+    let k = 1.0 / (1.0 + cos);
+    let vx = [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]];
+    let vx2 = mul(&vx, &vx);
+    [0, 1, 2].map(|i| [0, 1, 2].map(|j| f64::from(i == j) + vx[i][j] + vx2[i][j] * k))
+}
+
+/// A plug the engine made in the physical frame, as [`HollowPlug::mesh`]
+/// has it: in world orientation (`R`, a mirror flipping its winding back
+/// out), turned so `drain`'s direction points down, its axis on `z` and
+/// its lowest point on `z = 0`.
+fn standing_plug(
+    plug: &hollow_df::IndexedMesh,
+    drain: &DrainHole,
+    frame: &LeafFrame,
+) -> IndexedMesh {
+    let unit = |v: [f64; 3]| {
+        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-300);
+        v.map(|c| c / len)
+    };
+    let down = apply(&frame.rotation, drain.direction.map(f64::from));
+    let turn = mul(&turn_onto(unit(down), [0.0, 0.0, -1.0]), &frame.rotation);
+    let axis = apply(&turn, drain.center.map(f64::from));
+    let turned: Vec<[f64; 3]> = plug
+        .positions
+        .iter()
+        .map(|p| apply(&turn, [p.x, p.y, p.z].map(f64::from)))
+        .collect();
+    let floor = turned.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
+    let vertices = turned
+        .iter()
+        .map(|p| Vertex::new([p[0] - axis[0], p[1] - axis[1], p[2] - floor].map(|c| c as f32)))
+        .collect();
+    let det = frame.rotation[0][0]
+        * (frame.rotation[1][1] * frame.rotation[2][2]
+            - frame.rotation[1][2] * frame.rotation[2][1])
+        - frame.rotation[0][1]
+            * (frame.rotation[1][0] * frame.rotation[2][2]
+                - frame.rotation[1][2] * frame.rotation[2][0])
+        + frame.rotation[0][2]
+            * (frame.rotation[1][0] * frame.rotation[2][1]
+                - frame.rotation[1][1] * frame.rotation[2][0]);
+    let faces = plug
+        .triangles
+        .iter()
+        .map(|&[a, b, c]| {
+            IndexedTriangle::from_raw_indices(if det < 0.0 { [a, c, b] } else { [a, b, c] })
+        })
+        .collect();
+    IndexedMesh::new(None, vertices, faces)
 }
 
 /// Material to keep, in world coordinates at the current pose.
@@ -338,6 +440,8 @@ pub enum HollowResult {
         /// carrying the original mesh's metadata.
         mesh: IndexedMesh,
         drains: Vec<DrainReport>,
+        /// One per drain cut that asked for a plug (#318), in drain order.
+        plugs: Vec<HollowPlug>,
     },
 }
 
@@ -528,11 +632,23 @@ fn run_hollow(
         HollowKind::Apply => {
             let drains: Vec<DrainHole> = request.drains.iter().map(|d| d.in_frame(frame)).collect();
             let applied = session.apply(&settings, &drains, ctl).map_err(to_job)?;
+            let plugs = applied
+                .plugs
+                .iter()
+                .map(|plug| HollowPlug {
+                    drain: plug.drain,
+                    mesh: plug
+                        .mesh
+                        .as_ref()
+                        .map(|m| standing_plug(m, &drains[plug.drain], frame)),
+                })
+                .collect();
             (
                 applied.stats,
                 HollowResult::Apply {
                     mesh: leaf_mesh(&applied.mesh, frame, mesh.meta().clone()),
                     drains: applied.drains,
+                    plugs,
                 },
             )
         }

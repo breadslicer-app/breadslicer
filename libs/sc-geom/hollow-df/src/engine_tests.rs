@@ -1775,3 +1775,302 @@ fn a_drain_along_a_cavity_wall_is_cut_as_reported() {
         assert_eq!(face_shells(&applied.mesh).1, 1, "{at:?}: drained");
     }
 }
+
+/// The area of a regular polygon of `segments` sides around `radius`.
+fn polygon_area(radius: f64, segments: usize) -> f64 {
+    0.5 * segments as f64 * radius * radius * (std::f64::consts::TAU / segments as f64).sin()
+}
+
+/// A drain down into the top of the 40 mm cube (its 2 mm wall from z 20 to
+/// 18), off the grid's lines.
+fn top_drain(radius: f32) -> DrainHole {
+    DrainHole::new([1.3, -2.1, 20.0], [0.0, 0.0, -1.0], radius)
+}
+
+/// #316: a set depth is drilled as set; one short of the cavity is left
+/// out, as Hollow leaves out any drain that misses (the mesh is the one
+/// without it); one that would run on into the far side stops short of it
+/// and says so. The report is what apply cuts.
+#[test]
+fn a_set_depth_is_drilled_as_set_and_never_through_the_far_side() {
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    let plain = session.apply(&settings, &[], Control::none()).unwrap();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let cavity_bvh = Bvh::build(&preview.cavity);
+
+    let mut set = top_drain(1.5);
+    set.depth = DrainDepth::Mm(3.5);
+    let report = session.drain_report(&settings, &set).unwrap();
+    assert!(report.reaches_cavity && !report.auto_depth && !report.depth_capped);
+    assert_eq!(report.depth_mm, 3.5);
+    let applied = session.apply(&settings, &[set], Control::none()).unwrap();
+    assert_eq!(applied.drains[0], report, "the preview is the result");
+    assert!(is_edge_manifold(&applied.mesh));
+    assert_eq!(face_shells(&applied.mesh).1, 1, "drained");
+
+    let mut short = top_drain(1.5);
+    short.depth = DrainDepth::Mm(1.2);
+    let report = session.drain_report(&settings, &short).unwrap();
+    assert!(!report.reaches_cavity, "{report:?}");
+    let applied = session.apply(&settings, &[short], Control::none()).unwrap();
+    assert_eq!(applied.drains[0], report);
+    assert_eq!(applied.mesh, plain.mesh, "left out, as shown");
+
+    let mut deep = top_drain(1.5);
+    deep.depth = DrainDepth::Mm(60.0);
+    let report = session.drain_report(&settings, &deep).unwrap();
+    assert!(report.reaches_cavity && report.depth_capped, "{report:?}");
+    let (center, axis) = drain_axis(&deep);
+    let origin = center.sub(axis.scale(0.5));
+    let walls = cavity_bvh.ray_hit_distances_closed(&preview.cavity, origin, axis);
+    let far = walls[walls.len() - 1] - 0.5;
+    assert!(
+        report.depth_mm <= far - 0.09 && report.depth_mm > far - 0.2,
+        "{report:?}: far side at {far}"
+    );
+    let applied = session.apply(&settings, &[deep], Control::none()).unwrap();
+    assert_eq!(applied.drains[0], report);
+    assert!(is_edge_manifold(&applied.mesh));
+    // The far wall is whole: along the axis, the first surface past the
+    // opening is the cavity's far side, then the model's bottom face.
+    let out_bvh = Bvh::build(&applied.mesh);
+    let hits = out_bvh.ray_hit_distances_closed(&applied.mesh, origin, axis);
+    assert!((hits[0] - 0.5 - far).abs() < 0.01, "{hits:?}");
+    assert_eq!(hits.len(), 2, "{hits:?}: the floor and the bottom face");
+}
+
+/// #317: a cone drain is a frustum cut from the surface radius to the end
+/// radius: through the flat 2 mm wall the cube loses the frustum's volume,
+/// and its side is where the cone puts it. Narrowing and widening, closed,
+/// drained, and cut as reported.
+#[test]
+fn a_cone_drain_cuts_the_frustum() {
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    let plain = session.apply(&settings, &[], Control::none()).unwrap();
+    let plain_volume = plain.stats.output_volume_mm3.unwrap();
+    let preview = session.preview(&settings, Control::none()).unwrap();
+    let cavity_bvh = Bvh::build(&preview.cavity);
+    for (outer, inner) in [(2.5f32, 1.0f32), (1.0, 2.0)] {
+        let mut cone = top_drain(outer);
+        cone.inner_radius_mm = Some(inner);
+        cone.depth = DrainDepth::Mm(2.5);
+        let report = session.drain_report(&settings, &cone).unwrap();
+        let case = format!("{outer} to {inner}: {report:?}");
+        assert!(report.reaches_cavity, "{case}");
+        let applied = session.apply(&settings, &[cone], Control::none()).unwrap();
+        assert_eq!(applied.drains[0], report, "{case}");
+        assert!(is_edge_manifold(&applied.mesh), "{case}");
+        assert_eq!(face_shells(&applied.mesh).1, 1, "{case}: drained");
+        let (center, axis) = drain_axis(&cone);
+        let wall =
+            cavity_bvh.ray_hit_distances_closed(&preview.cavity, center.sub(axis), axis)[0] - 1.0;
+        let at = |t: f32| f64::from(outer + (inner - outer) * t / 2.5);
+        let segments = report.segments;
+        let (a0, a1) = (
+            polygon_area(at(0.0), segments),
+            polygon_area(at(wall), segments),
+        );
+        let expected = f64::from(wall) / 3.0 * (a0 + a1 + (a0 * a1).sqrt());
+        let removed = plain_volume - applied.stats.output_volume_mm3.unwrap();
+        assert!(
+            (removed - expected).abs() < 0.02 * expected,
+            "{case}: removed {removed}, frustum {expected}"
+        );
+        // A ray down inside the opening, 0.2 mm in from its rim: it meets
+        // the cone's side where the radius narrows to it, or goes through.
+        let r = outer - 0.2;
+        let out_bvh = Bvh::build(&applied.mesh);
+        let ray = center.add(Vec3::new(r, 0.0, 0.0)).sub(axis);
+        let first = out_bvh.ray_hit_distances(&applied.mesh, ray, axis)[0] - 1.0;
+        if inner < outer {
+            let t_side = (outer - r) / (outer - inner) * 2.5;
+            assert!(
+                (first - t_side).abs() < 0.08,
+                "{case}: side at {first}, cone at {t_side}"
+            );
+        } else {
+            assert!(
+                first > wall - 0.01,
+                "{case}: open to the cavity, hit at {first}"
+            );
+        }
+    }
+}
+
+/// #317 with #315: an automatic cone drain goes through the wall and 0.2 mm
+/// past it, measured at its end's width, and opens the whole hole.
+#[test]
+fn an_auto_cone_drain_goes_just_through_the_wall() {
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    session.preview(&settings, Control::none()).unwrap();
+    for inner in [0.8f32, 2.4] {
+        let mut cone = top_drain(1.5);
+        cone.inner_radius_mm = Some(inner);
+        let report = session.drain_report(&settings, &cone).unwrap();
+        assert!(report.reaches_cavity && report.auto_depth, "{report:?}");
+        assert!(
+            (2.15..=2.3).contains(&report.depth_mm),
+            "{inner}: {report:?}"
+        );
+        let applied = session.apply(&settings, &[cone], Control::none()).unwrap();
+        assert_eq!(applied.drains[0], report);
+        assert_eq!(face_shells(&applied.mesh).1, 1);
+    }
+}
+
+/// #318: a plug is the core the drain takes out of the wall, narrower by
+/// the clearance: on the cube's flat top, a disc 2 mm thick from the
+/// model's face down to the cavity's, its radius the hole's less 0.05 mm,
+/// closed, one piece. A cone's plug follows the cone. The hollow is the
+/// same with or without plugs, and a drain left out makes none.
+#[test]
+fn a_plug_is_the_drained_core_less_the_clearance() {
+    let session = cube_session();
+    let settings = HollowSettings::default();
+    let mut plain = top_drain(1.5);
+    plain.depth = DrainDepth::Mm(2.5);
+    let mut plugged = plain;
+    plugged.plug_clearance_mm = Some(DEFAULT_PLUG_CLEARANCE_MM);
+    let mut cone = DrainHole::new([-9.7, 8.2, 20.0], [0.0, 0.0, -1.0], 2.0);
+    cone.inner_radius_mm = Some(1.0);
+    cone.depth = DrainDepth::Mm(2.5);
+    let mut cone_plugged = cone;
+    cone_plugged.plug_clearance_mm = Some(0.1);
+    let mut missing = DrainHole::new([5.1, 9.3, 20.0], [0.0, 0.0, -1.0], 1.0);
+    missing.depth = DrainDepth::Mm(1.0);
+    missing.plug_clearance_mm = Some(0.1);
+
+    let without = session
+        .apply(&settings, &[plain, cone], Control::none())
+        .unwrap();
+    assert!(without.plugs.is_empty());
+    let applied = session
+        .apply(
+            &settings,
+            &[plugged, cone_plugged, missing],
+            Control::none(),
+        )
+        .unwrap();
+    assert_eq!(applied.mesh, without.mesh, "plugs do not change the hollow");
+    assert_eq!(
+        applied.plugs.iter().map(|p| p.drain).collect::<Vec<_>>(),
+        [0, 1],
+        "no plug for a drain left out"
+    );
+    for (plug, hole) in applied.plugs.iter().zip([plugged, cone_plugged]) {
+        let mesh = plug.mesh.as_ref().expect("a plug");
+        let case = format!("{hole:?}");
+        assert!(is_edge_manifold(mesh), "{case}");
+        assert_eq!(face_shells(mesh).1, 1, "{case}");
+        let bbox = mesh.bbox();
+        assert!((bbox.max.z - 20.0).abs() < 1e-3, "{case}: {bbox:?}");
+        assert!((bbox.min.z - 18.0).abs() < 0.05, "{case}: {bbox:?}");
+        // Its radius 0.05 mm under the hole's, all along.
+        let report = applied.drains[plug.drain];
+        let radius_at = |z: f32| {
+            let t = 20.0 - z;
+            let inner = hole.inner_radius_mm.unwrap_or(hole.radius_mm);
+            hole.radius_mm + (inner - hole.radius_mm) * t / report.depth_mm - 0.05
+        };
+        for p in &mesh.positions {
+            let off = (p.x - hole.center[0]).hypot(p.y - hole.center[1]);
+            assert!(off <= radius_at(p.z) + 1e-3, "{case}: {p:?} at {off}");
+        }
+        let widest = mesh
+            .positions
+            .iter()
+            .filter(|p| p.z > 19.99)
+            .map(|p| (p.x - hole.center[0]).hypot(p.y - hole.center[1]))
+            .fold(0.0, f32::max);
+        assert!((widest - radius_at(20.0)).abs() < 1e-3, "{case}: {widest}");
+        let thick = bbox.max.z - bbox.min.z;
+        let at = |t: f32| f64::from(radius_at(20.0 - t));
+        let (a0, a1) = (
+            polygon_area(at(0.0), report.segments),
+            polygon_area(at(thick), report.segments),
+        );
+        let expected = f64::from(thick) / 3.0 * (a0 + a1 + (a0 * a1).sqrt());
+        let volume = mesh.signed_volume();
+        assert!(
+            (volume - expected).abs() < 0.01 * expected,
+            "{case}: {volume} against {expected}"
+        );
+    }
+}
+
+/// #318 on a curve: on the sphere the plug's outer end follows the model's
+/// surface and its inner end the cavity's: it is closed, one piece, inside
+/// the model and outside the cavity, and it fits in the hole the drain cut
+/// (its surface does not cross the drained mesh).
+#[test]
+fn a_plug_on_a_curve_follows_both_surfaces() {
+    let session = sphere_session(0.65);
+    let settings = HollowSettings::default();
+    let normal = vec3_normalize(Vec3::new(0.4, -0.3, 0.86)).unwrap();
+    let mut hole = DrainHole::new(
+        normal.scale(19.9).to_array(),
+        normal.scale(-1.0).to_array(),
+        2.5,
+    );
+    hole.plug_clearance_mm = Some(0.1);
+    let applied = session.apply(&settings, &[hole], Control::none()).unwrap();
+    let plug = applied.plugs[0].mesh.as_ref().expect("a plug");
+    assert!(is_edge_manifold(plug));
+    assert_eq!(face_shells(plug).1, 1);
+    assert!(plug.signed_volume() > 0.0);
+    // Its middle, inside the model and outside the cavity.
+    let bbox = plug.bbox();
+    let middle = Vec3::new(
+        0.5 * (bbox.min.x + bbox.max.x),
+        0.5 * (bbox.min.y + bbox.max.y),
+        0.5 * (bbox.min.z + bbox.max.z),
+    );
+    let source = session.source_mesh();
+    assert!(point_inside_mesh_parity(
+        source,
+        &Bvh::build(source),
+        middle,
+        0.01
+    ));
+    let cavity = &applied.cavity;
+    assert!(!point_inside_mesh_parity(
+        cavity,
+        &Bvh::build(cavity),
+        middle,
+        0.01
+    ));
+    // Its ends: the outer one on the sphere's surface (radius 20, facets a
+    // little inside), the inner one on the cavity's (about 18).
+    let reach = plug
+        .positions
+        .iter()
+        .map(|p| p.length())
+        .fold((f32::MAX, 0.0f32), |(lo, hi), r| (lo.min(r), hi.max(r)));
+    assert!((19.5..=20.01).contains(&reach.1), "{reach:?}");
+    assert!((17.3..=18.6).contains(&reach.0), "{reach:?}");
+    assert!(!surfaces_cross(plug, &applied.mesh), "it fits in the hole");
+}
+
+/// #339 with #317: a cone drain removes every infill member its channel
+/// reaches, whole, narrowing or widening, through pillars and a lattice,
+/// and the preview is the result.
+#[test]
+fn a_cone_drain_removes_whole_infill_members() {
+    let (middle, _) = pillars_to_drain();
+    for (outer, inner) in [(2.5f32, 1.0f32), (1.0, 2.5)] {
+        let mut bottom = DrainHole::new([middle[0], middle[1], -20.0], [0.0, 0.0, 1.0], outer);
+        bottom.inner_radius_mm = Some(inner);
+        let gone =
+            assert_drains_remove_whole_members(&infill_settings(InfillMode::Pillar), &[bottom]);
+        assert!(gone >= 1, "{outer} to {inner}: the pillar there");
+        let mut side = DrainHole::new([20.0, -2.3, 0.9], [-1.0, 0.0, 0.0], outer);
+        side.inner_radius_mm = Some(inner);
+        side.depth = DrainDepth::Mm(9.0);
+        let gone =
+            assert_drains_remove_whole_members(&infill_settings(InfillMode::Lattice), &[side]);
+        assert!(gone >= 1, "{outer} to {inner}: a strut reached");
+    }
+}

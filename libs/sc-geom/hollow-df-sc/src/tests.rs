@@ -256,7 +256,7 @@ fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
             ..HollowRequest::default()
         },
     );
-    let HollowResult::Apply { mesh, drains } = &out.result else {
+    let HollowResult::Apply { mesh, drains, .. } = &out.result else {
         panic!("apply");
     };
     assert!(drains[0].reaches_cavity, "{drains:?}");
@@ -305,7 +305,7 @@ fn an_applied_hollow_with_infill_and_drains_slices() {
                 ..HollowRequest::default()
             },
         );
-        let HollowResult::Apply { mesh, drains } = &out.result else {
+        let HollowResult::Apply { mesh, drains, .. } = &out.result else {
             panic!("apply");
         };
         assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
@@ -519,7 +519,7 @@ fn drains_on_a_face_diagonal_slice() {
                 ..HollowRequest::default()
             },
         );
-        let HollowResult::Apply { mesh, drains } = &out.result else {
+        let HollowResult::Apply { mesh, drains, .. } = &out.result else {
             panic!("apply");
         };
         assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
@@ -530,5 +530,54 @@ fn drains_on_a_face_diagonal_slice() {
             (1, 2),
             "wall {wall}: two drains in the tip"
         );
+    }
+}
+
+/// #318: a drain's plug comes back as a model of its own, standing up: in
+/// world millimetres, its axis on `z`, its lowest point on the plate,
+/// closed and facing out (a mirrored model's too), as wide as the hole less
+/// the clearance, and it slices as one solid disc.
+#[test]
+fn a_plug_comes_back_standing_and_slices() {
+    let mirror = [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for linear in [IDENTITY, mirror] {
+        let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(linear, [50.0, 50.0, 15.0]));
+        // In from the side, along -x.
+        let mut drain = WorldDrain::new([65.0, 50.0, 15.0], [-1.0, 0.0, 0.0], 2.0);
+        drain.plug_clearance_mm = Some(0.1);
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                drains: vec![drain],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { drains, plugs, .. } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains[0].reaches_cavity, "{drains:?}");
+        assert_eq!(plugs.len(), 1);
+        assert_eq!(plugs[0].drain, 0);
+        let plug = plugs[0].mesh.clone().expect("a plug");
+        let engine = as_engine(&plug);
+        assert!(hollow_df::topology::is_edge_manifold(&engine));
+        assert!(engine.signed_volume() > 0.0, "it faces out");
+        let bbox = engine.bbox();
+        assert!(bbox.min.z.abs() < 1e-5, "{bbox:?}");
+        // Through the 2 mm wall, about.
+        assert!((1.8..=2.9).contains(&bbox.max.z), "{bbox:?}");
+        let widest = plug
+            .vertices()
+            .iter()
+            .map(|v| v.as_array()[0].hypot(v.as_array()[1]))
+            .fold(0.0f32, f32::max);
+        assert!((widest - 1.95).abs() < 1e-3, "{widest}");
+
+        let (plate, placed) = scene_with(plug.clone(), affine(IDENTITY, [20.0, 20.0, 0.0]));
+        let placed = bake_mesh_to_world_of(&plate, placed, &plug);
+        let (polygons, holes) = holes_at_mid_height(placed, 0.5 * bbox.max.z as f64);
+        assert_eq!((polygons, holes), (1, 0), "a solid disc");
     }
 }

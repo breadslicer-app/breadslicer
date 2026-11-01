@@ -5,7 +5,9 @@
 //! voxel-tunnel fallback. SoulCrafted builds offline and in pure Rust, so the
 //! cut is done here, for the one shape a drain needs: a closed edge-manifold
 //! mesh `A` minus a convex polyhedron `C` (a cylinder, as a prism of
-//! DragonFruit's segment count).
+//! DragonFruit's segment count, or a cone, as a frustum of one). The same
+//! cut keeps the other side for [`intersect_convex`]: `A ∩ C`, the piece a
+//! drain takes out, from which its plug is made (#318).
 //!
 //! The result is edge-manifold by construction, because every vertex the cut
 //! creates has a symbolic name computed once:
@@ -106,7 +108,11 @@ struct Prism {
     u: P3,
     v: P3,
     w: P3,
+    /// The radii at `origin`.
     radius: [f64; 2],
+    /// The radii at the far end over those at `origin`: 1 for a prism, else
+    /// a frustum of a cone (#317), whose sides stay planar trapezoids.
+    taper: f64,
     length: f64,
     segments: usize,
     phase: f64,
@@ -120,6 +126,7 @@ impl Prism {
             v,
             w,
             radius,
+            taper,
             length,
             segments: segs,
             phase,
@@ -139,7 +146,11 @@ impl Prism {
                 u[2] * c * radius[0] + v[2] * s * radius[1],
             ];
             corners.push([o[0] + r[0], o[1] + r[1], o[2] + r[2]]);
-            corners.push([top[0] + r[0], top[1] + r[1], top[2] + r[2]]);
+            corners.push([
+                top[0] + r[0] * taper,
+                top[1] + r[1] * taper,
+                top[2] + r[2] * taper,
+            ]);
         }
         let b = |i: usize| (2 * (i % segs)) as u32;
         let t = |i: usize| (2 * (i % segs) + 1) as u32;
@@ -155,8 +166,9 @@ impl Prism {
 
     /// The prism of retry `attempt`: turned about its axis by a fraction of
     /// a side (½, ¼, ¾, ⅛…, so each turn lands between the earlier ones), and
-    /// both ends moved out by a micrometre per attempt. The hole is the same
-    /// to any print resolution; every corner, side and end is somewhere new.
+    /// both ends moved out by a micrometre per attempt, along the cone of a
+    /// frustum. The hole is the same to any print resolution; every corner,
+    /// side and end is somewhere new.
     fn retry(self, attempt: usize) -> Self {
         let mut fraction = 0.0;
         let (mut bits, mut weight) = (attempt, 0.5);
@@ -169,12 +181,17 @@ impl Prism {
         }
         let side = std::f64::consts::TAU / self.segments as f64;
         let out = RETRY_END_SHIFT_MM * attempt as f64;
+        // The radius scale at `t` along the axis, 1 at the origin.
+        let slope = (self.taper - 1.0) / self.length.max(1e-12);
+        let (start, end) = (1.0 - slope * out, 1.0 + slope * (self.length + out));
         Prism {
             origin: [
                 self.origin[0] - self.w[0] * out,
                 self.origin[1] - self.w[1] * out,
                 self.origin[2] - self.w[2] * out,
             ],
+            radius: self.radius.map(|r| r * start),
+            taper: end / start,
             length: self.length + 2.0 * out,
             phase: self.phase + side * fraction,
             ..self
@@ -210,6 +227,29 @@ impl ConvexCutter {
         segments: usize,
         phase: f64,
     ) -> Self {
+        Self::frustum(
+            origin,
+            axis,
+            [radius_x, radius_y],
+            1.0,
+            length,
+            segments,
+            phase,
+        )
+    }
+
+    /// [`ConvexCutter::prism`] narrowing or widening along `axis`: the radii
+    /// are `radius` at `origin` and `radius` times `taper` at the far end
+    /// (#317). A `taper` of 1 is the prism.
+    pub fn frustum(
+        origin: Vec3,
+        axis: Vec3,
+        radius: [f32; 2],
+        taper: f32,
+        length: f32,
+        segments: usize,
+        phase: f64,
+    ) -> Self {
         let axis = vec3_normalize(axis).unwrap_or(Vec3::new(0.0, 0.0, -1.0));
         let helper = if axis.z.abs() < 0.95 {
             Vec3::new(0.0, 0.0, 1.0)
@@ -223,7 +263,8 @@ impl ConvexCutter {
             u,
             v,
             w: to64(axis),
-            radius: [radius_x as f64, radius_y as f64],
+            radius: radius.map(f64::from),
+            taper: f64::from(taper.max(1e-3)),
             length: length as f64,
             segments: segments.max(8),
             phase,
@@ -375,11 +416,51 @@ pub fn subtract_convex_closed(
     mesh: &IndexedMesh,
     cutter: &ConvexCutter,
 ) -> Result<IndexedMesh, CutError> {
-    subtract_convex_attempts(mesh, |attempt| match cutter.prism {
-        _ if attempt == 0 => cutter.clone(),
-        Some(prism) => prism.retry(attempt).cutter(),
-        None => jitter(cutter, attempt),
-    })
+    cut_attempts(mesh, Keep::Outside, |attempt| cutter.attempt(attempt))
+}
+
+/// The part of the closed edge-manifold `mesh` inside `cutter`: `A ∩ C`,
+/// closed by the same faces [`subtract_convex`] caps the hole with, facing
+/// out. Empty when the cutter reaches nothing. Retried as a subtraction is.
+pub fn intersect_convex(
+    mesh: &IndexedMesh,
+    cutter: &ConvexCutter,
+) -> Result<IndexedMesh, CutError> {
+    let defects = edge_manifold_defects(mesh);
+    if !defects.is_clean() {
+        return Err(CutError::SourceNotManifold(defects));
+    }
+    intersect_convex_closed(mesh, cutter)
+}
+
+/// [`intersect_convex`] for a mesh the caller has already proven closed and
+/// edge-manifold. The result is checked.
+pub fn intersect_convex_closed(
+    mesh: &IndexedMesh,
+    cutter: &ConvexCutter,
+) -> Result<IndexedMesh, CutError> {
+    cut_attempts(mesh, Keep::Inside, |attempt| cutter.attempt(attempt))
+}
+
+impl ConvexCutter {
+    /// The cutter of retry `attempt`: itself first, then a prism turned
+    /// about its axis ([`Prism::retry`]), any other shape jittered.
+    fn attempt(&self, attempt: usize) -> ConvexCutter {
+        match self.prism {
+            _ if attempt == 0 => self.clone(),
+            Some(prism) => prism.retry(attempt).cutter(),
+            None => jitter(self, attempt),
+        }
+    }
+}
+
+/// Which side of the cutter a cut keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    /// `A − C`: the mesh with the hole.
+    Outside,
+    /// `A ∩ C`: what the hole takes out.
+    Inside,
 }
 
 /// Turns the cutter about its centroid by a small irrational angle and grows
@@ -433,8 +514,9 @@ const ATTEMPTS: usize = 8;
 /// zero-length edge, or inside the cutter, over the hole). A cutter not in
 /// general position is not even tried, but on the last attempt. When none is
 /// clean, the first closed result is returned, as before such checks.
-fn subtract_convex_attempts(
+fn cut_attempts(
     mesh: &IndexedMesh,
+    keep: Keep,
     cutter_for: impl Fn(usize) -> ConvexCutter,
 ) -> Result<IndexedMesh, CutError> {
     // Built only when a corner's side cannot be read from the cut itself.
@@ -443,7 +525,7 @@ fn subtract_convex_attempts(
     let mut closed: Option<IndexedMesh> = None;
     for attempt in 0..ATTEMPTS {
         let cutter = cutter_for(attempt);
-        let cut = Cut::new(mesh, &parity, &cutter);
+        let cut = Cut::new(mesh, &parity, &cutter, keep);
         let (touching, near) = cut.candidates();
         let general = cut.in_general_position(&touching, &near);
         if !general && attempt + 1 < ATTEMPTS {
@@ -451,12 +533,18 @@ fn subtract_convex_attempts(
         }
         match cut.run(&touching) {
             Ok((out, fresh, is_closed)) => {
-                debug_assert_eq!(is_closed, edge_manifold_defects(&out).is_clean());
+                debug_assert!(
+                    keep == Keep::Inside || is_closed == edge_manifold_defects(&out).is_clean()
+                );
                 if !is_closed {
                     last = CutError::ResultNotManifold(edge_manifold_defects(&out));
                     continue;
                 }
-                if general && clean_triangles(&out, &fresh, &cutter) {
+                let clean = match keep {
+                    Keep::Outside => clean_triangles(&out, &fresh, &cutter),
+                    Keep::Inside => clean_inside(&out),
+                };
+                if general && clean {
                     return Ok(out);
                 }
                 closed.get_or_insert(out);
@@ -533,6 +621,15 @@ fn clean_triangles(out: &IndexedMesh, fresh: &[usize], cutter: &ConvexCutter) ->
     fresh.iter().all(|&t| {
         let [a, b, c] = out.triangles[t].map(|v| out.positions[v as usize]);
         a != b && b != c && c != a && !cutter.overlaps([a, b, c].map(to64))
+    })
+}
+
+/// No triangle of an intersection has a zero-length edge once in `f32`.
+/// Its triangles all lie within the cutter, so no fold check applies.
+fn clean_inside(out: &IndexedMesh) -> bool {
+    out.triangles.iter().all(|t| {
+        let [a, b, c] = t.map(|v| out.positions[v as usize]);
+        a != b && b != c && c != a
     })
 }
 /// Which cutter failed (its index), and why.
@@ -946,6 +1043,7 @@ struct Cut<'a> {
     mesh: &'a IndexedMesh,
     parity: &'a OnceCell<Bvh>,
     cutter: &'a ConvexCutter,
+    keep: Keep,
     pos: Vec<P3>,
     /// Output index and position of every named point other than `V`.
     named: HashMap<Key, u32>,
@@ -957,11 +1055,17 @@ struct Cut<'a> {
 }
 
 impl<'a> Cut<'a> {
-    fn new(mesh: &'a IndexedMesh, parity: &'a OnceCell<Bvh>, cutter: &'a ConvexCutter) -> Self {
+    fn new(
+        mesh: &'a IndexedMesh,
+        parity: &'a OnceCell<Bvh>,
+        cutter: &'a ConvexCutter,
+        keep: Keep,
+    ) -> Self {
         Self {
             mesh,
             parity,
             cutter,
+            keep,
             pos: mesh.positions.iter().map(|&p| to64(p)).collect(),
             named: HashMap::new(),
             extra: Vec::new(),
@@ -1166,14 +1270,23 @@ impl<'a> Cut<'a> {
     }
 
     /// The cut, which of its triangles it made (indices into it), and
-    /// whether it is closed and edge-manifold ([`closed_where_cut`]).
+    /// whether it is closed and edge-manifold ([`closed_where_cut`]; an
+    /// intersection, small, is checked whole).
     fn run(mut self, candidates: &[u32]) -> Result<(IndexedMesh, Vec<usize>, bool), CutError> {
-        let mut out: Vec<[u32; 3]> = Vec::with_capacity(self.mesh.triangles.len());
+        let inside = self.keep == Keep::Inside;
+        let mut out: Vec<[u32; 3]> = Vec::with_capacity(if inside {
+            candidates.len() * 2
+        } else {
+            self.mesh.triangles.len()
+        });
         let mut fresh: Vec<usize> = Vec::new();
         let mut next = candidates.iter().copied().peekable();
         for (t, &tri) in self.mesh.triangles.iter().enumerate() {
             if next.next_if_eq(&(t as u32)).is_none() {
-                out.push(tri);
+                // Wholly outside the cutter (or its box).
+                if !inside {
+                    out.push(tri);
+                }
                 continue;
             }
             let start = out.len();
@@ -1188,11 +1301,12 @@ impl<'a> Cut<'a> {
             self.cap_face(k, &mut out)?;
             fresh.extend(start..out.len());
         }
-        let closed = closed_where_cut(self.mesh, candidates, &out, &fresh);
+        let closed = inside || closed_where_cut(self.mesh, candidates, &out, &fresh);
         let mut positions: Vec<Vec3> = self.mesh.positions.clone();
         positions.extend(self.extra.iter().map(|&p| to32(p)));
         let mut mesh = IndexedMesh::new(positions, out);
         compact_unreferenced_vertices(&mut mesh);
+        let closed = closed && (!inside || edge_manifold_defects(&mesh).is_clean());
         Ok((mesh, fresh, closed))
     }
 
@@ -1231,12 +1345,19 @@ impl<'a> Cut<'a> {
             }
             poly = next;
         }
+        let inside = self.keep == Keep::Inside;
         if poly.len() < 3 {
-            out.push(tri);
+            if !inside {
+                out.push(tri);
+            }
             return Ok(());
         }
         if poly.len() == 3 && poly.iter().all(|k| matches!(k, Key::V(_))) {
-            return Ok(()); // entirely inside the cutter
+            // Entirely inside the cutter.
+            if inside {
+                out.push(tri);
+            }
+            return Ok(());
         }
 
         // The cut curves: clipped edges on a cutter plane, reversed so the
@@ -1248,6 +1369,19 @@ impl<'a> Cut<'a> {
                     self.segments[k as usize].push((q, p));
                 }
             }
+        }
+
+        if inside {
+            // The clipped part itself, wound as the triangle.
+            let mut half_edges = Vec::with_capacity(poly.len());
+            for i in 0..poly.len() {
+                half_edges.push((
+                    self.index(poly[i])?,
+                    self.index(poly[(i + 1) % poly.len()])?,
+                ));
+            }
+            let normal = self.tri_plane(t).n;
+            return self.fill(&half_edges, normal, false, out);
         }
 
         // The outside part: the triangle's boundary less the clipped part's,
@@ -1407,7 +1541,8 @@ impl<'a> Cut<'a> {
         Ok(())
     }
 
-    /// Fills the part of cutter face `k` inside `A`, facing into the cutter.
+    /// Fills the part of cutter face `k` inside `A`, facing into the cutter
+    /// (out of an intersection, which keeps the other side).
     fn cap_face(&mut self, k: usize, out: &mut Vec<[u32; 3]>) -> Result<(), CutError> {
         let face = self.cutter.faces[k].clone();
         let segments = std::mem::take(&mut self.segments[k]);
@@ -1469,7 +1604,7 @@ impl<'a> Cut<'a> {
             return Ok(());
         }
         let normal = self.cutter.planes[k].n;
-        self.fill(&half_edges, normal, true, out)
+        self.fill(&half_edges, normal, self.keep == Keep::Outside, out)
     }
 
     fn neighbour_face(&self, k: usize, a: u32, b: u32) -> Option<u16> {

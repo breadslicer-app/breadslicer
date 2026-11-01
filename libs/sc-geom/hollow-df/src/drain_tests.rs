@@ -291,3 +291,134 @@ fn edge_components_split_shells_that_share_only_a_vertex() {
     assert!(labels[..12].iter().all(|&l| l == 0));
     assert!(labels[12..].iter().all(|&l| l == 1));
 }
+
+/// The volume of a frustum of regular `segments`-gons around `r0` and `r1`,
+/// `height` apart.
+fn frustum_volume(r0: f64, r1: f64, segments: usize, height: f64) -> f64 {
+    let (a0, a1) = (prism_area(r0, segments), prism_area(r1, segments));
+    height / 3.0 * (a0 + a1 + (a0 * a1).sqrt())
+}
+
+/// #317: a frustum is closed, faces out, and holds a frustum's volume.
+#[test]
+fn a_frustum_cutter_is_closed_with_its_volume() {
+    for taper in [0.4f32, 1.0, 2.5] {
+        let cutter = ConvexCutter::frustum(
+            Vec3::new(1.0, -2.0, 3.0),
+            Vec3::new(0.2, 1.0, -0.3),
+            [2.0, 2.0],
+            taper,
+            5.0,
+            24,
+            0.1,
+        );
+        let mesh = cutter.to_mesh();
+        assert!(is_edge_manifold(&mesh));
+        let expected = frustum_volume(2.0, 2.0 * taper as f64, 24, 5.0);
+        assert!(
+            (mesh.signed_volume() - expected).abs() < 1e-3 * expected,
+            "taper {taper}: {} against {expected}",
+            mesh.signed_volume()
+        );
+    }
+}
+
+/// #317: a cone through a box takes out exactly the frustum, and the cut is
+/// closed; turned about its axis on a retry, it is the same cone.
+#[test]
+fn a_cone_through_a_box_removes_the_frustum() {
+    let block = tessellated_box([0.0; 3], [20.0, 20.0, 10.0], 8);
+    // From 2 mm below the box to 2 mm above: 14 mm, radius 3 to 1.
+    let cutter = ConvexCutter::frustum(
+        Vec3::new(10.3, 9.7, -2.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        [3.0, 3.0],
+        1.0 / 3.0,
+        14.0,
+        24,
+        0.0,
+    );
+    let out = subtract_convex(&block, &cutter).unwrap();
+    assert!(is_edge_manifold(&out));
+    let at = |t: f64| 3.0 + (1.0 - 3.0) * t / 14.0;
+    let expected = 20.0 * 20.0 * 10.0 - frustum_volume(at(2.0), at(12.0), 24, 10.0);
+    assert!(
+        (out.signed_volume() - expected).abs() < 1e-2,
+        "volume {}, expected {expected}",
+        out.signed_volume()
+    );
+    let prism = cutter.prism.unwrap();
+    for attempt in 1..4 {
+        let turned = prism.retry(attempt);
+        let r = |p: Prism, t: f64| {
+            let slope = (p.taper - 1.0) / p.length;
+            let back = (attempt as f64) * RETRY_END_SHIFT_MM;
+            p.radius[0] * (1.0 + slope * (t + back))
+        };
+        for t in [0.0, 7.0, 14.0] {
+            assert!(
+                (r(turned, t) - at(t)).abs() < 1e-6,
+                "attempt {attempt}, t {t}"
+            );
+        }
+    }
+}
+
+/// #318: what a drain takes out of a solid, `A ∩ C`, is closed and is the
+/// rest of `A − C`: the two volumes add up to the solid's.
+#[test]
+fn the_intersection_is_closed_and_complements_the_cut() {
+    let hollow = merged(&[tessellated_box([0.0; 3], [30.0, 30.0, 30.0], 6), {
+        let mut inner = tessellated_box([3.0; 3], [27.0, 27.0, 27.0], 5);
+        for tri in &mut inner.triangles {
+            tri.swap(1, 2);
+        }
+        inner
+    }]);
+    for taper in [1.0f32, 0.6, 1.5] {
+        let cutter = ConvexCutter::frustum(
+            Vec3::new(14.2, 15.1, 33.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            [2.5, 2.5],
+            taper,
+            6.2,
+            20,
+            0.0,
+        );
+        let cut = subtract_convex(&hollow, &cutter).unwrap();
+        let core = intersect_convex(&hollow, &cutter).unwrap();
+        assert!(is_edge_manifold(&core), "taper {taper}");
+        assert_eq!(face_shells(&core).1, 1, "taper {taper}: one plug");
+        assert!(core.signed_volume() > 0.0, "taper {taper}: faces out");
+        let total = cut.signed_volume() + core.signed_volume();
+        assert!(
+            (total - hollow.signed_volume()).abs() < 1e-2,
+            "taper {taper}: {total} against {}",
+            hollow.signed_volume()
+        );
+        // The wall's 3 mm, from z 30 down to 27: the frustum there.
+        let at = |t: f64| 2.5 * (1.0 + (taper as f64 - 1.0) * t / 6.2);
+        let expected = frustum_volume(at(3.0), at(6.0), 20, 3.0);
+        assert!(
+            (core.signed_volume() - expected).abs() < 1e-2,
+            "taper {taper}: {} against {expected}",
+            core.signed_volume()
+        );
+    }
+    // A cutter away from the mesh takes nothing.
+    let away = ConvexCutter::prism(
+        Vec3::new(50.0, 50.0, 50.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        1.0,
+        1.0,
+        1.0,
+        16,
+        0.0,
+    );
+    assert!(
+        intersect_convex(&hollow, &away)
+            .unwrap()
+            .triangles
+            .is_empty()
+    );
+}
