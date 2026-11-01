@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-10-16 18:11+0000\n"
+"POT-Creation-Date: 2026-11-01 22:04+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -12,69 +12,9 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: ui/slice-control-panel.slint:165
-msgctxt "SlicePanel"
-msgid "Slice setup"
-msgstr ""
-
-#: ui/slice-control-panel.slint:228
-msgctxt "SlicePanel"
-msgid "Print Setup"
-msgstr ""
-
-#: ui/slice-control-panel.slint:242
-msgctxt "SlicePanel"
-msgid "Printer"
-msgstr ""
-
-#: ui/slice-control-panel.slint:259
-msgctxt "SlicePanel"
-msgid "Resin"
-msgstr ""
-
-#: ui/slice-control-panel.slint:276
-msgctxt "SlicePanel"
-msgid "First layer height (mm)"
-msgstr ""
-
-#: ui/slice-control-panel.slint:282
-msgctxt "SlicePanel"
-msgid "from resin profile"
-msgstr ""
-
-#: ui/slice-control-panel.slint:283
-msgctxt "SlicePanel"
-msgid "First layer height in millimetres"
-msgstr ""
-
-#: ui/slice-control-panel.slint:295
-msgctxt "SlicePanel"
-msgid "Slice is up to date."
-msgstr ""
-
-#: ui/slice-control-panel.slint:308
-msgctxt "SlicePanel"
-msgid "Slice"
-msgstr ""
-
-#: ui/slice-control-panel.slint:323
-msgctxt "SlicePanel"
-msgid "Print format"
-msgstr ""
-
-#: ui/slice-control-panel.slint:344
-msgctxt "SlicePanel"
-msgid "Export for printer"
-msgstr ""
-
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
-msgid "About SoulCrafted Slicer"
-msgstr ""
-
-#: ui/about-window.slint:55
-msgctxt "AboutWindow"
-msgid "SoulCrafted Slicer"
+msgid "About Breadslicer"
 msgstr ""
 
 #: ui/about-window.slint:62
@@ -95,776 +35,6 @@ msgstr ""
 #: ui/about-window.slint:84
 msgctxt "About"
 msgid "Close"
-msgstr ""
-
-#: ui/slice-view-panel.slint:140
-msgctxt "SliceView"
-msgid "Slice preview"
-msgstr ""
-
-#: ui/slice-view-panel.slint:208
-msgctxt "SliceView"
-msgid "Slice View"
-msgstr ""
-
-#: ui/slice-overwrite-dialog.slint:14 ui/slice-overwrite-dialog.slint:83
-msgctxt "SliceOverwriteDialog"
-msgid "Re-slice"
-msgstr ""
-
-#: ui/slice-overwrite-dialog.slint:63
-msgctxt "SliceOverwriteDialog"
-msgid "Re-slice this scene?"
-msgstr ""
-
-#: ui/slice-overwrite-dialog.slint:69
-msgctxt "SliceOverwriteDialog"
-msgid ""
-"The geometry or the print settings changed since the last slice. Re-slicing "
-"replaces the slice data you already have."
-msgstr ""
-
-#: ui/slice-overwrite-dialog.slint:90
-msgctxt "SliceOverwriteDialog"
-msgid "Cancel"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:16
-msgctxt "ReplaceSceneDialog"
-msgid "Open new model"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:77
-msgctxt "ReplaceSceneDialog"
-msgid "Close the current scene?"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:76
-msgctxt "ReplaceSceneDialog"
-msgid "Replace the current scene?"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:82
-msgctxt "ReplaceSceneDialog"
-msgid "Opening: {}"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:94
-msgctxt "ReplaceSceneDialog"
-msgid "The current scene will be closed."
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:99
-msgctxt "ReplaceSceneDialog"
-msgid ""
-"The current scene will be closed. Save it as a project or export a copy "
-"first to keep the changes you've made."
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:103
-msgctxt "ReplaceSceneDialog"
-msgid ""
-"The current scene will be closed. Save it or export a copy first to keep the "
-"changes you've made."
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:118
-msgctxt "ReplaceSceneDialog"
-msgid "Discard & Close"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:117
-msgctxt "ReplaceSceneDialog"
-msgid "Discard & Open"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:126
-msgctxt "ReplaceSceneDialog"
-msgid "Save As & Close…"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:126
-msgctxt "ReplaceSceneDialog"
-msgid "Save & Close"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:125
-msgctxt "ReplaceSceneDialog"
-msgid "Save As & Open…"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:126
-msgctxt "ReplaceSceneDialog"
-msgid "Save & Open"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:136
-msgctxt "ReplaceSceneDialog"
-msgid "Export & Close…"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:133
-msgctxt "ReplaceSceneDialog"
-msgid "Export & Open…"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:140
-msgctxt "ReplaceSceneDialog"
-msgid "Cancel"
-msgstr ""
-
-#: ui/preferences/printer.slint:25
-msgctxt "PreferencesPage"
-msgid "Printer"
-msgstr ""
-
-#: ui/preferences/printer.slint:65
-msgctxt "PreferencesPage"
-msgid "Search models"
-msgstr ""
-
-#: ui/preferences/printer.slint:67
-msgctxt "PreferencesPage"
-msgid "Search printer models"
-msgstr ""
-
-#: ui/preferences/printer.slint:153
-msgctxt "PreferencesPage"
-msgid "No image"
-msgstr ""
-
-#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:237
-msgctxt "PreferencesPage"
-msgid "custom"
-msgstr ""
-
-#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:306
-msgctxt "PreferencesPage"
-msgid "Import package..."
-msgstr ""
-
-#: ui/preferences/printer.slint:199
-msgctxt "PreferencesPage"
-msgid "Export printers..."
-msgstr ""
-
-#: ui/preferences/slicing.slint:10
-msgctxt "PreferencesPage"
-msgid "Slicing"
-msgstr ""
-
-#: ui/preferences/slicing.slint:19
-msgctxt "SlicingPreferences"
-msgid "Off"
-msgstr ""
-
-#: ui/preferences/slicing.slint:20
-msgctxt "SlicingPreferences"
-msgid "2x"
-msgstr ""
-
-#: ui/preferences/slicing.slint:21
-msgctxt "SlicingPreferences"
-msgid "4x"
-msgstr ""
-
-#: ui/preferences/slicing.slint:22
-msgctxt "SlicingPreferences"
-msgid "8x"
-msgstr ""
-
-#: ui/preferences/slicing.slint:30 ui/preferences/slicing.slint:41
-msgctxt "SlicingPreferences"
-msgid "Anti-aliasing"
-msgstr ""
-
-#: ui/preferences/resin.slint:48
-msgctxt "PreferencesPage"
-msgid "Resin"
-msgstr ""
-
-#: ui/preferences/resin.slint:120
-msgctxt "PreferencesPage"
-msgid "Search resins"
-msgstr ""
-
-#: ui/preferences/resin.slint:122
-msgctxt "PreferencesPage"
-msgid "Search resins by brand, name or family"
-msgstr ""
-
-#: ui/preferences/resin.slint:139 ui/preferences/resin.slint:283
-msgctxt "PreferencesPage"
-msgid "View"
-msgstr ""
-
-#: ui/preferences/resin.slint:145
-msgctxt "PreferencesPage"
-msgid "Fork..."
-msgstr ""
-
-#: ui/preferences/resin.slint:151
-msgctxt "PreferencesPage"
-msgid "Extend..."
-msgstr ""
-
-#: ui/preferences/resin.slint:157 ui/preferences/resin.slint:289
-msgctxt "PreferencesPage"
-msgid "Edit"
-msgstr ""
-
-#: ui/preferences/resin.slint:163
-msgctxt "PreferencesPage"
-msgid "Delete..."
-msgstr ""
-
-#: ui/preferences/resin.slint:256
-msgctxt "PreferencesPage"
-msgid "No calibration data"
-msgstr ""
-
-#: ui/preferences/resin.slint:258
-msgctxt "PreferencesPage"
-msgid "Generic calibration"
-msgstr ""
-
-#: ui/preferences/resin.slint:259
-msgctxt "PreferencesPage"
-msgid "Calibration: {}"
-msgstr ""
-
-#: ui/preferences/resin.slint:312
-msgctxt "PreferencesPage"
-msgid "Export materials..."
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:14
-msgctxt "PreferencesWindow"
-msgid "Preferences"
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:88
-msgctxt "PreferencesMenu"
-msgid "Preferences Sections"
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:90
-msgctxt "PreferencesMenu"
-msgid "UI & Theme"
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:91
-msgctxt "PreferencesMenu"
-msgid "Printer"
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:92
-msgctxt "PreferencesMenu"
-msgid "Resin"
-msgstr ""
-
-#: ui/preferences/preferences-window.slint:93
-msgctxt "PreferencesMenu"
-msgid "Slicing"
-msgstr ""
-
-#: ui/preferences/appearance.slint:12
-msgctxt "PreferencesPage"
-msgid "UI & Theme"
-msgstr ""
-
-#: ui/preferences/appearance.slint:27
-msgctxt "AppearancePreferences"
-msgid "System"
-msgstr ""
-
-#: ui/preferences/appearance.slint:28
-msgctxt "AppearancePreferences"
-msgid "Light"
-msgstr ""
-
-#: ui/preferences/appearance.slint:29
-msgctxt "AppearancePreferences"
-msgid "Dark"
-msgstr ""
-
-#: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
-msgctxt "AppearancePreferences"
-msgid "Theme"
-msgstr ""
-
-#: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
-msgctxt "AppearancePreferences"
-msgid "Language"
-msgstr ""
-
-#: ui/info-dialog.slint:10 ui/info-dialog.slint:14 ui/info-dialog.slint:80
-msgctxt "InfoDialog"
-msgid "Information"
-msgstr ""
-
-#. drop or replace it.
-#: ui/info-dialog.slint:108
-msgctxt "InfoDialog"
-msgid "Hide details"
-msgstr ""
-
-#. drop or replace it.
-#: ui/info-dialog.slint:108
-msgctxt "InfoDialog"
-msgid "Show details"
-msgstr ""
-
-#: ui/info-dialog.slint:135
-msgctxt "InfoDialog"
-msgid "Close"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:60
-msgctxt "ProfileViewDialog"
-msgid "Resin profile"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:222
-msgctxt "ProfileViewDialog"
-msgid "Defaults"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:227
-msgctxt "ProfileViewDialog"
-msgid "Scale compensation x (%)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:231
-msgctxt "ProfileViewDialog"
-msgid "Scale compensation y (%)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:235
-msgctxt "ProfileViewDialog"
-msgid "Scale compensation z (%)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:239 ui/profile-view-dialog.slint:299
-msgctxt "ProfileViewDialog"
-msgid "Bottom layer count"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:243 ui/profile-view-dialog.slint:303
-msgctxt "ProfileViewDialog"
-msgid "Wait before cure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:247 ui/profile-view-dialog.slint:307
-msgctxt "ProfileViewDialog"
-msgid "Wait after cure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:251 ui/profile-view-dialog.slint:311
-msgctxt "ProfileViewDialog"
-msgid "Wait after lift (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:255 ui/profile-view-dialog.slint:375
-msgctxt "ProfileViewDialog"
-msgid "Light power (%)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:259 ui/profile-view-dialog.slint:379
-msgctxt "ProfileViewDialog"
-msgid "Bottom light power (%)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:277
-msgctxt "ProfileViewDialog"
-msgid "Edit calibration values"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:291
-msgctxt "ProfileViewDialog"
-msgid "Normal exposure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:295
-msgctxt "ProfileViewDialog"
-msgid "Bottom exposure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:315
-msgctxt "ProfileViewDialog"
-msgid "Bottom wait before cure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:319
-msgctxt "ProfileViewDialog"
-msgid "Bottom wait after cure (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:323
-msgctxt "ProfileViewDialog"
-msgid "Bottom wait after lift (s)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:327
-msgctxt "ProfileViewDialog"
-msgid "Lift distance (mm)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:331
-msgctxt "ProfileViewDialog"
-msgid "Lift speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:335
-msgctxt "ProfileViewDialog"
-msgid "Retract speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:339
-msgctxt "ProfileViewDialog"
-msgid "Second lift distance (mm)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:343
-msgctxt "ProfileViewDialog"
-msgid "Second lift speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:347
-msgctxt "ProfileViewDialog"
-msgid "Second retract speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:351
-msgctxt "ProfileViewDialog"
-msgid "Bottom lift distance (mm)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:355
-msgctxt "ProfileViewDialog"
-msgid "Bottom lift speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:359
-msgctxt "ProfileViewDialog"
-msgid "Bottom retract speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:363
-msgctxt "ProfileViewDialog"
-msgid "Bottom second lift distance (mm)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:367
-msgctxt "ProfileViewDialog"
-msgid "Bottom second lift speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:371
-msgctxt "ProfileViewDialog"
-msgid "Bottom second retract speed (mm/min)"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:400
-msgctxt "ProfileViewDialog"
-msgid "Save"
-msgstr ""
-
-#: ui/profile-view-dialog.slint:407
-msgctxt "ProfileViewDialog"
-msgid "Close"
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:16
-msgctxt "ReplaceSceneDialog"
-msgid "Close scene"
-msgstr ""
-
-#: ui/error-dialog.slint:10
-msgctxt "ErrorDialog"
-msgid "Error"
-msgstr ""
-
-#: ui/error-dialog.slint:14
-msgctxt "ErrorDialog"
-msgid "An error occurred"
-msgstr ""
-
-#: ui/error-dialog.slint:82
-msgctxt "ErrorDialog"
-msgid "Warning"
-msgstr ""
-
-#. side of the label in RTL runs automatically.
-#: ui/error-dialog.slint:123
-msgctxt "ErrorDialog"
-msgid "Hide technical details"
-msgstr ""
-
-#. side of the label in RTL runs automatically.
-#: ui/error-dialog.slint:123
-msgctxt "ErrorDialog"
-msgid "Show technical details"
-msgstr ""
-
-#: ui/error-dialog.slint:150
-msgctxt "ErrorDialog"
-msgid "Close"
-msgstr ""
-
-#: ui/object-list-panel.slint:138
-msgctxt "ObjectList"
-msgid "Scene objects"
-msgstr ""
-
-#: ui/object-list-panel.slint:206
-msgctxt "ObjectList"
-msgid "Scene Objects"
-msgstr ""
-
-#: ui/main-window.slint:96
-msgctxt "MainWindow"
-msgid "SoulCrafted Slicer"
-msgstr ""
-
-#: ui/main-window.slint:383 ui/main-window.slint:964
-msgctxt "MenuBar"
-msgid "File"
-msgstr ""
-
-#: ui/main-window.slint:386 ui/main-window.slint:967
-msgctxt "MenuBar"
-msgid "New Window"
-msgstr ""
-
-#: ui/main-window.slint:396 ui/main-window.slint:976
-msgctxt "MenuBar"
-msgid "Open…"
-msgstr ""
-
-#: ui/main-window.slint:405 ui/main-window.slint:984
-msgctxt "MenuBar"
-msgid "Close"
-msgstr ""
-
-#: ui/main-window.slint:416 ui/main-window.slint:994
-msgctxt "MenuBar"
-msgid "Save"
-msgstr ""
-
-#: ui/main-window.slint:425 ui/main-window.slint:1002
-msgctxt "MenuBar"
-msgid "Save As…"
-msgstr ""
-
-#: ui/main-window.slint:436 ui/main-window.slint:1012
-msgctxt "MenuBar"
-msgid "Export As…"
-msgstr ""
-
-#: ui/main-window.slint:446 ui/main-window.slint:1021
-msgctxt "MenuBar"
-msgid "Edit"
-msgstr ""
-
-#: ui/main-window.slint:448 ui/main-window.slint:1024
-msgctxt "MenuBar"
-msgid "Undo"
-msgstr ""
-
-#: ui/main-window.slint:459 ui/main-window.slint:1034
-msgctxt "MenuBar"
-msgid "Redo"
-msgstr ""
-
-#: ui/main-window.slint:472 ui/main-window.slint:1046
-msgctxt "MenuBar"
-msgid "Delete"
-msgstr ""
-
-#: ui/main-window.slint:483 ui/main-window.slint:1057
-msgctxt "MenuBar"
-msgid "Preferences"
-msgstr ""
-
-#: ui/main-window.slint:492 ui/main-window.slint:1065
-msgctxt "MenuBar"
-msgid "Tools"
-msgstr ""
-
-#: ui/main-window.slint:512
-msgctxt "MenuBar"
-msgid "Generate Supports (DragonFruit)…"
-msgstr ""
-
-#: ui/main-window.slint:495 ui/main-window.slint:1068
-msgctxt "MenuBar"
-msgid "Generate Support (trivial for test)…"
-msgstr ""
-
-#: ui/main-window.slint:504 ui/main-window.slint:1077
-msgctxt "MenuBar"
-msgid "View"
-msgstr ""
-
-#: ui/main-window.slint:508 ui/main-window.slint:1081
-msgctxt "MenuBar"
-msgid "Hide Object List"
-msgstr ""
-
-#: ui/main-window.slint:509 ui/main-window.slint:1082
-msgctxt "MenuBar"
-msgid "Show Object List"
-msgstr ""
-
-#: ui/main-window.slint:520 ui/main-window.slint:1092
-msgctxt "MenuBar"
-msgid "Hide Slice View"
-msgstr ""
-
-#: ui/main-window.slint:521 ui/main-window.slint:1093
-msgctxt "MenuBar"
-msgid "Show Slice View"
-msgstr ""
-
-#: ui/main-window.slint:534 ui/main-window.slint:1103
-msgctxt "MenuBar"
-msgid "Show Menu Bar"
-msgstr ""
-
-#: ui/main-window.slint:535 ui/main-window.slint:1104
-msgctxt "MenuBar"
-msgid "Hide Menu Bar"
-msgstr ""
-
-#: ui/main-window.slint:553 ui/main-window.slint:1117
-msgctxt "MenuBar"
-msgid "Fullscreen"
-msgstr ""
-
-#: ui/main-window.slint:563 ui/main-window.slint:1124
-msgctxt "MenuBar"
-msgid "Help"
-msgstr ""
-
-#: ui/main-window.slint:565 ui/main-window.slint:1127
-msgctxt "MenuBar"
-msgid "Documentation"
-msgstr ""
-
-#: ui/main-window.slint:570 ui/main-window.slint:1132
-msgctxt "MenuBar"
-msgid "Show Release Notes"
-msgstr ""
-
-#: ui/main-window.slint:577 ui/main-window.slint:1139
-msgctxt "MenuBar"
-msgid "Report Issue"
-msgstr ""
-
-#: ui/main-window.slint:584 ui/main-window.slint:1146
-msgctxt "MenuBar"
-msgid "Check for Updates…"
-msgstr ""
-
-#: ui/main-window.slint:591 ui/main-window.slint:1153
-msgctxt "MenuBar"
-msgid "About"
-msgstr ""
-
-#: ui/main-window.slint:598 ui/main-window.slint:1160
-msgctxt "MenuBar"
-msgid "View License"
-msgstr ""
-
-#: ui/main-window.slint:610
-msgctxt "MainWindow"
-msgid "Open a 3D model to visualize it here"
-msgstr ""
-
-#: ui/main-window.slint:857
-msgctxt "Workspace"
-msgid "Prepare"
-msgstr ""
-
-#: ui/main-window.slint:870
-msgctxt "Workspace"
-msgid "Transform"
-msgstr ""
-
-#: ui/main-window.slint:883
-msgctxt "Workspace"
-msgid "Slice"
-msgstr ""
-
-#: ui/main-window.slint:913
-msgctxt "Prepare"
-msgid "Repair meshes"
-msgstr ""
-
-#: ui/main-window.slint:1200
-msgctxt "MainWindow"
-msgid "Drop to open"
-msgstr ""
-
-#: ui/main-window.slint:1229
-msgctxt "MainWindow"
-msgid "Reading file…"
-msgstr ""
-
-#: ui/main-window.slint:1231 ui/main-window.slint:1293
-msgctxt "MainWindow"
-msgid "Preparing geometry…"
-msgstr ""
-
-#: ui/main-window.slint:1232
-msgctxt "MainWindow"
-msgid "Uploading to GPU…"
-msgstr ""
-
-#: ui/main-window.slint:1262
-msgctxt "MainWindow"
-msgid "Generating support structure…"
-msgstr ""
-
-#: ui/main-window.slint:1314
-msgctxt "MainWindow"
-msgid "Cancel"
-msgstr ""
-
-#: ui/main-window.slint:1295
-msgctxt "MainWindow"
-msgid "Serializing model…"
-msgstr ""
-
-#: ui/main-window.slint:1297
-msgctxt "MainWindow"
-msgid "Compressing…"
-msgstr ""
-
-#: ui/main-window.slint:1298
-msgctxt "MainWindow"
-msgid "Writing file…"
-msgstr ""
-
-#: ui/main-window.slint:1348
-msgctxt "SlicePanel"
-msgid "Slicing..."
-msgstr ""
-
-#: ui/main-window.slint:1355
-msgctxt "SlicePanel"
-msgid "{} / {} layers"
-msgstr ""
-
-#: ui/main-window.slint:1356
-msgctxt "SlicePanel"
-msgid "Preparing..."
-msgstr ""
-
-#: ui/main-window.slint:1366
-msgctxt "SlicePanel"
-msgid "Cancel"
 msgstr ""
 
 #: ui/extend-dialog.slint:15
@@ -1067,47 +237,2138 @@ msgctxt "ForkDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/mesh-viewer.slint:136
+#. Heading of an error message that brings none of its own.
+#: ui/main-window.slint:85
+msgctxt "ErrorDialog"
+msgid "An error occurred"
+msgstr ""
+
+#: ui/main-window.slint:667 ui/main-window.slint:1983
+msgctxt "MenuBar"
+msgid "File"
+msgstr ""
+
+#: ui/main-window.slint:670 ui/main-window.slint:1986
+msgctxt "MenuBar"
+msgid "New Window"
+msgstr ""
+
+#: ui/main-window.slint:680 ui/main-window.slint:1995
+msgctxt "MenuBar"
+msgid "Open…"
+msgstr ""
+
+#: ui/main-window.slint:689 ui/main-window.slint:2003
+msgctxt "MenuBar"
+msgid "Close"
+msgstr ""
+
+#: ui/main-window.slint:700 ui/main-window.slint:2013
+msgctxt "MenuBar"
+msgid "Save"
+msgstr ""
+
+#: ui/main-window.slint:709 ui/main-window.slint:2021
+msgctxt "MenuBar"
+msgid "Save As…"
+msgstr ""
+
+#: ui/main-window.slint:718 ui/main-window.slint:2029
+msgctxt "MenuBar"
+msgid "Save As 3MF…"
+msgstr ""
+
+#: ui/main-window.slint:726 ui/main-window.slint:2037
+msgctxt "MenuBar"
+msgid "Previous Versions…"
+msgstr ""
+
+#: ui/main-window.slint:736 ui/main-window.slint:2047
+msgctxt "MenuBar"
+msgid "Export As…"
+msgstr ""
+
+#: ui/main-window.slint:746 ui/main-window.slint:2056
+msgctxt "MenuBar"
+msgid "Edit"
+msgstr ""
+
+#: ui/main-window.slint:748 ui/main-window.slint:1074
+#: ui/main-window.slint:748 ui/main-window.slint:1074
+msgctxt "MenuBar"
+msgid "Undo"
+msgstr ""
+
+#: ui/main-window.slint:759 ui/main-window.slint:1083
+#: ui/main-window.slint:759 ui/main-window.slint:1083
+msgctxt "MenuBar"
+msgid "Redo"
+msgstr ""
+
+#: ui/main-window.slint:772 ui/main-window.slint:2081
+msgctxt "MenuBar"
+msgid "Delete"
+msgstr ""
+
+#: ui/main-window.slint:781 ui/main-window.slint:2090
+msgctxt "MenuBar"
+msgid "Split into Bodies"
+msgstr ""
+
+#: ui/main-window.slint:790 ui/main-window.slint:2099
+msgctxt "MenuBar"
+msgid "Keep Only This Body"
+msgstr ""
+
+#: ui/main-window.slint:801 ui/main-window.slint:2110
+msgctxt "MenuBar"
+msgid "Preferences"
+msgstr ""
+
+#: ui/main-window.slint:810 ui/main-window.slint:2118
+msgctxt "MenuBar"
+msgid "Tools"
+msgstr ""
+
+#: ui/main-window.slint:813 ui/main-window.slint:2121
+msgctxt "MenuBar"
+msgid "Generate Supports (DragonFruit)…"
+msgstr ""
+
+#: ui/main-window.slint:821 ui/main-window.slint:2129
+msgctxt "MenuBar"
+msgid "Generate Support (trivial for test)…"
+msgstr ""
+
+#: ui/main-window.slint:830 ui/main-window.slint:2138
+msgctxt "MenuBar"
+msgid "View"
+msgstr ""
+
+#: ui/main-window.slint:838 ui/main-window.slint:2143
+msgctxt "MenuBar"
+msgid "Show Menu Bar"
+msgstr ""
+
+#: ui/main-window.slint:839 ui/main-window.slint:2144
+msgctxt "MenuBar"
+msgid "Hide Menu Bar"
+msgstr ""
+
+#: ui/main-window.slint:857 ui/main-window.slint:2157
+msgctxt "MenuBar"
+msgid "Fullscreen"
+msgstr ""
+
+#: ui/main-window.slint:867 ui/main-window.slint:2164
+msgctxt "MenuBar"
+msgid "Help"
+msgstr ""
+
+#: ui/main-window.slint:869 ui/main-window.slint:2167
+msgctxt "MenuBar"
+msgid "Documentation"
+msgstr ""
+
+#: ui/main-window.slint:874 ui/main-window.slint:2172
+msgctxt "MenuBar"
+msgid "Show Release Notes"
+msgstr ""
+
+#: ui/main-window.slint:881 ui/main-window.slint:2179
+msgctxt "MenuBar"
+msgid "Report Issue"
+msgstr ""
+
+#: ui/main-window.slint:886 ui/main-window.slint:2184
+msgctxt "MenuBar"
+msgid "Export Diagnostics…"
+msgstr ""
+
+#: ui/main-window.slint:895 ui/main-window.slint:2193
+msgctxt "MenuBar"
+msgid "Check for Updates…"
+msgstr ""
+
+#: ui/main-window.slint:902 ui/main-window.slint:2200
+msgctxt "MenuBar"
+msgid "About"
+msgstr ""
+
+#: ui/main-window.slint:909 ui/main-window.slint:2207
+msgctxt "MenuBar"
+msgid "View License"
+msgstr ""
+
+#: ui/main-window.slint:978
+msgctxt "Workspace"
+msgid "Transform"
+msgstr ""
+
+#: ui/main-window.slint:994 ui/main-window.slint:1177
+msgctxt "Workspace"
+msgid "Hollow"
+msgstr ""
+
+#: ui/main-window.slint:1008
+msgctxt "Workspace"
+msgid "Supports"
+msgstr ""
+
+#: ui/main-window.slint:1023
+msgctxt "Workspace"
+msgid "Slice"
+msgstr ""
+
+#: ui/main-window.slint:1033
+msgctxt "Workspace"
+msgid "Export"
+msgstr ""
+
+#: ui/main-window.slint:1048
+msgctxt "MainWindow"
+msgid "Support us on Patreon"
+msgstr ""
+
+#: ui/main-window.slint:1055
+msgctxt "MainWindow"
+msgid "Support us on Ko-fi"
+msgstr ""
+
+#: ui/main-window.slint:1065
+msgctxt "Workspace"
+msgid "No printer"
+msgstr ""
+
+#: ui/main-window.slint:1116
+msgctxt "Inspector"
+msgid "Move"
+msgstr ""
+
+#: ui/main-window.slint:1127
+msgctxt "Inspector"
+msgid "Rotate"
+msgstr ""
+
+#: ui/main-window.slint:1138 ui/workspace/inspectors.slint:1060
+msgctxt "Inspector"
+msgid "Scale"
+msgstr ""
+
+#: ui/main-window.slint:1149
+msgctxt "Inspector"
+msgid "Orient: the best way up for printing"
+msgstr ""
+
+#: ui/main-window.slint:1167 ui/workspace/inspectors.slint:665
+msgctxt "Inspector"
+msgid "Repair meshes"
+msgstr ""
+
+#: ui/main-window.slint:1184
+msgctxt "Inspector"
+msgid "Drain holes"
+msgstr ""
+
+#: ui/main-window.slint:1190 ui/workspace/inspectors.slint:1485
+msgctxt "Inspector"
+msgid "Generate supports"
+msgstr ""
+
+#: ui/main-window.slint:1208
+msgctxt "Inspector"
+msgid "Add support (click the model)"
+msgstr ""
+
+#: ui/main-window.slint:1218
+msgctxt "Inspector"
+msgid "Remove support (click it)"
+msgstr ""
+
+#: ui/main-window.slint:1228 ui/slice-control-panel.slint:308
+#: ui/main-window.slint:1228 ui/slice-control-panel.slint:308
+msgctxt "SlicePanel"
+msgid "Slice"
+msgstr ""
+
+#: ui/main-window.slint:1238
+msgctxt "LayerView"
+msgid "Layer view"
+msgstr ""
+
+#: ui/main-window.slint:1248 ui/slice-control-panel.slint:344
+#: ui/main-window.slint:1248 ui/slice-control-panel.slint:344
+msgctxt "SlicePanel"
+msgid "Export for printer"
+msgstr ""
+
+#: ui/main-window.slint:1275
+msgctxt "MainWindow"
+msgid "Open a 3D model to visualize it here"
+msgstr ""
+
+#: ui/main-window.slint:1427
+msgctxt "LayerView"
+msgid "Layer {} of {}"
+msgstr ""
+
+#: ui/main-window.slint:1920
+msgctxt "Workspace"
+msgid "Open or drop a model to start."
+msgstr ""
+
+#: ui/main-window.slint:1921
+msgctxt "Workspace"
+msgid ""
+"G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, "
+"Shift is finer."
+msgstr ""
+
+#: ui/main-window.slint:1922
+msgctxt "Workspace"
+msgid "A drain here would not reach the cavity: hollowing leaves it out."
+msgstr ""
+
+#: ui/main-window.slint:1923
+msgctxt "Workspace"
+msgid ""
+"Not known yet whether a drain here reaches the cavity: the cavity is not "
+"computed."
+msgstr ""
+
+#: ui/main-window.slint:1924
+msgctxt "Workspace"
+msgid ""
+"At its set depth a drain here would reach the far side of the cavity: it is "
+"drilled shorter, as drawn."
+msgstr ""
+
+#: ui/main-window.slint:1925
+msgctxt "Workspace"
+msgid ""
+"Click the model's surface to drill a drain there, where it shows green: red "
+"does not reach the cavity. Undo takes it back."
+msgstr ""
+
+#: ui/main-window.slint:1926
+msgctxt "Workspace"
+msgid "Hollow the selected model to save resin, then place its drains with D."
+msgstr ""
+
+#: ui/main-window.slint:1927
+msgctxt "Workspace"
+msgid "Click the model where a support should touch it. Undo takes it back."
+msgstr ""
+
+#: ui/main-window.slint:1928
+msgctxt "Workspace"
+msgid "Click a support to remove it and everything hanging from it."
+msgstr ""
+
+#: ui/main-window.slint:1929
+msgctxt "Workspace"
+msgid "Generate supports for every model on the plate."
+msgstr ""
+
+#: ui/main-window.slint:1930
+msgctxt "Workspace"
+msgid "Drag the layer slider to inspect the slice."
+msgstr ""
+
+#: ui/main-window.slint:1931
+msgctxt "Workspace"
+msgid "The printer file uses the printer and resin in force."
+msgstr ""
+
+#: ui/main-window.slint:1959
+msgctxt "Workspace"
+msgid "{} object(s)"
+msgstr ""
+
+#: ui/main-window.slint:2247
+msgctxt "MainWindow"
+msgid "Drop to open"
+msgstr ""
+
+#: ui/main-window.slint:2276
+msgctxt "MainWindow"
+msgid "Reading file…"
+msgstr ""
+
+#: ui/main-window.slint:2278 ui/main-window.slint:2348
+msgctxt "MainWindow"
+msgid "Preparing geometry…"
+msgstr ""
+
+#: ui/main-window.slint:2279
+msgctxt "MainWindow"
+msgid "Uploading to GPU…"
+msgstr ""
+
+#: ui/main-window.slint:2310
+msgctxt "MainWindow"
+msgid "Generating support structure…"
+msgstr ""
+
+#: ui/main-window.slint:2320
+msgctxt "MainWindow"
+msgid "Cancel"
+msgstr ""
+
+#: ui/main-window.slint:2350
+msgctxt "MainWindow"
+msgid "Serializing model…"
+msgstr ""
+
+#: ui/main-window.slint:2352
+msgctxt "MainWindow"
+msgid "Compressing…"
+msgstr ""
+
+#: ui/main-window.slint:2353
+msgctxt "MainWindow"
+msgid "Writing file…"
+msgstr ""
+
+#: ui/main-window.slint:2403
+msgctxt "SlicePanel"
+msgid "Slicing..."
+msgstr ""
+
+#: ui/main-window.slint:2409
+msgctxt "SlicePanel"
+msgid "Checking the layers..."
+msgstr ""
+
+#: ui/main-window.slint:2411
+msgctxt "SlicePanel"
+msgid "{} / {} layers"
+msgstr ""
+
+#: ui/main-window.slint:2412
+msgctxt "SlicePanel"
+msgid "Preparing..."
+msgstr ""
+
+#: ui/main-window.slint:2422
+msgctxt "SlicePanel"
+msgid "Cancel"
+msgstr ""
+
+#: ui/mesh-viewer.slint:192
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr ""
 
-#: ui/mesh-viewer.slint:137
+#: ui/mesh-viewer.slint:193
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr ""
 
-#: ui/mesh-viewer.slint:169
+#: ui/mesh-viewer.slint:194
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Middle or right drag to orbit. "
-"Shift with middle/right drag or arrow keys to pan. 5 toggles "
-"perspective/orthographic. Scroll, Plus/Minus, or Page Up/Down to zoom. Press "
-"F or Home to frame the model. Press 1, 3, or 7 for front, right, or top "
-"views; hold Control for back, left, or bottom."
+"Shift with middle/right drag or arrow keys to pan. 5 toggles perspective/"
+"orthographic. Scroll, Plus/Minus, or Page Up/Down to zoom. Press F or Home "
+"to frame the model. Press 1, 3, or 7 for front, right, or top views; hold "
+"Control for back, left, or bottom. Press 4 or 6 to orbit left or right, 8 or "
+"2 to orbit up or down, 15 degrees per press."
 msgstr ""
 
-#: ui/mesh-viewer.slint:462
+#: ui/mesh-viewer.slint:606
 msgctxt "MeshViewer"
 msgid "Copy"
 msgstr ""
 
-#: ui/mesh-viewer.slint:468
+#: ui/mesh-viewer.slint:612
 msgctxt "MeshViewer"
 msgid "Delete"
 msgstr ""
 
-#: ui/mesh-viewer.slint:474
+#: ui/mesh-viewer.slint:618
 msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: ui/mesh-viewer.slint:575
+#: ui/mesh-viewer.slint:681
 msgctxt "MeshViewer"
 msgid "Enter / click: confirm | Esc / right click: cancel"
+msgstr ""
+
+#: ui/mesh-viewer.slint:681
+msgctxt "MeshViewer"
+msgid "Ctrl: snap | Shift: fine"
+msgstr ""
+
+#: ui/message-layer.slint:171
+msgctxt "ErrorDialog"
+msgid "Warning"
+msgstr ""
+
+#: ui/message-layer.slint:181
+msgctxt "InfoDialog"
+msgid "Information"
+msgstr ""
+
+#: ui/message-layer.slint:234
+msgctxt "ErrorDialog"
+msgid "Hide technical details"
+msgstr ""
+
+#: ui/message-layer.slint:234
+msgctxt "ErrorDialog"
+msgid "Show technical details"
+msgstr ""
+
+#: ui/message-layer.slint:235
+msgctxt "InfoDialog"
+msgid "Hide details"
+msgstr ""
+
+#: ui/message-layer.slint:235
+msgctxt "InfoDialog"
+msgid "Show details"
+msgstr ""
+
+#: ui/message-layer.slint:254
+msgctxt "InfoDialog"
+msgid "Copied"
+msgstr ""
+
+#: ui/message-layer.slint:254
+msgctxt "InfoDialog"
+msgid "Copy details"
+msgstr ""
+
+#: ui/message-layer.slint:294
+msgctxt "ReplaceSceneDialog"
+msgid "Close the current scene?"
+msgstr ""
+
+#: ui/message-layer.slint:294
+msgctxt "ReplaceSceneDialog"
+msgid "Replace the current scene?"
+msgstr ""
+
+#: ui/message-layer.slint:301
+msgctxt "ReplaceSceneDialog"
+msgid "Opening: {}"
+msgstr ""
+
+#: ui/message-layer.slint:309
+msgctxt "ReplaceSceneDialog"
+msgid "The current scene will be closed."
+msgstr ""
+
+#: ui/message-layer.slint:311
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it as a project or export a copy "
+"first to keep the changes you've made."
+msgstr ""
+
+#: ui/message-layer.slint:315
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it or export a copy first to keep the "
+"changes you've made."
+msgstr ""
+
+#: ui/message-layer.slint:359
+msgctxt "SliceOverwriteDialog"
+msgid "Re-slice this scene?"
+msgstr ""
+
+#: ui/message-layer.slint:366
+msgctxt "SliceOverwriteDialog"
+msgid ""
+"The geometry or the print settings changed since the last slice. Re-slicing "
+"replaces the slice data you already have."
+msgstr ""
+
+#: ui/message-layer.slint:380
+msgctxt "DiagnosticsDialog"
+msgid "Export diagnostics"
+msgstr ""
+
+#: ui/message-layer.slint:387
+msgctxt "DiagnosticsDialog"
+msgid "Saves a .zip file to attach to a bug report. It holds:"
+msgstr ""
+
+#: ui/message-layer.slint:396
+msgctxt "DiagnosticsDialog"
+msgid ""
+"What the app did in this session: steps, times and errors, without models, "
+"file names or anything you typed."
+msgstr ""
+
+#: ui/message-layer.slint:397
+msgctxt "DiagnosticsDialog"
+msgid ""
+"The logs saved on this computer: crash reports, and the diagnostic log if "
+"you turned it on."
+msgstr ""
+
+#: ui/message-layer.slint:398
+msgctxt "DiagnosticsDialog"
+msgid "The app version, the system, the graphics card and the screens."
+msgstr ""
+
+#: ui/message-layer.slint:399
+msgctxt "DiagnosticsDialog"
+msgid "Your preferences, without folders."
+msgstr ""
+
+#: ui/message-layer.slint:400
+msgctxt "DiagnosticsDialog"
+msgid "The scene in numbers: models, triangles, supports and hollowing."
+msgstr ""
+
+#: ui/message-layer.slint:409
+msgctxt "DiagnosticsDialog"
+msgid "Your user name and your user folder are replaced in every file."
+msgstr ""
+
+#: ui/message-layer.slint:416
+msgctxt "DiagnosticsDialog"
+msgid "Include the scene's models (.bread)"
+msgstr ""
+
+#: ui/message-layer.slint:421
+msgctxt "DiagnosticsDialog"
+msgid ""
+"Breadslicer never sends us anything. The file stays on your computer, and "
+"only reaches us if you send it yourself."
+msgstr ""
+
+#: ui/message-layer.slint:433
+msgctxt "DiagnosticLogDialog"
+msgid "Save a diagnostic log?"
+msgstr ""
+
+#: ui/message-layer.slint:440
+msgctxt "DiagnosticLogDialog"
+msgid ""
+"Until you close Breadslicer, closing included, it writes what it does to the "
+"logs folder on this computer: steps, times and errors, without models, file "
+"names or anything you type."
+msgstr ""
+
+#: ui/message-layer.slint:450
+msgctxt "DiagnosticLogDialog"
+msgid "The next time you open Breadslicer, the log turns off by itself."
+msgstr ""
+
+#: ui/message-layer.slint:457
+msgctxt "DiagnosticLogDialog"
+msgid ""
+"Breadslicer never sends us anything. The log stays on your computer, and "
+"only reaches us if you send it yourself."
+msgstr ""
+
+#: ui/message-layer.slint:469
+msgctxt "MessageLayer"
+msgid "Don't show again"
+msgstr ""
+
+#: ui/message-layer.slint:478
+msgctxt "ErrorDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/message-layer.slint:478
+msgctxt "InfoDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/message-layer.slint:486
+msgctxt "ReplaceSceneDialog"
+msgid "Discard & Close"
+msgstr ""
+
+#: ui/message-layer.slint:486
+msgctxt "ReplaceSceneDialog"
+msgid "Discard & Open"
+msgstr ""
+
+#: ui/message-layer.slint:494
+msgctxt "ReplaceSceneDialog"
+msgid "Save As & Close…"
+msgstr ""
+
+#: ui/message-layer.slint:494
+msgctxt "ReplaceSceneDialog"
+msgid "Save & Close"
+msgstr ""
+
+#: ui/message-layer.slint:495
+msgctxt "ReplaceSceneDialog"
+msgid "Save As & Open…"
+msgstr ""
+
+#: ui/message-layer.slint:495
+msgctxt "ReplaceSceneDialog"
+msgid "Save & Open"
+msgstr ""
+
+#: ui/message-layer.slint:502
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Close…"
+msgstr ""
+
+#: ui/message-layer.slint:502
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Open…"
+msgstr ""
+
+#: ui/message-layer.slint:509
+msgctxt "SliceOverwriteDialog"
+msgid "Re-slice"
+msgstr ""
+
+#: ui/message-layer.slint:516
+msgctxt "ReplaceSceneDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/message-layer.slint:524
+msgctxt "RecoveryDialog"
+msgid "Discard"
+msgstr ""
+
+#: ui/message-layer.slint:531
+msgctxt "RecoveryDialog"
+msgid "Recover"
+msgstr ""
+
+#: ui/message-layer.slint:539
+msgctxt "SliceOverwriteDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/message-layer.slint:547
+msgctxt "DiagnosticsDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/message-layer.slint:554
+msgctxt "DiagnosticsDialog"
+msgid "Save…"
+msgstr ""
+
+#: ui/message-layer.slint:562
+msgctxt "DiagnosticLogDialog"
+msgid "Cancel"
+msgstr ""
+
+#: ui/message-layer.slint:569
+msgctxt "DiagnosticLogDialog"
+msgid "Turn on"
+msgstr ""
+
+#: ui/object-list-panel.slint:138
+msgctxt "ObjectList"
+msgid "Scene objects"
+msgstr ""
+
+#: ui/object-list-panel.slint:206
+msgctxt "ObjectList"
+msgid "Scene Objects"
+msgstr ""
+
+#: ui/preferences/appearance.slint:12
+msgctxt "PreferencesPage"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:60
+msgctxt "AppearancePreferences"
+msgid "System"
+msgstr ""
+
+#: ui/preferences/appearance.slint:61
+msgctxt "AppearancePreferences"
+msgid "Light"
+msgstr ""
+
+#: ui/preferences/appearance.slint:62
+msgctxt "AppearancePreferences"
+msgid "Dark"
+msgstr ""
+
+#: ui/preferences/appearance.slint:82 ui/preferences/appearance.slint:93
+msgctxt "AppearancePreferences"
+msgid "Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:106 ui/preferences/appearance.slint:114
+msgctxt "AppearancePreferences"
+msgid "Language"
+msgstr ""
+
+#: ui/preferences/appearance.slint:127
+msgctxt "AppearancePreferences"
+msgid "Show all messages again"
+msgstr ""
+
+#: ui/preferences/appearance.slint:135
+msgctxt "AppearancePreferences"
+msgid "Hidden messages: {}"
+msgstr ""
+
+#: ui/preferences/appearance.slint:142
+msgctxt "AppearancePreferences"
+msgid "Smooth shading on models"
+msgstr ""
+
+#: ui/preferences/appearance.slint:155 ui/preferences/appearance.slint:166
+msgctxt "AppearancePreferences"
+msgid "Gizmo style"
+msgstr ""
+
+#: ui/preferences/appearance.slint:162
+msgctxt "AppearancePreferences"
+msgid "Outline: every handle at once"
+msgstr ""
+
+#: ui/preferences/appearance.slint:163
+msgctxt "AppearancePreferences"
+msgid "Focused: the tool picked on the left rail"
+msgstr ""
+
+#: ui/preferences/appearance.slint:179 ui/preferences/appearance.slint:187
+msgctxt "AppearancePreferences"
+msgid "Gizmo size"
+msgstr ""
+
+#: ui/preferences/appearance.slint:200 ui/preferences/appearance.slint:213
+msgctxt "AppearancePreferences"
+msgid "Frame rate"
+msgstr ""
+
+#: ui/preferences/appearance.slint:207
+msgctxt "AppearancePreferences"
+msgid "Automatic"
+msgstr ""
+
+#: ui/preferences/appearance.slint:208
+msgctxt "AppearancePreferences"
+msgid "30 FPS"
+msgstr ""
+
+#: ui/preferences/appearance.slint:209
+msgctxt "AppearancePreferences"
+msgid "60 FPS"
+msgstr ""
+
+#: ui/preferences/appearance.slint:210
+msgctxt "AppearancePreferences"
+msgid "120 FPS"
+msgstr ""
+
+#: ui/preferences/appearance.slint:222
+msgctxt "AppearancePreferences"
+msgid ""
+"Automatic follows your monitor and uses 30 FPS on battery. The 3D view only "
+"draws when something changes."
+msgstr ""
+
+#: ui/preferences/appearance.slint:232
+msgctxt "AppearancePreferences"
+msgid "Test performance"
+msgstr ""
+
+#: ui/preferences/appearance.slint:240
+msgctxt "AppearancePreferences"
+msgid "Use {} FPS"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:16
+msgctxt "PreferencesWindow"
+msgid "Preferences"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:119
+msgctxt "PreferencesMenu"
+msgid "Preferences Sections"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:121
+msgctxt "PreferencesMenu"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:122
+msgctxt "PreferencesMenu"
+msgid "Printer"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:123
+msgctxt "PreferencesMenu"
+msgid "Resin"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:124
+msgctxt "PreferencesMenu"
+msgid "Slicing"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:125
+msgctxt "PreferencesMenu"
+msgid "Privacy"
+msgstr ""
+
+#: ui/preferences/printer.slint:25
+msgctxt "PreferencesPage"
+msgid "Printer"
+msgstr ""
+
+#: ui/preferences/printer.slint:65
+msgctxt "PreferencesPage"
+msgid "Search models"
+msgstr ""
+
+#: ui/preferences/printer.slint:67
+msgctxt "PreferencesPage"
+msgid "Search printer models"
+msgstr ""
+
+#: ui/preferences/printer.slint:153
+msgctxt "PreferencesPage"
+msgid "No image"
+msgstr ""
+
+#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:237
+msgctxt "PreferencesPage"
+msgid "custom"
+msgstr ""
+
+#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:306
+msgctxt "PreferencesPage"
+msgid "Import package..."
+msgstr ""
+
+#: ui/preferences/printer.slint:199
+msgctxt "PreferencesPage"
+msgid "Export printers..."
+msgstr ""
+
+#: ui/preferences/privacy.slint:10
+msgctxt "PreferencesPage"
+msgid "Privacy"
+msgstr ""
+
+#: ui/preferences/privacy.slint:20
+msgctxt "PrivacyPreferences"
+msgid ""
+"Breadslicer never sends us anything: no logs, no models, no data about you "
+"or about how you use it. Nothing reaches us unless you send it yourself."
+msgstr ""
+
+#: ui/preferences/privacy.slint:26
+msgctxt "PrivacyPreferences"
+msgid "Save a diagnostic log until Breadslicer closes"
+msgstr ""
+
+#: ui/preferences/privacy.slint:39
+msgctxt "PrivacyPreferences"
+msgid ""
+"For a bug report: it writes what the app does (steps, times and errors, "
+"without models, file names or anything you type) to the logs folder on this "
+"computer. It turns off by itself the next time you open Breadslicer."
+msgstr ""
+
+#: ui/preferences/privacy.slint:48
+msgctxt "PrivacyPreferences"
+msgid "Open logs folder"
+msgstr ""
+
+#: ui/preferences/privacy.slint:56
+msgctxt "PrivacyPreferences"
+msgid ""
+"To report a problem, use Help > Export Diagnostics: it saves a file on your "
+"computer that you can attach to the report."
+msgstr ""
+
+#: ui/preferences/resin.slint:48
+msgctxt "PreferencesPage"
+msgid "Resin"
+msgstr ""
+
+#: ui/preferences/resin.slint:120
+msgctxt "PreferencesPage"
+msgid "Search resins"
+msgstr ""
+
+#: ui/preferences/resin.slint:122
+msgctxt "PreferencesPage"
+msgid "Search resins by brand, name or family"
+msgstr ""
+
+#: ui/preferences/resin.slint:139 ui/preferences/resin.slint:283
+msgctxt "PreferencesPage"
+msgid "View"
+msgstr ""
+
+#: ui/preferences/resin.slint:145
+msgctxt "PreferencesPage"
+msgid "Fork..."
+msgstr ""
+
+#: ui/preferences/resin.slint:151
+msgctxt "PreferencesPage"
+msgid "Extend..."
+msgstr ""
+
+#: ui/preferences/resin.slint:157 ui/preferences/resin.slint:289
+msgctxt "PreferencesPage"
+msgid "Edit"
+msgstr ""
+
+#: ui/preferences/resin.slint:163
+msgctxt "PreferencesPage"
+msgid "Delete..."
+msgstr ""
+
+#: ui/preferences/resin.slint:256
+msgctxt "PreferencesPage"
+msgid "No calibration data"
+msgstr ""
+
+#: ui/preferences/resin.slint:258
+msgctxt "PreferencesPage"
+msgid "Generic calibration"
+msgstr ""
+
+#: ui/preferences/resin.slint:259
+msgctxt "PreferencesPage"
+msgid "Calibration: {}"
+msgstr ""
+
+#: ui/preferences/resin.slint:312
+msgctxt "PreferencesPage"
+msgid "Export materials..."
+msgstr ""
+
+#: ui/preferences/slicing.slint:10
+msgctxt "PreferencesPage"
+msgid "Slicing"
+msgstr ""
+
+#: ui/preferences/slicing.slint:24
+msgctxt "SlicingPreferences"
+msgid "Off"
+msgstr ""
+
+#: ui/preferences/slicing.slint:25
+msgctxt "SlicingPreferences"
+msgid "2x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:26
+msgctxt "SlicingPreferences"
+msgid "4x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:27
+msgctxt "SlicingPreferences"
+msgid "8x"
+msgstr ""
+
+#: ui/preferences/slicing.slint:39 ui/preferences/slicing.slint:50
+msgctxt "SlicingPreferences"
+msgid "Anti-aliasing"
 msgstr ""
 
 #: ui/preferences/slicing.slint:59
 msgctxt "SlicingPreferences"
 msgid "Prepare supports in the background"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:60
+msgctxt "ProfileViewDialog"
+msgid "Resin profile"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:222
+msgctxt "ProfileViewDialog"
+msgid "Defaults"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:227
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation x (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:231
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation y (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:235
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation z (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:239 ui/profile-view-dialog.slint:299
+msgctxt "ProfileViewDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:243 ui/profile-view-dialog.slint:303
+msgctxt "ProfileViewDialog"
+msgid "Wait before cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:247 ui/profile-view-dialog.slint:307
+msgctxt "ProfileViewDialog"
+msgid "Wait after cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:251 ui/profile-view-dialog.slint:311
+msgctxt "ProfileViewDialog"
+msgid "Wait after lift (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:255 ui/profile-view-dialog.slint:375
+msgctxt "ProfileViewDialog"
+msgid "Light power (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:259 ui/profile-view-dialog.slint:379
+msgctxt "ProfileViewDialog"
+msgid "Bottom light power (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:277
+msgctxt "ProfileViewDialog"
+msgid "Edit calibration values"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:291
+msgctxt "ProfileViewDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:295
+msgctxt "ProfileViewDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:315
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:319
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:323
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:327
+msgctxt "ProfileViewDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:331
+msgctxt "ProfileViewDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:335
+msgctxt "ProfileViewDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:339
+msgctxt "ProfileViewDialog"
+msgid "Second lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:343
+msgctxt "ProfileViewDialog"
+msgid "Second lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:347
+msgctxt "ProfileViewDialog"
+msgid "Second retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:351
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:355
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:359
+msgctxt "ProfileViewDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:363
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:367
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:371
+msgctxt "ProfileViewDialog"
+msgid "Bottom second retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:400
+msgctxt "ProfileViewDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:407
+msgctxt "ProfileViewDialog"
+msgid "Close"
+msgstr ""
+
+#: ui/slice-control-panel.slint:165
+msgctxt "SlicePanel"
+msgid "Slice setup"
+msgstr ""
+
+#: ui/slice-control-panel.slint:228
+msgctxt "SlicePanel"
+msgid "Print Setup"
+msgstr ""
+
+#: ui/slice-control-panel.slint:242 ui/workspace/inspectors.slint:1765
+msgctxt "SlicePanel"
+msgid "Printer"
+msgstr ""
+
+#: ui/slice-control-panel.slint:259 ui/workspace/inspectors.slint:1776
+msgctxt "SlicePanel"
+msgid "Resin"
+msgstr ""
+
+#: ui/slice-control-panel.slint:276 ui/workspace/inspectors.slint:1787
+msgctxt "SlicePanel"
+msgid "First layer height (mm)"
+msgstr ""
+
+#: ui/slice-control-panel.slint:282 ui/workspace/inspectors.slint:1790
+msgctxt "SlicePanel"
+msgid "from resin profile"
+msgstr ""
+
+#: ui/slice-control-panel.slint:283 ui/workspace/inspectors.slint:1791
+msgctxt "SlicePanel"
+msgid "First layer height in millimetres"
+msgstr ""
+
+#: ui/slice-control-panel.slint:295 ui/workspace/inspectors.slint:1808
+msgctxt "SlicePanel"
+msgid "Slice is up to date."
+msgstr ""
+
+#: ui/slice-control-panel.slint:323 ui/workspace/inspectors.slint:2037
+msgctxt "SlicePanel"
+msgid "Print format"
+msgstr ""
+
+#: ui/slice-view-panel.slint:140
+msgctxt "SliceView"
+msgid "Slice preview"
+msgstr ""
+
+#: ui/slice-view-panel.slint:208
+msgctxt "SliceView"
+msgid "Slice View"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:198
+msgctxt "Review"
+msgid "Add support here"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:205
+msgctxt "Review"
+msgid "Add drain holes…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:222
+msgctxt "Review"
+msgid "No raft"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:230
+msgctxt "Review"
+msgid "Support added."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:231
+msgctxt "Review"
+msgid "Done. Generate the supports again, then slice."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:232
+msgctxt "Review"
+msgid "Drain requested."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:240
+msgctxt "Review"
+msgid "Do not fill"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:241
+msgctxt "Review"
+msgid "Fill on the next slice ({})"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:242
+msgctxt "Review"
+msgid "Fill on the next slice"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:249
+msgctxt "Review"
+msgid "Leave it"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:257
+msgctxt "Review"
+msgid "Marked: the next slice cures this cavity solid."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:375
+msgctxt "Inspector"
+msgid "Does not fit the printer"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:430
+msgctxt "Inspector"
+msgid "ORIENT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:435
+msgctxt "Inspector"
+msgid ""
+"Finds the best way up for printing: fewer supports, less peel force, less "
+"height. Hover an option to see it on the model."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:438
+msgctxt "Inspector"
+msgid "Objective"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:441
+msgctxt "Inspector"
+msgid "Balanced"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:442
+msgctxt "Inspector"
+msgid "Fewer supports"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:443
+msgctxt "Inspector"
+msgid "Lower force"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:444
+msgctxt "Inspector"
+msgid "Faster"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:456 ui/workspace/inspectors.slint:472
+msgctxt "Inspector"
+msgid "Advanced"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:489
+msgctxt "Inspector"
+msgid "Max tilt from now"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:499
+msgctxt "Inspector"
+msgid "Align to the plate"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:507
+msgctxt "Inspector"
+msgid "Weight of supports"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:517
+msgctxt "Inspector"
+msgid "Weight of peel force"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:527
+msgctxt "Inspector"
+msgid "Weight of height"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:537
+msgctxt "Inspector"
+msgid ""
+"180° allows any pose, upside down included. Without aligning, an option "
+"turns about the vertical only to fit the plate."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:540
+msgctxt "Inspector"
+msgid "AUTO-ORIENT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:550
+msgctxt "Inspector"
+msgid "Quick"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:560
+msgctxt "Inspector"
+msgid "Full"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:577
+msgctxt "Inspector"
+msgid "Preparing the model…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:578
+msgctxt "Inspector"
+msgid "Searching…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:579
+msgctxt "Inspector"
+msgid "Refining the best poses…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:580
+msgctxt "Inspector"
+msgid "Judging the finalists…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:589 ui/workspace/inspectors.slint:692
+#: ui/workspace/inspectors.slint:589 ui/workspace/inspectors.slint:692 ui/workspace/inspectors.slint:906
+#: ui/workspace/inspectors.slint:589 ui/workspace/inspectors.slint:692 ui/workspace/inspectors.slint:906 ui/workspace/inspectors.slint:1506
+msgctxt "Inspector"
+msgid "Cancel"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:620
+msgctxt "Inspector"
+msgid "Apply {}"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:621
+msgctxt "Inspector"
+msgid "Apply"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:630 ui/workspace/inspectors.slint:874
+msgctxt "Inspector"
+msgid "Arrange all"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:638
+msgctxt "Inspector"
+msgid "Close"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:682
+msgctxt "Inspector"
+msgid "Repairing…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:699
+msgctxt "Inspector"
+msgid "Show what is left on the model"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:774 ui/workspace/inspectors.slint:1074
+msgctxt "Inspector"
+msgid "MESH CHECK"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:803
+msgctxt "Inspector"
+msgid "OBJECTS"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:807
+msgctxt "Inspector"
+msgid "Open or drop a model to start."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:826
+msgctxt "Inspector"
+msgid "ARRANGE"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:831
+msgctxt "Inspector"
+msgid ""
+"Packs the objects with their supports by their whole shadow: nothing reaches "
+"over another object."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:832
+msgctxt "Inspector"
+msgid ""
+"Packs the objects with their supports by their real shape: a part may reach "
+"over a shorter object, never closer than the gap."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:835
+msgctxt "Inspector"
+msgid "Gap"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:845
+msgctxt "Inspector"
+msgid "Edge margin"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:855
+msgctxt "Inspector"
+msgid "Turn objects to fit"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:863
+msgctxt "Inspector"
+msgid "Shadow only"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:887
+msgctxt "Inspector"
+msgid "Arrange selection"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:896
+msgctxt "Inspector"
+msgid "Max copies"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:897
+msgctxt "Inspector"
+msgid "All that fit"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:906
+msgctxt "Inspector"
+msgid "Fill bed"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:917
+msgctxt "Inspector"
+msgid "Arranging…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:928 ui/workspace/inspectors.slint:935
+msgctxt "Inspector"
+msgid "TRANSFORM"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:930
+msgctxt "Inspector"
+msgid ""
+"Select an object to see its size and to move, rotate or scale it by numbers."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:938
+msgctxt "Inspector"
+msgid ""
+"{} objects selected. Move, rotate or scale them together about their shared "
+"centre with the gizmo, G, R or S. To type values, select one."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:943
+msgctxt "Inspector"
+msgid "MOVE"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:963
+msgctxt "Inspector"
+msgid "Lift (Z)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:974 ui/workspace/inspectors.slint:1529
+msgctxt "Inspector"
+msgid "Drop to plate"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:981
+msgctxt "Inspector"
+msgid "Center"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:991
+msgctxt "Inspector"
+msgid "ROTATE"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1022
+msgctxt "Inspector"
+msgid "Auto-orient"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1032
+msgctxt "Inspector"
+msgid "SIZE"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1036
+msgctxt "Inspector"
+msgid "Width (X)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1044
+msgctxt "Inspector"
+msgid "Depth (Y)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1052
+msgctxt "Inspector"
+msgid "Height (Z)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1069
+msgctxt "Inspector"
+msgid "Sizes scale uniformly, keeping proportions."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1075
+msgctxt "Inspector"
+msgid "No problems"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1133
+msgctxt "Inspector"
+msgid "HOLLOWING"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1134 ui/workspace/inspectors.slint:1470
+msgctxt "Inspector"
+msgid "Working"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1134
+msgctxt "Inspector"
+msgid "Hollow"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1138
+msgctxt "Inspector"
+msgid "Select a model to hollow it."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1141
+msgctxt "Inspector"
+msgid "That is the support mesh; select a model."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1144
+msgctxt "Inspector"
+msgid "Hollow again"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1144
+msgctxt "Inspector"
+msgid "Hollow model"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1157 ui/workspace/inspectors.slint:1498
+msgctxt "Inspector"
+msgid "Starting…"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1175
+msgctxt "Inspector"
+msgid "Show the cavity (live preview)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1182
+msgctxt "Inspector"
+msgid "Make solid again"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1190
+msgctxt "Inspector"
+msgid "WALL"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1194
+msgctxt "Inspector"
+msgid "Wall thickness"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1210
+msgctxt "Inspector"
+msgid "Recommended ({} mm)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1249
+msgctxt "Inspector"
+msgid "Detail (voxel)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1257
+msgctxt "Inspector"
+msgid "Inside"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1260
+msgctxt "Inspector"
+msgid "Empty"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1260
+msgctxt "Inspector"
+msgid "Lattice"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1260
+msgctxt "Inspector"
+msgid "Pillars"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1268
+msgctxt "Inspector"
+msgid "Cell size"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1276
+msgctxt "Inspector"
+msgid "Beam radius"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1286
+msgctxt "Inspector"
+msgid "DRAINS"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1290
+msgctxt "Inspector"
+msgid "Placing drains (D)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1290
+msgctxt "Inspector"
+msgid "Place drains (D)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1299
+msgctxt "Inspector"
+msgid "Radius at the surface"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1299
+msgctxt "Inspector"
+msgid "Drain radius"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1307 ui/workspace/inspectors.slint:1619
+msgctxt "Inspector"
+msgid "Shape"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1310
+msgctxt "Inspector"
+msgid "Cylinder"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1310
+msgctxt "Inspector"
+msgid "Cone"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1318
+msgctxt "Inspector"
+msgid "Radius at the end"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1326
+msgctxt "Inspector"
+msgid "Depth"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1329
+msgctxt "Inspector"
+msgid "Through the wall"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1329
+msgctxt "Inspector"
+msgid "Set"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1337
+msgctxt "Inspector"
+msgid "Depth from the surface"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1345
+msgctxt "Inspector"
+msgid "Make a plug for each new drain"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1352
+msgctxt "Inspector"
+msgid "Plug clearance (across)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1360
+msgctxt "Inspector"
+msgid ""
+"Each drain keeps the shape it was placed with. A plug is a separate part on "
+"the plate, as long as the hole and narrower by the clearance: print it with "
+"the model and close the hole with it after cleaning."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1363
+msgctxt "Inspector"
+msgid "Remove all drains"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1370
+msgctxt "Inspector"
+msgid ""
+"Sealed cavity: resin stays trapped inside and the walls act as a suction "
+"cup. Add at least one drain near the plate."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1373
+msgctxt "Inspector"
+msgid ""
+"Place drains now or after hollowing: click the model's surface with the "
+"drain tool. They are drilled when the model is hollowed."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1376
+msgctxt "Inspector"
+msgid "These drains are drilled when you hollow the model."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1379
+msgctxt "Inspector"
+msgid "Each new drain hollows the model again with it: one undo per drain."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1432 ui/workspace/inspectors.slint:1632
+msgctxt "Inspector"
+msgid "RAFT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1433
+msgctxt "Inspector"
+msgid "Interferes with the model"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1452
+msgctxt "Inspector"
+msgid "No raft"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1460
+msgctxt "Inspector"
+msgid "Generate anyway"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1469
+msgctxt "Inspector"
+msgid "AUTO SUPPORTS"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1474
+msgctxt "Inspector"
+msgid "Preset"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1518
+msgctxt "Inspector"
+msgid "LIFT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1521
+msgctxt "Inspector"
+msgid "Height above plate"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1535
+msgctxt "Inspector"
+msgid ""
+"Room under the model for the supports; moving it again marks them out of "
+"date."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1540
+msgctxt "Inspector"
+msgid "PLACEMENT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1550
+msgctxt "Inspector"
+msgid "Support size"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1553
+msgctxt "Inspector"
+msgid "Detail"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1553
+msgctxt "Inspector"
+msgid "Structure"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1553
+msgctxt "Inspector"
+msgid "Anchor"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1561
+msgctxt "Inspector"
+msgid "Area per support"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1570
+msgctxt "Inspector"
+msgid "Overhang angle"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1579
+msgctxt "Inspector"
+msgid "Size scale"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1587
+msgctxt "Inspector"
+msgid "Smallest island"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1595
+msgctxt "Inspector"
+msgid "Coverage"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1604
+msgctxt "Inspector"
+msgid "Stabilize poses on a point or edge"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1612
+msgctxt "Inspector"
+msgid "Cross-bracing"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1622
+msgctxt "Inspector"
+msgid "Smooth"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1622
+msgctxt "Inspector"
+msgid "Classic"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1636
+msgctxt "Inspector"
+msgid "Bottom"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1639
+msgctxt "Inspector"
+msgid "Solid"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1639
+msgctxt "Inspector"
+msgid "Lines"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1639
+msgctxt "Inspector"
+msgid "Off"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1647
+msgctxt "Inspector"
+msgid "Thickness"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1656
+msgctxt "Inspector"
+msgid "Crenelated wall"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1666
+msgctxt "Inspector"
+msgid "PRESETS"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1671
+msgctxt "Inspector"
+msgid "Name for a new preset"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1677
+msgctxt "Inspector"
+msgid "Save as preset"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1686
+msgctxt "Inspector"
+msgid "Delete"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1693
+msgctxt "Inspector"
+msgid ""
+"Built-in presets cannot be deleted. Presets are saved as TOML files in the "
+"app data folder."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1761
+msgctxt "Inspector"
+msgid "PRINT SETUP"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1813
+msgctxt "Inspector"
+msgid "RESULT"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1815
+msgctxt "Inspector"
+msgid "Sliced"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1815
+msgctxt "Inspector"
+msgid "Not sliced"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1819
+msgctxt "Inspector"
+msgid "Slice to see the layers, the estimates and the checks."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1826
+msgctxt "Inspector"
+msgid "layers"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1830
+msgctxt "Inspector"
+msgid "current layer"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1838
+msgctxt "Inspector"
+msgid "print time"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1842
+msgctxt "Inspector"
+msgid "resin"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1846
+msgctxt "Inspector"
+msgid "weight"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1887
+msgctxt "Review"
+msgid "REVIEW"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1896
+msgctxt "Review"
+msgid "Out of date"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1933
+msgctxt "Review"
+msgid "This slice was not reviewed. Slice again to check it."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1936
+msgctxt "Review"
+msgid "The scene changed since this slice. Slice again to review it."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1976
+msgctxt "Review"
+msgid "Hide the notes"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1976
+msgctxt "Review"
+msgid "Show {n} note"
+msgid_plural "Show {n} notes"
+msgstr[0] ""
+msgstr[1] ""
+
+#: ui/workspace/inspectors.slint:1983
+msgctxt "Review"
+msgid "Fix all ({})"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:1990
+msgctxt "Review"
+msgid "Fill all small traps ({})"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2012
+msgctxt "Review"
+msgid "Click a finding to show its layer and centre the view on it."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2034
+msgctxt "Inspector"
+msgid "PRINTER FILE"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2061
+msgctxt "Inspector"
+msgid "Slice first: the printer file is written from the held slice."
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2066
+msgctxt "Inspector"
+msgid "ALSO"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2069
+msgctxt "Inspector"
+msgid "Save project (.3mf with slices)"
+msgstr ""
+
+#: ui/workspace/inspectors.slint:2077
+msgctxt "Inspector"
+msgid "Export mesh (STL / OBJ / 3MF)"
+msgstr ""
+
+#: ui/workspace/layer-view.slint:95
+msgctxt "LayerView"
+msgid "Fit"
 msgstr ""
