@@ -67,6 +67,7 @@ mod project_profiles;
 mod project_versions;
 mod raft_clash;
 mod reloaded_slices;
+mod repair_marks;
 mod repair_report;
 mod repair_run;
 mod review;

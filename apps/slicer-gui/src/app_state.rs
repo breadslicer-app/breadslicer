@@ -692,7 +692,7 @@ impl AppState {
             ctrl.document(),
         );
         crate::export_print_file::wire_export_print_file(ui, ctrl.clone(), slice_panel.clone());
-        let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs());
+        let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let arrange_run = ArrangeRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());

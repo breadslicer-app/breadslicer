@@ -4688,3 +4688,81 @@ msgstr "Pivote propio de cada objeto ({}: común)"
 msgctxt "MeshViewer"
 msgid "Shared pivot ({}: each object's own)"
 msgstr "Pivote común ({}: el propio de cada objeto)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Show what is left on the model"
+msgstr "Mostrar en el modelo lo que quedó"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking the mesh…"
+msgstr "Revisando la malla…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing broken faces…"
+msgstr "Quitando caras rotas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Welding cracks…"
+msgstr "Soldando grietas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing duplicate faces…"
+msgstr "Quitando caras duplicadas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Separating parts that touch…"
+msgstr "Separando piezas que se tocan…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Filling holes…"
+msgstr "Tapando agujeros…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Turning inside-out shells outward…"
+msgstr "Dando vuelta las cáscaras que estaban al revés…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking that nothing was lost…"
+msgstr "Revisando que no se haya perdido nada…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Orienting faces…"
+msgstr "Orientando caras…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing slivers…"
+msgstr "Quitando astillas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking the result…"
+msgstr "Revisando el resultado…"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{} — {} ({} of {})"
+msgstr "{} — {} ({} de {})"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Check {}: Repair closed large openings, which may be open on purpose."
+msgstr "Revisá {}: Reparar cerró aberturas grandes, que pueden estar abiertas a propósito."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Check: the fills cover {} % of its surface. If it is open on purpose (a plate, a relief without a back), it now prints as a thin solid."
+msgstr "Revisá: lo tapado cubre el {} % de su superficie. Si está abierto a propósito (una placa, un relieve sin fondo), ahora se imprime como un sólido fino."

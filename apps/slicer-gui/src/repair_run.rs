@@ -7,10 +7,13 @@
 //!
 //! The Repair button clones the scene on the UI thread and runs the mesh-core
 //! repair policy on a worker thread so the event loop stays responsive; the
-//! finished result is deposited into a slot and picked up on the UI thread via
-//! `invoke_repair_finished`. No progress bar or cancel: the run is 1 validation
-//! pass per mesh, the same cost the load worker absorbs silently. The notice
-//! that follows shows the report of `repair_report`.
+//! finished result is deposited into the run's own slot and picked up on the
+//! UI thread via `invoke_repair_finished`. While it runs, the MESH CHECK card
+//! shows the step and how far the run is (polled from the worker's watch),
+//! and Cancel (#253): the worker stops at its next step, and nothing it did
+//! is applied. The UI is released at once; a cancelled worker that is still
+//! finishing its step writes into a slot no one reads. The notice that follows
+//! a run shows the report of `repair_report`.
 //!
 //! The window's `repairing-in-progress` property is the single gate: the button
 //! and undo/redo are disabled while it is set (an undo landing mid-run would
@@ -23,18 +26,25 @@
 //! edits (1 undo unit): only meshes the policy actually changed appear in it,
 //! because the driver forks storage on fix so clean and refused targets keep
 //! their Arc identity.
+//!
+//! What a run leaves broken is marked on the model (`repair_marks`), for the
+//! meshes the scene still holds, while the Transform tab shows and the card's
+//! "Show what is left on the model" is on.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::indexed_mesh::repair::RepairEnd;
+use sc_mesh_core::indexed_mesh::repair_progress::{RepairCancelled, RepairStep};
+use sc_mesh_core::transform::Transform3D;
 use sc_scene::mesh_targets::MeshTarget;
-use sc_scene::repair::SceneRepairOutcome;
-use sc_scene::{Scene, SceneError};
+use sc_scene::repair::{SceneRepairOutcome, SceneRepairProgress, SceneRepairWatch};
+use sc_scene::{NodeId, Scene, SceneError};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
@@ -43,11 +53,19 @@ use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts, MessageKey};
 use crate::i18n::ctr;
 use crate::mesh_check::{show_card, target_arc};
 use crate::mesh_loader::panic_message;
-use crate::repair_report::{details_text, left_reason, summary_message, target_names};
+use crate::mesh_render::Overlay;
+use crate::repair_marks::RepairMarks;
+use crate::repair_report::{
+    details_text, left_reason, object_names_by_leaf, summary_message, target_names,
+};
 use crate::scene_document::{
     EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
 };
+use crate::viewport::ViewportController;
 use crate::workspace_section::allows_repair;
+
+/// How often the card reads the worker's progress.
+const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// A mesh the repair run rewrote: the storage place plus the exact Arcs before
 /// and after, ready to become a replace edit.
@@ -79,11 +97,45 @@ impl MeshReplacement {
 struct CompletedRepair {
     outcomes: Vec<SceneRepairOutcome>,
     replacements: Vec<MeshReplacement>,
+    /// What each target that still does not slice has left, to mark on the
+    /// model.
+    marks: Vec<(MeshTarget, Arc<RepairMarks>)>,
     /// How long the whole run took on the worker.
     elapsed: Duration,
 }
 
-type RepairSlot = Arc<Mutex<Option<Result<CompletedRepair, String>>>>;
+/// What the worker deposits: the run, a cancelled run, or a panic.
+type WorkerResult = Result<Result<CompletedRepair, RepairCancelled>, String>;
+
+type RepairSlot = Arc<Mutex<Option<WorkerResult>>>;
+
+/// What the worker tells and the UI thread reads: how far the run is, and
+/// whether to stop.
+#[derive(Default)]
+struct RunWatch {
+    progress: Mutex<Option<SceneRepairProgress>>,
+    cancel: AtomicBool,
+}
+
+impl SceneRepairWatch for RunWatch {
+    fn progress(&self, progress: SceneRepairProgress) {
+        *self.progress.lock().unwrap_or_else(PoisonError::into_inner) = Some(progress);
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// 1 run in flight.
+struct Job {
+    slot: RepairSlot,
+    watch: Arc<RunWatch>,
+    /// Revision captured at launch.
+    revision: SceneRevision,
+    /// The object-list name of each target, in run order, for the card.
+    names: Vec<String>,
+}
 
 /// What `settle` did with a deposited result.
 #[derive(Debug, PartialEq, Eq)]
@@ -98,42 +150,53 @@ enum RepairSettlement {
     Rejected(SceneError),
 }
 
+/// The marks drawn now: per object, its marks and its pose, so a scene event
+/// that moves nothing marked builds nothing.
+type ShownMarks = Vec<(NodeId, Arc<RepairMarks>, Transform3D)>;
+
 pub(crate) struct RepairRun {
     ui: slint::Weak<MainWindow>,
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
-    slot: RepairSlot,
-    // Revision captured at launch; `None` when no run is in flight.
-    pending_revision: RefCell<Option<SceneRevision>>,
-    // Keeps the MESH CHECK card following the scene.
-    _scene_events: SceneSubscription,
+    ctrl: Rc<ViewportController>,
+    job: RefCell<Option<Job>>,
+    poll_timer: slint::Timer,
+    /// Whether the card's "Show what is left on the model" is on.
+    marks_shown: Cell<bool>,
+    shown_marks: RefCell<Option<ShownMarks>>,
+    // Keeps the MESH CHECK card and the marks following the scene.
+    scene_events: RefCell<Option<SceneSubscription>>,
 }
 
 impl RepairRun {
-    /// Wires the Repair / finished callbacks and returns the driver, which the
-    /// caller keeps alive for the window's lifetime.
+    /// Wires the Repair / Cancel / finished callbacks and returns the driver,
+    /// which the caller keeps alive for the window's lifetime.
     pub(crate) fn install(
         ui: &MainWindow,
         document: Rc<SceneDocument>,
         dialogs: Rc<DialogManager>,
+        ctrl: Rc<ViewportController>,
     ) -> Rc<Self> {
-        let scene_events = {
-            let ui = ui.as_weak();
-            let weak_document = Rc::downgrade(&document);
-            document.subscribe(move |event| {
-                if let Some(document) = weak_document.upgrade() {
-                    follow_scene(&ui, &document, event);
-                }
-            })
-        };
         let run = Rc::new(Self {
             ui: ui.as_weak(),
             document,
             dialogs,
-            slot: Arc::new(Mutex::new(None)),
-            pending_revision: RefCell::new(None),
-            _scene_events: scene_events,
+            ctrl,
+            job: RefCell::new(None),
+            poll_timer: slint::Timer::default(),
+            marks_shown: Cell::new(true),
+            shown_marks: RefCell::new(None),
+            scene_events: RefCell::new(None),
         });
+        let scene_events = {
+            let weak = Rc::downgrade(&run);
+            run.document.subscribe(move |event| {
+                if let Some(run) = weak.upgrade() {
+                    run.follow_scene(event);
+                }
+            })
+        };
+        *run.scene_events.borrow_mut() = Some(scene_events);
         {
             let run = run.clone();
             ui.on_repair_requested(move || run.start());
@@ -142,6 +205,18 @@ impl RepairRun {
             let run = run.clone();
             ui.on_repair_finished(move || run.finish());
         }
+        {
+            let run = run.clone();
+            ui.on_repair_cancel(move || run.cancel());
+        }
+        {
+            let run = run.clone();
+            ui.on_repair_marks_toggled(move |on| {
+                run.marks_shown.set(on);
+                run.refresh_marks(true);
+            });
+        }
+        ui.set_repair_marks_shown(true);
         run
     }
 
@@ -158,42 +233,124 @@ impl RepairRun {
         if !allows_repair(ui.get_workspace_section()) {
             return;
         }
-        let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
+        let Some((scene, names)) = self.document.with_scene(|spatial| {
+            let graph = spatial.graph();
+            (graph.clone(), names_in_run_order(graph))
+        }) else {
             return;
         };
-        *self.pending_revision.borrow_mut() = Some(self.document.scene_revision());
+        let slot: RepairSlot = Arc::new(Mutex::new(None));
+        let watch = Arc::new(RunWatch::default());
+        *self.job.borrow_mut() = Some(Job {
+            slot: slot.clone(),
+            watch: watch.clone(),
+            revision: self.document.scene_revision(),
+            names,
+        });
+        ui.set_repair_progress(0.0);
+        ui.set_repair_phase(Default::default());
         ui.set_repairing_in_progress(true);
+        crate::breadcrumbs::started("repair");
+        self.start_poll();
 
-        let slot = self.slot.clone();
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_repair(scene)))
-                    .map_err(|payload| panic_message(&payload));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_repair_watched(scene, watch.as_ref())
+            }))
+            .map_err(|payload| panic_message(&payload));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
             let _ = ui_weak.upgrade_in_event_loop(|ui| ui.invoke_repair_finished());
         });
     }
 
+    /// Shows the worker's progress on the card while the run goes.
+    fn start_poll(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.poll_timer.start(
+            slint::TimerMode::Repeated,
+            PROGRESS_POLL_INTERVAL,
+            move || {
+                if let Some(run) = weak.upgrade() {
+                    run.show_progress();
+                }
+            },
+        );
+    }
+
+    fn show_progress(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let job = self.job.borrow();
+        let Some(job) = job.as_ref() else {
+            return;
+        };
+        let progress = *job
+            .watch
+            .progress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(progress) = progress {
+            ui.set_repair_progress(progress.done);
+            ui.set_repair_phase(phase_text(&progress, &job.names).into());
+        }
+    }
+
+    /// Cancel on the card: the worker stops at its next step, and the scene
+    /// stays exactly as it was (the run works on a clone and applies nothing
+    /// until it is done). The UI is released at once.
+    fn cancel(&self) {
+        let Some(job) = self.job.borrow_mut().take() else {
+            return;
+        };
+        job.watch.cancel.store(true, Ordering::Relaxed);
+        self.poll_timer.stop();
+        crate::breadcrumbs::finished("repair", "cancelled");
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_repairing_in_progress(false);
+        }
+    }
+
     /// Drains the deposited result on the UI thread, applies it when it is
     /// still current, and reports through the info dialog. The tab stays
-    /// Transform; its repair card follows the scene's new health.
+    /// Transform; its repair card follows the scene's new health. A wake-up
+    /// from a cancelled worker finds the run it belongs to gone, and does
+    /// nothing.
     fn finish(&self) {
-        let taken = self
+        let ready = self.job.borrow().as_ref().is_some_and(|job| {
+            job.slot
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some()
+        });
+        if !ready {
+            return;
+        }
+        let Some(job) = self.job.borrow_mut().take() else {
+            return;
+        };
+        self.poll_timer.stop();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_repairing_in_progress(false);
+        }
+        let taken = job
             .slot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        let captured = self.pending_revision.borrow_mut().take();
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_repairing_in_progress(false);
-        }
-        let (Some(result), Some(captured)) = (taken, captured) else {
+        let Some(result) = taken else {
             return;
         };
         let completed = match result {
-            Ok(completed) => completed,
+            Ok(Ok(completed)) => completed,
+            // Only Cancel stops a run, and it takes the job first.
+            Ok(Err(RepairCancelled)) => {
+                crate::breadcrumbs::finished("repair", "cancelled");
+                return;
+            }
             Err(panic) => {
+                crate::breadcrumbs::finished("repair", "crashed");
                 self.dialogs.show_error(move || ErrorTexts {
                     heading: ctr!("RepairDialog", "Repair failed"),
                     context: None,
@@ -203,9 +360,17 @@ impl RepairRun {
                 return;
             }
         };
+        crate::breadcrumbs::finished("repair", "ok");
         // The meshes the run made get their verdicts before they land, so
         // the card, which follows the scene, never checks them again.
         let check = self.document.mesh_check();
+        let marks_of = |target: MeshTarget| {
+            completed
+                .marks
+                .iter()
+                .find(|(t, _)| *t == target)
+                .map(|(_, marks)| marks.clone())
+        };
         for replacement in &completed.replacements {
             if let Some(outcome) = completed
                 .outcomes
@@ -217,9 +382,10 @@ impl RepairRun {
                     outcome_slices(outcome),
                     left_reason(outcome),
                 );
+                check.remember_marks(&replacement.after, marks_of(replacement.target));
             }
         }
-        match settle(&self.document, &completed, captured) {
+        match settle(&self.document, &completed, job.revision) {
             RepairSettlement::DiscardedStale => {
                 self.dialogs.show_info(|| InfoTexts {
                     heading: ctr!("RepairDialog", "Repair discarded"),
@@ -231,9 +397,6 @@ impl RepairRun {
                 });
             }
             RepairSettlement::NothingApplied | RepairSettlement::Applied => {
-                let CompletedRepair {
-                    outcomes, elapsed, ..
-                } = completed;
                 // The Transform tab's repair card follows what the run left:
                 // the live scene now holds the meshes the run ended with, and
                 // a mesh the run left as it was gets what is left on it.
@@ -241,21 +404,31 @@ impl RepairRun {
                     .document
                     .with_scene(|spatial| {
                         let graph = spatial.graph();
-                        for outcome in &outcomes {
+                        for outcome in &completed.outcomes {
                             if let Some(mesh) = target_arc(graph, outcome.target) {
                                 check.remember(
                                     &mesh,
                                     outcome_slices(outcome),
                                     left_reason(outcome),
                                 );
+                                check.remember_marks(&mesh, marks_of(outcome.target));
                             }
                         }
-                        (target_names(&outcomes, graph), check.card(graph, true))
+                        (
+                            target_names(&completed.outcomes, graph),
+                            check.card(graph, true),
+                        )
                     })
                     .unwrap_or_default();
                 if let (Some(ui), Some(card)) = (self.ui.upgrade(), card) {
                     show_card(&ui, &card);
                 }
+                // A new run shows what it left.
+                self.marks_shown.set(true);
+                self.refresh_marks(true);
+                let CompletedRepair {
+                    outcomes, elapsed, ..
+                } = completed;
                 self.dialogs
                     .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
                         heading: ctr!("RepairDialog", "Mesh repair"),
@@ -276,20 +449,206 @@ impl RepairRun {
             }
         }
     }
+
+    /// Keeps the MESH CHECK card and the marks on what the scene holds now:
+    /// an undo that puts a broken mesh back, a deleted or moved object. A
+    /// mesh with no verdict is checked only while the card shows a problem
+    /// (see `mesh_check`).
+    fn follow_scene(&self, event: SceneEvent) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        match event {
+            SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::UndoStackChanged => {
+                let check_unknown = ui.get_mesh_needs_repair();
+                let card = self
+                    .document
+                    .with_scene(|spatial| {
+                        self.document
+                            .mesh_check()
+                            .card(spatial.graph(), check_unknown)
+                    })
+                    .flatten();
+                if let Some(card) = card {
+                    show_card(&ui, &card);
+                }
+                self.refresh_marks(false);
+            }
+            SceneEvent::Cleared => {
+                self.document.mesh_check().forget_all();
+                show_card(&ui, &Default::default());
+                self.refresh_marks(false);
+            }
+            // A new scene gets its card from the load worker's verdicts.
+            SceneEvent::Installed => self.refresh_marks(false),
+            SceneEvent::SelectionChanged | SceneEvent::SliceChanged | SceneEvent::DirtyChanged => {}
+        }
+    }
+
+    /// Hands the viewport the marks of the meshes the scene holds, posed per
+    /// object; with `force` off, only when what they show moved or changed.
+    fn refresh_marks(&self, force: bool) {
+        let check = self.document.mesh_check();
+        // Most scenes have nothing marked: following them walks nothing.
+        let any = check.any_marks();
+        if !any && !force && self.shown_marks.borrow().as_ref().is_none_or(Vec::is_empty) {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_repair_marks_available(false);
+            }
+            return;
+        }
+        let marked: ShownMarks = self
+            .document
+            .with_scene(|spatial| {
+                let graph = spatial.graph();
+                let mut marked = Vec::new();
+                for target in graph.mesh_targets() {
+                    let Some(marks) = target_arc(graph, target).and_then(|m| check.marks_of(&m))
+                    else {
+                        continue;
+                    };
+                    for leaf in graph.leaves_referencing(target) {
+                        if let Ok(world) = graph.world_transform_of(leaf) {
+                            marked.push((leaf, marks.clone(), world));
+                        }
+                    }
+                }
+                marked
+            })
+            .unwrap_or_default();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_repair_marks_available(!marked.is_empty());
+            ui.set_repair_marks_shown(self.marks_shown.get());
+        }
+        let shown = self.marks_shown.get().then_some(marked);
+        let unchanged = match (&*self.shown_marks.borrow(), &shown) {
+            (Some(a), Some(b)) => same_marks(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged && !force {
+            return;
+        }
+        let overlay = shown
+            .as_ref()
+            .filter(|marked| !marked.is_empty())
+            .map(|marked| {
+                let pieces: Vec<_> = marked
+                    .iter()
+                    .flat_map(|(_, marks, world)| marks.overlay(world))
+                    .collect();
+                Overlay::from(pieces)
+            });
+        *self.shown_marks.borrow_mut() = shown;
+        self.ctrl.set_repair_marks(overlay);
+    }
+}
+
+/// Whether 2 lists of posed marks draw the same: the same marks, by
+/// pointer, on the same objects at the same poses.
+fn same_marks(a: &ShownMarks, b: &ShownMarks) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|((la, ma, wa), (lb, mb, wb))| la == lb && Arc::ptr_eq(ma, mb) && wa == wb)
+}
+
+/// The card's line for `progress`: the step, and with several objects which
+/// one, by its object-list name.
+fn phase_text(progress: &SceneRepairProgress, names: &[String]) -> String {
+    let step = step_text(progress.step);
+    if progress.targets < 2 {
+        return step;
+    }
+    let name = names
+        .get(progress.target)
+        .cloned()
+        .unwrap_or_else(|| ctr!("RepairDialog", "Mesh {}", progress.target + 1).to_string());
+    ctr!(
+        "RepairDialog",
+        "{} — {} ({} of {})",
+        step,
+        name,
+        progress.target + 1,
+        progress.targets
+    )
+    .to_string()
+}
+
+fn step_text(step: RepairStep) -> String {
+    match step {
+        RepairStep::Checking => ctr!("RepairDialog", "Checking the mesh…"),
+        RepairStep::RemovingBrokenFaces => ctr!("RepairDialog", "Removing broken faces…"),
+        RepairStep::Welding => ctr!("RepairDialog", "Welding cracks…"),
+        RepairStep::RemovingDuplicates => ctr!("RepairDialog", "Removing duplicate faces…"),
+        RepairStep::SeparatingParts => ctr!("RepairDialog", "Separating parts that touch…"),
+        RepairStep::FillingHoles => ctr!("RepairDialog", "Filling holes…"),
+        RepairStep::TurningShellsOutward => {
+            ctr!("RepairDialog", "Turning inside-out shells outward…")
+        }
+        RepairStep::CheckingRound => ctr!("RepairDialog", "Checking that nothing was lost…"),
+        RepairStep::Orienting => ctr!("RepairDialog", "Orienting faces…"),
+        RepairStep::RemovingSlivers => ctr!("RepairDialog", "Removing slivers…"),
+        RepairStep::CheckingResult => ctr!("RepairDialog", "Checking the result…"),
+    }
+    .to_string()
+}
+
+/// The object-list name of each target of `graph`, in the order a repair
+/// run walks them.
+fn names_in_run_order(graph: &Scene) -> Vec<String> {
+    let by_leaf = object_names_by_leaf(graph);
+    graph
+        .mesh_targets()
+        .into_iter()
+        .enumerate()
+        .map(|(i, target)| {
+            graph
+                .leaves_referencing(target)
+                .into_iter()
+                .find_map(|leaf| by_leaf.get(&leaf).cloned())
+                .unwrap_or_else(|| ctr!("RepairDialog", "Mesh {}", i + 1).to_string())
+        })
+        .collect()
 }
 
 /// Repairs every stored mesh of the cloned scene, on the worker, and derives
 /// the replacements from the Arc diff. The clone shares its mesh storage with
 /// the live scene, so an Arc that survived the run unchanged proves the live
 /// mesh needs no replacing.
-fn run_repair(mut scene: Scene) -> CompletedRepair {
+#[cfg(test)]
+fn run_repair(scene: Scene) -> CompletedRepair {
+    match run_repair_watched(scene, &NoWatch) {
+        Ok(completed) => completed,
+        Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
+    }
+}
+
+/// A watch that never cancels, for tests.
+#[cfg(test)]
+struct NoWatch;
+
+#[cfg(test)]
+impl SceneRepairWatch for NoWatch {
+    fn progress(&self, _progress: SceneRepairProgress) {}
+
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// [`run_repair`] told to `watch`; a cancelled run returns nothing.
+fn run_repair_watched(
+    mut scene: Scene,
+    watch: &dyn SceneRepairWatch,
+) -> Result<CompletedRepair, RepairCancelled> {
     let start = Instant::now();
     let before: Vec<(MeshTarget, Arc<IndexedMesh>)> = scene
         .mesh_targets()
         .into_iter()
         .filter_map(|target| Some((target, target_arc(&scene, target)?)))
         .collect();
-    let outcomes = scene.repair_meshes(RepairPasses::default_repair());
+    let outcomes = scene.repair_meshes_watched(RepairPasses::default_repair(), watch)?;
     let replacements = before
         .into_iter()
         .filter_map(|(target, before_arc)| {
@@ -305,46 +664,27 @@ fn run_repair(mut scene: Scene) -> CompletedRepair {
             }
         })
         .collect();
-    CompletedRepair {
+    let marks = outcomes
+        .iter()
+        .filter_map(|outcome| {
+            let leftovers = outcome.details.leftovers.as_ref()?;
+            let mesh = target_arc(&scene, outcome.target)?;
+            let marks = RepairMarks::of(&mesh, leftovers)?;
+            Some((outcome.target, Arc::new(marks)))
+        })
+        .collect();
+    Ok(CompletedRepair {
         outcomes,
         replacements,
+        marks,
         elapsed: start.elapsed(),
-    }
+    })
 }
 
 /// Whether the mesh an outcome ends with slices, as the MESH CHECK card
 /// counts it: a mesh without faces is no problem.
 fn outcome_slices(outcome: &SceneRepairOutcome) -> bool {
     outcome.report.end == RepairEnd::NoFaces || outcome.details.after.sliceable
-}
-
-/// Keeps the MESH CHECK card on what the scene holds now: an undo that puts
-/// a broken mesh back, a deleted object. A mesh with no verdict is checked
-/// only while the card shows a problem (see `mesh_check`).
-fn follow_scene(ui: &slint::Weak<MainWindow>, document: &SceneDocument, event: SceneEvent) {
-    let Some(ui) = ui.upgrade() else {
-        return;
-    };
-    match event {
-        SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::UndoStackChanged => {
-            let check_unknown = ui.get_mesh_needs_repair();
-            let card = document
-                .with_scene(|spatial| document.mesh_check().card(spatial.graph(), check_unknown))
-                .flatten();
-            if let Some(card) = card {
-                show_card(&ui, &card);
-            }
-        }
-        SceneEvent::Cleared => {
-            document.mesh_check().forget_all();
-            show_card(&ui, &Default::default());
-        }
-        // A new scene gets its card from the load worker's verdicts.
-        SceneEvent::Installed
-        | SceneEvent::SelectionChanged
-        | SceneEvent::SliceChanged
-        | SceneEvent::DirtyChanged => {}
-    }
 }
 
 /// Applies a still-current result to the document: stale results are discarded,
@@ -395,6 +735,7 @@ mod repair_run_tests {
 
     use super::*;
     use crate::mesh_health::scene_slices;
+    use crate::test_support::slint_thread::on_fresh_slint_thread;
 
     /// Returns the shared broken trio as 1 scene: cube and Z-tunnel inline,
     /// Y-tunnel behind a shared resource, plus 1 clean inline cube.
@@ -649,5 +990,234 @@ mod repair_run_tests {
         })
         .unwrap();
         assert!(!doc.can_undo(), "nothing was recorded on the new scene");
+    }
+
+    /// A window with `graph` open and the Repair driver installed.
+    struct Window {
+        window: MainWindow,
+        document: Rc<SceneDocument>,
+        run: Rc<RepairRun>,
+    }
+
+    fn window_with(graph: Scene) -> Window {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        document.install_graph(graph, PathBuf::from("/tmp/repair-run-window.obj"));
+        window.set_workspace_section(crate::WorkspaceSection::Transform);
+        let run = RepairRun::install(&window, document.clone(), ctrl.dialogs(), ctrl);
+        Window {
+            window,
+            document,
+            run,
+        }
+    }
+
+    /// The slot of the run in flight.
+    fn slot_of(run: &RepairRun) -> RepairSlot {
+        run.job
+            .borrow()
+            .as_ref()
+            .expect("a run in flight")
+            .slot
+            .clone()
+    }
+
+    /// Waits until the worker that writes `slot` is done.
+    fn wait_for(slot: &RepairSlot) {
+        let start = Instant::now();
+        while slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none()
+        {
+            assert!(
+                start.elapsed() < Duration::from_secs(120),
+                "the worker hangs"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The `Arc` of every target of the live scene.
+    fn live_arcs(document: &SceneDocument) -> Vec<Arc<IndexedMesh>> {
+        document
+            .with_scene(|spatial| {
+                let graph = spatial.graph();
+                graph
+                    .mesh_targets()
+                    .into_iter()
+                    .filter_map(|t| target_arc(graph, t))
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    /// A flat plate: a hole over the fill cap, left open.
+    fn plate() -> IndexedMesh {
+        let vertices = [
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [10.0, 10.0, 0.0],
+        ]
+        .map(sc_mesh_core::primitives::Vertex::new)
+        .to_vec();
+        let faces = [[0, 1, 2], [2, 1, 3]]
+            .map(sc_mesh_core::primitives::IndexedTriangle::from_raw_indices)
+            .to_vec();
+        IndexedMesh::new(None, vertices, faces)
+    }
+
+    /// Pins Cancel: the card is released at once, the scene keeps every mesh
+    /// it had and nothing reaches the history; the late wake-up of the
+    /// cancelled worker does nothing, not even to the next run.
+    #[test]
+    fn a_cancelled_run_leaves_the_scene_as_it_was_and_its_wake_up_is_ignored() {
+        on_fresh_slint_thread(|| {
+            let w = window_with(broken_trio_scene());
+            let before = live_arcs(&w.document);
+
+            w.run.start();
+            assert!(w.window.get_repairing_in_progress());
+            let cancelled = slot_of(&w.run);
+            w.run.cancel();
+            assert!(!w.window.get_repairing_in_progress());
+            assert!(w.run.job.borrow().is_none());
+
+            // A new run starts while the cancelled worker may still go.
+            w.run.start();
+            assert!(w.window.get_repairing_in_progress());
+            let next = slot_of(&w.run);
+            wait_for(&cancelled);
+            wait_for(&next);
+            // The cancelled worker's wake-up, with the next run's result
+            // held back: the next run goes on, the scene is untouched.
+            let held = next.lock().unwrap().take();
+            w.run.finish();
+            assert!(w.window.get_repairing_in_progress());
+            assert!(w.run.job.borrow().is_some());
+            let after_cancel = live_arcs(&w.document);
+            assert_eq!(after_cancel.len(), before.len());
+            for (a, b) in after_cancel.iter().zip(&before) {
+                assert!(Arc::ptr_eq(a, b), "a cancelled run changed a mesh");
+            }
+            assert!(!w.document.can_undo());
+
+            // The next run's own wake-up applies it, as 1 undo step.
+            *next.lock().unwrap() = held;
+            w.run.finish();
+            assert!(!w.window.get_repairing_in_progress());
+            assert!(w.document.with_scene(|s| scene_slices(s.graph())).unwrap());
+            assert!(w.document.can_undo());
+        });
+    }
+
+    /// Pins the worker side of Cancel: a run told to stop returns no result
+    /// and leaves the scene it was handed as it was.
+    #[test]
+    fn a_cancelled_worker_returns_nothing() {
+        let scene = broken_trio_scene();
+        let watch = RunWatch::default();
+        watch.cancel.store(true, Ordering::Relaxed);
+        assert!(run_repair_watched(scene.clone(), &watch).is_err());
+        assert!(
+            watch.progress.lock().unwrap().is_none(),
+            "a stopped run tells no step"
+        );
+    }
+
+    /// Pins the card's progress line: the step, and with several objects,
+    /// which one.
+    #[test]
+    fn the_progress_line_names_the_step_and_the_object() {
+        let at = |target, targets| SceneRepairProgress {
+            target,
+            targets,
+            step: RepairStep::FillingHoles,
+            done: 0.5,
+        };
+        let names = ["Wolf".to_string(), "Base".to_string()];
+        assert_eq!(phase_text(&at(0, 1), &names), "Filling holes…");
+        assert_eq!(
+            phase_text(&at(1, 2), &names),
+            "Filling holes… — Base (2 of 2)"
+        );
+    }
+
+    /// Pins the marks: after a run that leaves a plate open, the viewport
+    /// marks its outline, follows the object when it moves, hides the marks
+    /// when the card's box is off, and drops them with the mesh.
+    #[test]
+    fn what_a_run_leaves_is_marked_and_follows_the_scene() {
+        on_fresh_slint_thread(|| {
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(plate())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            let w = window_with(graph);
+            assert!(!w.window.get_repair_marks_available());
+
+            w.run.start();
+            wait_for(&slot_of(&w.run));
+            w.run.finish();
+            assert!(w.window.get_repair_marks_available());
+            assert!(w.window.get_repair_marks_shown());
+            let shown = w.run.shown_marks.borrow().clone().expect("marks shown");
+            assert_eq!(shown.len(), 1);
+            assert_eq!(shown[0].0, leaf);
+            assert_eq!(shown[0].2, Transform3D::Identity);
+
+            // The object moves: the marks go with it.
+            let moved = Transform3D::Affine(
+                sc_mesh_core::transform::AffineTransform3D::from_translation([5.0, 0.0, 0.0]),
+            );
+            let edit = SceneEdit::SetLocalTransform {
+                node_id: leaf,
+                before: Transform3D::Identity,
+                after: moved,
+            };
+            w.document.apply_edit(edit.clone()).unwrap();
+            w.document.push_edit(edit);
+            let shown = w.run.shown_marks.borrow().clone().expect("marks shown");
+            assert_eq!(shown[0].2, moved);
+
+            // The box off hides them; the marks stay known.
+            w.window.invoke_repair_marks_toggled(false);
+            assert!(w.run.shown_marks.borrow().is_none());
+            assert!(w.window.get_repair_marks_available());
+            assert!(!w.window.get_repair_marks_shown());
+            w.window.invoke_repair_marks_toggled(true);
+            assert!(w.run.shown_marks.borrow().is_some());
+
+            // Another scene: no marks.
+            w.document
+                .install_graph(Scene::new(), PathBuf::from("/tmp/empty.obj"));
+            assert!(!w.window.get_repair_marks_available());
+            assert!(
+                w.run
+                    .shown_marks
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(Vec::is_empty)
+            );
+        });
+    }
+
+    /// Pins that a run that leaves nothing broken marks nothing.
+    #[test]
+    fn a_run_that_fixes_everything_marks_nothing() {
+        on_fresh_slint_thread(|| {
+            let w = window_with(broken_trio_scene());
+            w.run.start();
+            wait_for(&slot_of(&w.run));
+            w.run.finish();
+            assert!(!w.window.get_repair_marks_available());
+        });
     }
 }

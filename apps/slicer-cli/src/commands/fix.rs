@@ -356,6 +356,7 @@ mod show_zero_area_warnings_tests {
                 stages: Vec::new(),
                 elapsed: std::time::Duration::ZERO,
                 leftovers: None,
+                filled_fraction: None,
             },
         }
     }

@@ -173,6 +173,14 @@ fn mesh_block(outcome: &SceneRepairOutcome, name: &str) -> Option<String> {
             for action in repair_actions(&report.fixes) {
                 lines.push(format!("  - {}", action_text(&action)));
             }
+            if details.filled_a_lot()
+                && let Some(fraction) = details.filled_fraction
+            {
+                lines.push(format!(
+                    "  Check: the fills cover {:.0} % of its surface; if it is open on purpose (a plate, a relief without a back), it now prints as a thin solid",
+                    fraction * 100.0
+                ));
+            }
             if let Some(leftovers) = &details.leftovers {
                 for text in leftover_texts(leftovers) {
                     lines.push(format!("  {text}"));
@@ -343,10 +351,9 @@ fn refusal_text(refusal: &RepairRefusal) -> String {
             "{} coordinates that are not numbers; export the model again from its 3D app.",
             count(errors.len(), "vertex has", "vertices have")
         ),
-        RepairRefusal::UnfixableFaceErrors(errors) => format!(
-            "{} invalid.",
-            count(errors.len(), "face is", "faces are")
-        ),
+        RepairRefusal::UnfixableFaceErrors(errors) => {
+            format!("{} invalid.", count(errors.len(), "face is", "faces are"))
+        }
     }
 }
 
@@ -460,6 +467,7 @@ mod repair_report_tests {
                 stages,
                 elapsed: Duration::from_millis(20),
                 leftovers,
+                filled_fraction: None,
             },
         }
     }
@@ -478,6 +486,7 @@ mod repair_report_tests {
                 added_faces: 40,
                 largest_hole_edges: 40,
                 largest_hole_area_mm2: 3.214,
+                filled_area_mm2: 3.214,
             }],
             figures(20_440, false),
             figures(20_480, true),
@@ -526,6 +535,25 @@ mod repair_report_tests {
     }
 
     #[test]
+    fn fills_over_a_large_share_of_the_surface_ask_for_a_check() {
+        let mut lid = filled_hole();
+        lid.details.filled_fraction = Some(0.17);
+        let text = render(&[lid], &["Bowl"]);
+        assert!(
+            text.contains(
+                "
+  - Filled 1 hole (3.21 mm²)
+  Check: the fills cover 17 % of its surface; if it is open on purpose (a plate, a relief without a back), it now prints as a thin solid
+"
+            ),
+            "{text}"
+        );
+        let mut small = filled_hole();
+        small.details.filled_fraction = Some(0.01);
+        assert!(!render(&[small], &["Wolf"]).contains("Check:"));
+    }
+
+    #[test]
     fn a_clean_scene_says_so_in_1_line() {
         assert_eq!(
             render(&[clean(), clean()], &["A", "B"]),
@@ -557,6 +585,7 @@ mod repair_report_tests {
                     open_edges: 0,
                     tangled_edges: 2,
                 }],
+                edges: Vec::new(),
             }),
         );
         assert_eq!(

@@ -7,11 +7,15 @@
 //! told as actions with counts ([`repair_actions`]); the mesh before and after
 //! (faces, volume, whether it slices); the time of each stage; and, when the
 //! mesh still does not slice, what is left and on which body
-//! ([`Leftovers`]). [`repaired_copy_with_details`] repairs exactly as
+//! ([`Leftovers`]), with its edges, so they can be shown on the model.
+//! [`repaired_copy_with_details`] repairs exactly as
 //! [`repaired_copy`](super::repair::repaired_copy) does and only measures
-//! around it.
+//! around it; [`repaired_copy_watched`] also tells a [`RepairWatch`] how far
+//! it is, and stops when it asks to.
 
 use std::time::{Duration, Instant};
+
+use rayon::prelude::*;
 
 use super::fix::records::MeshFix;
 use super::fix::watertight::leftover_edges;
@@ -20,6 +24,7 @@ use super::repair::{
     MAX_AUTO_FILL_AREA_FRACTION, MeshRepairReport, RepairAssessment, RepairEnd, RepairPasses,
     assess_with_verdict,
 };
+use super::repair_progress::{Progress, RepairCancelled, RepairStep, RepairWatch, Unwatched};
 use crate::shells::{Bodies, BodyKind};
 
 /// A stage of a repair run that can change the mesh, in run order.
@@ -86,9 +91,27 @@ pub struct RepairDetails {
     /// What keeps the mesh from slicing after the run, and where. `None` for
     /// a mesh that slices, and for a refused one (the refusal says why).
     pub leftovers: Option<Leftovers>,
+    /// The share of the surface of the mesh after the run that its hole
+    /// fills cover; `None` when the run filled no hole.
+    pub filled_fraction: Option<f64>,
 }
 
+/// The share of a mesh's surface that hole fills may cover before the
+/// report warns that the model may not be meant to be solid: an open plate
+/// or a relief without a back closes into a thin solid, which slices but is
+/// not what was modelled. The fills of the real broken meshes of the
+/// repair corpus cover at most 1 % of their surface, but for 3 models with
+/// large openings (10 to 37 %).
+pub const LOOKS_OPEN_FILL_FRACTION: f64 = 0.05;
+
 impl RepairDetails {
+    /// Whether the run's fills cover so much of the surface
+    /// ([`LOOKS_OPEN_FILL_FRACTION`]) that the model may be open on purpose.
+    pub fn filled_a_lot(&self) -> bool {
+        self.filled_fraction
+            .is_some_and(|fraction| fraction > LOOKS_OPEN_FILL_FRACTION)
+    }
+
     /// The time spent outside the stages that changed the mesh: checking it
     /// before, between and after them.
     pub fn checking_time(&self) -> Duration {
@@ -110,6 +133,31 @@ pub struct Leftovers {
     pub bodies: usize,
     /// The bodies with something left, in body order.
     pub per_body: Vec<BodyLeftovers>,
+    /// Every edge left, to show on the model: the edges of the holes, then
+    /// the open edges, then the tangled ones.
+    pub edges: Vec<LeftoverEdge>,
+}
+
+/// 1 edge that keeps a mesh from slicing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeftoverEdge {
+    /// Its 2 vertices, in the mesh the run ended with.
+    pub vertices: [u32; 2],
+    pub kind: LeftoverEdgeKind,
+}
+
+/// What is wrong at a [`LeftoverEdge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeftoverEdgeKind {
+    /// On a hole over the fill cap ([`HoleLeft::too_large_to_fill`]): may be
+    /// open on purpose.
+    LargeHole,
+    /// On a hole Repair could not close.
+    Hole,
+    /// An open edge on no closed hole.
+    Open,
+    /// An edge with more than 2 faces, or with 2 that wind the same way.
+    Tangled,
 }
 
 /// What is left on 1 body of a mesh.
@@ -284,7 +332,25 @@ pub fn repaired_copy_with_details(
     mesh: &IndexedMesh,
     passes: RepairPasses,
 ) -> (MeshRepairReport, Option<IndexedMesh>, RepairDetails) {
+    match repaired_copy_watched(mesh, passes, &Unwatched) {
+        Ok(repaired) => repaired,
+        // An unwatched run is never cancelled.
+        Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
+    }
+}
+
+/// [`repaired_copy_with_details`], telling `watch` each step and how far
+/// the run is, and stopping before a step when it asks to. A run that stops
+/// returns [`RepairCancelled`] and drops its copy: `mesh` is never touched.
+/// Watching changes nothing the run does.
+pub fn repaired_copy_watched(
+    mesh: &IndexedMesh,
+    passes: RepairPasses,
+    watch: &dyn RepairWatch,
+) -> Result<(MeshRepairReport, Option<IndexedMesh>, RepairDetails), RepairCancelled> {
     let start = Instant::now();
+    let progress = Progress::of(watch);
+    progress.step(RepairStep::Checking, 0.0)?;
     let (assessment, sliceable_before) = assess_with_verdict(mesh, passes, false);
     let before = figures(mesh, sliceable_before);
     let mut stages = Vec::new();
@@ -312,11 +378,12 @@ pub fn repaired_copy_with_details(
         ),
         RepairAssessment::Work => {
             let mut copy = mesh.clone();
-            let report = copy.repair_timed(passes, &mut stages);
+            let report = copy.repair_timed(passes, &mut stages, progress.part(RUN_FROM, RUN_TO))?;
             let changed = !report.fixes.is_empty();
             (report, changed.then_some(copy))
         }
     };
+    progress.step(RepairStep::CheckingResult, RUN_TO)?;
     let after = match (&repaired, &report.end) {
         (Some(copy), RepairEnd::Completed(state)) => figures(
             copy,
@@ -333,14 +400,57 @@ pub fn repaired_copy_with_details(
         }
         _ => None,
     };
+    let filled_area: f64 = report
+        .fixes
+        .iter()
+        .map(|fix| match fix {
+            MeshFix::FilledHoles {
+                filled_area_mm2, ..
+            } => *filled_area_mm2,
+            _ => 0.0,
+        })
+        .sum();
+    let filled_fraction = match &repaired {
+        Some(copy) if filled_area > 0.0 => Some(filled_area / surface_area(copy).max(filled_area)),
+        _ => None,
+    };
     let details = RepairDetails {
         before,
         after,
         stages,
         elapsed: start.elapsed(),
         leftovers,
+        filled_fraction,
     };
-    (report, repaired, details)
+    Ok((report, repaired, details))
+}
+
+/// The share of a watched run where the passes start and end: the checks
+/// before and after take the rest.
+const RUN_FROM: f32 = 0.03;
+const RUN_TO: f32 = 0.95;
+
+/// The area of the surface of `mesh`, in mm².
+fn surface_area(mesh: &IndexedMesh) -> f64 {
+    let at = |v: crate::primitives::VertexIndex| {
+        mesh.vertices
+            .get(v.get() as usize)
+            .map_or([0.0; 3], |p| p.coords().map(f64::from))
+    };
+    mesh.faces
+        .par_iter()
+        .map(|face| {
+            let [a, b, c] = face.vertices.map(at);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            0.5 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt()
+        })
+        .sum()
 }
 
 /// The figures of `mesh`, whose verdict the caller knows.
@@ -376,24 +486,42 @@ fn find_leftovers(mesh: &IndexedMesh) -> Leftovers {
         })
         .collect();
     let surface = edges.mesh_area;
+    let mut marks = Vec::new();
     for hole in &edges.loops {
-        per_body[bodies.of(hole.face) as usize]
-            .holes
-            .push(HoleLeft {
-                edges: hole.edges,
-                area_mm2: hole.area,
-                surface_fraction: if surface > 0.0 {
-                    hole.area / surface
-                } else {
-                    1.0
-                },
-            });
+        let left = HoleLeft {
+            edges: hole.edges,
+            area_mm2: hole.area,
+            surface_fraction: if surface > 0.0 {
+                hole.area / surface
+            } else {
+                1.0
+            },
+        };
+        let kind = if left.too_large_to_fill() {
+            LeftoverEdgeKind::LargeHole
+        } else {
+            LeftoverEdgeKind::Hole
+        };
+        let ring = &hole.vertices;
+        marks.extend((0..ring.len()).map(|i| LeftoverEdge {
+            vertices: [ring[i], ring[(i + 1) % ring.len()]],
+            kind,
+        }));
+        per_body[bodies.of(hole.face) as usize].holes.push(left);
     }
-    for &face in &edges.open {
+    for &(face, vertices) in &edges.open {
         per_body[bodies.of(face) as usize].open_edges += 1;
+        marks.push(LeftoverEdge {
+            vertices,
+            kind: LeftoverEdgeKind::Open,
+        });
     }
-    for &face in &edges.tangled {
+    for &(face, vertices) in &edges.tangled {
         per_body[bodies.of(face) as usize].tangled_edges += 1;
+        marks.push(LeftoverEdge {
+            vertices,
+            kind: LeftoverEdgeKind::Tangled,
+        });
     }
     for body in &mut per_body {
         body.holes.sort_by(|a, b| b.area_mm2.total_cmp(&a.area_mm2));
@@ -402,5 +530,6 @@ fn find_leftovers(mesh: &IndexedMesh) -> Leftovers {
     Leftovers {
         bodies: bodies.count(),
         per_body,
+        edges: marks,
     }
 }
