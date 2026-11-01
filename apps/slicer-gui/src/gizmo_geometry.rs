@@ -18,6 +18,11 @@
 //! - [`build_ring_geometry`]: the full rotate ring around +X.
 //! - [`build_scale_cube_geometry`]: the per-axis scale cube.
 //! - [`build_centre_ball_geometry`]: the uniform-scale ball at the pivot.
+//! - [`build_plane_geometry`]: the square of a plane handle (#207).
+//! - [`build_stalk_geometry`]: the thin shaft that carries a scale cube in
+//!   the focused style (#274).
+//!
+//! Every builder takes the [`Metrics`] of a gizmo style.
 //! - [`build_rotate_marks`]: while rotating, the swept slice, the ticks every
 //!   15° and the start and end spokes, built per frame.
 
@@ -25,11 +30,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
 use crate::gizmo::axis::{Axis, axis_basis};
-use crate::gizmo::dimensions::{
-    AXIS_SCALE_CUBE_PIXELS, CENTRE_BALL_PIXELS, CONE_BASE_X, CONE_RADIUS_PIXELS, CONE_TIP_X,
-    MIDPOINT_FRACTION, RING_TUBE_PIXELS, ROTATE_ARC_RADIUS_FRACTION, SHAFT_RADIUS_PIXELS,
-    SHAFT_START_PIXELS, px,
-};
+use crate::gizmo::dimensions::{CONE_BASE_X, SHAFT_START_PIXELS, px};
+use crate::gizmo::look::Metrics;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
@@ -65,8 +67,8 @@ const RING_TUBE_SIDES: u32 = 10;
 const BALL_RINGS: u32 = 10;
 const BALL_SEGMENTS: u32 = 16;
 
-/// Major (circle) radius of the rotate ring in handle-local space.
-pub(crate) const RING_RADIUS_LOCAL: f32 = ROTATE_ARC_RADIUS_FRACTION;
+/// Segments of each rounded corner of a plane square.
+const PLANE_CORNER_SEGMENTS: u32 = 6;
 
 /// The swept slice reaches this far toward the ring.
 const WEDGE_RADIUS_FRACTION: f32 = 0.97;
@@ -75,14 +77,14 @@ const WEDGE_SEGMENTS_PER_RADIAN: f32 = 20.0;
 
 /// Builds the move arrow along +X: a shaft from just past the centre ball to
 /// the cone base, then a cone to the tip. Both pieces are closed.
-pub(crate) fn build_arrow_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_arrow_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
     // Shaft: a ring at the start (with its cap) and one at the cone base. The
     // start ring grows backward as well as outward, so the cap stays flat.
     let start = px(SHAFT_START_PIXELS);
-    let radius = px(SHAFT_RADIUS_PIXELS);
+    let radius = px(m.shaft_radius_px);
     let ring_dir = |i: u32| {
         let theta = i as f32 / SHAFT_SIDES as f32 * std::f32::consts::TAU;
         Vec3::new(0.0, theta.cos(), theta.sin())
@@ -112,8 +114,8 @@ pub(crate) fn build_arrow_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 
     // Cone: base ring, base centre and apex. The offsets move the slanted
     // side and the base plane each by one unit (see `cone_offsets`).
-    let cone_len = CONE_TIP_X - CONE_BASE_X;
-    let cone_r = px(CONE_RADIUS_PIXELS);
+    let cone_len = m.cone_tip - CONE_BASE_X;
+    let cone_r = px(m.cone_radius_px);
     let (rim_axial, rim_radial, apex_axial) = cone_offsets(cone_r, cone_len);
     let base = vertices.len() as u32;
     for i in 0..CONE_SIDES {
@@ -128,7 +130,7 @@ pub(crate) fn build_arrow_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     vertices.push(GizmoVertex::new(Vec3::new(CONE_BASE_X, 0.0, 0.0), -Vec3::X));
     let apex = vertices.len() as u32;
     vertices.push(GizmoVertex::new(
-        Vec3::new(CONE_TIP_X, 0.0, 0.0),
+        Vec3::new(m.cone_tip, 0.0, 0.0),
         Vec3::X * apex_axial,
     ));
     for i in 0..CONE_SIDES {
@@ -149,14 +151,14 @@ fn cone_offsets(r: f32, len: f32) -> (f32, f32, f32) {
 
 /// Builds the full rotate ring around +X: a torus in the YZ plane with the
 /// ring radius and a tube of `RING_TUBE_PIXELS`.
-pub(crate) fn build_ring_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
-    let tube = px(RING_TUBE_PIXELS);
+pub(crate) fn build_ring_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
+    let tube = px(m.ring_tube_px);
     let mut vertices = Vec::with_capacity((RING_SEGMENTS * RING_TUBE_SIDES) as usize);
     let mut indices = Vec::with_capacity((RING_SEGMENTS * RING_TUBE_SIDES * 6) as usize);
     for i in 0..RING_SEGMENTS {
         let phi = i as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
         let radial = Vec3::new(0.0, phi.cos(), phi.sin());
-        let centre = radial * RING_RADIUS_LOCAL;
+        let centre = radial * m.ring_radius;
         for j in 0..RING_TUBE_SIDES {
             let theta = j as f32 / RING_TUBE_SIDES as f32 * std::f32::consts::TAU;
             let normal = radial * theta.cos() + Vec3::X * theta.sin();
@@ -179,9 +181,9 @@ pub(crate) fn build_ring_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 
 /// Builds the per-axis scale cube: an axis-aligned cube centred on the shaft at
 /// `MIDPOINT_FRACTION`, `AXIS_SCALE_CUBE_PIXELS` on a side.
-pub(crate) fn build_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
-    let centre = Vec3::new(MIDPOINT_FRACTION, 0.0, 0.0);
-    let h = px(AXIS_SCALE_CUBE_PIXELS) * 0.5;
+pub(crate) fn build_scale_cube_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
+    let centre = Vec3::new(m.cube_at, 0.0, 0.0);
+    let h = px(m.cube_px) * 0.5;
     let corners = [
         Vec3::new(-1.0, -1.0, -1.0),
         Vec3::new(1.0, -1.0, -1.0),
@@ -209,8 +211,8 @@ pub(crate) fn build_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 }
 
 /// Builds the uniform-scale ball at the pivot.
-pub(crate) fn build_centre_ball_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
-    let r = px(CENTRE_BALL_PIXELS);
+pub(crate) fn build_centre_ball_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
+    let r = px(m.ball_px);
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     vertices.push(GizmoVertex::new(Vec3::Z * r, Vec3::Z));
@@ -243,6 +245,80 @@ pub(crate) fn build_centre_ball_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
+/// Builds the square of a plane handle in the handle-local YZ plane (normal
+/// +X): centred `plane_offset_px` out along +Y and +Z, `plane_size_px` on a
+/// side, with corners of `plane_round_px`. Both faces are drawn, and the
+/// offsets of the rim grow the square in its plane, so the outline is the
+/// same square grown by its width, its corners rounded by as much more.
+pub(crate) fn build_plane_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
+    let centre = Vec3::new(0.0, px(m.plane_offset_px), px(m.plane_offset_px));
+    let half = px(m.plane_size_px) * 0.5;
+    let round = px(m.plane_round_px).min(half);
+    let mut vertices = vec![GizmoVertex::new(centre, Vec3::ZERO)];
+    // The corners, counter-clockwise from (+Y, +Z), each with its quarter.
+    let inner = half - round;
+    for (k, (sy, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let corner = centre + Vec3::new(0.0, sy * inner, sz * inner);
+        if round <= 0.0 {
+            // A sharp corner moves along its diagonal, so both edges move
+            // by one unit.
+            vertices.push(GizmoVertex::new(corner, Vec3::new(0.0, sy, sz)));
+            continue;
+        }
+        let a0 = k as f32 * std::f32::consts::FRAC_PI_2;
+        for i in 0..=PLANE_CORNER_SEGMENTS {
+            let a = a0 + std::f32::consts::FRAC_PI_2 * i as f32 / PLANE_CORNER_SEGMENTS as f32;
+            let normal = Vec3::new(0.0, a.cos(), a.sin());
+            vertices.push(GizmoVertex::new(corner + normal * round, normal));
+        }
+    }
+    let rim = vertices.len() as u32 - 1;
+    let mut indices = Vec::with_capacity(rim as usize * 6);
+    for i in 0..rim {
+        let (a, b) = (1 + i, 1 + (i + 1) % rim);
+        indices.extend_from_slice(&[0, a, b, 0, b, a]);
+    }
+    (vertices, indices)
+}
+
+/// Builds the thin shaft from the centre ball to the scale cube, for a style
+/// whose cubes stand alone at the tips (`stalk_radius_px > 0`): a closed
+/// cylinder like the shaft of the arrow.
+pub(crate) fn build_stalk_geometry(m: &Metrics) -> (Vec<GizmoVertex>, Vec<u32>) {
+    let start = px(SHAFT_START_PIXELS);
+    let end = (m.cube_at - px(m.cube_px) * 0.5).max(start);
+    let radius = px(m.stalk_radius_px.max(0.5));
+    let ring_dir = |i: u32| {
+        let theta = i as f32 / SHAFT_SIDES as f32 * std::f32::consts::TAU;
+        Vec3::new(0.0, theta.cos(), theta.sin())
+    };
+    let mut vertices = Vec::new();
+    for (x, cap) in [(start, -Vec3::X), (end, Vec3::X)] {
+        for i in 0..SHAFT_SIDES {
+            let r = ring_dir(i);
+            vertices.push(GizmoVertex::new(
+                Vec3::new(x, 0.0, 0.0) + r * radius,
+                r + cap,
+            ));
+        }
+    }
+    let caps = vertices.len() as u32;
+    vertices.push(GizmoVertex::new(Vec3::new(start, 0.0, 0.0), -Vec3::X));
+    vertices.push(GizmoVertex::new(Vec3::new(end, 0.0, 0.0), Vec3::X));
+    let mut indices = Vec::new();
+    for i in 0..SHAFT_SIDES {
+        let next = (i + 1) % SHAFT_SIDES;
+        let (a0, a1, b0, b1) = (i, next, SHAFT_SIDES + i, SHAFT_SIDES + next);
+        indices.extend_from_slice(&[a0, b1, b0, a0, a1, b1]);
+        indices.extend_from_slice(&[caps, a1, a0]);
+        indices.extend_from_slice(&[caps + 1, b0, b1]);
+    }
+    (vertices, indices)
+}
+
 /// The marks of a turn in progress, as plain triangle lists in world-aligned
 /// handle-local space (no per-axis rotation).
 #[derive(Debug, Default)]
@@ -257,18 +333,30 @@ pub(crate) struct RotateMarks {
 /// Builds the marks of a turn around `axis` that started at `start` (the
 /// cursor angle at press, in the basis of `axis_basis`) and has turned
 /// `sweep` radians so far. The slice shows at most one full turn.
-pub(crate) fn build_rotate_marks(axis: Axis, start: f32, sweep: f32) -> RotateMarks {
+pub(crate) fn build_rotate_marks(
+    axis: Axis,
+    start: f32,
+    sweep: f32,
+    ring_radius: f32,
+) -> RotateMarks {
     let (u, v) = axis_basis(axis);
-    build_ring_marks(u, v, start, sweep)
+    build_ring_marks(u, v, start, sweep, ring_radius)
 }
 
 /// [`build_rotate_marks`] for a ring in the plane of the unit vectors `u` and
 /// `v` (the turn grows from `u` toward `v`): the screen ring of a modal R
-/// without an axis lies in the camera plane.
-pub(crate) fn build_ring_marks(u: Vec3, v: Vec3, start: f32, sweep: f32) -> RotateMarks {
+/// without an axis lies in the camera plane. `ring_radius` is the ring's, in
+/// handle-local units.
+pub(crate) fn build_ring_marks(
+    u: Vec3,
+    v: Vec3,
+    start: f32,
+    sweep: f32,
+    ring_radius: f32,
+) -> RotateMarks {
     let dir = |a: f32| u * a.cos() + v * a.sin();
     let tangent = |a: f32| -u * a.sin() + v * a.cos();
-    let r = RING_RADIUS_LOCAL;
+    let r = ring_radius;
     let mut out = RotateMarks::default();
 
     let shown = sweep.clamp(-std::f32::consts::TAU, std::f32::consts::TAU);
@@ -298,7 +386,7 @@ pub(crate) fn build_ring_marks(u: Vec3, v: Vec3, start: f32, sweep: f32) -> Rota
             p(r0, 1.0),
         ]);
     };
-    let tick_from = r + px(RING_TUBE_PIXELS + 4.0);
+    let tick_from = r + px(5.5);
     for t in 0..24 {
         let major = t % 6 == 0;
         let a = start + t as f32 * std::f32::consts::PI / 12.0;
@@ -314,7 +402,75 @@ pub(crate) fn build_ring_marks(u: Vec3, v: Vec3, start: f32, sweep: f32) -> Rota
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gizmo::dimensions::{
+        AXIS_SCALE_CUBE_PIXELS, CENTRE_BALL_PIXELS, CONE_RADIUS_PIXELS, CONE_TIP_X,
+        MIDPOINT_FRACTION, RING_TUBE_PIXELS, ROTATE_ARC_RADIUS_FRACTION,
+    };
+    use crate::gizmo::look::{FOCUSED_METRICS, OUTLINE_METRICS as B};
     use float_cmp::assert_approx_eq;
+
+    const RING_RADIUS_LOCAL: f32 = ROTATE_ARC_RADIUS_FRACTION;
+
+    #[test]
+    fn a_plane_square_sits_between_its_two_axes_with_both_faces() {
+        for m in [&B, &FOCUSED_METRICS] {
+            let (v, i) = build_plane_geometry(m);
+            assert_indices_in_bounds(&v, &i);
+            let half = px(m.plane_size_px) * 0.5;
+            let off = px(m.plane_offset_px);
+            for x in &v {
+                let p = Vec3::from(x.position);
+                assert_eq!(p.x, 0.0);
+                assert!((p.y - off).abs() <= half + 1e-6 && (p.z - off).abs() <= half + 1e-6);
+            }
+            // Every triangle is there facing each way.
+            let facing = |tri: &[u32]| {
+                let (a, b, c) = (pos(&v, tri[0]), pos(&v, tri[1]), pos(&v, tri[2]));
+                (b - a).cross(c - a).x
+            };
+            let front = i.chunks(3).filter(|t| facing(t) > 0.0).count();
+            let back = i.chunks(3).filter(|t| facing(t) < 0.0).count();
+            assert_eq!(front, back);
+            // Grown by d, the square is d larger on every side.
+            let d = 0.01;
+            let g = grown(&v, d);
+            let max_y = g.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            assert_approx_eq!(f32, max_y, off + half + d, epsilon = 1e-5);
+        }
+    }
+
+    #[test]
+    fn the_focused_stalk_runs_from_the_centre_to_its_cube() {
+        let m = FOCUSED_METRICS;
+        let (v, i) = build_stalk_geometry(&m);
+        assert_indices_in_bounds(&v, &i);
+        let max = v.iter().map(|x| x.position[0]).fold(f32::MIN, f32::max);
+        assert_approx_eq!(f32, max, m.cube_at - px(m.cube_px) * 0.5, epsilon = 1e-6);
+        let (cube, _) = build_scale_cube_geometry(&m);
+        let cube_max = cube.iter().map(|x| x.position[0]).fold(f32::MIN, f32::max);
+        assert_approx_eq!(
+            f32,
+            cube_max,
+            m.cube_at + px(m.cube_px) * 0.5,
+            epsilon = 1e-6
+        );
+    }
+
+    #[test]
+    fn the_focused_arrow_is_thicker_and_its_ring_larger() {
+        let radial = |p: Vec3| p.y.hypot(p.z);
+        let widest = |v: &[GizmoVertex]| {
+            v.iter()
+                .map(|x| radial(Vec3::from(x.position)))
+                .fold(0.0, f32::max)
+        };
+        let (b, _) = build_arrow_geometry(&B);
+        let (c, _) = build_arrow_geometry(&FOCUSED_METRICS);
+        assert!(widest(&c) > widest(&b));
+        let (rb, _) = build_ring_geometry(&B);
+        let (rc, _) = build_ring_geometry(&FOCUSED_METRICS);
+        assert!(widest(&rc) > widest(&rb));
+    }
 
     fn pos(v: &[GizmoVertex], i: u32) -> Vec3 {
         Vec3::from(v[i as usize].position)
@@ -351,7 +507,7 @@ mod tests {
 
     #[test]
     fn arrow_runs_from_past_the_centre_to_the_tip_and_faces_out() {
-        let (v, i) = build_arrow_geometry();
+        let (v, i) = build_arrow_geometry(&B);
         assert_indices_in_bounds(&v, &i);
         let xs: Vec<f32> = v.iter().map(|x| x.position[0]).collect();
         let min = xs.iter().copied().fold(f32::MAX, f32::min);
@@ -372,7 +528,7 @@ mod tests {
 
     #[test]
     fn arrow_is_a_three_pixel_line_with_a_thirteen_pixel_cone() {
-        let (v, _) = build_arrow_geometry();
+        let (v, _) = build_arrow_geometry(&B);
         let radial = |p: Vec3| p.y.hypot(p.z);
         let shaft = v
             .iter()
@@ -393,7 +549,7 @@ mod tests {
     fn the_outline_grows_the_cone_side_and_base_by_the_same_width() {
         // The grown cone's slanted side and base each sit `d` from the drawn
         // ones, so the outline is even all round.
-        let (v, _) = build_arrow_geometry();
+        let (v, _) = build_arrow_geometry(&B);
         let d = 0.01;
         let r = px(CONE_RADIUS_PIXELS);
         let len = CONE_TIP_X - CONE_BASE_X;
@@ -410,7 +566,7 @@ mod tests {
 
     #[test]
     fn ring_is_a_full_circle_with_a_three_pixel_tube() {
-        let (v, i) = build_ring_geometry();
+        let (v, i) = build_ring_geometry(&B);
         assert_indices_in_bounds(&v, &i);
         for x in &v {
             let p = Vec3::from(x.position);
@@ -438,7 +594,7 @@ mod tests {
 
     #[test]
     fn cube_sits_on_the_shaft_and_faces_out() {
-        let (v, i) = build_scale_cube_geometry();
+        let (v, i) = build_scale_cube_geometry(&B);
         assert_indices_in_bounds(&v, &i);
         let centre = Vec3::new(MIDPOINT_FRACTION, 0.0, 0.0);
         let mean = v.iter().map(|x| Vec3::from(x.position)).sum::<Vec3>() / v.len() as f32;
@@ -457,7 +613,7 @@ mod tests {
 
     #[test]
     fn centre_ball_is_round_and_faces_out() {
-        let (v, i) = build_centre_ball_geometry();
+        let (v, i) = build_centre_ball_geometry(&B);
         assert_indices_in_bounds(&v, &i);
         for x in &v {
             assert_approx_eq!(
@@ -472,7 +628,8 @@ mod tests {
 
     #[test]
     fn rotate_marks_sweep_from_the_start_angle() {
-        let marks = build_rotate_marks(Axis::Z, 0.0, std::f32::consts::FRAC_PI_2);
+        let marks =
+            build_rotate_marks(Axis::Z, 0.0, std::f32::consts::FRAC_PI_2, RING_RADIUS_LOCAL);
         assert!(!marks.wedge.is_empty());
         assert_eq!(marks.wedge.len() % 3, 0);
         // The slice lies in the XY plane (Z ring), from +X to +Y.
@@ -492,9 +649,13 @@ mod tests {
 
     #[test]
     fn rotate_marks_show_no_slice_before_turning_and_at_most_one_turn() {
-        assert!(build_rotate_marks(Axis::X, 0.3, 0.0).wedge.is_empty());
-        let many = build_rotate_marks(Axis::X, 0.0, 5.0 * std::f32::consts::TAU);
-        let one = build_rotate_marks(Axis::X, 0.0, std::f32::consts::TAU);
+        assert!(
+            build_rotate_marks(Axis::X, 0.3, 0.0, RING_RADIUS_LOCAL)
+                .wedge
+                .is_empty()
+        );
+        let many = build_rotate_marks(Axis::X, 0.0, 5.0 * std::f32::consts::TAU, RING_RADIUS_LOCAL);
+        let one = build_rotate_marks(Axis::X, 0.0, std::f32::consts::TAU, RING_RADIUS_LOCAL);
         assert_eq!(many.wedge.len(), one.wedge.len());
     }
 
@@ -505,7 +666,7 @@ mod tests {
         for axis in [Axis::X, Axis::Y, Axis::Z] {
             let (u, v) = axis_basis(axis);
             let a = 1.0;
-            let marks = build_rotate_marks(axis, 0.0, a);
+            let marks = build_rotate_marks(axis, 0.0, a, RING_RADIUS_LOCAL);
             let spoke = &marks.marks[marks.marks.len() - 6..];
             let tip = (Vec3::from(spoke[1].position) + Vec3::from(spoke[2].position)) * 0.5;
             let expected = (u * a.cos() + v * a.sin()) * RING_RADIUS_LOCAL;

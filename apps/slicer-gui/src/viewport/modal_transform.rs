@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 //! Cursor-driven modal transform math, independent of the UI and document.
 //! Ctrl snaps the gesture to steps and Shift slows it down (#275), as in the
-//! gizmo drags.
+//! gizmo drags. With several objects selected, pressing R or S again turns or
+//! scales each object about its own pivot instead of the shared one (#218).
 use glam::Vec3;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -55,6 +56,9 @@ pub(super) struct ModalGesture {
     pub modifiers: DragModifiers,
     /// The scale factor applied so far (1 until an S gesture moves).
     pub factor: f32,
+    /// With several objects selected, whether each one turns or scales
+    /// about its own pivot (R R, S S) rather than the shared one (#218).
+    pub individual: bool,
 }
 impl ModalGesture {
     /// The turn an R gesture has applied so far, in radians, right-handed
@@ -98,6 +102,28 @@ impl ModalGesture {
             return 0.0;
         }
         d.dot(v).atan2(d.dot(u))
+    }
+
+    /// The turn or scale the gesture applies so far, about the origin: what
+    /// each object of a group turning or scaling about its own pivot gets
+    /// about that pivot (#218). `None` for a move.
+    pub(super) fn linear_delta(&self) -> Option<AffineTransform3D> {
+        match self.op {
+            ModalOp::Move => None,
+            ModalOp::Rotate => AffineTransform3D::from_axis_angle(
+                self.turn_axis().to_array().map(f64::from),
+                f64::from(self.applied_turn()),
+            )
+            .ok(),
+            ModalOp::Scale => Some(match self.axis {
+                Some(axis) => {
+                    let mut factors = [1.0; 3];
+                    factors[axis] = f64::from(self.factor);
+                    AffineTransform3D::from_non_uniform_scale(factors)
+                }
+                None => AffineTransform3D::from_uniform_scale(f64::from(self.factor)),
+            }),
+        }
     }
 
     pub(super) fn world_translation(&self, local: Transform3D, delta: Vec3) -> Option<Transform3D> {
@@ -206,6 +232,25 @@ impl ModalGesture {
         }
     }
 }
+/// The view direction a modal R without an axis turns about: snapped onto
+/// the world axis it is within `VIEW_AXIS_SNAP_COS` of, so an R from an
+/// axis-aligned view (the Top preset looks a hair off vertical, its pitch
+/// held just short of the pole) turns about that exact world axis and the
+/// supports of a turn about Z follow it (#351, #153). Any other view is
+/// returned as it is.
+pub(super) fn snap_view_axis(view: Vec3) -> Vec3 {
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+        let along = view.dot(axis);
+        if along.abs() >= VIEW_AXIS_SNAP_COS {
+            return axis * along.signum();
+        }
+    }
+    view
+}
+
+/// `cos(0.5°)`: a view within half a degree of a world axis is that axis.
+const VIEW_AXIS_SNAP_COS: f32 = 0.999_961_9;
+
 fn axis_vector(axis: usize) -> Vec3 {
     match axis {
         0 => Vec3::X,
@@ -252,6 +297,7 @@ mod tests {
             precision: PrecisionCursor::new([100.0, 0.0], false),
             modifiers: DragModifiers::default(),
             factor: 1.0,
+            individual: false,
         }
     }
 
@@ -400,5 +446,44 @@ mod tests {
         );
         let p = point(g.propose([250.0, 0.0], SHIFT).unwrap(), [0.0; 3]);
         assert!((p[0] - 60.0).abs() < 1e-4, "{p:?}");
+    }
+
+    #[test]
+    fn a_view_within_half_a_degree_of_a_world_axis_snaps_onto_it() {
+        // The Top preset: pitch held 1e-3 rad short of the pole.
+        let tilt = 1e-3f32;
+        let top = Vec3::new(0.0, -tilt.sin(), tilt.cos());
+        assert_eq!(snap_view_axis(top), Vec3::Z);
+        assert_eq!(snap_view_axis(-top), -Vec3::Z);
+        let front = Vec3::new(1e-4, -1.0, 2e-4).normalize();
+        assert_eq!(snap_view_axis(front), -Vec3::Y);
+        // One degree off stays as it is: the screen feel is kept.
+        let a = 1f32.to_radians();
+        let off = Vec3::new(0.0, a.sin(), a.cos());
+        assert_eq!(snap_view_axis(off), off);
+    }
+
+    #[test]
+    fn the_linear_delta_is_the_turn_or_scale_without_the_pivot() {
+        let mut g = gesture(ModalOp::Rotate);
+        g.axis = Some(2);
+        g.pivot = Vec3::new(5.0, 5.0, 0.0);
+        g.propose([0.0, 100.0], NO_KEYS).unwrap();
+        let m = g.linear_delta().unwrap();
+        // It keeps the origin where it is.
+        assert_eq!(*m.translation(), [0.0; 3]);
+        let turned = point(Transform3D::Affine(m), [1.0, 0.0, 0.0]);
+        assert!((turned[0].hypot(turned[1]) - 1.0).abs() < 1e-5);
+        assert!(turned[2].abs() < 1e-6);
+
+        let mut g = gesture(ModalOp::Scale);
+        g.axis = Some(0);
+        g.propose([200.0, 0.0], NO_KEYS).unwrap();
+        let m = g.linear_delta().unwrap();
+        assert_eq!(
+            point(Transform3D::Affine(m), [1.0, 1.0, 1.0]),
+            [2.0, 1.0, 1.0]
+        );
+        assert!(gesture(ModalOp::Move).linear_delta().is_none());
     }
 }

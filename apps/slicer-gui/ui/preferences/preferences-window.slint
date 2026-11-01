@@ -33,6 +33,8 @@ export component PreferencesWindow inherits Window {
     in-out property <bool> prescan-supports: false;
     in-out property <bool> smooth-models: false;
     in-out property <int> current-frame-rate-index: 0;
+    in-out property <int> current-gizmo-style-index: 0;
+    in-out property <int> current-gizmo-size-index: 2;
     in property <bool> probe-running: false;
     in property <float> probe-progress: 0;
     in property <string> probe-message;
@@ -71,6 +73,8 @@ export component PreferencesWindow inherits Window {
     callback prescan-supports-changed(bool);
     callback smooth-models-changed(bool);
     callback frame-rate-changed(int);
+    callback gizmo-style-changed(int);
+    callback gizmo-size-changed(int);
     callback test-performance();
     callback use-recommended-frame-rate();
     callback diagnostic-log-changed(bool);
@@ -135,6 +139,16 @@ export component PreferencesWindow inherits Window {
                     root.smooth-models-changed(on);
                 }
                 current-frame-rate-index: root.current-frame-rate-index;
+                current-gizmo-style-index: root.current-gizmo-style-index;
+                gizmo-style-selected(i) => {
+                    root.current-gizmo-style-index = i;
+                    root.gizmo-style-changed(i);
+                }
+                current-gizmo-size-index: root.current-gizmo-size-index;
+                gizmo-size-selected(i) => {
+                    root.current-gizmo-size-index = i;
+                    root.gizmo-size-changed(i);
+                }
                 frame-rate-selected(i) => {
                     root.current-frame-rate-index = i;
                     root.frame-rate-changed(i);

@@ -72,15 +72,27 @@ const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// press before it fades back out.
 const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
 
-/// Shared completed/total layer-slice counters: the worker writes them, the UI
-/// polls them into the modal. `completed` climbs monotonically (`fetch_max`);
-/// `total` is the run's fixed denominator. `reviewing` is raised once every
-/// layer is cut, while the review runs.
+/// Shared completed/total layer counters: the worker writes them, the UI polls
+/// them into the modal. Both count plate layers, not the engine's layer-slices
+/// (one per leaf and layer, #355), so the modal's total is the layer count the
+/// Result card shows. `completed` climbs monotonically (`fetch_max`); `total`
+/// is the run's fixed denominator. `reviewing` is raised once every layer is
+/// cut, while the review runs.
 #[derive(Default)]
 struct SliceProgressCell {
     completed: AtomicU32,
     total: AtomicU32,
     reviewing: AtomicBool,
+}
+
+impl SliceProgressCell {
+    /// Publishes an engine report in plate layers. Reports arrive out of
+    /// order from the layer tasks, so `completed` only ever rises.
+    fn record(&self, progress: SliceProgress) {
+        self.completed
+            .fetch_max(progress.layers_completed() as u32, Ordering::Relaxed);
+        self.total.store(progress.layers as u32, Ordering::Relaxed);
+    }
 }
 
 /// A completed slice, already merged, fingerprinted and reviewed on the worker
@@ -598,12 +610,7 @@ fn run_slice(
         &params,
         &inputs.supports,
         cancel,
-        |p: SliceProgress| {
-            progress
-                .completed
-                .fetch_max(p.completed as u32, Ordering::Relaxed);
-            progress.total.store(p.total as u32, Ordering::Relaxed);
-        },
+        |p: SliceProgress| progress.record(p),
     )
     .map_err(SliceFailure::from)?;
     match run {
@@ -889,5 +896,99 @@ mod dialog_text_tests {
             texts.message,
             "These objects are not closed meshes: Wolf, Wolf. Press Repair meshes in the Transform tab, then slice again."
         );
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_scene::LeafPayload;
+
+    use crate::test_support::scenes::cube_scene;
+
+    /// Builds a plate of 4 unit cubes, each its own leaf, as a model with
+    /// its supports and raft slices as several leaves.
+    fn four_leaf_scene() -> Scene {
+        let mut scene = cube_scene();
+        for _ in 0..3 {
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+                )
+                .expect("inline-mesh leaf");
+            scene.add_root(leaf).expect("fresh leaf becomes a root");
+        }
+        scene
+    }
+
+    fn inputs() -> SliceInputs {
+        SliceInputs {
+            printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
+            resin: MaterialId::new("standard-405").expect("valid id"),
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+            raft_top_mm: None,
+            supports: SupportOwners::new(),
+            fills: Vec::new(),
+            erasures: Vec::new(),
+        }
+    }
+
+    /// The modal counts the plate's layers, the count the Result card shows,
+    /// not one per leaf and layer (#355), and it ends full.
+    #[test]
+    fn progress_counts_the_plate_layers_and_ends_full() {
+        let progress = SliceProgressCell::default();
+        let outcome = run_slice(
+            &four_leaf_scene(),
+            &inputs(),
+            &CancelToken::new(),
+            &progress,
+        )
+        .expect("the cubes slice");
+        let SliceRunOutcome::Completed(completed) = outcome else {
+            panic!("not cancelled");
+        };
+        let layers = completed.contours.schedule().total_layers();
+        assert!(layers > 1, "layers: {layers}");
+        assert_eq!(progress.total.load(Ordering::Relaxed), layers);
+        assert_eq!(progress.completed.load(Ordering::Relaxed), layers);
+    }
+
+    /// A cancelled run still stops cleanly and never counts past the plate.
+    #[test]
+    fn a_cancelled_run_stays_within_the_plate_layers() {
+        let progress = SliceProgressCell::default();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let outcome = run_slice(&four_leaf_scene(), &inputs(), &cancel, &progress)
+            .expect("cancellation is a clean stop");
+        assert!(matches!(outcome, SliceRunOutcome::Cancelled));
+        assert!(
+            progress.completed.load(Ordering::Relaxed) <= progress.total.load(Ordering::Relaxed)
+        );
+    }
+
+    /// Reports arrive out of order from the layer tasks: the published count
+    /// never steps back, and it is in plate layers.
+    #[test]
+    fn record_publishes_plate_layers_and_never_steps_back() {
+        let cell = SliceProgressCell::default();
+        let report = |completed| SliceProgress {
+            completed,
+            total: 2800,
+            layers: 700,
+        };
+        cell.record(report(1400));
+        cell.record(report(8));
+        assert_eq!(cell.completed.load(Ordering::Relaxed), 350);
+        assert_eq!(cell.total.load(Ordering::Relaxed), 700);
+        cell.record(report(2800));
+        assert_eq!(cell.completed.load(Ordering::Relaxed), 700);
     }
 }

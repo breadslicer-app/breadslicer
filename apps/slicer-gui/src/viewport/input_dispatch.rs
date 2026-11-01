@@ -33,16 +33,29 @@ use sc_scene::NodeId;
 
 use super::gizmo_drag::GizmoState;
 use super::gizmo_fsm::{
-    GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
+    BodyCtx, GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx,
+    StartCtx as GizmoStartCtx,
 };
-use super::input_state::{ClickOrDrag, InputState, RightUpOutcome};
+use super::input_state::{CLICK_DRAG_THRESHOLD, ClickOrDrag, InputState, RightUpOutcome};
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::types::{ScreenPoint, ViewportSize};
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
+use crate::gizmo::look::GizmoLook;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
 use crate::scene_document::SceneDocument;
+use crate::selection::{LeafId, Selection};
+
+/// A left press on the body of a model that grabbed no gizmo handle: the
+/// model and the world point grabbed. Past the click threshold it becomes a
+/// move of the model on the plate (#209); released before, it stays a click.
+#[derive(Clone, Copy, Debug)]
+struct PendingBody {
+    node_id: NodeId,
+    grab: glam::Vec3,
+    press: ScreenPoint,
+}
 
 /// Outcome of [`InputDispatch::on_pointer_up`] the coordinator must
 /// act on:
@@ -98,6 +111,10 @@ pub(super) struct InputDispatch {
     /// Where a Shift+left press that grabbed no gizmo handle went down:
     /// the corner a selection box starts from (#13). `None` otherwise.
     box_from: Cell<Option<ScreenPoint>>,
+    /// A press on a model that may become a move of it (#209).
+    pending_body: Cell<Option<PendingBody>>,
+    /// The gizmo the user picked (#274, #276) and the rail's tool.
+    look: Cell<GizmoLook>,
 }
 
 impl InputDispatch {
@@ -112,7 +129,25 @@ impl InputDispatch {
             last_cursor: Cell::new(None),
             hovering: Cell::new(false),
             box_from: Cell::new(None),
+            pending_body: Cell::new(None),
+            look: Cell::new(GizmoLook::default()),
         }
+    }
+
+    /// The gizmo the user picked and the rail's tool.
+    pub(super) fn gizmo_look(&self) -> GizmoLook {
+        self.look.get()
+    }
+
+    /// Sets the gizmo's style, size and tool. Returns whether it changed;
+    /// the hover is dropped then, since the handles under the cursor may be
+    /// gone.
+    pub(super) fn set_gizmo_look(&self, look: GizmoLook) -> bool {
+        if self.look.replace(look) == look {
+            return false;
+        }
+        self.gizmo_fsm.clear_hover();
+        true
     }
 
     /// Read-only access to the gizmo FSM for the renderer (drag
@@ -143,6 +178,7 @@ impl InputDispatch {
         self.last_cursor.set(None);
         self.hovering.set(false);
         self.box_from.set(None);
+        self.pending_body.set(None);
     }
 
     /// Latch a right-button press position. The release path
@@ -190,7 +226,11 @@ impl InputDispatch {
     /// transform and the world-space anchor. Shift held at press
     /// starts the drag fine. A Shift press that grabs no handle starts
     /// a selection box instead (#13); returns whether it did, so the
-    /// viewport draws it.
+    /// viewport draws it. A plain press on a model that grabs no handle may
+    /// become a move of the model once the cursor leaves the click threshold
+    /// (#209); the model is the one a click there selects
+    /// (`supports_selectable`, as for the click).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn on_pointer_down(
         &self,
         document: &Rc<SceneDocument>,
@@ -199,9 +239,11 @@ impl InputDispatch {
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
         allow_transforms: bool,
+        supports_selectable: bool,
     ) -> bool {
         self.input_state.set_pressed(cursor);
         self.box_from.set(None);
+        self.pending_body.set(None);
         let shift = modifiers.shift;
         // The gizmo can only be grabbed in the Transform section. The
         // press is still recorded above so a click without a drag
@@ -216,14 +258,86 @@ impl InputDispatch {
                 group: &group,
                 press: cursor,
                 modifiers,
+                look: self.look.get(),
             };
             self.gizmo_fsm.try_start_drag(ctx);
         }
-        let boxing = shift && !matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. });
+        let grabbed = matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. });
+        let boxing = shift && !grabbed;
         if boxing {
             self.box_from.set(Some(cursor));
         }
+        if allow_transforms && !shift && !grabbed {
+            let pending = self
+                .body_at(document, camera, viewport, cursor, supports_selectable)
+                .map(|(node_id, grab)| PendingBody {
+                    node_id,
+                    grab,
+                    press: cursor,
+                });
+            self.pending_body.set(pending);
+        }
         boxing
+    }
+
+    /// The model a click at `cursor` selects and the world point the click
+    /// lands on, or `None` over empty space.
+    fn body_at(
+        &self,
+        document: &Rc<SceneDocument>,
+        camera: &RefCell<Option<OrbitCamera>>,
+        viewport: Option<ViewportSize>,
+        cursor: ScreenPoint,
+        supports_selectable: bool,
+    ) -> Option<(NodeId, glam::Vec3)> {
+        let vp = viewport?;
+        let camera_slot = camera.borrow();
+        let camera = camera_slot.as_ref()?;
+        let ray = picking::ray_from_pixel(
+            camera,
+            default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        document
+            .with_scene(|spatial| selected_where(&ray, spatial, supports_selectable))
+            .flatten()
+    }
+
+    /// Turns a press on a model into a move of it once the cursor at
+    /// `cursor` leaves the click threshold (#209): a model outside the
+    /// selection becomes the selection (no undo step, as a click), and a
+    /// model of a selection of several moves them all.
+    fn start_pending_body(
+        &self,
+        document: &Rc<SceneDocument>,
+        cursor: ScreenPoint,
+        modifiers: PointerModifiers,
+    ) {
+        let Some(pending) = self.pending_body.get() else {
+            return;
+        };
+        let (dx, dy) = (cursor.x - pending.press.x, cursor.y - pending.press.y);
+        if dx * dx + dy * dy <= CLICK_DRAG_THRESHOLD * CLICK_DRAG_THRESHOLD {
+            return;
+        }
+        self.pending_body.set(None);
+        let mut group = document.selection_node_ids();
+        if !group.contains(&pending.node_id) {
+            document.set_selection(Selection::One(LeafId(pending.node_id)));
+            group = vec![pending.node_id];
+        }
+        self.gizmo_fsm.clear_hover();
+        self.gizmo_fsm.start_body_drag(BodyCtx {
+            document,
+            node_id: pending.node_id,
+            grab: pending.grab,
+            group: &group,
+            press: pending.press,
+            modifiers,
+        });
     }
 
     /// Drives the gizmo drag for `pointer-moved`, recomputes the
@@ -250,6 +364,7 @@ impl InputDispatch {
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
     ) -> bool {
+        self.start_pending_body(document, cursor, modifiers.clone());
         let move_ctx = GizmoMoveCtx {
             document,
             camera,
@@ -277,6 +392,7 @@ impl InputDispatch {
             selection_id: document.selection_primary_node_id(),
             group: &group,
             cursor,
+            look: self.look.get(),
         };
         self.gizmo_fsm.update_hover(hover_ctx)
     }
@@ -293,6 +409,7 @@ impl InputDispatch {
     ) -> PointerUpOutcome {
         let outcome = self.input_state.click_or_drag(cursor);
         let box_from = self.box_from.take();
+        self.pending_body.set(None);
         // A press and release on the centre ball without moving is a click
         // on what lies under it: the ball means nothing without a drag.
         if outcome == ClickOrDrag::Click
@@ -352,6 +469,7 @@ impl InputDispatch {
     /// itself fires `Mutated` and the listener marks the renderer
     /// dirty).
     pub(super) fn abort_gizmo_drag(&self, document: &Rc<SceneDocument>) -> bool {
+        self.pending_body.set(None);
         if self.gizmo_fsm.abort(document) {
             self.input_state.set_idle();
             true
@@ -441,12 +559,21 @@ fn selected_by(
     spatial: &SceneSpatial,
     supports_selectable: bool,
 ) -> Option<NodeId> {
+    selected_where(ray, spatial, supports_selectable).map(|(id, _)| id)
+}
+
+/// [`selected_by`], with the world point the ray hit.
+fn selected_where(
+    ray: &picking::Ray,
+    spatial: &SceneSpatial,
+    supports_selectable: bool,
+) -> Option<(NodeId, glam::Vec3)> {
     let (hit, t) = picking::pick_object_where(ray, spatial, |_| true)?;
-    if supports_selectable || !shows_supports(spatial, hit) {
-        return Some(hit);
-    }
     let at = ray.origin + ray.direction * t;
-    nearest_model(spatial, at.x, at.y)
+    if supports_selectable || !shows_supports(spatial, hit) {
+        return Some((hit, at));
+    }
+    nearest_model(spatial, at.x, at.y).map(|id| (id, at))
 }
 
 /// The model whose footprint on the plate is nearest `(x, y)`; between

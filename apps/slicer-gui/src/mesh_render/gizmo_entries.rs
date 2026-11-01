@@ -5,18 +5,20 @@
 
 //! What the gizmo pass draws in a frame, in order: the faint back halves of
 //! the rotate rings, then the dark outline of every visible handle, then the
-//! handles themselves, then the marks of a turn in progress. Pure data, so the
-//! style rules (#208) are tested without a device.
+//! handles themselves (the translucent plane squares last), then the marks of
+//! a turn in progress. Pure data, so the style rules (#208, #274) are tested
+//! without a device.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 use crate::gizmo::axis::{ALL_AXES, Axis};
-use crate::gizmo::dimensions::{MIDPOINT_FRACTION, OUTLINE_PIXELS, px};
+use crate::gizmo::dimensions::px;
+use crate::gizmo::look::{Family, GizmoLook};
 use crate::gizmo::style::{
-    ACTIVE_MIX, CENTRE_COLOR, HOVER_MIX, OUTLINE_ALPHA, OUTLINE_COLOR, REFERENCE_ALPHA,
-    RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, VIEW_RING_COLOR, WEDGE_ALPHA, axis_color, axis_fade,
-    lighten, ring_fade,
+    ACTIVE_MIX, CENTRE_COLOR, HOVER_MIX, OUTLINE_ALPHA, OUTLINE_COLOR, PLANE_ALPHA_MAX,
+    PLANE_LIT_GAIN, REFERENCE_ALPHA, RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, VIEW_RING_COLOR,
+    WEDGE_ALPHA, axis_color, axis_fade, lighten, plane_fade, ring_fade,
 };
 
 /// Per-frame uniform for the gizmo pass: the camera transform, the
@@ -45,10 +47,10 @@ pub(super) struct GizmoDrawEntry {
 
 pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = size_of::<GizmoDrawEntry>() as u64;
 
-/// Draw entries reserved in `gizmo_entries_buffer`: at most 7 per axis
-/// (arrow, ring and cube outlines and bodies, ring back), 2 for the centre
-/// ball and 2 for the marks of a turn.
-pub(super) const GIZMO_ENTRY_SLOTS: u64 = 32;
+/// Draw entries reserved in `gizmo_entries_buffer`: at most 9 per axis
+/// (arrow, ring, cube and plane outlines and bodies, ring back), 2 for the
+/// centre ball and 2 for the marks of a turn, with room to spare.
+pub(super) const GIZMO_ENTRY_SLOTS: u64 = 40;
 
 /// Which static or per-frame mesh a draw uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +59,10 @@ pub(super) enum GizmoMesh {
     Ring,
     Cube,
     Ball,
+    /// The square of a plane handle (#207).
+    Plane,
+    /// The thin shaft under a lone scale cube (the focused style).
+    Stalk,
     /// The swept slice of a turn, built per frame.
     Wedge,
     /// The ticks and spokes of a turn, built per frame.
@@ -101,6 +107,9 @@ pub struct GizmoFrame {
     /// or carries the turn so far for the rotate marks. `None` when no
     /// drag is in progress.
     pub drag_visual: Option<GizmoDragVisual>,
+    /// The style, size and tool the user picked (#274, #276). `scale`
+    /// already holds the size.
+    pub look: GizmoLook,
 }
 
 /// Live cursor-driven drag state, used by the renderer to give real-time
@@ -130,6 +139,8 @@ pub enum GizmoDragVisual {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoHover {
     Translate(Axis),
+    /// The plane square perpendicular to the axis (#207).
+    Plane(Axis),
     Rotate(Axis),
     ScaleAxis(Axis),
     ScaleUniform,
@@ -144,6 +155,12 @@ pub enum GizmoVisibility {
     Idle,
     DraggingTranslate {
         axis: Axis,
+    },
+    /// A move in the plane perpendicular to `normal`: a plane handle
+    /// (#207), or the body of a model pressed and dragged (#209). The
+    /// square lights and the arrows stay as faint references.
+    DraggingPlane {
+        normal: Axis,
     },
     DraggingRotate {
         axis: Axis,
@@ -198,14 +215,29 @@ impl Look {
     }
 }
 
-/// One visible handle: its mesh and placement, colour, opacity, and
-/// whether it is a ring split into a front and a faint back half.
+/// One visible handle: its mesh and placement, colour, opacity, how much of
+/// that opacity its body keeps (a plane square is translucent, its outline is
+/// not), and whether it is a ring split into a front and a faint back half.
 struct Handle {
     mesh: GizmoMesh,
     transform: Mat4,
     color: [f32; 3],
     alpha: f32,
+    fill: f32,
     split_ring: bool,
+}
+
+impl Handle {
+    fn solid(mesh: GizmoMesh, transform: Mat4, color: [f32; 3], alpha: f32) -> Self {
+        Self {
+            mesh,
+            transform,
+            color,
+            alpha,
+            fill: 1.0,
+            split_ring: false,
+        }
+    }
 }
 
 const HALF_ALL: f32 = 0.0;
@@ -225,6 +257,7 @@ fn entry(transform: Mat4, color: [f32; 3], alpha: f32, grow: f32, half: f32) -> 
 /// Builds the draws of one frame, in drawing order.
 pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
     let handles = visible_handles(frame);
+    let outline = px(frame.look.metrics().outline_px);
     let mut draws = Vec::with_capacity(GIZMO_ENTRY_SLOTS as usize);
     let half_of = |h: &Handle| if h.split_ring { HALF_FRONT } else { HALF_ALL };
     for h in handles.iter().filter(|h| h.split_ring) {
@@ -245,7 +278,7 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
                 h.transform,
                 OUTLINE_COLOR,
                 OUTLINE_ALPHA * h.alpha,
-                px(OUTLINE_PIXELS),
+                outline,
                 half_of(h),
             ),
         });
@@ -254,7 +287,7 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
         draws.push(GizmoDraw {
             mesh: h.mesh,
             layer: GizmoLayer::Core,
-            entry: entry(h.transform, h.color, h.alpha, 0.0, half_of(h)),
+            entry: entry(h.transform, h.color, h.alpha * h.fill, 0.0, half_of(h)),
         });
     }
     let marks_color = match (frame.visibility, frame.drag_visual) {
@@ -289,38 +322,42 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
 
 fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
     let rotations = axis_world_rotations();
+    let look = frame.look;
+    let m = look.metrics();
     let hover = match frame.visibility {
         GizmoVisibility::Idle => frame.hover,
         _ => None,
     };
-    let mut out = Vec::with_capacity(10);
+    let idle = frame.visibility == GizmoVisibility::Idle;
+    let mut out = Vec::with_capacity(16);
     for axis in ALL_AXES {
         let i = axis.index();
         let base = axis_color(axis);
         let fade = axis_fade(axis, frame.view_dir);
         let arrow = match frame.visibility {
-            GizmoVisibility::Idle => Some((
+            GizmoVisibility::Idle if look.shows(Family::Arrows) => Some((
                 Look::of(hover == Some(GizmoHover::Translate(axis)), false),
                 fade,
             )),
             GizmoVisibility::DraggingTranslate { axis: dragged } if dragged == axis => {
                 Some((Look::Active, 1.0))
             }
-            GizmoVisibility::DraggingTranslate { .. } => Some((Look::Rest, REFERENCE_ALPHA * fade)),
+            GizmoVisibility::DraggingTranslate { .. } | GizmoVisibility::DraggingPlane { .. } => {
+                Some((Look::Rest, REFERENCE_ALPHA * fade))
+            }
             GizmoVisibility::MovingFree => Some((Look::Active, fade)),
             _ => None,
         };
         if let Some((look, alpha)) = arrow {
-            out.push(Handle {
-                mesh: GizmoMesh::Arrow,
-                transform: rotations[i],
-                color: look.color(base),
+            out.push(Handle::solid(
+                GizmoMesh::Arrow,
+                rotations[i],
+                look.color(base),
                 alpha,
-                split_ring: false,
-            });
+            ));
         }
         let ring = match frame.visibility {
-            GizmoVisibility::Idle => Some((
+            GizmoVisibility::Idle if look.shows(Family::Rings) => Some((
                 Look::of(hover == Some(GizmoHover::Rotate(axis)), false),
                 true,
             )),
@@ -331,19 +368,21 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
         };
         if let Some((look, split)) = ring {
             out.push(Handle {
-                mesh: GizmoMesh::Ring,
-                transform: rotations[i],
-                color: look.color(base),
-                alpha: if split {
-                    ring_fade(axis, frame.view_dir)
-                } else {
-                    1.0
-                },
                 split_ring: split,
+                ..Handle::solid(
+                    GizmoMesh::Ring,
+                    rotations[i],
+                    look.color(base),
+                    if split {
+                        ring_fade(axis, frame.view_dir)
+                    } else {
+                        1.0
+                    },
+                )
             });
         }
         let cube = match frame.visibility {
-            GizmoVisibility::Idle => Some((
+            GizmoVisibility::Idle if look.shows(Family::Cubes) => Some((
                 Look::of(hover == Some(GizmoHover::ScaleAxis(axis)), false),
                 fade,
             )),
@@ -355,20 +394,35 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
         if let Some((look, alpha)) = cube {
             // While a scale drag is live, the cube slides along its axis to
             // the cursor: shift it, in world units, from its rest position.
+            let rest = frame.scale * m.cube_at;
             let slide = match frame.drag_visual {
                 Some(GizmoDragVisual::ScaleAxis {
                     axis: dragged,
                     axial_distance,
-                }) if dragged == axis => axial_distance - frame.scale * MIDPOINT_FRACTION,
+                }) if dragged == axis => axial_distance - rest,
                 _ => 0.0,
             };
-            out.push(Handle {
-                mesh: GizmoMesh::Cube,
-                transform: rotations[i] * Mat4::from_translation(Vec3::new(slide, 0.0, 0.0)),
-                color: look.color(base),
+            let color = look.color(base);
+            if m.stalk_radius_px > 0.0 {
+                // The stalk stretches with the cube.
+                let stretch = if rest > 0.0 {
+                    ((rest + slide) / rest).max(0.0)
+                } else {
+                    1.0
+                };
+                out.push(Handle::solid(
+                    GizmoMesh::Stalk,
+                    rotations[i] * Mat4::from_scale(Vec3::new(stretch, 1.0, 1.0)),
+                    color,
+                    alpha,
+                ));
+            }
+            out.push(Handle::solid(
+                GizmoMesh::Cube,
+                rotations[i] * Mat4::from_translation(Vec3::new(slide, 0.0, 0.0)),
+                color,
                 alpha,
-                split_ring: false,
-            });
+            ));
         }
     }
     if let (
@@ -379,40 +433,89 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
         // The ring mesh lies across handle-local +X: turn +X onto the
         // direction toward the eye, so the ring faces the viewer.
         let toward_eye = right.cross(up);
-        out.push(Handle {
-            mesh: GizmoMesh::Ring,
-            transform: Mat4::from_cols(
+        out.push(Handle::solid(
+            GizmoMesh::Ring,
+            Mat4::from_cols(
                 toward_eye.extend(0.0),
                 right.extend(0.0),
                 up.extend(0.0),
                 glam::Vec4::W,
             ),
-            color: Look::Active.color(VIEW_RING_COLOR),
-            alpha: 1.0,
-            split_ring: false,
-        });
+            Look::Active.color(VIEW_RING_COLOR),
+            1.0,
+        ));
     }
     let ball = match frame.visibility {
-        GizmoVisibility::Idle => Some(Look::of(hover == Some(GizmoHover::ScaleUniform), false)),
+        GizmoVisibility::Idle if look.shows(Family::Ball) => {
+            Some(Look::of(hover == Some(GizmoHover::ScaleUniform), false))
+        }
         GizmoVisibility::DraggingScaleUniform => Some(Look::Active),
         _ => None,
     };
     if let Some(look) = ball {
+        out.push(Handle::solid(
+            GizmoMesh::Ball,
+            Mat4::IDENTITY,
+            look.color(CENTRE_COLOR),
+            1.0,
+        ));
+    }
+    // The plane squares come last: translucent, they show what lies behind.
+    for normal in ALL_AXES {
+        let lit = match frame.visibility {
+            _ if idle && look.shows(Family::Planes) => {
+                Some(Look::of(hover == Some(GizmoHover::Plane(normal)), false))
+            }
+            GizmoVisibility::DraggingPlane { normal: dragged } if dragged == normal => {
+                Some(Look::Active)
+            }
+            _ => None,
+        };
+        let Some(state) = lit else {
+            continue;
+        };
+        let alpha = match state {
+            Look::Active => 1.0,
+            _ => plane_fade(normal, frame.view_dir),
+        };
+        let fill = match state {
+            Look::Rest => m.plane_alpha,
+            _ => (m.plane_alpha + PLANE_LIT_GAIN).min(PLANE_ALPHA_MAX),
+        };
         out.push(Handle {
-            mesh: GizmoMesh::Ball,
-            transform: Mat4::IDENTITY,
-            color: look.color(CENTRE_COLOR),
-            alpha: 1.0,
-            split_ring: false,
+            fill,
+            ..Handle::solid(
+                GizmoMesh::Plane,
+                plane_transform(normal, frame.view_dir),
+                state.color(axis_color(normal)),
+                alpha,
+            )
         });
     }
     out.retain(|h| h.alpha >= MIN_ALPHA);
     out
 }
 
+/// Lays the plane mesh (built across handle-local +X, its square toward +Y
+/// and +Z) onto the plane perpendicular to `normal`, in the quadrant that
+/// faces the camera looking along `view_dir` (`plane_quadrant`, which the hit
+/// test shares).
+fn plane_transform(normal: Axis, view_dir: Vec3) -> Mat4 {
+    let (u, v) = normal.plane_axes();
+    let (su, sv) = crate::gizmo::hit_test::plane_quadrant(normal, view_dir);
+    Mat4::from_cols(
+        normal.world_dir().extend(0.0),
+        (u.world_dir() * su).extend(0.0),
+        (v.world_dir() * sv).extend(0.0),
+        glam::Vec4::W,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gizmo::dimensions::{MIDPOINT_FRACTION, OUTLINE_PIXELS};
+    use crate::gizmo::look::OUTLINE_METRICS;
     use crate::gizmo::style::{AXIS_COLORS, RING_EDGE_ALPHA};
     use float_cmp::assert_approx_eq;
     use glam::Vec4;
@@ -430,6 +533,7 @@ mod tests {
             visibility,
             hover: None,
             drag_visual: None,
+            look: GizmoLook::default(),
         }
     }
 
@@ -487,7 +591,7 @@ mod tests {
             .collect();
         assert_eq!(
             outlines.len(),
-            cores(&draws, GizmoMesh::Arrow).len() * 3 + 1
+            cores(&draws, GizmoMesh::Arrow).len() * 3 + 1 + cores(&draws, GizmoMesh::Plane).len()
         );
         for (i, d) in draws.iter().enumerate() {
             if d.layer == GizmoLayer::Halo {
@@ -704,5 +808,128 @@ mod tests {
             assert_rgb(rgb(e), lighten(AXIS_COLORS[i], ACTIVE_MIX));
         }
         assert!(cores(&draws, GizmoMesh::Ring).is_empty());
+    }
+
+    #[test]
+    fn idle_shows_three_translucent_plane_squares_in_the_colour_of_their_normal() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        let planes = cores(&draws, GizmoMesh::Plane);
+        assert_eq!(planes.len(), 3);
+        for (i, e) in planes.iter().enumerate() {
+            assert_rgb(rgb(e), AXIS_COLORS[i]);
+            let fade = plane_fade(ALL_AXES[i], oblique());
+            assert_approx_eq!(f32, e.tint[3], fade * OUTLINE_METRICS.plane_alpha);
+            // The square lies in the plane of the two other axes, in the
+            // quadrant facing the camera.
+            let m = Mat4::from_cols_array_2d(&e.axis_rotation);
+            let n = (m * Vec4::new(1.0, 0.0, 0.0, 0.0)).truncate();
+            assert!((n - ALL_AXES[i].world_dir()).length() < 1e-6);
+            let (u, v) = ALL_AXES[i].plane_axes();
+            let (su, sv) = crate::gizmo::hit_test::plane_quadrant(ALL_AXES[i], oblique());
+            let corner = (m * Vec4::new(0.0, 1.0, 1.0, 0.0)).truncate();
+            assert!((corner - u.world_dir() * su - v.world_dir() * sv).length() < 1e-6);
+            assert!(corner.dot(oblique()) <= 0.0, "toward the camera");
+        }
+        // The squares come after every other handle.
+        let last_other = draws
+            .iter()
+            .rposition(|d| d.layer == GizmoLayer::Core && d.mesh != GizmoMesh::Plane)
+            .unwrap();
+        let first_plane = draws
+            .iter()
+            .position(|d| d.layer == GizmoLayer::Core && d.mesh == GizmoMesh::Plane)
+            .unwrap();
+        assert!(first_plane > last_other);
+        // Their outline is as dark as any other.
+        let plane_outlines: Vec<_> = draws
+            .iter()
+            .filter(|d| d.layer == GizmoLayer::Halo && d.mesh == GizmoMesh::Plane)
+            .collect();
+        assert_eq!(plane_outlines.len(), 3);
+    }
+
+    #[test]
+    fn a_square_seen_edge_on_disappears() {
+        let mut f = frame(GizmoVisibility::Idle);
+        f.view_dir = -Vec3::Z;
+        let draws = build_gizmo_draws(&f);
+        let planes = cores(&draws, GizmoMesh::Plane);
+        assert_eq!(planes.len(), 1);
+        assert_rgb(rgb(&planes[0]), AXIS_COLORS[2]);
+    }
+
+    #[test]
+    fn a_hovered_square_lightens_and_grows_more_opaque() {
+        let mut f = frame(GizmoVisibility::Idle);
+        f.hover = Some(GizmoHover::Plane(Axis::Z));
+        let draws = build_gizmo_draws(&f);
+        let planes = cores(&draws, GizmoMesh::Plane);
+        assert_rgb(rgb(&planes[2]), lighten(AXIS_COLORS[2], HOVER_MIX));
+        assert!(planes[2].tint[3] > planes[0].tint[3]);
+        assert_rgb(rgb(&planes[0]), AXIS_COLORS[0]);
+    }
+
+    #[test]
+    fn a_plane_drag_shows_its_square_and_the_arrows_faint() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::DraggingPlane { normal: Axis::Z }));
+        let planes = cores(&draws, GizmoMesh::Plane);
+        assert_eq!(planes.len(), 1);
+        assert_rgb(rgb(&planes[0]), lighten(AXIS_COLORS[2], ACTIVE_MIX));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 3);
+        for a in arrows {
+            assert!(a.tint[3] <= REFERENCE_ALPHA + 1e-6);
+        }
+        assert!(cores(&draws, GizmoMesh::Ring).is_empty());
+        assert!(cores(&draws, GizmoMesh::Ball).is_empty());
+    }
+
+    fn focused(tool: crate::gizmo::look::GizmoTool) -> GizmoFrame {
+        let mut f = frame(GizmoVisibility::Idle);
+        f.look = GizmoLook {
+            style: crate::gizmo::look::GizmoStyle::Focused,
+            size: 1.0,
+            tool,
+        };
+        f
+    }
+
+    #[test]
+    fn the_focused_style_shows_one_tool_at_a_time() {
+        use crate::gizmo::look::GizmoTool;
+        let count = |tool, mesh| cores(&build_gizmo_draws(&focused(tool)), mesh).len();
+        assert_eq!(count(GizmoTool::Move, GizmoMesh::Arrow), 3);
+        assert_eq!(count(GizmoTool::Move, GizmoMesh::Plane), 3);
+        assert_eq!(count(GizmoTool::Move, GizmoMesh::Ring), 0);
+        assert_eq!(count(GizmoTool::Move, GizmoMesh::Ball), 0);
+        assert_eq!(count(GizmoTool::Rotate, GizmoMesh::Ring), 3);
+        assert_eq!(count(GizmoTool::Rotate, GizmoMesh::Arrow), 0);
+        assert_eq!(count(GizmoTool::Scale, GizmoMesh::Cube), 3);
+        assert_eq!(count(GizmoTool::Scale, GizmoMesh::Stalk), 3);
+        assert_eq!(count(GizmoTool::Scale, GizmoMesh::Ball), 1);
+        assert_eq!(count(GizmoTool::Scale, GizmoMesh::Arrow), 0);
+        // Its outline is thicker.
+        let draws = build_gizmo_draws(&focused(GizmoTool::Move));
+        let halo = draws.iter().find(|d| d.layer == GizmoLayer::Halo).unwrap();
+        assert_approx_eq!(
+            f32,
+            halo.entry.params[0],
+            px(crate::gizmo::look::FOCUSED_METRICS.outline_px)
+        );
+    }
+
+    #[test]
+    fn a_drag_in_the_focused_style_shows_its_handle_whatever_the_tool() {
+        use crate::gizmo::look::GizmoTool;
+        // A modal R with an axis while the rail says Move.
+        let mut f = focused(GizmoTool::Move);
+        f.visibility = GizmoVisibility::DraggingRotate { axis: Axis::X };
+        assert_eq!(cores(&build_gizmo_draws(&f), GizmoMesh::Ring).len(), 1);
+    }
+
+    #[test]
+    fn the_outline_style_draws_no_stalks() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        assert!(cores(&draws, GizmoMesh::Stalk).is_empty());
     }
 }

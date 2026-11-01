@@ -13,8 +13,9 @@
 //! vertical axis), as they do for a single model (#119, #153); a move in Z, a
 //! tilt or a scale leaves them standing. On commit they go back where the
 //! history has them and the recorded edit takes them along or away to be
-//! made again ([`crate::support_follow::commit`]). Turning each object about
-//! its own centre is the rest of #218.
+//! made again ([`crate::support_follow::commit`]). `R R` and `S S` turn or
+//! scale each object about its own centre instead ([`GroupMove::apply_each`],
+//! #218).
 
 use std::cell::RefCell;
 
@@ -28,19 +29,24 @@ use sc_scene::NodeId;
 use crate::scene_document::{EditNotApplied, SceneDocument, SceneEdit};
 use crate::support_persist::{in_force, model_of, sets_of_model};
 
-/// A leaf the move sets: where it started, in its parent's frame.
+/// A leaf the move sets: where it started, in its parent's frame, and its
+/// own pivot in the world then (the centre of its box, as the gizmo of one
+/// object stands).
 #[derive(Clone, Copy, Debug)]
 struct Member {
     node_id: NodeId,
     original: Transform3D,
     parent: Transform3D,
+    pivot: Vec3,
 }
 
-/// A support set that rides along with its model while the move is live.
+/// A support set that rides along with its model while the move is live:
+/// `model` is that model's place in the members.
 #[derive(Clone, Copy, Debug)]
 struct Rider {
     node_id: NodeId,
     start: Transform3D,
+    model: usize,
 }
 
 /// A live move, turn or scale of several leaves, from the press to the
@@ -126,14 +132,22 @@ impl GroupMove {
                 {
                     continue;
                 }
+                let pivot =
+                    crate::gizmo::pivot_for_leaf(spatial, id).unwrap_or_else(|| {
+                        match query.world_transform() {
+                            Transform3D::Identity => Vec3::ZERO,
+                            Transform3D::Affine(a) => Vec3::from(a.translation().map(|c| c as f32)),
+                        }
+                    });
                 members.push(Member {
                     node_id: id,
                     original: query.local_transform(),
                     parent: query.parent_world(),
+                    pivot,
                 });
             }
             let mut riders: Vec<Rider> = Vec::new();
-            for member in &members {
+            for (model, member) in members.iter().enumerate() {
                 let is_model = spatial
                     .leaf(member.node_id)
                     .is_some_and(|q| !is_support_mesh(q.mesh()));
@@ -154,6 +168,7 @@ impl GroupMove {
                     riders.push(Rider {
                         node_id: leaf,
                         start: query.local_transform(),
+                        model,
                     });
                 }
             }
@@ -301,6 +316,67 @@ impl GroupMove {
         document.apply_edit_unfollowed(SceneEdit::Compound(edits))
     }
 
+    /// Sets every leaf where the turn or scale `m` (about the origin) takes it
+    /// about its own pivot from where it started (#218, `R R`, `S S`). Each
+    /// one is kept on the plate on its own, as one object is
+    /// ([`super::bed_clearance::keep_above_bed`]); a model's supports ride
+    /// along when its own motion keeps to the plate plane (a turn about the
+    /// vertical axis), and stand where they were otherwise (#153). Not
+    /// recorded: the commit records the gesture.
+    pub(super) fn apply_each(
+        &self,
+        document: &SceneDocument,
+        m: &AffineTransform3D,
+    ) -> Result<(), EditNotApplied> {
+        let edits = document
+            .with_scene(|spatial| {
+                let (base, rider_base) = &*self.base.borrow();
+                let mut deltas = Vec::with_capacity(self.members.len());
+                let mut edits = Vec::new();
+                for (member, b) in self.members.iter().zip(base) {
+                    let world = member.parent.compose(b);
+                    let delta = about(m, member.pivot);
+                    let delta = match spatial.leaf(member.node_id) {
+                        Some(query) => lifted(&query, &world, delta),
+                        None => delta,
+                    };
+                    deltas.push(delta);
+                    let (Some(query), Ok(up)) =
+                        (spatial.leaf(member.node_id), member.parent.inverse())
+                    else {
+                        continue;
+                    };
+                    edits.push(SceneEdit::SetLocalTransform {
+                        node_id: member.node_id,
+                        before: query.local_transform(),
+                        after: up.compose(&delta.compose(&world)),
+                    });
+                }
+                for (r, b) in self.riders.iter().zip(rider_base) {
+                    let Some(query) = spatial.leaf(r.node_id) else {
+                        continue;
+                    };
+                    let ride = deltas
+                        .get(r.model)
+                        .filter(|d| in_plane(d))
+                        .copied()
+                        .unwrap_or(Transform3D::Identity);
+                    edits.push(SceneEdit::SetLocalTransform {
+                        node_id: r.node_id,
+                        before: query.local_transform(),
+                        after: ride.compose(b),
+                    });
+                }
+                edits
+            })
+            .unwrap_or_default();
+        let edits: Vec<SceneEdit> = edits.into_iter().filter(|e| !e.is_noop()).collect();
+        if edits.is_empty() {
+            return Ok(());
+        }
+        document.apply_edit_unfollowed(SceneEdit::Compound(edits))
+    }
+
     /// Ends the gesture: the supports go back where the history has them and
     /// the leaves' change is recorded as one undo entry, which takes the
     /// supports along or away.
@@ -359,6 +435,40 @@ pub(super) fn world_delta(from: &Transform3D, to: &Transform3D) -> Option<Transf
         }
     };
     finite.then_some(delta)
+}
+
+/// `m` (about the origin) about the world point `pivot`:
+/// `T(pivot) ∘ m ∘ T(-pivot)`.
+fn about(m: &AffineTransform3D, pivot: Vec3) -> Transform3D {
+    let p = pivot.to_array().map(f64::from);
+    translation(p)
+        .compose(&Transform3D::Affine(*m))
+        .compose(&translation(p.map(|c| -c)))
+}
+
+/// `delta` applied to a leaf standing at `world`, followed by the lift in Z
+/// that keeps its lowest point where it was, or on the plate when it rested
+/// there: the rule of [`GroupMove::kept_on_bed`], for one leaf. A turn about
+/// the vertical axis needs none.
+fn lifted(query: &ObjectQuery<'_>, world: &Transform3D, delta: Transform3D) -> Transform3D {
+    if in_plane(&delta) {
+        return delta;
+    }
+    let (Some(before), Some(after)) = (
+        query.minimum_world_z(*world),
+        query.minimum_world_z(delta.compose(world)),
+    ) else {
+        return delta;
+    };
+    if !before.is_finite() || !after.is_finite() {
+        return delta;
+    }
+    let target = if before > 1e-4 { before } else { 0.0 };
+    let correction = target - after;
+    if correction.abs() <= 1e-6 {
+        return delta;
+    }
+    translation([0.0, 0.0, correction + 1e-5]).compose(&delta)
 }
 
 /// Whether `delta` keeps to the plate plane: no move in Z, no tilt, no

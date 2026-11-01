@@ -4,7 +4,8 @@
  */
 
 //! The 2D aids of a gesture in flight (#69), in viewport pixels: the line
-//! along the axis through the start position, the figure next to the dragged
+//! along the axis through the start position (a line along each of its two
+//! axes for a move in a plane, #207, #209), the figure next to the dragged
 //! handle (or the cursor, in G/R/S), and, while moving, a dot at the start
 //! position and a dashed line to the current one. The chip at the top and the
 //! rotate slice are drawn elsewhere (the chip by the controller, the slice by
@@ -14,7 +15,8 @@ use glam::{Vec2, Vec3};
 
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::{Axis, axis_basis};
-use crate::gizmo::dimensions::{CONE_TIP_X, MIDPOINT_FRACTION, ROTATE_ARC_RADIUS_FRACTION, px};
+use crate::gizmo::dimensions::px;
+use crate::gizmo::look::GizmoLook;
 use crate::gizmo::style::AXIS_COLORS;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
@@ -37,6 +39,7 @@ const GUIDE_ALPHA: u8 = 165;
 const TAG_PAST_ARROW_PIXELS: f32 = 16.0;
 const TAG_PAST_RING_PIXELS: f32 = 22.0;
 const TAG_PAST_CUBE_PIXELS: f32 = 20.0;
+const TAG_PAST_PLANE_PIXELS: f32 = 12.0;
 /// In G/R/S, and next to the centre ball, the figure sits this far down and
 /// right of the anchor.
 const TAG_CURSOR_OFFSET: f32 = 16.0;
@@ -46,6 +49,8 @@ const TAG_CURSOR_OFFSET: f32 = 16.0;
 pub(super) struct GestureAids {
     /// The axis line: path commands and colour (RGBA).
     pub guide: Option<(String, [u8; 4])>,
+    /// The line along the second axis of a move in a plane.
+    pub guide2: Option<(String, [u8; 4])>,
     /// The anchor point of the figure next to the handle; the text is the
     /// gesture's own (see `tag_text`).
     pub tag_anchor: Option<(f32, f32)>,
@@ -68,11 +73,13 @@ pub(super) enum GestureView<'a> {
     },
 }
 
-/// Projection of world points into logical viewport pixels.
+/// Projection of world points into logical viewport pixels, and the gizmo
+/// the user picked (where its handles sit and how large it is).
 pub(super) struct Screen<'a> {
     pub camera: &'a OrbitCamera,
     pub width: f32,
     pub height: f32,
+    pub look: GizmoLook,
 }
 
 impl Screen<'_> {
@@ -81,9 +88,16 @@ impl Screen<'_> {
             .map(|(x, y)| Vec2::new(x, y))
     }
 
-    /// World length of the gizmo shaft at `p` (see `gizmo::gizmo_scale`).
+    /// World length of the gizmo shaft at `p` (see `gizmo::gizmo_scale`), at
+    /// the gizmo's size.
     fn shaft(&self, p: Vec3) -> Option<f32> {
-        crate::gizmo::gizmo_scale(self.camera, p, default_fov_y(), self.height)
+        crate::gizmo::gizmo_scale_sized(
+            self.camera,
+            p,
+            default_fov_y(),
+            self.height,
+            self.look.size,
+        )
     }
 }
 
@@ -103,6 +117,7 @@ pub(super) fn compose(view: &GestureView<'_>, screen: &Screen<'_>) -> GestureAid
             let [cx, cy] = gesture.cursor;
             GestureAids {
                 guide,
+                guide2: None,
                 tag_anchor: modal_tag_anchor(gesture, *pivot_now, screen)
                     .or(Some((cx + TAG_CURSOR_OFFSET, cy + TAG_CURSOR_OFFSET))),
                 trail,
@@ -113,23 +128,28 @@ pub(super) fn compose(view: &GestureView<'_>, screen: &Screen<'_>) -> GestureAid
             pivot_start,
             pivot_now,
         } => {
-            let axis = match *op {
+            let (first, second) = match *op {
                 DragOp::Translate { axis, .. }
                 | DragOp::Rotate { axis, .. }
-                | DragOp::ScaleAxis { axis, .. } => Some(axis),
-                DragOp::ScaleUniform { .. } => None,
+                | DragOp::ScaleAxis { axis, .. } => (Some(axis), None),
+                DragOp::Plane { normal, .. } => {
+                    let (u, v) = normal.plane_axes();
+                    (Some(u), Some(v))
+                }
+                DragOp::ScaleUniform { .. } => (None, None),
             };
-            let guide = axis.and_then(|a| {
+            let line = |a: Axis| {
                 let shaft = screen.shaft(*pivot_start)?;
                 let p0 = screen.project(*pivot_start)?;
                 let p1 = screen.project(*pivot_start + a.world_dir() * shaft)?;
                 guide_line(p0, p1 - p0, a.index())
-            });
-            let trail = matches!(op, DragOp::Translate { .. })
+            };
+            let trail = matches!(op, DragOp::Translate { .. } | DragOp::Plane { .. })
                 .then(|| trail(screen, *pivot_start, *pivot_now))
                 .flatten();
             GestureAids {
-                guide,
+                guide: first.and_then(line),
+                guide2: second.and_then(line),
                 tag_anchor: drag_tag_anchor(*op, *pivot_start, *pivot_now, screen),
                 trail,
             }
@@ -146,9 +166,24 @@ fn drag_tag_anchor(
     screen: &Screen<'_>,
 ) -> Option<(f32, f32)> {
     let shaft = screen.shaft(pivot_now)?;
+    let m = screen.look.metrics();
     let world = match op {
         DragOp::Translate { axis, .. } => {
-            pivot_now + axis.world_dir() * shaft * (CONE_TIP_X + px(TAG_PAST_ARROW_PIXELS))
+            pivot_now + axis.world_dir() * shaft * (m.cone_tip + px(TAG_PAST_ARROW_PIXELS))
+        }
+        DragOp::Plane { normal, body, .. } => {
+            if body {
+                // A model dragged by its body: next to its centre, where the
+                // gizmo stands.
+                let p = screen.project(pivot_now)?;
+                return Some((p.x + TAG_CURSOR_OFFSET, p.y + TAG_CURSOR_OFFSET));
+            }
+            // Past the outer corner of the square.
+            let (u, v) = normal.plane_axes();
+            let view_dir = (screen.camera.target - screen.camera.eye()).normalize_or_zero();
+            let (su, sv) = crate::gizmo::hit_test::plane_quadrant(normal, view_dir);
+            let corner = px(m.plane_offset_px + m.plane_size_px * 0.5 + TAG_PAST_PLANE_PIXELS);
+            pivot_now + (u.world_dir() * su + v.world_dir() * sv) * shaft * corner
         }
         DragOp::Rotate {
             axis,
@@ -158,7 +193,7 @@ fn drag_tag_anchor(
         } => {
             let (u, v) = axis_basis(axis);
             let a = start_angle + applied;
-            let r = shaft * (ROTATE_ARC_RADIUS_FRACTION + px(TAG_PAST_RING_PIXELS));
+            let r = shaft * (m.ring_radius + px(TAG_PAST_RING_PIXELS));
             pivot_start + (u * a.cos() + v * a.sin()) * r
         }
         DragOp::ScaleAxis {
@@ -184,21 +219,22 @@ fn modal_tag_anchor(
     screen: &Screen<'_>,
 ) -> Option<(f32, f32)> {
     let axis = gesture.axis.map(|k| [Axis::X, Axis::Y, Axis::Z][k]);
+    let m = screen.look.metrics();
     let world = match (gesture.op, axis) {
         (ModalOp::Move, Some(axis)) => {
             let shaft = screen.shaft(pivot_now)?;
-            pivot_now + axis.world_dir() * shaft * (CONE_TIP_X + px(TAG_PAST_ARROW_PIXELS))
+            pivot_now + axis.world_dir() * shaft * (m.cone_tip + px(TAG_PAST_ARROW_PIXELS))
         }
         (ModalOp::Rotate, _) => {
             let shaft = screen.shaft(gesture.pivot)?;
             let (u, v) = gesture.ring_basis();
             let a = gesture.ring_start() + gesture.applied_turn();
-            let r = shaft * (ROTATE_ARC_RADIUS_FRACTION + px(TAG_PAST_RING_PIXELS));
+            let r = shaft * (m.ring_radius + px(TAG_PAST_RING_PIXELS));
             gesture.pivot + (u * a.cos() + v * a.sin()) * r
         }
         (ModalOp::Scale, Some(axis)) => {
             let shaft = screen.shaft(gesture.pivot)?;
-            let along = MIDPOINT_FRACTION * gesture.factor + px(TAG_PAST_CUBE_PIXELS);
+            let along = m.cube_at * gesture.factor + px(TAG_PAST_CUBE_PIXELS);
             gesture.pivot + axis.world_dir() * shaft * along
         }
         _ => return None,
@@ -265,13 +301,13 @@ pub(super) fn tag_text(readout: &str) -> String {
     readout.to_string()
 }
 
-/// The axis an op is locked to, if any.
+/// The axis an op is locked to, if any. A move in a plane has two.
 pub(super) fn drag_axis(op: DragOp) -> Option<Axis> {
     match op {
         DragOp::Translate { axis, .. }
         | DragOp::Rotate { axis, .. }
         | DragOp::ScaleAxis { axis, .. } => Some(axis),
-        DragOp::ScaleUniform { .. } => None,
+        DragOp::Plane { .. } | DragOp::ScaleUniform { .. } => None,
     }
 }
 
@@ -285,6 +321,7 @@ mod tests {
             camera,
             width: 800.0,
             height: 600.0,
+            look: GizmoLook::default(),
         }
     }
 
@@ -385,9 +422,58 @@ mod tests {
         };
         let aids = compose(&view, &screen);
         let (tx, ty) = aids.tag_anchor.unwrap();
-        let ring = ROTATE_ARC_RADIUS_FRACTION * crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+        let ring = crate::gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION
+            * crate::gizmo::dimensions::HANDLE_PIXEL_LENGTH;
         assert!(tx - 400.0 > ring, "{tx}");
         assert!((ty - 300.0).abs() < 0.5);
         assert!(aids.trail.is_none());
+    }
+
+    #[test]
+    fn a_plane_drag_draws_a_line_along_each_of_its_axes_and_a_trail() {
+        let camera = front_camera();
+        let screen = front_screen(&camera);
+        let view = GestureView::Drag {
+            op: DragOp::Plane {
+                normal: Axis::Y,
+                origin: Vec3::ZERO,
+                anchor: Vec3::ZERO,
+                body: false,
+            },
+            pivot_start: Vec3::ZERO,
+            pivot_now: Vec3::new(2.0, 0.0, 1.0),
+        };
+        let aids = compose(&view, &screen);
+        let (_, first) = aids.guide.expect("a line along X");
+        let (_, second) = aids.guide2.expect("a line along Z");
+        assert_eq!(&first[..3], &[239, 91, 91]);
+        assert_eq!(&second[..3], &[79, 143, 247]);
+        assert!(aids.trail.is_some());
+        // The figure sits up and right, past the square.
+        let (tx, ty) = aids.tag_anchor.unwrap();
+        assert!(tx > 400.0 && ty < 300.0, "{tx} {ty}");
+    }
+
+    #[test]
+    fn a_body_drag_puts_its_figure_by_the_model() {
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 10.0);
+        camera.set_axis_view(AxisView::Top);
+        let screen = front_screen(&camera);
+        let view = GestureView::Drag {
+            op: DragOp::Plane {
+                normal: Axis::Z,
+                origin: Vec3::ZERO,
+                anchor: Vec3::ZERO,
+                body: true,
+            },
+            pivot_start: Vec3::ZERO,
+            pivot_now: Vec3::new(3.0, 0.0, 0.0),
+        };
+        let aids = compose(&view, &screen);
+        assert!(aids.guide.is_some() && aids.guide2.is_some());
+        let now = screen.project(Vec3::new(3.0, 0.0, 0.0)).unwrap();
+        let (tx, ty) = aids.tag_anchor.unwrap();
+        assert!((tx - now.x - TAG_CURSOR_OFFSET).abs() < 0.5);
+        assert!((ty - now.y - TAG_CURSOR_OFFSET).abs() < 0.5);
     }
 }
