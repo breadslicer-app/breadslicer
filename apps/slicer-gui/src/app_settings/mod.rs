@@ -15,6 +15,8 @@ use std::path::PathBuf;
 
 use newtypes::newtype_validated;
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
+
+use crate::gizmo::look::{DEFAULT_GIZMO_SIZE, GizmoStyle, clamp_size};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::frame_rate::FrameRateCap;
@@ -378,6 +380,18 @@ fn is_default_frame_rate(cap: &FrameRateCap) -> bool {
     *cap == FrameRateCap::default()
 }
 
+fn is_default_gizmo_style(style: &GizmoStyle) -> bool {
+    *style == GizmoStyle::default()
+}
+
+fn default_gizmo_size() -> u32 {
+    DEFAULT_GIZMO_SIZE
+}
+
+fn is_default_gizmo_size(size: &u32) -> bool {
+    *size == DEFAULT_GIZMO_SIZE
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -435,6 +449,17 @@ pub(crate) struct AppSettings {
     /// default (`Automatic`).
     #[serde(default, skip_serializing_if = "is_default_frame_rate")]
     frame_rate: FrameRateCap,
+    /// The gizmo style (#274). Omitted in TOML while it holds the default
+    /// (`outline`).
+    #[serde(default, skip_serializing_if = "is_default_gizmo_style")]
+    gizmo_style: GizmoStyle,
+    /// The gizmo size in percent (#276). Omitted in TOML while it holds the
+    /// default (100).
+    #[serde(
+        default = "default_gizmo_size",
+        skip_serializing_if = "is_default_gizmo_size"
+    )]
+    gizmo_size: u32,
     /// Whether the viewport shows an orthographic view instead of a
     /// perspective one. Omitted in TOML while off (the default, perspective).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -476,6 +501,8 @@ impl Default for AppSettings {
             prescan_supports: default_prescan_supports(),
             smooth_models: default_smooth_models(),
             frame_rate: FrameRateCap::default(),
+            gizmo_style: GizmoStyle::default(),
+            gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             silenced_messages: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
@@ -603,6 +630,23 @@ impl AppSettings {
 
     pub(crate) fn set_frame_rate(&mut self, cap: FrameRateCap) {
         self.frame_rate = cap;
+    }
+
+    pub(crate) fn gizmo_style(&self) -> GizmoStyle {
+        self.gizmo_style
+    }
+
+    pub(crate) fn set_gizmo_style(&mut self, style: GizmoStyle) {
+        self.gizmo_style = style;
+    }
+
+    /// The gizmo size in percent, held to the range Preferences offers.
+    pub(crate) fn gizmo_size(&self) -> u32 {
+        clamp_size(self.gizmo_size)
+    }
+
+    pub(crate) fn set_gizmo_size(&mut self, percent: u32) {
+        self.gizmo_size = clamp_size(percent);
     }
 
     pub(crate) fn orthographic_view(&self) -> bool {

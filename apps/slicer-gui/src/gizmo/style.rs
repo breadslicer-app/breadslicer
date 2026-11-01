@@ -55,6 +55,16 @@ pub(crate) const TICK_ALPHA: f32 = 0.9;
 pub(crate) const AXIS_FADE_START: f32 = 0.95;
 pub(crate) const AXIS_FADE_END: f32 = 0.99;
 
+/// A plane square (#207) fades out as it turns edge-on, between these
+/// `|normal · view|` values; below `tolerances::PLANE_PICK_MIN` it cannot be
+/// grabbed.
+pub(crate) const PLANE_FADE_START: f32 = 0.24;
+pub(crate) const PLANE_FADE_END: f32 = 0.10;
+/// How much more opaque a plane square gets under the cursor or dragged, up
+/// to `PLANE_ALPHA_MAX`.
+pub(crate) const PLANE_LIT_GAIN: f32 = 0.35;
+pub(crate) const PLANE_ALPHA_MAX: f32 = 0.9;
+
 const fn rgb(r: u8, g: u8, b: u8) -> [f32; 3] {
     [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]
 }
@@ -78,6 +88,13 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 pub(crate) fn axis_fade(axis: Axis, view_dir: Vec3) -> f32 {
     let along = axis.world_dir().dot(view_dir).abs();
     1.0 - smoothstep(AXIS_FADE_START, AXIS_FADE_END, along)
+}
+
+/// Opacity of the plane square perpendicular to `normal` seen along
+/// `view_dir` (unit): 1 facing the camera, 0 edge-on.
+pub(crate) fn plane_fade(normal: Axis, view_dir: Vec3) -> f32 {
+    let facing = normal.world_dir().dot(view_dir).abs();
+    smoothstep(PLANE_FADE_END, PLANE_FADE_START, facing)
 }
 
 /// Opacity of the rotate ring around `axis`: faded once the ring is edge-on
@@ -144,6 +161,15 @@ mod tests {
         assert_approx_eq!(f32, axis_fade(Axis::X, -Vec3::X), 0.0);
         let mid = Vec3::new(0.97, (1.0f32 - 0.97 * 0.97).sqrt(), 0.0);
         let f = axis_fade(Axis::X, mid);
+        assert!(f > 0.2 && f < 0.8, "{f}");
+    }
+
+    #[test]
+    fn a_plane_fades_out_edge_on() {
+        assert_approx_eq!(f32, plane_fade(Axis::Z, Vec3::Z), 1.0);
+        assert_approx_eq!(f32, plane_fade(Axis::Z, Vec3::X), 0.0);
+        let mid = Vec3::new((1.0f32 - 0.17 * 0.17).sqrt(), 0.0, 0.17);
+        let f = plane_fade(Axis::Z, mid);
         assert!(f > 0.2 && f < 0.8, "{f}");
     }
 

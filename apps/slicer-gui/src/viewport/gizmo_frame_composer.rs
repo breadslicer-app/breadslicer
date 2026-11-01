@@ -22,8 +22,8 @@ use super::input_dispatch::InputDispatch;
 use super::modal_transform::{ModalGesture, ModalOp};
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::ALL_AXES;
-use crate::gizmo::dimensions::MIDPOINT_FRACTION;
 use crate::gizmo::frame::{build_gizmo_frame, build_gizmo_frame_at};
+use crate::gizmo::look::GizmoLook;
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoVisibility, default_fov_y};
 
 pub(super) struct GizmoFrameComposer;
@@ -46,11 +46,17 @@ impl GizmoFrameComposer {
     ) -> Option<GizmoFrame> {
         let sel = selection?;
         let pivot = gizmo_pivot(spatial, sel, group)?;
+        let look = input.gizmo_look();
         let (visibility, drag_visual) = match input.modal.get() {
             Some(gesture) => {
-                let shaft =
-                    crate::gizmo::gizmo_scale(camera, pivot, default_fov_y(), viewport_h_logical);
-                modal_look(&gesture, shaft)
+                let shaft = crate::gizmo::gizmo_scale_sized(
+                    camera,
+                    pivot,
+                    default_fov_y(),
+                    viewport_h_logical,
+                    look.size,
+                );
+                modal_look(&gesture, shaft, &look)
             }
             None => drag_look(input.gizmo_fsm().current()),
         };
@@ -63,6 +69,7 @@ impl GizmoFrameComposer {
                 visibility,
                 hover,
                 drag_visual,
+                look,
             );
         }
         build_gizmo_frame(
@@ -73,6 +80,7 @@ impl GizmoFrameComposer {
             visibility,
             hover,
             drag_visual,
+            look,
         )
     }
 }
@@ -82,6 +90,7 @@ fn drag_look(state: GizmoState) -> (GizmoVisibility, Option<GizmoDragVisual>) {
     match state {
         GizmoState::Drag { op, pivot, .. } => match op {
             DragOp::Translate { axis, .. } => (GizmoVisibility::DraggingTranslate { axis }, None),
+            DragOp::Plane { normal, .. } => (GizmoVisibility::DraggingPlane { normal }, None),
             DragOp::Rotate {
                 axis,
                 start_angle,
@@ -119,10 +128,12 @@ fn drag_look(state: GizmoState) -> (GizmoVisibility, Option<GizmoDragVisual>) {
 /// the arrow or cube of the locked axis (the cube slides with the scale), R
 /// shows its ring whole with the slice of the turn. Without an axis, G lights
 /// every arrow, S the centre ball, and R a screen ring in the camera plane.
-/// `shaft` is the world length of the gizmo shaft at the pivot.
+/// `shaft` is the world length of the gizmo shaft at the pivot, and `look`
+/// the gizmo the user picked (its cube sits where the style puts it).
 pub(super) fn modal_look(
     gesture: &ModalGesture,
     shaft: Option<f32>,
+    look: &GizmoLook,
 ) -> (GizmoVisibility, Option<GizmoDragVisual>) {
     let axis = gesture.axis.map(|k| ALL_AXES[k]);
     match (gesture.op, axis) {
@@ -132,7 +143,7 @@ pub(super) fn modal_look(
             GizmoVisibility::DraggingScaleAxis { axis },
             shaft.map(|s| GizmoDragVisual::ScaleAxis {
                 axis,
-                axial_distance: s * MIDPOINT_FRACTION * gesture.factor,
+                axial_distance: s * look.metrics().cube_at * gesture.factor,
             }),
         ),
         (ModalOp::Scale, None) => (GizmoVisibility::DraggingScaleUniform, None),
@@ -204,23 +215,36 @@ mod modal_look_tests {
             precision: PrecisionCursor::new([200.0, 100.0], false),
             modifiers: DragModifiers::default(),
             factor: 1.0,
+            individual: false,
         }
     }
 
     #[test]
     fn modal_g_and_s_light_the_handle_a_drag_would() {
-        let (v, d) = modal_look(&gesture(ModalOp::Move, Some(0)), Some(1.0));
+        let (v, d) = modal_look(
+            &gesture(ModalOp::Move, Some(0)),
+            Some(1.0),
+            &GizmoLook::default(),
+        );
         assert_eq!(v, GizmoVisibility::DraggingTranslate { axis: Axis::X });
         assert!(d.is_none());
-        let (v, _) = modal_look(&gesture(ModalOp::Move, None), Some(1.0));
+        let (v, _) = modal_look(
+            &gesture(ModalOp::Move, None),
+            Some(1.0),
+            &GizmoLook::default(),
+        );
         assert_eq!(v, GizmoVisibility::MovingFree);
-        let (v, _) = modal_look(&gesture(ModalOp::Scale, None), Some(1.0));
+        let (v, _) = modal_look(
+            &gesture(ModalOp::Scale, None),
+            Some(1.0),
+            &GizmoLook::default(),
+        );
         assert_eq!(v, GizmoVisibility::DraggingScaleUniform);
 
         // S X: the cube slides out with the scale, as in a cube drag.
         let mut g = gesture(ModalOp::Scale, Some(0));
         g.propose([300.0, 100.0], DragModifiers::default()).unwrap();
-        let (v, d) = modal_look(&g, Some(2.0));
+        let (v, d) = modal_look(&g, Some(2.0), &GizmoLook::default());
         assert_eq!(v, GizmoVisibility::DraggingScaleAxis { axis: Axis::X });
         match d {
             Some(GizmoDragVisual::ScaleAxis {
@@ -228,7 +252,11 @@ mod modal_look_tests {
                 axial_distance,
             }) => {
                 assert_eq!(axis, Axis::X);
-                assert_approx_eq!(f32, axial_distance, 2.0 * MIDPOINT_FRACTION * 2.0);
+                assert_approx_eq!(
+                    f32,
+                    axial_distance,
+                    2.0 * crate::gizmo::dimensions::MIDPOINT_FRACTION * 2.0
+                );
             }
             other => panic!("expected the cube slide, got {other:?}"),
         }
@@ -239,7 +267,7 @@ mod modal_look_tests {
         let mut g = gesture(ModalOp::Rotate, Some(2));
         // A quarter turn counter-clockwise on screen around the pivot.
         g.propose([100.0, 0.0], DragModifiers::default()).unwrap();
-        let (v, d) = modal_look(&g, Some(1.0));
+        let (v, d) = modal_look(&g, Some(1.0), &GizmoLook::default());
         assert_eq!(v, GizmoVisibility::DraggingRotate { axis: Axis::Z });
         match d {
             Some(GizmoDragVisual::Rotate { axis, start, sweep }) => {
@@ -258,7 +286,7 @@ mod modal_look_tests {
         let mut g = gesture(ModalOp::Rotate, None);
         // The cursor goes from right of the pivot to above it.
         g.propose([100.0, 0.0], DragModifiers::default()).unwrap();
-        let (v, d) = modal_look(&g, Some(1.0));
+        let (v, d) = modal_look(&g, Some(1.0), &GizmoLook::default());
         assert_eq!(v, GizmoVisibility::DraggingViewRotate);
         match d {
             Some(GizmoDragVisual::ViewRotate {

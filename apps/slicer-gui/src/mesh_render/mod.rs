@@ -50,6 +50,12 @@ use gizmo_entries::{
     GIZMO_ENTRY_SLOTS, GizmoDrawEntry, GizmoLayer, GizmoMesh, GizmoUniformsGpu, build_gizmo_draws,
 };
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
+
+/// How many draws the gizmo pass records for `frame`, for the cost probe.
+#[cfg(test)]
+pub(crate) fn gizmo_draw_count_for_test(frame: &GizmoFrame) -> usize {
+    build_gizmo_draws(frame).len()
+}
 pub(crate) use overlay::{Overlay, OverlayMesh, OverlayTint};
 use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
@@ -1213,10 +1219,11 @@ impl Renderer {
         let draws = build_gizmo_draws(frame);
         let entries: Vec<GizmoDrawEntry> = draws.iter().map(|d| d.entry).collect();
         buffers.write_entries(&self.core.queue, &entries);
+        let ring_radius = frame.look.metrics().ring_radius;
         let (wedge, marks) = match frame.drag_visual {
             Some(GizmoDragVisual::Rotate { axis, start, sweep }) => buffers.write_marks(
                 &self.core.queue,
-                &crate::gizmo_geometry::build_rotate_marks(axis, start, sweep),
+                &crate::gizmo_geometry::build_rotate_marks(axis, start, sweep, ring_radius),
             ),
             Some(GizmoDragVisual::ViewRotate {
                 right,
@@ -1225,7 +1232,7 @@ impl Renderer {
                 sweep,
             }) => buffers.write_marks(
                 &self.core.queue,
-                &crate::gizmo_geometry::build_ring_marks(right, up, start, sweep),
+                &crate::gizmo_geometry::build_ring_marks(right, up, start, sweep, ring_radius),
             ),
             _ => (0..0, 0..0),
         };
@@ -1278,7 +1285,7 @@ impl Renderer {
                 &self.pipelines.gizmo.entries_bind_group,
                 &[offset],
             );
-            if let Some(mesh) = buffers.mesh(draw.mesh) {
+            if let Some(mesh) = buffers.mesh(draw.mesh, frame.look.style) {
                 if bound_mesh != Some(draw.mesh) {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);

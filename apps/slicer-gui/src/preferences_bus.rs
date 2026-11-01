@@ -30,6 +30,9 @@ use std::rc::{Rc, Weak};
 use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
 use crate::frame_rate::FrameRateCap;
+#[cfg(test)]
+use crate::gizmo::look::DEFAULT_GIZMO_SIZE;
+use crate::gizmo::look::GizmoStyle;
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
 use crate::slint_ui::{MenuLayout, ThemePreference};
@@ -57,6 +60,9 @@ pub(crate) struct PreferencesSnapshot {
     pub smooth_models: bool,
     /// The viewport's frame-rate cap (`frame_rate`).
     pub frame_rate: FrameRateCap,
+    /// The gizmo style (#274) and its size in percent (#276).
+    pub gizmo_style: GizmoStyle,
+    pub gizmo_size: u32,
     /// Whether the viewport shows an orthographic view (the 5 key or the
     /// viewport button). A new window starts with it; a window keeps its own
     /// projection while it is open, so a switch in 1 window is written to disk
@@ -152,6 +158,8 @@ impl PreferencesSnapshot {
             prescan_supports: false,
             smooth_models: false,
             frame_rate: FrameRateCap::Automatic,
+            gizmo_style: GizmoStyle::Outline,
+            gizmo_size: DEFAULT_GIZMO_SIZE,
             orthographic_view: false,
             diagnostic_log: false,
             silenced_messages: BTreeSet::new(),
@@ -196,6 +204,8 @@ pub(crate) enum PreferencesChange {
     PrescanSupports,
     SmoothModels,
     FrameRate,
+    /// The gizmo style or size (#274, #276).
+    Gizmo,
     Projection,
     DiagnosticLog,
     SilencedMessages,

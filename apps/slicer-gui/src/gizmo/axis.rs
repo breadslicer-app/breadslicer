@@ -23,6 +23,16 @@ impl Axis {
         }
     }
 
+    /// The two axes of the plane perpendicular to this one, in `[X, Y, Z]`
+    /// order: the plane a plane handle moves in (#207).
+    pub const fn plane_axes(self) -> (Axis, Axis) {
+        match self {
+            Axis::X => (Axis::Y, Axis::Z),
+            Axis::Y => (Axis::X, Axis::Z),
+            Axis::Z => (Axis::X, Axis::Y),
+        }
+    }
+
     /// Position in `[X, Y, Z]`.
     pub const fn index(self) -> usize {
         match self {
