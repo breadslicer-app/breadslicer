@@ -259,6 +259,13 @@ pub(crate) struct RotateMarks {
 /// `sweep` radians so far. The slice shows at most one full turn.
 pub(crate) fn build_rotate_marks(axis: Axis, start: f32, sweep: f32) -> RotateMarks {
     let (u, v) = axis_basis(axis);
+    build_ring_marks(u, v, start, sweep)
+}
+
+/// [`build_rotate_marks`] for a ring in the plane of the unit vectors `u` and
+/// `v` (the turn grows from `u` toward `v`): the screen ring of a modal R
+/// without an axis lies in the camera plane.
+pub(crate) fn build_ring_marks(u: Vec3, v: Vec3, start: f32, sweep: f32) -> RotateMarks {
     let dir = |a: f32| u * a.cos() + v * a.sin();
     let tangent = |a: f32| -u * a.sin() + v * a.cos();
     let r = RING_RADIUS_LOCAL;

@@ -2144,12 +2144,15 @@ fn gizmo_pictures() {
     let (graph, camera, pivot) = gizmo_showcase();
     renderer.upload_scene(&graph).expect("upload_scene");
     let (w, h) = (768u32, 576u32);
+    let inverse_view = camera.view_matrix().inverse();
+    let right = inverse_view.transform_vector3(Vec3::X).normalize();
+    let up = inverse_view.transform_vector3(Vec3::Y).normalize();
     let shots: [(
         &str,
         GizmoVisibility,
         Option<GizmoHover>,
         Option<GizmoDragVisual>,
-    ); 6] = [
+    ); 7] = [
         ("1-reposo", GizmoVisibility::Idle, None, None),
         (
             "2-mouse-encima-flecha-x",
@@ -2184,6 +2187,17 @@ fn gizmo_pictures() {
             GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
             None,
             None,
+        ),
+        (
+            "7-r-sin-eje-anillo-de-pantalla",
+            GizmoVisibility::DraggingViewRotate,
+            None,
+            Some(GizmoDragVisual::ViewRotate {
+                right,
+                up,
+                start: 0.3,
+                sweep: 50f32.to_radians(),
+            }),
         ),
     ];
     for (name, visibility, hover, drag_visual) in shots {

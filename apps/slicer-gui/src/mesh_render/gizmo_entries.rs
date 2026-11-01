@@ -15,7 +15,8 @@ use crate::gizmo::axis::{ALL_AXES, Axis};
 use crate::gizmo::dimensions::{MIDPOINT_FRACTION, OUTLINE_PIXELS, px};
 use crate::gizmo::style::{
     ACTIVE_MIX, CENTRE_COLOR, HOVER_MIX, OUTLINE_ALPHA, OUTLINE_COLOR, REFERENCE_ALPHA,
-    RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, WEDGE_ALPHA, axis_color, axis_fade, lighten, ring_fade,
+    RING_BACK_ALPHA, TICK_ALPHA, TICK_MIX, VIEW_RING_COLOR, WEDGE_ALPHA, axis_color, axis_fade,
+    lighten, ring_fade,
 };
 
 /// Per-frame uniform for the gizmo pass: the camera transform, the
@@ -114,6 +115,15 @@ pub enum GizmoDragVisual {
     /// `gizmo::axis::axis_basis`, as `rotate_drag_angle` measures it) and
     /// the turn applied so far (`sweep`, snapped when Ctrl is held).
     Rotate { axis: Axis, start: f32, sweep: f32 },
+    /// A modal R without an axis turns about the view direction: the screen
+    /// ring lies in the camera plane spanned by the unit vectors `right` and
+    /// `up`; `start` and `sweep` are measured from `right` toward `up`.
+    ViewRotate {
+        right: Vec3,
+        up: Vec3,
+        start: f32,
+        sweep: f32,
+    },
 }
 
 /// Which handle the pointer is currently over, in `Idle` visibility.
@@ -132,10 +142,21 @@ pub enum GizmoHover {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoVisibility {
     Idle,
-    DraggingTranslate { axis: Axis },
-    DraggingRotate { axis: Axis },
-    DraggingScaleAxis { axis: Axis },
+    DraggingTranslate {
+        axis: Axis,
+    },
+    DraggingRotate {
+        axis: Axis,
+    },
+    DraggingScaleAxis {
+        axis: Axis,
+    },
     DraggingScaleUniform,
+    /// A modal G without an axis: every arrow lit, moving in the view plane.
+    MovingFree,
+    /// A modal R without an axis: only the screen ring, turning about the
+    /// view direction.
+    DraggingViewRotate,
 }
 
 /// Rotation that maps handle-local +X onto each world axis. Indexed
@@ -236,10 +257,16 @@ pub(super) fn build_gizmo_draws(frame: &GizmoFrame) -> Vec<GizmoDraw> {
             entry: entry(h.transform, h.color, h.alpha, 0.0, half_of(h)),
         });
     }
-    if let (GizmoVisibility::DraggingRotate { axis }, Some(GizmoDragVisual::Rotate { .. })) =
-        (frame.visibility, frame.drag_visual)
-    {
-        let base = axis_color(axis);
+    let marks_color = match (frame.visibility, frame.drag_visual) {
+        (GizmoVisibility::DraggingRotate { axis }, Some(GizmoDragVisual::Rotate { .. })) => {
+            Some(axis_color(axis))
+        }
+        (GizmoVisibility::DraggingViewRotate, Some(GizmoDragVisual::ViewRotate { .. })) => {
+            Some(VIEW_RING_COLOR)
+        }
+        _ => None,
+    };
+    if let Some(base) = marks_color {
         draws.push(GizmoDraw {
             mesh: GizmoMesh::Wedge,
             layer: GizmoLayer::Flat,
@@ -280,6 +307,7 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
                 Some((Look::Active, 1.0))
             }
             GizmoVisibility::DraggingTranslate { .. } => Some((Look::Rest, REFERENCE_ALPHA * fade)),
+            GizmoVisibility::MovingFree => Some((Look::Active, fade)),
             _ => None,
         };
         if let Some((look, alpha)) = arrow {
@@ -342,6 +370,27 @@ fn visible_handles(frame: &GizmoFrame) -> Vec<Handle> {
                 split_ring: false,
             });
         }
+    }
+    if let (
+        GizmoVisibility::DraggingViewRotate,
+        Some(GizmoDragVisual::ViewRotate { right, up, .. }),
+    ) = (frame.visibility, frame.drag_visual)
+    {
+        // The ring mesh lies across handle-local +X: turn +X onto the
+        // direction toward the eye, so the ring faces the viewer.
+        let toward_eye = right.cross(up);
+        out.push(Handle {
+            mesh: GizmoMesh::Ring,
+            transform: Mat4::from_cols(
+                toward_eye.extend(0.0),
+                right.extend(0.0),
+                up.extend(0.0),
+                glam::Vec4::W,
+            ),
+            color: Look::Active.color(VIEW_RING_COLOR),
+            alpha: 1.0,
+            split_ring: false,
+        });
     }
     let ball = match frame.visibility {
         GizmoVisibility::Idle => Some(Look::of(hover == Some(GizmoHover::ScaleUniform), false)),
@@ -588,5 +637,72 @@ mod tests {
             sweep: 1.0,
         });
         assert!(build_gizmo_draws(&f).len() as u64 <= GIZMO_ENTRY_SLOTS);
+    }
+
+    #[test]
+    fn a_modal_r_without_axis_shows_only_the_yellow_screen_ring_facing_the_viewer() {
+        let right = Vec3::new(0.6, 0.8, 0.0);
+        let up = Vec3::new(-0.8 * 0.5, 0.6 * 0.5, 0.75_f32.sqrt());
+        let mut f = frame(GizmoVisibility::DraggingViewRotate);
+        f.drag_visual = Some(GizmoDragVisual::ViewRotate {
+            right,
+            up,
+            start: 0.2,
+            sweep: 0.7,
+        });
+        let draws = build_gizmo_draws(&f);
+        let rings = cores(&draws, GizmoMesh::Ring);
+        assert_eq!(rings.len(), 1);
+        assert_rgb(rgb(&rings[0]), lighten(VIEW_RING_COLOR, ACTIVE_MIX));
+        assert_approx_eq!(f32, rings[0].params[1], HALF_ALL);
+        // The ring's plane is the camera plane: its local axis maps onto the
+        // direction toward the eye, its local Y and Z onto right and up.
+        let m = Mat4::from_cols_array_2d(&rings[0].axis_rotation);
+        let normal = (m * Vec4::new(1.0, 0.0, 0.0, 0.0)).truncate();
+        assert!((normal - right.cross(up)).length() < 1e-5);
+        assert!(((m * Vec4::new(0.0, 1.0, 0.0, 0.0)).truncate() - right).length() < 1e-5);
+        assert!((m.determinant() - 1.0).abs() < 1e-4);
+        for mesh in [GizmoMesh::Arrow, GizmoMesh::Cube, GizmoMesh::Ball] {
+            assert!(cores(&draws, mesh).is_empty(), "{mesh:?}");
+        }
+        let wedge: Vec<_> = draws
+            .iter()
+            .filter(|d| d.mesh == GizmoMesh::Wedge)
+            .collect();
+        assert_eq!(wedge.len(), 1);
+        assert_rgb(rgb(&wedge[0].entry), VIEW_RING_COLOR);
+        assert_eq!(draws.last().unwrap().mesh, GizmoMesh::Marks);
+    }
+
+    #[test]
+    fn the_screen_ring_yellow_stays_apart_from_the_axes_and_the_selection_amber() {
+        let amber = [
+            0xd7 as f32 / 255.0,
+            0xa7 as f32 / 255.0,
+            0x5a as f32 / 255.0,
+        ];
+        let distance = |a: [f32; 3], b: [f32; 3]| {
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+        };
+        for axis in AXIS_COLORS {
+            assert!(distance(VIEW_RING_COLOR, axis) > 0.3);
+        }
+        assert!(distance(VIEW_RING_COLOR, amber) > 0.15);
+        // No other mode draws the screen ring.
+        let idle = build_gizmo_draws(&frame(GizmoVisibility::Idle));
+        for d in idle {
+            assert_ne!(rgb(&d.entry), VIEW_RING_COLOR);
+        }
+    }
+
+    #[test]
+    fn a_free_modal_move_lights_every_arrow() {
+        let draws = build_gizmo_draws(&frame(GizmoVisibility::MovingFree));
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 3);
+        for (i, e) in arrows.iter().enumerate() {
+            assert_rgb(rgb(e), lighten(AXIS_COLORS[i], ACTIVE_MIX));
+        }
+        assert!(cores(&draws, GizmoMesh::Ring).is_empty());
     }
 }

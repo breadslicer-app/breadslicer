@@ -53,8 +53,53 @@ pub(super) struct ModalGesture {
     pub precision: PrecisionCursor,
     /// The modifier keys of the last pointer event.
     pub modifiers: DragModifiers,
+    /// The scale factor applied so far (1 until an S gesture moves).
+    pub factor: f32,
 }
 impl ModalGesture {
+    /// The turn an R gesture has applied so far, in radians, right-handed
+    /// about [`Self::turn_axis`] (snapped as the rotation is).
+    pub(super) fn applied_turn(&self) -> f32 {
+        let axis = self.turn_axis();
+        let sign = if axis.dot(self.view_axis) >= 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        self.modifiers.angle(self.angle) * sign
+    }
+
+    /// The axis an R gesture turns about: the locked axis, or the view
+    /// direction (toward the eye) without one.
+    pub(super) fn turn_axis(&self) -> Vec3 {
+        self.axis.map(axis_vector).unwrap_or(self.view_axis)
+    }
+
+    /// The plane of the ring an R gesture shows, as two unit vectors (the
+    /// turn grows from the first toward the second): the locked axis's ring,
+    /// or the screen ring in the camera plane.
+    pub(super) fn ring_basis(&self) -> (Vec3, Vec3) {
+        match self.axis {
+            Some(k) => crate::gizmo::axis::axis_basis(crate::gizmo::axis::ALL_AXES[k]),
+            None => (self.right, self.up),
+        }
+    }
+
+    /// Where on its ring an R gesture started, in the basis of
+    /// [`Self::ring_basis`]: the direction from the pivot to the press on
+    /// screen, laid onto the ring's plane.
+    pub(super) fn ring_start(&self) -> f32 {
+        let (u, v) = self.ring_basis();
+        let on_screen = self.right * (self.start[0] - self.screen_pivot[0])
+            - self.up * (self.start[1] - self.screen_pivot[1]);
+        let n = self.turn_axis();
+        let d = on_screen - n * on_screen.dot(n);
+        if d.length() < 1e-6 {
+            return 0.0;
+        }
+        d.dot(v).atan2(d.dot(u))
+    }
+
     pub(super) fn world_translation(&self, local: Transform3D, delta: Vec3) -> Option<Transform3D> {
         let shift = Transform3D::Affine(AffineTransform3D::from_translation(
             delta.to_array().map(f64::from),
@@ -127,6 +172,7 @@ impl ModalGesture {
                 }
                 .clamp(0.001, 1000.0);
                 let factor = modifiers.factor(factor);
+                self.factor = factor;
                 let scale = if let Some(axis) = self.axis {
                     let mut factors = [1.0; 3];
                     factors[axis] = f64::from(factor);
@@ -150,15 +196,9 @@ impl ModalGesture {
                 } else {
                     self.angle = dx * 0.01;
                 }
-                let axis = self.axis.map(axis_vector).unwrap_or(self.view_axis);
-                let sign = if axis.dot(self.view_axis) >= 0.0 {
-                    -1.0
-                } else {
-                    1.0
-                };
                 let rotation = AffineTransform3D::from_axis_angle(
-                    axis.to_array().map(f64::from),
-                    f64::from(modifiers.angle(self.angle) * sign),
+                    self.turn_axis().to_array().map(f64::from),
+                    f64::from(self.applied_turn()),
                 )
                 .ok()?;
                 self.about_pivot(rotation)
@@ -211,6 +251,7 @@ mod tests {
             angle: 0.0,
             precision: PrecisionCursor::new([100.0, 0.0], false),
             modifiers: DragModifiers::default(),
+            factor: 1.0,
         }
     }
 

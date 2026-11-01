@@ -14,7 +14,7 @@ use glam::{Vec2, Vec3};
 
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::{Axis, axis_basis};
-use crate::gizmo::dimensions::{CONE_TIP_X, ROTATE_ARC_RADIUS_FRACTION, px};
+use crate::gizmo::dimensions::{CONE_TIP_X, MIDPOINT_FRACTION, ROTATE_ARC_RADIUS_FRACTION, px};
 use crate::gizmo::style::AXIS_COLORS;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
@@ -103,7 +103,8 @@ pub(super) fn compose(view: &GestureView<'_>, screen: &Screen<'_>) -> GestureAid
             let [cx, cy] = gesture.cursor;
             GestureAids {
                 guide,
-                tag_anchor: Some((cx + TAG_CURSOR_OFFSET, cy + TAG_CURSOR_OFFSET)),
+                tag_anchor: modal_tag_anchor(gesture, *pivot_now, screen)
+                    .or(Some((cx + TAG_CURSOR_OFFSET, cy + TAG_CURSOR_OFFSET))),
                 trail,
             }
         }
@@ -169,6 +170,38 @@ fn drag_tag_anchor(
             let p = screen.project(pivot_now)?;
             return Some((p.x + TAG_CURSOR_OFFSET, p.y + TAG_CURSOR_OFFSET));
         }
+    };
+    screen.project(world).map(|p| (p.x, p.y))
+}
+
+/// The figure's anchor for a modal G/R/S, where the matching drag puts it:
+/// past the arrow tip, outside the ring at the current angle (the screen ring
+/// without an axis), or past the sliding cube. `None` (next to the cursor) for
+/// a free G and a uniform S.
+fn modal_tag_anchor(
+    gesture: &ModalGesture,
+    pivot_now: Vec3,
+    screen: &Screen<'_>,
+) -> Option<(f32, f32)> {
+    let axis = gesture.axis.map(|k| [Axis::X, Axis::Y, Axis::Z][k]);
+    let world = match (gesture.op, axis) {
+        (ModalOp::Move, Some(axis)) => {
+            let shaft = screen.shaft(pivot_now)?;
+            pivot_now + axis.world_dir() * shaft * (CONE_TIP_X + px(TAG_PAST_ARROW_PIXELS))
+        }
+        (ModalOp::Rotate, _) => {
+            let shaft = screen.shaft(gesture.pivot)?;
+            let (u, v) = gesture.ring_basis();
+            let a = gesture.ring_start() + gesture.applied_turn();
+            let r = shaft * (ROTATE_ARC_RADIUS_FRACTION + px(TAG_PAST_RING_PIXELS));
+            gesture.pivot + (u * a.cos() + v * a.sin()) * r
+        }
+        (ModalOp::Scale, Some(axis)) => {
+            let shaft = screen.shaft(gesture.pivot)?;
+            let along = MIDPOINT_FRACTION * gesture.factor + px(TAG_PAST_CUBE_PIXELS);
+            gesture.pivot + axis.world_dir() * shaft * along
+        }
+        _ => return None,
     };
     screen.project(world).map(|p| (p.x, p.y))
 }

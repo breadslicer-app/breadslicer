@@ -1461,6 +1461,7 @@ impl ViewportController {
                     angle: 0.0,
                     precision: gizmo::modifiers::PrecisionCursor::new([x, y], false),
                     modifiers: Default::default(),
+                    factor: 1.0,
                 })
             })
             .flatten();

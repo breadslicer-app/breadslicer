@@ -22,6 +22,11 @@ pub(crate) const AXIS_COLORS: [[f32; 3]; 3] = [
 /// The uniform-scale ball at the centre.
 pub(crate) const CENTRE_COLOR: [f32; 3] = rgb(0xdf, 0xe3, 0xe6);
 
+/// The screen ring of a modal R without an axis, which turns about the view
+/// direction. A yellow tuned like the axis colours, clear of the theme amber
+/// (`#d7a75a`, which means "selected" and "warning") and of the three axes.
+pub(crate) const VIEW_RING_COLOR: [f32; 3] = rgb(0xea, 0xd1, 0x56);
+
 /// The outline drawn around every handle (`#0e1011` at 88 %), so a handle
 /// reads over the amber selected model and over the dark bed alike.
 pub(crate) const OUTLINE_COLOR: [f32; 3] = rgb(0x0e, 0x10, 0x11);

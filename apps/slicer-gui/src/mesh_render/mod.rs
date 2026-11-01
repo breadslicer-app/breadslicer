@@ -1218,6 +1218,15 @@ impl Renderer {
                 &self.core.queue,
                 &crate::gizmo_geometry::build_rotate_marks(axis, start, sweep),
             ),
+            Some(GizmoDragVisual::ViewRotate {
+                right,
+                up,
+                start,
+                sweep,
+            }) => buffers.write_marks(
+                &self.core.queue,
+                &crate::gizmo_geometry::build_ring_marks(right, up, start, sweep),
+            ),
             _ => (0..0, 0..0),
         };
 
