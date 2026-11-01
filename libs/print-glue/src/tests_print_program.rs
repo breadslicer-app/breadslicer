@@ -979,3 +979,83 @@ fn slab_top_out_of_range_display_names_the_layer_and_the_height() {
     assert!(msg.contains("layer 7"), "msg: {msg}");
     assert!(msg.contains("inf"), "msg: {msg}");
 }
+
+#[test]
+fn a_per_layer_overhead_is_paid_by_every_layer_on_top_of_the_offset() {
+    let calibrated = format!(
+        "{PRINTER_WITHOUT_TRANSITION_LAYERS_TOML}\n[time_calibration]\nprint_time_offset_sec = 144.0\nper_layer_overhead_sec = 1.14\n",
+    );
+    let reported = timed_program(&calibrated).print_time_sec.value();
+    let expected = SCHEDULE_SEC + 2.0 * 1.14 + 144.0;
+    assert!((reported - expected).abs() < 1e-9, "print time: {reported}");
+}
+
+/// The Photon Mono M7 Pro profile the app ships, with its measured time
+/// calibration.
+const SHIPPED_M7_PRO_TOML: &str =
+    include_str!("../../../assets/profiles/printers/anycubic-photon-mono-m7-pro.toml");
+
+/// The resin settings of a real 404 layer print on the M7 Pro: 4 bottom
+/// layers of 25 s, 2 s after them, half a second before each cure, and 8 mm
+/// of travel each way in 2 stages at 6 mm/s.
+const M7_PRO_PRINT_MATERIAL_TOML: &str = r#"
+[identity]
+id = "m7-pro-print"
+brand = "Siraya Tech"
+family = "standard"
+name = "M7 Pro print"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."anycubic-photon-mono-m7-pro"]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 4
+wait_before_cure_sec = 0.5
+bottom_wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 360.0
+retract_speed_mm_min = 360.0
+bottom_lift_distance_mm = 3.0
+bottom_lift_speed_mm_min = 360.0
+bottom_retract_speed_mm_min = 360.0
+second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 360.0, retract_speed_mm_min = 360.0 }
+bottom_second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 360.0, retract_speed_mm_min = 360.0 }
+"#;
+
+fn m7_pro_print_time_sec(printer_toml: &str) -> f64 {
+    let config = resolved_config_for(printer_toml, M7_PRO_PRINT_MATERIAL_TOML);
+    let profile = slice_profile(&config, 404);
+    project_to_print_program(&trio_as_roots(), &config, &profile, created_at(), "0.0.12")
+        .unwrap()
+        .print_time_sec
+        .value()
+}
+
+#[test]
+fn the_shipped_m7_pro_estimate_lands_near_a_real_print() {
+    // Without the calibration, the schedule alone: the 2248.33 s (37.5 min)
+    // the file of that print carried.
+    let uncalibrated = SHIPPED_M7_PRO_TOML.replace(
+        "print_time_offset_sec = 144.0\nper_layer_overhead_sec = 1.14\n",
+        "",
+    );
+    let schedule = m7_pro_print_time_sec(&uncalibrated);
+    assert!((schedule - 2248.33).abs() < 0.01, "schedule: {schedule}");
+
+    // With it, 1.14 s more per layer and 144 s more per print: 47.5 min,
+    // where the machine took at most 45.3 from receiving the file to
+    // reporting it done.
+    let estimate = m7_pro_print_time_sec(SHIPPED_M7_PRO_TOML);
+    let expected = schedule + 404.0 * 1.14 + 144.0;
+    assert!((estimate - expected).abs() < 1e-6, "estimate: {estimate}");
+    assert!(
+        (estimate / 60.0 - 47.5).abs() < 0.05,
+        "estimate: {estimate}"
+    );
+}
