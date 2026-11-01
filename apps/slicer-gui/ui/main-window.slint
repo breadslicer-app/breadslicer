@@ -362,6 +362,12 @@ export component MainWindow inherits Window {
     // undo/redo (an undo landing mid-run would invalidate the
     // worker's result).
     in-out property <bool> repairing-in-progress: false;
+    // The run's step and how far it is, polled from Rust (#253); and whether
+    // the viewport marks what a run left broken.
+    in property <string> repair-phase;
+    in property <float> repair-progress;
+    in property <bool> repair-marks-available;
+    in property <bool> repair-marks-shown;
 
     // support-generatoin run state (Menu: Tools > Generate Support (trivial for test)):
     // set when the job is submitted and cleared on
@@ -515,6 +521,8 @@ export component MainWindow inherits Window {
     callback redo-requested();
     callback repair-requested();
     callback repair-finished();
+    callback repair-cancel();
+    callback repair-marks-toggled(bool);
     // Arrange (#180), the Transform tab's Arrange card: a run in flight, what
     // the last one did, and the card's settings (Rust keeps them).
     in property <bool> arranging: false;
@@ -1669,6 +1677,16 @@ export component MainWindow inherits Window {
                             check-note: root.mesh-check-note;
                             check-text: root.mesh-check-text;
                             repairing: root.repairing-in-progress;
+                            repair-phase: root.repair-phase;
+                            repair-progress: root.repair-progress;
+                            repair-marks-available: root.repair-marks-available;
+                            repair-marks-shown: root.repair-marks-shown;
+                            repair-cancel => {
+                                root.repair-cancel();
+                            }
+                            repair-marks-toggled(on) => {
+                                root.repair-marks-toggled(on);
+                            }
                             repair-enabled: root.has-scene && !root.loading && !root.slicing-in-progress
                                 && !root.repairing-in-progress;
                             object-picked(i) => {

@@ -22,6 +22,7 @@ use sc_scene::mesh_targets::MeshTarget;
 
 use crate::MainWindow;
 use crate::i18n::ctr;
+use crate::repair_marks::RepairMarks;
 use crate::repair_report::object_names_by_leaf;
 
 /// How many names the card lists before it counts the rest.
@@ -44,6 +45,8 @@ struct Known {
     sliceable: bool,
     /// Why it still does not slice after a Repair run, when one ran on it.
     left: Option<String>,
+    /// What that run left broken, to mark on the model.
+    marks: Option<Arc<RepairMarks>>,
 }
 
 /// The remembered verdicts, and the problem the card shows now.
@@ -80,7 +83,38 @@ impl MeshCheck {
             mesh: Arc::downgrade(mesh),
             sliceable,
             left,
+            marks: None,
         });
+    }
+
+    /// Remembers what a Repair run left broken on `mesh`, whose verdict is
+    /// remembered: `None` when it left nothing to mark.
+    pub(crate) fn remember_marks(&self, mesh: &Arc<IndexedMesh>, marks: Option<Arc<RepairMarks>>) {
+        if let Some(known) = self
+            .known
+            .borrow_mut()
+            .iter_mut()
+            .find(|k| ptr_eq(&k.mesh, mesh))
+        {
+            known.marks = marks;
+        }
+    }
+
+    /// Whether a Repair run left something to mark on any mesh still alive.
+    pub(crate) fn any_marks(&self) -> bool {
+        self.known
+            .borrow()
+            .iter()
+            .any(|k| k.marks.is_some() && k.mesh.strong_count() > 0)
+    }
+
+    /// What a Repair run left broken on `mesh`, when one did.
+    pub(crate) fn marks_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Arc<RepairMarks>> {
+        self.known
+            .borrow()
+            .iter()
+            .find(|k| ptr_eq(&k.mesh, mesh))
+            .and_then(|k| k.marks.clone())
     }
 
     fn lookup(&self, mesh: &Arc<IndexedMesh>) -> Option<(bool, Option<String>)> {
