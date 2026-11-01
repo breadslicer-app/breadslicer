@@ -3205,6 +3205,73 @@ msgctxt "Inspector"
 msgid "{} of {} objects fit; the rest are beside the plate."
 msgstr "Entran {} de {} objetos; el resto quedó al lado de la plataforma."
 
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Max copies"
+msgstr "Copias máximas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "All that fit"
+msgstr "Todas las que entren"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Fill bed"
+msgstr "Llenar plataforma"
+
+#: src/arrange_run/fill.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Copying the supports: {} of {}…"
+msgstr "Copiando los soportes: {} de {}…"
+
+#: src/arrange_run/fill.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Filling the plate: {n} copy so far…"
+msgid_plural "Filling the plate: {n} copies so far…"
+msgstr[0] "Llenando la plataforma: {n} copia hasta ahora…"
+msgstr[1] "Llenando la plataforma: {n} copias hasta ahora…"
+
+#: src/arrange_run/fill.rs
+msgctxt "Inspector"
+msgid "Select the models to copy."
+msgstr "Seleccioná los modelos a copiar."
+
+#: src/arrange_run/fill.rs
+msgctxt "Inspector"
+msgid "The scene changed while filling; nothing was added."
+msgstr "La escena cambió mientras se llenaba la plataforma; no se agregó nada."
+
+#: src/arrange_run/fill.rs
+msgctxt "Inspector"
+msgid "No copy fits on the plate."
+msgstr "No entra ninguna copia en la plataforma."
+
+#: src/arrange_run/fill.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Added {n} copy in {} s."
+msgid_plural "Added {n} copies in {} s."
+msgstr[0] "Se agregó {n} copia en {} s."
+msgstr[1] "Se agregaron {n} copias en {} s."
+
+#: src/arrange_run/fill.rs
+msgctxt "ArrangeDialog"
+msgid "Fill bed failed"
+msgstr "No se pudo llenar la plataforma"
+
+#: src/arrange_run/fill.rs
+msgctxt "ArrangeDialog"
+msgid "The fill stopped unexpectedly."
+msgstr "El llenado se detuvo inesperadamente."
+
+#: src/arrange_run/fill.rs
+msgctxt "ArrangeDialog"
+msgid "The scene rejected the copies; nothing was added."
+msgstr "La escena rechazó las copias; no se agregó nada."
+
 #: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Export Diagnostics…"

@@ -3697,6 +3697,303 @@ mod hand_edit_tests {
         });
     }
 
+    /// #356: Fill bed copies a supported model with its set: each copy gets
+    /// a set of its own, drawn where it stands and in force (editable and
+    /// saved as data), the original's stays as it was, nothing is generated
+    /// again, and one Undo takes every copy away.
+    #[test]
+    fn filling_the_plate_gives_each_copy_its_own_set() {
+        use crate::arrange_run::{ArrangeOptions, fill_now};
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let original = leaves[0];
+            let (_, set_mesh) = set_of(&document, &run, original);
+            let model_mesh = document
+                .with_scene(|s| s.graph().leaf_mesh_arc(original).cloned())
+                .flatten()
+                .unwrap();
+            document.set_selection(Selection::One(LeafId(original)));
+            let plate = sc_arrange::Plate {
+                min: [0.0, 0.0],
+                max: [60.0, 40.0],
+                floor: 0.0,
+            };
+            let options = ArrangeOptions {
+                max_copies: 3,
+                ..ArrangeOptions::default()
+            };
+            let filled = fill_now(&document, &plate, options).expect("filled").0;
+            assert_eq!(filled.copies.len(), 3);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, original).1, &set_mesh));
+            let sets = run.sets_in_force();
+            assert_eq!(sets.len(), 4, "each copy's set is in force");
+            let top = |mesh: &sc_mesh_core::IndexedMesh| {
+                mesh.vertices()
+                    .iter()
+                    .map(|v| v.as_array()[2])
+                    .fold(f32::MIN, f32::max)
+            };
+            for drawn in sets.iter().filter(|d| d.model != original) {
+                let (leaf, mesh) = set_of(&document, &run, drawn.model);
+                assert_eq!(leaf, drawn.leaf);
+                assert!(sc_geom::df_supports::is_support_mesh(&mesh));
+                assert!(!Arc::ptr_eq(&mesh, &set_mesh), "drawn for the copy");
+                let (copy_mesh, copy_at) = document
+                    .with_scene(|s| {
+                        let q = s.leaf(drawn.model)?;
+                        let at = match q.world_transform() {
+                            Transform3D::Affine(a) => *a.translation(),
+                            Transform3D::Identity => [0.0; 3],
+                        };
+                        Some((s.graph().leaf_mesh_arc(drawn.model)?.clone(), at))
+                    })
+                    .flatten()
+                    .unwrap();
+                assert!(Arc::ptr_eq(&copy_mesh, &model_mesh), "the same mesh");
+                assert!((copy_at[2] - 8.0).abs() < 1e-9, "still 8 mm up");
+                // Under its copy, as high as the original's.
+                let (lo, hi) =
+                    mesh.vertices()
+                        .iter()
+                        .fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), v| {
+                            let p = v.as_array();
+                            (
+                                [lo[0].min(p[0]), lo[1].min(p[1])],
+                                [hi[0].max(p[0]), hi[1].max(p[1])],
+                            )
+                        });
+                for k in 0..2 {
+                    let c = copy_at[k] as f32;
+                    assert!(lo[k] < c && c < hi[k], "{lo:?} {hi:?} {copy_at:?}");
+                }
+                assert!((top(&mesh) - top(&set_mesh)).abs() < 0.2);
+            }
+            let saved = document
+                .with_scene(|spatial| crate::support_persist::support_documents(&document, spatial))
+                .unwrap();
+            assert_eq!(saved.documents.len(), 4, "every set saved as data");
+            assert!(saved.as_mesh.is_none());
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+
+            // One Undo takes the copies and their sets away; Redo puts them
+            // back, still in force.
+            assert!(document.undo().unwrap());
+            assert_eq!(run.sets_in_force().len(), 1);
+            assert_eq!(support_sets(&document).len(), 1);
+            assert!(document.redo().unwrap());
+            assert_eq!(run.sets_in_force().len(), 4);
+        });
+    }
+
+    /// #356: times Fill bed on a real model with supports generated on it,
+    /// on the M7 Pro's plate: the search, drawing every copy's set, and
+    /// adding the copies; then Undo and Redo.
+    /// `FILL_MODEL=<stl> [FILL_SCALE=0.5] cargo test -p sc-slicer-gui --release fill_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs FILL_MODEL, a real model"]
+    fn fill_timing() {
+        use std::time::Instant;
+
+        use crate::arrange_run::{ArrangeOptions, fill_now};
+        use crate::selection::{LeafId, Selection};
+        let path = std::env::var("FILL_MODEL").expect("FILL_MODEL");
+        let scale: f32 = std::env::var("FILL_SCALE").map_or(1.0, |s| s.parse().unwrap());
+        on_fresh_slint_thread(move || {
+            let loaded = sc_mesh_formats::load_mesh_from_path(
+                std::path::Path::new(&path),
+                None,
+                Some(sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES),
+            )
+            .expect("the model opens");
+            let mut mesh = sc_mesh_formats::scene_writer::flatten_graph_to_mesh(&loaded.graph)
+                .unwrap()
+                .mesh;
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in &mut mesh.vertices {
+                for c in v.as_array_mut() {
+                    *c *= scale;
+                }
+                let p = v.as_array();
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            // Its middle over the plate's, 5 mm up.
+            let at = [
+                111.8 - f64::from(lo[0] + hi[0]) * 0.5,
+                63.5 - f64::from(lo[1] + hi[1]) * 0.5,
+                5.0 - f64::from(lo[2]),
+            ];
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(None, translation(at), LeafPayload::Mesh(Arc::new(mesh)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let t = Instant::now();
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            println!(
+                "supports generated in {:.0} ms",
+                t.elapsed().as_secs_f64() * 1e3
+            );
+            document.set_selection(Selection::One(LeafId(leaf)));
+            let plate = sc_arrange::Plate {
+                min: [0.0, 0.0],
+                max: [223.642, 126.976],
+                floor: 0.0,
+            };
+            let t = Instant::now();
+            let (filled, sets) =
+                fill_now(&document, &plate, ArrangeOptions::default()).expect("filled");
+            let total = t.elapsed();
+            let turned = filled
+                .copies
+                .iter()
+                .filter(|c| c.placement.angle != 0.0)
+                .count();
+            println!(
+                "{} copies ({turned} turned) in {:.0} ms: footprints {:.0} ms, search {:.0} ms, supports {:.0} ms, sets in force {}",
+                filled.copies.len(),
+                total.as_secs_f64() * 1e3,
+                filled.timings.footprints.as_secs_f64() * 1e3,
+                filled.timings.search.as_secs_f64() * 1e3,
+                sets.as_secs_f64() * 1e3,
+                run.sets_in_force().len()
+            );
+            let t = Instant::now();
+            assert!(document.undo().unwrap());
+            let undo = t.elapsed();
+            let t = Instant::now();
+            assert!(document.redo().unwrap());
+            println!(
+                "undo {:.0} ms, redo {:.0} ms",
+                undo.as_secs_f64() * 1e3,
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        });
+    }
+
+    /// #356: a supported model in the plate's middle moves to let more
+    /// copies in: its set is redrawn where it goes and stays in force, in
+    /// the same step as the copies, and Undo puts both back.
+    #[test]
+    fn a_supported_model_moved_by_the_fill_takes_its_set() {
+        use crate::arrange_run::{ArrangeOptions, fill_now};
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let model = leaves[0];
+            let (set_leaf, set_mesh) = set_of(&document, &run, model);
+            let start = leaf_transform(&document, model);
+            // The plate around it: room for two rows and four columns of it
+            // with its raft, so in its middle it splits the plate.
+            let size = set_mesh
+                .vertices()
+                .iter()
+                .fold([0.0f64; 2], |m, v| {
+                    let p = v.as_array();
+                    [
+                        m[0].max((f64::from(p[0]) - 20.0).abs()),
+                        m[1].max((f64::from(p[1]) - 20.0).abs()),
+                    ]
+                })
+                .map(|half| half * 2.0 + 1.6);
+            let plate = sc_arrange::Plate {
+                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
+                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
+                floor: 0.0,
+            };
+            document.set_selection(Selection::One(LeafId(model)));
+            let filled = fill_now(&document, &plate, ArrangeOptions::default())
+                .expect("filled")
+                .0;
+            assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
+            assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
+            assert_ne!(leaf_transform(&document, model), start);
+            let (leaf, mesh) = set_of(&document, &run, model);
+            assert_eq!(leaf, set_leaf, "the same set");
+            assert!(!Arc::ptr_eq(&mesh, &set_mesh), "redrawn where it went");
+            assert!(
+                matches!(leaf_transform(&document, leaf), Transform3D::Identity)
+                    || leaf_transform(&document, leaf)
+                        == Transform3D::Affine(AffineTransform3D::identity()),
+                "its leaf stays put: the set is drawn in world space"
+            );
+            let sets = run.sets_in_force();
+            assert!(sets.iter().any(|d| d.model == model), "still in force");
+            assert_eq!(sets.len(), 1 + filled.copies.len());
+
+            assert!(document.undo().unwrap());
+            assert_eq!(leaf_transform(&document, model), start);
+            assert!(Arc::ptr_eq(&set_of(&document, &run, model).1, &set_mesh));
+            assert_eq!(run.sets_in_force().len(), 1);
+        });
+    }
+
+    /// #356: a copy turned a quarter turn about the vertical axis gets its
+    /// model's set turned with it, as a turn of the model takes it (#153).
+    #[test]
+    fn a_turned_copy_gets_its_set_turned() {
+        use crate::arrange_run::copied_set_now;
+        use crate::selection::{LeafId, Selection};
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let (_, set_mesh) = set_of(&document, &run, leaves[0]);
+            document.set_selection(Selection::One(LeafId(leaves[0])));
+            // A quarter turn about the model's middle, then 15 mm along X.
+            let placement = sc_arrange::Placement {
+                angle: std::f64::consts::FRAC_PI_2,
+                translation: [55.0, 0.0],
+                on_plate: true,
+            };
+            let (session, mesh) = copied_set_now(&document, &placement).expect("drawn");
+            assert_eq!(session.model_count(), 1);
+            assert!(session.supports_only_on(0));
+            assert!(sc_geom::df_supports::is_support_mesh(&mesh));
+            let turned_to = |p: &[f32; 3]| [55.0 - p[1], p[0], p[2]];
+            let bounds = |points: Vec<[f32; 3]>| {
+                points
+                    .iter()
+                    .fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+                        (
+                            std::array::from_fn(|k| lo[k].min(p[k])),
+                            std::array::from_fn(|k| hi[k].max(p[k])),
+                        )
+                    })
+            };
+            let (lo, hi) = bounds(mesh.vertices().iter().map(|v| *v.as_array()).collect());
+            let (want_lo, want_hi) = bounds(
+                set_mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| turned_to(v.as_array()))
+                    .collect(),
+            );
+            for k in 0..3 {
+                assert!((lo[k] - want_lo[k]).abs() < 0.2, "{lo:?} {want_lo:?}");
+                assert!((hi[k] - want_hi[k]).abs() < 0.2, "{hi:?} {want_hi:?}");
+            }
+        });
+    }
+
     /// #13: `G` with two supported models selected moves both by the same
     /// offset; their supports ride along while it is live, are redrawn where
     /// the models land, still editable, and one Undo takes everything back.

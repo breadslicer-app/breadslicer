@@ -541,8 +541,14 @@ export component MainWindow inherits Window {
     in property <float> arrange-margin: 5;
     in property <bool> arrange-turns: true;
     in property <bool> arrange-shadow-only: false;
+    // Fill bed (#356): a fill in flight (`arranging` is set too), its count
+    // so far, and at most how many copies it adds (0: as many as fit).
+    in property <bool> arrange-filling: false;
+    in property <string> arrange-fill-progress;
+    in property <float> arrange-max-copies: 0;
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
+    callback arrange-fill-requested();
     callback arrange-finished();
     callback arrange-cancel();
     callback arrange-option-changed(int, float);
@@ -1733,8 +1739,14 @@ export component MainWindow inherits Window {
                             arrange-margin: root.arrange-margin;
                             arrange-turns: root.arrange-turns;
                             arrange-shadow-only: root.arrange-shadow-only;
+                            arrange-filling: root.arrange-filling;
+                            arrange-fill-progress: root.arrange-fill-progress;
+                            arrange-max-copies: root.arrange-max-copies;
                             arrange-requested(selection) => {
                                 root.arrange-requested(selection);
+                            }
+                            arrange-fill-requested => {
+                                root.arrange-fill-requested();
                             }
                             arrange-cancel => {
                                 root.arrange-cancel();

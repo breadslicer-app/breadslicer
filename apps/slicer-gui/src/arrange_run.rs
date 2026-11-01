@@ -17,6 +17,9 @@
 //! again ([`crate::support_follow`]). A result worked out for a scene that
 //! has changed since is dropped. Objects that do not fit go beside the
 //! plate, and are named.
+//!
+//! Fill bed (#356, [`fill`]) leaves everything where it is and fills the
+//! room left with copies of the selected models.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -40,6 +43,11 @@ use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
 use crate::support_persist::{in_force, model_of};
 use crate::viewport::ViewportController;
 
+mod fill;
+
+#[cfg(test)]
+pub(crate) use fill::{copied_set_now, fill_now};
+
 /// What the Arrange card sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ArrangeOptions {
@@ -51,6 +59,8 @@ pub(crate) struct ArrangeOptions {
     pub(crate) turns: bool,
     /// Keep each object's whole shadow clear of the others.
     pub(crate) shadow_only: bool,
+    /// Fill bed adds at most this many copies; 0 adds as many as fit.
+    pub(crate) max_copies: u32,
 }
 
 impl Default for ArrangeOptions {
@@ -60,6 +70,7 @@ impl Default for ArrangeOptions {
             margin_mm: 5.0,
             turns: true,
             shadow_only: false,
+            max_copies: 0,
         }
     }
 }
@@ -82,6 +93,8 @@ struct Gathered {
     /// Per body, the leaves its move moves: the model, and supports that
     /// do not follow it by themselves. A set in force follows its model.
     leaves: Vec<Vec<NodeId>>,
+    /// Per body, the support leaves whose set in force follows its model.
+    follows: Vec<Vec<NodeId>>,
     names: Vec<String>,
 }
 
@@ -104,6 +117,7 @@ pub(crate) struct ArrangeRun {
     slot: ArrangeSlot,
     pending: RefCell<Option<Pending>>,
     cancel: Arc<AtomicBool>,
+    fill: fill::Fill,
 }
 
 impl ArrangeRun {
@@ -124,6 +138,7 @@ impl ArrangeRun {
             slot: Arc::new(Mutex::new(None)),
             pending: RefCell::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
+            fill: fill::Fill::default(),
         });
         run.push_options(ui);
         {
@@ -142,6 +157,10 @@ impl ArrangeRun {
             let run = run.clone();
             ui.on_arrange_cancel(move || run.cancel());
         }
+        {
+            let run = run.clone();
+            ui.on_arrange_fill_requested(move || run.start_fill());
+        }
         run
     }
 
@@ -151,6 +170,7 @@ impl ArrangeRun {
         ui.set_arrange_margin(o.margin_mm);
         ui.set_arrange_turns(o.turns);
         ui.set_arrange_shadow_only(o.shadow_only);
+        ui.set_arrange_max_copies(o.max_copies as f32);
     }
 
     fn on_option(&self, code: i32, value: f32) {
@@ -160,6 +180,7 @@ impl ArrangeRun {
             1 => o.margin_mm = value.clamp(0.0, 50.0),
             2 => o.turns = value != 0.0,
             3 => o.shadow_only = value != 0.0,
+            4 => o.max_copies = value.round().clamp(0.0, 9999.0) as u32,
             _ => return,
         }
         self.options.set(o);
@@ -184,13 +205,7 @@ impl ArrangeRun {
         let Some(gathered) = gather(&self.document, selection) else {
             return;
         };
-        let volume = self.ctrl.build_volume();
-        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
-        let plate = Plate {
-            min: [f64::from(lo.x), f64::from(lo.y)],
-            max: [f64::from(hi.x), f64::from(hi.y)],
-            floor: f64::from(lo.z),
-        };
+        let plate = self.plate();
         let settings = self.options.get().settings();
         *self.pending.borrow_mut() = Some(Pending {
             revision: self.document.scene_revision(),
@@ -218,9 +233,24 @@ impl ArrangeRun {
         });
     }
 
+    /// The printer's plate.
+    fn plate(&self) -> Plate {
+        let volume = self.ctrl.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        Plate {
+            min: [f64::from(lo.x), f64::from(lo.y)],
+            max: [f64::from(hi.x), f64::from(hi.y)],
+            floor: f64::from(lo.z),
+        }
+    }
+
     /// Takes the worker's result on the UI thread and applies it, when the
     /// scene is still the one it was worked out for.
     fn finish(&self) {
+        if self.fill.is_running() {
+            self.finish_fill();
+            return;
+        }
         let taken = self
             .slot
             .lock()
@@ -249,13 +279,10 @@ impl ArrangeRun {
             }
         };
         if self.document.scene_revision() != pending.revision {
-            ui.set_arrange_last_run(
-                ctr!(
-                    "Inspector",
-                    "The scene changed while arranging; nothing was moved."
-                )
-                .into(),
-            );
+            ui.set_arrange_last_run(ctr!(
+                "Inspector",
+                "The scene changed while arranging; nothing was moved."
+            ));
             return;
         }
         crate::breadcrumbs::note(&format!(
@@ -263,7 +290,7 @@ impl ArrangeRun {
             outcome.timings.footprints, outcome.timings.search
         ));
         let Some(edit) = arrangement_edit(&self.document, &outcome, &pending.leaves) else {
-            ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place.").into());
+            ui.set_arrange_last_run(ctr!("Inspector", "Everything is already in place."));
             return;
         };
         match self.document.apply_edit(edit.clone()) {
@@ -299,8 +326,7 @@ impl ArrangeRun {
                     "{n} object does not fit on the plate. It is beside the plate, on the right.",
                     "{n} objects do not fit on the plate. They are beside the plate, on the right.",
                     count
-                )
-                .into(),
+                ),
                 details: left_off.join("\n").into(),
             });
         }
@@ -356,6 +382,7 @@ fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
             let mut gathered = Gathered {
                 bodies: Vec::new(),
                 leaves: Vec::new(),
+                follows: Vec::new(),
                 names: Vec::new(),
             };
             let mut body_of: HashMap<NodeId, usize> = HashMap::new();
@@ -383,6 +410,7 @@ fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                     fixed: selection && !selected.contains(&leaf),
                 });
                 gathered.leaves.push(vec![leaf]);
+                gathered.follows.push(Vec::new());
                 gathered.names.push(name(row));
             }
             for (row, &leaf) in rows.iter().enumerate() {
@@ -403,7 +431,9 @@ fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                         // any other moves with it as it is.
                         let follows = in_force(spatial, &sessions, leaf)
                             .is_some_and(|drawn| Some(drawn.model) == model);
-                        if !follows {
+                        if follows {
+                            gathered.follows[i].push(leaf);
+                        } else {
                             gathered.leaves[i].push(leaf);
                         }
                     }
@@ -413,6 +443,7 @@ fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                             fixed: true,
                         });
                         gathered.leaves.push(Vec::new());
+                        gathered.follows.push(Vec::new());
                         gathered.names.push(name(row));
                     }
                 }

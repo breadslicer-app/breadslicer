@@ -16,8 +16,14 @@
 //! piles within a few percent of the smallest, the best peel balance. The
 //! whole pile then shifts to balance the peel, which also centres a pile
 //! made in the corner.
+//!
+//! A fill ([`fill`]) places copies one after the other in the same way,
+//! until one no longer fits. Each copy of a shape looks for its spot from
+//! where the last one found it: the plate only fills up, so the spots
+//! before are still full, and a fill of a hundred copies costs about what
+//! one pass over the plate does.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -136,6 +142,11 @@ enum Pull {
     /// Front row first, then left, as far as they slide: a pile that fills
     /// a crowded plate's corners.
     Corner,
+    /// On a lattice as large as the shape, in the plate's middle, row by
+    /// row: copies side by side in rows and columns, as on a tray (a fill
+    /// only). Sliding into the hollows of the row before can take one more
+    /// row, or lose a copy of each row after it.
+    Grid,
 }
 
 /// How a spot ranks, lowest first: the plate the pile needs, its area, and
@@ -159,20 +170,35 @@ struct Pass<'p, 'a> {
 impl Pass<'_, '_> {
     /// Where `shape` goes in this pass.
     fn spot(&self, shape: &Shape) -> Option<[i32; 2]> {
+        self.spot_from(shape, &mut 0)
+    }
+
+    /// [`Self::spot`], looking from the `cursor`-th spot of the pass's
+    /// order on, and leaving `cursor` at the first spot that fits. The plate
+    /// only fills up within a pass, so a spot `shape` did not fit before
+    /// stays full: the next copy of the same shape looks on from there.
+    fn spot_from(&self, shape: &Shape, cursor: &mut usize) -> Option<[i32; 2]> {
         match self.pull {
-            Pull::Centre => self.nearest(shape),
-            Pull::Corner => self.cornered(shape),
+            Pull::Centre => self.nearest(shape, cursor),
+            Pull::Corner => self.cornered(shape, cursor),
+            Pull::Grid => self.lattice(shape, cursor),
         }
     }
 
-    /// The first spot along the rows where `shape` fits, slid down and left
-    /// a cell at a time while it fits.
-    fn cornered(&self, shape: &Shape) -> Option<[i32; 2]> {
-        let mut best = self
-            .rows
+    /// The first spot along the rows from `cursor` where `shape` fits, slid
+    /// down and left a cell at a time while it fits.
+    fn cornered(&self, shape: &Shape, cursor: &mut usize) -> Option<[i32; 2]> {
+        let found = self.rows[(*cursor).min(self.rows.len())..]
             .iter()
             .map(|p| [p[0] - shape.lo[0], p[1] - shape.lo[1]])
-            .find(|&at| self.plate.fits(shape, at))?;
+            .position(|at| self.plate.fits(shape, at));
+        let Some(found) = found else {
+            *cursor = self.rows.len();
+            return None;
+        };
+        *cursor += found;
+        let p = self.rows[*cursor];
+        let mut best = [p[0] - shape.lo[0], p[1] - shape.lo[1]];
         loop {
             let moved = [[0, -1], [-1, 0]]
                 .into_iter()
@@ -186,18 +212,51 @@ impl Pass<'_, '_> {
         Some(best)
     }
 
-    /// The spot nearest the target where `shape` fits, refined to the cell.
-    fn nearest(&self, shape: &Shape) -> Option<[i32; 2]> {
+    /// The first spot from the `cursor`-th on a lattice of `shape`'s own
+    /// size, row by row, where it fits. The lattice holds as many rows and
+    /// columns as the plate does, in its middle.
+    fn lattice(&self, shape: &Shape, cursor: &mut usize) -> Option<[i32; 2]> {
+        let size = [shape.hi[0] - shape.lo[0], shape.hi[1] - shape.lo[1]];
+        if size[0] <= 0 || size[1] <= 0 {
+            return None;
+        }
+        let (width, height) = (self.plate.width as i32, self.plate.height as i32);
+        let (cols, rows) = (width / size[0], height / size[1]);
+        let from = [(width - cols * size[0]) / 2, (height - rows * size[1]) / 2];
+        let count = (cols * rows).max(0) as usize;
+        while *cursor < count {
+            let (i, j) = (*cursor as i32 % cols, *cursor as i32 / cols);
+            let at = [
+                from[0] + i * size[0] - shape.lo[0],
+                from[1] + j * size[1] - shape.lo[1],
+            ];
+            if self.plate.fits(shape, at) {
+                return Some(at);
+            }
+            *cursor += 1;
+        }
+        None
+    }
+
+    /// The spot nearest the target where `shape` fits, from the `cursor`-th
+    /// coarse spot on, refined to the cell.
+    fn nearest(&self, shape: &Shape, cursor: &mut usize) -> Option<[i32; 2]> {
         let anchor = shape.anchor();
         let goal = [
             self.problem.target[0] - anchor[0],
             self.problem.target[1] - anchor[1],
         ];
-        let first = self
-            .coarse
+        let found = self.coarse[(*cursor).min(self.coarse.len())..]
             .iter()
             .map(|d| [goal[0] + d[0], goal[1] + d[1]])
-            .find(|&at| self.plate.fits(shape, at))?;
+            .position(|at| self.plate.fits(shape, at));
+        let Some(found) = found else {
+            *cursor = self.coarse.len();
+            return None;
+        };
+        *cursor += found;
+        let d = self.coarse[*cursor];
+        let first = [goal[0] + d[0], goal[1] + d[1]];
         // Between the coarse spots: the nearest that fits around the one
         // found, then a cell at a time towards the goal while it fits.
         let mut best = first;
@@ -238,6 +297,33 @@ impl Pass<'_, '_> {
         }
     }
 
+    /// How `shape` at `at` ranks: the plate the pile then needs, its area,
+    /// and how far the spot is from where the pass pulls.
+    fn score(&self, shape: &Shape, at: [i32; 2]) -> Score {
+        let (lo, hi) = self.pile_with(shape, at);
+        let extent = self.metric.extent(lo, hi);
+        let area = i64::from(hi[0] - lo[0]) * i64::from(hi[1] - lo[1]);
+        let near = match self.pull {
+            Pull::Centre => {
+                let anchor = shape.anchor();
+                self.metric
+                    .dist2([at[0] + anchor[0], at[1] + anchor[1]], self.problem.target)
+            }
+            // The lowest top, then the leftmost.
+            Pull::Corner | Pull::Grid => {
+                i64::from(at[1] + shape.hi[1]) * (1 << 20) + i64::from(at[0] + shape.lo[0])
+            }
+        };
+        (extent, area, near)
+    }
+
+    /// Puts `shape` of `body` at `at`.
+    fn stamp(&mut self, body: usize, angle: usize, at: [i32; 2]) {
+        let shape = &self.problem.footprints[body].shapes[angle];
+        self.plate.stamp(shape, at);
+        self.pile = Some(self.pile_with(shape, at));
+    }
+
     /// Places `body` at its best angle and spot; `None` when it fits nowhere.
     fn place(&mut self, body: usize) -> Option<(usize, [i32; 2])> {
         let fp = &self.problem.footprints[body];
@@ -247,50 +333,217 @@ impl Pass<'_, '_> {
             let Some(at) = self.spot(shape) else {
                 continue;
             };
-            let (lo, hi) = self.pile_with(shape, at);
-            let extent = self.metric.extent(lo, hi);
-            let area = i64::from(hi[0] - lo[0]) * i64::from(hi[1] - lo[1]);
-            let near = match self.pull {
-                Pull::Centre => {
-                    let anchor = shape.anchor();
-                    self.metric
-                        .dist2([at[0] + anchor[0], at[1] + anchor[1]], self.problem.target)
-                }
-                // The lowest top, then the leftmost.
-                Pull::Corner => {
-                    i64::from(at[1] + shape.hi[1]) * (1 << 20) + i64::from(at[0] + shape.lo[0])
-                }
-            };
-            let score = (extent, area, near);
+            let score = self.score(shape, at);
             if best.is_none_or(|(s, _, _)| score < s) {
                 best = Some((score, angle, at));
             }
         }
         let (_, angle, at) = best?;
-        let shape = &fp.shapes[angle];
-        self.plate.stamp(shape, at);
-        self.pile = Some(self.pile_with(shape, at));
+        self.stamp(body, angle, at);
+        Some((angle, at))
+    }
+
+    /// Places one more copy of `body` at the best of `angles` and its spot,
+    /// looking for each angle on from its cursor in `cursors`; `nearest`
+    /// ranks the spot's nearness first. `None` when it fits nowhere.
+    fn place_copy(
+        &mut self,
+        body: usize,
+        angles: &[usize],
+        cursors: &mut [usize],
+        nearest: bool,
+    ) -> Option<(usize, [i32; 2])> {
+        let fp = &self.problem.footprints[body];
+        let mut best: Option<(Score, usize, [i32; 2])> = None;
+        for &angle in angles {
+            let shape = &fp.shapes[angle];
+            let Some(at) = self.spot_from(shape, &mut cursors[angle]) else {
+                continue;
+            };
+            let (extent, area, near) = self.score(shape, at);
+            let score = if nearest {
+                (near, extent, area)
+            } else {
+                (extent, area, near)
+            };
+            if best.is_none_or(|(s, _, _)| score < s) {
+                best = Some((score, angle, at));
+            }
+        }
+        let (_, angle, at) = best?;
+        self.stamp(body, angle, at);
         Some((angle, at))
     }
 }
 
+/// The spots a pass tries, in order, for a problem's plate.
+#[derive(Debug)]
+struct Spots {
+    metric: Metric,
+    coarse: Vec<[i32; 2]>,
+    fine: Vec<[i32; 2]>,
+    rows: Vec<[i32; 2]>,
+}
+
+impl Spots {
+    fn of(problem: &Problem<'_>) -> Self {
+        let step = ((1.0 / problem.cell).round() as i32).max(1);
+        let reach = [
+            problem.plate.width as i32 / 2 + step,
+            problem.plate.height as i32 / 2 + step,
+        ];
+        let metric = Metric {
+            size: [problem.plate.width as i64, problem.plate.height as i64],
+        };
+        Self {
+            metric,
+            coarse: spiral(reach, step, metric),
+            fine: spiral([step, step], 1, metric),
+            rows: rows(
+                [problem.plate.width as i32, problem.plate.height as i32],
+                step,
+            ),
+        }
+    }
+
+    fn pass<'p, 'a>(&'p self, problem: &'p Problem<'a>, pull: Pull) -> Pass<'p, 'a> {
+        Pass {
+            problem,
+            pull,
+            metric: self.metric,
+            coarse: &self.coarse,
+            fine: &self.fine,
+            rows: &self.rows,
+            plate: problem.plate.clone(),
+            pile: None,
+        }
+    }
+}
+
+/// Which angles the copies of a fill pass may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Turns {
+    /// Any the footprint has.
+    All,
+    /// Only this one (an index into the footprint's angles), for every
+    /// copy: copies in rows, as on a tray, all turned alike.
+    One(usize),
+    /// This one, or half a turn from it: pairs that nest.
+    Half(usize),
+}
+
+/// A copy a fill placed: which body it copies, its angle, and where its
+/// frame's corner sits (plate cells).
+pub(crate) type Copied = (usize, usize, [i32; 2]);
+
+/// Places copies of the bodies of `problem` on its plate, which holds
+/// everything that stays, until one does not fit or there are `limit`:
+/// a copy of each body in turn, so each body gets as many as the others,
+/// give or take one. Several passes run side by side (pulled to the
+/// middle or to the corner, ranked by the pile or by nearness, with every
+/// angle, every copy at one same angle, or at one and half a turn from
+/// it) and the one
+/// that places most wins, then the smallest pile. `placed` follows the
+/// count of the pass furthest along, less `uncounted`. `None` when
+/// cancelled.
+pub(crate) fn fill(
+    problem: &Problem<'_>,
+    limit: Option<usize>,
+    placed: &AtomicUsize,
+    uncounted: usize,
+    cancel: &AtomicBool,
+) -> Option<Vec<Copied>> {
+    let bodies = problem.footprints.len();
+    if bodies == 0 || limit == Some(0) {
+        return Some(Vec::new());
+    }
+    let spots = Spots::of(problem);
+    let turns = problem
+        .footprints
+        .iter()
+        .map(|fp| fp.shapes.len())
+        .min()
+        .unwrap_or(1);
+    let mut variants: Vec<(Pull, bool, Turns)> = Vec::new();
+    for pull in [Pull::Corner, Pull::Centre] {
+        for nearest in [true, false] {
+            if turns > 1 {
+                variants.push((pull, nearest, Turns::All));
+            }
+            for a in 0..turns {
+                variants.push((pull, nearest, Turns::One(a)));
+            }
+            // Half a turn from the second half's angles is the first half's.
+            if turns > 2 && turns % 2 == 0 {
+                for a in 0..turns / 2 {
+                    variants.push((pull, nearest, Turns::Half(a)));
+                }
+            }
+        }
+    }
+    for a in 0..turns {
+        variants.push((Pull::Grid, true, Turns::One(a)));
+    }
+    let runs: Vec<Option<(Vec<Copied>, i64)>> = variants
+        .par_iter()
+        .enumerate()
+        .map(|(v, &(pull, nearest, t))| {
+            let mut run = spots.pass(problem, pull);
+            let angles: Vec<Vec<usize>> = problem
+                .footprints
+                .iter()
+                .map(|fp| {
+                    let n = fp.shapes.len();
+                    match t {
+                        Turns::All => (0..n).collect(),
+                        Turns::One(a) => vec![a % n],
+                        Turns::Half(a) => vec![a % n, (a + n / 2) % n],
+                    }
+                })
+                .collect();
+            let mut cursors: Vec<Vec<usize>> = problem
+                .footprints
+                .iter()
+                .map(|fp| vec![0; fp.shapes.len()])
+                .collect();
+            let mut copies: Vec<Copied> = Vec::new();
+            // Each pass starts with another body, so no body is always the
+            // one that gets the extra copy.
+            let first = v % bodies;
+            'fill: loop {
+                for k in (0..bodies).map(|j| (first + j) % bodies) {
+                    if limit.is_some_and(|l| copies.len() >= l) {
+                        break 'fill;
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    match run.place_copy(k, &angles[k], &mut cursors[k], nearest) {
+                        Some((angle, at)) => copies.push((k, angle, at)),
+                        None => break 'fill,
+                    }
+                    placed.fetch_max(copies.len().saturating_sub(uncounted), Ordering::Relaxed);
+                }
+            }
+            let extent = run.pile.map_or(0, |(lo, hi)| spots.metric.extent(lo, hi));
+            Some((copies, extent))
+        })
+        .collect();
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    // The most copies, then the smallest pile; ties to the earlier pass.
+    runs.into_iter()
+        .flatten()
+        .enumerate()
+        .min_by_key(|(i, (copies, extent))| (std::cmp::Reverse(copies.len()), *extent, *i))
+        .map(|(_, (copies, _))| copies)
+}
+
 /// Runs the passes and keeps the best layout. `None` when cancelled.
 pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layout> {
-    let cell = problem.cell;
-    let step = ((1.0 / cell).round() as i32).max(1);
-    let reach = [
-        problem.plate.width as i32 / 2 + step,
-        problem.plate.height as i32 / 2 + step,
-    ];
-    let metric = Metric {
-        size: [problem.plate.width as i64, problem.plate.height as i64],
-    };
-    let coarse = spiral(reach, step, metric);
-    let fine = spiral([step, step], 1, metric);
-    let rows = rows(
-        [problem.plate.width as i32, problem.plate.height as i32],
-        step,
-    );
+    let spots = Spots::of(problem);
+    let metric = spots.metric;
     let sizes: Vec<i64> = problem
         .footprints
         .iter()
@@ -324,16 +577,7 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
             } else {
                 Pull::Corner
             };
-            let mut run = Pass {
-                problem,
-                pull,
-                metric,
-                coarse: &coarse,
-                fine: &fine,
-                rows: &rows,
-                plate: problem.plate.clone(),
-                pile: None,
-            };
+            let mut run = spots.pass(problem, pull);
             let mut placed = vec![None; sizes.len()];
             for (_, body) in order {
                 if cancel.load(Ordering::Relaxed) {

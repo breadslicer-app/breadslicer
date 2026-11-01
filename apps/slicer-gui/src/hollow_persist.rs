@@ -65,16 +65,23 @@ pub(crate) const DF_HOLLOWER: &str = "df";
 pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 2;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
-/// that a leaf still shows.
+/// that a leaf still shows, once, with the first leaf that shows it. Copies
+/// of a hollowed model (Fill bed, #356) show the same mesh, which the file
+/// keeps once and reopens shared, so the one document covers them all.
 pub(crate) fn hollow_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> Vec<HollowDocument> {
     let hollows = doc.hollows();
     let hollows = hollows.borrow();
     let scene = spatial.graph();
+    let mut saved: Vec<*const IndexedMesh> = Vec::new();
     (0..)
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|leaf| {
             let mesh = scene.leaf_mesh_arc(leaf)?;
             let hollowed = hollows.iter().find(|h| Arc::ptr_eq(&h.hollow, mesh))?;
+            if saved.contains(&Arc::as_ptr(mesh)) {
+                return None;
+            }
+            saved.push(Arc::as_ptr(mesh));
             let (version, document) = encode(hollowed);
             Some(HollowDocument {
                 leaf,
@@ -639,6 +646,78 @@ mod hollow_persist_tests {
         assert_eq!(drains, 1);
         let made = hollowed();
         assert_eq!(kept, Some((made.options, made.drains)));
+    }
+
+    /// #356: copies of a hollowed model (Fill bed) show its very mesh. The
+    /// file keeps the hollow once, and opened again every copy is that
+    /// hollow.
+    #[test]
+    fn copies_of_a_hollow_save_it_once() {
+        use std::path::PathBuf;
+        use std::rc::Rc;
+
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_project_formats::{LoadedContent, ProjectPayload, load_scene};
+        use sc_scene::LeafPayload;
+
+        use crate::scene_save::{prepare_save, write_bundle};
+        use crate::test_support::slint_thread::on_fresh_slint_thread;
+        use crate::viewport::ViewportController;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("copies.bread");
+        let (documents, shared) = on_fresh_slint_thread(move || {
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let hollow = Arc::new(hollow_box());
+            let mut scene = Scene::new();
+            for x in [0.0, 20.0, 40.0] {
+                let leaf = scene
+                    .add_leaf(
+                        None,
+                        Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 5.0])),
+                        LeafPayload::Mesh(hollow.clone()),
+                    )
+                    .unwrap();
+                scene.add_root(leaf).unwrap();
+            }
+            document.install_graph(scene, PathBuf::from("hollow.stl"));
+            document.hollows().borrow_mut().push(Hollowed {
+                hollow,
+                ..hollowed()
+            });
+            let bundle = prepare_save(&document, ProjectPayload::default(), path.clone())
+                .expect("a scene to save");
+            write_bundle(&bundle, |_, _, _| {}).expect("the project writes");
+
+            let loaded = load_scene(&path, None, |_| {}).expect("it opens");
+            let LoadedContent::Project(project) = loaded.content else {
+                panic!("a .bread opens as a project");
+            };
+            let documents = project.hollows.len();
+            let restored = restore_hollows(&project.scene, project.hollows);
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            let reopened = Rc::new(ViewportController::new_for_test()).document();
+            reopened.install_graph(project.scene, path.clone());
+            install_hollows(&reopened, restored.hollows);
+            let kept = reopened.hollows().borrow()[0].hollow.clone();
+            let shared = reopened
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .filter(|&leaf| {
+                            spatial
+                                .graph()
+                                .leaf_mesh_arc(leaf)
+                                .is_some_and(|mesh| Arc::ptr_eq(mesh, &kept))
+                        })
+                        .count()
+                })
+                .unwrap_or_default();
+            (documents, shared)
+        });
+        assert_eq!(documents, 1, "the hollow saved once");
+        assert_eq!(shared, 3, "every copy is the hollow again");
     }
 
     #[test]

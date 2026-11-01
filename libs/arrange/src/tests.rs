@@ -274,3 +274,165 @@ fn a_cancelled_arrangement_says_so() {
     );
     assert_eq!(out, Err(crate::Cancelled));
 }
+
+/// #356: the bodies with the copies `fill` placed, each copy as its source
+/// moved, and the placements to check them with.
+fn filled_plate(bodies: &[Body], filled: &crate::Filled) -> (Vec<Body>, Vec<Option<Placement>>) {
+    let mut all: Vec<Body> = bodies.to_vec();
+    let mut placements: Vec<Option<Placement>> = vec![None; bodies.len()];
+    for moved in &filled.moved {
+        placements[moved.source] = Some(moved.placement);
+    }
+    for copy in &filled.copies {
+        all.push(bodies[copy.source].clone());
+        placements.push(Some(copy.placement));
+    }
+    (all, placements)
+}
+
+fn fill_now(
+    bodies: &[Body],
+    sources: &[usize],
+    plate: &Plate,
+    settings: &Settings,
+    limit: Option<usize>,
+) -> crate::Filled {
+    let placed = std::sync::atomic::AtomicUsize::new(0);
+    let filled = crate::fill(
+        bodies,
+        sources,
+        plate,
+        settings,
+        limit,
+        &placed,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        placed.load(std::sync::atomic::Ordering::Relaxed) >= filled.copies.len(),
+        "the progress saw every copy"
+    );
+    filled
+}
+
+/// One box in the plate's corner: copies fill the rest of the plate in
+/// rows, kept apart from it, from each other and from the edge.
+#[test]
+fn a_fill_puts_as_many_copies_as_fit() {
+    let mesh = cube();
+    // 8.5 mm boxes and a 1 mm gap: 4 × 4 fit in the 40 mm inside the margin.
+    let bodies = [body(vec![boxed(&mesh, [8.5, 8.5, 6.0], [5.0, 5.0, 0.0])])];
+    let plate = plate(50.0, 50.0);
+    let settings = quarter_turns();
+    let filled = fill_now(&bodies, &[0], &plate, &settings, None);
+    assert_eq!(filled.copies.len(), 15, "{:?}", filled.copies);
+    assert!(filled.copies.iter().all(|c| c.source == 0));
+    let (all, placements) = filled_plate(&bodies, &filled);
+    assert_kept_apart(&all, &placements, &plate, &settings);
+
+    // At most as many as asked for.
+    let some = fill_now(&bodies, &[0], &plate, &settings, Some(4));
+    assert_eq!(some.copies.len(), 4);
+    let (all, placements) = filled_plate(&bodies, &some);
+    assert_kept_apart(&all, &placements, &plate, &settings);
+}
+
+/// What is not copied stays where it is, and the copies keep clear of it,
+/// at every height: in bands, a short copy may stand under an overhang.
+#[test]
+fn a_fill_keeps_clear_of_what_stays() {
+    let mesh = cube();
+    let table = body(vec![
+        boxed(&mesh, [4.0, 4.0, 18.0], [20.0, 12.0, 0.0]),
+        boxed(&mesh, [20.0, 16.0, 2.0], [20.0, 12.0, 18.0]),
+    ]);
+    let other = body(vec![boxed(&mesh, [6.0, 20.0, 9.0], [45.0, 6.0, 0.0])]);
+    let short = body(vec![boxed(&mesh, [5.0, 5.0, 5.0], [6.0, 6.0, 0.0])]);
+    let bodies = [table, other, short];
+    let plate = plate(60.0, 40.0);
+    let settings = quarter_turns();
+    let filled = fill_now(&bodies, &[2], &plate, &settings, None);
+    assert!(filled.copies.len() > 10, "{}", filled.copies.len());
+    assert!(filled.copies.iter().all(|c| c.source == 2));
+    let (all, placements) = filled_plate(&bodies, &filled);
+    assert_kept_apart(&all, &placements, &plate, &settings);
+    // Some copy stands under the table's top.
+    let top = boxes(&bodies[0], None)[1];
+    let under = filled.copies.iter().any(|c| {
+        let b = boxes(&bodies[2], Some(c.placement))[0];
+        b.0[0] < top.1[0] && b.1[0] > top.0[0] && b.0[1] < top.1[1] && b.1[1] > top.0[1]
+    });
+    assert!(under, "a copy under the overhang");
+}
+
+/// Two sources: copies of both, mixed, as many of one as of the other,
+/// give or take one.
+#[test]
+fn a_fill_of_two_bodies_mixes_them_evenly() {
+    let mesh = cube();
+    let bodies = [
+        body(vec![boxed(&mesh, [12.0, 7.0, 6.0], [5.0, 5.0, 0.0])]),
+        body(vec![boxed(&mesh, [5.0, 5.0, 12.0], [20.0, 5.0, 0.0])]),
+    ];
+    let plate = plate(80.0, 60.0);
+    let settings = quarter_turns();
+    let filled = fill_now(&bodies, &[0, 1], &plate, &settings, None);
+    let count = |s: usize| filled.copies.iter().filter(|c| c.source == s).count();
+    let (a, b) = (count(0), count(1));
+    assert!(a > 5 && b > 5, "{a} and {b}");
+    assert!(a.abs_diff(b) <= 1, "{a} and {b}");
+    let (all, placements) = filled_plate(&bodies, &filled);
+    assert_kept_apart(&all, &placements, &plate, &settings);
+}
+
+/// A source in the plate's middle splits it: no row fits above or below
+/// it. Moved, it lets the copies in rows and columns, as on a tray; what
+/// is not copied still stays.
+#[test]
+fn a_source_in_the_middle_moves_to_let_more_copies_in() {
+    let mesh = cube();
+    let plate = plate(70.0, 36.0);
+    let bodies = [
+        body(vec![boxed(&mesh, [12.0, 12.0, 6.0], [29.0, 12.0, 0.0])]),
+        body(vec![boxed(&mesh, [3.0, 3.0, 3.0], [64.0, 2.0, 0.0])]),
+    ];
+    let settings = quarter_turns();
+    let filled = fill_now(&bodies, &[0], &plate, &settings, None);
+    assert_eq!(filled.moved.len(), 1, "the source moves");
+    assert_eq!(filled.moved[0].source, 0);
+    // 12 mm boxes and a 1 mm gap: 4 × 2 in the 60 × 26 mm inside the margin.
+    assert_eq!(filled.copies.len(), 7, "{:?}", filled.copies);
+    let (all, placements) = filled_plate(&bodies, &filled);
+    assert_eq!(placements[1], None, "the other one stays");
+    assert_kept_apart(&all, &placements, &plate, &settings);
+
+    // Where staying fits as many, the source stays.
+    let corner = [body(vec![boxed(&mesh, [12.0, 12.0, 6.0], [5.0, 5.0, 0.0])])];
+    let filled = fill_now(&corner, &[0], &plate, &settings, None);
+    assert!(filled.moved.is_empty());
+    assert_eq!(filled.copies.len(), 7);
+}
+
+#[test]
+fn a_full_plate_takes_no_copy() {
+    let mesh = cube();
+    let bodies = [body(vec![boxed(&mesh, [30.0, 30.0, 5.0], [5.0, 5.0, 0.0])])];
+    let filled = fill_now(&bodies, &[0], &plate(45.0, 45.0), &quarter_turns(), None);
+    assert!(filled.copies.is_empty(), "{:?}", filled.copies);
+}
+
+#[test]
+fn a_cancelled_fill_says_so() {
+    let mesh = cube();
+    let bodies = [body(vec![boxed(&mesh, [5.0, 5.0, 5.0], [5.0, 5.0, 0.0])])];
+    let out = crate::fill(
+        &bodies,
+        &[0],
+        &plate(40.0, 40.0),
+        &Settings::default(),
+        None,
+        &std::sync::atomic::AtomicUsize::new(0),
+        &AtomicBool::new(true),
+    );
+    assert_eq!(out, Err(crate::Cancelled));
+}

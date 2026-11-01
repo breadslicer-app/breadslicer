@@ -754,10 +754,16 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> arrange-margin;
     in property <bool> arrange-turns;
     in property <bool> arrange-shadow-only;
+    // Fill bed (#356): a fill in flight, its count so far, and at most how
+    // many copies it adds (0: as many as fit).
+    in property <bool> arrange-filling;
+    in property <string> arrange-fill-progress;
+    in property <float> arrange-max-copies;
     // Arrange all (false) or the selection (true).
     callback arrange-requested(bool);
+    callback arrange-fill-requested();
     callback arrange-cancel();
-    // 0 gap, 1 edge margin, 2 turns (0/1), 3 shadow only (0/1).
+    // 0 gap, 1 edge margin, 2 turns (0/1), 3 shadow only (0/1), 4 max copies.
     callback arrange-option-changed(int, float);
     // The Auto-orient button of the ROTATE card opens the Orient tool (#182).
     callback orient-requested();
@@ -865,10 +871,10 @@ export component TransformInspector inherits VerticalLayout {
             spacing: 8px;
 
             ScButton {
-                text: root.arranging ? @tr("Inspector" => "Cancel") : @tr("Inspector" => "Arrange all");
+                text: root.arranging && !root.arrange-filling ? @tr("Inspector" => "Cancel") : @tr("Inspector" => "Arrange all");
                 kind: ButtonKind.primary;
                 horizontal-stretch: 1;
-                enabled: root.arrange-enabled || root.arranging;
+                enabled: root.arrange-enabled || (root.arranging && !root.arrange-filling);
                 clicked => {
                     if root.arranging {
                         root.arrange-cancel();
@@ -886,8 +892,32 @@ export component TransformInspector inherits VerticalLayout {
                 }
             }
         }
-        if root.arranging: Note {
+        NumberField {
+            label: @tr("Inspector" => "Max copies");
+            placeholder: @tr("Inspector" => "All that fit");
+            decimals: 0;
+            value: root.arrange-max-copies;
+            enabled: !root.arranging;
+            committed(v) => {
+                root.arrange-option-changed(4, v);
+            }
+        }
+        ScButton {
+            text: root.arrange-filling ? @tr("Inspector" => "Cancel") : @tr("Inspector" => "Fill bed");
+            enabled: (root.arrange-enabled && root.selection-valid) || root.arrange-filling;
+            clicked => {
+                if root.arrange-filling {
+                    root.arrange-cancel();
+                } else {
+                    root.arrange-fill-requested();
+                }
+            }
+        }
+        if root.arranging && !root.arrange-filling: Note {
             text: @tr("Inspector" => "Arranging…");
+        }
+        if root.arrange-filling: Note {
+            text: root.arrange-fill-progress;
         }
         if !root.arranging && root.arrange-last-run != "": Note {
             text: root.arrange-last-run;
