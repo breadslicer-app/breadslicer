@@ -134,6 +134,7 @@ fn install_rendering_notifier(
                 other => ctrl.handle_unsupported_graphics_api(format!("{other:?}")),
             },
             slint::RenderingState::BeforeRendering => {
+                crate::startup_timing::frame_starting();
                 ctrl.handle_before_rendering();
             }
             slint::RenderingState::AfterRendering => {

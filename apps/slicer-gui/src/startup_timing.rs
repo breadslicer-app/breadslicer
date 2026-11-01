@@ -18,7 +18,7 @@
 
 use std::fmt::Write as _;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 /// The file the steps are written to, when set.
@@ -32,10 +32,14 @@ struct Timeline {
 }
 
 static TIMELINE: Mutex<Option<Timeline>> = Mutex::new(None);
-static FIRST_FRAME: AtomicBool = AtomicBool::new(false);
+static FRAMES: AtomicU32 = AtomicU32::new(0);
+static REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Notes that step `step` just ended.
 pub(crate) fn mark(step: &'static str) {
+    if REPORTED.load(Ordering::Relaxed) {
+        return;
+    }
     let now = Instant::now();
     let Ok(mut timeline) = TIMELINE.lock() else {
         return;
@@ -49,18 +53,31 @@ pub(crate) fn mark(step: &'static str) {
     timeline.steps.push((step, at));
 }
 
+/// Called before every frame a window draws; marks the first two.
+pub(crate) fn frame_starting() {
+    match FRAMES.load(Ordering::Relaxed) {
+        0 => mark("first frame started"),
+        1 => mark("second frame started"),
+        _ => {}
+    }
+}
+
 /// Called after every frame a window presents. The first one marks the frame
 /// and schedules the interactive mark for the next turn of the event loop,
 /// the first one free to handle input.
 pub(crate) fn frame_presented() {
-    if FIRST_FRAME.swap(true, Ordering::Relaxed) {
-        return;
+    match FRAMES.fetch_add(1, Ordering::Relaxed) {
+        0 => {
+            mark("first frame");
+            slint::Timer::single_shot(Duration::ZERO, || {
+                mark("interactive");
+                report();
+            });
+        }
+        1 => mark("second frame"),
+        2 => mark("third frame"),
+        _ => {}
     }
-    mark("first frame");
-    slint::Timer::single_shot(Duration::ZERO, || {
-        mark("interactive");
-        report();
-    });
 }
 
 /// The steps so far as `step<TAB>ms since the process started` lines.
@@ -80,6 +97,7 @@ fn trace() -> String {
 /// Puts the steps in the event trail and, when asked, in the trace file.
 fn report() {
     let trace = trace();
+    REPORTED.store(true, Ordering::Relaxed);
     let line = trace
         .lines()
         .map(|line| line.replace('\t', " "))
