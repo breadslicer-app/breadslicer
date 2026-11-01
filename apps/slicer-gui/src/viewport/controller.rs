@@ -96,6 +96,8 @@ pub(crate) struct ViewportController {
     /// Preview pieces drawn over the scene (a support or drain before it is
     /// placed, a hollow cavity), set by the tab drivers.
     overlay: RefCell<Option<crate::mesh_render::Overlay>>,
+    /// What a Repair run left broken, marked over the scene (#253).
+    repair_marks: crate::repair_marks::MarksLayer,
     /// The performance test while it runs. It owns the renderer's scene
     /// meanwhile, so the frame pass waits until it ends.
     probe: RefCell<Option<ProbeRun>>,
@@ -156,6 +158,7 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            repair_marks: Default::default(),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -192,6 +195,7 @@ impl ViewportController {
             readout_owed: Cell::new(true),
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
+            repair_marks: Default::default(),
             probe: RefCell::new(None),
             probe_timer: slint::Timer::default(),
             orbit_marker_timer: slint::Timer::default(),
@@ -813,6 +817,14 @@ impl ViewportController {
         };
         if changed {
             *self.overlay.borrow_mut() = pieces;
+            self.mark_dirty();
+        }
+    }
+
+    /// Marks what a Repair run left broken over the scene, in the Transform
+    /// tab, until replaced (`None` clears them).
+    pub(crate) fn set_repair_marks(&self, marks: Option<crate::mesh_render::Overlay>) {
+        if self.repair_marks.set(marks) {
             self.mark_dirty();
         }
     }
@@ -2144,7 +2156,7 @@ impl ViewportController {
             return false;
         };
         drop(camera_slot);
-        let Some(fragment_aabb) = clipboard::fragment_world_aabb(clipboard.fragment()) else {
+        let Some(fragment_aabb) = clipboard.world_aabb() else {
             return false;
         };
         let Some(obstacles) = self
@@ -2688,7 +2700,11 @@ impl ViewportController {
         let Some(renderer) = renderer_slot.as_mut() else {
             return;
         };
-        renderer.set_overlay(self.overlay.borrow().as_ref());
+        let marks_shown = self.session.section() == WorkspaceSection::Transform;
+        let overlay = self
+            .repair_marks
+            .over(self.overlay.borrow().as_ref(), marks_shown);
+        renderer.set_overlay(overlay.as_ref());
 
         let Some(ui) = self.ui.upgrade() else {
             return;

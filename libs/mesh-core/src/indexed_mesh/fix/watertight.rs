@@ -34,7 +34,9 @@
 //!    edge, and a larger one (or one with no such triangulation) a fan from its
 //!    centroid. A hole whose fill would exceed
 //!    [`WatertightOptions::max_fill_area_fraction`] of the mesh area is left
-//!    open: it is more likely an open part on purpose than a defect.
+//!    open: it is more likely an open part on purpose than a defect. The
+//!    only vertex a fill adds, a fan's centre, stays within the box of its
+//!    hole's boundary (the fill guard): a fill never reaches past the hole.
 //! 7. Turn closed inside-out shells outward, unless they sit inside another
 //!    closed shell (a cavity, like a hollow's). An outward shell is never
 //!    turned inward.
@@ -60,6 +62,7 @@ use crate::primitives::{FaceIndex, IndexedTriangle, Vertex, VertexIndex};
 
 use super::super::half_edges;
 use super::super::mesh::IndexedMesh;
+use super::super::repair_progress::{Progress, RepairCancelled, RepairStep};
 use super::records::MeshFix;
 use crate::shells::FaceShells;
 
@@ -108,31 +111,49 @@ pub(crate) struct WatertightMesh {
     pub(crate) fixes: Vec<MeshFix>,
 }
 
+/// The share of the watertight pass each round ends at, for its progress:
+/// most meshes need 1 round, few a 3rd.
+const ROUND_ENDS: [f32; 3] = [0.65, 0.85, 1.0];
+
 /// Plans the watertight pass on a mesh whose face indices are in range and
 /// whose faces have 3 distinct vertices. Changes nothing: the caller applies
-/// [`WatertightOutcome::repaired`].
+/// [`WatertightOutcome::repaired`]. Tells `progress` each step, and stops
+/// before one when it asks to.
 pub(crate) fn plan_watertight(
     vertices: &[Vertex],
     faces: &[IndexedTriangle],
     options: &WatertightOptions,
-) -> WatertightOutcome {
+    progress: Progress<'_>,
+) -> Result<WatertightOutcome, RepairCancelled> {
     let mut best_errors = count_bad_edges(faces);
     let mut holes_left_open = 0;
     if best_errors == 0 || !(options.resolve_non_manifold || options.close_holes) {
-        return WatertightOutcome {
+        return Ok(WatertightOutcome {
             repaired: None,
             holes_left_open,
-        };
+        });
     }
     let guard = MaterialGuard::of(vertices, faces);
     let mut current: Option<(Vec<Vertex>, Vec<IndexedTriangle>)> = None;
     let mut total = Stats::default();
     for round in 0..options.max_rounds {
+        let last = ROUND_ENDS.len() - 1;
+        let from = round
+            .checked_sub(1)
+            .map_or(0.0, |r| ROUND_ENDS[r.min(last)]);
+        let round_progress = progress.part(from, ROUND_ENDS[round.min(last)]);
         let (mut round_vertices, mut round_faces) = match &current {
             Some((v, f)) => (v.clone(), f.clone()),
             None => (vertices.to_vec(), faces.to_vec()),
         };
-        let stats = run_round(&mut round_vertices, &mut round_faces, options, round == 0);
+        let stats = run_round(
+            &mut round_vertices,
+            &mut round_faces,
+            options,
+            round == 0,
+            round_progress,
+        )?;
+        round_progress.step(RepairStep::CheckingRound, 0.85)?;
         if !stats.changed() || round_faces.is_empty() {
             holes_left_open = stats.holes_left_open;
             break;
@@ -152,7 +173,7 @@ pub(crate) fn plan_watertight(
             break;
         }
     }
-    WatertightOutcome {
+    Ok(WatertightOutcome {
         repaired: current.map(|(mut vertices, faces)| {
             offset_coincident_vertices(&mut vertices, &faces, options.split_vertex_offset_mm);
             WatertightMesh {
@@ -162,7 +183,7 @@ pub(crate) fn plan_watertight(
             }
         }),
         holes_left_open,
-    }
+    })
 }
 
 /// Plans the orientation pass on a mesh whose face indices are in range:
@@ -529,6 +550,8 @@ struct Stats {
     largest_hole: usize,
     /// The area of the largest fill, in mm².
     largest_hole_area: f64,
+    /// The area of all fills, in mm².
+    filled_area: f64,
     shells_outward: usize,
     shell_faces_outward: usize,
     holes_left_open: usize,
@@ -560,6 +583,7 @@ impl Stats {
         self.fill_faces += other.fill_faces;
         self.largest_hole = self.largest_hole.max(other.largest_hole);
         self.largest_hole_area = self.largest_hole_area.max(other.largest_hole_area);
+        self.filled_area += other.filled_area;
         self.shells_outward += other.shells_outward;
         self.shell_faces_outward += other.shell_faces_outward;
     }
@@ -604,6 +628,7 @@ impl Stats {
                 added_faces: self.fill_faces,
                 largest_hole_edges: self.largest_hole,
                 largest_hole_area_mm2: self.largest_hole_area,
+                filled_area_mm2: self.filled_area,
             });
         }
         if self.shells_outward > 0 {
@@ -616,17 +641,22 @@ impl Stats {
     }
 }
 
+/// 1 round; tells `progress` each step, and stops before one when it asks
+/// to.
 fn run_round(
     vertices: &mut Vec<Vertex>,
     faces: &mut Vec<IndexedTriangle>,
     options: &WatertightOptions,
     first: bool,
-) -> Stats {
+    progress: Progress<'_>,
+) -> Result<Stats, RepairCancelled> {
     let mut stats = Stats::default();
     if options.close_holes && first && options.weld_tolerance_mm > 0.0 {
+        progress.step(RepairStep::Welding, 0.0)?;
         weld_boundary_vertices(vertices, faces, options.weld_tolerance_mm, &mut stats);
     }
     if first {
+        progress.step(RepairStep::RemovingDuplicates, 0.1)?;
         // A part stored twice keeps 1 copy; dropping both would lose it.
         // Then opposite copies, which enclose nothing, cancel out: after the
         // duplicates, so a glued wall that is also stored twice goes whole.
@@ -636,6 +666,7 @@ fn run_round(
         *vertices = mesh.vertices;
         *faces = mesh.faces;
     }
+    progress.step(RepairStep::SeparatingParts, 0.25)?;
     let dropped = pair_split_and_orient(vertices, faces, options.resolve_non_manifold, &mut stats);
     if let Some(dropped) = dropped {
         let mut idx = 0;
@@ -646,10 +677,12 @@ fn run_round(
         });
     }
     if options.close_holes {
+        progress.step(RepairStep::FillingHoles, 0.55)?;
         fill_holes(vertices, faces, options, &mut stats);
     }
+    progress.step(RepairStep::TurningShellsOutward, 0.75)?;
     turn_inside_out_shells_outward(vertices, faces, &mut stats);
-    stats
+    Ok(stats)
 }
 
 #[inline]
@@ -1260,7 +1293,7 @@ fn fill_holes(
                     }
                 }
                 None => {
-                    vertices.push(Vertex::new(centroid.map(|c| c as f32)));
+                    vertices.push(Vertex::new(fan_centre(centroid, &points)));
                     let apex = (vertices.len() - 1) as u32;
                     for i in 0..hole.len() {
                         added.push(IndexedTriangle::from_raw_indices([
@@ -1282,6 +1315,7 @@ fn fill_holes(
                 })
                 .sum();
             stats.largest_hole_area = stats.largest_hole_area.max(fill_area);
+            stats.filled_area += fill_area;
         }
     }
     drop(records);
@@ -1294,20 +1328,23 @@ fn fill_holes(
 pub(crate) struct LeftoverEdges {
     /// The closed loops of open edges: holes.
     pub(crate) loops: Vec<OpenLoop>,
-    /// A face beside each open edge on no closed loop.
-    pub(crate) open: Vec<FaceIndex>,
+    /// A face beside each open edge on no closed loop, and the edge.
+    pub(crate) open: Vec<(FaceIndex, [u32; 2])>,
     /// A face on each edge with more than 2 faces, or whose 2 faces wind the
-    /// same way.
-    pub(crate) tangled: Vec<FaceIndex>,
+    /// same way, and the edge.
+    pub(crate) tangled: Vec<(FaceIndex, [u32; 2])>,
     /// The area of the whole mesh, in mm².
     pub(crate) mesh_area: f64,
 }
 
 /// A closed loop of open edges.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OpenLoop {
     /// A face beside the loop.
     pub(crate) face: FaceIndex,
+    /// The vertices of the loop, in order: its edges join each to the next,
+    /// and the last to the first.
+    pub(crate) vertices: Vec<u32>,
     /// How many edges the loop has.
     pub(crate) edges: usize,
     /// The area a fan from its centroid covers, in mm²: what the hole step
@@ -1335,7 +1372,10 @@ pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> 
                 }
             }
             [a, b] if half_edges::is_reversed(a.1) != half_edges::is_reversed(b.1) => {}
-            _ => tangled.push(half_edges::face_of(run[0].1)),
+            _ => {
+                let (lo, hi) = half_edges::key_vertices(run[0].0);
+                tangled.push((half_edges::face_of(run[0].1), [lo.get(), hi.get()]));
+            }
         }
     }
     drop(records);
@@ -1382,7 +1422,10 @@ pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> 
             current = boundary[k].1;
         }
         if !closed {
-            open.extend(walked.iter().map(|&k| boundary[k].2));
+            open.extend(walked.iter().map(|&k| {
+                let (from, to, face) = boundary[k];
+                (face, [from, to])
+            }));
             continue;
         }
         for hole in split_into_simple_loops(&walk) {
@@ -1393,8 +1436,9 @@ pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> 
                 // 2 open edges between the same 2 vertices: a slit, not a
                 // hole to fill.
                 for (i, &v) in hole.iter().enumerate() {
-                    if let Some(face) = edge_from(v, hole[(i + 1) % hole.len()]) {
-                        open.push(face);
+                    let w = hole[(i + 1) % hole.len()];
+                    if let Some(face) = edge_from(v, w) {
+                        open.push((face, [v, w]));
                     }
                 }
                 continue;
@@ -1408,6 +1452,7 @@ pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> 
                 face,
                 edges: hole.len(),
                 area,
+                vertices: hole,
             });
         }
     }
@@ -1417,6 +1462,29 @@ pub(crate) fn leftover_edges(vertices: &[Vertex], faces: &[IndexedTriangle]) -> 
         tangled,
         mesh_area,
     }
+}
+
+/// The fill guard: the centre of a fan fill, the only vertex a fill adds,
+/// held within the box of its hole's boundary `points`, so a fill never
+/// reaches past the hole it closes. The centroid of the boundary is always
+/// there; the guard keeps it so against rounding, and against a later fill
+/// that would place its vertex elsewhere.
+fn fan_centre(centre: [f64; 3], points: &[[f64; 3]]) -> [f32; 3] {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    [0, 1, 2].map(|k| {
+        if lo[k] <= hi[k] {
+            centre[k].clamp(lo[k], hi[k]) as f32
+        } else {
+            centre[k] as f32
+        }
+    })
 }
 
 fn centroid(points: &[[f64; 3]]) -> [f64; 3] {
@@ -1787,6 +1855,21 @@ fn winding_number(
 #[cfg(test)]
 mod watertight_helper_tests {
     use super::*;
+
+    #[test]
+    fn the_fill_guard_keeps_a_fan_centre_within_its_hole() {
+        let ring = [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 1.0],
+            [2.0, 2.0, 0.0],
+            [0.0, 2.0, 1.0],
+        ];
+        // The centroid is inside: kept, to the bit.
+        let inside = centroid(&ring);
+        assert_eq!(fan_centre(inside, &ring), inside.map(|c| c as f32));
+        // A centre past the hole is brought back to its box.
+        assert_eq!(fan_centre([5.0, -1.0, 0.5], &ring), [2.0, 0.0, 0.5]);
+    }
 
     #[test]
     fn a_walk_that_visits_a_vertex_twice_splits_into_simple_loops() {

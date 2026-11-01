@@ -143,6 +143,7 @@ pub(crate) fn fit_to_screen(ui: &MainWindow) {
         Some(ui) => match monitor_of(ui.window()) {
             Some(monitor) => {
                 fit(ui.window(), monitor);
+                crate::startup_timing::mark("window fitted to the screen");
                 true
             }
             None => false,

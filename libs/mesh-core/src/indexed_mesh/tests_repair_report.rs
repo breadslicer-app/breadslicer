@@ -78,6 +78,7 @@ fn the_actions_fold_the_records_by_kind_in_report_order() {
             added_faces: 6,
             largest_hole_edges: 5,
             largest_hole_area_mm2: 1.5,
+            filled_area_mm2: 2.0,
         },
         MeshFix::WeldedBoundaryVertices {
             vertices: 12,

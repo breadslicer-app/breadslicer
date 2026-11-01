@@ -344,6 +344,7 @@ pub fn select_adapter_and_device_with(
     preferred_name: Option<&str>,
 ) -> anyhow::Result<AdapterSelection> {
     let adapters = pollster::block_on(instance.enumerate_adapters(backends));
+    crate::startup_timing::mark("graphics adapters listed");
     let infos: Vec<wgpu::AdapterInfo> = adapters.iter().map(|adapter| adapter.get_info()).collect();
     let candidates: Vec<AdapterFacts<'_>> = infos
         .iter()

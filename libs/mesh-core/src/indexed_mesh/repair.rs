@@ -19,6 +19,7 @@ use super::fix::watertight::{
 };
 use super::half_edges;
 use super::mesh::IndexedMesh;
+use super::repair_progress::{Progress, RepairCancelled, RepairStep, Unwatched};
 use super::repair_report::{RepairStage, StageTime};
 use super::validate::{MeshFaceError, MeshVertexError};
 use super::validated::ZeroAreaFace;
@@ -112,6 +113,13 @@ pub const MAX_WATERTIGHT_ROUNDS: usize = 3;
 /// position, keeps the parts apart. A tenth of the smallest pixel among the
 /// bundled printer profiles (10.5 um): no printer sees it.
 pub const SPLIT_VERTEX_OFFSET_MM: f64 = 0.001;
+
+/// The share of a run's passes where the watertight pass starts and ends,
+/// and where the collinear-face pass starts, for its progress: the
+/// watertight pass is most of the time of a mesh that needs it.
+const WATERTIGHT_FROM: f32 = 0.05;
+const WATERTIGHT_TO: f32 = 0.9;
+const SLIVERS_AT: f32 = 0.95;
 
 /// Why [`IndexedMesh::repair`] refused to run, or to finish, its passes.
 #[derive(Clone, Debug, PartialEq)]
@@ -268,7 +276,18 @@ pub(crate) fn assess_with_verdict(
         if !plan_pass {
             return (RepairAssessment::Work, sliceable());
         }
-        let outcome = plan_watertight(&mesh.vertices, &mesh.faces, &passes.watertight_options());
+        let unwatched = Unwatched;
+        let planned = plan_watertight(
+            &mesh.vertices,
+            &mesh.faces,
+            &passes.watertight_options(),
+            Progress::of(&unwatched),
+        );
+        // An unwatched plan is never cancelled; were it, the run would
+        // still have the pass to try.
+        let Ok(outcome) = planned else {
+            return (RepairAssessment::Work, sliceable());
+        };
         if outcome.repaired.is_some() {
             return (RepairAssessment::Work, sliceable());
         }
@@ -345,38 +364,47 @@ impl IndexedMesh {
     /// Every path is total: no panic, and at every observable point the mesh is
     /// at least as valid as it was before the call.
     pub fn repair(&mut self, passes: RepairPasses) -> MeshRepairReport {
-        self.repair_timed(passes, &mut Vec::new())
+        let unwatched = Unwatched;
+        match self.repair_timed(passes, &mut Vec::new(), Progress::of(&unwatched)) {
+            Ok(report) => report,
+            // An unwatched run is never cancelled.
+            Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
+        }
     }
 
     /// [`Self::repair`], adding the time of each stage it goes through to
-    /// `stages`.
+    /// `stages`, and telling `progress` each step. A run that `progress`
+    /// cancels stops between 2 steps and leaves this mesh half repaired: run
+    /// it only on a copy, and drop the copy on [`RepairCancelled`].
     pub(crate) fn repair_timed(
         &mut self,
         passes: RepairPasses,
         stages: &mut Vec<StageTime>,
-    ) -> MeshRepairReport {
-        let (fixes, end) = self.run_repair_passes(passes, stages);
+        progress: Progress<'_>,
+    ) -> Result<MeshRepairReport, RepairCancelled> {
+        let (fixes, end) = self.run_repair_passes(passes, stages, progress)?;
         if !fixes.is_empty()
             && let Some(meta) = &mut self.meta
         {
             meta.declared_facet_normals = None;
         }
-        MeshRepairReport { fixes, end }
+        Ok(MeshRepairReport { fixes, end })
     }
 
     fn run_repair_passes(
         &mut self,
         passes: RepairPasses,
         stages: &mut Vec<StageTime>,
-    ) -> (Vec<MeshFix>, RepairEnd) {
+        progress: Progress<'_>,
+    ) -> Result<(Vec<MeshFix>, RepairEnd), RepairCancelled> {
         if self.faces.is_empty() {
-            return (Vec::new(), RepairEnd::NoFaces);
+            return Ok((Vec::new(), RepairEnd::NoFaces));
         }
         if let Err(errors) = self.validate_vertices() {
-            return (
+            return Ok((
                 Vec::new(),
                 RepairEnd::Refused(RepairRefusal::InvalidVertices(errors)),
-            );
+            ));
         }
 
         let mut fixes: Vec<MeshFix> = Vec::new();
@@ -388,11 +416,12 @@ impl IndexedMesh {
                 // invalid-face pass disabled every face error is
                 // unaddressable.
                 if !passes.zero_length_edges {
-                    return (
+                    return Ok((
                         fixes,
                         RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(face_errors)),
-                    );
+                    ));
                 }
+                progress.step(RepairStep::RemovingBrokenFaces, 0.0)?;
                 let start = Instant::now();
                 let (face_fixes, witness) = self.fix_invalid_faces_into_validated(&face_errors);
                 stages.push(StageTime::since(
@@ -407,10 +436,10 @@ impl IndexedMesh {
                     // removing whole faces keeps the others as they were;
                     // mapped instead of panicking so the function stays total.
                     Err(residual) => {
-                        return (
+                        return Ok((
                             fixes,
                             RepairEnd::Refused(RepairRefusal::UnfixableFaceErrors(residual)),
-                        );
+                        ));
                     }
                 }
             }
@@ -419,8 +448,10 @@ impl IndexedMesh {
         let mut holes_left_open = 0;
         if passes.watertight() && validated.validate_edge_manifold().is_err() {
             let start = Instant::now();
-            let (watertight_fixes, left_open) =
-                validated.fix_watertight(&passes.watertight_options());
+            let (watertight_fixes, left_open) = validated.fix_watertight(
+                &passes.watertight_options(),
+                progress.part(WATERTIGHT_FROM, WATERTIGHT_TO),
+            )?;
             stages.push(StageTime::since(
                 RepairStage::Watertight,
                 start,
@@ -431,6 +462,7 @@ impl IndexedMesh {
         }
 
         if passes.flipped_faces {
+            progress.step(RepairStep::Orienting, WATERTIGHT_TO)?;
             let start = Instant::now();
             let orientation_fixes = validated.fix_orientation();
             stages.push(StageTime::since(
@@ -448,6 +480,7 @@ impl IndexedMesh {
             && validated.validate_face_areas().is_err()
             && let Ok(manifold) = validated.validated_edge_manifold_mut()
         {
+            progress.step(RepairStep::RemovingSlivers, SLIVERS_AT)?;
             let start = Instant::now();
             let collinear_fixes = manifold.fix_collinear_faces();
             stages.push(StageTime::since(
@@ -463,6 +496,6 @@ impl IndexedMesh {
             validated.validate_face_areas(),
             holes_left_open,
         );
-        (fixes, RepairEnd::Completed(state))
+        Ok((fixes, RepairEnd::Completed(state)))
     }
 }

@@ -1162,6 +1162,196 @@ fn render_multi_object_scene_under_default_limits() {
         .expect("render multi-object");
 }
 
+/// A small closed mesh with a box that is not symmetric about any axis.
+fn wedge_mesh() -> IndexedMesh {
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([4.0, 0.0, 0.0]),
+            Vertex::new([0.0, 3.0, 0.0]),
+            Vertex::new([0.0, 0.0, 2.0]),
+        ],
+        faces: vec![
+            IndexedTriangle::from_raw_indices([0, 2, 1]),
+            IndexedTriangle::from_raw_indices([0, 1, 3]),
+            IndexedTriangle::from_raw_indices([0, 3, 2]),
+            IndexedTriangle::from_raw_indices([1, 2, 3]),
+        ],
+    }
+}
+
+/// Adds a root leaf drawing the resource `rid` at `[x, y, 0]`, as a paste does.
+fn paste_resource_leaf(graph: &mut Scene, rid: sc_scene::MeshResourceId, x: f64, y: f64) {
+    let leaf = graph
+        .add_leaf(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation([x, y, 0.0])),
+            LeafPayload::MeshResource(rid),
+        )
+        .expect("leaf");
+    graph.add_root(leaf).expect("root");
+}
+
+fn renderer_on(device: &wgpu::Device, queue: &wgpu::Queue) -> Renderer {
+    Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device")
+}
+
+fn installed_objects(renderer: &Renderer) -> &[scene_upload::ObjectDraw] {
+    renderer.scene.as_ref().expect("a scene").gpu.objects()
+}
+
+/// Copies of one mesh draw from one set of buffers: a paste uploads nothing of
+/// its own (#353).
+#[test]
+fn copies_of_a_mesh_share_one_set_of_buffers() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    paste_resource_leaf(&mut graph, rid, 10.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    renderer.upload_scene(&graph).expect("upload");
+    let objects = installed_objects(&renderer);
+    assert_eq!(objects.len(), 2);
+    assert!(objects[0].shares_buffers_with(&objects[1]));
+    assert_eq!(objects[1].index_count(), 12);
+}
+
+/// Uploading the scene again after a paste keeps the buffers of the mesh it
+/// already drew, and a mesh new to the scene gets buffers of its own.
+#[test]
+fn an_upload_after_a_paste_reuses_the_buffers_already_uploaded() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    renderer.upload_scene(&graph).expect("upload");
+    let probe = installed_objects(&renderer)[0].buffers_for_test();
+
+    paste_resource_leaf(&mut graph, rid, 10.0, 0.0);
+    let other = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, other, 20.0, 0.0);
+    renderer.upload_scene(&graph).expect("upload");
+    let objects = installed_objects(&renderer);
+    assert_eq!(objects.len(), 3);
+    assert!(Arc::ptr_eq(&objects[0].buffers_for_test(), &probe));
+    assert!(Arc::ptr_eq(&objects[1].buffers_for_test(), &probe));
+    assert!(!objects[2].shares_buffers_with(&objects[0]));
+}
+
+/// The buffers of a mesh the scene no longer draws are released at the next
+/// upload, and a mesh drawn again after a replacement is uploaded afresh.
+#[test]
+fn an_upload_releases_the_buffers_of_meshes_no_longer_drawn() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let old = Arc::new(wedge_mesh());
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::clone(&old));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    renderer.upload_scene(&graph).expect("upload");
+    let probe = installed_objects(&renderer)[0].buffers_for_test();
+
+    // Replaced as an edit does: the resource now holds another mesh.
+    let mut replaced = Scene::new();
+    let new_rid = replaced.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut replaced, new_rid, 0.0, 0.0);
+    renderer.upload_scene(&replaced).expect("upload");
+    let objects = installed_objects(&renderer);
+    assert!(!Arc::ptr_eq(&objects[0].buffers_for_test(), &probe));
+    // Only the probe here and nothing in the renderer holds the old buffers.
+    assert_eq!(Arc::strong_count(&probe), 1);
+    let uploaded = renderer.scene.take().expect("a scene").gpu.into_uploaded();
+    assert_eq!(uploaded.len(), 1);
+}
+
+/// The world boxes of meshes a new upload still draws are kept, and the ones
+/// of meshes it no longer draws are forgotten.
+#[test]
+fn an_upload_keeps_the_world_boxes_of_meshes_still_drawn() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    let mut renderer = renderer_on(&device, &queue);
+    renderer.upload_scene(&graph).expect("upload");
+    let frame = |renderer: &mut Renderer, graph: &Scene| {
+        build_model_entries(graph, &[], TEST_BV, &mut renderer.world_boxes).expect("entries");
+    };
+    frame(&mut renderer, &graph);
+    assert_eq!(renderer.world_boxes.remembered(), 1);
+
+    paste_resource_leaf(&mut graph, rid, 10.0, 0.0);
+    renderer.upload_scene(&graph).expect("upload");
+    assert_eq!(renderer.world_boxes.remembered(), 1);
+    frame(&mut renderer, &graph);
+    assert_eq!(renderer.world_boxes.remembered(), 2);
+
+    let mut other = Scene::new();
+    let other_rid = other.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut other, other_rid, 0.0, 0.0);
+    renderer.upload_scene(&other).expect("upload");
+    assert_eq!(renderer.world_boxes.remembered(), 0);
+}
+
+/// A scene uploaded on top of the scene before it draws exactly what a fresh
+/// upload of it draws.
+#[test]
+fn an_upload_on_top_of_the_scene_before_draws_what_a_fresh_upload_draws() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut graph = Scene::new();
+    let rid = graph.add_mesh_resource_arc(Arc::new(wedge_mesh()));
+    paste_resource_leaf(&mut graph, rid, 0.0, 0.0);
+    let mut reused = renderer_on(&device, &queue);
+    reused.upload_scene(&graph).expect("upload");
+    paste_resource_leaf(&mut graph, rid, 6.0, 0.0);
+    paste_resource_leaf(&mut graph, rid, 0.0, 6.0);
+    reused.upload_scene(&graph).expect("upload");
+    let mut fresh = renderer_on(&device, &queue);
+    fresh.upload_scene(&graph).expect("upload");
+
+    assert_eq!(reused.scene_bounds(), fresh.scene_bounds());
+    let bounds = fresh.scene_bounds().expect("bounds");
+    let center = (bounds.0 + bounds.1) * 0.5;
+    let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+    let camera = OrbitCamera::new(center, radius);
+    let pixels = |renderer: &mut Renderer| {
+        renderer
+            .preview_pixels(&graph, TEST_BV, &camera, 64, 64)
+            .expect("drawn")
+            .expect("a frame")
+    };
+    let (a, b) = (pixels(&mut reused), pixels(&mut fresh));
+    assert!(
+        a.rgba.iter().any(|&c| c != a.rgba[0]),
+        "the frame shows something"
+    );
+    assert_eq!(a, b);
+}
+
 /// Renders with no scene installed: the plate alone should produce a non-`None`
 /// texture. 2 consecutive calls, so the second exercises the cached
 /// `plate_buffers` path.

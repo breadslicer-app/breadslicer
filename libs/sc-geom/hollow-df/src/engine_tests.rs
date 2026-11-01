@@ -24,7 +24,12 @@ fn the_grid_reports_the_voxel_it_used() {
     );
     assert_eq!(grid.bound, None);
 
-    let fine = sphere_session(0.1);
+    let request = GridRequest {
+        voxel_size_mm: 0.1,
+        max_resolution: 192,
+        ..GridRequest::default()
+    };
+    let fine = Session::build(icosphere(20.0, 3), &request, None, Control::none()).unwrap();
     assert_eq!(
         fine.grid().bound,
         Some(ResolutionBound::Coarsened {
@@ -36,10 +41,70 @@ fn the_grid_reports_the_voxel_it_used() {
 }
 
 #[test]
+fn a_long_model_keeps_the_requested_voxel_past_192_voxels() {
+    // 265 mm, the research's whale at twice its size: 408 voxels of 0.65 mm,
+    // which a fixed bound of 192 turned into 1.38 mm voxels (#263).
+    let long = tessellated_box([0.0, 0.0, 0.0], [265.0, 30.0, 20.0], 1);
+    let session = Session::build(long, &GridRequest::default(), None, Control::none()).unwrap();
+    let grid = session.grid();
+    assert_eq!(grid.bound, None);
+    assert_eq!(grid.resolution, 408);
+    assert!((grid.voxel_mm - 0.65).abs() < 1e-3, "{}", grid.voxel_mm);
+}
+
+#[test]
+fn any_grid_dragonfruit_allows_fits_the_default_memory_limit() {
+    // The largest grid of up to 192 voxels per side: a cube. Models that
+    // hollowed before #263 are never coarsened by memory.
+    let cube = crate::mesh::Aabb {
+        min: crate::mesh::Vec3::new(0.0, 0.0, 0.0),
+        max: crate::mesh::Vec3::new(192.0, 192.0, 192.0),
+    };
+    let grid = GridSpec::for_bbox_with_voxel(&cube, 1.0);
+    assert!(grid.cell_count() * BYTES_PER_CELL <= GRID_MEMORY_LIMIT_BYTES);
+}
+
+#[test]
+fn a_grid_over_the_memory_limit_gets_the_finest_voxel_that_fits() {
+    // 40 mm at 0.1 mm wants 400 voxels per side, 65 M cells; 28 MB holds
+    // 1 M cells, about 100 per side.
+    let limit_bytes = 1_000_000 * BYTES_PER_CELL;
+    let request = GridRequest {
+        voxel_size_mm: 0.1,
+        max_memory_bytes: limit_bytes,
+        ..GridRequest::default()
+    };
+    let sphere = icosphere(20.0, 3);
+    let bbox = sphere.bbox();
+    let session = Session::build(sphere, &request, None, Control::none()).unwrap();
+    let grid = session.grid();
+    assert_eq!(
+        grid.bound,
+        Some(ResolutionBound::MemoryLimited {
+            wanted: 400,
+            limit_bytes
+        })
+    );
+    assert!(grid.memory_estimate_bytes <= limit_bytes);
+    let extent = bbox.max.sub(bbox.min);
+    let extent = extent.x.max(extent.y).max(extent.z);
+    let finer = GridSpec::for_bbox_with_voxel(&bbox, extent / (grid.resolution + 1) as f32);
+    assert!(finer.cell_count() * BYTES_PER_CELL > limit_bytes);
+    assert!((96..=100).contains(&grid.resolution), "{}", grid.resolution);
+    assert!((grid.voxel_mm - extent / grid.resolution as f32).abs() < 1e-4);
+    // It still hollows.
+    let preview = session
+        .preview(&HollowSettings::default(), Control::none())
+        .unwrap();
+    assert!(!preview.cavity.triangles.is_empty());
+}
+
+#[test]
 fn a_higher_bound_gives_the_requested_voxel() {
     let request = GridRequest {
         voxel_size_mm: 0.15,
         max_resolution: 300,
+        ..GridRequest::default()
     };
     let session = Session::build(icosphere(20.0, 2), &request, None, Control::none()).unwrap();
     assert_eq!(session.grid().bound, None);
