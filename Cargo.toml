@@ -51,6 +51,16 @@ lto = "thin"
 debug = false
 strip = true
 
+# Builds tried by hand for behaviour (gestures, placement, UI): release
+# optimisation without LTO, with incremental compilation, so an edit rebuilds
+# in seconds instead of minutes. Timings, benchmarks and published builds use
+# `release`.
+[profile.quick-release]
+inherits = "release"
+codegen-units = 256
+lto = false
+incremental = true
+
 [workspace.dependencies]
 sc-3mf = { path = "libs/3mf", version = "0.2.0" }
 sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
