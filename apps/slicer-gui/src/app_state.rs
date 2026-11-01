@@ -1019,11 +1019,14 @@ impl AppState {
             return;
         }
         let hit = wired.controller.pick_node_at(x, y);
+        // A right-click on one of several selected objects keeps them all, so
+        // Delete acts on every one of them (#13); on any other object it
+        // selects that one.
         if let Some(node_id) = hit {
-            wired
-                .controller
-                .document()
-                .set_selection(Selection::One(LeafId(node_id)));
+            let document = wired.controller.document();
+            if !document.is_selected(node_id) {
+                document.set_selection(Selection::One(LeafId(node_id)));
+            }
         }
         let flags = context_menu_flags(hit.is_some(), self.clipboard.borrow().is_some());
         if !flags.any() {

@@ -416,7 +416,7 @@ fn render_succeeds_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -444,7 +444,7 @@ fn render_succeeds_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph2,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -673,7 +673,7 @@ fn render_with_a_cap_produces_a_texture() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: Some(1.0),
             }),
@@ -754,7 +754,7 @@ fn render_succeeds_on_dx12_backend() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -799,7 +799,7 @@ fn render_with_selection_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -848,7 +848,7 @@ fn outline_post_pass_under_default_limits_is_validated() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -863,7 +863,7 @@ fn outline_post_pass_under_default_limits_is_validated() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -915,7 +915,7 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: Some(frame),
                 clip_z: None,
             }),
@@ -930,7 +930,7 @@ fn render_with_gizmo_under_default_limits_is_validated() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: Some(frame),
                 clip_z: None,
             }),
@@ -980,7 +980,7 @@ fn render_with_idle_gizmo_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: Some(frame),
                 clip_z: None,
             }),
@@ -1030,7 +1030,7 @@ fn render_with_rotate_gizmo_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: Some(frame),
                 clip_z: None,
             }),
@@ -1080,7 +1080,7 @@ fn render_with_scale_gizmo_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: Some(first_leaf(&graph)),
+                selection: &[first_leaf(&graph)],
                 gizmo: Some(scale_axis),
                 clip_z: None,
             }),
@@ -1142,7 +1142,7 @@ fn render_multi_object_scene_under_default_limits() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -1526,7 +1526,7 @@ fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
         .render(
             Some(SceneRender {
                 graph: &safe_graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -1548,7 +1548,7 @@ fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
         .render(
             Some(SceneRender {
                 graph: &breach_graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -1651,7 +1651,7 @@ fn render_against_grown_graph_does_not_panic() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -1734,7 +1734,7 @@ fn render_after_deleting_the_last_leaf_still_produces_a_texture() {
         .render(
             Some(SceneRender {
                 graph: &graph,
-                selection: None,
+                selection: &[],
                 gizmo: None,
                 clip_z: None,
             }),
@@ -2003,7 +2003,7 @@ fn a_preview_overlay_is_drawn_in_its_tint() {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: None,
+                    selection: &[],
                     gizmo: None,
                     clip_z: None,
                 }),

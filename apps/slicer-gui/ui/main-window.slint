@@ -125,6 +125,13 @@ export component MainWindow inherits Window {
     in property <ThemePreference> theme: ThemePreference.System;
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
+    // Every selected row (#13), indexed like `object-list`, and how many
+    // objects are selected. `selected-object-index` is the primary one.
+    in property <[bool]> selected-object-rows: [];
+    in property <int> selected-object-count: 0;
+    // A Shift+left drag that grabbed no gizmo handle: the viewport draws
+    // the selection box while it lasts.
+    in property <bool> box-select-armed: false;
     in-out property <bool> show-object-list: true;
     // Floating object-list panel geometry, persisted per window. The
     // position is stored relative to the window edges: `anchor-right` /
@@ -482,6 +489,8 @@ export component MainWindow inherits Window {
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
     callback object-list-selection-changed(int);
+    // Shift+click or Ctrl+click on a row: it joins the selection or leaves it.
+    callback object-list-toggle(int);
     callback viewport-pointer-down(length, length, PointerModifiers);
     callback viewport-pointer-move(length, length, PointerModifiers);
     callback viewport-pointer-up(length, length, PointerModifiers);
@@ -1215,6 +1224,7 @@ export component MainWindow inherits Window {
                 mv := MeshViewer {
                     horizontal-stretch: 1;
                     rendering: root.mesh-rendering;
+                    box-select-armed: root.box-select-armed;
                     placeholder-text: @tr("Open a 3D model to visualize it here");
                     modal-transform-active: root.modal-transform-active;
                     modal-transform-status: root.modal-transform-status;
@@ -1577,6 +1587,8 @@ export component MainWindow inherits Window {
                         if root.workspace-section == WorkspaceSection.Transform: TransformInspector {
                             objects: root.object-list;
                             selected-index: root.selected-object-index;
+                            selected-rows: root.selected-object-rows;
+                            selected-count: root.selected-object-count;
                             needs-repair: root.mesh-needs-repair;
                             check-note: root.mesh-check-note;
                             check-text: root.mesh-check-text;
@@ -1586,6 +1598,10 @@ export component MainWindow inherits Window {
                             object-picked(i) => {
                                 root.selected-object-index = i;
                                 root.object-list-selection-changed(i);
+                                mv.focus-viewport();
+                            }
+                            object-toggled(i) => {
+                                root.object-list-toggle(i);
                                 mv.focus-viewport();
                             }
                             repair-requested => {

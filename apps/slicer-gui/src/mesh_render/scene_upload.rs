@@ -516,15 +516,15 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 }
 
 /// Returns the model entry of each reachable leaf, in draw order. `selection`
-/// is the [`NodeId`] of the selected leaf, or `None` for no selection. A
-/// `NodeId` that does not name a reachable leaf leaves every entry's `flags.x`
-/// at 0. The shader reads `flags.x` and mixes a warm tint when it is 1;
+/// holds the [`NodeId`]s of the selected leaves, sorted; empty for no
+/// selection. A `NodeId` that does not name a reachable leaf marks no entry.
+/// The shader reads `flags.x` and mixes a warm tint when it is 1;
 /// `flags.y` is set when the leaf has any vertex outside the build envelope,
 /// driving the mild interior wash that marks the whole object as "offending"
 /// even where individual fragments are still inside the envelope.
 pub(super) fn build_model_entries(
     graph: &Scene,
-    selection: Option<NodeId>,
+    selection: &[NodeId],
     build_volume: BuildVolume,
     boxes: &mut WorldBoxes,
 ) -> Result<Vec<ModelEntry>> {
@@ -532,7 +532,7 @@ pub(super) fn build_model_entries(
     graph.for_each_expanded_leaf::<SceneError, _>(
         CsgPolicy::Descend,
         |node_id, world_transform, mesh| {
-            let selected = selection == Some(node_id);
+            let selected = selection.binary_search(&node_id).is_ok();
             let transform_mat = transform_to_mat4(world_transform);
             // The envelope is an axis-aligned box, so it contains the world
             // box if and only if it contains every vertex, and therefore every
@@ -1209,9 +1209,8 @@ mod transform_to_mat4_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([7.0, 0.0, 0.0])),
         );
-        let entries =
-            build_model_entries(&g, None, permissive_volume(), &mut WorldBoxes::default())
-                .expect("clean graph");
+        let entries = build_model_entries(&g, &[], permissive_volume(), &mut WorldBoxes::default())
+            .expect("clean graph");
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -1239,13 +1238,9 @@ mod transform_to_mat4_tests {
     #[test]
     fn no_selection_leaves_every_flags_x_zero() {
         let graph = two_object_graph();
-        let entries = build_model_entries(
-            &graph,
-            None,
-            permissive_volume(),
-            &mut WorldBoxes::default(),
-        )
-        .expect("clean graph");
+        let entries =
+            build_model_entries(&graph, &[], permissive_volume(), &mut WorldBoxes::default())
+                .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -1255,7 +1250,7 @@ mod transform_to_mat4_tests {
         let graph = two_object_graph();
         let entries = build_model_entries(
             &graph,
-            Some(nth_leaf(&graph, 1)),
+            &[nth_leaf(&graph, 1)],
             permissive_volume(),
             &mut WorldBoxes::default(),
         )
@@ -1272,7 +1267,7 @@ mod transform_to_mat4_tests {
         let graph = two_object_graph();
         let entries = build_model_entries(
             &graph,
-            Some(graph.roots()[0]),
+            &[graph.roots()[0]],
             permissive_volume(),
             &mut WorldBoxes::default(),
         )
@@ -1313,7 +1308,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn flags_y_is_zero_for_fully_inside_leaf() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
-        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+        let entries = build_model_entries(&graph, &[], snug_volume(), &mut WorldBoxes::default())
             .expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
@@ -1323,7 +1318,7 @@ mod transform_to_mat4_tests {
         // Translation +60 mm on X puts the unit triangle's vertices at
         // [60,0,0], [61,0,0] and [60,1,0], all 3 past the +X wall at x = 50.
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+        let entries = build_model_entries(&graph, &[], snug_volume(), &mut WorldBoxes::default())
             .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
@@ -1332,7 +1327,7 @@ mod transform_to_mat4_tests {
     fn flags_y_is_one_when_any_vertex_dips_below_the_floor() {
         // Translation in Z by -0.5 puts every vertex below z = 0.
         let graph = unit_triangle_graph_at([0.0, 0.0, -0.5]);
-        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+        let entries = build_model_entries(&graph, &[], snug_volume(), &mut WorldBoxes::default())
             .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
@@ -1343,7 +1338,7 @@ mod transform_to_mat4_tests {
         // [1,0,0] at x = 50.5 (outside +X wall), so the leaf breaches through
         // the second vertex.
         let graph = unit_triangle_graph_at([49.5, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+        let entries = build_model_entries(&graph, &[], snug_volume(), &mut WorldBoxes::default())
             .expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
@@ -1353,7 +1348,7 @@ mod transform_to_mat4_tests {
         // Every vertex has z = 0 (the floor). The breach test uses a strict
         // comparison, so resting on the plate is "inside".
         let graph = unit_triangle_graph_at([0.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume(), &mut WorldBoxes::default())
+        let entries = build_model_entries(&graph, &[], snug_volume(), &mut WorldBoxes::default())
             .expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
@@ -1543,7 +1538,7 @@ mod transform_to_mat4_tests {
         let mut boxes = WorldBoxes::default();
         let frame = |graph: &Scene, boxes: &mut WorldBoxes| {
             let entries =
-                build_model_entries(graph, None, snug_volume(), boxes).expect("clean graph");
+                build_model_entries(graph, &[], snug_volume(), boxes).expect("clean graph");
             let mask =
                 build_envelope_warning_mask(graph, snug_volume(), boxes).expect("clean graph");
             (entries[0].flags[1], mask)
@@ -1582,7 +1577,7 @@ mod transform_to_mat4_tests {
         graph.add_root(leaf).expect("root");
         let volume = snug_volume();
         let mut boxes = WorldBoxes::default();
-        build_model_entries(&graph, Some(leaf), volume, &mut boxes).expect("clean graph");
+        build_model_entries(&graph, &[leaf], volume, &mut boxes).expect("clean graph");
         let start = std::time::Instant::now();
         while boxes.hulls.get(&mesh).is_none() {
             assert!(start.elapsed().as_secs() < 30, "the hull never arrived");
@@ -1617,7 +1612,7 @@ mod transform_to_mat4_tests {
             assert!(hull.world_box(&matrix).is_some(), "the hull answers");
             let walked = leaf_world_box(&mesh, &matrix);
             let entries =
-                build_model_entries(&graph, Some(leaf), volume, &mut boxes).expect("clean graph");
+                build_model_entries(&graph, &[leaf], volume, &mut boxes).expect("clean graph");
             let mask =
                 build_envelope_warning_mask(&graph, volume, &mut boxes).expect("clean graph");
             let expected_mask = volume

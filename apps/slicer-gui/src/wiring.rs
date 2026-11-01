@@ -215,6 +215,14 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_object_list_toggle(move |idx| {
+            if idx >= 0 {
+                ctrl.on_toggle_by_index(idx as usize);
+            }
+        });
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_viewport_pointer_down(move |x, y, m| ctrl.on_pointer_down(ScreenPoint::new(x, y), m));
     }
     {

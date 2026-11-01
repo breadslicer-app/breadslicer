@@ -18,6 +18,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_scene::NodeId;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
+use super::group_move::GroupMove;
 use super::types::ViewportSize;
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
@@ -233,6 +234,9 @@ pub(super) struct KeyboardDriveState {
     arrows: Cell<ArrowDrive>,
     last_tick: Cell<Option<Instant>>,
     burst: BurstTracker,
+    /// The leaves a burst moves when several are selected (#13): they all
+    /// follow the offset the arrows give the primary one.
+    group: RefCell<Option<Rc<GroupMove>>>,
 }
 
 impl KeyboardDriveState {
@@ -242,6 +246,7 @@ impl KeyboardDriveState {
             arrows: Cell::new(ArrowDrive::default()),
             last_tick: Cell::new(None),
             burst: BurstTracker::new(),
+            group: RefCell::new(None),
         }
     }
 
@@ -263,6 +268,7 @@ impl KeyboardDriveState {
         self.arrows.set(ArrowDrive::default());
         self.last_tick.set(None);
         self.burst.discard();
+        self.group.replace(None);
     }
 
     /// Sets `focus` if the move is legal. Returns `true` when the cell changed;
@@ -353,6 +359,8 @@ impl KeyboardDriveState {
             return;
         };
         self.burst.arm(node_id, before);
+        let group = GroupMove::capture(document, &document.selection_node_ids());
+        self.group.replace(group.map(Rc::new));
     }
 
     /// Pushes the in-progress burst as one undo entry, using the scene's
@@ -360,9 +368,14 @@ impl KeyboardDriveState {
     /// the no-op case (the user pressed and released without an integration
     /// tick), so we don't gate it here.
     fn flush_burst(&self, document: &Rc<SceneDocument>) {
+        let group = self.group.take();
         let Some((node_id, before)) = self.burst.take() else {
             return;
         };
+        if let Some(group) = group {
+            group.commit(document);
+            return;
+        }
         let after = document
             .with_scene(|s| s.leaf(node_id).map(|q| q.local_transform()))
             .flatten();
@@ -409,10 +422,15 @@ impl KeyboardDriveState {
         // Pull the running transform + pivot + camera + the leaf's
         // ancestor-chain transform through the document's read borrow + camera
         // borrow; all drop at the closure's end before the scene write below.
+        let group = self.group.borrow().clone();
         let prepared: Option<(Vec3, Transform3D, Transform3D, f32)> = ctx
             .document
             .with_scene(|spatial| {
-                let pivot = crate::gizmo::pivot_for_leaf(spatial, node_id)?;
+                let pivot = if group.is_some() {
+                    super::group_move::group_pivot(spatial, &ctx.document.selection_node_ids())?
+                } else {
+                    crate::gizmo::pivot_for_leaf(spatial, node_id)?
+                };
                 let query = spatial.leaf(node_id)?;
                 let running = query.local_transform();
                 let parent_world = query.parent_world();
@@ -441,6 +459,26 @@ impl KeyboardDriveState {
         ) else {
             return false;
         };
+
+        // Several objects: each gets the world transform the burst has given
+        // the primary one since it began, about their shared centre; a turn
+        // or a scale keeps the group on the plate.
+        if let Some(group) = group
+            && let Some((_, start)) = self.burst.armed.get()
+        {
+            let Some(delta) = super::group_move::world_delta(
+                &parent_world.compose(&start),
+                &parent_world.compose(&new_transform),
+            ) else {
+                return false;
+            };
+            let delta = if focus == KbdFocus::Translate {
+                delta
+            } else {
+                group.kept_on_bed(ctx.document, delta)
+            };
+            return group.apply_world(ctx.document, delta).is_ok();
+        }
 
         // Same policy as mouse drags: translation is free, also out of the
         // plate; rotate/scale lift their bounding box above the plate without

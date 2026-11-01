@@ -151,9 +151,8 @@ fn selection_centre(document: &SceneDocument, camera: &OrbitCamera) -> Option<Ve
 /// The world bounding box of everything selected, or `None` with nothing
 /// selected (or nothing measurable).
 fn selection_bounds(document: &SceneDocument) -> Option<(Vec3, Vec3)> {
-    // One leaf today. A multi-selection only has to yield more ids here; the
-    // union below already spans them all.
-    let ids = document.selection_primary_node_id().into_iter();
+    // Every selected leaf (#13); the union below spans them all.
+    let ids = document.selection_node_ids().into_iter();
     document
         .with_scene(|spatial| {
             ids.filter_map(|id| {

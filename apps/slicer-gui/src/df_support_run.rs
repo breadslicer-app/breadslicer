@@ -2887,6 +2887,15 @@ mod hand_edit_tests {
         window: &MainWindow,
         cubes: &[[f64; 3]],
     ) -> (Rc<SceneDocument>, Rc<DfSupportRun>, Vec<NodeId>) {
+        let (ctrl, run, leaves) = supported_in(window, cubes);
+        (ctrl.document(), run, leaves)
+    }
+
+    /// [`supported`], with the viewport that holds the scene.
+    fn supported_in(
+        window: &MainWindow,
+        cubes: &[[f64; 3]],
+    ) -> (Rc<ViewportController>, Rc<DfSupportRun>, Vec<NodeId>) {
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
@@ -2911,7 +2920,7 @@ mod hand_edit_tests {
             .join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
         run.finish(outcome);
-        (document, run, leaves)
+        (ctrl, run, leaves)
     }
 
     fn translation(t: [f64; 3]) -> Transform3D {
@@ -3618,6 +3627,162 @@ mod hand_edit_tests {
             ));
             assert_ne!(leaf_transform(&document, leaves[1]), before[1]);
             assert_eq!(run.sets_in_force().len(), 2);
+        });
+    }
+
+    /// #13: `G` with two supported models selected moves both by the same
+    /// offset; their supports ride along while it is live, are redrawn where
+    /// the models land, still editable, and one Undo takes everything back.
+    #[test]
+    fn moving_several_supported_models_together_carries_every_set_in_one_step() {
+        use crate::camera::{AxisView, OrbitCamera};
+        use crate::selection::{LeafId, Selection};
+        use crate::viewport::ScreenPoint;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, run, leaves) =
+                supported_in(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let document = ctrl.document();
+            let at = |l: NodeId| match leaf_transform(&document, l) {
+                Transform3D::Affine(a) => *a.translation(),
+                Transform3D::Identity => [0.0; 3],
+            };
+            let before: Vec<[f64; 3]> = leaves.iter().map(|&l| at(l)).collect();
+            let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> =
+                leaves.iter().map(|&l| set_of(&document, &run, l)).collect();
+            let set_before: Vec<[f64; 3]> = sets.iter().map(|&(s, _)| at(s)).collect();
+
+            ctrl.set_section(WorkspaceSection::Transform);
+            ctrl.set_viewport_for_test(400.0, 200.0);
+            let mut camera = OrbitCamera::new(glam::Vec3::new(35.0, 20.0, 8.0), 100.0);
+            camera.set_axis_view(AxisView::Top);
+            ctrl.set_camera_for_test(camera);
+            document.set_selection(Selection::of(leaves.iter().map(|&l| LeafId(l))));
+            ctrl.on_modal_transform_start(0, 200.0, 100.0);
+            ctrl.on_pointer_move(
+                ScreenPoint::new(230.0, 100.0),
+                crate::PointerModifiers::default(),
+            );
+            let d: Vec<[f64; 3]> = leaves
+                .iter()
+                .zip(&before)
+                .map(|(&l, b)| {
+                    let a = at(l);
+                    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+                })
+                .collect();
+            assert!(d[0][0].hypot(d[0][1]) > 1.0, "moved: {:?}", d[0]);
+            assert!((0..3).all(|k| (d[0][k] - d[1][k]).abs() < 1e-9), "together");
+            assert!(d[0][2].abs() < 1e-9, "in the plate plane");
+            // Live, each set rides along with its model.
+            for (i, &(set, _)) in sets.iter().enumerate() {
+                let s = at(set);
+                assert!((s[0] - set_before[i][0] - d[0][0]).abs() < 1e-9);
+                assert!((s[1] - set_before[i][1] - d[0][1]).abs() < 1e-9);
+            }
+
+            ctrl.on_modal_transform_finish(true);
+            for (i, &l) in leaves.iter().enumerate() {
+                let (set, mesh) = set_of(&document, &run, l);
+                assert_eq!(at(set), set_before[i], "the set's leaf back in place");
+                assert!(
+                    !Arc::ptr_eq(&mesh, &sets[i].1),
+                    "its set redrawn where it went"
+                );
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+
+            // One Undo takes both models and both sets back.
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(at(l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &sets[i].1));
+            }
+        });
+    }
+
+    /// #13, #218: `R` about Z with two supported models selected turns them
+    /// together about their shared centre and their sets follow, redrawn and
+    /// editable; `S` scales them together and takes the sets away for new
+    /// ones (#153). Each is one Undo step.
+    #[test]
+    fn turning_and_scaling_several_supported_models_together_treats_their_sets_as_one_models() {
+        use crate::camera::{AxisView, OrbitCamera};
+        use crate::selection::{LeafId, Selection};
+        use crate::viewport::ScreenPoint;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (ctrl, run, leaves) =
+                supported_in(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let document = ctrl.document();
+            let before: Vec<Transform3D> = leaves
+                .iter()
+                .map(|&l| leaf_transform(&document, l))
+                .collect();
+            let meshes: Vec<_> = leaves
+                .iter()
+                .map(|&l| set_of(&document, &run, l).1)
+                .collect();
+            ctrl.set_section(WorkspaceSection::Transform);
+            ctrl.set_viewport_for_test(400.0, 200.0);
+            let mut camera = OrbitCamera::new(glam::Vec3::new(35.0, 20.0, 8.0), 100.0);
+            camera.set_axis_view(AxisView::Top);
+            ctrl.set_camera_for_test(camera.clone());
+            let centre = crate::picking::project_world_to_screen(
+                &camera,
+                crate::mesh_render::default_fov_y(),
+                400.0,
+                200.0,
+                glam::Vec3::new(35.0, 20.0, 8.0),
+            )
+            .expect("in view");
+            document.set_selection(Selection::of(leaves.iter().map(|&l| LeafId(l))));
+            let mods = crate::PointerModifiers::default;
+
+            // R, Z, a quarter turn of the cursor about the centre.
+            ctrl.on_modal_transform_start(1, centre.0 + 40.0, centre.1);
+            ctrl.on_modal_transform_axis(2, centre.0 + 40.0, centre.1);
+            ctrl.on_pointer_move(ScreenPoint::new(centre.0, centre.1 - 40.0), mods());
+            ctrl.on_modal_transform_finish(true);
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_ne!(leaf_transform(&document, l), before[i], "turned");
+                assert!(
+                    !Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]),
+                    "its set redrawn where it turned to"
+                );
+            }
+            assert_eq!(run.sets_in_force().len(), 2, "both editable");
+            assert!(
+                document.supports_wanted().is_none(),
+                "nothing to make again"
+            );
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(leaf_transform(&document, l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]));
+            }
+
+            // S: twice the size, about the shared centre.
+            document.set_selection(Selection::of(leaves.iter().map(|&l| LeafId(l))));
+            ctrl.on_modal_transform_start(2, centre.0 + 40.0, centre.1);
+            ctrl.on_pointer_move(ScreenPoint::new(centre.0 + 80.0, centre.1), mods());
+            ctrl.on_modal_transform_finish(true);
+            let (_, wanted) = document.supports_wanted().expect("new supports wanted");
+            let mut ids = wanted.ids();
+            ids.sort();
+            let mut expected = leaves.clone();
+            expected.sort();
+            assert_eq!(ids, expected, "both models wait for new supports");
+            assert!(run.sets_in_force().is_empty(), "the old sets went");
+            assert!(document.undo().unwrap());
+            for (i, &l) in leaves.iter().enumerate() {
+                assert_eq!(leaf_transform(&document, l), before[i]);
+                assert!(Arc::ptr_eq(&set_of(&document, &run, l).1, &meshes[i]));
+            }
         });
     }
 
