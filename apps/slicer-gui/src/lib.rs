@@ -18,9 +18,6 @@ mod app_state;
 mod arrange_run;
 mod autosave;
 mod autosave_store;
-mod breadcrumbs;
-pub mod build_volume;
-pub mod camera;
 mod clipboard;
 mod default_envelope;
 mod df_support_run;
@@ -31,10 +28,6 @@ mod export_progress;
 mod export_progress_panel;
 mod failure_gate;
 mod frame_rate;
-mod front_label;
-mod gizmo;
-mod gizmo_geometry;
-pub mod graphics_adapter;
 mod graphics_status;
 mod hollow_persist;
 mod hollow_run;
@@ -48,14 +41,11 @@ mod material_form;
 mod mesh_check;
 mod mesh_health;
 mod mesh_loader;
-pub mod mesh_render;
 mod orient_run;
 mod pending_load;
-mod picking;
 mod preferences_bus;
 mod preferences_filters;
 mod preferences_window;
-mod print_file_preview;
 mod print_format;
 mod print_selection;
 pub mod profile_catalog;
@@ -80,14 +70,12 @@ mod scene_export;
 mod scene_loader;
 mod scene_save;
 mod selection;
-mod slice_cap;
 mod slice_panel;
 mod slice_projection;
 mod slice_result;
 mod slice_run;
 mod slice_selection;
 mod split_bodies;
-mod startup_timing;
 mod startup_token;
 mod support_follow;
 mod support_gen_run;
@@ -99,7 +87,7 @@ mod tests_bread_roundtrip;
 #[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]
-mod tests_print_file_preview;
+mod tests_paste_timing;
 #[cfg(test)]
 mod tests_scene_dirty;
 #[cfg(test)]
@@ -119,12 +107,15 @@ mod workspace_section;
 use std::error::Error;
 use std::path::PathBuf;
 
-// Slint's generated code allows the clippy groups by itself, but not the rustc
-// lints the workspace denies. Lint attributes are ignored on macro invocations,
-// hence the wrapper module.
-#[allow(missing_debug_implementations, unreachable_pub, unused_qualifications)]
-mod slint_ui;
-pub use slint_ui::*;
+// The interface Slint generates, compiled in a crate of its own (#361).
+use sc_slicer_gui_ui as slint_ui;
+pub use sc_slicer_gui_ui::*;
+
+// The 3D view and the base the GUI crates share, in crates of their own
+// (#361). The integration tests reach the view's modules through this crate.
+use sc_slicer_gui_base::{breadcrumbs, startup_timing};
+pub use sc_slicer_gui_render::{build_volume, camera, graphics_adapter, mesh_render};
+use sc_slicer_gui_render::{front_label, gizmo, picking, print_file_preview, slice_cap};
 
 use crate::app_state::AppState;
 use crate::i18n::ctr;
@@ -180,7 +171,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // Before anything reads or writes the per-user folders (logs, settings).
     let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();
-    breadcrumbs::start();
+    breadcrumbs::start(env!("CARGO_PKG_VERSION"), diagnostics::commit());
     for dir in &migrated {
         breadcrumbs::note(&format!("migrated user data into {}", dir.display()));
     }

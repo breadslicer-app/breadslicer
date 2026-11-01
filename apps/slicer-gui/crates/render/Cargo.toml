@@ -1,0 +1,49 @@
+[package]
+name = "sc-slicer-gui-render"
+version = "0.3.1"
+edition.workspace = true
+license = "AGPL-3.0-or-later"
+description = "The 3D view of the Breadslicer GUI: the wgpu renderer, the camera, picking, the transform gizmo and the print file previews, apart from the Slint interface."
+
+[lints]
+workspace = true
+
+[features]
+# The shared GPU device and the stand-in renderer the GUI's tests use. Tests
+# only: the GUI enables it as a dev-dependency.
+test-support = []
+
+[dependencies]
+sc-geom = { workspace = true }
+sc-mesh-core = { workspace = true }
+sc-mesh-spatial = { workspace = true }
+sc-print-primitives = { workspace = true, features = ["serde"] }
+sc-scene = { workspace = true }
+sc-sl1cer = { workspace = true }
+sc-sla-formats = { workspace = true }
+sc-slicer-gui-base = { workspace = true }
+
+anyhow = { workspace = true }
+bytemuck = { version = "1.18", features = ["derive"] }
+glam = "0.32.1"
+harfrust = "0.8"
+pollster = "0.4"
+serde = { version = "1.0.228", features = ["derive"] }
+slint = { workspace = true }
+swash = { version = "0.2.10", default-features = false, features = [
+    "render",
+    "scale",
+] }
+wgpu = { workspace = true }
+
+[build-dependencies]
+sc-message-catalog = { workspace = true }
+
+[dev-dependencies]
+sc-mesh-fixtures = { workspace = true }
+sc-mesh-formats = { workspace = true }
+# The interface, for a component that installs Slint's translations in a test.
+sc-slicer-gui-ui = { workspace = true }
+
+float-cmp = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

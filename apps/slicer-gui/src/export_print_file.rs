@@ -53,8 +53,9 @@ pub(crate) enum ExportFailure {
     /// disk would now produce.
     Stale,
     /// The profiles the slice ran under could not be loaded, or no longer
-    /// schedule the scene.
-    Prepare(SliceFailure),
+    /// schedule the scene. Boxed: it is the largest failure, and every export
+    /// result would otherwise carry its size.
+    Prepare(Box<SliceFailure>),
     /// The full print configuration does not resolve. Slicing needs the layer
     /// height alone; a printer file also needs the exposures, the waits and the
     /// motion.
@@ -176,7 +177,7 @@ fn prepare_export(document: &SceneDocument) -> Result<ExportJob, ExportFailure> 
         .with_scene(|spatial| spatial.graph().clone())
         .ok_or(ExportFailure::NoSlice)?;
     let (printer, material) = load_selected_profiles(&held.params.printer, &held.params.resin)
-        .map_err(ExportFailure::Prepare)?;
+        .map_err(|err| ExportFailure::Prepare(Box::new(err)))?;
     export_job(held, &scene, &printer, &material)
 }
 
@@ -195,7 +196,7 @@ fn export_job(
         aa_level: held.params.aa_level,
     };
     let schedule = schedule_for_selection(scene, printer, material, &params)
-        .map_err(|err| ExportFailure::Prepare(SliceFailure::from(err)))?;
+        .map_err(|err| ExportFailure::Prepare(Box::new(SliceFailure::from(err))))?;
     if &schedule != held.contours.schedule() {
         return Err(ExportFailure::Stale);
     }
@@ -812,7 +813,7 @@ mod export_failure_text_tests {
     #[test]
     fn a_failed_preparation_shows_the_slice_failure() {
         assert_eq!(
-            ExportFailure::Prepare(SliceFailure::EmptySceneGeometry).to_string(),
+            ExportFailure::Prepare(Box::new(SliceFailure::EmptySceneGeometry)).to_string(),
             "The scene has no geometry to slice."
         );
     }

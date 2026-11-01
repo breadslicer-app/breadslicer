@@ -1004,16 +1004,16 @@ impl ViewportController {
                 query.transformed_aabb(query.world_transform())
             })
             .flatten();
-        if let Some(bounds) = bounds {
-            if let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut() {
-                cam.frame_bounds(
-                    glam::Vec3::from(bounds.min().coords()),
-                    glam::Vec3::from(bounds.max().coords()),
-                    crate::mesh_render::default_fov_y(),
-                    vp.width() / vp.height().max(1.0),
-                );
-                self.mark_dirty();
-            }
+        if let Some(bounds) = bounds
+            && let Some(cam) = self.camera.camera_cell().borrow_mut().as_mut()
+        {
+            cam.frame_bounds(
+                glam::Vec3::from(bounds.min().coords()),
+                glam::Vec3::from(bounds.max().coords()),
+                crate::mesh_render::default_fov_y(),
+                vp.width() / vp.height().max(1.0),
+            );
+            self.mark_dirty();
         }
     }
 
@@ -1824,7 +1824,7 @@ impl ViewportController {
         self.input.note_hover_cursor(cursor);
         self.tab_tool_hover(cursor);
         if self.input.modal.get().is_some() {
-            self.update_modal(cursor, modifiers.into());
+            self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
         if !self.allows_transform_gizmo() {

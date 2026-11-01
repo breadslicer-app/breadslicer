@@ -26,7 +26,7 @@ find ./ui -name \*.slint \
         -o ./i18n/from-slint.pot.tmp ;
 maybe_update_pot ./i18n/from-slint.pot
 
-find ./src -name '*.rs' \
+find ./src ./crates -name '*.rs' \
     | xargs xgettext \
         -L Rust \
         --keyword='tr!:1' --keyword='tr!:1,2' \
@@ -34,11 +34,12 @@ find ./src -name '*.rs' \
         -o ./i18n/from-rust-without-context.pot.tmp ;
 maybe_update_pot ./i18n/from-rust-without-context.pot
 
+# The GUI's crates under ./crates translate with the same catalogs.
 # A plural ctr! call has at least 4 arguments: context, singular, plural and
 # count. The total-argument specs keep xgettext from reading a singular call
 # whose 3rd argument is a string literal as plural. A plural call with more than
 # 10 arguments needs 1 more spec.
-find ./src -name '*.rs' \
+find ./src ./crates -name '*.rs' \
     | xargs xgettext \
         -L Rust \
         --keyword='ctr!:1c,2' \

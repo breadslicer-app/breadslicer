@@ -7,7 +7,7 @@
 
 pub(crate) mod catalog_entries;
 pub(crate) mod documents;
-pub(crate) mod gpu_devices;
+pub(crate) use sc_slicer_gui_render::test_support::gpu_devices;
 pub(crate) mod language_pick;
 pub(crate) mod material_profiles;
 pub(crate) mod message_cards;

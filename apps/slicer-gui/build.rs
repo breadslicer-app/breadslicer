@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use sc_message_catalog::bundle::Bundle;
 use sc_message_catalog::generate::catalog_code;
 use sc_message_catalog::scan::scan_directory;
-use slint_build::{CompilerConfiguration, compile_with_config};
 
 const I18N_DIR: &str = "i18n";
 const LOCALE_NAMES_FILE: &str = "i18n/locale-names.toml";
@@ -31,33 +30,15 @@ const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
 /// System-auto-detects-it path.
 const SOURCE_LANGUAGE_CODE: &str = "en";
 
+// The interface itself is compiled by the `sc-slicer-gui-ui` crate
+// (`crates/ui`), so editing this crate's Rust code does not run the Slint
+// compiler again.
 fn main() {
-    // The Slint resolver recurses through the component graph; on Windows the
-    // default 1 MiB thread stack overflows, so run the build on a worker thread
-    // with a generous stack. Cheap on every platform.
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(run_build)
-        .expect("failed to spawn build thread")
-        .join()
-        .expect("build thread panicked");
-}
-
-fn run_build() {
     #[cfg(windows)]
     embed_windows_resources();
     let bundle = Bundle::read(Path::new(I18N_DIR), DOMAIN).unwrap_or_else(|err| panic!("{err}"));
     generate_language_table(&bundle);
     generate_message_catalog(&bundle);
-
-    // Development builds (tests among them) carry the element ids and type
-    // names Slint's element queries need, so layout tests can measure what is
-    // drawn. Release builds do not.
-    let debug_info = env::var("PROFILE").as_deref() == Ok("debug");
-    let config = CompilerConfiguration::new()
-        .with_bundled_translations(I18N_DIR)
-        .with_debug_info(debug_info);
-    compile_with_config("ui/main-window.slint", config).expect("Slint build failed");
 }
 
 /// Relative path (from the crate root) to the multi-resolution icon embedded

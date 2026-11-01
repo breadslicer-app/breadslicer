@@ -5,6 +5,9 @@ members = [
     "apps/profiles-converter",
     "apps/slicer-cli",
     "apps/slicer-gui",
+    "apps/slicer-gui/crates/base",
+    "apps/slicer-gui/crates/render",
+    "apps/slicer-gui/crates/ui",
     "libs/3mf",
     "libs/app-paths",
     "libs/arrange",
@@ -48,6 +51,16 @@ lto = "thin"
 debug = false
 strip = true
 
+# Builds tried by hand for behaviour (gestures, placement, UI): release
+# optimisation without LTO, with incremental compilation, so an edit rebuilds
+# in seconds instead of minutes. Timings, benchmarks and published builds use
+# `release`.
+[profile.quick-release]
+inherits = "release"
+codegen-units = 256
+lto = false
+incremental = true
+
 [workspace.dependencies]
 sc-3mf = { path = "libs/3mf", version = "0.2.0" }
 sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
@@ -72,6 +85,29 @@ sc-sla-formats = { path = "libs/sla-formats", version = "0.2.0" }
 sc-sla-formats-uvtools = { path = "libs/sla-formats-uvtools", version = "0.1.0" }
 
 sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
+
+# The GUI's own crates, split from `apps/slicer-gui` so that an edit rebuilds
+# less of it (#361).
+sc-slicer-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.3.1" }
+sc-slicer-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.3.1" }
+sc-slicer-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.3.1" }
+
+# Slint's default feature set minus FemtoVG renderer. One spec for every GUI
+# crate, so the generated interface and the code that drives it agree.
+slint = { version = "1.18.1", default-features = false, features = [
+    "accessibility",
+    "backend-winit",
+    "compat-1-2",
+    "image-default-formats",
+    "renderer-skia",
+    "renderer-software",
+    "std",
+    "unstable-wgpu-30",
+    "unstable-winit-030",
+] }
+slint-build = "1.18.1"
+# Note: keep wgpu version in sync with that used by Slint.
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 
 
 aes = "0.9.3"
