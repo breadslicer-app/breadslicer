@@ -147,11 +147,14 @@ impl CancelToken {
 
 /// Progress of a slicing run: the number of layer-slices finished out of the
 /// total across every leaf (leaves times the layer count of the schedule).
-/// Reported once per completed layer.
+/// Reported once per completed layer. `layers` is the layer count of the
+/// schedule, the plate's layers, which is what a user counts; see
+/// [`layers_completed`](Self::layers_completed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SliceProgress {
     pub completed: usize,
     pub total: usize,
+    pub layers: usize,
 }
 
 impl SliceProgress {
@@ -163,6 +166,21 @@ impl SliceProgress {
             0.0
         } else {
             self.completed as f32 / self.total as f32
+        }
+    }
+
+    /// Returns the completed share of the run in plate layers, out of
+    /// `layers`: every leaf slices the whole schedule, so the layer-slices
+    /// count up to `layers` times the leaf count. Rounds down, so it reaches
+    /// `layers` only once every layer-slice is done; `0` when there is no
+    /// work.
+    #[inline]
+    pub fn layers_completed(&self) -> usize {
+        if self.total == 0 {
+            0
+        } else {
+            let done = self.completed.min(self.total) as u128 * self.layers as u128;
+            (done / self.total as u128) as usize
         }
     }
 }
@@ -263,9 +281,8 @@ where
     F: Fn(SliceProgress) + Sync,
 {
     let leaves = collect_mesh_leaves(scene)?;
-    let total = leaves
-        .len()
-        .saturating_mul(profile.layer_schedule().total_layers() as usize);
+    let layers = profile.layer_schedule().total_layers() as usize;
+    let total = leaves.len().saturating_mul(layers);
     let completed = AtomicUsize::new(0);
 
     let mut failures: Vec<LeafValidationFailure> = Vec::new();
@@ -302,6 +319,7 @@ where
                 on_progress,
                 &completed,
                 total,
+                layers,
             )
             .map_err(|error| SliceSceneError::LeafSlicingFailed {
                 leaf,
@@ -415,6 +433,7 @@ fn slice_manifold_mesh(
         &|_| {},
         &AtomicUsize::new(0),
         total,
+        total,
     )?;
     match sliced {
         Some(stack) => Ok(stack),
@@ -436,7 +455,8 @@ fn slice_manifold_mesh(
 /// poll saw a tripped token before every layer was computed (the finished
 /// layers are dropped); tasks already past the poll still complete and report
 /// progress. `completed` accumulates across every leaf of the run, so the
-/// reported progress spans the whole scene.
+/// reported progress spans the whole scene; `layers` is the schedule's layer
+/// count, passed through to each report.
 fn slice_manifold_mesh_observed<F>(
     mesh: &ValidatedEdgeManifoldMesh<'_>,
     profile: &SliceProfile,
@@ -444,6 +464,7 @@ fn slice_manifold_mesh_observed<F>(
     on_progress: &F,
     completed: &AtomicUsize,
     total: usize,
+    layers: usize,
 ) -> Result<Option<ContourStack>, SliceError>
 where
     F: Fn(SliceProgress) + Sync,
@@ -466,6 +487,7 @@ where
             on_progress(SliceProgress {
                 completed: done,
                 total,
+                layers,
             });
             Ok(Some(layer))
         })
