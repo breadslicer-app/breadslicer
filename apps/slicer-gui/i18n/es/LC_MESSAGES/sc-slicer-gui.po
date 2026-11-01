@@ -14,57 +14,57 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 2026.9.1\n"
 
-#: ui/slice-control-panel.slint:165
+#: ui/slice-control-panel.slint
 msgctxt "SlicePanel"
 msgid "Slice setup"
 msgstr "Configuración de laminado"
 
-#: ui/slice-control-panel.slint:228
+#: ui/slice-control-panel.slint
 msgctxt "SlicePanel"
 msgid "Print Setup"
 msgstr "Configuración de impresión"
 
-#: ui/slice-control-panel.slint:242
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Printer"
 msgstr "Impresora"
 
-#: ui/slice-control-panel.slint:259
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Resin"
 msgstr "Resina"
 
-#: ui/slice-control-panel.slint:276
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "First layer height (mm)"
 msgstr "Altura de la primera capa (mm)"
 
-#: ui/slice-control-panel.slint:282
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "from resin profile"
 msgstr "del perfil de resina"
 
-#: ui/slice-control-panel.slint:283
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "First layer height in millimetres"
 msgstr "Altura de la primera capa en milímetros"
 
-#: ui/slice-control-panel.slint:295
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Slice is up to date."
 msgstr "El laminado está actualizado."
 
-#: ui/slice-control-panel.slint:308
+#: ui/main-window.slint ui/slice-control-panel.slint
 msgctxt "SlicePanel"
 msgid "Slice"
 msgstr "Laminar"
 
-#: ui/slice-control-panel.slint:323
+#: ui/slice-control-panel.slint ui/workspace/inspectors.slint
 msgctxt "SlicePanel"
 msgid "Print format"
 msgstr "Formato de impresión"
 
-#: ui/slice-control-panel.slint:344
+#: ui/main-window.slint ui/slice-control-panel.slint
 msgctxt "SlicePanel"
 msgid "Export for printer"
 msgstr "Exportar para la impresora"
@@ -79,47 +79,47 @@ msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/about-window.slint:62
+#: ui/about-window.slint
 msgctxt "About"
 msgid "Version {0}"
 msgstr "Versión {0}"
 
-#: ui/about-window.slint:68
+#: ui/about-window.slint
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr "Un \"slicer\" de código libre para impresoras 3D de resina."
 
-#: ui/about-window.slint:74
+#: ui/about-window.slint
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr "Licenciado bajo AGPL-3.0-only"
 
-#: ui/about-window.slint:84
+#: ui/about-window.slint
 msgctxt "About"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/slice-view-panel.slint:140
+#: ui/slice-view-panel.slint
 msgctxt "SliceView"
 msgid "Slice preview"
 msgstr "Vista previa del laminado"
 
-#: ui/slice-view-panel.slint:208
+#: ui/slice-view-panel.slint
 msgctxt "SliceView"
 msgid "Slice View"
 msgstr "Vista de laminado"
 
-#: ui/slice-overwrite-dialog.slint:14 ui/slice-overwrite-dialog.slint:83
+#: ui/message-layer.slint
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice"
 msgstr "Volver a laminar"
 
-#: ui/slice-overwrite-dialog.slint:63
+#: ui/message-layer.slint
 msgctxt "SliceOverwriteDialog"
 msgid "Re-slice this scene?"
 msgstr "¿Volver a laminar esta escena?"
 
-#: ui/slice-overwrite-dialog.slint:69
+#: ui/message-layer.slint
 msgctxt "SliceOverwriteDialog"
 msgid ""
 "The geometry or the print settings changed since the last slice. Re-slicing "
@@ -128,7 +128,7 @@ msgstr ""
 "La geometría o los ajustes de impresión cambiaron desde el último laminado. "
 "Volver a laminar reemplaza los datos de laminado que ya tienes."
 
-#: ui/slice-overwrite-dialog.slint:90
+#: ui/message-layer.slint
 msgctxt "SliceOverwriteDialog"
 msgid "Cancel"
 msgstr "Cancelar"
@@ -138,27 +138,27 @@ msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr "Abrir nuevo modelo"
 
-#: ui/replace-scene-dialog.slint:77
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Close the current scene?"
 msgstr "¿Cerrar la escena actual?"
 
-#: ui/replace-scene-dialog.slint:76
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr "¿Quieres sustituir la escena actual?"
 
-#: ui/replace-scene-dialog.slint:82
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr "Abriendo: {}"
 
-#: ui/replace-scene-dialog.slint:94
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
 msgstr "Se cerrará la escena actual."
 
-#: ui/replace-scene-dialog.slint:99
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it as a project or export a copy "
@@ -167,7 +167,7 @@ msgstr ""
 "Se cerrará la escena actual. Guárdala como proyecto o exporta una copia "
 "antes para conservar los cambios que hiciste."
 
-#: ui/replace-scene-dialog.slint:103
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Save it or export a copy first to keep the "
@@ -176,409 +176,409 @@ msgstr ""
 "Se cerrará la escena actual. Guárdala o exporta una copia antes para "
 "conservar los cambios que hiciste."
 
-#: ui/replace-scene-dialog.slint:118
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Close"
 msgstr "Descartar y cerrar"
 
-#: ui/replace-scene-dialog.slint:117
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
 msgstr "Descartar y abrir"
 
-#: ui/replace-scene-dialog.slint:126
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Save As & Close…"
 msgstr "Guardar como y cerrar…"
 
-#: ui/replace-scene-dialog.slint:126
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Save & Close"
 msgstr "Guardar y cerrar"
 
-#: ui/replace-scene-dialog.slint:125
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Save As & Open…"
 msgstr "Guardar como y abrir…"
 
-#: ui/replace-scene-dialog.slint:126
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Save & Open"
 msgstr "Guardar y abrir"
 
-#: ui/replace-scene-dialog.slint:136
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Close…"
 msgstr "Exportar y cerrar…"
 
-#: ui/replace-scene-dialog.slint:133
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
 msgstr "Exportar y abrir…"
 
-#: ui/replace-scene-dialog.slint:140
+#: ui/message-layer.slint
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: ui/preferences/printer.slint:25
+#: ui/preferences/printer.slint
 msgctxt "PreferencesPage"
 msgid "Printer"
 msgstr "Impresora"
 
-#: ui/preferences/printer.slint:65
+#: ui/preferences/printer.slint
 msgctxt "PreferencesPage"
 msgid "Search models"
 msgstr "Buscar modelos"
 
-#: ui/preferences/printer.slint:67
+#: ui/preferences/printer.slint
 msgctxt "PreferencesPage"
 msgid "Search printer models"
 msgstr "Buscar modelos de impresora"
 
-#: ui/preferences/printer.slint:153
+#: ui/preferences/printer.slint
 msgctxt "PreferencesPage"
 msgid "No image"
 msgstr "Sin imagen"
 
-#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:237
+#: ui/preferences/printer.slint ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr "personalizado"
 
-#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:306
+#: ui/preferences/printer.slint ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr "Importar paquete..."
 
-#: ui/preferences/printer.slint:199
+#: ui/preferences/printer.slint
 msgctxt "PreferencesPage"
 msgid "Export printers..."
 msgstr "Exportar impresoras..."
 
-#: ui/preferences/slicing.slint:10
+#: ui/preferences/slicing.slint
 msgctxt "PreferencesPage"
 msgid "Slicing"
 msgstr "Laminado"
 
-#: ui/preferences/slicing.slint:19
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "Off"
 msgstr "Desactivado"
 
-#: ui/preferences/slicing.slint:20
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "2x"
 msgstr "2x"
 
-#: ui/preferences/slicing.slint:21
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "4x"
 msgstr "4x"
 
-#: ui/preferences/slicing.slint:22
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "8x"
 msgstr "8x"
 
-#: ui/preferences/slicing.slint:30 ui/preferences/slicing.slint:41
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "Anti-aliasing"
 msgstr "Antialiasing"
 
-#: ui/preferences/resin.slint:48
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr "Resina"
 
-#: ui/preferences/resin.slint:120
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Search resins"
 msgstr "Buscar resinas"
 
-#: ui/preferences/resin.slint:122
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Search resins by brand, name or family"
 msgstr "Buscar resinas por marca, nombre o familia"
 
-#: ui/preferences/resin.slint:139 ui/preferences/resin.slint:283
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr "Ver"
 
-#: ui/preferences/resin.slint:145
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Fork..."
 msgstr "Bifurcar..."
 
-#: ui/preferences/resin.slint:151
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr "Ampliar..."
 
-#: ui/preferences/resin.slint:157 ui/preferences/resin.slint:289
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr "Editar"
 
-#: ui/preferences/resin.slint:163
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr "Eliminar..."
 
-#: ui/preferences/resin.slint:256
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr "Sin datos de calibración"
 
-#: ui/preferences/resin.slint:258
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr "Calibración genérica"
 
-#: ui/preferences/resin.slint:259
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr "Calibración: {}"
 
-#: ui/preferences/resin.slint:312
+#: ui/preferences/resin.slint
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr "Exportar materiales..."
 
-#: ui/preferences/preferences-window.slint:14
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr "Ajustes"
 
-#: ui/preferences/preferences-window.slint:88
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr "Preferencias"
 
-#: ui/preferences/preferences-window.slint:90
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr "Interfaz de usuario y tema"
 
-#: ui/preferences/preferences-window.slint:91
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesMenu"
 msgid "Printer"
 msgstr "Impresora"
 
-#: ui/preferences/preferences-window.slint:92
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesMenu"
 msgid "Resin"
 msgstr "Resina"
 
-#: ui/preferences/preferences-window.slint:93
+#: ui/preferences/preferences-window.slint
 msgctxt "PreferencesMenu"
 msgid "Slicing"
 msgstr "Laminado"
 
-#: ui/preferences/appearance.slint:12
+#: ui/preferences/appearance.slint
 msgctxt "PreferencesPage"
 msgid "UI & Theme"
 msgstr "Interfaz de usuario y tema"
 
-#: ui/preferences/appearance.slint:27
+#: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "System"
 msgstr "Sistema"
 
-#: ui/preferences/appearance.slint:28
+#: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "Light"
 msgstr "Claro"
 
-#: ui/preferences/appearance.slint:29
+#: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "Dark"
 msgstr "Oscuro"
 
-#: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
+#: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "Theme"
 msgstr "Tema"
 
-#: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
+#: ui/preferences/appearance.slint
 msgctxt "AppearancePreferences"
 msgid "Language"
 msgstr "Idioma"
 
-#: ui/info-dialog.slint:10 ui/info-dialog.slint:14 ui/info-dialog.slint:80
+#: ui/message-layer.slint
 msgctxt "InfoDialog"
 msgid "Information"
 msgstr "Información"
 
 #. drop or replace it.
-#: ui/info-dialog.slint:108
+#: ui/message-layer.slint
 msgctxt "InfoDialog"
 msgid "Hide details"
 msgstr "Ocultar detalles"
 
 #. drop or replace it.
-#: ui/info-dialog.slint:108
+#: ui/message-layer.slint
 msgctxt "InfoDialog"
 msgid "Show details"
 msgstr "Mostrar detalles"
 
-#: ui/info-dialog.slint:135
+#: ui/message-layer.slint
 msgctxt "InfoDialog"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/profile-view-dialog.slint:60
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Resin profile"
 msgstr "Perfil de resina"
 
-#: ui/profile-view-dialog.slint:222
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Defaults"
 msgstr "Valores predeterminados"
 
-#: ui/profile-view-dialog.slint:227
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation x (%)"
 msgstr "Compensación de escala x (%)"
 
-#: ui/profile-view-dialog.slint:231
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation y (%)"
 msgstr "Compensación de escala y (%)"
 
-#: ui/profile-view-dialog.slint:235
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation z (%)"
 msgstr "Compensación de escala z (%)"
 
-#: ui/profile-view-dialog.slint:239 ui/profile-view-dialog.slint:299
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom layer count"
 msgstr "Número de capas base"
 
-#: ui/profile-view-dialog.slint:243 ui/profile-view-dialog.slint:303
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Wait before cure (s)"
 msgstr "Espera antes del curado (s)"
 
-#: ui/profile-view-dialog.slint:247 ui/profile-view-dialog.slint:307
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Wait after cure (s)"
 msgstr "Espera después del curado (s)"
 
-#: ui/profile-view-dialog.slint:251 ui/profile-view-dialog.slint:311
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Wait after lift (s)"
 msgstr "Espera después de la elevación (s)"
 
-#: ui/profile-view-dialog.slint:255 ui/profile-view-dialog.slint:375
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Light power (%)"
 msgstr "Potencia de luz (%)"
 
-#: ui/profile-view-dialog.slint:259 ui/profile-view-dialog.slint:379
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom light power (%)"
 msgstr "Potencia de luz de capas base (%)"
 
-#: ui/profile-view-dialog.slint:277
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Edit calibration values"
 msgstr "Editar valores de calibración"
 
-#: ui/profile-view-dialog.slint:291
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Normal exposure (s)"
 msgstr "Exposición normal (s)"
 
-#: ui/profile-view-dialog.slint:295
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom exposure (s)"
 msgstr "Exposición de capas base (s)"
 
-#: ui/profile-view-dialog.slint:315
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait before cure (s)"
 msgstr "Espera antes del curado en capas base (s)"
 
-#: ui/profile-view-dialog.slint:319
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait after cure (s)"
 msgstr "Espera después del curado en capas base (s)"
 
-#: ui/profile-view-dialog.slint:323
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait after lift (s)"
 msgstr "Espera después de la elevación en capas base (s)"
 
-#: ui/profile-view-dialog.slint:327
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Lift distance (mm)"
 msgstr "Distancia de elevación (mm)"
 
-#: ui/profile-view-dialog.slint:331
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Lift speed (mm/min)"
 msgstr "Velocidad de elevación (mm/min)"
 
-#: ui/profile-view-dialog.slint:335
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr "Velocidad de retracción (mm/min)"
 
-#: ui/profile-view-dialog.slint:339
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Second lift distance (mm)"
 msgstr "Distancia de la segunda elevación (mm)"
 
-#: ui/profile-view-dialog.slint:343
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Second lift speed (mm/min)"
 msgstr "Velocidad de la segunda elevación (mm/min)"
 
-#: ui/profile-view-dialog.slint:347
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Second retract speed (mm/min)"
 msgstr "Velocidad de la segunda retracción (mm/min)"
 
-#: ui/profile-view-dialog.slint:351
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom lift distance (mm)"
 msgstr "Distancia de elevación en capas base (mm)"
 
-#: ui/profile-view-dialog.slint:355
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom lift speed (mm/min)"
 msgstr "Velocidad de elevación en capas base (mm/min)"
 
-#: ui/profile-view-dialog.slint:359
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom retract speed (mm/min)"
 msgstr "Velocidad de retracción en capas base (mm/min)"
 
-#: ui/profile-view-dialog.slint:363
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom second lift distance (mm)"
 msgstr "Distancia de la segunda elevación en capas base (mm)"
 
-#: ui/profile-view-dialog.slint:367
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom second lift speed (mm/min)"
 msgstr "Velocidad de la segunda elevación en capas base (mm/min)"
 
-#: ui/profile-view-dialog.slint:371
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Bottom second retract speed (mm/min)"
 msgstr "Velocidad de la segunda retracción en capas base (mm/min)"
 
-#: ui/profile-view-dialog.slint:400
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/profile-view-dialog.slint:407
+#: ui/profile-view-dialog.slint
 msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr "Cerrar"
@@ -593,39 +593,39 @@ msgctxt "ErrorDialog"
 msgid "Error"
 msgstr "Error"
 
-#: ui/error-dialog.slint:14
+#: ui/main-window.slint
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr "Ha ocurrido un error"
 
-#: ui/error-dialog.slint:82
+#: ui/message-layer.slint
 msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr "Aviso"
 
 #. side of the label in RTL runs automatically.
-#: ui/error-dialog.slint:123
+#: ui/message-layer.slint
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
 msgstr "Ocultar detalles técnicos"
 
 #. side of the label in RTL runs automatically.
-#: ui/error-dialog.slint:123
+#: ui/message-layer.slint
 msgctxt "ErrorDialog"
 msgid "Show technical details"
 msgstr "Mostrar detalles técnicos"
 
-#: ui/error-dialog.slint:150
+#: ui/message-layer.slint
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/object-list-panel.slint:138
+#: ui/object-list-panel.slint
 msgctxt "ObjectList"
 msgid "Scene objects"
 msgstr "Objetos de escena"
 
-#: ui/object-list-panel.slint:206
+#: ui/object-list-panel.slint
 msgctxt "ObjectList"
 msgid "Scene Objects"
 msgstr "Objetos de escena"
@@ -635,82 +635,82 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:383 ui/main-window.slint:964
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Archivo"
 
-#: ui/main-window.slint:386 ui/main-window.slint:967
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr "Nueva ventana"
 
-#: ui/main-window.slint:396 ui/main-window.slint:976
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Abrir…"
 
-#: ui/main-window.slint:405 ui/main-window.slint:984
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/main-window.slint:416 ui/main-window.slint:994
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/main-window.slint:425 ui/main-window.slint:1002
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Guardar como…"
 
-#: ui/main-window.slint:436 ui/main-window.slint:1012
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr "Exportar como…"
 
-#: ui/main-window.slint:446 ui/main-window.slint:1021
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr "Editar"
 
-#: ui/main-window.slint:448 ui/main-window.slint:1024
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr "Deshacer"
 
-#: ui/main-window.slint:459 ui/main-window.slint:1034
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr "Rehacer"
 
-#: ui/main-window.slint:472 ui/main-window.slint:1046
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr "Eliminar"
 
-#: ui/main-window.slint:483 ui/main-window.slint:1057
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr "Ajustes"
 
-#: ui/main-window.slint:492 ui/main-window.slint:1065
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Tools"
 msgstr "Herramientas"
 
-#: ui/main-window.slint:512
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Generate Supports (DragonFruit)…"
 msgstr "Generar soportes (DragonFruit)…"
 
-#: ui/main-window.slint:495 ui/main-window.slint:1068
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Generate Support (trivial for test)…"
 msgstr "Generar soporte (trivial, de prueba)…"
 
-#: ui/main-window.slint:504 ui/main-window.slint:1077
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "View"
 msgstr "Vista"
@@ -735,57 +735,57 @@ msgctxt "MenuBar"
 msgid "Show Slice View"
 msgstr "Mostrar vista de laminado"
 
-#: ui/main-window.slint:534 ui/main-window.slint:1103
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Show Menu Bar"
 msgstr "Mostrar barra de menús"
 
-#: ui/main-window.slint:535 ui/main-window.slint:1104
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Hide Menu Bar"
 msgstr "Ocultar barra de menús"
 
-#: ui/main-window.slint:553 ui/main-window.slint:1117
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Fullscreen"
 msgstr "Pantalla completa"
 
-#: ui/main-window.slint:563 ui/main-window.slint:1124
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ayuda"
 
-#: ui/main-window.slint:565 ui/main-window.slint:1127
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentación"
 
-#: ui/main-window.slint:570 ui/main-window.slint:1132
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Mostrar notas de lanzamiento"
 
-#: ui/main-window.slint:577 ui/main-window.slint:1139
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Informar de un problema"
 
-#: ui/main-window.slint:584 ui/main-window.slint:1146
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Comprobar actualizaciones…"
 
-#: ui/main-window.slint:591 ui/main-window.slint:1153
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Acerca de"
 
-#: ui/main-window.slint:598 ui/main-window.slint:1160
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Ver licencia"
 
-#: ui/main-window.slint:610
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir modelo 3D para visualizarlo aquí"
@@ -795,12 +795,12 @@ msgctxt "Workspace"
 msgid "Prepare"
 msgstr "Preparar"
 
-#: ui/main-window.slint:870
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid "Transform"
 msgstr "Transformar"
 
-#: ui/main-window.slint:883
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid "Slice"
 msgstr "Laminar"
@@ -810,283 +810,283 @@ msgctxt "Prepare"
 msgid "Repair meshes"
 msgstr "Reparar mallas"
 
-#: ui/main-window.slint:1200
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr "Suelta para abrir"
 
-#: ui/main-window.slint:1229
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Reading file…"
 msgstr "Leyendo archivo…"
 
-#: ui/main-window.slint:1231 ui/main-window.slint:1293
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Preparing geometry…"
 msgstr "Preparando geometría…"
 
-#: ui/main-window.slint:1232
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Uploading to GPU…"
 msgstr "Subiendo a la GPU…"
 
-#: ui/main-window.slint:1262
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Generating support structure…"
 msgstr "Generando estructura de soporte…"
 
-#: ui/main-window.slint:1314
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: ui/main-window.slint:1295
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Serializing model…"
 msgstr "Serializando modelo…"
 
-#: ui/main-window.slint:1297
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Compressing…"
 msgstr "Comprimiendo…"
 
-#: ui/main-window.slint:1298
+#: ui/main-window.slint
 msgctxt "MainWindow"
 msgid "Writing file…"
 msgstr "Escribiendo archivo…"
 
-#: ui/main-window.slint:1348
+#: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "Slicing..."
 msgstr "Laminando..."
 
-#: ui/main-window.slint:1355
+#: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "{} / {} layers"
 msgstr "{} / {} capas"
 
-#: ui/main-window.slint:1356
+#: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "Preparing..."
 msgstr "Preparando..."
 
-#: ui/main-window.slint:1366
+#: ui/main-window.slint
 msgctxt "SlicePanel"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: ui/extend-dialog.slint:15
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Extend resin profile"
 msgstr "Ampliar perfil de resina"
 
-#: ui/extend-dialog.slint:88
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Extend {}"
 msgstr "Ampliar {}"
 
-#: ui/extend-dialog.slint:95
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Add calibration values for a target this resin does not cover yet."
 msgstr ""
 "Añade valores de calibración para un objetivo que esta resina aún no cubre."
 
-#: ui/extend-dialog.slint:119
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Copy values from"
 msgstr "Copiar valores de"
 
-#: ui/extend-dialog.slint:132
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Normal exposure (s)"
 msgstr "Exposición normal (s)"
 
-#: ui/extend-dialog.slint:136
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom exposure (s)"
 msgstr "Exposición de capas base (s)"
 
-#: ui/extend-dialog.slint:140
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom layer count"
 msgstr "Número de capas base"
 
-#: ui/extend-dialog.slint:144
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Wait before cure (s)"
 msgstr "Espera antes del curado (s)"
 
-#: ui/extend-dialog.slint:148
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Wait after cure (s)"
 msgstr "Espera después del curado (s)"
 
-#: ui/extend-dialog.slint:152
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Wait after lift (s)"
 msgstr "Espera después de la elevación (s)"
 
-#: ui/extend-dialog.slint:156
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom wait before cure (s)"
 msgstr "Espera antes del curado en capas base (s)"
 
-#: ui/extend-dialog.slint:160
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom wait after cure (s)"
 msgstr "Espera después del curado en capas base (s)"
 
-#: ui/extend-dialog.slint:164
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom wait after lift (s)"
 msgstr "Espera después de la elevación en capas base (s)"
 
-#: ui/extend-dialog.slint:168
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Lift distance (mm)"
 msgstr "Distancia de elevación (mm)"
 
-#: ui/extend-dialog.slint:172
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Lift speed (mm/min)"
 msgstr "Velocidad de elevación (mm/min)"
 
-#: ui/extend-dialog.slint:176
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Retract speed (mm/min)"
 msgstr "Velocidad de retracción (mm/min)"
 
-#: ui/extend-dialog.slint:180
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Second lift distance (mm)"
 msgstr "Distancia de la segunda elevación (mm)"
 
-#: ui/extend-dialog.slint:184
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Second lift speed (mm/min)"
 msgstr "Velocidad de la segunda elevación (mm/min)"
 
-#: ui/extend-dialog.slint:188
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Second retract speed (mm/min)"
 msgstr "Velocidad de la segunda retracción (mm/min)"
 
-#: ui/extend-dialog.slint:192
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom lift distance (mm)"
 msgstr "Distancia de elevación en capas base (mm)"
 
-#: ui/extend-dialog.slint:196
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom lift speed (mm/min)"
 msgstr "Velocidad de elevación en capas base (mm/min)"
 
-#: ui/extend-dialog.slint:200
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom retract speed (mm/min)"
 msgstr "Velocidad de retracción en capas base (mm/min)"
 
-#: ui/extend-dialog.slint:204
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom second lift distance (mm)"
 msgstr "Distancia de la segunda elevación en capas base (mm)"
 
-#: ui/extend-dialog.slint:208
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom second lift speed (mm/min)"
 msgstr "Velocidad de la segunda elevación en capas base (mm/min)"
 
-#: ui/extend-dialog.slint:212
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom second retract speed (mm/min)"
 msgstr "Velocidad de la segunda retracción en capas base (mm/min)"
 
-#: ui/extend-dialog.slint:216
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Light power (%)"
 msgstr "Potencia de luz (%)"
 
-#: ui/extend-dialog.slint:220
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Bottom light power (%)"
 msgstr "Potencia de luz de capas base (%)"
 
-#: ui/extend-dialog.slint:238
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/extend-dialog.slint:246
+#: ui/extend-dialog.slint
 msgctxt "ExtendDialog"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: ui/fork-dialog.slint:21
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Fork resin profile"
 msgstr "Bifurcar perfil de resina"
 
-#: ui/fork-dialog.slint:84
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Fork {}"
 msgstr "Bifurcar {}"
 
-#: ui/fork-dialog.slint:95
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Brand"
 msgstr "Marca"
 
-#: ui/fork-dialog.slint:110
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Name"
 msgstr "Nombre"
 
-#: ui/fork-dialog.slint:126
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Copy from the source:"
 msgstr "Copiar del original:"
 
-#: ui/fork-dialog.slint:139
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Intent"
 msgstr "Uso previsto"
 
-#: ui/fork-dialog.slint:143
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Defaults"
 msgstr "Valores predeterminados"
 
-#: ui/fork-dialog.slint:147
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Calibration: {}"
 msgstr "Calibración: {}"
 
-#: ui/fork-dialog.slint:149
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Generic"
 msgstr "Genérico"
 
-#: ui/fork-dialog.slint:171
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Create"
 msgstr "Crear"
 
-#: ui/fork-dialog.slint:178
+#: ui/fork-dialog.slint
 msgctxt "ForkDialog"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: ui/mesh-viewer.slint:136
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr "Visor de modelos 3D, vacío"
 
-#: ui/mesh-viewer.slint:137
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr "Visor de modelos 3D"
 
-#: ui/mesh-viewer.slint:169
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Middle or right drag to orbit. "
@@ -1105,32 +1105,32 @@ msgstr ""
 "orbitar a la izquierda o a la derecha, 8 o 2 para orbitar arriba o abajo, 15 "
 "grados por pulsación."
 
-#: ui/mesh-viewer.slint:462
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "Copy"
 msgstr "Copiar"
 
-#: ui/mesh-viewer.slint:468
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "Delete"
 msgstr "Eliminar"
 
-#: ui/mesh-viewer.slint:474
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "Paste"
 msgstr "Pegar"
 
-#: ui/mesh-viewer.slint:575
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "Enter / click: confirm | Esc / right click: cancel"
 msgstr "Intro / clic: confirmar | Esc / clic derecho: cancelar"
 
-#: ui/mesh-viewer.slint:584
+#: ui/mesh-viewer.slint
 msgctxt "MeshViewer"
 msgid "Ctrl: snap | Shift: fine"
 msgstr "Ctrl: imantar | Shift: fino"
 
-#: ui/main-window.slint:1824
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid ""
 "G move · R rotate · S scale, then X / Y / Z to lock an axis. Ctrl snaps, "
@@ -1139,142 +1139,141 @@ msgstr ""
 "G mover · R rotar · S escalar, después X / Y / Z para fijar un eje. Ctrl "
 "imanta, Shift afina."
 
-#: src/scene_save.rs:103
+#: src/scene_save.rs
 msgctxt "ErrorDialog"
 msgid "Project files are saved as .3mf packages."
 msgstr "Los archivos de proyecto se guardan como paquetes .3mf."
 
-#: src/viewport/controller.rs:745
+#: src/split_bodies.rs src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "Edit failed"
 msgstr "La edición falló"
 
-#: src/viewport/controller.rs:749
+#: src/split_bodies.rs src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr "La escena rechazó la última edición; no se cambió nada."
 
-#: src/viewport/controller.rs:1116
+#: src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr "No se pudo iniciar la vista 3D"
 
-#: src/viewport/controller.rs:1119
+#: src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr "No se pueden abrir archivos en esta ventana."
 
-#: src/viewport/controller.rs:1366
+#: src/viewport/controller.rs
 msgctxt "MeshViewer"
 msgid "FRONT"
 msgstr "FRENTE"
 
-#: src/viewport/controller.rs:1452
+#: src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "No se pudo mostrar el modelo 3D"
 
-#: src/viewport/controller.rs:1455
+#: src/viewport/controller.rs
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "No se ha podido pasar la textura renderizada a la interfaz gráfica."
 
-#: src/viewport/object_list.rs:53 src/app_state.rs:1941
+#: src/app_state.rs src/viewport/object_list.rs
 #, rust-format
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr "Objeto {}"
 
-#: src/df_support_run.rs:102
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "Support generation failed"
 msgstr "La generación de soportes falló"
 
-#: src/df_support_run.rs:167
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "Supports discarded"
 msgstr "Soportes descartados"
 
-#: src/df_support_run.rs:168
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid ""
 "The scene changed while supports were being generated; nothing was added."
 msgstr ""
 "La escena cambió mientras se generaban los soportes; no se añadió nada."
 
-#: src/df_support_run.rs:181
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "No supports needed"
 msgstr "No se necesitan soportes"
 
-#: src/df_support_run.rs:193
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "The scene rejected the generated supports; nothing was changed."
 msgstr "La escena rechazó los soportes generados; no se cambió nada."
 
-#: src/df_support_run.rs:202
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "Supports generated"
 msgstr "Soportes generados"
 
-#: src/slice_panel.rs:447 src/print_format.rs:159
+#: src/print_format.rs src/slice_panel.rs
 msgctxt "SlicePanel"
 msgid ".goo (V3.0)"
 msgstr ".goo (V3.0)"
 
-#: src/wiring.rs:339
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr "Todos los archivos compatibles"
 
-#: src/wiring.rs:342 src/wiring.rs:550 src/wiring.rs:713
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "3MF files"
 msgstr "Archivos 3MF"
 
-#: src/wiring.rs:343 src/wiring.rs:709 src/i18n.rs:104
+#: src/i18n.rs src/wiring.rs
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr "Archivos OBJ"
 
-#: src/wiring.rs:345
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr "Archivos STL"
 
-#: src/wiring.rs:348
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "All files"
 msgstr "Todos los archivos"
 
-#: src/wiring.rs:565
+#: src/wiring.rs
 msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr "No se pudo guardar"
 
-#: src/wiring.rs:566 src/wiring.rs:687 src/i18n.rs:105 src/scene_loader.rs:563
-#: src/app_state.rs:762 src/error_dialog.rs:600 src/export_print_file.rs:280
+#: src/app_state.rs src/diagnostics/mod.rs src/error_dialog.rs src/export_print_file.rs src/i18n.rs src/scene_loader.rs src/wiring.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Archivo: {}"
 
-#: src/wiring.rs:686
+#: src/wiring.rs
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr "No se ha podido exportar"
 
-#: src/wiring.rs:701
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr "STL (binario)"
 
-#: src/wiring.rs:705
+#: src/wiring.rs
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr "STL (ASCII)"
 
-#: src/scene_export.rs:86
+#: src/scene_export.rs
 msgctxt "ErrorDialog"
 msgid ""
 "Unable to infer file format from filename. Use one of: .stl (binary "
@@ -1283,35 +1282,35 @@ msgstr ""
 "No se pudo deducir el formato del archivo a partir del nombre. Usa uno de "
 "estos: .stl (STL binario), .stla (STL ASCII), .obj o .3mf."
 
-#: src/scene_export.rs:88
+#: src/scene_export.rs
 msgctxt "ErrorDialog"
 msgid "No scene loaded"
 msgstr "No hay ninguna escena cargada"
 
-#: src/slice_projection.rs:70
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not load the printer profile: {}"
 msgstr "No se pudo cargar el perfil de impresora: {}"
 
-#: src/slice_projection.rs:73
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not load the resin profile: {}"
 msgstr "No se pudo cargar el perfil de resina: {}"
 
-#: src/slice_projection.rs:76
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not measure the scene bounds: {}"
 msgstr "No se pudieron medir los límites de la escena: {}"
 
-#: src/slice_projection.rs:79
+#: src/slice_projection.rs
 msgctxt "ErrorDialog"
 msgid "The scene has no geometry to slice."
 msgstr "La escena no tiene geometría que laminar."
 
-#: src/slice_projection.rs:83
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1322,101 +1321,101 @@ msgstr ""
 "la plataforma de impresión (z = 0). Mueve el modelo por encima de la "
 "plataforma antes de laminar."
 
-#: src/slice_projection.rs:88 src/export_print_file.rs:82
+#: src/export_print_file.rs src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not resolve the print configuration: {}"
 msgstr "No se pudo resolver la configuración de impresión: {}"
 
-#: src/slice_projection.rs:92
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not derive the layer count: {}"
 msgstr "No se pudo calcular el número de capas: {}"
 
-#: src/slice_projection.rs:94
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Slicing failed: {}"
 msgstr "El laminado falló: {}"
 
-#: src/slice_projection.rs:97
+#: src/slice_projection.rs
 msgctxt "ErrorDialog"
 msgid "The slice layers could not be merged (internal layer-grid mismatch)."
 msgstr ""
 "No se pudieron combinar las capas del laminado (discrepancia interna en la "
 "cuadrícula de capas)."
 
-#: src/slice_projection.rs:101
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not fingerprint the slice inputs: {}"
 msgstr "No se pudo calcular la huella de los datos de entrada del laminado: {}"
 
-#: src/slice_projection.rs:104
+#: src/slice_projection.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The slicer panicked: {}"
 msgstr "El laminador sufrió un fallo crítico: {}"
 
-#: src/profile_transfer/mod.rs:92
+#: src/profile_transfer/mod.rs
 msgctxt "PreferencesPage"
 msgid "Importing this package would overwrite existing profiles:"
 msgstr "Importar este paquete sobrescribiría perfiles existentes:"
 
-#: src/profile_transfer/mod.rs:97
+#: src/profile_transfer/mod.rs
 msgctxt "PreferencesPage"
 msgid "Printers"
 msgstr "Impresoras"
 
-#: src/profile_transfer/mod.rs:102
+#: src/profile_transfer/mod.rs
 msgctxt "PreferencesPage"
 msgid "Materials"
 msgstr "Materiales"
 
-#: src/profile_transfer/mod.rs:107
+#: src/profile_transfer/mod.rs
 msgctxt "PreferencesPage"
 msgid "Material extensions"
 msgstr "Extensiones de material"
 
-#: src/mesh_render/error.rs:50
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its mesh pipeline: {}"
 msgstr "La vista 3D no pudo crear su canalización de mallas: {}"
 
-#: src/mesh_render/error.rs:55
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its outline pipeline: {}"
 msgstr "La vista 3D no pudo crear su canalización de contornos: {}"
 
-#: src/mesh_render/error.rs:60
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its gizmo geometry: {}"
 msgstr "La vista 3D no pudo crear la geometría del gizmo: {}"
 
-#: src/mesh_render/error.rs:65
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its gizmo pipeline: {}"
 msgstr "La vista 3D no pudo crear la canalización del gizmo: {}"
 
-#: src/mesh_render/error.rs:70
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its build plate pipeline: {}"
 msgstr ""
 "La vista 3D no pudo crear la canalización de la plataforma de impresión: {}"
 
-#: src/mesh_render/error.rs:75
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its slice cap pipeline: {}"
 msgstr "La vista 3D no pudo crear la canalización de la tapa de corte: {}"
 
-#: src/mesh_render/error.rs:80
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The 3D view could not build its plate label pipeline: {}"
@@ -1424,32 +1423,32 @@ msgstr ""
 "La vista 3D no pudo crear la canalización de las etiquetas de la plataforma: "
 "{}"
 
-#: src/mesh_render/error.rs:144
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the build plate geometry: {}"
 msgstr ""
 "El dispositivo gráfico rechazó la geometría de la plataforma de impresión: {}"
 
-#: src/mesh_render/error.rs:149
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the multisample buffers: {}"
 msgstr "El dispositivo gráfico rechazó los búferes de multimuestreo: {}"
 
-#: src/mesh_render/error.rs:154
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the output image: {}"
 msgstr "El dispositivo gráfico rechazó la imagen de salida: {}"
 
-#: src/mesh_render/error.rs:159
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the slice cap texture: {}"
 msgstr "El dispositivo gráfico rechazó la textura de la tapa de corte: {}"
 
-#: src/mesh_render/error.rs:164
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the plate label texture: {}"
@@ -1457,13 +1456,13 @@ msgstr ""
 "El dispositivo gráfico rechazó la textura de las etiquetas de la plataforma: "
 "{}"
 
-#: src/mesh_render/error.rs:169
+#: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the image readback buffer: {}"
 msgstr "El dispositivo gráfico rechazó el búfer de lectura de la imagen: {}"
 
-#: src/mesh_render/scene_upload.rs:103
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1473,7 +1472,7 @@ msgstr ""
 "El objeto '{}' tiene más vértices ({}) de los que este dispositivo gráfico "
 "puede alojar en un búfer"
 
-#: src/mesh_render/scene_upload.rs:109
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1483,7 +1482,7 @@ msgstr ""
 "Un objeto tiene más vértices ({}) de los que este dispositivo gráfico puede "
 "alojar en un búfer"
 
-#: src/mesh_render/scene_upload.rs:114
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1493,7 +1492,7 @@ msgstr ""
 "El objeto '{}' tiene más triángulos ({}) de los que este dispositivo gráfico "
 "puede alojar en un búfer"
 
-#: src/mesh_render/scene_upload.rs:120
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -1503,7 +1502,7 @@ msgstr ""
 "Un objeto tiene más triángulos ({}) de los que este dispositivo gráfico "
 "puede alojar en un búfer"
 
-#: src/mesh_render/scene_upload.rs:159
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the vertex buffer of object '{}' ({} bytes)"
@@ -1511,28 +1510,28 @@ msgstr ""
 "El dispositivo gráfico rechazó el búfer de vértices del objeto '{}' ({} "
 "bytes)"
 
-#: src/mesh_render/scene_upload.rs:168
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the vertex buffer of an object ({} bytes)"
 msgstr ""
 "El dispositivo gráfico rechazó el búfer de vértices de un objeto ({} bytes)"
 
-#: src/mesh_render/scene_upload.rs:176
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the index buffer of object '{}' ({} bytes)"
 msgstr ""
 "El dispositivo gráfico rechazó el búfer de índices del objeto '{}' ({} bytes)"
 
-#: src/mesh_render/scene_upload.rs:185
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the index buffer of an object ({} bytes)"
 msgstr ""
 "El dispositivo gráfico rechazó el búfer de índices de un objeto ({} bytes)"
 
-#: src/mesh_render/scene_upload.rs:190
+#: crates/render/src/mesh_render/scene_upload.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The graphics device refused the per-object transform table ({} bytes)"
@@ -1540,22 +1539,22 @@ msgstr ""
 "El dispositivo gráfico rechazó la tabla de transformaciones por objeto ({} "
 "bytes)"
 
-#: src/mesh_render/scene_upload.rs:211
+#: crates/render/src/mesh_render/scene_upload.rs
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost while uploading the scene"
 msgstr "Se perdió el dispositivo gráfico mientras se subía la escena"
 
-#: src/mesh_render/scene_upload.rs:223
+#: crates/render/src/mesh_render/scene_upload.rs
 msgctxt "ErrorDialog"
 msgid "Graph has no leaves to render"
 msgstr "El grafo no tiene hojas que renderizar"
 
-#: src/scene_loader.rs:492
+#: src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr "No se pudo preparar la vista 3D"
 
-#: src/scene_loader.rs:495
+#: src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
@@ -1564,216 +1563,216 @@ msgstr ""
 "No se pudo pasar la escena al dispositivo gráfico. La vista 3D muestra solo "
 "la plataforma de impresión hasta la próxima actualización correcta."
 
-#: src/scene_loader.rs:515
+#: src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr "No se pudo dibujar la vista 3D"
 
-#: src/scene_loader.rs:519
+#: src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr "El corte se dibuja sin relleno hasta que se muestre otra capa."
 
-#: src/scene_loader.rs:523
+#: src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr "La vista 3D conserva su última imagen hasta que se cambie su tamaño."
 
-#: src/scene_loader.rs:562 src/error_dialog.rs:599
+#: src/error_dialog.rs src/scene_loader.rs
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr "No se pudo abrir el modelo 3D"
 
-#: src/material_form/mod.rs:140
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Normal exposure"
 msgstr "Exposición normal"
 
-#: src/material_form/mod.rs:141
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom exposure"
 msgstr "Exposición de capas base"
 
-#: src/material_form/mod.rs:142
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom layer count"
 msgstr "Número de capas base"
 
-#: src/material_form/mod.rs:143
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Wait before cure"
 msgstr "Espera antes del curado"
 
-#: src/material_form/mod.rs:144
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Wait after cure"
 msgstr "Espera después del curado"
 
-#: src/material_form/mod.rs:145
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Wait after lift"
 msgstr "Espera después de la elevación"
 
-#: src/material_form/mod.rs:146
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom wait before cure"
 msgstr "Espera antes del curado en capas base"
 
-#: src/material_form/mod.rs:147
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom wait after cure"
 msgstr "Espera después del curado en capas base"
 
-#: src/material_form/mod.rs:148
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom wait after lift"
 msgstr "Espera después de la elevación en capas base"
 
-#: src/material_form/mod.rs:149
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Lift distance"
 msgstr "Distancia de elevación"
 
-#: src/material_form/mod.rs:150
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Lift speed"
 msgstr "Velocidad de elevación"
 
-#: src/material_form/mod.rs:151
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Retract speed"
 msgstr "Velocidad de retracción"
 
-#: src/material_form/mod.rs:152
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Second lift distance"
 msgstr "Distancia de la segunda elevación"
 
-#: src/material_form/mod.rs:153
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Second lift speed"
 msgstr "Velocidad de la segunda elevación"
 
-#: src/material_form/mod.rs:154
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Second retract speed"
 msgstr "Velocidad de la segunda retracción"
 
-#: src/material_form/mod.rs:155
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom lift distance"
 msgstr "Distancia de elevación en capas base"
 
-#: src/material_form/mod.rs:156
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom lift speed"
 msgstr "Velocidad de elevación en capas base"
 
-#: src/material_form/mod.rs:157
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom retract speed"
 msgstr "Velocidad de retracción en capas base"
 
-#: src/material_form/mod.rs:159
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom second lift distance"
 msgstr "Distancia de la segunda elevación en capas base"
 
-#: src/material_form/mod.rs:161
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom second lift speed"
 msgstr "Velocidad de la segunda elevación en capas base"
 
-#: src/material_form/mod.rs:163
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom second retract speed"
 msgstr "Velocidad de la segunda retracción en capas base"
 
-#: src/material_form/mod.rs:165
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Light power"
 msgstr "Potencia de luz"
 
-#: src/material_form/mod.rs:166
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Bottom light power"
 msgstr "Potencia de luz de capas base"
 
-#: src/material_form/mod.rs:167
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Scale compensation x"
 msgstr "Compensación de escala x"
 
-#: src/material_form/mod.rs:168
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Scale compensation y"
 msgstr "Compensación de escala y"
 
-#: src/material_form/mod.rs:169
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Scale compensation z"
 msgstr "Compensación de escala z"
 
-#: src/material_form/mod.rs:210
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "the second travel stage"
 msgstr "la segunda etapa de recorrido"
 
-#: src/material_form/mod.rs:211
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "the bottom second travel stage"
 msgstr "la segunda etapa de recorrido de capas base"
 
-#: src/material_form/mod.rs:245
+#: src/material_form/mod.rs
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} must be a number"
 msgstr "{} debe ser un número"
 
-#: src/material_form/mod.rs:252
+#: src/material_form/mod.rs
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} is out of range"
 msgstr "{} está fuera de rango"
 
-#: src/material_form/mod.rs:258
+#: src/material_form/mod.rs
 msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr "Rellena los tres ejes de compensación de escala o deja los tres vacíos"
 
-#: src/material_form/mod.rs:262
+#: src/material_form/mod.rs
 #, rust-format
 msgctxt "MaterialForm"
 msgid "Fill all three values of {}, or leave all three empty"
 msgstr "Rellena los tres valores de {} o deja los tres vacíos"
 
-#: src/preferences_filters.rs:59 src/preferences_window/mod.rs:1549
+#: src/preferences_filters.rs src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr "Todas"
 
-#: src/app_state.rs:510 src/lib.rs:291
+#: src/app_state.rs src/lib.rs
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr "Se perdió el dispositivo gráfico"
 
-#: src/app_state.rs:761
+#: src/app_state.rs
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr "Archivo no compatible"
 
-#: src/app_state.rs:765
+#: src/app_state.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
 msgstr "Solo se pueden abrir los siguientes tipos de archivo: {}"
 
-#: src/app_state.rs:995
+#: src/app_state.rs
 msgctxt "SaveDialog"
 msgid "Scene not replaced"
 msgstr "La escena no se reemplazó"
 
-#: src/app_state.rs:998
+#: src/app_state.rs
 msgctxt "SaveDialog"
 msgid ""
 "The scene changed while saving, so the file does not hold its current state. "
@@ -1782,32 +1781,32 @@ msgstr ""
 "La escena cambió mientras se guardaba, así que el archivo no contiene su "
 "estado actual. No se reemplazó nada."
 
-#: src/repair_run.rs:179 src/repair_run.rs:212
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "Repair failed"
 msgstr "La reparación falló"
 
-#: src/repair_run.rs:181
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "The repair worker crashed."
 msgstr "El proceso de reparación falló inesperadamente."
 
-#: src/repair_run.rs:190
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "Repair discarded"
 msgstr "Reparación descartada"
 
-#: src/repair_run.rs:193
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "The scene changed while repairing; nothing was applied."
 msgstr "La escena cambió durante la reparación; no se aplicó nada."
 
-#: src/repair_run.rs:205
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "Mesh repair"
 msgstr "Reparación de mallas"
 
-#: src/repair_run.rs:216
+#: src/repair_run.rs
 msgctxt "RepairDialog"
 msgid "The scene rejected the repair edit; nothing was changed."
 msgstr "La escena rechazó la edición de reparación; no se cambió nada."
@@ -1948,7 +1947,7 @@ msgid_plural "{n} zero-area faces remain"
 msgstr[0] "queda {n} cara de área cero"
 msgstr[1] "quedan {n} caras de área cero"
 
-#: src/repair_run.rs:461
+#: src/repair_report.rs src/repair_run.rs
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"
@@ -1980,32 +1979,32 @@ msgid_plural "removed {n} faces that named a missing vertex"
 msgstr[0] "se quitó {n} cara que apuntaba a un vértice inexistente"
 msgstr[1] "se quitaron {n} caras que apuntaban a un vértice inexistente"
 
-#: src/slice_run.rs:372
+#: src/slice_run.rs
 msgctxt "ErrorDialog"
 msgid "Cannot slice"
 msgstr "No se puede laminar"
 
-#: src/slice_run.rs:376
+#: src/slice_run.rs
 msgctxt "ErrorDialog"
 msgid "Choose a printer and a resin before slicing."
 msgstr "Elige una impresora y una resina antes de laminar."
 
-#: src/slice_run.rs:385
+#: src/slice_run.rs
 msgctxt "ErrorDialog"
 msgid "Slicing failed"
 msgstr "El laminado falló"
 
-#: src/support_gen_run.rs:147
+#: src/support_gen_run.rs
 msgctxt "GenSupportDialog"
 msgid "Support generation failed"
 msgstr "La generación de soportes falló"
 
-#: src/support_gen_run.rs:221 src/support_gen_run.rs:243
+#: src/support_gen_run.rs
 msgctxt "GenSupportDialog"
 msgid "Support-structures generation failed"
 msgstr "La generación de estructuras de soporte falló"
 
-#: src/support_gen_run.rs:225
+#: src/support_gen_run.rs
 msgctxt "GenSupportDialog"
 msgid ""
 "The scene rejected one or more generated support structures; nothing was "
@@ -2014,12 +2013,12 @@ msgstr ""
 "La escena rechazó una o más estructuras de soporte generadas; no se cambió "
 "nada para esas."
 
-#: src/support_gen_run.rs:235
+#: src/support_gen_run.rs
 msgctxt "GenSupportDialog"
 msgid "Support-structures generated"
 msgstr "Estructuras de soporte generadas"
 
-#: src/support_gen_run.rs:273
+#: src/support_gen_run.rs
 #, rust-format
 msgctxt "GenSupportDialog"
 msgid ""
@@ -2032,7 +2031,7 @@ msgstr[1] ""
 "{} de {n} estructuras de soporte añadidas a la escena. Material estimado: {} "
 "g."
 
-#: src/support_gen_run.rs:283
+#: src/support_gen_run.rs
 #, rust-format
 msgctxt "GenSupportDialog"
 msgid "{n} Support structure added to the scene. Estimated material: {} g."
@@ -2043,55 +2042,58 @@ msgstr[0] ""
 msgstr[1] ""
 "{n} estructuras de soporte añadidas a la escena. Material estimado: {} g."
 
-#: src/print_format.rs:72
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid "this build cannot write it yet"
 msgstr "esta versión aún no puede escribirlo"
 
-#: src/print_format.rs:148
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".goo (automatic)"
 msgstr ".goo (automático)"
 
-#: src/print_format.rs:149
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (automatic)"
 msgstr ".ctb (automático)"
 
-#: src/print_format.rs:160
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".goo (V5.1)"
 msgstr ".goo (V5.1)"
 
-#: src/print_format.rs:161
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (v2)"
 msgstr ".ctb (v2)"
 
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (v3)"
 msgstr ".ctb (v3)"
 
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (v4)"
 msgstr ".ctb (v4)"
 
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (v5)"
 msgstr ".ctb (v5)"
 
-#: src/print_format.rs:163
+#: src/print_format.rs
 msgctxt "SlicePanel"
 msgid ".ctb (v5 encrypted)"
 msgstr ".ctb (v5 cifrado)"
 
-#: src/graphics_status.rs:66
+#: src/graphics_status.rs
 msgctxt "ErrorDialog"
 msgid "The 3D view is still starting up. Please try again in a moment."
 msgstr ""
 "La vista 3D todavía se está iniciando. Inténtalo de nuevo en un momento."
 
-#: src/graphics_status.rs:71
+#: src/graphics_status.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
@@ -2101,61 +2103,60 @@ msgstr ""
 "No se pudo iniciar la vista 3D: esta ventana se renderiza mediante {}, que "
 "esta versión no puede usar para 3D."
 
-#: src/graphics_status.rs:77
+#: src/graphics_status.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "{} Files cannot be opened in this window."
 msgstr "{} No se pueden abrir archivos en esta ventana."
 
-#: src/graphics_status.rs:83
+#: src/graphics_status.rs
 msgctxt "ErrorDialog"
 msgid ""
 "The graphics device was lost. Save your work and restart the application."
 msgstr ""
 "Se perdió el dispositivo gráfico. Guarda tu trabajo y reinicia la aplicación."
 
-#: src/profile_extending/mod.rs:58 src/profile_extending/mod.rs:89
-#: src/preferences_window/extend_dialog.rs:387
+#: src/preferences_window/extend_dialog.rs src/profile_extending/mod.rs
 msgctxt "ExtendDialog"
 msgid "Generic"
 msgstr "Genérico"
 
-#: src/profile_forking/mod.rs:51
+#: src/profile_forking/mod.rs
 msgctxt "ForkDialog"
 msgid "Enter a name for the forked profile"
 msgstr "Introduce un nombre para el perfil bifurcado"
 
-#: src/profile_forking/mod.rs:52
+#: src/profile_forking/mod.rs
 msgctxt "ForkDialog"
 msgid "Enter a brand for the forked profile"
 msgstr "Introduce una marca para el perfil bifurcado"
 
-#: src/profile_forking/mod.rs:56
+#: src/profile_forking/mod.rs
 msgctxt "ForkDialog"
 msgid "Could not derive a free profile id from that name"
 msgstr ""
 "No se pudo obtener un identificador de perfil libre a partir de ese nombre"
 
-#: src/error_dialog.rs:499
+#: src/error_dialog.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "caused by: {}"
 msgstr "causado por: {}"
 
-#: src/mesh_loader.rs:55
+#: src/mesh_loader.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 "El archivo tiene un tamaño de {} MiB, lo que supera el límite de {} MiB."
 
-#: src/mesh_loader.rs:286
+#: src/mesh_loader.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The mesh loader panicked: {}"
 msgstr "El cargador de mallas sufrió un fallo crítico: {}"
 
-#: src/lib.rs:296
+#: src/lib.rs
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."
@@ -2163,94 +2164,93 @@ msgstr ""
 "La aplicación tiene que cerrarse; reiníciala cuando el controlador gráfico "
 "vuelva a funcionar."
 
-#: src/profile_view/mod.rs:62
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "not set"
 msgstr "sin definir"
 
-#: src/profile_view/mod.rs:96
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Bundled"
 msgstr "Incluido"
 
-#: src/profile_view/mod.rs:97
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Custom"
 msgstr "Personalizado"
 
-#: src/profile_view/mod.rs:100
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Identity"
 msgstr "Identidad"
 
-#: src/profile_view/mod.rs:104
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Brand"
 msgstr "Marca"
 
-#: src/profile_view/mod.rs:108
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Name"
 msgstr "Nombre"
 
-#: src/profile_view/mod.rs:112
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Family"
 msgstr "Familia"
 
-#: src/profile_view/mod.rs:116
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Profile version"
 msgstr "Versión del perfil"
 
-#: src/profile_view/mod.rs:119
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Origin"
 msgstr "Origen"
 
-#: src/profile_view/mod.rs:126
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Intent"
 msgstr "Uso previsto"
 
-#: src/profile_view/mod.rs:130
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Target energy density (mJ/cm2)"
 msgstr "Densidad de energía objetivo (mJ/cm2)"
 
-#: src/profile_view/mod.rs:134
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Target layer height (mm)"
 msgstr "Altura de capa objetivo (mm)"
 
-#: src/profile_view/mod.rs:158
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation (x/y/z)"
 msgstr "Compensación de escala (x/y/z)"
 
-#: src/profile_view/mod.rs:224 src/preferences_window/profile_editor.rs:481
-#: src/preferences_window/profile_editor.rs:523
+#: src/preferences_window/profile_editor.rs src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Generic"
 msgstr "Genérico"
 
-#: src/profile_view/mod.rs:286
+#: src/profile_view/mod.rs
 msgctxt "ProfileViewDialog"
 msgid "Generic calibration"
 msgstr "Calibración genérica"
 
-#: src/profile_view/mod.rs:289
+#: src/profile_view/mod.rs
 #, rust-format
 msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr "Calibración: {}"
 
-#: src/export_print_file.rs:73
+#: src/export_print_file.rs
 msgctxt "ErrorDialog"
 msgid "Nothing has been sliced yet, so there is nothing to write."
 msgstr "Todavía no se ha laminado nada, así que no hay nada que escribir."
 
-#: src/export_print_file.rs:77
+#: src/export_print_file.rs
 msgctxt "ErrorDialog"
 msgid ""
 "The held slice is out of date and no longer describes this plate. Slice it "
@@ -2259,98 +2259,96 @@ msgstr ""
 "El laminado guardado está desactualizado y ya no corresponde a esta "
 "plataforma. Vuelve a laminarla antes de exportar."
 
-#: src/export_print_file.rs:87
+#: src/export_print_file.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Cannot describe this print to the machine: {}"
 msgstr "No se puede describir esta impresión para la máquina: {}"
 
-#: src/export_print_file.rs:90
+#: src/export_print_file.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Could not write the printer file: {}"
 msgstr "No se pudo escribir el archivo de impresora: {}"
 
-#: src/export_print_file.rs:91
+#: src/export_print_file.rs
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "The writer panicked: {}"
 msgstr "El escritor sufrió un fallo crítico: {}"
 
-#: src/export_print_file.rs:279
+#: src/export_print_file.rs
 msgctxt "ErrorDialog"
 msgid "Cannot export for the printer"
 msgstr "No se puede exportar para la impresora"
 
-#: src/export_print_file.rs:293
+#: src/export_print_file.rs
 msgctxt "FileDialog"
 msgid "Printer files"
 msgstr "Archivos de impresora"
 
-#: src/preferences_window/profile_editor.rs:49
+#: src/preferences_window/profile_editor.rs
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 "El perfil bifurcado ya está en tu biblioteca. Cerrar lo mantiene sin cambios."
 
-#: src/preferences_window/profile_editor.rs:194
-#: src/preferences_window/profile_editor.rs:478
-#: src/preferences_window/mod.rs:913
+#: src/preferences_window/mod.rs src/preferences_window/profile_editor.rs
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr "{} (ampliado)"
 
-#: src/preferences_window/mod.rs:544 src/preferences_window/mod.rs:568
+#: src/preferences_window/mod.rs
 msgctxt "FileDialog"
 msgid "Profile package"
 msgstr "Paquete de perfiles"
 
-#: src/preferences_window/mod.rs:589
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr "Sobrescribir"
 
-#: src/preferences_window/mod.rs:591
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr "¿Sobrescribir los perfiles existentes?"
 
-#: src/preferences_window/mod.rs:595 src/preferences_window/mod.rs:670
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/preferences_window/mod.rs:652
+#: src/preferences_window/mod.rs
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 "Eliminar la extensión de {} quita todos los pares de calibración que añade."
 
-#: src/preferences_window/mod.rs:659
+#: src/preferences_window/mod.rs
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr "Eliminar {} borra el archivo del perfil personalizado."
 
-#: src/preferences_window/mod.rs:664
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr "Eliminar"
 
-#: src/preferences_window/mod.rs:666
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr "¿Eliminar el perfil?"
 
-#: src/preferences_window/mod.rs:1012
+#: src/preferences_window/mod.rs
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr "Genérico"
 
-#: src/preferences_window/fork_dialog.rs:104
+#: src/preferences_window/fork_dialog.rs
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
@@ -2415,7 +2413,7 @@ msgstr "{} (bifurcado)"
 #~ msgid "No objects to display"
 #~ msgstr "No hay elementos que mostrar"
 
-#: ui/preferences/slicing.slint:59
+#: ui/preferences/slicing.slint
 msgctxt "SlicingPreferences"
 msgid "Prepare supports in the background"
 msgstr "Preparar soportes en segundo plano"
@@ -2517,6 +2515,7 @@ msgctxt "Review"
 msgid "This cavity is not in a model hollowed here, so the drain cannot be drilled."
 msgstr "Esta cavidad no está en un modelo ahuecado acá, así que no se puede perforar el drenaje."
 
+#: src/review_panel.rs
 msgctxt "Review"
 msgid "The models changed since this slice. Slice again before applying a fix."
 msgstr "Los modelos cambiaron desde este laminado. Laminá de nuevo antes de aplicar una corrección."
@@ -2619,7 +2618,7 @@ msgctxt "Review"
 msgid "Fill all small traps ({})"
 msgstr "Rellenar todas las trampas chicas ({})"
 
-#: ui/workspace/inspectors.slint
+#: src/review_panel.rs
 msgctxt "Review"
 msgid "Clear fills"
 msgstr "Quitar los rellenos"
@@ -2758,6 +2757,7 @@ msgid_plural "{n} fixed"
 msgstr[0] "{n} corregido"
 msgstr[1] "{n} corregidos"
 
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Save As 3MF…"
 msgstr "Guardar como 3MF…"
@@ -2906,7 +2906,7 @@ msgstr "Corregir todo lo dejó: levantá el modelo o desactivá la balsa con los
 #: src/review_panel.rs
 msgctxt "Review"
 msgid "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
-msgstr "Corregir todo lo dejó: no mueve ni cambia el tamaño de los modelos. Acomodá la placa a mano."
+msgstr "Corregir todo lo dejó: no mueve ni cambia el tamaño de los modelos. Acomodá la plataforma a mano."
 
 #: src/review_panel.rs
 msgctxt "Review"
@@ -3078,22 +3078,27 @@ msgctxt "DfSupportDialog"
 msgid "Select these supports, or their model, to remove them."
 msgstr "Seleccioná estos soportes, o su modelo, para quitarlos."
 
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "Supports regenerated"
 msgstr "Soportes regenerados"
 
+#: src/df_support_run.rs
 msgctxt "DfSupportDialog"
 msgid "The model's new pose got new supports, so the supports added or removed by hand are gone. Undo brings back the old pose with them."
 msgstr "La pose nueva del modelo tiene soportes nuevos, así que se perdieron los que agregaste o quitaste a mano. Deshacer trae de vuelta la pose anterior con ellos."
 
+#: src/df_support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated: same result as before."
 msgstr "Soportes regenerados: mismo resultado que antes."
 
+#: src/df_support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated: replaced the previous set."
 msgstr "Soportes regenerados: reemplazaron a los anteriores."
 
+#: src/df_support_run.rs
 msgctxt "Workspace"
 msgid "Supports regenerated for the model's new pose."
 msgstr "Soportes regenerados para la pose nueva del modelo."
@@ -3213,7 +3218,7 @@ msgstr "Copias máximas"
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "All that fit"
-msgstr "Todas las que entren"
+msgstr "Las que entren"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -3528,7 +3533,7 @@ msgstr "Inclinación máxima desde la actual"
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Align to the plate"
-msgstr "Alinear a la cama"
+msgstr "Alinear a la plataforma"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -3555,12 +3560,12 @@ msgctxt "Inspector"
 msgid "AUTO-ORIENT"
 msgstr "AUTO-ORIENTAR"
 
-#: ui/workspace/inspectors.slint src/orient_run.rs
+#: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Quick"
 msgstr "Rápida"
 
-#: ui/workspace/inspectors.slint src/orient_run.rs
+#: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Full"
 msgstr "Completa"
@@ -3736,178 +3741,217 @@ msgctxt "OrientDialog"
 msgid "The scene rejected the new pose; nothing was moved."
 msgstr "La escena rechazó la pose nueva; no se movió nada."
 
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Split into Bodies"
 msgstr "Separar en cuerpos"
 
+#: ui/main-window.slint
 msgctxt "MenuBar"
 msgid "Keep Only This Body"
 msgstr "Quedarse solo con este cuerpo"
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "Split into bodies"
 msgstr "Separar en cuerpos"
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "Supports are not split into bodies. Select a model to split it."
 msgstr "Los soportes no se separan en cuerpos. Seleccioná un modelo para separarlo."
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "This object is a single body, so there is nothing to split."
 msgstr "Este objeto es un solo cuerpo, así que no hay nada que separar."
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "This object was hollowed as a whole, so it is not split: its hollow and drains belong to the whole object. Undo the hollow, split the object, and hollow the bodies you keep."
 msgstr "Este objeto se ahuecó entero, así que no se separa: su hueco y sus drenajes son del objeto entero. Deshacé el ahuecado, separá el objeto y ahuecá los cuerpos que te quedes."
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "{} fragments"
 msgstr "{}: fragmentos"
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "Object"
 msgstr "Objeto"
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "The supports of this object stay as they were, so the print does not change. They no longer belong to one model, so they cannot be edited by hand: generate supports for the bodies you keep to replace them."
 msgstr "Los soportes de este objeto quedan como estaban, así que la impresión no cambia. Ya no son de un solo modelo, así que no se pueden editar a mano: generá soportes para los cuerpos que te quedes y reemplazalos."
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "Split into 1 object."
 msgid_plural "Split into {n} objects."
 msgstr[0] "Separado en 1 objeto."
 msgstr[1] "Separado en {n} objetos."
 
+#: src/split_bodies.rs
 msgctxt "SplitBodies"
 msgid "Kept this body and removed 1 other."
 msgid_plural "Kept this body and removed {n} others."
 msgstr[0] "Quedó este cuerpo y se quitó 1 más."
 msgstr[1] "Quedó este cuerpo y se quitaron {n} más."
 
+#: src/import_notes.rs
 msgctxt "Workspace"
 msgid "Opened with {n} note"
 msgid_plural "Opened with {n} notes"
 msgstr[0] "Se abrió con {n} nota"
 msgstr[1] "Se abrió con {n} notas"
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Import notes"
 msgstr "Notas de importación"
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "{} opened with these notes:"
 msgstr "{} se abrió con estas notas:"
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Removed {n} duplicate face from {}: an exact copy of another face, so the shape did not change."
 msgid_plural "Removed {n} duplicate faces from {}: exact copies of other faces, so the shape did not change."
 msgstr[0] "Se quitó {n} cara duplicada de {}: era una copia exacta de otra cara, así que la forma no cambió."
 msgstr[1] "Se quitaron {n} caras duplicadas de {}: eran copias exactas de otras caras, así que la forma no cambió."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "These objects share vertices in the file: {}."
 msgstr "Estos objetos comparten vértices en el archivo: {}."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Skipped {n} file part with no content type, such as another slicer's settings or pictures."
 msgid_plural "Skipped {n} file parts with no content type, such as another slicer's settings or pictures."
 msgstr[0] "Se omitió {n} parte del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
 msgstr[1] "Se omitieron {n} partes del archivo sin tipo de contenido, como la configuración o las imágenes de otro slicer."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored {n} material group: materials are not supported yet."
 msgid_plural "Ignored {n} material groups: materials are not supported yet."
 msgstr[0] "Se ignoró {n} grupo de materiales: los materiales todavía no están soportados."
 msgstr[1] "Se ignoraron {n} grupos de materiales: los materiales todavía no están soportados."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Skipped object {}: the file does not place it on the plate."
 msgstr "Se omitió el objeto {}: el archivo no lo pone en la plataforma."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Object {} is marked as '{}' in the file; it was loaded as a plain model."
 msgstr "El objeto {} está marcado como '{}' en el archivo; se cargó como un modelo común."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored the slices stored in the file ({n} stack); the full models were loaded."
 msgid_plural "Ignored the slices stored in the file ({n} stacks); the full models were loaded."
 msgstr[0] "Se ignoraron las capas laminadas que trae el archivo ({n} pila); se cargaron los modelos completos."
 msgstr[1] "Se ignoraron las capas laminadas que trae el archivo ({n} pilas); se cargaron los modelos completos."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The file places no objects on the plate."
 msgstr "El archivo no pone ningún objeto en la plataforma."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Dropped the face normals stored for object {}: its mesh changed after they were saved."
 msgstr "Se descartaron las normales de cara guardadas del objeto {}: su malla cambió después de guardarlas."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored a damaged part with stored face normals."
 msgstr "Se ignoró una parte dañada con normales de cara guardadas."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The OBJ file has no vertices."
 msgstr "El archivo OBJ no tiene vértices."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The OBJ file has no faces."
 msgstr "El archivo OBJ no tiene caras."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored {n} OBJ group line; its faces were loaded with their object."
 msgid_plural "Ignored {n} OBJ group lines; their faces were loaded with their objects."
 msgstr[0] "Se ignoró {n} línea de grupo del OBJ; sus caras se cargaron con su objeto."
 msgstr[1] "Se ignoraron {n} líneas de grupo del OBJ; sus caras se cargaron con sus objetos."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored {n} OBJ material line: materials are not supported yet."
 msgid_plural "Ignored {n} OBJ material lines: materials are not supported yet."
 msgstr[0] "Se ignoró {n} línea de material del OBJ: los materiales todavía no están soportados."
 msgstr[1] "Se ignoraron {n} líneas de material del OBJ: los materiales todavía no están soportados."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Skipped {n} OBJ line this reader does not handle, such as lines or points."
 msgid_plural "Skipped {n} OBJ lines this reader does not handle, such as lines or points."
 msgstr[0] "Se omitió {n} línea del OBJ que este lector no maneja, como líneas o puntos."
 msgstr[1] "Se omitieron {n} líneas del OBJ que este lector no maneja, como líneas o puntos."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The project settings were saved by a newer version (format {}) and were ignored."
 msgstr "La configuración del proyecto se guardó con una versión más nueva (formato {}) y se ignoró."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "Ignored an unknown part among the profiles the file carries."
 msgstr "Se ignoró una parte desconocida entre los perfiles que trae el archivo."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The file carries project settings from {}; only the models were loaded."
 msgstr "El archivo trae configuración de proyecto de {}; solo se cargaron los modelos."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The project uses the printer profile \"{}\", which is not installed."
 msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The project uses the printer profile \"{}\", which is not installed; the file carries a copy of it."
 msgstr "El proyecto usa el perfil de impresora \"{}\", que no está instalado; el archivo trae una copia."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The project uses the resin profile \"{}\", which is not installed."
 msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado."
 
+#: src/import_notes.rs
 msgctxt "ImportNotes"
 msgid "The project uses the resin profile \"{}\", which is not installed; the file carries a copy of it."
 msgstr "El proyecto usa el perfil de resina \"{}\", que no está instalado; el archivo trae una copia."
 
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid "A drain here would not reach the cavity: hollowing leaves it out."
 msgstr "Un drenaje acá no llegaría a la cavidad: al ahuecar queda afuera."
 
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid "Not known yet whether a drain here reaches the cavity: the cavity is not computed."
 msgstr "Todavía no se sabe si un drenaje acá llega a la cavidad: la cavidad no está calculada."
 
+#: ui/main-window.slint
 msgctxt "Workspace"
 msgid "Click the model's surface to drill a drain there, where it shows green: red does not reach the cavity. Undo takes it back."
 msgstr "Hacé clic en la superficie del modelo para perforar un drenaje ahí, donde se ve verde: en rojo no llega a la cavidad. Deshacer lo quita."
@@ -4407,7 +4451,7 @@ msgctxt "Inspector"
 msgid "Repairing…"
 msgstr "Reparando…"
 
-#: ui/workspace/inspectors.slint
+#: ui/main-window.slint ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "Repair meshes"
 msgstr "Reparar mallas"
@@ -4574,11 +4618,6 @@ msgstr "Soportes"
 
 #: ui/main-window.slint
 msgctxt "Workspace"
-msgid "Hollowing is on its way; supports can be generated before or after it."
-msgstr "El ahuecado está en camino; los soportes se pueden generar antes o después."
-
-#: ui/main-window.slint
-msgctxt "Workspace"
 msgid "Export"
 msgstr "Exportar"
 
@@ -4731,7 +4770,7 @@ msgid_plural "{n} left out: they do not reach the cavity."
 msgstr[0] "Uno quedó afuera: no llega a la cavidad."
 msgstr[1] "{n} quedaron afuera: no llegan a la cavidad."
 
-#: ui/workspace/inspectors.slint:831
+#: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "{} objects selected. Move, rotate or scale them together about their shared centre with the gizmo, G, R or S. To type values, select one."
 msgstr "{} objetos seleccionados. Movelos, rotalos o escalalos juntos alrededor de su centro común con el gizmo, G, R o S. Para escribir valores, seleccioná uno solo."
@@ -4994,6 +5033,86 @@ msgstr "Punta"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
+msgid "OBJECTS"
+msgstr "OBJETOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Open or drop a model to start."
+msgstr "Abrí o soltá un modelo para empezar."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "TRANSFORM"
+msgstr "TRANSFORMAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Select an object to see its size and to move, rotate or scale it by numbers."
+msgstr "Seleccioná un objeto para ver su tamaño y moverlo, rotarlo o escalarlo con números."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "MOVE"
+msgstr "MOVER"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lift (Z)"
+msgstr "Elevación (Z)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Drop to plate"
+msgstr "Bajar a la plataforma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Center"
+msgstr "Centrar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "ROTATE"
+msgstr "ROTAR"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "SIZE"
+msgstr "TAMAÑO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Width (X)"
+msgstr "Ancho (X)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Depth (Y)"
+msgstr "Profundidad (Y)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Height (Z)"
+msgstr "Alto (Z)"
+
+#: ui/main-window.slint ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Scale"
+msgstr "Escala"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Sizes scale uniformly, keeping proportions."
+msgstr "El tamaño cambia parejo y mantiene las proporciones."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "AUTO SUPPORTS"
+msgstr "SOPORTES AUTOMÁTICOS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
 msgid "Preset"
 msgstr "Preset"
 
@@ -5091,3 +5210,377 @@ msgstr "La escena cambió antes de poner el soporte; no cambió nada."
 msgctxt "DfSupportDialog"
 msgid "Supports are being generated; the click was dropped."
 msgstr "Se están generando soportes; el clic se descartó."
+#: ui/main-window.slint ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Generate supports"
+msgstr "Generar soportes"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "LIFT"
+msgstr "ELEVACIÓN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Height above plate"
+msgstr "Altura sobre la plataforma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Room under the model for the supports; moving it again marks them out of date."
+msgstr "Espacio bajo el modelo para los soportes; si lo movés de nuevo, quedan desactualizados."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "PLACEMENT"
+msgstr "UBICACIÓN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Support size"
+msgstr "Tamaño"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Detail"
+msgstr "Detalle"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Structure"
+msgstr "Estructura"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Anchor"
+msgstr "Anclaje"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Area per support"
+msgstr "Área por soporte"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Overhang angle"
+msgstr "Ángulo de voladizo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Size scale"
+msgstr "Escala de tamaño"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Smallest island"
+msgstr "Isla más chica"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Coverage"
+msgstr "Cobertura"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Stabilize poses on a point or edge"
+msgstr "Estabilizar poses sobre un punto o borde"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cross-bracing"
+msgstr "Refuerzos cruzados"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Smooth"
+msgstr "Suave"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Classic"
+msgstr "Clásica"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Bottom"
+msgstr "Base"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Solid"
+msgstr "Maciza"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Lines"
+msgstr "Líneas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Off"
+msgstr "Ninguna"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Thickness"
+msgstr "Grosor"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Crenelated wall"
+msgstr "Pared almenada"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "PRESETS"
+msgstr "PRESETS"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Name for a new preset"
+msgstr "Nombre del preset nuevo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Save as preset"
+msgstr "Guardar como preset"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Delete"
+msgstr "Eliminar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Built-in presets cannot be deleted. Presets are saved as TOML files in the app data folder."
+msgstr "Los presets incluidos no se pueden eliminar. Los presets se guardan como archivos TOML en la carpeta de datos de la app."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "PRINT SETUP"
+msgstr "IMPRESIÓN"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "RESULT"
+msgstr "RESULTADO"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Sliced"
+msgstr "Laminado"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Not sliced"
+msgstr "Sin laminar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Slice to see the layers, the estimates and the checks."
+msgstr "Laminá para ver las capas, las estimaciones y la revisión."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "layers"
+msgstr "capas"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "current layer"
+msgstr "capa actual"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "print time"
+msgstr "duración"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "resin"
+msgstr "resina"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "weight"
+msgstr "peso"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Move"
+msgstr "Mover"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Rotate"
+msgstr "Rotar"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Add support (click the model)"
+msgstr "Agregar soporte (clic en el modelo)"
+
+#: ui/main-window.slint
+msgctxt "Inspector"
+msgid "Remove support (click it)"
+msgstr "Quitar soporte (clic en él)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Structure (default)"
+msgstr "Estructura (normal)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Detail (small miniatures)"
+msgstr "Detalle (minis)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Anchor (heavy parts)"
+msgstr "Anclaje (pesadas)"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "{n} support root, edited by hand."
+msgid_plural "{n} support roots, edited by hand."
+msgstr[0] "{n} raíz de soporte, editada a mano."
+msgstr[1] "{n} raíces de soporte, editadas a mano."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Support roots: {}, edited by hand. No support could hold {n} point: {}."
+msgid_plural "Support roots: {}, edited by hand. No support could hold {n} points: {}."
+msgstr[0] "Raíces de soporte: {}, editadas a mano. Ningún soporte pudo sostener {n} punto: {}."
+msgstr[1] "Raíces de soporte: {}, editadas a mano. Ningún soporte pudo sostener {n} puntos: {}."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Supports regenerated for the new pose. {} {} s."
+msgstr "Soportes regenerados para la pose nueva. {} {} s."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Models: {}, islands: {}, support roots: {}, triangles: {}."
+msgstr "Modelos: {}, islas: {}, raíces de soporte: {}, triángulos: {}."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Preparing scans…"
+msgstr "Preparando el análisis…"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "That edit failed inside the support engine; nothing was changed."
+msgstr "Esa edición falló dentro del motor de soportes; no se cambió nada."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "That was the last support; use Undo to bring it back."
+msgstr "Ese era el último soporte; usá Deshacer para recuperarlo."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The support mesh is not in the scene; generate supports again."
+msgstr "La malla de soportes no está en la escena; generá los soportes de nuevo."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The edit was refused: {}"
+msgstr "Se rechazó la edición: {}"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Supports out of date"
+msgstr "Soportes desactualizados"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "The scene changed since the supports were made; generate them again to edit them."
+msgstr "La escena cambió desde que se hicieron los soportes; generalos de nuevo para editarlos."
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "No supports to edit"
+msgstr "No hay soportes para editar"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "Generate supports first; then add or remove them by hand."
+msgstr "Primero generá los soportes; después agregalos o quitalos a mano."
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
+msgid ".cxdlp (automatic)"
+msgstr ".cxdlp (automático)"
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
+msgid "Anycubic (automatic)"
+msgstr "Anycubic (automático)"
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
+msgid ".cxdlp (v2)"
+msgstr ".cxdlp (v2)"
+
+#: src/print_format.rs
+msgctxt "SlicePanel"
+msgid ".cxdlp (v3)"
+msgstr ".cxdlp (v3)"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "No printer"
+msgstr "Sin impresora"
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Open or drop a model to start."
+msgstr "Abrí o soltá un modelo para empezar."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Hollow the selected model to save resin, then place its drains with D."
+msgstr "Ahuecá el modelo seleccionado para ahorrar resina y después poné sus drenajes con D."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click the model where a support should touch it. Undo takes it back."
+msgstr "Hacé clic en el modelo donde un soporte tiene que tocarlo. Deshacer lo quita."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Click a support to remove it and everything hanging from it."
+msgstr "Hacé clic en un soporte para quitarlo junto con todo lo que cuelga de él."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Generate supports for every model on the plate."
+msgstr "Generá soportes para todos los modelos de la plataforma."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "Drag the layer slider to inspect the slice."
+msgstr "Arrastrá el control de capas para revisar el laminado."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "{} object(s)"
+msgstr "{} objeto(s)"
+
+#: ui/main-window.slint
+msgctxt "LayerView"
+msgid "Layer view"
+msgstr "Vista de capas"
+
+#: ui/main-window.slint
+msgctxt "LayerView"
+msgid "Layer {} of {}"
+msgstr "Capa {} de {}"
+
+#: ui/workspace/layer-view.slint
+msgctxt "LayerView"
+msgid "Fit"
+msgstr "Ajustar"
+

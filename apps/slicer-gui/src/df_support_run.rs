@@ -585,8 +585,8 @@ struct Preset {
 /// The presets that ship with SoulCrafted: DragonFruit's three sizing
 /// tiers, then the two zone presets (#360).
 fn built_in_presets() -> Vec<Preset> {
-    let tier = |name: &str, sizing: &str| Preset {
-        name: name.to_owned(),
+    let tier = |name: slint::SharedString, sizing: &str| Preset {
+        name: name.to_string(),
         options: DfSupportOptions {
             sizing: sizing.to_owned(),
             ..Default::default()
@@ -602,9 +602,9 @@ fn built_in_presets() -> Vec<Preset> {
         built_in: true,
     };
     vec![
-        tier("Structure (default)", "structure"),
-        tier("Detail (small miniatures)", "detail"),
-        tier("Anchor (heavy parts)", "anchor"),
+        tier(ctr!("Inspector", "Structure (default)"), "structure"),
+        tier(ctr!("Inspector", "Detail (small miniatures)"), "detail"),
+        tier(ctr!("Inspector", "Anchor (heavy parts)"), "anchor"),
         zones(ctr!("Inspector", "Minis 30 mm+"), minis_30()),
         zones(ctr!("Inspector", "Figures 70 mm+"), figures_70()),
     ]
@@ -2232,17 +2232,30 @@ impl DfSupportRun {
                 }
                 refused.sort_by_key(|(i, _)| *i);
                 let line = match refused.first() {
-                    None => format!("{roots} support root(s), edited by hand."),
-                    Some((_, why)) => format!(
-                        "{roots} support root(s), edited by hand; {} point(s) no support could hold: {why}.",
-                        refused.len()
+                    None => ctr!(
+                        "Inspector",
+                        "{n} support root, edited by hand.",
+                        "{n} support roots, edited by hand.",
+                        roots
+                    ),
+                    Some((_, why)) => ctr!(
+                        "Inspector",
+                        "Support roots: {}, edited by hand. No support could hold {n} point: {}.",
+                        "Support roots: {}, edited by hand. No support could hold {n} points: {}.",
+                        refused.len(),
+                        roots,
+                        why
                     ),
                 };
-                ui.set_supports_last_run(line.into());
+                ui.set_supports_last_run(line);
                 self.warm_worker();
                 HandEdit::Applied
             }
-            Err(err) => failed(format!("The edit was refused: {err:?}").into()),
+            Err(err) => failed(ctr!(
+                "DfSupportDialog",
+                "The edit was refused: {}",
+                format!("{err:?}")
+            )),
         }
     }
 
@@ -2662,9 +2675,12 @@ impl DfSupportRun {
         let summary = summary_message(&outcome);
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
-            ui.set_supports_last_run(
-                format!("Supports regenerated for the new pose. {summary} {seconds:.1} s.").into(),
-            );
+            ui.set_supports_last_run(ctr!(
+                "Inspector",
+                "Supports regenerated for the new pose. {} {} s.",
+                summary,
+                format!("{seconds:.1}")
+            ));
         }
         let sets: Vec<(NodeId, Arc<sc_mesh_core::IndexedMesh>, DfSupportSession)> = outcome
             .sets
@@ -2790,13 +2806,15 @@ fn mm_text(mm: f64) -> String {
 
 /// One line: models, islands, roots and triangles.
 fn summary_message(outcome: &DfSupportOutcome) -> String {
-    format!(
-        "{} model(s), {} island(s), {} support root(s), {} triangle(s).",
+    ctr!(
+        "Inspector",
+        "Models: {}, islands: {}, support roots: {}, triangles: {}.",
         outcome.models,
         outcome.islands,
         outcome.support.collections.roots.len(),
         outcome.triangles
     )
+    .to_string()
 }
 
 /// Appends one run's summary and full timing report to
