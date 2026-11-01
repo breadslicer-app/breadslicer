@@ -25,6 +25,7 @@ use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEdit};
 
 use super::gizmo_drag::{DragOp, GizmoState, HandleHit, apply_drag_move};
+use super::group_move::{GroupMove, group_pivot, world_delta};
 use super::types::{ScreenPoint, ViewportSize};
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
@@ -33,6 +34,10 @@ pub(super) struct StartCtx<'a> {
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_id: Option<NodeId>,
+    /// Every selected leaf. With more than one, the gizmo stands at their
+    /// shared centre and moves, turns or scales them all about it (#13,
+    /// #218).
+    pub(super) group: &'a [NodeId],
     pub(super) press: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
 }
@@ -53,6 +58,8 @@ pub(super) struct HoverCtx<'a> {
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_id: Option<NodeId>,
+    /// Every selected leaf, as in [`StartCtx::group`].
+    pub(super) group: &'a [NodeId],
     pub(super) cursor: ScreenPoint,
 }
 
@@ -61,6 +68,9 @@ pub(super) struct GizmoFsm {
     hover: Cell<Option<GizmoHover>>,
     /// The cursor the drag in flight reads: slowed down while Shift is held.
     cursor: Cell<PrecisionCursor>,
+    /// The leaves a drag of several selected objects moves; `None` for a
+    /// drag of one.
+    group: RefCell<Option<Rc<GroupMove>>>,
 }
 
 impl GizmoFsm {
@@ -69,6 +79,7 @@ impl GizmoFsm {
             state: Cell::new(GizmoState::Idle),
             hover: Cell::new(None),
             cursor: Cell::new(PrecisionCursor::new([0.0, 0.0], false)),
+            group: RefCell::new(None),
         }
     }
 
@@ -86,6 +97,7 @@ impl GizmoFsm {
     /// undo stack.
     pub(super) fn set_idle(&self) {
         self.state.set(GizmoState::Idle);
+        self.group.replace(None);
     }
 
     /// Drag-end commit: if a drag is in flight, push the `before → after` pair
@@ -101,6 +113,10 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
+        if let Some(group) = self.group.take() {
+            group.commit(document);
+            return true;
+        }
         let after =
             document.with_scene(|spatial| spatial.leaf(node_id).map(|q| q.local_transform()));
         if let Some(Some(after)) = after {
@@ -146,6 +162,7 @@ impl GizmoFsm {
         let fov_y = default_fov_y();
         let x = ctx.press.x;
         let y = ctx.press.y;
+        let several = ctx.group.len() > 1;
 
         // Compute the drag-start under both borrows; both drop at the closure's
         // end, so `state.set` below can run without overlap.
@@ -154,9 +171,14 @@ impl GizmoFsm {
             .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                let pivot = gizmo::pivot_for_leaf(spatial, sel_id)?;
+                let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
                 let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+                // The centre ball sits on the selection itself: a Shift press
+                // there starts a selection box (#13) rather than a scale.
+                if winner == HandleHit::ScaleUniform && ctx.modifiers.shift {
+                    return None;
+                }
                 let original = spatial.leaf(sel_id)?.local_transform();
 
                 let op = match winner {
@@ -209,6 +231,15 @@ impl GizmoFsm {
         let Some((op, original, pivot)) = computed else {
             return;
         };
+        let group = if several {
+            match GroupMove::capture(ctx.document, ctx.group) {
+                Some(group) => Some(Rc::new(group)),
+                None => return,
+            }
+        } else {
+            None
+        };
+        self.group.replace(group);
         self.cursor
             .set(PrecisionCursor::new([x, y], ctx.modifiers.shift));
         self.state.set(GizmoState::Drag {
@@ -267,6 +298,37 @@ impl GizmoFsm {
             return false;
         };
 
+        // Several objects: each gets the world transform the handle gives the
+        // primary one about their shared centre. The cell is not borrowed
+        // while the edit notifies the listeners.
+        let group = self.group.borrow().clone();
+        if let Some(group) = group {
+            self.state.set(GizmoState::Drag {
+                op: new_op,
+                original,
+                pivot,
+                node_id,
+            });
+            let delta = ctx
+                .document
+                .with_scene(|spatial| {
+                    let parent = spatial.leaf(node_id)?.parent_world();
+                    world_delta(&parent.compose(&original), &parent.compose(&new_transform))
+                })
+                .flatten();
+            let Some(delta) = delta else {
+                return false;
+            };
+            // As for one object: a move is free, a turn or a scale keeps the
+            // group on the plate.
+            let delta = if matches!(new_op, DragOp::Translate { .. }) {
+                delta
+            } else {
+                group.kept_on_bed(ctx.document, delta)
+            };
+            return group.apply_world(ctx.document, delta).is_ok();
+        }
+
         // Translation is free, also out of the plate: the out-of-volume
         // warning marks it instead of holding it back. Rotation and scale
         // receive only a floor lift, in the same undoable edit.
@@ -311,6 +373,10 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
+        if let Some(group) = self.group.take() {
+            group.abort(document);
+            return true;
+        }
         // The current transform on the leaf is whatever the last drag tick
         // wrote; we need it as the `before` so the edit describes "from
         // current, back to original."
@@ -423,7 +489,7 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
         .with_scene(|spatial| {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
-            let pivot = gizmo::pivot_for_leaf(spatial, sel_id)?;
+            let pivot = gizmo_pivot(spatial, sel_id, ctx.group)?;
             if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
                 return None;
             }
@@ -432,6 +498,20 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
             Some(handle_hit_to_hover(hit))
         })
         .flatten()
+}
+
+/// Where the gizmo stands: at the selected leaf's centre, or at the centre of
+/// the box around every selected leaf when there are several (#13).
+pub(super) fn gizmo_pivot(
+    spatial: &sc_mesh_spatial::SceneSpatial,
+    primary: NodeId,
+    group: &[NodeId],
+) -> Option<glam::Vec3> {
+    if group.len() > 1 {
+        group_pivot(spatial, group)
+    } else {
+        gizmo::pivot_for_leaf(spatial, primary)
+    }
 }
 
 /// Returns `false` when the cursor is far enough from the gizmo's projected

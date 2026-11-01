@@ -28,6 +28,7 @@ use super::gesture_overlay::{GestureView, Screen};
 use super::gizmo_drag::DragOp;
 use super::gizmo_drag::GizmoState;
 use super::gizmo_frame_composer::GizmoFrameComposer;
+use super::group_move::GroupMove;
 use super::input_dispatch::{InputDispatch, PointerUpOutcome, shows_supports};
 use super::keyboard_drive::KbdFocus;
 use super::modal_transform::{ModalGesture, ModalOp};
@@ -264,7 +265,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(super) fn set_camera_for_test(&self, camera: crate::camera::OrbitCamera) {
+    pub(crate) fn set_camera_for_test(&self, camera: crate::camera::OrbitCamera) {
         *self.camera.camera_cell().borrow_mut() = Some(camera);
     }
 
@@ -713,8 +714,8 @@ impl ViewportController {
     /// switcher and by the load pipeline, which picks the initial section from
     /// mesh health. Entering Slice cancels any in-flight gizmo gesture so a
     /// half-finished transform cannot linger in a section that forbids editing.
-    /// Leaving Supports with the supports selected selects nothing: they are
-    /// selected only there (#120).
+    /// Leaving Supports takes the supports out of the selection: they are
+    /// selected only there (#120). The models selected with them stay.
     pub(crate) fn set_section(&self, section: WorkspaceSection) {
         self.on_modal_transform_finish(false);
         if !self.session.set_section(section) {
@@ -726,14 +727,16 @@ impl ViewportController {
         }
         if !self.supports_selectable() {
             let document = self.session.document();
-            let on_supports = document.selection_primary_node_id().is_some_and(|id| {
-                document
-                    .with_scene(|spatial| shows_supports(spatial, id))
-                    .unwrap_or(false)
-            });
-            if on_supports {
+            let kept = document
+                .with_scene(|spatial| {
+                    document
+                        .selection()
+                        .retained(|id| !shows_supports(spatial, id))
+                })
+                .unwrap_or(Selection::None);
+            if kept != document.selection() {
                 self.input.gizmo_fsm().clear_hover();
-                document.set_selection(Selection::None);
+                document.set_selection(kept);
             }
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -1179,6 +1182,36 @@ impl ViewportController {
         document.set_selection(new_sel);
     }
 
+    /// Handles Shift+click or Ctrl+click on a row of the object list (#13):
+    /// the row joins the selection, or leaves it when it was in it, as
+    /// Shift+click does in the viewport. The supports' row does nothing
+    /// outside the Supports tab (#120).
+    pub(crate) fn on_toggle_by_index(&self, idx: usize) {
+        self.on_modal_transform_finish(false);
+        let supports_selectable = self.supports_selectable();
+        let document = self.session.document();
+        let leaf = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(idx)?;
+                (supports_selectable || !shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        match leaf {
+            Some(id) => self.toggle_selected(id),
+            None => self.mirror_selection_to_ui(),
+        }
+    }
+
+    /// Adds `id` to the selection, or takes it out when it is in it.
+    fn toggle_selected(&self, id: sc_scene::NodeId) {
+        let document = self.session.document();
+        let next = document.selection().toggled(LeafId(id));
+        if next == Selection::None {
+            self.input.gizmo_fsm().clear_hover();
+        }
+        document.set_selection(next);
+    }
+
     /// Whether the supports can be selected: only in the Supports tab, which
     /// edits them. Anywhere else they follow their model (#120).
     fn supports_selectable(&self) -> bool {
@@ -1384,12 +1417,23 @@ impl ViewportController {
         let Some(node_id) = document.selection_primary_node_id() else {
             return;
         };
+        // Several objects move, turn and scale together about their shared
+        // centre (#13, #218).
+        let group = document.selection_node_ids();
+        let group_move = if group.len() > 1 {
+            let Some(group_move) = GroupMove::capture(document, &group) else {
+                return;
+            };
+            Some(Rc::new(group_move))
+        } else {
+            None
+        };
         let gesture = document
             .with_scene(|spatial| {
                 let camera_slot = self.camera.camera_cell().borrow();
                 let camera = camera_slot.as_ref()?;
                 let query = spatial.leaf(node_id)?;
-                let pivot = gizmo::pivot_for_leaf(spatial, node_id)?;
+                let pivot = super::gizmo_fsm::gizmo_pivot(spatial, node_id, &group)?;
                 let fov = crate::mesh_render::default_fov_y();
                 let screen = picking::project_world_to_screen(
                     camera,
@@ -1421,6 +1465,7 @@ impl ViewportController {
             })
             .flatten();
         self.input.modal.set(gesture);
+        self.input.modal_group.replace(gesture.and(group_move));
         self.input
             .modal_revision
             .set(gesture.map(|_| document.scene_revision()));
@@ -1446,6 +1491,7 @@ impl ViewportController {
         if self.input.modal_revision.get() != Some(self.session.document().scene_revision()) {
             self.input.modal.set(None);
             self.input.modal_revision.set(None);
+            self.input.modal_group.replace(None);
             self.mirror_modal_to_ui();
             return;
         }
@@ -1455,6 +1501,12 @@ impl ViewportController {
         let Some(proposed) = gesture.propose([cursor.x, cursor.y], modifiers) else {
             return;
         };
+        let group = self.input.modal_group.borrow().clone();
+        if let Some(group) = group {
+            self.input.modal.set(Some(gesture));
+            self.update_modal_group(&gesture, &group, proposed);
+            return;
+        }
         let result = self
             .session
             .document()
@@ -1503,14 +1555,61 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// One step of `G`, `R` or `S` with several objects selected: each gets
+    /// the world transform `proposed` gives the primary one about their
+    /// shared centre. A move is lifted as one so that none sinks below the
+    /// plate (unless it is along Z); a turn or a scale keeps the group on the
+    /// plate as one object is kept.
+    fn update_modal_group(&self, gesture: &ModalGesture, group: &GroupMove, proposed: Transform3D) {
+        let document = self.session.document();
+        let applied = if gesture.op == ModalOp::Move {
+            let at = |t: &Transform3D| match gesture.parent.compose(t) {
+                Transform3D::Identity => [0.0; 3],
+                Transform3D::Affine(a) => *a.translation(),
+            };
+            let (a, b) = (at(&gesture.original), at(&proposed));
+            let mut d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            if gesture.axis != Some(2) {
+                d[2] += group.floor_lift(document, d);
+            }
+            group.apply(document, d)
+        } else {
+            let Some(delta) = super::group_move::world_delta(
+                &gesture.parent.compose(&gesture.original),
+                &gesture.parent.compose(&proposed),
+            ) else {
+                return;
+            };
+            group.apply_world(document, group.kept_on_bed(document, delta))
+        };
+        if let Err(error) = applied {
+            self.on_modal_transform_finish(false);
+            if let EditNotApplied::Rejected(reason) = error {
+                self.show_edit_rejected(reason);
+            }
+        }
+        self.mark_dirty();
+    }
+
     pub(crate) fn on_modal_transform_finish(&self, confirm: bool) {
         let Some(gesture) = self.input.modal.take() else {
             return;
         };
+        let group = self.input.modal_group.take();
         let document = self.session.document();
         if self.input.modal_revision.take() != Some(document.scene_revision()) {
             // A new document or externally committed edit owns the scene now.
             // Never restore a stale snapshot onto a possibly reused node id.
+            self.mirror_modal_to_ui();
+            self.mark_dirty();
+            return;
+        }
+        if let Some(group) = group {
+            if confirm {
+                group.commit(document);
+            } else {
+                group.abort(document);
+            }
             self.mirror_modal_to_ui();
             self.mark_dirty();
             return;
@@ -1596,7 +1695,7 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        self.input.on_pointer_down(
+        let boxing = self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
@@ -1604,6 +1703,9 @@ impl ViewportController {
             modifiers,
             self.allows_transform_gizmo(),
         );
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_box_select_armed(boxing);
+        }
     }
 
     pub(crate) fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
@@ -1629,16 +1731,82 @@ impl ViewportController {
         }
     }
 
-    pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, _modifiers: PointerModifiers) {
+    /// Ends a left press: commits a gizmo drag, or picks on a click (with
+    /// Shift, the object joins the selection or leaves it, #13), or selects
+    /// what a Shift drag's box touches, on top of the selection.
+    pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_box_select_armed(false);
+        }
         match self.input.on_pointer_up(self.session.document(), cursor) {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => {
-                if !self.support_tool_click(cursor) {
+                if modifiers.shift {
+                    self.run_toggle_pick_at(cursor);
+                } else if !self.support_tool_click(cursor) {
                     self.run_pick_at(cursor);
                 }
             }
+            PointerUpOutcome::BoxSelect { from, to } => self.select_in_box(from, to),
             PointerUpOutcome::Nothing => (),
         }
+    }
+
+    /// Shift+click: the object under `cursor` joins the selection, or leaves
+    /// it when it was in it. Empty space keeps the selection as it is.
+    fn run_toggle_pick_at(&self, cursor: ScreenPoint) {
+        let pick = self.input.pick_at(
+            self.session.document(),
+            self.camera.camera_cell(),
+            self.render.viewport(),
+            cursor,
+            self.supports_selectable(),
+        );
+        if let Some(Some(node_id)) = pick {
+            self.toggle_selected(node_id);
+        }
+    }
+
+    /// Adds every object the box from `from` to `to` touches on screen to
+    /// the selection (see [`super::box_select`]). Outside the Supports tab,
+    /// supports in the box bring their model instead (#120).
+    fn select_in_box(&self, from: ScreenPoint, to: ScreenPoint) {
+        let Some(viewport) = self.render.viewport() else {
+            return;
+        };
+        let document = self.session.document();
+        let supports_selectable = self.supports_selectable();
+        let sessions = document.support_sessions();
+        let touched = document
+            .with_scene(|spatial| {
+                let camera_slot = self.camera.camera_cell().borrow();
+                let camera = camera_slot.as_ref()?;
+                Some(super::box_select::leaves_touching(
+                    spatial,
+                    camera,
+                    crate::mesh_render::default_fov_y(),
+                    [viewport.width(), viewport.height()],
+                    super::box_select::ScreenRect::spanning([from.x, from.y], [to.x, to.y]),
+                    |id| {
+                        if supports_selectable || !shows_supports(spatial, id) {
+                            Some(id)
+                        } else {
+                            crate::support_persist::model_of(&sessions, id)
+                                .filter(|&model| spatial.leaf(model).is_some())
+                        }
+                    },
+                ))
+            })
+            .flatten()
+            .unwrap_or_default();
+        crate::breadcrumbs::note(&format!("box select: {} object(s)", touched.len()));
+        if touched.is_empty() {
+            return;
+        }
+        let next = document
+            .selection()
+            .with_added(touched.into_iter().map(LeafId));
+        document.set_selection(next);
     }
 
     /// The tab tool armed in the current section, if any.
@@ -1920,6 +2088,9 @@ impl ViewportController {
                 .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten())
                 .map_or(-1, |i| i as i32);
             ui.set_selected_object_index(idx);
+            let rows = selected_rows(document);
+            ui.set_selected_object_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+            ui.set_selected_object_count(document.selection_len() as i32);
         }
     }
 
@@ -2048,7 +2219,10 @@ impl ViewportController {
                     query.world_transform(),
                     axis,
                 );
-                let pivot_now = gizmo::pivot_for_leaf(spatial, node)?;
+                // With several objects selected the gizmo, and so the trail,
+                // follows their shared centre (#13).
+                let pivot_now =
+                    super::gizmo_fsm::gizmo_pivot(spatial, node, &document.selection_node_ids())?;
                 let camera_slot = self.camera.camera_cell().borrow();
                 let camera = camera_slot.as_ref()?;
                 let viewport = self.render.viewport()?;
@@ -2119,6 +2293,9 @@ impl ViewportController {
         let Some(id) = document.selection_primary_node_id() else {
             return;
         };
+        if document.selection_len() > 1 && !lift_in_supports {
+            return;
+        }
         let volume = self.build_volume();
         let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
         let centre = [f64::from(lo.x + hi.x) * 0.5, f64::from(lo.y + hi.y) * 0.5];
@@ -2494,6 +2671,9 @@ impl ViewportController {
             .document()
             .with_scene(|spatial_for_render| {
                 let selection_node_id = self.session.document().selection_primary_node_id();
+                let group = self.session.document().selection_node_ids();
+                let mut highlighted = group.clone();
+                highlighted.sort_unstable();
                 // The selection highlight stays visible in every section
                 // (selection is live everywhere). The gizmo is a transform
                 // tool, so its handles compose in Prepare and Transform:
@@ -2509,13 +2689,14 @@ impl ViewportController {
                     spatial_for_render,
                     camera,
                     gizmo_selection,
+                    &group,
                     h_logical,
                 );
 
                 renderer.render(
                     Some(SceneRender {
                         graph: spatial_for_render.graph(),
-                        selection: selection_node_id,
+                        selection: &highlighted,
                         gizmo: gizmo_frame,
                         clip_z,
                     }),
@@ -2570,6 +2751,19 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// Which rows of the object list are selected, in row order: what the list
+/// highlights, so it shows what the viewport does (#13).
+pub(super) fn selected_rows(document: &SceneDocument) -> Vec<bool> {
+    document
+        .with_scene(|s| {
+            (0..)
+                .map_while(|i| s.leaf_id_at_index(i))
+                .map(|id| document.is_selected(id))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn axis_from_ui(view: crate::AxisView) -> AxisView {
@@ -2838,6 +3032,7 @@ mod selection_tests {
 mod viewport_click_tests {
     use super::*;
     use crate::camera::OrbitCamera;
+    use crate::gizmo;
     use crate::gizmo::axis::Axis;
     use crate::mesh_render::default_fov_y;
     use crate::picking;

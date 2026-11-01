@@ -4,6 +4,7 @@
  */
 
 mod bed_clearance;
+mod box_select;
 mod camera_controller;
 mod controller;
 mod frame_pacer;
@@ -11,6 +12,7 @@ mod gesture_overlay;
 mod gizmo_drag;
 mod gizmo_frame_composer;
 mod gizmo_fsm;
+mod group_move;
 mod input_dispatch;
 mod input_state;
 mod keyboard_drive;
@@ -26,6 +28,8 @@ mod session_state;
 mod tests_controller_handle_before_rendering;
 #[cfg(test)]
 mod tests_controller_lifecycle;
+#[cfg(test)]
+mod tests_controller_multi_select;
 #[cfg(test)]
 mod tests_controller_numeric;
 #[cfg(test)]

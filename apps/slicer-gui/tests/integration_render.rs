@@ -228,7 +228,7 @@ fn render_texture_converts_to_slint_image() {
                 .render(
                     Some(SceneRender {
                         graph: &graph,
-                        selection: Some(first_leaf(&graph)),
+                        selection: &[first_leaf(&graph)],
                         gizmo: None,
                         clip_z: None,
                     }),
@@ -283,7 +283,7 @@ fn render_with_a_slice_clip_produces_a_texture() {
                 .render(
                     Some(SceneRender {
                         graph: &graph,
-                        selection: None,
+                        selection: &[],
                         gizmo: None,
                         clip_z: Some(0.5),
                     }),

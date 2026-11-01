@@ -168,7 +168,7 @@ impl ArrangeRun {
         }
     }
 
-    /// Arrange all, or (`selection`) the selected model alone.
+    /// Arrange all, or (`selection`) the selected models alone.
     pub(crate) fn start(self: &Rc<Self>, selection: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -344,11 +344,11 @@ fn affine(t: &Transform3D) -> AffineTransform3D {
 
 /// The plate's objects: one body per model, with its supports. Supports
 /// whose model is unknown stay where they are, and so does everything but
-/// the selected model when arranging the selection. `None` when nothing
-/// would move.
+/// the selected models when arranging the selection (#13). `None` when
+/// nothing would move.
 fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
     let sessions = document.support_sessions();
-    let selected = document.selection_primary_node_id();
+    let selected = document.selection_node_ids();
     document
         .with_scene(|spatial| {
             let names = crate::viewport::object_names(spatial.graph());
@@ -380,7 +380,7 @@ fn gather(document: &SceneDocument, selection: bool) -> Option<Gathered> {
                 body_of.insert(leaf, gathered.bodies.len());
                 gathered.bodies.push(Body {
                     parts: vec![part],
-                    fixed: selection && selected != Some(leaf),
+                    fixed: selection && !selected.contains(&leaf),
                 });
                 gathered.leaves.push(vec![leaf]);
                 gathered.names.push(name(row));

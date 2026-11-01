@@ -61,6 +61,12 @@ export component MeshViewer inherits Rectangle {
     property <bool> left-pressed: false;
     property <length> last-x;
     property <length> last-y;
+    // Selection box (#13): Rust arms it on a Shift+left press that grabbed
+    // no gizmo handle; it spans from the press to the cursor while the
+    // button is held.
+    in property <bool> box-select-armed: false;
+    property <length> box-x0;
+    property <length> box-y0;
 
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
@@ -508,6 +514,8 @@ export component MeshViewer inherits Rectangle {
                         else if (event.button == PointerEventButton.right) { root.modal-transform-finish(false); }
                     } else if (event.button == PointerEventButton.left) {
                         root.left-pressed = true;
+                        root.box-x0 = ta.mouse-x;
+                        root.box-y0 = ta.mouse-y;
                         root.viewport-pointer-down(ta.mouse-x, ta.mouse-y, {
                             shift: event.modifiers.shift,
                             control: event.modifiers.control,
@@ -615,6 +623,17 @@ export component MeshViewer inherits Rectangle {
                 }
             }
         }
+    }
+    if root.box-select-armed && root.left-pressed
+        && (abs(ta.mouse-x - root.box-x0) > 3px || abs(ta.mouse-y - root.box-y0) > 3px): Rectangle {
+        x: min(root.box-x0, ta.mouse-x);
+        y: min(root.box-y0, ta.mouse-y);
+        width: abs(ta.mouse-x - root.box-x0);
+        height: abs(ta.mouse-y - root.box-y0);
+        border-width: 1px;
+        border-color: #6fb3ff;
+        background: #6fb3ff22;
+        accessible-role: none;
     }
     // The orbit's pivot. It holds still on screen while the camera turns;
     // off screen it waits on the edge with an arrow toward the pivot.

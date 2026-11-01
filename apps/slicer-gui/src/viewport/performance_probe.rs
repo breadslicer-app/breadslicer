@@ -139,7 +139,7 @@ impl ProbeRun {
             let texture = renderer.render(
                 Some(SceneRender {
                     graph: &self.graph,
-                    selection: None,
+                    selection: &[],
                     gizmo: None,
                     clip_z: None,
                 }),
