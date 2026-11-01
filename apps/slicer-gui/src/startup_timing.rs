@@ -11,8 +11,9 @@
 //! the loader's work before `main` shows too (on Windows; elsewhere they count
 //! from the first mark).
 //!
-//! Once the window is interactive, the steps go into the event trail as 1 line
-//! (`startup: …`), which Help > Export Diagnostics carries. With
+//! A second after the window turns interactive (time for the frame that follows
+//! the window taking its size on the screen), the steps go into the event trail
+//! as 1 line (`startup: …`), which Help > Export Diagnostics carries. With
 //! `BREADSLICER_STARTUP_TRACE` naming a file, they are also written there, 1
 //! step per line, for the startup timing harness.
 
@@ -23,6 +24,9 @@ use std::time::{Duration, Instant};
 
 /// The file the steps are written to, when set.
 const TRACE_ENV: &str = "BREADSLICER_STARTUP_TRACE";
+
+/// How long after the interactive mark the steps are reported.
+const REPORT_AFTER: Duration = Duration::from_secs(1);
 
 struct Timeline {
     /// The first mark, and how old the process was then.
@@ -62,20 +66,19 @@ pub(crate) fn frame_starting() {
     }
 }
 
-/// Called after every frame a window presents. The first one marks the frame
-/// and schedules the interactive mark for the next turn of the event loop,
-/// the first one free to handle input.
+/// Called after every frame a window presents; marks the first two. The
+/// first one schedules the interactive mark for the next turn of the event
+/// loop, the first one free to handle input.
 pub(crate) fn frame_presented() {
     match FRAMES.fetch_add(1, Ordering::Relaxed) {
         0 => {
             mark("first frame");
             slint::Timer::single_shot(Duration::ZERO, || {
                 mark("interactive");
-                report();
+                slint::Timer::single_shot(REPORT_AFTER, report);
             });
         }
         1 => mark("second frame"),
-        2 => mark("third frame"),
         _ => {}
     }
 }
