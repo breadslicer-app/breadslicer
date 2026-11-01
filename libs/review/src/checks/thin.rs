@@ -1573,7 +1573,7 @@ pub(crate) fn dilate_square(runs: &[Run], r: u32, width: u32, height: u32) -> Ve
 }
 
 /// The pixels in both run lists.
-fn intersection(a: &[Run], b: &[Run]) -> Vec<Run> {
+pub(crate) fn intersection(a: &[Run], b: &[Run]) -> Vec<Run> {
     let mut out = Vec::new();
     runs::for_each_overlap(a, b, |i, j, _| {
         out.push(Run::new(

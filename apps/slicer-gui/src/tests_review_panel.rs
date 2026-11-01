@@ -433,6 +433,7 @@ mod fix_all {
                     x1_mm,
                     y1_mm: 1.0,
                 }],
+                rim: Vec::new(),
             }],
         }
     }

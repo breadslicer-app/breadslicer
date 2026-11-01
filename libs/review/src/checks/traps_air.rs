@@ -20,6 +20,8 @@
 
 use rayon::prelude::*;
 
+use crate::checks::thin::{dilate_square, intersection};
+use crate::fill::FillLayerRuns;
 use crate::input::ReviewInput;
 use crate::regions::{
     AIR_CONNECTIVITY, LayerPixels, Overlap, PixelBox, Region, label_runs, measure_runs,
@@ -457,13 +459,14 @@ pub(super) fn classify(
 }
 
 /// The opened air runs of each cavity in `cavities` (its member regions),
-/// layer by layer from the plate up: the pixels a fill cures. Each layer
-/// any cavity touches is rasterised once, in parallel.
+/// layer by layer from the plate up, with the model runs of their rim: the
+/// pixels a fill cures (see [`crate::fill`]). Each layer any cavity touches
+/// is rasterised once, in parallel.
 pub(super) fn cavity_runs(
     input: &ReviewInput<'_>,
     width: u32,
     cavities: &[&[RegionRef]],
-) -> Vec<Vec<(usize, Vec<Run>)>> {
+) -> Vec<Vec<FillLayerRuns>> {
     let mut wanted: Vec<(usize, usize, u32)> = cavities
         .iter()
         .enumerate()
@@ -475,7 +478,9 @@ pub(super) fn cavity_runs(
         .collect();
     wanted.sort_unstable();
     let layers: Vec<&[(usize, usize, u32)]> = wanted.chunk_by(|a, b| a.0 == b.0).collect();
-    let found: Vec<Vec<(usize, usize, Vec<Run>)>> = layers
+    let (width_px, height_px) = (input.width_px(), input.height_px());
+    // Each cavity's index with its runs on the layer.
+    let found: Vec<Vec<(usize, FillLayerRuns)>> = layers
         .par_iter()
         .map(|members| {
             let layer = members[0].0;
@@ -483,21 +488,26 @@ pub(super) fn cavity_runs(
             members
                 .chunk_by(|a, b| a.1 == b.1)
                 .map(|regions| {
-                    let runs = air
+                    let runs: Vec<Run> = air
                         .air
                         .iter()
                         .zip(&air.labels)
                         .filter(|(_, label)| regions.iter().any(|r| r.2 == **label))
                         .map(|(run, _)| *run)
                         .collect();
-                    (layer, regions[0].1, runs)
+                    // The model pixels touching the cavity, sides or corners.
+                    let rim = intersection(
+                        &dilate_square(&runs, 1, width_px, height_px),
+                        &air.pixels.model,
+                    );
+                    (regions[0].1, (layer, runs, rim))
                 })
                 .collect()
         })
         .collect();
-    let mut out: Vec<Vec<(usize, Vec<Run>)>> = vec![Vec::new(); cavities.len()];
-    for (layer, cavity, runs) in found.into_iter().flatten() {
-        out[cavity].push((layer, runs));
+    let mut out: Vec<Vec<FillLayerRuns>> = vec![Vec::new(); cavities.len()];
+    for (cavity, layer) in found.into_iter().flatten() {
+        out[cavity].push(layer);
     }
     out
 }

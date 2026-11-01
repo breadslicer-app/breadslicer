@@ -351,6 +351,7 @@ mod review_marks_tests {
                     x1_mm: 0.5,
                     y1_mm: 0.5,
                 }],
+                rim: Vec::new(),
             }],
         }
     }

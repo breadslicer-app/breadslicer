@@ -20,6 +20,17 @@
 //! light exactly the pixels the review found. On a slice with another layer
 //! schedule, each layer takes the slab its cutting height falls in.
 //!
+//! A cavity's fill also covers its *rim* (#371): the model pixels that touch
+//! its pixels, sides or corners. The model's contour crosses those pixels
+//! with their centres inside it, so the review counts them solid, but it
+//! leaves a sliver of each uncovered on the cavity's side. Without the rim
+//! the fill would stop at the pixel edge and the slivers would stay open: a
+//! ring of partly lit pixels in an anti-aliased layer, and a seam in the
+//! slice view's cut. The rim pixels are model already, so they change no
+//! pixel of a binary layer and nothing the review sees; they only close the
+//! fill flush with the model. Support pixels are left out of the rim: the
+//! fill is model, and the review tells the two apart.
+//!
 //! Fix All (#156) uses the same pixels for two more fixes:
 //!
 //! - **Thickening** a feature thinner than a pixel: the thin-feature check
@@ -96,6 +107,11 @@ pub struct FillSlab {
     pub top_mm: f64,
     /// The cavity's pixels on this layer, as disjoint rectangles.
     pub rects: Vec<PlateRect>,
+    /// The model pixels on the cavity's rim on this layer, as disjoint
+    /// rectangles beside `rects` (see the module documentation). Cured with
+    /// the fill but solid already, so they add no resin. Empty for a
+    /// thickening or an erasure.
+    pub rim: Vec<PlateRect>,
 }
 
 impl FillSlab {
@@ -104,6 +120,10 @@ impl FillSlab {
         self.bottom_mm <= z_mm && z_mm < self.top_mm
     }
 }
+
+/// One layer of a fill in pixels: the layer index, the run list of the
+/// cavity's pixels and that of its rim.
+pub(crate) type FillLayerRuns = (usize, Vec<Run>, Vec<Run>);
 
 /// The pixels of one cavity, to cure solid on a later slice.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -114,28 +134,29 @@ pub struct CavityFill {
 
 impl CavityFill {
     /// The fill of the run lists `layers` (layer index, its runs) of
-    /// `input`'s raster.
+    /// `input`'s raster, without a rim.
     pub(crate) fn from_runs(input: &ReviewInput<'_>, layers: Vec<(usize, Vec<Run>)>) -> Self {
+        Self::with_rims(
+            input,
+            layers
+                .into_iter()
+                .map(|(layer, runs)| (layer, runs, Vec::new()))
+                .collect(),
+        )
+    }
+
+    /// The fill of the run lists `layers` (layer index, its runs, the runs
+    /// of its rim) of `input`'s raster.
+    pub(crate) fn with_rims(input: &ReviewInput<'_>, layers: Vec<FillLayerRuns>) -> Self {
         let slabs = layers
             .into_iter()
-            .map(|(layer, runs)| {
+            .map(|(layer, runs, rim)| {
                 let span = input.layers()[layer];
                 FillSlab {
                     bottom_mm: span.bottom_mm,
                     top_mm: span.top_mm,
-                    rects: pixel_rects(&runs)
-                        .into_iter()
-                        .map(|[x0, y0, x1, y1]| {
-                            let a = input.pixel_to_plate([f64::from(x0), f64::from(y0)]);
-                            let b = input.pixel_to_plate([f64::from(x1), f64::from(y1)]);
-                            PlateRect {
-                                x0_mm: a[0].min(b[0]),
-                                y0_mm: a[1].min(b[1]),
-                                x1_mm: a[0].max(b[0]),
-                                y1_mm: a[1].max(b[1]),
-                            }
-                        })
-                        .collect(),
+                    rects: plate_rects(input, &runs),
+                    rim: plate_rects(input, &rim),
                 }
             })
             .collect();
@@ -215,7 +236,8 @@ pub fn fill_stack<'f>(
             let polygons: Vec<Polygon> = slabs
                 .iter()
                 .filter(|slab| slab.holds(z_mm))
-                .flat_map(|slab| slab.rects.iter().map(PlateRect::polygon))
+                .flat_map(|slab| slab.rects.iter().chain(&slab.rim))
+                .map(PlateRect::polygon)
                 .collect();
             lit |= !polygons.is_empty();
             ContourLayer::new(z_mm, polygons)
@@ -356,6 +378,24 @@ fn crossing(a: Point2D, b: Point2D, axis: usize, limit: f64) -> Point2D {
     }
 }
 
+/// The pixels of the run list `runs` of `input`'s raster as disjoint
+/// rectangles in plate millimetres.
+fn plate_rects(input: &ReviewInput<'_>, runs: &[Run]) -> Vec<PlateRect> {
+    pixel_rects(runs)
+        .into_iter()
+        .map(|[x0, y0, x1, y1]| {
+            let a = input.pixel_to_plate([f64::from(x0), f64::from(y0)]);
+            let b = input.pixel_to_plate([f64::from(x1), f64::from(y1)]);
+            PlateRect {
+                x0_mm: a[0].min(b[0]),
+                y0_mm: a[1].min(b[1]),
+                x1_mm: a[0].max(b[0]),
+                y1_mm: a[1].max(b[1]),
+            }
+        })
+        .collect()
+}
+
 /// The pixels of a run list as disjoint rectangles `[x0, y0, x1, y1]` in
 /// raster space: runs that repeat the same span on consecutive rows join.
 fn pixel_rects(runs: &[Run]) -> Vec<[u32; 4]> {
@@ -450,6 +490,7 @@ mod fill_tests {
             bottom_mm,
             top_mm,
             rects,
+            rim: Vec::new(),
         }
     }
 
@@ -584,18 +625,21 @@ mod fill_tests {
                     bottom_mm: 0.10,
                     top_mm: 0.15,
                     rects: vec![rect],
+                    rim: Vec::new(),
                 },
                 FillSlab {
                     bottom_mm: 0.15,
                     top_mm: 0.20,
                     rects: vec![rect, rect],
+                    rim: vec![rect],
                 },
             ],
         };
+        // The rim is cured with the fill but adds no resin: it is solid.
         assert!((fill.volume_mm3() - 0.15).abs() < 1e-12);
         let stack = fill_stack([&fill], &schedule).expect("a filled layer");
         let counts: Vec<usize> = stack.layers().iter().map(|l| l.polygons().len()).collect();
-        assert_eq!(counts, [0, 0, 1, 2, 0, 0]);
+        assert_eq!(counts, [0, 0, 1, 3, 0, 0]);
         let zs: Vec<f64> = stack.layers().iter().map(ContourLayer::z_mm).collect();
         assert_eq!(zs, schedule.iter_z().collect::<Vec<_>>());
         assert!(fill_stack([&CavityFill::default()], &schedule).is_none());

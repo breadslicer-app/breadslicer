@@ -10,7 +10,12 @@
 //! use the same box: a 60 x 50 pixel block whose walls, 5 pixels thick,
 //! surround a 50 x 40 pixel hole (2000 pixels, 20 mm²).
 
-use sc_print_primitives::Mirror;
+use sc_print_primitives::{Mirror, PixelResolution};
+use sc_sl1cer::contour::ContourLayer;
+use sc_sl1cer::profile::AaLevel;
+use sc_sl1cer::raster::pixel_map::PixelMap;
+use sc_sl1cer::raster::rle::LayerRaster;
+use sc_sl1cer::raster::{rasterize_layer, rasterize_layer_binary};
 
 use super::*;
 use crate::input::Role;
@@ -1137,4 +1142,105 @@ fn a_small_cup_no_drain_helps_is_offered_a_fill() {
         ..TrapOptions::default()
     };
     assert_fill_only(&traps_with(&fixture, &big)[0]);
+}
+
+/// Layer `layer` of `fixture` with `fills` cured on it, merged into one
+/// contour layer as export and the slice view merge the leaves.
+fn merged_with_fills(fixture: &Fixture, fills: &[CavityFill], layer: usize) -> ContourLayer {
+    let filled = crate::fill::fill_stack(fills, fixture.schedule()).expect("a fill");
+    let input = fixture.input_with(crate::input::ReviewLeaf::new(
+        Some("Filled cavities"),
+        Role::Model,
+        &filled,
+    ));
+    let z_mm = filled.layers()[layer].z_mm();
+    ContourLayer::new(
+        z_mm,
+        input.polygons(layer).map(|(_, p)| p.clone()).collect(),
+    )
+}
+
+/// The pixel values of `raster`, row by row.
+fn raster_pixels(raster: &LayerRaster) -> Vec<u8> {
+    raster
+        .runs()
+        .iter()
+        .flat_map(|run| std::iter::repeat_n(run.value, run.length as usize))
+        .collect()
+}
+
+#[test]
+fn a_fill_closes_flush_with_the_model() {
+    // #371: a round sealed cavity around a pillar. Its fill must close
+    // against the curved walls and the pillar with no seam: no partly lit
+    // pixel in an anti-aliased layer, no gap a finer grid (the slice view's
+    // cut) can see, and no binary pixel changed by the rim.
+    let (cx, cy, r) = (100.0, 60.0, 45.0);
+    let fixture = FixtureBuilder::new(23)
+        .model(0..3, Shape::circle(cx, cy, r))
+        .model(3..20, Shape::ring(cx, cy, r, 35.3))
+        .model(3..20, Shape::circle(112.3, 63.1, 4.2))
+        .model(20..23, Shape::circle(cx, cy, r))
+        .build();
+    let input = fixture.input();
+    let regions = fixture.regions();
+    let ctx = ReviewContext::new(&input, &regions);
+    let (_, fills) = run_with_fills(&ctx, &TrapOptions::default());
+    assert_eq!(fills.len(), 1);
+    assert!(fills[0].slabs.iter().all(|slab| !slab.rim.is_empty()));
+    let layer = 10;
+    let merged = merged_with_fills(&fixture, &fills, layer);
+    // Well inside the solid disc the layer now is, a pixel and a half from
+    // its outer edge.
+    let inside = |x: f64, y: f64| (x - cx).hypot(y - cy) < r - 1.5;
+    let pixel_map = *input.pixel_map();
+    let (width, height) = (input.width_px(), input.height_px());
+    let pixels = |raster: &LayerRaster| {
+        let values = raster_pixels(raster);
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .filter(|&(x, y)| inside(f64::from(x) + 0.5, f64::from(y) + 0.5))
+            .map(|(x, y)| values[(y * width + x) as usize])
+            .collect::<Vec<u8>>()
+    };
+    let aa = pixels(&rasterize_layer(&merged, &pixel_map, AaLevel::X8, 0.0));
+    let partial = aa.iter().filter(|&&v| v < 255).count();
+    assert_eq!(partial, 0, "{partial} pixels not fully lit");
+
+    // The rim lights no pixel the binary layer did not light already.
+    let mut bare = fills.clone();
+    for slab in &mut bare[0].slabs {
+        slab.rim.clear();
+    }
+    let without_rim = merged_with_fills(&fixture, &bare, layer);
+    assert_eq!(
+        rasterize_layer_binary(&merged, &pixel_map).runs(),
+        rasterize_layer_binary(&without_rim, &pixel_map).runs()
+    );
+    assert!(
+        pixels(&rasterize_layer_binary(&merged, &pixel_map))
+            .iter()
+            .all(|&v| v == 255)
+    );
+
+    // A finer grid, offset from the screen's, as the slice view's cut
+    // samples the layer.
+    let (fine_w, fine_h) = (1733_u32, 1039_u32);
+    let fine = PixelMap::new(
+        pixel_map.plate_x(),
+        pixel_map.plate_y(),
+        PixelResolution::new(fine_w, fine_h).expect("a grid"),
+        Mirror::default(),
+    );
+    let values = raster_pixels(&rasterize_layer_binary(&merged, &fine));
+    let (sx, sy) = (
+        f64::from(width) / f64::from(fine_w),
+        f64::from(height) / f64::from(fine_h),
+    );
+    let holes = (0..fine_h)
+        .flat_map(|y| (0..fine_w).map(move |x| (x, y)))
+        .filter(|&(x, y)| inside((f64::from(x) + 0.5) * sx, (f64::from(y) + 0.5) * sy))
+        .filter(|&(x, y)| values[(y * fine_w + x) as usize] == 0)
+        .count();
+    assert_eq!(holes, 0, "{holes} holes along the seam");
 }
