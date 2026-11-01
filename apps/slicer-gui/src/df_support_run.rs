@@ -5160,4 +5160,127 @@ mod hand_edit_tests {
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &first));
         });
     }
+
+    /// Measurement, not a gate (#3): what a hand click holds the UI thread
+    /// for on a big real scene, now that the engine's part runs on a worker:
+    /// handing the click over, then putting the edit in the scene.
+    /// `SC_STRESS_STL` is the model, scaled to `SC_STRESS_HEIGHT_MM` tall
+    /// when set. `cargo test --profile quick-release -p sc-slicer-gui --lib
+    /// -- --ignored --nocapture ui_thread_cost_of_a_click`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn ui_thread_cost_of_a_click() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let bytes = std::fs::read(&path).unwrap();
+            let (loaded, _) =
+                sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+            let leaf = loaded.roots()[0];
+            let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+            let bounds = |mesh: &sc_mesh_core::IndexedMesh| {
+                let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+                for v in mesh.vertices() {
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(v.as_array()[k]);
+                        hi[k] = hi[k].max(v.as_array()[k]);
+                    }
+                }
+                (lo, hi)
+            };
+            if let Some(h) = height {
+                let (lo, hi) = bounds(&mesh);
+                let s = h / (hi[2] - lo[2]);
+                let vertices = mesh
+                    .vertices()
+                    .iter()
+                    .map(|v| sc_mesh_core::Vertex::new(v.as_array().map(|c| c * s)))
+                    .collect();
+                mesh = sc_mesh_core::IndexedMesh::new(None, vertices, mesh.faces().to_vec());
+            }
+            let (lo, hi) = bounds(&mesh);
+            let shift = [
+                60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+                40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+                5.0 - f64::from(lo[2]),
+            ];
+            let points: Vec<[f32; 3]> = mesh
+                .faces()
+                .iter()
+                .filter_map(|f| {
+                    let [a, b, c] = f
+                        .vertices
+                        .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+                    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                    let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                    let nz = u[0] * w[1] - u[1] * w[0];
+                    let len = ((u[1] * w[2] - u[2] * w[1]).powi(2)
+                        + (u[2] * w[0] - u[0] * w[2]).powi(2)
+                        + nz * nz)
+                        .sqrt();
+                    (len > 1e-12 && nz / len < -0.5).then(|| {
+                        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k] as f32)
+                    })
+                })
+                .collect();
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(None, translation(shift), LeafPayload::Mesh(Arc::new(mesh)))
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+            let run =
+                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_df_supports(&graph, DfSupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            window.set_support_tool(1);
+            let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+            let (mut hand_over, mut put_in, mut waits) = (Vec::new(), Vec::new(), Vec::new());
+            let step = (points.len() / 10).max(1);
+            for p in points.iter().step_by(step).take(10) {
+                let t = Instant::now();
+                run.on_tool_click_with(*p, false);
+                hand_over.push(ms(t));
+                if run.pending_click.borrow().is_none() {
+                    continue;
+                }
+                let waited = Instant::now();
+                loop {
+                    std::thread::sleep(Duration::from_millis(1));
+                    let t = Instant::now();
+                    run.poll_click();
+                    if run.pending_click.borrow().is_none() {
+                        put_in.push(ms(t));
+                        break;
+                    }
+                }
+                waits.push(ms(waited));
+            }
+            let stats = |v: &[f64]| {
+                let mut v = v.to_vec();
+                v.sort_by(f64::total_cmp);
+                format!(
+                    "median {:.1} ms, max {:.1} ms (n {})",
+                    v.get(v.len() / 2).copied().unwrap_or(0.0),
+                    v.last().copied().unwrap_or(0.0),
+                    v.len()
+                )
+            };
+            println!("{}", window.get_supports_last_run());
+            println!("UI thread, the click handed over: {}", stats(&hand_over));
+            println!("worker, the edit made: {}", stats(&waits));
+            println!("UI thread, the edit put in the scene: {}", stats(&put_in));
+        });
+    }
 }

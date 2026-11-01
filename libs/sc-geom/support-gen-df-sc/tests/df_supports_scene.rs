@@ -469,8 +469,8 @@ fn hand_edits_on_a_real_model() {
 /// scene. `SC_STRESS_STL` is the model (scaled to `SC_STRESS_HEIGHT_MM` tall
 /// when set, lifted 5 mm); for clicks on its downward faces it times the
 /// hover preview (a worker computes it) and, apart, drawing the whole set
-/// again once the click takes the previewed edit (`mesh`, what the click
-/// runs on the UI thread), plus a click with no preview ready. `cargo test
+/// again once the click takes the previewed edit (`mesh`, the slow part of
+/// a click, made off the UI thread), plus a click with no preview ready. `cargo test
 /// --release -p support-gen-df-sc --test df_supports_scene -- --ignored
 /// --nocapture click_cost_on_a_real_model`.
 #[test]
@@ -596,6 +596,6 @@ fn click_cost_on_a_real_model() {
     };
     println!("placed {placed}, hanging {attached}");
     println!("hover preview (worker): {}", stats(&previews));
-    println!("click, preview taken (UI thread): {}", stats(&draws));
-    println!("click, no preview (UI thread): {}", stats(&cold));
+    println!("click, preview taken (the set drawn again): {}", stats(&draws));
+    println!("click, no preview (placed and drawn): {}", stats(&cold));
 }
