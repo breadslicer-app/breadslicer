@@ -144,7 +144,7 @@ pub(crate) fn project_to_print_program(
     let corrected = config
         .printer
         .time_calibration
-        .corrected_sec(schedule_duration_sec(&layers));
+        .corrected_sec(schedule_duration_sec(&layers), layers.len());
     let print_time_sec =
         NonNegativeFiniteSec::new(corrected).map_err(UnprojectablePrint::PrintTime)?;
 
