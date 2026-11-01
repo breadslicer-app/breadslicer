@@ -200,7 +200,7 @@ fn applying_an_option_is_one_undo_step() {
         assert_eq!(f.window.get_orient_selected(), 0, "the best is picked");
         assert!(!f.document.can_undo(), "searching records nothing");
         assert_eq!(local(&f), before, "searching moves nothing");
-        let after = afters(&f)[0].clone();
+        let after = afters(&f)[0];
         assert_ne!(after, before, "a tipped cube is turned");
 
         assert!(f.run.apply());
@@ -262,8 +262,8 @@ fn undo_or_a_save_during_a_preview_sees_the_scene_as_recorded() {
             .compose(&before);
         let edit = SceneEdit::SetLocalTransform {
             node_id: f.leaf,
-            before: before.clone(),
-            after: moved.clone(),
+            before,
+            after: moved,
         };
         f.document.apply_edit(edit.clone()).unwrap();
         f.document.push_edit(edit);
@@ -303,7 +303,7 @@ fn a_result_for_a_changed_scene_is_dropped() {
         let edit = SceneEdit::SetLocalTransform {
             node_id: f.leaf,
             before,
-            after: moved.clone(),
+            after: moved,
         };
         f.document.apply_edit(edit.clone()).unwrap();
         f.document.push_edit(edit);

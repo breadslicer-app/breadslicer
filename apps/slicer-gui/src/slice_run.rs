@@ -106,9 +106,10 @@ struct CompletedSlice {
 }
 
 /// The worker's finished payload, past the engine's raw per-leaf output: a
-/// completed, merged, fingerprinted slice, or a cancellation.
+/// completed, merged, fingerprinted slice, or a cancellation. The slice is
+/// boxed so a cancellation does not carry its size; one allocation per run.
 enum SliceRunOutcome {
-    Completed(CompletedSlice),
+    Completed(Box<CompletedSlice>),
     Cancelled,
 }
 
@@ -645,7 +646,8 @@ fn run_slice(
             let contours = plate
                 .merge_with(filled.into_iter().chain(erased))
                 .map_err(|_| SliceFailure::SliceMerge)?;
-            capture(scene, contours, scale, review, layers).map(SliceRunOutcome::Completed)
+            capture(scene, contours, scale, review, layers)
+                .map(|completed| SliceRunOutcome::Completed(Box::new(completed)))
         }
     }
 }
