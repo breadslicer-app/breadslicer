@@ -37,6 +37,8 @@ pub mod scene_upload;
 mod targets;
 #[cfg(test)]
 mod tests_gpu;
+#[cfg(test)]
+mod tests_paste_timing;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
@@ -373,29 +375,57 @@ impl Renderer {
     /// on `Ok`, and no scene at all on `Err`. When `graph` has no renderable
     /// leaves ([`render`] then draws the plate alone).
     ///
+    /// The meshes the scene before already uploaded keep their buffers, so a
+    /// paste, a deletion or an undo uploads only the meshes new to the scene
+    /// (#353).
+    ///
     /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
         if self.core.device_loss.is_lost() {
             return Err(scene_upload::DeviceLostDuringUpload.into());
         }
-        // Released before the build so the old and the new scene never occupy
-        // device memory at the same time.
-        self.scene = None;
-        self.world_boxes.clear();
+        // Released before the build, but for the buffers of the meshes the new
+        // scene still draws, so the old and the new scene never occupy device
+        // memory at the same time.
+        let uploaded = self
+            .scene
+            .take()
+            .map(|installed| installed.gpu.into_uploaded())
+            .unwrap_or_default();
         // An empty model uniform buffer would fail bind-group validation, so a
         // leafless graph gets no scene at all.
-        if renderable_leaf_count(graph)? == 0 {
-            self.clear_scene();
-            return Ok(());
+        let built = renderable_leaf_count(graph).and_then(|count| {
+            if count == 0 {
+                return Ok(None);
+            }
+            let mut uploaded = uploaded;
+            uploaded.retain_drawn(graph)?;
+            GpuScene::build_reusing(
+                &self.core.device,
+                self.core.device_token,
+                graph,
+                &self.core.device_loss,
+                uploaded,
+                |_| {},
+            )
+            .map(Some)
+        });
+        match built {
+            Ok(Some(gpu)) => {
+                self.attach_scene(gpu);
+                Ok(())
+            }
+            Ok(None) => {
+                self.clear_scene();
+                Ok(())
+            }
+            Err(err) => {
+                // The boxes are kept only across an install that names the
+                // meshes they still stand for.
+                self.world_boxes.clear();
+                Err(err)
+            }
         }
-        let gpu = GpuScene::build(
-            &self.core.device,
-            self.core.device_token,
-            graph,
-            &self.core.device_loss,
-        )?;
-        self.attach_scene(gpu);
-        Ok(())
     }
 
     /// Installs a `GpuScene` built on a worker thread, but only if its
@@ -430,11 +460,11 @@ impl Renderer {
                     }),
                 }],
             });
+        self.world_boxes.keep_for(gpu.uploaded());
         self.scene = Some(InstalledScene {
             gpu,
             models_bind_group,
         });
-        self.world_boxes.clear();
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) -> Result<(), RenderError> {

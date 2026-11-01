@@ -2837,6 +2837,108 @@ mod scene_document_tests {
         assert!(!doc.can_undo());
     }
 
+    /// Copies pasted from one fragment share its mesh but are separate
+    /// objects: moving one leaves the other where it is, the spatial queries
+    /// of each follow its own transform, and every paste and the move are
+    /// one undo step each (#353).
+    #[test]
+    fn pasted_copies_stay_independent_and_each_paste_is_one_undo_step() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let a = doc
+            .paste_fragment(&fragment, [0.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
+        let b = doc
+            .paste_fragment(&fragment, [10.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
+        let moved = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 20.0, 0.0]));
+        let before = doc
+            .with_scene(|s| s.graph().node(a).unwrap().local_transform)
+            .unwrap();
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: a,
+            before,
+            after: moved,
+        };
+        doc.apply_edit(edit.clone()).unwrap();
+        doc.push_edit(edit);
+        let min_x_y = |id: NodeId| {
+            doc.with_scene(|s| {
+                let query = s.leaf(id).unwrap();
+                let min = query
+                    .transformed_aabb(query.world_transform())
+                    .unwrap()
+                    .min()
+                    .coords();
+                (min[0], min[1])
+            })
+            .unwrap()
+        };
+        assert_eq!(min_x_y(a), (0.0, 20.0));
+        assert_eq!(min_x_y(b), (10.0, 0.0));
+        let shared = doc
+            .with_scene(|s| {
+                let g = s.graph();
+                (
+                    Arc::ptr_eq(g.leaf_mesh_arc(a).unwrap(), g.leaf_mesh_arc(b).unwrap()),
+                    g.mesh_resources_iter().count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(shared, (true, 1));
+
+        // The move, then each paste, one step at a time.
+        doc.undo().unwrap();
+        assert_eq!(min_x_y(a), (0.0, 0.0));
+        assert_eq!(min_x_y(b), (10.0, 0.0));
+        doc.undo().unwrap();
+        assert!(doc.with_scene(|s| s.leaf(b).is_none()).unwrap());
+        assert!(doc.with_scene(|s| s.leaf(a).is_some()).unwrap());
+        doc.undo().unwrap();
+        let left = doc
+            .with_scene(|s| (s.leaf(a).is_some(), s.graph().mesh_resources_iter().count()))
+            .unwrap();
+        assert_eq!(left, (false, 0));
+        assert!(!doc.can_undo());
+    }
+
+    /// A copy pasted from an inline leaf starts with the spatial caches the
+    /// original already built, so the first query on it does not walk the
+    /// mesh again (#353).
+    #[test]
+    fn a_pasted_copy_shares_the_spatial_cache_of_its_original() {
+        let doc = SceneDocument::new();
+        let mut g = Scene::new();
+        let mesh = triangle_arc();
+        let original = g
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([3.0, 0.0, -1.5])),
+                LeafPayload::Mesh(Arc::clone(&mesh)),
+            )
+            .unwrap();
+        g.add_root(original).unwrap();
+        doc.install_graph(g, fixture_path());
+        doc.set_selection(Selection::One(crate::selection::LeafId(original)));
+        let fragment = crate::clipboard::fragment_from_document_selection(&doc).unwrap();
+        let copy = doc
+            .paste_fragment(&fragment, [10.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
+        let shared = doc
+            .with_scene(|s| {
+                std::ptr::eq(
+                    s.leaf(original).unwrap().clusters().unwrap(),
+                    s.leaf(copy).unwrap().clusters().unwrap(),
+                )
+            })
+            .unwrap();
+        assert!(shared);
+    }
+
     #[test]
     fn paste_fragment_fires_restructured_event() {
         // Paste lands a compound that grows the node + mesh-resource arenas, so
