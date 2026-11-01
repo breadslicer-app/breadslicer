@@ -749,6 +749,194 @@ fn run_stacked_chain(
     }
 }
 
+/// SoulCrafted (#3): braces one shaft added by hand to its neighbours, the
+/// way a bracing run pairs and braces a shaft, and changes nothing else.
+///
+/// It pairs the shaft as [`build_group_pairs`] would: with the nearest
+/// shaft of its model in reach, then with the one nearest a right angle to
+/// that, for two axes. The pairs are laid by the run's own ladder (the
+/// preset's chains, or its tiers and zigzags), each brace clear of the model,
+/// within the settings' length, at their diameter. The braces and their knots
+/// join `state`; the braces already there stay as they are. Returns how many
+/// braces it added.
+pub fn brace_new_shaft(
+    state: &mut SupportState,
+    shaft_id: &str,
+    input_settings: &AutoBracingSettings,
+    live: &SupportSettings,
+    meshes: &BraceMeshes<'_>,
+) -> usize {
+    let settings = normalize_auto_bracing_settings(input_settings);
+    let grid = GridSnap {
+        enabled: live.grid.enabled,
+        spacing_mm: live.grid.spacing_mm,
+    };
+    let c = &state.collections;
+    let arena: Vec<SupportSample> = build_support_samples(c, c)
+        .into_iter()
+        .filter(|s| is_auto_braceable_shaft_type(s.support_kind))
+        .collect();
+    let Some(me) = arena.iter().position(|s| s.support_id == shaft_id) else {
+        return 0;
+    };
+    let model_id = arena[me].model_id.clone();
+    let min_span = js_max(0.001, min_pair_span_mm(&settings));
+    let here = grid_correlated_point(&arena[me], Some(grid));
+    let mut edges: Vec<Edge> = arena
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| *i != me && s.model_id == model_id)
+        .filter_map(|(i, s)| {
+            let there = grid_correlated_point(s, Some(grid));
+            let (dx, dy) = (there.x - here.x, there.y - here.y);
+            if grid.enabled && !is_cardinal_delta(dx, dy, grid.spacing_mm) {
+                return None;
+            }
+            let h_dist = (dx * dx + dy * dy).sqrt();
+            (h_dist >= min_span && h_dist <= settings.max_brace_length_mm).then(|| Edge {
+                a: me,
+                b: i,
+                h_dist,
+                angle_rad: normalize_axis_angle_rad(js_atan2(dy, dx)),
+            })
+        })
+        .collect();
+    edges.sort_by(|x, y| js_compare(x.h_dist - y.h_dist));
+    let Some(&nearest) = edges.first() else {
+        return 0;
+    };
+    // The second axis: the pair nearest a right angle to the first, as the
+    // run's two-axis step picks it.
+    let mut pairs = vec![nearest];
+    let mut best: Option<(Edge, f64)> = None;
+    for &e in &edges[1..] {
+        let sep = axis_separation_deg(nearest.angle_rad, e.angle_rad);
+        if sep < auto_bracing_hard_rules::MIN_AXIS_SEPARATION_DEG {
+            continue;
+        }
+        let score = 90.0 - (90.0 - sep).abs();
+        if best.is_none_or(|(_, s)| score > s) {
+            best = Some((e, score));
+        }
+    }
+    pairs.extend(best.map(|(e, _)| e));
+    let max_z = arena
+        .iter()
+        .filter(|s| s.model_id == model_id)
+        .fold(f64::NEG_INFINITY, |m, s| js_max(m, s.top_reference_z));
+    let no_overrides = HashSet::new();
+    let mut ladder = Ladder {
+        arena: &arena,
+        settings: &settings,
+        grid,
+        meshes,
+        max_run: settings.max_brace_length_mm,
+        pair_distance_overrides: &no_overrides,
+        brace_profile: build_brace_profile(settings.brace_diameter_mm),
+        brace_ids: c.braces.keys().cloned().collect(),
+        knot_ids: c.knots.keys().cloned().collect(),
+        brace_id_factory: UniqueIds {
+            prefix: "auto-brace",
+            index: 1,
+        },
+        knot_id_factory: UniqueIds {
+            prefix: "auto-brace-knot",
+            index: 1,
+        },
+        generated_braces: IndexMap::new(),
+        generated_knots: IndexMap::new(),
+        braced_axes_by_trunk_id: HashMap::new(),
+    };
+    lay_ladder(&mut ladder, &pairs, &settings, &arena, max_z);
+    let Ladder {
+        generated_braces,
+        generated_knots,
+        ..
+    } = ladder;
+    let added = generated_braces.len();
+    state.collections.knots.extend(generated_knots);
+    state.collections.braces.extend(generated_braces);
+    added
+}
+
+/// The brace ladder of one model's pairs, `max_z` its tallest shaft top:
+/// a bracing preset's chains, else the zigzag chains and the pattern tiers.
+fn lay_ladder(
+    ladder: &mut Ladder<'_>,
+    pairs: &[Edge],
+    settings: &AutoBracingSettings,
+    arena: &[SupportSample],
+    max_z: f64,
+) {
+    let mut tiers = vec![settings.initial_distance_mm];
+    let mut curr = settings.initial_distance_mm + settings.pattern_interval_mm;
+    while curr <= max_z {
+        tiers.push(curr);
+        curr += settings.pattern_interval_mm;
+    }
+    let brace_pairs: Vec<BracePair<usize>> = pairs
+        .iter()
+        .map(|e| BracePair {
+            a: e.a,
+            b: e.b,
+            h_dist: e.h_dist,
+        })
+        .collect();
+    let min_rise = auto_bracing_hard_rules::MIN_ZIG_ZAG_RISE_MM;
+    if let Some(stack) = &settings.stacked {
+        run_stacked_chain(
+            &brace_pairs,
+            stack,
+            settings.initial_distance_mm,
+            &arena,
+            ladder,
+            min_rise,
+            settings.brace_diameter_mm,
+        );
+        return;
+    }
+    if settings.initial_pattern == AutoBracingPattern::ZigZag {
+        run_zig_zag_chain(
+            &brace_pairs,
+            settings.initial_distance_mm,
+            max_z,
+            BraceDebugSection::Initial,
+            &mut |l, h, s, z, r| ladder.place(l, h, s, z, r),
+            min_rise,
+        );
+    } else if settings.repeating_pattern == AutoBracingPattern::ZigZag {
+        run_zig_zag_chain(
+            &brace_pairs,
+            settings.initial_distance_mm + settings.pattern_interval_mm,
+            max_z,
+            BraceDebugSection::Repeating,
+            &mut |l, h, s, z, r| ladder.place(l, h, s, z, r),
+            min_rise,
+        );
+    }
+    for (tier_index, &anchor_z) in tiers.iter().enumerate() {
+        let is_initial = tier_index == 0;
+        let pattern = if is_initial {
+            settings.initial_pattern
+        } else {
+            settings.repeating_pattern
+        };
+        if pattern == AutoBracingPattern::ZigZag {
+            continue;
+        }
+        apply_tier_pattern(
+            &brace_pairs,
+            pattern,
+            if is_initial {
+                BraceDebugSection::Initial
+            } else {
+                BraceDebugSection::Repeating
+            },
+            &mut |l, h, s| ladder.place(l, h, s, anchor_z, 0.0),
+        );
+    }
+}
+
 /// `buildAutoBracedSnapshot`. `live` is `getSettings()` (grid, kickstand
 /// sizing); `store` is the committed store, which resolves the type of an
 /// unstamped entity; ids are drawn by the kickstand builds.
@@ -1259,73 +1447,7 @@ pub fn build_auto_braced_snapshot(
             .fold(f64::NEG_INFINITY, |m, i| {
                 js_max(m, arena[i].top_reference_z)
             });
-        let mut tiers = vec![settings.initial_distance_mm];
-        let mut curr = settings.initial_distance_mm + settings.pattern_interval_mm;
-        while curr <= max_z {
-            tiers.push(curr);
-            curr += settings.pattern_interval_mm;
-        }
-        let brace_pairs: Vec<BracePair<usize>> = pairs
-            .iter()
-            .map(|e| BracePair {
-                a: e.a,
-                b: e.b,
-                h_dist: e.h_dist,
-            })
-            .collect();
-        let min_rise = auto_bracing_hard_rules::MIN_ZIG_ZAG_RISE_MM;
-        if let Some(stack) = &settings.stacked {
-            run_stacked_chain(
-                &brace_pairs,
-                stack,
-                settings.initial_distance_mm,
-                &arena,
-                &mut ladder,
-                min_rise,
-                settings.brace_diameter_mm,
-            );
-            continue;
-        }
-        if settings.initial_pattern == AutoBracingPattern::ZigZag {
-            run_zig_zag_chain(
-                &brace_pairs,
-                settings.initial_distance_mm,
-                max_z,
-                BraceDebugSection::Initial,
-                &mut |l, h, s, z, r| ladder.place(l, h, s, z, r),
-                min_rise,
-            );
-        } else if settings.repeating_pattern == AutoBracingPattern::ZigZag {
-            run_zig_zag_chain(
-                &brace_pairs,
-                settings.initial_distance_mm + settings.pattern_interval_mm,
-                max_z,
-                BraceDebugSection::Repeating,
-                &mut |l, h, s, z, r| ladder.place(l, h, s, z, r),
-                min_rise,
-            );
-        }
-        for (tier_index, &anchor_z) in tiers.iter().enumerate() {
-            let is_initial = tier_index == 0;
-            let pattern = if is_initial {
-                settings.initial_pattern
-            } else {
-                settings.repeating_pattern
-            };
-            if pattern == AutoBracingPattern::ZigZag {
-                continue;
-            }
-            apply_tier_pattern(
-                &brace_pairs,
-                pattern,
-                if is_initial {
-                    BraceDebugSection::Initial
-                } else {
-                    BraceDebugSection::Repeating
-                },
-                &mut |l, h, s| ladder.place(l, h, s, anchor_z, 0.0),
-            );
-        }
+        lay_ladder(&mut ladder, pairs, &settings, &arena, max_z);
     }
     let Ladder {
         mut generated_braces,
