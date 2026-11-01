@@ -38,3 +38,5 @@ version = "pwsz"
 [defaults]
 
 [time_calibration]
+print_time_offset_sec = 144.0
+per_layer_overhead_sec = 1.14

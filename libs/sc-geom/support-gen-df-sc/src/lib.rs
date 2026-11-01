@@ -35,6 +35,7 @@ mod document;
 mod options;
 mod session;
 mod shift;
+pub mod zone_presets;
 
 pub use document::{DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, RestoreError, RestoredSet};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, DfSupportOptions, RaftMode, recommended_lift_mm};

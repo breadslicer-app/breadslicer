@@ -101,6 +101,7 @@ pub fn candidate_from_island(island: &DetectedIsland, bands: &SizingBands) -> Ca
         tip_diameter_mm: (area < SMALL_ISLAND_TIP_AREA_MM2)
             .then(|| bands.small_island_tip_diameter_mm()),
         grid_point: None,
+        zone_size: None,
     }
 }
 

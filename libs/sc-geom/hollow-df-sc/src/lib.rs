@@ -191,6 +191,7 @@ pub struct SessionKey {
     stretch: [i64; 9],
     voxel_bits: u32,
     max_resolution: u16,
+    max_memory_bytes: usize,
 }
 
 /// A voxel session kept between jobs (moves and rotations reuse it).
@@ -558,6 +559,7 @@ fn run_hollow(
         stretch: frame.stretch_key(),
         voxel_bits: request.grid.voxel_size_mm.to_bits(),
         max_resolution: request.grid.max_resolution,
+        max_memory_bytes: request.grid.max_memory_bytes,
     };
     let reuse = request.prepared.as_ref().filter(|p| p.key == key).cloned();
     let stages = match request.kind {

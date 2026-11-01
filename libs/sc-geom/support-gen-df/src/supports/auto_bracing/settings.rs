@@ -28,6 +28,72 @@ pub struct AutoBracingSettings {
     /// Remove existing bracing before generating. Only braces and kickstands
     /// this tool generated are removed; `generatedBy` distinguishes them.
     pub remove_existing_bracing: bool,
+    /// SoulCrafted (#360): a bracing preset. When set, braces climb every
+    /// pair in a chain from `initial_distance_mm`, its links `gap_mm` apart,
+    /// with patterns for the bottom, middle and top links and rings at the
+    /// reinforcement heights; every brace is drawn at
+    /// `brace_diameter_mm` (not at its hosts' diameter). The tier fields
+    /// above are not read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stacked: Option<StackedBracing>,
+}
+
+/// How the links of a stacked chain are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GridDiagonal {
+    None,
+    Single,
+    Cross,
+}
+
+/// A bracing preset (SoulCrafted, #360); see `AutoBracingSettings::stacked`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StackedBracing {
+    /// Vertical gap between one link's top and the next link's bottom.
+    pub gap_mm: f64,
+    pub bottom_pattern: AutoBracingPattern,
+    /// How many links from the bottom take the bottom pattern.
+    pub bottom_repeat: u32,
+    pub middle_pattern: AutoBracingPattern,
+    pub top_pattern: AutoBracingPattern,
+    /// How many links from the top take the top pattern.
+    pub top_repeat: u32,
+    /// Heights (mm above the plate) of reinforcement rings between every
+    /// pair, each drawn as a cross at that height (a level brace would start
+    /// in mid-air).
+    pub reinforcement_heights_mm: Vec<f64>,
+    /// The diagonal each ring adds in the link above it.
+    pub reinforcement_diagonal: GridDiagonal,
+}
+
+impl Default for StackedBracing {
+    fn default() -> Self {
+        StackedBracing {
+            gap_mm: 0.0,
+            bottom_pattern: AutoBracingPattern::SingleDiagonal,
+            bottom_repeat: 0,
+            middle_pattern: AutoBracingPattern::SingleDiagonal,
+            top_pattern: AutoBracingPattern::SingleDiagonal,
+            top_repeat: 0,
+            reinforcement_heights_mm: Vec::new(),
+            reinforcement_diagonal: GridDiagonal::None,
+        }
+    }
+}
+
+impl StackedBracing {
+    /// The pattern link `index` of a chain of `links` takes.
+    pub fn pattern_of(&self, index: u32, links: u32) -> AutoBracingPattern {
+        if index < self.bottom_repeat {
+            self.bottom_pattern
+        } else if index + self.top_repeat >= links {
+            self.top_pattern
+        } else {
+            self.middle_pattern
+        }
+    }
 }
 
 impl Default for AutoBracingSettings {
@@ -98,6 +164,7 @@ pub fn create_default_auto_bracing_settings() -> AutoBracingSettings {
         debug_section_colors_enabled: false,
         debug_voronoi_seeds_enabled: false,
         remove_existing_bracing: true,
+        stacked: None,
     }
 }
 
@@ -118,5 +185,21 @@ pub fn normalize_auto_bracing_settings(source: &AutoBracingSettings) -> AutoBrac
         debug_section_colors_enabled: source.debug_section_colors_enabled,
         debug_voronoi_seeds_enabled: source.debug_voronoi_seeds_enabled,
         remove_existing_bracing: source.remove_existing_bracing,
+        stacked: source.stacked.as_ref().map(|st| StackedBracing {
+            gap_mm: if st.gap_mm.is_finite() {
+                st.gap_mm.clamp(0.0, 50.0)
+            } else {
+                0.0
+            },
+            bottom_repeat: st.bottom_repeat.min(100),
+            top_repeat: st.top_repeat.min(100),
+            reinforcement_heights_mm: st
+                .reinforcement_heights_mm
+                .iter()
+                .copied()
+                .filter(|h| h.is_finite() && *h > 0.0)
+                .collect(),
+            ..st.clone()
+        }),
     }
 }

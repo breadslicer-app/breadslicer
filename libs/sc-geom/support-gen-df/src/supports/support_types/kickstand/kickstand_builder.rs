@@ -218,6 +218,7 @@ pub fn build_kickstand_data(
         disk_height: root_disk_height,
         cone_height: root_cone_height,
         height: None,
+        join_cone_mm: None,
     };
 
     let root_top_z = input.root_pos.z + root.disk_height + root.cone_height;

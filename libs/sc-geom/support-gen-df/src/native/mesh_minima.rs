@@ -12,6 +12,7 @@
 //! the vertex adjacency graph, and returns the surviving minima.
 
 use super::islands::{
+    body::{IslandBody, IslandBodyScan, MaskFrame, island_bodies},
     geometry::parse_triangles,
     model::{Connectivity, GridRef, IslandScanJob},
     pipeline::run_island_scan,
@@ -272,6 +273,9 @@ pub struct VoxelIsland {
     pub base_z: f64,
     pub area_mm2: f32,
     pub layer_span: [u32; 2],
+    /// SoulCrafted (#360): the island's body, when the scan was asked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<IslandBody>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -309,6 +313,7 @@ pub fn scan_islands(
         connectivity,
         k,
         Some((overhang_self_support_angle_deg, overhang_px_mm)),
+        None,
     )
 }
 
@@ -326,6 +331,29 @@ pub fn scan_islands_without_overhangs(
     connectivity: u8,
     k: Option<usize>,
 ) -> CombinedIslandScanResult {
+    scan_islands_with_bodies(
+        mesh,
+        layer_height_mm,
+        px_mm,
+        support_buffer_mm,
+        connectivity,
+        k,
+        None,
+    )
+}
+
+/// [`scan_islands_without_overhangs`] that also measures every voxel
+/// island's body when `bodies` asks for it (SoulCrafted, #360); with `None`
+/// it is the same scan.
+pub fn scan_islands_with_bodies(
+    mesh: &IndexedMesh,
+    layer_height_mm: f64,
+    px_mm: f64,
+    support_buffer_mm: f64,
+    connectivity: u8,
+    k: Option<usize>,
+    bodies: Option<IslandBodyScan>,
+) -> CombinedIslandScanResult {
     scan_islands_inner(
         mesh,
         layer_height_mm,
@@ -334,6 +362,7 @@ pub fn scan_islands_without_overhangs(
         connectivity,
         k,
         None,
+        bodies,
     )
 }
 
@@ -346,6 +375,7 @@ fn scan_islands_inner(
     connectivity: u8,
     k: Option<usize>,
     overhangs: Option<(Option<f32>, Option<f32>)>,
+    bodies: Option<IslandBodyScan>,
 ) -> CombinedIslandScanResult {
     let tri_count = mesh.triangle_count();
     let bbox = mesh.bbox();
@@ -396,7 +426,12 @@ fn scan_islands_inner(
     let oh_px_mm = overhang_px_mm.unwrap_or(0.25);
     // `rayon::join` rather than threads of their own, so the three (and
     // their parallel loops) stay in the pool the caller runs in.
-    let (scan_result, (minima_islands, overhang_islands)) = rayon::join(
+    let frame = MaskFrame {
+        origin_x: ox,
+        top_y: bbox.max.y as f64,
+        px_mm,
+    };
+    let ((scan_result, island_bodies_by_id), (minima_islands, overhang_islands)) = rayon::join(
         // A: voxel rasterization + island scan
         || {
             let (masks, _, _, _, _, _) = rasterize_for_island_scan(
@@ -410,7 +445,11 @@ fn scan_islands_inner(
                 px_mm,
                 layer_height_mm,
             );
-            run_island_scan(&job, &masks, None)
+            let result = run_island_scan(&job, &masks, None);
+            let bodies = bodies
+                .map(|request| island_bodies(&masks, &result, layer_height_mm, frame, request))
+                .unwrap_or_default();
+            (result, bodies)
         },
         || {
             rayon::join(
@@ -516,6 +555,7 @@ fn scan_islands_inner(
                     .copied()
                     .unwrap_or(island.total_area_mm2) as f32,
                 layer_span: [island.first_layer, island.last_layer],
+                body: island_bodies_by_id.get(&island.id.0).cloned(),
             }
         })
         .collect();

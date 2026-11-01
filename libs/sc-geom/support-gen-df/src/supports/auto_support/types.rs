@@ -65,4 +65,8 @@ pub struct CandidatePoint {
     /// Density-grid point: must become its own standalone trunk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid_point: Option<bool>,
+    /// SoulCrafted (#360): the zone rules' size this support takes (an index
+    /// into the rules' sizes); `None` sizes it the usual way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone_size: Option<usize>,
 }

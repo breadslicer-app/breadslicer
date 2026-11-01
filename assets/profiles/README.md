@@ -74,6 +74,18 @@ mirrors in X: Lychee rasterises it at 24.8 µm in Y (its header says
 mirror only when X is mirrored. It also runs the 2 stage move and 6
 transition layers, as those Lychee files do.
 
+The 6 machines that take Anycubic's ZIP file (the Photon Mono M7, M7 Pro,
+M7 Max and 4 Ultra, and the Photon P1 and P1 Max) carry a time calibration
+measured on a Photon Mono M7 Pro: each layer takes 1.14 s more than its
+record adds up to (ramping the platform, loading the next image), and each
+print 144 s more (homing, warming the resin). Those 2 figures were fitted
+against 23 prints on that machine, each timed from when its file reached
+the machine to when the machine reported it done, and put every one of
+them within 6 % of that time, where the bare schedule fell short by 16 %
+on average and by up to 44 % on short prints. The other 5 machines have
+not been timed; they run the same firmware and take the same figures until
+they are.
+
 The Creality Halot One's plate is laid out 128 mm wide and 81 mm deep, as
 the machine stands, where UVtools lists the panel as 81 x 128. Its files
 still carry the panel's 1620 x 2560 pixels: the profile turns the stored

@@ -30,6 +30,7 @@ mod overlay;
 mod smooth_shading;
 pub(crate) use smooth_shading::set_smooth_models;
 mod pipelines;
+mod prepared;
 mod readback;
 mod render_size;
 mod renderer_trait;
@@ -37,6 +38,8 @@ pub mod scene_upload;
 mod targets;
 #[cfg(test)]
 mod tests_gpu;
+#[cfg(test)]
+mod tests_paste_timing;
 
 pub use device_loss::DeviceLoss;
 use device_ops::scoped;
@@ -63,6 +66,7 @@ use pipelines::label::LabelPipeline;
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
+pub use prepared::prepare_pipelines;
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
@@ -193,6 +197,34 @@ struct Pipelines {
     plate_buffers: Option<PlateBuffers>,
 }
 
+impl Pipelines {
+    /// Builds every pipeline of the viewport against `device`.
+    fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RendererInitError> {
+        let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
+        let mesh = MeshPipeline::create(device).map_err(at(RendererStage::Mesh))?;
+        let outline = OutlinePipeline::create(device).map_err(at(RendererStage::Outline))?;
+        let gizmo_buffers =
+            GizmoBuffers::create(device, queue).map_err(at(RendererStage::GizmoBuffers))?;
+        let gizmo =
+            GizmoPipeline::create(device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
+        let plate = PlatePipeline::create(device, &mesh).map_err(at(RendererStage::Plate))?;
+        let cap = CapPipeline::create(device, &mesh).map_err(at(RendererStage::Cap))?;
+        let label = LabelPipeline::create(device, &mesh).map_err(at(RendererStage::Label))?;
+        Ok(Self {
+            mesh,
+            outline,
+            gizmo,
+            gizmo_buffers,
+            plate,
+            cap,
+            cap_state: CapState::Off,
+            label,
+            label_state: LabelState::Off,
+            plate_buffers: None,
+        })
+    }
+}
+
 /// State of the slice-view cap texture, keyed by the layer it was last built
 /// for. The bind group keeps the texture and its view alive.
 enum CapState {
@@ -302,16 +334,12 @@ impl Renderer {
         queue: wgpu::Queue,
         device_loss: DeviceLoss,
     ) -> Result<Self, RendererInitError> {
-        let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
-        let mesh = MeshPipeline::create(&device).map_err(at(RendererStage::Mesh))?;
-        let outline = OutlinePipeline::create(&device).map_err(at(RendererStage::Outline))?;
-        let gizmo_buffers =
-            GizmoBuffers::create(&device, &queue).map_err(at(RendererStage::GizmoBuffers))?;
-        let gizmo =
-            GizmoPipeline::create(&device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
-        let plate = PlatePipeline::create(&device, &mesh).map_err(at(RendererStage::Plate))?;
-        let cap = CapPipeline::create(&device, &mesh).map_err(at(RendererStage::Cap))?;
-        let label = LabelPipeline::create(&device, &mesh).map_err(at(RendererStage::Label))?;
+        // Built ahead on a worker thread when [`prepare_pipelines`] was called
+        // for this device; built here otherwise.
+        let pipelines = match prepared::take(&device) {
+            Some(prepared) => prepared?,
+            None => Pipelines::create(&device, &queue)?,
+        };
         let max_texture_side = device.limits().max_texture_dimension_2d;
 
         Ok(Self {
@@ -322,18 +350,7 @@ impl Renderer {
                 device_loss,
                 max_texture_side,
             },
-            pipelines: Pipelines {
-                mesh,
-                outline,
-                gizmo,
-                gizmo_buffers,
-                plate,
-                cap,
-                cap_state: CapState::Off,
-                label,
-                label_state: LabelState::Off,
-                plate_buffers: None,
-            },
+            pipelines,
             scene: None,
             world_boxes: WorldBoxes::default(),
             overlay: overlay::OverlaySlot::default(),
@@ -379,29 +396,57 @@ impl Renderer {
     /// on `Ok`, and no scene at all on `Err`. When `graph` has no renderable
     /// leaves ([`render`] then draws the plate alone).
     ///
+    /// The meshes the scene before already uploaded keep their buffers, so a
+    /// paste, a deletion or an undo uploads only the meshes new to the scene
+    /// (#353).
+    ///
     /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
         if self.core.device_loss.is_lost() {
             return Err(scene_upload::DeviceLostDuringUpload.into());
         }
-        // Released before the build so the old and the new scene never occupy
-        // device memory at the same time.
-        self.scene = None;
-        self.world_boxes.clear();
+        // Released before the build, but for the buffers of the meshes the new
+        // scene still draws, so the old and the new scene never occupy device
+        // memory at the same time.
+        let uploaded = self
+            .scene
+            .take()
+            .map(|installed| installed.gpu.into_uploaded())
+            .unwrap_or_default();
         // An empty model uniform buffer would fail bind-group validation, so a
         // leafless graph gets no scene at all.
-        if renderable_leaf_count(graph)? == 0 {
-            self.clear_scene();
-            return Ok(());
+        let built = renderable_leaf_count(graph).and_then(|count| {
+            if count == 0 {
+                return Ok(None);
+            }
+            let mut uploaded = uploaded;
+            uploaded.retain_drawn(graph)?;
+            GpuScene::build_reusing(
+                &self.core.device,
+                self.core.device_token,
+                graph,
+                &self.core.device_loss,
+                uploaded,
+                |_| {},
+            )
+            .map(Some)
+        });
+        match built {
+            Ok(Some(gpu)) => {
+                self.attach_scene(gpu);
+                Ok(())
+            }
+            Ok(None) => {
+                self.clear_scene();
+                Ok(())
+            }
+            Err(err) => {
+                // The boxes are kept only across an install that names the
+                // meshes they still stand for.
+                self.world_boxes.clear();
+                Err(err)
+            }
         }
-        let gpu = GpuScene::build(
-            &self.core.device,
-            self.core.device_token,
-            graph,
-            &self.core.device_loss,
-        )?;
-        self.attach_scene(gpu);
-        Ok(())
     }
 
     /// Installs a `GpuScene` built on a worker thread, but only if its
@@ -436,11 +481,11 @@ impl Renderer {
                     }),
                 }],
             });
+        self.world_boxes.keep_for(gpu.uploaded());
         self.scene = Some(InstalledScene {
             gpu,
             models_bind_group,
         });
-        self.world_boxes.clear();
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) -> Result<(), RenderError> {

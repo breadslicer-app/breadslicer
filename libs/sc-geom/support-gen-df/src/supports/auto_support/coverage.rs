@@ -281,6 +281,7 @@ pub fn build_gap_fill_candidates(
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: Some(true),
+                zone_size: None,
             });
         }
     }

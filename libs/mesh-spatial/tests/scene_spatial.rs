@@ -786,6 +786,87 @@ mod invalidation_discipline {
         assert!(spatial.leaf(nid).is_none());
         assert!(spatial.graph().mesh_resource(rid).is_none());
     }
+
+    /// A spatial holding an inline leaf of `arc`, with the leaf's clusters
+    /// built, and the paste compound that adds a copy of it.
+    fn spatial_with_a_pasted_copy(arc: &Arc<IndexedMesh>) -> (SceneSpatial, NodeId, NodeId) {
+        let (mut graph, root) = graph_with_group_root();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::clone(arc)),
+            )
+            .expect("inline leaf");
+        graph.add_child(root, leaf).expect("attach inline leaf");
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let rid = spatial.allocate_unbound_mesh_resource_id();
+        let copy = spatial.allocate_unbound_node_id();
+        spatial
+            .apply_edit(SceneEdit::Compound(vec![
+                SceneEdit::AddMeshResource {
+                    rid,
+                    mesh: Arc::clone(arc),
+                },
+                root_resource_leaf_edit(copy, rid, Transform3D::Identity),
+            ]))
+            .expect("paste");
+        (spatial, leaf, copy)
+    }
+
+    #[test]
+    fn a_pasted_copy_of_a_mesh_shares_the_cache_of_the_original() {
+        let arc = Arc::new(triangle_mesh(1.0));
+        let (spatial, original, copy) = spatial_with_a_pasted_copy(&arc);
+        let original_clusters = spatial.leaf(original).unwrap().clusters().unwrap();
+        let copy_clusters = spatial.leaf(copy).unwrap().clusters().unwrap();
+        assert!(std::ptr::eq(original_clusters, copy_clusters));
+    }
+
+    #[test]
+    fn a_resource_of_another_mesh_gets_a_cache_of_its_own() {
+        let arc = Arc::new(triangle_mesh(1.0));
+        let (mut spatial, original, _copy) = spatial_with_a_pasted_copy(&arc);
+        let rid = spatial.allocate_unbound_mesh_resource_id();
+        let other = spatial.allocate_unbound_node_id();
+        // Equal content, but another mesh.
+        spatial
+            .apply_edit(SceneEdit::Compound(vec![
+                SceneEdit::AddMeshResource {
+                    rid,
+                    mesh: Arc::new(triangle_mesh(1.0)),
+                },
+                root_resource_leaf_edit(other, rid, Transform3D::Identity),
+            ]))
+            .expect("paste");
+        let original_clusters = spatial.leaf(original).unwrap().clusters().unwrap();
+        let other_clusters = spatial.leaf(other).unwrap().clusters().unwrap();
+        assert!(!std::ptr::eq(original_clusters, other_clusters));
+    }
+
+    #[test]
+    fn replacing_the_mesh_of_a_copy_leaves_the_original_cache_alone() {
+        let arc = Arc::new(triangle_mesh(1.0));
+        let (mut spatial, original, copy) = spatial_with_a_pasted_copy(&arc);
+        let primed = spatial.leaf(original).unwrap().local_aabb().unwrap();
+        let rid = match spatial.graph().node(copy).unwrap().kind {
+            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => rid,
+            _ => panic!("the copy is a resource leaf"),
+        };
+        spatial
+            .apply_edit(SceneEdit::ReplaceMeshResource {
+                rid,
+                before: Arc::clone(&arc),
+                after: Arc::new(triangle_mesh(3.0)),
+            })
+            .expect("replace");
+        assert_eq!(
+            spatial.leaf(original).unwrap().local_aabb().unwrap(),
+            primed
+        );
+        let replaced = spatial.leaf(copy).unwrap().local_aabb().unwrap();
+        assert_eq!(replaced.max().coords(), [3.0, 3.0, 0.0]);
+    }
 }
 
 mod transformed_aabb {

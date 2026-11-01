@@ -425,6 +425,7 @@ pub fn build_branch_data(
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
         sphere_radius_ratio: None,
+        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     });
 
     let shaft_diameter = input

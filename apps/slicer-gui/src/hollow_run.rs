@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use sc_geom::df_hollow::hollow_df::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
 use sc_geom::df_hollow::hollow_df::{
-    DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, Stage,
+    DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::df_hollow::{
     HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult, LeafFrame, PreparedHollow,
@@ -1236,6 +1236,32 @@ impl HollowRun {
             format!("{:.2}", stats.grid.voxel_mm),
         )
         .to_string();
+        // Say why the voxel came out larger than asked (#263).
+        let coarsened = match stats.grid.bound {
+            Some(ResolutionBound::Coarsened { max, .. }) => Some(
+                ctr!(
+                    "HollowRun",
+                    "The voxel was enlarged from {} mm: at most {} voxels per side.",
+                    format!("{:.2}", stats.grid.requested_voxel_mm),
+                    max,
+                )
+                .to_string(),
+            ),
+            Some(ResolutionBound::MemoryLimited { limit_bytes, .. }) => Some(
+                ctr!(
+                    "HollowRun",
+                    "The voxel was enlarged from {} mm so the hollow fits in {} GB of memory.",
+                    format!("{:.2}", stats.grid.requested_voxel_mm),
+                    format!("{:.0}", limit_bytes as f64 / (1u64 << 30) as f64),
+                )
+                .to_string(),
+            ),
+            Some(ResolutionBound::Refined { .. }) | None => None,
+        };
+        if let Some(why) = coarsened {
+            summary.push(' ');
+            summary.push_str(&why);
+        }
         if !drains.is_empty() {
             summary.push(' ');
             summary.push_str(&ctr!(

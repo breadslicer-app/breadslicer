@@ -28,18 +28,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::clipper::ClipperError;
 use crate::features::slicing::smooth_shafts::ShaftStyle;
 use crate::features::slicing::support_world_triangles::{
-    SupportSliceInput, TriangleSink, build_support_and_raft_world_parts,
+    SupportSliceInput, TipDrawing, TriangleSink, build_support_and_raft_world_parts,
 };
+use crate::native::islands::body::IslandBodyScan;
 use crate::native::mesh_core::mesh::IndexedMesh;
-use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_without_overhangs};
+use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
 use crate::native::overhang::{
-    OVERHANG_WELD_EPSILON, OverhangScan, overhang_and_stability, overhang_and_stability_from_soup,
+    OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
+    overhang_and_stability_from_soup,
 };
 use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
 use crate::supports::auto_support::auto_place::plan::{
-    AutoSupportPlan, PlanInput, compute_auto_support_plan,
+    AutoSupportPlan, PlanInput, ZonePlanInput, compute_auto_support_plan,
 };
 use crate::supports::auto_support::parameter_sizing::SizingBands;
 use crate::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
@@ -55,8 +57,9 @@ use crate::supports::types::SupportState;
 use crate::three::buffer_geometry::BufferGeometry;
 use crate::three::{Matrix4, Vec3};
 use crate::three_mesh_bvh::{MeshBvh, Side};
+use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::use_islands::{
-    DerivedIslands, IslandPanelSettings, derive_islands,
+    DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,
 };
 
 /// A model of the scene: its loaded geometry (model space) and placement.
@@ -80,6 +83,11 @@ pub struct IslandScanSettings {
     pub overhang_px_mm: f32,
     /// The weld tolerance of the scan's indexed mesh.
     pub merge_epsilon: f32,
+    /// SoulCrafted (#360): measure every island's body (zone rules).
+    pub island_bodies: Option<IslandBodyScan>,
+    /// SoulCrafted (#360): also classify the down-facing regions up to this
+    /// angle from horizontal (the zone rules' stabilization).
+    pub steep_angle_deg: Option<f32>,
 }
 
 impl Default for IslandScanSettings {
@@ -91,6 +99,8 @@ impl Default for IslandScanSettings {
             minima_k: Some(2),
             overhang_px_mm: 0.25,
             merge_epsilon: 1e-5,
+            island_bodies: None,
+            steep_angle_deg: None,
         }
     }
 }
@@ -113,6 +123,8 @@ pub struct PipelineSettings {
     /// The contact tips' penetration into the model (DragonFruit's
     /// `calculateTipOffset` for the active material and printer).
     pub tip_penetration_mm: f64,
+    /// How contact tips are drawn (SoulCrafted; the default is DragonFruit's).
+    pub tip_drawing: TipDrawing,
     /// How the tessellation draws shafts (DragonFruit's spheres, or smooth
     /// tubes with bicones).
     pub shaft_style: ShaftStyle,
@@ -133,6 +145,7 @@ impl PipelineSettings {
             sdf_cell_mm: 0.5,
             support_tip_shrink_percent: 0.0,
             tip_penetration_mm: 0.0,
+            tip_drawing: TipDrawing::default(),
             shaft_style: ShaftStyle::DragonFruit,
             robust_raft_geometry: false,
         }
@@ -301,6 +314,8 @@ pub struct ScanKey {
     merge_epsilon: u32,
     angle: u32,
     has_raft: bool,
+    bodies: Option<([u32; 4], u8, u32)>,
+    steep_angle: Option<u32>,
 }
 
 impl ScanKey {
@@ -318,6 +333,14 @@ impl ScanKey {
             merge_epsilon: s.merge_epsilon.to_bits(),
             angle: angle.to_bits(),
             has_raft,
+            bodies: s.island_bodies.map(|b| {
+                (
+                    b.section_heights_mm.map(f32::to_bits),
+                    b.heights,
+                    b.volume_cap_mm3.to_bits(),
+                )
+            }),
+            steep_angle: s.steep_angle_deg.map(f32::to_bits),
         }
     }
 }
@@ -399,7 +422,7 @@ fn scan_model(
     // there. The timing frame is per thread, so each scan is timed where it
     // runs and recorded here; `stage:scans` is the wall time of both.
     perf::mark("stage:scans");
-    let (((regions, stability), t_overhangs), (combined, t_islands)) = rayon::join(
+    let ((((regions, stability), steep_regions), t_overhangs), (combined, t_islands)) = rayon::join(
         || {
             let t = std::time::Instant::now();
             // Same weld as the island scan's by default: reuse it.
@@ -408,17 +431,22 @@ fn scan_model(
             } else {
                 overhang_and_stability_from_soup(soup, angle, s.overhang_px_mm, has_raft)
             };
-            (overhangs, t.elapsed())
+            let steep = s
+                .steep_angle_deg
+                .map(|steep| classify_overhangs(&mesh, steep, s.overhang_px_mm))
+                .unwrap_or_default();
+            ((overhangs, steep), t.elapsed())
         },
         || {
             let t = std::time::Instant::now();
-            let r = scan_islands_without_overhangs(
+            let r = scan_islands_with_bodies(
                 &mesh,
                 settings.layer_height_mm,
                 s.px_mm,
                 s.support_buffer_mm,
                 s.connectivity,
                 s.minima_k,
+                s.island_bodies,
             );
             (r, t.elapsed())
         },
@@ -426,7 +454,14 @@ fn scan_model(
     perf::measure("stage:scans");
     perf::record("scan:islands", t_islands);
     perf::record("scan:overhangs", t_overhangs);
-    (combined, OverhangScan { regions, stability })
+    (
+        combined,
+        OverhangScan {
+            regions,
+            stability,
+            steep_regions,
+        },
+    )
 }
 
 /// Runs the geometry-only part of [`generate_supports`] for `models` ahead of
@@ -602,7 +637,8 @@ fn run_pipeline(
             )
         })
         .collect();
-    let bands = SizingBands::factory();
+    let bands =
+        SizingBands::factory().with_zone_sizes(settings.supports.auto_support.zone_rules.as_ref());
     let angle = scan_angle(settings);
 
     let mut current = state.clone();
@@ -628,6 +664,16 @@ fn run_pipeline(
             let _perf = perf::scope("stage:derive-islands");
             derive_islands(&combined, &overhang, &[], &settings.panel)
         };
+        // The zone rules' stabilization reads the steep regions as islands.
+        let steep: Vec<DetectedIsland> = overhang
+            .steep_regions
+            .iter()
+            .enumerate()
+            .map(|(i, r)| DetectedIsland {
+                id: format!("s{i}"),
+                ..overhang_region_to_island(r, i)
+            })
+            .collect();
 
         check()?;
         step(progress, Stage::PlanSupports, i);
@@ -656,6 +702,10 @@ fn run_pipeline(
                 committed: &current,
                 has_raft,
                 brace_meshes: &brace_meshes,
+                zone: Some(ZonePlanInput {
+                    steep: &steep,
+                    layer_height_mm: settings.layer_height_mm,
+                }),
             },
             &ctx,
         );
@@ -736,6 +786,7 @@ pub fn support_soup(
         plate_clearance_models: &clearance,
         support_tip_shrink_percent: settings.support_tip_shrink_percent,
         tip_penetration_mm: settings.tip_penetration_mm,
+        tip_drawing: settings.tip_drawing,
         shaft_style: settings.shaft_style,
         robust_raft_geometry: settings.robust_raft_geometry,
     })

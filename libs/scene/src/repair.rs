@@ -9,10 +9,17 @@
 //! borrow; storage shared through `Arc`s is replaced only for meshes the run
 //! changed, so clean, refused and unchanged targets keep their pointer identity
 //! (callers can compare pointers to learn what changed).
+//!
+//! [`Scene::repair_meshes_watched`] tells a [`SceneRepairWatch`] how far the
+//! run is, and stops when it asks to, with the scene as it was: the repaired
+//! meshes are put in place only once every target is done.
 
 use crate::Scene;
 use crate::mesh_targets::MeshTarget;
-use sc_mesh_core::indexed_mesh::repair_report::{RepairDetails, repaired_copy_with_details};
+use sc_mesh_core::indexed_mesh::repair_progress::{
+    RepairCancelled, RepairStep, RepairWatch, Unwatched,
+};
+use sc_mesh_core::indexed_mesh::repair_report::{RepairDetails, repaired_copy_watched};
 use sc_mesh_core::indexed_mesh::{MeshRepairReport, RepairPasses};
 
 /// Everything a repair run did, and did not do, to 1 stored mesh.
@@ -29,6 +36,64 @@ pub struct SceneRepairOutcome {
     pub details: RepairDetails,
 }
 
+/// How far a [`Scene::repair_meshes_watched`] run is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneRepairProgress {
+    /// The target being repaired, 0-based, of `targets`.
+    pub target: usize,
+    pub targets: usize,
+    /// The step it is at.
+    pub step: RepairStep,
+    /// The share of the whole run done, from 0 to 1, each target weighed by
+    /// its faces. It never goes back.
+    pub done: f32,
+}
+
+/// Watches a [`Scene::repair_meshes_watched`] run.
+pub trait SceneRepairWatch {
+    /// The run reached `progress`.
+    fn progress(&self, progress: SceneRepairProgress);
+    /// Whether the run should stop. Asked as each step starts.
+    fn cancelled(&self) -> bool;
+}
+
+/// A [`SceneRepairWatch`] seen by the run of 1 target.
+struct TargetWatch<'a> {
+    scene: &'a dyn SceneRepairWatch,
+    target: usize,
+    targets: usize,
+    /// The share of the whole run done before this target, and this
+    /// target's share.
+    before: f32,
+    share: f32,
+}
+
+impl RepairWatch for TargetWatch<'_> {
+    fn step(&self, step: RepairStep, done: f32) {
+        self.scene.progress(SceneRepairProgress {
+            target: self.target,
+            targets: self.targets,
+            step,
+            done: (self.before + self.share * done).min(1.0),
+        });
+    }
+
+    fn cancelled(&self) -> bool {
+        self.scene.cancelled()
+    }
+}
+
+/// A scene watch that wants nothing.
+struct NoSceneWatch;
+
+impl SceneRepairWatch for NoSceneWatch {
+    fn progress(&self, _progress: SceneRepairProgress) {}
+
+    fn cancelled(&self) -> bool {
+        Unwatched.cancelled()
+    }
+}
+
 impl Scene {
     /// Runs the enabled repair passes over every stored mesh and reports 1
     /// outcome per target, in [`Scene::mesh_targets`] order. A refused target
@@ -36,21 +101,53 @@ impl Scene {
     /// least as valid as before the call (refused meshes are byte-identical,
     /// applied passes only shrink the problem set).
     pub fn repair_meshes(&mut self, passes: RepairPasses) -> Vec<SceneRepairOutcome> {
+        match self.repair_meshes_watched(passes, &NoSceneWatch) {
+            Ok(outcomes) => outcomes,
+            // An unwatched run is never cancelled.
+            Err(RepairCancelled) => unreachable!("an unwatched repair was cancelled"),
+        }
+    }
+
+    /// [`Self::repair_meshes`], telling `watch` how far the run is and
+    /// stopping before a step when it asks to. The repaired meshes are put in
+    /// place only once every target is done: a run that stops returns
+    /// [`RepairCancelled`] and leaves the scene exactly as it was.
+    pub fn repair_meshes_watched(
+        &mut self,
+        passes: RepairPasses,
+        watch: &dyn SceneRepairWatch,
+    ) -> Result<Vec<SceneRepairOutcome>, RepairCancelled> {
         let targets = self.mesh_targets();
+        // Each target weighs its faces; 1 at least, so a run of empty meshes
+        // still moves.
+        let weights: Vec<f32> = targets
+            .iter()
+            .map(|&target| self.target_mesh(target).map_or(1, |m| m.faces.len().max(1)) as f32)
+            .collect();
+        let total: f32 = weights.iter().sum::<f32>().max(1.0);
+        let mut before = 0.0;
         let mut outcomes = Vec::with_capacity(targets.len());
-        for target in targets {
+        let mut repaired_meshes = Vec::new();
+        for (i, (&target, &weight)) in targets.iter().zip(&weights).enumerate() {
+            let share = weight / total;
             let Some(mesh) = self.target_mesh(target) else {
                 // `mesh_targets` lists live storage only; a dead target here
                 // would be a broken graph invariant. Skipping keeps the driver
                 // total.
+                before += share;
                 continue;
             };
-            let (report, repaired, details) = repaired_copy_with_details(mesh, passes);
+            let target_watch = TargetWatch {
+                scene: watch,
+                target: i,
+                targets: targets.len(),
+                before,
+                share,
+            };
+            let (report, repaired, details) = repaired_copy_watched(mesh, passes, &target_watch)?;
+            before += share;
             if let Some(repaired) = repaired {
-                let Some(mesh) = self.target_mesh_mut(target) else {
-                    continue;
-                };
-                *mesh = repaired;
+                repaired_meshes.push((target, repaired));
             }
             outcomes.push(SceneRepairOutcome {
                 target,
@@ -58,7 +155,15 @@ impl Scene {
                 details,
             });
         }
-        outcomes
+        if watch.cancelled() {
+            return Err(RepairCancelled);
+        }
+        for (target, repaired) in repaired_meshes {
+            if let Some(mesh) = self.target_mesh_mut(target) {
+                *mesh = repaired;
+            }
+        }
+        Ok(outcomes)
     }
 }
 
@@ -254,6 +359,117 @@ mod scene_repair_tests {
             graph.leaf_mesh_arc(clean_leaf).unwrap(),
             &held_clean
         ));
+    }
+
+    /// Records the progress of a watched run, and cancels once it was asked
+    /// `cancel_after` times.
+    struct Recorder {
+        seen: std::cell::RefCell<Vec<SceneRepairProgress>>,
+        asked: std::cell::Cell<usize>,
+        cancel_after: usize,
+    }
+
+    impl Recorder {
+        fn new(cancel_after: usize) -> Self {
+            Self {
+                seen: Default::default(),
+                asked: Default::default(),
+                cancel_after,
+            }
+        }
+    }
+
+    impl SceneRepairWatch for Recorder {
+        fn progress(&self, progress: SceneRepairProgress) {
+            self.seen.borrow_mut().push(progress);
+        }
+
+        fn cancelled(&self) -> bool {
+            let asked = self.asked.get();
+            self.asked.set(asked + 1);
+            asked >= self.cancel_after
+        }
+    }
+
+    /// 2 repairable targets and a clean one.
+    fn two_broken_and_a_clean_one() -> Scene {
+        let mut graph = Scene::new();
+        let root = add_root_group(&mut graph);
+        add_inline_leaf(&mut graph, root, flipped_tetrahedron());
+        add_inline_leaf(&mut graph, root, tetrahedron());
+        let rid = graph.add_mesh_resource(flipped_tetrahedron());
+        let res_leaf = graph
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        graph.add_child(root, res_leaf).unwrap();
+        graph
+    }
+
+    /// The `Arc` of every target of `graph`, in walk order.
+    fn arcs(graph: &Scene) -> Vec<*const IndexedMesh> {
+        graph
+            .mesh_targets()
+            .into_iter()
+            .map(|target| match target {
+                MeshTarget::Resource(rid) => Arc::as_ptr(graph.mesh_resource_arc(rid).unwrap()),
+                MeshTarget::InlineLeaf(id) => Arc::as_ptr(graph.leaf_mesh_arc(id).unwrap()),
+            })
+            .collect()
+    }
+
+    /// Pins that a watched run gives what an unwatched one gives, and that
+    /// its progress walks every target, in order, never going back.
+    #[test]
+    fn a_watched_run_repairs_as_an_unwatched_one_and_walks_every_target() {
+        let mut plain = two_broken_and_a_clean_one();
+        let mut watched = two_broken_and_a_clean_one();
+        let expected = plain.repair_meshes(RepairPasses::default_repair());
+        let watch = Recorder::new(usize::MAX);
+        let outcomes = watched
+            .repair_meshes_watched(RepairPasses::default_repair(), &watch)
+            .expect("never cancelled");
+        assert_eq!(outcomes.len(), expected.len());
+        for (a, b) in outcomes.iter().zip(&expected) {
+            assert_eq!(a.target, b.target);
+            assert_eq!(a.report, b.report);
+            assert_eq!(a.details.after, b.details.after);
+        }
+        for target in plain.mesh_targets() {
+            assert_eq!(plain.target_mesh(target), watched.target_mesh(target));
+        }
+        let seen = watch.seen.into_inner();
+        let targets: Vec<usize> = seen.iter().map(|p| p.target).collect();
+        assert_eq!(targets.first(), Some(&0));
+        assert_eq!(targets.last(), Some(&2));
+        assert!(targets.windows(2).all(|w| w[0] <= w[1]));
+        assert!(seen.iter().all(|p| p.targets == 3));
+        assert!(seen.windows(2).all(|w| w[0].done <= w[1].done));
+        assert!(seen.last().is_some_and(|p| p.done > 0.9 && p.done <= 1.0));
+    }
+
+    /// Pins that a run cancelled at any point leaves every mesh of the scene
+    /// where it was: none of the targets done before the cancel is put in.
+    #[test]
+    fn a_cancelled_run_leaves_the_scene_exactly_as_it_was() {
+        let full = Recorder::new(usize::MAX);
+        two_broken_and_a_clean_one()
+            .repair_meshes_watched(RepairPasses::default_repair(), &full)
+            .expect("never cancelled");
+        let asked = full.asked.get();
+        assert!(asked > 5);
+        for k in 0..asked {
+            let mut graph = two_broken_and_a_clean_one();
+            let before = arcs(&graph);
+            let watch = Recorder::new(k);
+            assert_eq!(
+                graph
+                    .repair_meshes_watched(RepairPasses::default_repair(), &watch)
+                    .err(),
+                Some(RepairCancelled),
+                "cancel after {k} asks"
+            );
+            assert_eq!(arcs(&graph), before, "cancel after {k} asks");
+        }
     }
 
     /// Pins that a hole too large to fill (the strip is a flat plate) is a

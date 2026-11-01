@@ -22,6 +22,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::thread::JoinHandle;
 
 use sc_print_primitives::{BuildVolume, MaterialId, OutputFormatBindings, PrinterId};
 pub use sc_print_profiles::{CalibrationCoverage, ProfileSource};
@@ -109,6 +110,37 @@ pub struct ProfileCatalog {
     /// entry in `materials`. An extension whose base is absent degrades to a
     /// standalone entry in `materials`.
     extensions: Vec<MaterialExtensionEntry>,
+}
+
+/// A catalog being read on a worker thread, so that reading the 2 libraries
+/// overlaps the rest of the launch (the graphics device takes longer) instead
+/// of adding to it (#359).
+#[derive(Debug)]
+pub struct CatalogLoad {
+    libraries: ProfileLibraries,
+    worker: Option<JoinHandle<ProfileCatalog>>,
+}
+
+impl CatalogLoad {
+    /// Starts reading `libraries`. When no thread can start, [`Self::finish`]
+    /// reads them itself.
+    pub fn start(libraries: ProfileLibraries) -> Self {
+        let read = libraries.clone();
+        let worker = std::thread::Builder::new()
+            .name("profile-catalog".into())
+            .spawn(move || ProfileCatalog::from_libraries(&read))
+            .ok();
+        Self { libraries, worker }
+    }
+
+    /// The catalog, the same one [`ProfileCatalog::from_libraries`] builds;
+    /// waits for the worker when it is not done yet. Should the worker have
+    /// panicked, the libraries are read again here.
+    pub fn finish(self) -> ProfileCatalog {
+        self.worker
+            .and_then(|worker| worker.join().ok())
+            .unwrap_or_else(|| ProfileCatalog::from_libraries(&self.libraries))
+    }
 }
 
 impl ProfileCatalog {

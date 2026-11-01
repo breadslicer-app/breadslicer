@@ -26,7 +26,7 @@ use super::helpers::{
     collect_fan_shaft_points, collect_host_entities, compute_mesh_volume_mm3,
     count_attachments_on_host, filter_already_supported, is_host_at_attachment_capacity,
     member_max_angle_from_vertical_deg, rehost_legacy_knots, resolve_surface_normal,
-    sync_contact_cone_diameters, validate_and_cull_orphans,
+    sync_contact_cone_diameters_with, validate_and_cull_orphans,
 };
 use super::place::{PlaceArgs, PlaceOutcome, RejectReason, place_one_candidate};
 use super::report::{
@@ -70,6 +70,7 @@ use crate::supports::auto_support::support_draft::{draft_add_entity, draft_add_p
 use crate::supports::auto_support::types::{
     AutoSupportMesh, CandidatePoint, CandidateSource, js_compare,
 };
+use crate::supports::auto_support::zone_candidates::{ZoneInput, generate_zone_candidates};
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::support_type_registry::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportPlacementMetric, SupportTypeId,
@@ -189,6 +190,17 @@ pub struct PlanInput<'a> {
     /// The models registered for auto-bracing's clearance checks
     /// (`getAllMeshEntriesForAutoBrace()`).
     pub brace_meshes: &'a BraceMeshes<'a>,
+    /// SoulCrafted (#360): what the zone rules read beyond the islands,
+    /// when the settings carry them.
+    pub zone: Option<ZonePlanInput<'a>>,
+}
+
+/// The zone rules' extra inputs (SoulCrafted, #360).
+#[derive(Clone, Copy)]
+pub struct ZonePlanInput<'a> {
+    /// The down-facing regions up to the stabilization angle.
+    pub steep: &'a [DetectedIsland],
+    pub layer_height_mm: f64,
 }
 
 /// A tip within this of an island's contact covers it (islands without
@@ -292,6 +304,7 @@ impl RunState {
         sizing_ctx: Option<&ModelSizingContext>,
         ctx: &PlanCtx<'_>,
     ) -> Option<SupportTypeId> {
+        ctx.set_zone(candidate.zone_size);
         let result: PlaceOutcome = place_one_candidate(
             candidate,
             &mut self.draft,
@@ -302,6 +315,7 @@ impl RunState {
             ctx,
             false,
         );
+        ctx.set_zone(None);
         let placed_a_grid_host = result
             .kind
             .is_some_and(|k| get_support_type_descriptor(k).can_be_grid_host);
@@ -372,7 +386,7 @@ impl RunState {
                 preset: result
                     .preset
                     .unwrap_or_else(|| preset_for_area(candidate.island_area_mm2)),
-                band_shaft_mm: ctx.bands.active(ctx.live).shaft_diameter_mm,
+                band_shaft_mm: ctx.bands.active(ctx.live()).shaft_diameter_mm,
             });
         }
         result.kind
@@ -416,7 +430,7 @@ pub fn compute_auto_support_plan(
     if !auto.enabled {
         return None;
     }
-    let live = ctx.live;
+    let live = ctx.live();
     let islands = input.islands;
     let model_id = input.model_id;
     let before = input.base_state.clone();
@@ -473,7 +487,32 @@ pub fn compute_auto_support_plan(
         .as_ref()
         .is_some_and(|p| is_slender_part(p.height_mm, p.volume_mm3, p.bearing_area_mm2));
 
-    let mut candidates: Vec<CandidatePoint> = {
+    let zone_rules = auto.zone_rules.as_ref();
+    let mut candidates: Vec<CandidatePoint> = if let Some(rules) = zone_rules {
+        // SoulCrafted (#360): the zone rules make every candidate, and they
+        // stand in for the stabilization anchors, the minima rings, the
+        // density grid and the deduplication below.
+        let field = mesh.map(|m| m.field());
+        let auto_mesh = mesh.zip(field.as_deref()).map(|(m, f)| AutoSupportMesh {
+            mesh: ModelMesh {
+                field: f,
+                rays: m.rays(),
+            },
+            side: m.side,
+            blocked: m.blocked,
+        });
+        let zone = input.zone.unwrap_or(ZonePlanInput {
+            steep: &[],
+            layer_height_mm: 0.05,
+        });
+        generate_zone_candidates(&ZoneInput {
+            islands: &islands_to_cover,
+            steep: zone.steep,
+            rules,
+            layer_height_mm: zone.layer_height_mm,
+            mesh: auto_mesh,
+        })
+    } else {
         let field = mesh.map(|m| m.field());
         let auto_mesh = mesh.zip(field.as_deref()).map(|(m, f)| AutoSupportMesh {
             mesh: ModelMesh {
@@ -491,6 +530,7 @@ pub fn compute_auto_support_plan(
 
     // Stabilization anchors: standalone trunks that broaden a point/edge bearing.
     if auto.stabilization_enabled
+        && zone_rules.is_none()
         && let Some(m) = mesh
     {
         let anchors = compute_stabilization_anchors(
@@ -511,12 +551,14 @@ pub fn compute_auto_support_plan(
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: None,
+                zone_size: None,
             });
         }
     }
 
     // Minima reinforcement: a ring of contacts on a minima's own flank.
     if auto.minima_reinforcement_enabled
+        && zone_rules.is_none()
         && let Some(m) = mesh
     {
         let points =
@@ -533,6 +575,7 @@ pub fn compute_auto_support_plan(
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: None,
+                zone_size: None,
             });
         }
     }
@@ -545,7 +588,7 @@ pub fn compute_auto_support_plan(
         .collect();
     let eligible: Vec<DetectedIsland> = overhang_islands
         .iter()
-        .filter(|i| should_use_density_grid(i, &auto))
+        .filter(|i| zone_rules.is_none() && should_use_density_grid(i, &auto))
         .cloned()
         .collect();
     if !eligible.is_empty() {
@@ -590,7 +633,9 @@ pub fn compute_auto_support_plan(
     perf::mark("auto:dedup-filter");
     // ── 2. Dedup, then the already-supported filter ─────────────────
     let before_dedup = candidates.len();
-    candidates = deduplicate_candidates(&candidates, &auto);
+    if zone_rules.is_none() {
+        candidates = deduplicate_candidates(&candidates, &auto);
+    }
     let deduped_candidates = candidates.len();
     if candidates.is_empty() {
         return noop_plan(before.clone(), AutoPlaceStatus::AllDeduplicated);
@@ -687,6 +732,8 @@ pub fn compute_auto_support_plan(
             };
             let tip = cone.pos;
             let tip_normal = cone.normal;
+            // A host keeps its own zone size as a member.
+            let host_zone = ctx.zone_of_tip(cone.profile.contact_diameter_mm);
             let host_pool: Vec<_> = pool
                 .iter()
                 .filter(|sp| sp.host_id != host_id)
@@ -704,6 +751,7 @@ pub fn compute_auto_support_plan(
                 .collections
                 .roots
                 .shift_remove_full(&entity.root_id);
+            ctx.set_zone(host_zone);
             let fan = fan_leaf_to_host(
                 &FanArgs {
                     target: tip,
@@ -730,6 +778,7 @@ pub fn compute_auto_support_plan(
                     entity_id,
                     ..
                 } => {
+                    ctx.set_zone(None);
                     add_fanned(&mut run.draft, kind, *parent_knot, *member);
                     pool = host_pool;
                     run.record_conversion(&host_id, host_type_id, kind, &entity_id);
@@ -753,6 +802,7 @@ pub fn compute_auto_support_plan(
                         )
                     })
                     .flatten();
+                    ctx.set_zone(None);
                     if let Some((parent_knot, member, branch_id, kind)) = branch {
                         add_fanned(&mut run.draft, kind, parent_knot, member);
                         pool = host_pool;
@@ -777,10 +827,17 @@ pub fn compute_auto_support_plan(
         }
     }
 
+    ctx.set_zone(None);
     perf::measure("auto:consolidation");
     perf::mark("auto:gap-fill");
     // ── Coverage convergence (gap-fill) ─────────────────────────────
-    for _ in 0..MAX_GAP_FILL_PASSES {
+    // The zone rules set their own density: no gap-fill on top.
+    let gap_fill_passes = if zone_rules.is_some() {
+        0
+    } else {
+        MAX_GAP_FILL_PASSES
+    };
+    for _ in 0..gap_fill_passes {
         // Reads the committed store, not the draft, as DragonFruit does.
         let tips = collect_support_tips(input.committed);
         let mut gap_candidates = build_gap_fill_candidates(&overhang_islands, &auto, &tips);
@@ -837,6 +894,7 @@ pub fn compute_auto_support_plan(
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: None,
+                zone_size: None,
             };
             let size_scale = live.auto_support.size_scale;
             let s_min = size_parameters(
@@ -1154,8 +1212,11 @@ pub fn compute_auto_support_plan(
     perf::mark("auto:resize-report");
     // ── 4. Forest resize, rehost, orphan cull, cone sync, report ────
     if changed {
-        let resized = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
-        run.draft = resized;
+        // A zone size keeps its trunk whatever it carries (#360).
+        if zone_rules.is_none() {
+            let resized = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
+            run.draft = resized;
+        }
         run.draft = rehost_legacy_knots(&run.draft);
         let mut orphan_infos: Vec<OrphanInfo> = Vec::new();
         let pre_cull_draft = run.draft.clone();
@@ -1205,6 +1266,7 @@ pub fn compute_auto_support_plan(
                         priority: 0.0,
                         tip_diameter_mm: None,
                         grid_point: None,
+                        zone_size: None,
                     };
                     let result = place_one_candidate(
                         &recandidate,
@@ -1265,7 +1327,12 @@ pub fn compute_auto_support_plan(
                 }
             }
         }
-        run.draft = sync_contact_cone_diameters(&run.draft);
+        let leaf_body_ratio = if zone_rules.is_some() {
+            auto.member_host_shaft_ratio
+        } else {
+            1.0
+        };
+        run.draft = sync_contact_cone_diameters_with(&run.draft, leaf_body_ratio);
 
         let mut forest_report = build_forest_report(&run.draft, &run.forest_ledger);
         let mut by_source = BySource::default();

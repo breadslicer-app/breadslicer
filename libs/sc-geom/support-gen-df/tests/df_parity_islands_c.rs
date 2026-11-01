@@ -137,7 +137,11 @@ fn mesh_to_braced_forest_matches_dragonfruit() {
             run["overhangPxMm"].as_f64().unwrap() as f32,
             run["hasRaft"].as_bool().unwrap(),
         );
-        let soup_scan = OverhangScan { regions, stability };
+        let soup_scan = OverhangScan {
+            regions,
+            stability,
+            steep_regions: Vec::new(),
+        };
         let derived = derive_islands(
             &combined,
             &soup_scan,
@@ -166,6 +170,7 @@ fn mesh_to_braced_forest_matches_dragonfruit() {
         let empty = SupportState::default();
         let plan = compute_auto_support_plan(
             &PlanInput {
+                zone: None,
                 islands: &derived.filtered,
                 model_id: name,
                 settings_override: Some(&live.auto_support),

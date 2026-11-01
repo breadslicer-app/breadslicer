@@ -120,6 +120,7 @@ fn real_model_hollow_timings() {
     let request = GridRequest {
         voxel_size_mm: env_or("SC_BENCH_VOXEL", 0.65f32),
         max_resolution: env_or("SC_BENCH_MAX_RES", 192u16),
+        ..GridRequest::default()
     };
     let settings = HollowSettings {
         wall_thickness_mm: env_or("SC_BENCH_WALL", 2.0f32),
@@ -268,6 +269,7 @@ fn real_model_drain_report_timings() {
     let request = GridRequest {
         voxel_size_mm: env_or("SC_BENCH_VOXEL", 0.65f32),
         max_resolution: env_or("SC_BENCH_MAX_RES", 192u16),
+        ..GridRequest::default()
     };
     let settings = HollowSettings {
         wall_thickness_mm: env_or("SC_BENCH_WALL", 2.0f32),

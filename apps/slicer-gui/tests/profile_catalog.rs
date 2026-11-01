@@ -14,7 +14,7 @@ use std::path::Path;
 use sc_print_primitives::{FormatKind, MaterialId, NonEmptyString, PrinterId};
 use sc_print_profiles::{CalibrationTarget, ProfileLibraries};
 use sc_slicer_gui::profile_catalog::{
-    CalibrationCoverage, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
+    CalibrationCoverage, CatalogLoad, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
 };
 
 /// Builds the catalog from an optional user root and 1 bundled root.
@@ -187,6 +187,58 @@ fn empty_libraries_yield_an_empty_catalog() {
     let catalog = catalog_from(None, &dir.path().join("does-not-exist"));
     assert!(catalog.printers().is_empty());
     assert!(catalog.materials().is_empty());
+}
+
+#[test]
+fn a_catalog_read_on_a_worker_is_the_one_read_in_place() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "a-one",
+        "Alpha",
+        "One",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+    write_printer(
+        user.path(),
+        "z-two",
+        "Zeta",
+        "Two",
+        (120.0, 70.0, 90.0),
+        None,
+    );
+    write_material(user.path(), "r-one", "Resin Co", "One", "Standard", &[]);
+    let libraries = ProfileLibraries::new(Some(user.path().into()), vec![bundled.path().into()]);
+
+    let read = CatalogLoad::start(libraries.clone()).finish();
+
+    assert_eq!(read, ProfileCatalog::from_libraries(&libraries));
+    assert_eq!(read.printers().len(), 2);
+    assert_eq!(read.materials().len(), 1);
+}
+
+#[test]
+fn the_bundled_profiles_read_on_a_worker_are_all_there() {
+    let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/profiles");
+    let libraries = ProfileLibraries::new(None, vec![bundled.clone()]);
+    let on_disk = |kind: &str| {
+        fs::read_dir(bundled.join(kind))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .is_ok_and(|e| e.path().extension().is_some_and(|x| x == "toml"))
+            })
+            .count()
+    };
+
+    let read = CatalogLoad::start(libraries.clone()).finish();
+
+    assert_eq!(read.printers().len(), on_disk("printers"));
+    assert!(!read.materials().is_empty());
+    assert_eq!(read, ProfileCatalog::from_libraries(&libraries));
 }
 
 #[test]

@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::voxel_footprint::VoxelFootprint;
+use crate::native::islands::body::IslandBody;
 use crate::supports::types::Vec3;
 
 /// Which detector produced an island.
@@ -112,6 +113,9 @@ pub struct DetectedIsland {
     pub fully_supported: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<DetectedIsland>>,
+    /// SoulCrafted (#360): the island's body, from a scan that measured it.
+    #[serde(skip)]
+    pub body: Option<std::sync::Arc<IslandBody>>,
 }
 
 /// Default proximity (mm) for the "already supported" dedupe.

@@ -189,11 +189,11 @@ fn build_sized_trunk(input: &TrunkBuildInput<'_>, ctx: &PlanCtx<'_>) -> TrunkBui
                     matrix_world: mesh.matrix,
                     stats: &mut stats,
                 },
-                ctx.live,
+                ctx.live(),
                 &mut || ctx.id(),
             )
         }
-        None => build_trunk_data(input, ctx.live, &mut || ctx.id()).expect("mesh-free build"),
+        None => build_trunk_data(input, ctx.live(), &mut || ctx.id()).expect("mesh-free build"),
     }
 }
 
@@ -209,7 +209,7 @@ pub fn place_one_candidate(
     ctx: &PlanCtx<'_>,
     ignore_grid: bool,
 ) -> PlaceOutcome {
-    let live: &SupportSettings = ctx.live;
+    let live: &SupportSettings = ctx.live();
     let auto = &live.auto_support;
     let grid_enabled = live.grid.enabled && !ignore_grid;
     let mesh = ctx.mesh.as_ref();
@@ -423,7 +423,19 @@ pub fn place_one_candidate(
                 }),
                 Err(_) => None,
             };
-            let band = ctx.bands.active(live);
+            // SoulCrafted (#360): a zone preset bridges a cavity with its
+            // thinnest size, whatever the zone: a cavity is tight.
+            let band = live
+                .auto_support
+                .zone_rules
+                .as_ref()
+                .and_then(|r| {
+                    r.sizes
+                        .iter()
+                        .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
+                        .map(|s| s.band())
+                })
+                .unwrap_or_else(|| ctx.bands.active(live));
             let bridge = {
                 let field = mesh.field();
                 build_cavity_bridge(
@@ -602,7 +614,7 @@ fn try_merge(
     draft: &SupportState,
     ctx: &PlanCtx<'_>,
 ) -> Option<Merge> {
-    let live = ctx.live;
+    let live = ctx.live();
     let mesh = ctx.mesh.as_ref();
     let host_entity = host_entity_of(draft, host.host_type_id, &host.host_id);
     let steep_min_rise_deg = js_max(45.0, 90.0 - member_max_angle_from_vertical_deg(live));
