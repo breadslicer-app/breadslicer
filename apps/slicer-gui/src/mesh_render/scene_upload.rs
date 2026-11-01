@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
@@ -89,6 +90,13 @@ pub(super) const fn align_up(size: u64, alignment: u64) -> u64 {
 /// per-leaf state (selection stencil) against the graph's stable id.
 pub(super) struct ObjectDraw {
     node_id: NodeId,
+    buffers: Arc<MeshBuffers>,
+}
+
+/// The local-space vertex and index buffers of one mesh. Every leaf that draws
+/// the same mesh the same way holds the same buffers, so a copy of an object
+/// costs no upload of its own (#353).
+pub(super) struct MeshBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
@@ -100,15 +108,101 @@ impl ObjectDraw {
     }
 
     pub(super) fn vertex_buffer(&self) -> &wgpu::Buffer {
-        &self.vertex_buffer
+        &self.buffers.vertex_buffer
     }
 
     pub(super) fn index_buffer(&self) -> &wgpu::Buffer {
-        &self.index_buffer
+        &self.buffers.index_buffer
     }
 
     pub(super) fn index_count(&self) -> u32 {
-        self.index_count
+        self.buffers.index_count
+    }
+
+    /// Whether this object draws from the very buffers `other` draws from.
+    #[cfg(test)]
+    pub(super) fn shares_buffers_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.buffers, &other.buffers)
+    }
+
+    /// The buffers this object draws from.
+    #[cfg(test)]
+    pub(super) fn buffers_for_test(&self) -> Arc<MeshBuffers> {
+        Arc::clone(&self.buffers)
+    }
+}
+
+/// What the buffers of a mesh depend on: the mesh, by address, and whether it
+/// is drawn smooth, which a preference can change between two uploads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct MeshKey {
+    mesh: usize,
+    smooth: bool,
+}
+
+impl MeshKey {
+    fn of(mesh: &Arc<IndexedMesh>) -> Self {
+        Self {
+            mesh: Arc::as_ptr(mesh) as usize,
+            smooth: super::smooth_shading::shades_smooth(mesh),
+        }
+    }
+}
+
+/// The meshes a [`GpuScene`] uploaded, with their buffers and local boxes, so
+/// that the next upload reuses what it still draws instead of flattening and
+/// uploading it again: a paste, a deletion or an undo then uploads only the
+/// meshes that are new to the scene (#353).
+///
+/// An entry holds a [`Weak`] to its mesh. While it lives the allocation cannot
+/// be reused by another mesh, and the mesh cannot change in place:
+/// `Arc::get_mut` refuses and `Arc::make_mut` moves the mesh to a new address.
+/// So a live entry always describes the vertices the mesh has now, as in
+/// [`HullPointsCache`].
+#[derive(Default)]
+pub(super) struct UploadedMeshes {
+    entries: HashMap<MeshKey, UploadedMesh>,
+}
+
+struct UploadedMesh {
+    mesh: Weak<IndexedMesh>,
+    buffers: Arc<MeshBuffers>,
+    local_aabb: Option<Aabb>,
+}
+
+impl UploadedMeshes {
+    /// The entry of `key`, when its mesh still lives.
+    fn get(&self, key: MeshKey) -> Option<&UploadedMesh> {
+        self.entries
+            .get(&key)
+            .filter(|entry| entry.mesh.strong_count() > 0)
+    }
+
+    /// Whether it holds the buffers of the live mesh at address `mesh`.
+    fn holds(&self, mesh: usize) -> bool {
+        [false, true]
+            .into_iter()
+            .any(|smooth| self.get(MeshKey { mesh, smooth }).is_some())
+    }
+
+    /// Keeps only the entries of meshes `graph` draws, the way it draws them.
+    pub(super) fn retain_drawn(&mut self, graph: &Scene) -> Result<()> {
+        let mut drawn: HashSet<MeshKey> = HashSet::new();
+        graph.for_each_expanded_leaf::<SceneError, _>(CsgPolicy::Descend, |node_id, _, mesh| {
+            if let Some(shared) = shared_mesh(graph, node_id, mesh) {
+                drawn.insert(MeshKey::of(shared));
+            }
+            Ok(())
+        })?;
+        self.entries
+            .retain(|key, entry| drawn.contains(key) && entry.mesh.strong_count() > 0);
+        Ok(())
+    }
+
+    /// How many meshes it holds the buffers of.
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
     }
 }
 
@@ -324,6 +418,8 @@ fn upload_buffer(
 /// [`Renderer::install_scene`](super::Renderer::install_scene).
 pub struct GpuScene {
     objects: Vec<ObjectDraw>,
+    /// The buffers of each mesh in `objects`, for the next upload to reuse.
+    meshes: UploadedMeshes,
     model_buffer: wgpu::Buffer,
     /// Distance in bytes between consecutive `ModelEntry` slots in
     /// `model_buffer`. Always at least `MODEL_ENTRY_SIZE` and a multiple of the
@@ -377,6 +473,27 @@ impl GpuScene {
         device_token: super::DeviceToken,
         graph: &Scene,
         device_loss: &DeviceLoss,
+        progress: impl FnMut(UploadProgress),
+    ) -> Result<Self> {
+        Self::build_reusing(
+            device,
+            device_token,
+            graph,
+            device_loss,
+            UploadedMeshes::default(),
+            progress,
+        )
+    }
+
+    /// Builds the scene as [`GpuScene::build_with_progress`] does, taking the
+    /// buffers of every mesh `uploaded` holds from there instead of uploading
+    /// them again. `uploaded` must come from a scene built on `device`.
+    pub(super) fn build_reusing(
+        device: &wgpu::Device,
+        device_token: super::DeviceToken,
+        graph: &Scene,
+        device_loss: &DeviceLoss,
+        uploaded: UploadedMeshes,
         mut progress: impl FnMut(UploadProgress),
     ) -> Result<Self> {
         let mut scene_triangles: u64 = 0;
@@ -397,42 +514,61 @@ impl GpuScene {
             });
         };
 
-        let data = build_gpu_scene_data(graph, |triangles| {
+        let data = build_gpu_scene_data(graph, &uploaded, |triangles| {
             tick(&mut processed_triangles, triangles);
         })?;
         check_leaf_buffers_fit(&data.objects, device.limits().max_buffer_size)?;
-        let mut objects = Vec::with_capacity(data.objects.len());
+        let mut objects: Vec<ObjectDraw> = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
-            let vertex_buffer = upload_buffer(
-                device,
-                device_loss,
-                "mesh-viewer object vertex buffer",
-                bytemuck::cast_slice(&obj.vertices),
-                wgpu::BufferUsages::VERTEX,
-                || UploadBuffer::Object {
-                    kind: LeafBufferKind::Vertex,
-                    name: obj.name.clone(),
-                },
-            )?;
-            let index_buffer = upload_buffer(
-                device,
-                device_loss,
-                "mesh-viewer object index buffer",
-                bytemuck::cast_slice(&obj.indices),
-                wgpu::BufferUsages::INDEX,
-                || UploadBuffer::Object {
-                    kind: LeafBufferKind::Index,
-                    name: obj.name.clone(),
-                },
-            )?;
+            let buffers = match &obj.source {
+                ObjectSource::Flattened { vertices, indices } => Arc::new(MeshBuffers {
+                    vertex_buffer: upload_buffer(
+                        device,
+                        device_loss,
+                        "mesh-viewer object vertex buffer",
+                        bytemuck::cast_slice(vertices),
+                        wgpu::BufferUsages::VERTEX,
+                        || UploadBuffer::Object {
+                            kind: LeafBufferKind::Vertex,
+                            name: obj.name.clone(),
+                        },
+                    )?,
+                    index_buffer: upload_buffer(
+                        device,
+                        device_loss,
+                        "mesh-viewer object index buffer",
+                        bytemuck::cast_slice(indices),
+                        wgpu::BufferUsages::INDEX,
+                        || UploadBuffer::Object {
+                            kind: LeafBufferKind::Index,
+                            name: obj.name.clone(),
+                        },
+                    )?,
+                    index_count: indices.len() as u32,
+                }),
+                ObjectSource::Uploaded(buffers) => Arc::clone(buffers),
+                ObjectSource::SameAs(first) => Arc::clone(&objects[*first].buffers),
+            };
             objects.push(ObjectDraw {
                 node_id: obj.node_id,
-                vertex_buffer,
-                index_buffer,
-                index_count: obj.indices.len() as u32,
+                buffers,
             });
-            tick(&mut processed_triangles, (obj.indices.len() / 3) as u64);
+            tick(&mut processed_triangles, obj.triangles);
         }
+        let meshes = UploadedMeshes {
+            entries: data
+                .meshes
+                .into_iter()
+                .map(|record| {
+                    let entry = UploadedMesh {
+                        mesh: record.mesh,
+                        buffers: Arc::clone(&objects[record.object].buffers),
+                        local_aabb: record.local_aabb,
+                    };
+                    (record.key, entry)
+                })
+                .collect(),
+        };
 
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let model_stride = align_up(MODEL_ENTRY_SIZE, alignment);
@@ -458,6 +594,7 @@ impl GpuScene {
 
         Ok(Self {
             objects,
+            meshes,
             model_buffer,
             model_stride,
             device_token,
@@ -491,6 +628,17 @@ impl GpuScene {
 
     pub(super) fn aabb(&self) -> (Vec3, Vec3) {
         (self.aabb_min, self.aabb_max)
+    }
+
+    /// The meshes it uploaded.
+    pub(super) fn uploaded(&self) -> &UploadedMeshes {
+        &self.meshes
+    }
+
+    /// Drops the scene but for the buffers of its meshes, for the next upload
+    /// to reuse.
+    pub(super) fn into_uploaded(self) -> UploadedMeshes {
+        self.meshes
     }
 }
 
@@ -604,10 +752,35 @@ impl WorldBoxKey {
 }
 
 impl WorldBoxes {
+    /// How many leaf occurrences have a box remembered.
+    #[cfg(test)]
+    pub(super) fn remembered(&self) -> usize {
+        self.slots.iter().flatten().count()
+    }
+
     /// Forgets every box, and the hull points of meshes that are gone. Called
-    /// whenever the renderer installs or drops a scene.
+    /// whenever the renderer drops a scene.
     pub(super) fn clear(&mut self) {
         self.slots.clear();
+        self.hulls.prune();
+    }
+
+    /// Forgets the boxes of meshes `meshes` does not hold, and the hull
+    /// points of meshes that are gone. Called whenever the renderer installs
+    /// a scene, with that scene's meshes: a box of a mesh the scene before
+    /// drew, and this one still draws, stays valid, because the scene before
+    /// held a [`Weak`] to it all along and so the mesh could not change. A
+    /// paste then walks the vertices of the new copy alone, not of every
+    /// object again (#353).
+    pub(super) fn keep_for(&mut self, meshes: &UploadedMeshes) {
+        for slot in &mut self.slots {
+            if slot
+                .as_ref()
+                .is_some_and(|slot| !meshes.holds(slot.key.mesh))
+            {
+                *slot = None;
+            }
+        }
         self.hulls.prune();
     }
 
@@ -734,8 +907,49 @@ pub(super) fn renderable_leaf_count(graph: &Scene) -> Result<usize> {
 struct ObjectData {
     node_id: NodeId,
     name: Option<String>,
-    vertices: Vec<GpuVertex>,
-    indices: Vec<u32>,
+    /// The triangles of its mesh, for the progress ticks.
+    triangles: u64,
+    source: ObjectSource,
+}
+
+/// Where the buffers of an object come from.
+enum ObjectSource {
+    /// Its mesh, flattened here for an upload of its own.
+    Flattened {
+        vertices: Vec<GpuVertex>,
+        indices: Vec<u32>,
+    },
+    /// The buffers the scene before uploaded for the same mesh.
+    Uploaded(Arc<MeshBuffers>),
+    /// The buffers of the earlier object at this index, which draws the same
+    /// mesh.
+    SameAs(usize),
+}
+
+impl ObjectData {
+    /// The vertices this object uploads: none when it shares another's.
+    fn vertices(&self) -> &[GpuVertex] {
+        match &self.source {
+            ObjectSource::Flattened { vertices, .. } => vertices,
+            ObjectSource::Uploaded(_) | ObjectSource::SameAs(_) => &[],
+        }
+    }
+
+    /// The indices this object uploads: none when it shares another's.
+    fn indices(&self) -> &[u32] {
+        match &self.source {
+            ObjectSource::Flattened { indices, .. } => indices,
+            ObjectSource::Uploaded(_) | ObjectSource::SameAs(_) => &[],
+        }
+    }
+}
+
+/// A mesh the scene draws, with the first object that draws it.
+struct MeshRecord {
+    key: MeshKey,
+    mesh: Weak<IndexedMesh>,
+    local_aabb: Option<Aabb>,
+    object: usize,
 }
 
 /// Refuses the first leaf (pre-order, vertex buffer before index buffer) whose
@@ -747,24 +961,24 @@ fn check_leaf_buffers_fit(
     max_buffer_size: u64,
 ) -> std::result::Result<(), LeafBufferExceedsDeviceLimit> {
     for obj in objects {
-        let vertex_bytes = (obj.vertices.len() * size_of::<GpuVertex>()) as u64;
+        let vertex_bytes = size_of_val(obj.vertices()) as u64;
         if vertex_bytes > max_buffer_size {
             return Err(LeafBufferExceedsDeviceLimit {
                 node_id: obj.node_id,
                 leaf_name: obj.name.clone(),
                 buffer_kind: LeafBufferKind::Vertex,
-                num_elements: obj.vertices.len(),
+                num_elements: obj.vertices().len(),
                 num_bytes: vertex_bytes,
                 max_buffer_size,
             });
         }
-        let index_bytes = (obj.indices.len() * size_of::<u32>()) as u64;
+        let index_bytes = size_of_val(obj.indices()) as u64;
         if index_bytes > max_buffer_size {
             return Err(LeafBufferExceedsDeviceLimit {
                 node_id: obj.node_id,
                 leaf_name: obj.name.clone(),
                 buffer_kind: LeafBufferKind::Index,
-                num_elements: obj.indices.len() / 3,
+                num_elements: obj.indices().len() / 3,
                 num_bytes: index_bytes,
                 max_buffer_size,
             });
@@ -775,71 +989,88 @@ fn check_leaf_buffers_fit(
 
 struct SceneData {
     objects: Vec<ObjectData>,
+    meshes: Vec<MeshRecord>,
     aabb_min: Vec3,
     aabb_max: Vec3,
 }
 
 /// Builds, on the CPU, the per-object draw data and the world-space scene AABB,
 /// apart from buffer creation so that it can be unit-tested without a
-/// `wgpu::Device`. `on_object_flattened` receives each flattened object's
-/// triangle count (0 for geometry-less leaves), in traversal order; the
+/// `wgpu::Device`. A mesh that `uploaded` holds, or that an earlier leaf draws
+/// the same way, is not flattened again: its object takes those buffers.
+/// `on_object_flattened` receives each object's triangle count (0 for
+/// geometry-less leaves), in traversal order, whether flattened or shared; the
 /// progress plumbing in [`GpuScene::build_with_progress`] is its only non-test
 /// consumer.
 fn build_gpu_scene_data(
     graph: &Scene,
+    uploaded: &UploadedMeshes,
     mut on_object_flattened: impl FnMut(u64),
 ) -> Result<SceneData> {
     let mut objects: Vec<ObjectData> = Vec::new();
+    let mut meshes: Vec<MeshRecord> = Vec::new();
+    let mut record_of: HashMap<MeshKey, usize> = HashMap::new();
+    // The union of each leaf's local box placed by Arvo's method under its
+    // world transform: what `Scene::aabb` computes, from the boxes kept with
+    // the uploaded meshes instead of a walk over every vertex.
+    let mut scene_box = Aabb::empty();
+    let mut has_box = false;
     graph.for_each_expanded_leaf::<SceneError, _>(
         CsgPolicy::Descend,
-        |node_id, _world_transform, mesh| {
-            on_object_flattened(mesh.faces().len() as u64);
+        |node_id, world_transform, mesh| {
+            let triangles = mesh.faces().len() as u64;
+            on_object_flattened(triangles);
             let name = graph
                 .node(node_id)
                 .and_then(|node| node.meta.as_ref())
                 .and_then(|meta| meta.name.clone())
                 .or_else(|| mesh.meta.as_ref().and_then(|meta| meta.name.clone()));
-            if mesh.faces().is_empty() {
-                // A leaf with no geometry contributes nothing to the draw set,
-                // but we keep its slot in the model buffer so the per-frame
-                // `build_model_entries` walk (which uses the same pre-order
-                // traversal) lines up index-by-index with the renderer's
-                // per-leaf draw loop. The slot is drawn as a no-op (an
-                // `index_count` of 0).
-                objects.push(ObjectData {
-                    node_id,
-                    name,
-                    vertices: Vec::new(),
-                    indices: Vec::new(),
-                });
-                return Ok(());
-            }
-
-            // Supports always shade smooth; models only when the preference
-            // asks for it.
-            let (vertices, indices) = if super::smooth_shading::shades_smooth(mesh) {
-                let smooth = super::smooth_shading::smooth_mesh(mesh);
-                (smooth.vertices.clone(), smooth.indices.clone())
-            } else {
-                let vertices: Vec<GpuVertex> = mesh
-                    .vertices()
-                    .iter()
-                    .map(|v| GpuVertex::at(v.coords()))
-                    .collect();
-                let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
-                for face in mesh.faces() {
-                    for vidx in face.vertices {
-                        indices.push(u32::from(vidx));
+            let shared = shared_mesh(graph, node_id, mesh);
+            let key = shared.map(MeshKey::of);
+            let earlier = key
+                .and_then(|key| record_of.get(&key).copied())
+                .map(|record| (meshes[record].object, meshes[record].local_aabb));
+            let (source, local_aabb) = match earlier {
+                Some((object, local_aabb)) => (ObjectSource::SameAs(object), local_aabb),
+                None => {
+                    let (source, local_aabb) = match key.and_then(|key| uploaded.get(key)) {
+                        Some(entry) => (
+                            ObjectSource::Uploaded(Arc::clone(&entry.buffers)),
+                            entry.local_aabb,
+                        ),
+                        None => {
+                            let smooth = key.map_or_else(
+                                || super::smooth_shading::shades_smooth(mesh),
+                                |key| key.smooth,
+                            );
+                            (flatten(mesh, smooth), mesh.local_aabb())
+                        }
+                    };
+                    if let (Some(key), Some(shared)) = (key, shared) {
+                        record_of.insert(key, meshes.len());
+                        meshes.push(MeshRecord {
+                            key,
+                            mesh: Arc::downgrade(shared),
+                            local_aabb,
+                            object: objects.len(),
+                        });
                     }
+                    (source, local_aabb)
                 }
-                (vertices, indices)
             };
-
+            if let Some(local) = local_aabb {
+                let world = match world_transform {
+                    Transform3D::Identity => local,
+                    Transform3D::Affine(a) => local.transformed_arvo(a),
+                };
+                scene_box.union(&world);
+                has_box = true;
+            }
             objects.push(ObjectData {
                 node_id,
                 name,
-                vertices,
-                indices,
+                triangles,
+                source,
             });
             Ok(())
         },
@@ -849,23 +1080,61 @@ fn build_gpu_scene_data(
         return Err(NoLeavesToRender.into());
     }
 
-    // World-space scene AABB via `Scene::aabb`, which composes each leaf's
-    // ancestor chain via Arvo. If every leaf is empty, fall back to a
-    // degenerate AABB at the origin (the renderer's diagonal-clamp `.max(1e-3)`
-    // keeps the projection matrix well-defined).
-    let (aabb_min, aabb_max) = match graph.aabb()? {
-        Some(aabb) => (
-            Vec3::from(aabb.min().coords()),
-            Vec3::from(aabb.max().coords()),
-        ),
-        None => (Vec3::ZERO, Vec3::ZERO),
+    // If every leaf is empty, fall back to a degenerate AABB at the origin
+    // (the renderer's diagonal-clamp `.max(1e-3)` keeps the projection matrix
+    // well-defined).
+    let (aabb_min, aabb_max) = if has_box {
+        (
+            Vec3::from(scene_box.min().coords()),
+            Vec3::from(scene_box.max().coords()),
+        )
+    } else {
+        (Vec3::ZERO, Vec3::ZERO)
     };
 
     Ok(SceneData {
         objects,
+        meshes,
         aabb_min,
         aabb_max,
     })
+}
+
+/// The vertices and indices of `mesh` for its own upload, shaded smooth when
+/// `smooth`.
+fn flatten(mesh: &IndexedMesh, smooth: bool) -> ObjectSource {
+    if mesh.faces().is_empty() {
+        // A leaf with no geometry contributes nothing to the draw set, but we
+        // keep its slot in the model buffer so the per-frame
+        // `build_model_entries` walk (which uses the same pre-order traversal)
+        // lines up index-by-index with the renderer's per-leaf draw loop. The
+        // slot is drawn as a no-op (an `index_count` of 0).
+        return ObjectSource::Flattened {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        };
+    }
+    // Supports always shade smooth; models only when the preference asks for
+    // it.
+    if smooth {
+        let smooth = super::smooth_shading::smooth_mesh(mesh);
+        return ObjectSource::Flattened {
+            vertices: smooth.vertices.clone(),
+            indices: smooth.indices.clone(),
+        };
+    }
+    let vertices: Vec<GpuVertex> = mesh
+        .vertices()
+        .iter()
+        .map(|v| GpuVertex::at(v.coords()))
+        .collect();
+    let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
+    for face in mesh.faces() {
+        for vidx in face.vertices {
+            indices.push(u32::from(vidx));
+        }
+    }
+    ObjectSource::Flattened { vertices, indices }
 }
 #[cfg(test)]
 mod build_gpu_scene_data_tests {
@@ -920,11 +1189,74 @@ mod build_gpu_scene_data_tests {
         }
     }
 
+    /// Every leaf after the first that draws a mesh shares the first one's
+    /// buffers instead of flattening the mesh again (#353).
+    #[test]
+    fn a_mesh_drawn_by_several_leaves_is_flattened_once() {
+        let (mut g, root) = graph_with_group_root();
+        let rid = g.add_mesh_resource(triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        ));
+        add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
+        add_resource_leaf(
+            &mut g,
+            root,
+            rid,
+            Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
+        );
+        let mut ticks = Vec::new();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |t| ticks.push(t)).unwrap();
+        assert_eq!(data.objects[0].indices(), vec![0, 1, 2]);
+        assert!(matches!(data.objects[1].source, ObjectSource::SameAs(0)));
+        assert_eq!(data.meshes.len(), 1);
+        // Both objects still count their triangles for the progress.
+        assert_eq!(ticks, vec![1, 1]);
+        assert_eq!(data.objects[1].triangles, 1);
+    }
+
+    /// The scene box comes from the local boxes kept with the meshes, and is
+    /// exactly the box `Scene::aabb` walks the vertices for.
+    #[test]
+    fn scene_box_is_bit_identical_to_the_scene_aabb() {
+        let mut g = Scene::new();
+        let tilt = Transform3D::Affine(
+            AffineTransform3D::from_rotation_z(0.3)
+                .compose(&AffineTransform3D::from_translation([1.25, -3.5, 0.75])),
+        );
+        let group = g.add_group(None, tilt);
+        g.add_root(group).unwrap();
+        let rid = g.add_mesh_resource(triangle_mesh(
+            vec![[0.1, 0.2, 0.3], [4.7, -1.3, 2.2], [-0.9, 3.3, 1.1]],
+            [0, 1, 2],
+        ));
+        add_resource_leaf(
+            &mut g,
+            group,
+            rid,
+            Transform3D::Affine(AffineTransform3D::from_rotation_x(1.1)),
+        );
+        add_resource_leaf(&mut g, group, rid, Transform3D::Identity);
+        add_inline_leaf(
+            &mut g,
+            group,
+            triangle_mesh(
+                vec![[-7.5, 2.0, 0.0], [3.0, 8.25, -6.0], [0.0, 0.0, 9.0]],
+                [0, 1, 2],
+            ),
+            Transform3D::Affine(AffineTransform3D::from_rotation_y(-0.7)),
+        );
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
+        let aabb = g.aabb().unwrap().unwrap();
+        assert_eq!(data.aabb_min, Vec3::from(aabb.min().coords()));
+        assert_eq!(data.aabb_max, Vec3::from(aabb.max().coords()));
+    }
+
     #[test]
     fn empty_graph_returns_error() {
         // A Group root with no children: the shape an empty-file load produces.
         let (graph, _root) = graph_with_group_root();
-        let Err(err) = build_gpu_scene_data(&graph, |_| {}) else {
+        let Err(err) = build_gpu_scene_data(&graph, &UploadedMeshes::default(), |_| {}) else {
             panic!("a graph with no leaf has nothing to render");
         };
         assert_eq!(err.to_string(), "Graph has no leaves to render");
@@ -942,10 +1274,10 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         let rid = g.add_mesh_resource(mesh);
         add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         assert_eq!(data.objects.len(), 1);
-        assert_eq!(data.objects[0].vertices.len(), 3);
-        assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
+        assert_eq!(data.objects[0].vertices().len(), 3);
+        assert_eq!(data.objects[0].indices(), vec![0, 1, 2]);
     }
 
     #[test]
@@ -956,11 +1288,11 @@ mod build_gpu_scene_data_tests {
         );
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         assert_eq!(data.objects.len(), 1);
-        assert_eq!(data.objects[0].vertices[0].position, [1.0, -2.0, 3.0]);
-        assert_eq!(data.objects[0].vertices[1].position, [4.0, 5.0, -6.0]);
-        assert_eq!(data.objects[0].vertices[2].position, [0.0, 0.0, 0.0]);
+        assert_eq!(data.objects[0].vertices()[0].position, [1.0, -2.0, 3.0]);
+        assert_eq!(data.objects[0].vertices()[1].position, [4.0, 5.0, -6.0]);
+        assert_eq!(data.objects[0].vertices()[2].position, [0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -979,10 +1311,10 @@ mod build_gpu_scene_data_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([100.0, -50.0, 25.0])),
         );
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
-        assert_eq!(data.objects[0].vertices[0].position, [1.0, 0.0, 0.0]);
-        assert_eq!(data.objects[0].vertices[1].position, [0.0, 1.0, 0.0]);
-        assert_eq!(data.objects[0].vertices[2].position, [0.0, 0.0, 1.0]);
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
+        assert_eq!(data.objects[0].vertices()[0].position, [1.0, 0.0, 0.0]);
+        assert_eq!(data.objects[0].vertices()[1].position, [0.0, 1.0, 0.0]);
+        assert_eq!(data.objects[0].vertices()[2].position, [0.0, 0.0, 1.0]);
     }
 
     #[test]
@@ -1001,10 +1333,10 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, a, Transform3D::Identity);
         add_inline_leaf(&mut g, root, b, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         assert_eq!(data.objects.len(), 2);
-        assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
-        assert_eq!(data.objects[1].indices, vec![0, 1, 2]);
+        assert_eq!(data.objects[0].indices(), vec![0, 1, 2]);
+        assert_eq!(data.objects[1].indices(), vec![0, 1, 2]);
     }
 
     #[test]
@@ -1020,7 +1352,7 @@ mod build_gpu_scene_data_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 30.0])),
         );
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         // World AABB = local AABB ([0,0,0]..[1,1,0]) translated by (10,20,30).
         assert_approx_eq!(f32, data.aabb_min.x, 10.0, epsilon = 1e-5);
         assert_approx_eq!(f32, data.aabb_min.y, 20.0, epsilon = 1e-5);
@@ -1043,7 +1375,7 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, a, Transform3D::Identity);
         add_inline_leaf(&mut g, root, b, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         assert_eq!(data.aabb_min, Vec3::new(-7.0, -2.0, -6.0));
         assert_eq!(data.aabb_max, Vec3::new(4.0, 8.0, 9.0));
     }
@@ -1066,10 +1398,10 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, empty, Transform3D::Identity);
         add_inline_leaf(&mut g, root, nonempty, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
+        let data = build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).unwrap();
         assert_eq!(data.objects.len(), 2);
-        assert!(data.objects[0].indices.is_empty());
-        assert_eq!(data.objects[1].indices.len(), 3);
+        assert!(data.objects[0].indices().is_empty());
+        assert_eq!(data.objects[1].indices().len(), 3);
     }
 
     #[test]
@@ -1091,7 +1423,7 @@ mod build_gpu_scene_data_tests {
         // Singular transforms are not rejected here; the GPU path accepts a
         // singular model matrix (it collapses the mesh onto a plane). The
         // assertion pins this, so the test fails if the behaviour changes.
-        assert!(build_gpu_scene_data(&g, |_| {}).is_ok());
+        assert!(build_gpu_scene_data(&g, &UploadedMeshes::default(), |_| {}).is_ok());
     }
 }
 
@@ -1855,7 +2187,8 @@ mod leaf_buffer_limit_tests {
     }
 
     fn check(graph: &Scene) -> std::result::Result<(), LeafBufferExceedsDeviceLimit> {
-        let data = build_gpu_scene_data(graph, |_| {}).expect("flatten");
+        let data =
+            build_gpu_scene_data(graph, &UploadedMeshes::default(), |_| {}).expect("flatten");
         check_leaf_buffers_fit(&data.objects, LIMIT)
     }
 

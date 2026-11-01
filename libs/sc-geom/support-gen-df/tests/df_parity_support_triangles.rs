@@ -104,6 +104,7 @@ fn support_triangles_match_dragonfruit() {
             plate_clearance_models: &models,
             support_tip_shrink_percent: case["shrink"].as_f64().unwrap(),
             tip_penetration_mm: 0.0,
+            tip_drawing: Default::default(),
             shaft_style: Default::default(),
             robust_raft_geometry: false,
         })

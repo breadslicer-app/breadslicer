@@ -33,24 +33,36 @@
 //! puts them back ([`crate::hollow_persist`], #161). Selecting a hollow puts
 //! the settings it was made with in the tab, so a new drain hollows it the
 //! same way again.
+//!
+//! The drain tool shapes the drains it places: as deep as the wall needs or
+//! to a set depth (#316), a cylinder or a cone narrowing or widening to an
+//! inner radius at its end (#317), with or without a plug (#318). Each drain
+//! keeps its own shape. A plug is a model of its own, standing on the plate
+//! beside the hollow, clear of the other models, on the end that meets the
+//! cavity (the model's surface on top, as it goes back in the hole). It
+//! comes and goes with its hollow in the same undo step: hollowing again
+//! replaces the plugs (one left where the person moved it stays there),
+//! making the model solid again takes them away.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::df_hollow::hollow_df::engine::DRAIN_PAST_WALL_MM;
+use sc_geom::df_hollow::hollow_df::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
 use sc_geom::df_hollow::hollow_df::{
-    GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
+    DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::df_hollow::{
-    HollowKind, HollowOutcome, HollowRequest, HollowResult, LeafFrame, PreparedHollow, WorldDrain,
-    start_hollow_mesh,
+    HollowKind, HollowOutcome, HollowPlug, HollowRequest, HollowResult, LeafFrame, PreparedHollow,
+    WorldDrain, start_hollow_mesh,
 };
 use sc_geom::{JobError, JobHandle};
-use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, Vertex};
 use sc_scene::NodeId;
+use sc_scene::node::{LeafAttachment, LeafPayload, SceneMetadata};
+use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::error_dialog::{DialogManager, ErrorTexts, InfoTexts};
@@ -121,12 +133,25 @@ pub(crate) struct HollowOptions {
     pub(crate) fill: u8,
     pub(crate) cell_mm: f32,
     pub(crate) beam_mm: f32,
+    /// The drain tool: the radius of a new drain at the surface.
     pub(crate) drain_radius_mm: f32,
+    /// New drains go `drain_depth_mm` deep (#316), else as deep as the wall
+    /// needs.
+    pub(crate) drain_depth_set: bool,
+    pub(crate) drain_depth_mm: f32,
+    /// New drains are cones (#317), their radius `drain_inner_radius_mm` at
+    /// their end.
+    pub(crate) drain_cone: bool,
+    pub(crate) drain_inner_radius_mm: f32,
+    /// New drains make a plug (#318), `plug_clearance_mm` narrower across
+    /// than the hole.
+    pub(crate) drain_plug: bool,
+    pub(crate) plug_clearance_mm: f32,
 }
 
 impl Default for HollowOptions {
     fn default() -> Self {
-        // DragonFruit's defaults.
+        // DragonFruit's defaults; the drain shapes off, Damian's clearance.
         Self {
             wall_mm: 2.0,
             voxel_mm: 0.65,
@@ -134,11 +159,33 @@ impl Default for HollowOptions {
             cell_mm: 4.24,
             beam_mm: 0.35,
             drain_radius_mm: 1.5,
+            drain_depth_set: false,
+            drain_depth_mm: 3.0,
+            drain_cone: false,
+            drain_inner_radius_mm: 1.0,
+            drain_plug: false,
+            plug_clearance_mm: DEFAULT_PLUG_CLEARANCE_MM,
         }
     }
 }
 
 impl HollowOptions {
+    /// These options without the drain tool's (its defaults, and no
+    /// radius): what the cavity depends on.
+    fn cavity_only(&self) -> Self {
+        let tool = Self::default();
+        Self {
+            drain_radius_mm: 0.0,
+            drain_depth_set: tool.drain_depth_set,
+            drain_depth_mm: tool.drain_depth_mm,
+            drain_cone: tool.drain_cone,
+            drain_inner_radius_mm: tool.drain_inner_radius_mm,
+            drain_plug: tool.drain_plug,
+            plug_clearance_mm: tool.plug_clearance_mm,
+            ..*self
+        }
+    }
+
     fn settings(&self) -> HollowSettings {
         let fill = match self.fill {
             0 => HollowFill::Cavity,
@@ -214,12 +261,19 @@ fn floor_underside(mesh: &IndexedMesh, world: &Transform3D, at: [f32; 3]) -> Opt
 }
 
 /// A drain in the leaf's local frame: a point on the surface and the
-/// direction into the model.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// direction into the model; its sizes in millimetres.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct LocalDrain {
     pub(crate) center: [f32; 3],
     pub(crate) direction: [f32; 3],
+    /// At the surface.
     pub(crate) radius_mm: f32,
+    /// A set depth (#316); `None` as deep as the wall needs.
+    pub(crate) depth_mm: Option<f32>,
+    /// A cone's radius at the drain's end (#317); `None` a cylinder.
+    pub(crate) inner_radius_mm: Option<f32>,
+    /// Make a plug this much narrower across (#318); `None` none.
+    pub(crate) plug_clearance_mm: Option<f32>,
 }
 
 impl LocalDrain {
@@ -234,19 +288,114 @@ impl LocalDrain {
             center,
             direction: normalized(std::array::from_fn(|i| inside[i] - center[i])),
             radius_mm,
+            ..LocalDrain::default()
         })
+    }
+
+    /// This drain shaped as the drain tool says: its depth, cone and plug.
+    fn shaped(self, options: &HollowOptions) -> Self {
+        Self {
+            depth_mm: options.drain_depth_set.then_some(options.drain_depth_mm),
+            inner_radius_mm: options.drain_cone.then_some(options.drain_inner_radius_mm),
+            plug_clearance_mm: options.drain_plug.then_some(options.plug_clearance_mm),
+            ..self
+        }
+    }
+
+    /// The radius at the drain's end: a cone's inner one, else the same.
+    fn end_radius_mm(&self) -> f32 {
+        self.inner_radius_mm.unwrap_or(self.radius_mm)
     }
 
     fn to_world(self, world: &Transform3D) -> WorldDrain {
         let at = |p: [f32; 3]| world.apply_to_vertex(Vertex::new(p)).coords();
         let center = at(self.center);
         let ahead = at(std::array::from_fn(|i| self.center[i] + self.direction[i]));
-        WorldDrain::new(
+        let mut drain = WorldDrain::new(
             center,
             normalized(std::array::from_fn(|i| ahead[i] - center[i])),
             self.radius_mm,
-        )
+        );
+        drain.depth = self.depth_mm.map_or(DrainDepth::Auto, DrainDepth::Mm);
+        drain.inner_radius_mm = self.inner_radius_mm;
+        drain.plug_clearance_mm = self.plug_clearance_mm;
+        drain
     }
+}
+
+/// A drain's plug a hollow put in the scene (#318): which drain, by its
+/// index in the hollow's drains, and the mesh its model shows, by identity.
+#[derive(Debug, Clone)]
+pub(crate) struct PlugLink {
+    pub(crate) drain: usize,
+    pub(crate) mesh: Arc<IndexedMesh>,
+}
+
+/// How far apart a plug stands from the models around it, on the plate.
+const PLUG_GAP_MM: f32 = 3.0;
+
+/// A box on the plate: its lowest and highest corner.
+type PlateRect = ([f32; 2], [f32; 2]);
+
+/// Where to stand plugs of the half widths `sizes` (around their axis) on
+/// the plate: beside `model` (its box), clear of each box of `taken` and of
+/// one another by [`PLUG_GAP_MM`], within `bed` when there is room there,
+/// the nearest to the model first (a millimetre grid). Without room, to the
+/// model's right.
+fn plug_spots(
+    model: PlateRect,
+    taken: &[PlateRect],
+    bed: PlateRect,
+    sizes: &[[f32; 2]],
+) -> Vec<[f32; 2]> {
+    let mut taken = taken.to_vec();
+    let gap = PLUG_GAP_MM;
+    let distance = |a: PlateRect, b: PlateRect| {
+        let dx = (b.0[0] - a.1[0]).max(a.0[0] - b.1[0]).max(0.0);
+        let dy = (b.0[1] - a.1[1]).max(a.0[1] - b.1[1]).max(0.0);
+        dx.hypot(dy)
+    };
+    let overlaps = |a: PlateRect, b: PlateRect| {
+        a.0[0] < b.1[0] + gap
+            && b.0[0] < a.1[0] + gap
+            && a.0[1] < b.1[1] + gap
+            && b.0[1] < a.1[1] + gap
+    };
+    sizes
+        .iter()
+        .map(|&half| {
+            let rect = |c: [f32; 2]| {
+                (
+                    [c[0] - half[0], c[1] - half[1]],
+                    [c[0] + half[0], c[1] + half[1]],
+                )
+            };
+            let mut best: Option<(f32, [f32; 2])> = None;
+            let (nx, ny) = (
+                (bed.1[0] - bed.0[0] - 2.0 * half[0]).floor().max(-1.0) as i32,
+                (bed.1[1] - bed.0[1] - 2.0 * half[1]).floor().max(-1.0) as i32,
+            );
+            for i in 0..=nx {
+                for j in 0..=ny {
+                    let c = [bed.0[0] + half[0] + i as f32, bed.0[1] + half[1] + j as f32];
+                    let r = rect(c);
+                    if overlaps(r, model) || taken.iter().any(|&t| overlaps(r, t)) {
+                        continue;
+                    }
+                    let d = distance(r, model);
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, c));
+                    }
+                }
+            }
+            let spot = best.map_or(
+                [model.1[0] + gap + half[0], 0.5 * (model.0[1] + model.1[1])],
+                |(_, c)| c,
+            );
+            taken.push(rect(spot));
+            spot
+        })
+        .collect()
 }
 
 /// A hollow this driver installed: the mesh it put on the leaf, what it was
@@ -257,6 +406,8 @@ pub(crate) struct Hollowed {
     pub(crate) original: Arc<IndexedMesh>,
     pub(crate) drains: Vec<LocalDrain>,
     pub(crate) options: HollowOptions,
+    /// The plugs it put in the scene with it (#318).
+    pub(crate) plugs: Vec<PlugLink>,
 }
 
 /// The job in flight and what it needs to land.
@@ -322,12 +473,15 @@ enum DrainReach {
     Misses,
     /// Not known: the cavity it would open into is not computed.
     Unknown,
+    /// It opens, but its set depth would run on into the cavity's far side:
+    /// Hollow drills it shorter (#316).
+    Capped,
 }
 
 impl DrainReach {
     fn tint(self) -> OverlayTint {
         match self {
-            DrainReach::Opens => OverlayTint::Valid,
+            DrainReach::Opens | DrainReach::Capped => OverlayTint::Valid,
             DrainReach::Misses => OverlayTint::Invalid,
             DrainReach::Unknown => OverlayTint::Pending,
         }
@@ -339,6 +493,7 @@ impl DrainReach {
             DrainReach::Opens => 1,
             DrainReach::Misses => 2,
             DrainReach::Unknown => 3,
+            DrainReach::Capped => 4,
         }
     }
 }
@@ -383,9 +538,17 @@ fn drains_key(drains: &[LocalDrain]) -> u64 {
     if drains.is_empty() {
         return 0;
     }
+    let shape = |v: Option<f32>| v.map_or(f32::NAN, |v| v);
     drains
         .iter()
-        .flat_map(|d| d.center.into_iter().chain(d.direction).chain([d.radius_mm]))
+        .flat_map(|d| {
+            d.center.into_iter().chain(d.direction).chain([
+                d.radius_mm,
+                shape(d.depth_mm),
+                shape(d.inner_radius_mm),
+                shape(d.plug_clearance_mm),
+            ])
+        })
         .fold(0xcbf2_9ce4_8422_2325u64, |h, c| {
             (h ^ u64::from(c.to_bits())).wrapping_mul(0x0100_0000_01b3)
         })
@@ -425,7 +588,8 @@ struct ShownKey {
     drains: Option<usize>,
     hover: Option<(DrainHover, DrainReach)>,
     world: [[f64; 4]; 4],
-    radius: f32,
+    /// The drain tool's settings, which shape the drain under the cursor.
+    tool: HollowOptions,
     /// Bits of the depth the drain under the cursor is drawn to.
     hover_depth: u32,
 }
@@ -677,14 +841,23 @@ impl HollowRun {
         ui.set_hollow_cell(o.cell_mm);
         ui.set_hollow_beam(o.beam_mm);
         ui.set_hollow_drain_radius(o.drain_radius_mm);
+        ui.set_hollow_drain_depth_set(o.drain_depth_set);
+        ui.set_hollow_drain_depth(o.drain_depth_mm);
+        ui.set_hollow_drain_cone(o.drain_cone);
+        ui.set_hollow_drain_inner_radius(o.drain_inner_radius_mm);
+        ui.set_hollow_drain_plug(o.drain_plug);
+        ui.set_hollow_plug_clearance(o.plug_clearance_mm);
     }
 
     /// An option change from the tab: 0 wall, 1 voxel, 3 fill, 4 infill
     /// cell, 5 beam radius, 6 drain radius (2 was the smoothing, gone with
-    /// #29). Values are clamped to what the engine accepts.
+    /// #29); the drain tool's shape: 7 depth set (0 or 1), 8 that depth, 9
+    /// cone (0 or 1), 10 its inner radius, 11 plug (0 or 1), 12 its
+    /// clearance. Values are clamped to what the engine accepts.
     fn on_option(&self, code: i32, value: f32) {
         {
             let mut o = self.options.borrow_mut();
+            let on = value >= 0.5;
             match code {
                 0 => o.wall_mm = value.clamp(0.5, 10.0),
                 1 => o.voxel_mm = value.clamp(0.1, 3.0),
@@ -692,6 +865,12 @@ impl HollowRun {
                 4 => o.cell_mm = value.clamp(1.0, 30.0),
                 5 => o.beam_mm = value.clamp(0.1, 5.0),
                 6 => o.drain_radius_mm = value.clamp(0.3, 10.0),
+                7 => o.drain_depth_set = on,
+                8 => o.drain_depth_mm = value.clamp(0.5, 100.0),
+                9 => o.drain_cone = on,
+                10 => o.drain_inner_radius_mm = value.clamp(0.3, 10.0),
+                11 => o.drain_plug = on,
+                12 => o.plug_clearance_mm = value.clamp(0.0, 1.0),
                 _ => return,
             }
         }
@@ -721,7 +900,9 @@ impl HollowRun {
         let Some((original, _)) = self.entry_for(&mesh) else {
             return;
         };
-        self.swap_mesh(leaf, mesh, original);
+        // The plugs go with the hollow.
+        let old = self.plugs_of(&mesh);
+        self.swap_mesh_and_plugs(leaf, mesh, original, &old, Vec::new());
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(ctr!(
                 "HollowRun",
@@ -758,8 +939,9 @@ impl HollowRun {
         if self.model_state(&mesh) == 2 {
             return;
         }
-        let Some(drain) =
-            LocalDrain::at(point, normal, self.options.borrow().drain_radius_mm, &world)
+        let options = *self.options.borrow();
+        let Some(drain) = LocalDrain::at(point, normal, options.drain_radius_mm, &world)
+            .map(|d| d.shaped(&options))
         else {
             return;
         };
@@ -956,7 +1138,12 @@ impl HollowRun {
             });
             return;
         }
-        let HollowResult::Apply { mesh, drains } = outcome.result else {
+        let HollowResult::Apply {
+            mesh,
+            drains,
+            plugs,
+        } = outcome.result
+        else {
             return;
         };
         // The engine leaves out a drain that does not reach the cavity
@@ -999,10 +1186,37 @@ impl HollowRun {
             self.tick_preview();
             return;
         }
+        // The plugs, by their drain's index among the drains kept.
+        let kept_index = |drain: usize| {
+            drains[..drain]
+                .iter()
+                .filter(|report| report.reaches_cavity)
+                .count()
+        };
+        let plug_failures = plugs.iter().filter(|p| p.mesh.is_none()).count();
+        let new_plugs: Vec<NewPlug> = plugs
+            .into_iter()
+            .filter_map(|HollowPlug { drain, mesh }| {
+                let index = kept_index(drain);
+                Some(NewPlug {
+                    drain: index,
+                    shape: kept[index],
+                    mesh: mesh?,
+                })
+            })
+            .collect();
+        let made_plugs = new_plugs.len();
+        let capped = drains
+            .iter()
+            .filter(|r| r.reaches_cavity && r.depth_capped)
+            .count();
+        let old_plugs = self.plugs_of(&job.before);
         let hollow = Arc::new(mesh);
-        if !self.swap_mesh(job.leaf, job.before, hollow.clone()) {
+        let Some(plug_links) =
+            self.swap_mesh_and_plugs(job.leaf, job.before, hollow.clone(), &old_plugs, new_plugs)
+        else {
             return;
-        }
+        };
         let stats = &outcome.stats;
         let ml = |mm3: f64| mm3 / 1000.0;
         let source = ml(stats.source_volume_mm3);
@@ -1065,6 +1279,41 @@ impl HollowRun {
                     missed
                 ));
             }
+            if capped > 0 {
+                summary.push(' ');
+                summary.push_str(&ctr!(
+                    "HollowRun",
+                    "One drilled shorter than set: deeper, it would reach the far side of the cavity.",
+                    "{n} drilled shorter than set: deeper, they would reach the far side of the cavity.",
+                    capped
+                ));
+            }
+            if made_plugs > 0 {
+                summary.push(' ');
+                summary.push_str(&ctr!(
+                    "HollowRun",
+                    "One plug placed beside the model.",
+                    "{n} plugs placed beside the model.",
+                    made_plugs
+                ));
+            }
+        }
+        if plug_failures > 0 {
+            self.dialogs.show_info(move || InfoTexts {
+                heading: ctr!(
+                    "HollowRun",
+                    "Plug not made",
+                    "{n} plugs not made",
+                    plug_failures
+                ),
+                message: ctr!(
+                    "HollowRun",
+                    "The drain was drilled, but its plug did not come out as a closed solid, so it was left out.",
+                    "The drains were drilled, but their plugs did not come out as closed solids, so they were left out.",
+                    plug_failures
+                ),
+                details: Default::default(),
+            });
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_hollow_last_run(summary.into());
@@ -1081,32 +1330,170 @@ impl HollowRun {
             original: job.original,
             drains: kept,
             options: job.options,
+            plugs: plug_links,
         });
         self.refresh_ui();
     }
 
-    /// Replaces the leaf's mesh as one undoable edit.
-    fn swap_mesh(&self, leaf: NodeId, before: Arc<IndexedMesh>, after: Arc<IndexedMesh>) -> bool {
-        let edit = self
+    /// The plugs the hollow `mesh` (by identity) put in the scene; none for
+    /// a mesh that is not a hollow made here.
+    fn plugs_of(&self, mesh: &Arc<IndexedMesh>) -> Vec<(PlugLink, LocalDrain)> {
+        self.hollowed
+            .borrow()
+            .iter()
+            .find(|h| Arc::ptr_eq(&h.hollow, mesh))
+            .map(|h| {
+                h.plugs
+                    .iter()
+                    .filter_map(|p| Some((p.clone(), *h.drains.get(p.drain)?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Replaces the leaf's mesh, takes the plugs `old` (with the drains they
+    /// were made for) out of the scene and stands the `new` ones on the
+    /// plate, as one undoable edit. A new plug for the same drain as an old
+    /// one takes its place (the person may have moved it); any other stands
+    /// beside the model ([`plug_spots`]). Returns the plugs put in, or
+    /// `None` when nothing changed.
+    fn swap_mesh_and_plugs(
+        &self,
+        leaf: NodeId,
+        before: Arc<IndexedMesh>,
+        after: Arc<IndexedMesh>,
+        old: &[(PlugLink, LocalDrain)],
+        new: Vec<NewPlug>,
+    ) -> Option<Vec<PlugLink>> {
+        let bed = {
+            let volume = self.ctrl.build_volume();
+            let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+            ([lo.x, lo.y], [hi.x, hi.y])
+        };
+        let planned = self
             .document
             .with_scene(|spatial| {
                 let scene = spatial.graph();
                 // The leaf must still show `before`: never swap out a mesh
                 // that changed under the job.
-                scene
+                if !scene
                     .leaf_mesh_arc(leaf)
                     .is_some_and(|m| Arc::ptr_eq(m, &before))
-                    .then(|| leaf_mesh_swap(scene, leaf, after))
-                    .flatten()
+                {
+                    return None;
+                }
+                let swap = leaf_mesh_swap(scene, leaf, after)?;
+                let leaves: Vec<NodeId> =
+                    (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect();
+                // The old plugs still in the scene, and the drain each was for.
+                let gone: Vec<(NodeId, LocalDrain)> = leaves
+                    .iter()
+                    .filter_map(|&id| {
+                        let mesh = scene.leaf_mesh_arc(id)?;
+                        old.iter()
+                            .find(|(p, _)| Arc::ptr_eq(&p.mesh, mesh))
+                            .map(|(_, drain)| (id, *drain))
+                    })
+                    .collect();
+                let rect_of = |id: NodeId| -> Option<PlateRect> {
+                    let query = spatial.leaf(id)?;
+                    let b = query.transformed_aabb(query.world_transform())?;
+                    let (lo, hi) = (b.min().coords(), b.max().coords());
+                    Some(([lo[0], lo[1]], [hi[0], hi[1]]))
+                };
+                let model = rect_of(leaf)?;
+                let taken: Vec<PlateRect> = leaves
+                    .iter()
+                    .filter(|&&id| id != leaf && !gone.iter().any(|(g, _)| *g == id))
+                    .filter_map(|&id| rect_of(id))
+                    .collect();
+                // Where each new plug goes: an old one's place, or a spot.
+                let mut reused: Vec<Option<Transform3D>> = Vec::with_capacity(new.len());
+                let mut claimed: Vec<NodeId> = Vec::new();
+                for plug in &new {
+                    let place = gone
+                        .iter()
+                        .find(|(id, drain)| *drain == plug.shape && !claimed.contains(id))
+                        .and_then(|&(id, _)| {
+                            let node = scene.node(id)?;
+                            matches!(scene.attachment_of(id)?, LeafAttachment::Root { .. })
+                                .then_some((id, node.local_transform))
+                        });
+                    if let Some((id, _)) = place {
+                        claimed.push(id);
+                    }
+                    reused.push(place.map(|(_, t)| t));
+                }
+                let sizes: Vec<[f32; 2]> = new
+                    .iter()
+                    .zip(&reused)
+                    .filter(|(_, r)| r.is_none())
+                    .map(|(plug, _)| plug_half_width(&plug.mesh))
+                    .collect();
+                let mut spots = plug_spots(model, &taken, bed, &sizes).into_iter();
+                let placed: Vec<Transform3D> = reused
+                    .into_iter()
+                    .map(|r| {
+                        r.unwrap_or_else(|| {
+                            let [x, y] = spots.next().unwrap_or_default();
+                            Transform3D::Affine(AffineTransform3D::from_translation([
+                                f64::from(x),
+                                f64::from(y),
+                                0.0,
+                            ]))
+                        })
+                    })
+                    .collect();
+                // The removals, worked out on the scene the ones before leave.
+                let mut graph = scene.clone();
+                let mut edits = vec![swap];
+                for &(id, _) in &gone {
+                    if let Some(remove) = SceneEdit::remove_leaf_with_gc(&graph, id)
+                        && remove.apply_to_scene(&mut graph).is_ok()
+                    {
+                        edits.push(remove);
+                    }
+                }
+                Some((edits, graph.roots().len(), placed))
             })
             .flatten();
-        let Some(edit) = edit else {
-            return false;
+        let (mut edits, roots, placed) = planned?;
+        let slots = self.document.allocate_leaf_slots(new.len());
+        if slots.len() != new.len() {
+            return None;
+        }
+        let mut links = Vec::with_capacity(new.len());
+        for (k, ((plug, transform), (node_id, rid))) in
+            new.into_iter().zip(placed).zip(slots).enumerate()
+        {
+            let mesh = Arc::new(plug.mesh);
+            links.push(PlugLink {
+                drain: plug.drain,
+                mesh: mesh.clone(),
+            });
+            edits.push(SceneEdit::AddMeshResource { rid, mesh });
+            edits.push(SceneEdit::AddLeaf {
+                node_id,
+                attachment: LeafAttachment::Root {
+                    position: roots + k,
+                },
+                payload: LeafPayload::MeshResource(rid),
+                local_transform: transform,
+                meta: Some(SceneMetadata {
+                    name: Some(ctr!("HollowRun", "Drain plug {}", plug.drain + 1).to_string()),
+                    comment: None,
+                }),
+            });
+        }
+        let edit = if edits.len() == 1 {
+            edits.pop()?
+        } else {
+            SceneEdit::Compound(edits)
         };
         match self.document.apply_edit(edit.clone()) {
             Ok(_) => {
                 self.document.push_edit(edit);
-                true
+                Some(links)
             }
             Err(err) => {
                 let details = format!("{err:?}");
@@ -1119,10 +1506,26 @@ impl HollowRun {
                     ),
                     details: details.as_str().into(),
                 });
-                false
+                None
             }
         }
     }
+}
+
+/// A plug to stand on the plate (#318): for which drain (its index among
+/// the hollow's drains, and its shape), standing as [`HollowPlug`] has it.
+struct NewPlug {
+    drain: usize,
+    shape: LocalDrain,
+    mesh: IndexedMesh,
+}
+
+/// How far a plug standing on its axis reaches across it, along `x` and `y`.
+fn plug_half_width(mesh: &IndexedMesh) -> [f32; 2] {
+    mesh.vertices.iter().fold([0.0f32; 2], |half, v| {
+        let [x, y, _] = *v.as_array();
+        [half[0].max(x.abs()), half[1].max(y.abs())]
+    })
 }
 
 impl HollowRun {
@@ -1175,11 +1578,8 @@ impl HollowRun {
             leaf,
             mesh: Arc::as_ptr(&original) as usize,
             stretch: frame.stretch_key(),
-            // The drain radius does not change the cavity.
-            options: HollowOptions {
-                drain_radius_mm: 0.0,
-                ..options
-            },
+            // The drain tool does not change the cavity.
+            options: options.cavity_only(),
             drains: if options.fill == 0 {
                 0
             } else {
@@ -1195,7 +1595,11 @@ impl HollowRun {
         // flat wall (#315).
         let fallback_depth = options.wall_mm + DRAIN_PAST_WALL_MM;
         let mut preview = self.preview.borrow_mut();
-        let mut hover_depth = fallback_depth;
+        let mut hover_depth = if options.drain_depth_set {
+            options.drain_depth_mm
+        } else {
+            fallback_depth
+        };
         let hover = self
             .hover
             .get()
@@ -1203,12 +1607,17 @@ impl HollowRun {
             .map(|hover| {
                 let (reach, depth) =
                     drain_reach(preview.ready.as_ref(), key, hover, &world, &options);
-                hover_depth = depth.unwrap_or(fallback_depth);
+                hover_depth = depth.unwrap_or(hover_depth);
                 (hover, reach)
             });
         ui.set_hollow_drain_reach(hover.map_or(0, |(_, reach)| reach.code()));
         let depths = drain_depths(&mut preview, &drains, key, &world, matrix, &options)
-            .unwrap_or_else(|| vec![fallback_depth; drains.len()]);
+            .unwrap_or_else(|| {
+                drains
+                    .iter()
+                    .map(|d| d.depth_mm.unwrap_or(fallback_depth))
+                    .collect()
+            });
 
         // The cavity of this model, current or the last one while the next
         // is computed.
@@ -1244,7 +1653,8 @@ impl HollowRun {
                     let mut mesh = (Vec::new(), Vec::new());
                     for (drain, &depth) in drains.iter().zip(&depths) {
                         let w = drain.to_world(&world);
-                        cylinder(w.center, w.direction, w.radius_mm, depth, &mut mesh);
+                        let radii = [w.radius_mm, drain.end_radius_mm()];
+                        drain_solid(w.center, w.direction, radii, depth, &mut mesh);
                     }
                     let piece = Arc::new(OverlayMesh {
                         positions: mesh.0,
@@ -1261,7 +1671,7 @@ impl HollowRun {
             drains: drains_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
             hover,
             world: matrix,
-            radius: options.drain_radius_mm,
+            tool: options,
             hover_depth: hover_depth.to_bits(),
         };
         if let Some((k, shown)) = &preview.shown
@@ -1277,11 +1687,16 @@ impl HollowRun {
             // Straight from the surface under the cursor, where the click
             // would drill: no search, the viewport's hit says it.
             let direction = hover.normal.map(|c| -c);
+            let end = if options.drain_cone {
+                options.drain_inner_radius_mm
+            } else {
+                options.drain_radius_mm
+            };
             let mut next = (Vec::new(), Vec::new());
-            cylinder(
+            drain_solid(
                 hover.point,
                 direction,
-                options.drain_radius_mm,
+                [options.drain_radius_mm, end],
                 hover_depth,
                 &mut next,
             );
@@ -1389,10 +1804,14 @@ fn drain_reach(
         return (DrainReach::Unknown, None);
     };
     let Some(drain) = LocalDrain::at(hover.point, hover.normal, options.drain_radius_mm, world)
+        .map(|d| d.shaped(options))
     else {
         return (DrainReach::Unknown, None);
     };
     match prepared.drain_report(world, &options.settings(), &drain.to_world(world)) {
+        Some(report) if report.reaches_cavity && report.depth_capped => {
+            (DrainReach::Capped, Some(report.depth_mm))
+        }
         Some(report) if report.reaches_cavity => (DrainReach::Opens, Some(report.depth_mm)),
         Some(report) => (DrainReach::Misses, Some(report.depth_mm)),
         None => (DrainReach::Unknown, None),
@@ -1480,12 +1899,13 @@ fn append_mesh(mesh: &mut IndexedMesh, extra: &IndexedMesh) {
     }));
 }
 
-/// A closed cylinder (a drain as drawn) from just outside `center` to
-/// `depth` along `direction`, added to `out`.
-fn cylinder(
+/// A closed cylinder or cone (a drain as drawn) from just outside `center`
+/// to `depth` along `direction`, its radius `radii[0]` at `center` and
+/// `radii[1]` at `depth` (#317), added to `out`.
+fn drain_solid(
     center: [f32; 3],
     direction: [f32; 3],
-    radius: f32,
+    radii: [f32; 2],
     depth: f32,
     out: &mut (Vec<[f32; 3]>, Vec<u32>),
 ) {
@@ -1499,14 +1919,18 @@ fn cylinder(
     let v = cross(d, u);
     let start: [f32; 3] = std::array::from_fn(|i| center[i] - d[i] * 0.5);
     let end: [f32; 3] = std::array::from_fn(|i| center[i] + d[i] * depth);
+    // Along the cone, half a millimetre out of the surface.
+    let start_radius = (radii[0] - (radii[1] - radii[0]) * 0.5 / depth.max(1e-3)).max(0.0);
     let (positions, indices) = out;
     let base = positions.len() as u32;
     for k in 0..DRAIN_SIDES {
         let a = k as f32 / DRAIN_SIDES as f32 * std::f32::consts::TAU;
         let (s, c) = a.sin_cos();
-        let off: [f32; 3] = std::array::from_fn(|i| (u[i] * c + v[i] * s) * radius);
-        positions.push(std::array::from_fn(|i| start[i] + off[i]));
-        positions.push(std::array::from_fn(|i| end[i] + off[i]));
+        let off =
+            |radius: f32| -> [f32; 3] { std::array::from_fn(|i| (u[i] * c + v[i] * s) * radius) };
+        let (near, far) = (off(start_radius), off(radii[1]));
+        positions.push(std::array::from_fn(|i| start[i] + near[i]));
+        positions.push(std::array::from_fn(|i| end[i] + far[i]));
     }
     positions.push(start);
     positions.push(end);
@@ -1590,9 +2014,7 @@ mod tests {
     #[test]
     fn a_drain_from_a_hit_points_into_the_model() {
         // Hit on the top face (normal +Z) of a model moved by (10, 0, 0).
-        let world = Transform3D::Affine(
-            sc_mesh_core::transform::AffineTransform3D::from_translation([10.0, 0.0, 0.0]),
-        );
+        let world = Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
         let drain = LocalDrain::at([10.0, 0.0, 5.0], [0.0, 0.0, 1.0], 1.5, &world).unwrap();
         assert_eq!(drain.center, [0.0, 0.0, 5.0]);
         assert_eq!(drain.direction, [0.0, 0.0, -1.0]);
@@ -1620,17 +2042,16 @@ mod tests {
         }
     }
 
-    fn standing(transform: sc_mesh_core::transform::AffineTransform3D) -> Transform3D {
+    fn standing(transform: AffineTransform3D) -> Transform3D {
         Transform3D::Affine(
-            sc_mesh_core::transform::AffineTransform3D::from_translation([0.0, 0.0, 5.0])
-                .compose(&transform),
+            AffineTransform3D::from_translation([0.0, 0.0, 5.0]).compose(&transform),
         )
     }
 
     #[test]
     fn a_drain_under_a_cavity_floor_leaves_through_the_underside() {
         let mesh = hollow_box();
-        let world = standing(sc_mesh_core::transform::AffineTransform3D::identity());
+        let world = standing(AffineTransform3D::identity());
         // The review's floor point is on the cavity floor, give or take half
         // a layer: either way the line leaves the solid at the box's bottom.
         for z in [2.05, 2.0, 1.97] {
@@ -1645,14 +2066,12 @@ mod tests {
     #[test]
     fn a_mirrored_or_scaled_hollow_keeps_its_underside() {
         let mesh = hollow_box();
-        let mirrored = standing(
-            sc_mesh_core::transform::AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]),
-        );
+        let mirrored = standing(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
         let exit = floor_underside(&mesh, &mirrored, [1.0, 1.0, 2.05]).expect("mirrored");
         assert!(exit[2].abs() < 1e-4, "{exit:?}");
         let scaled = Transform3D::Affine(
-            sc_mesh_core::transform::AffineTransform3D::from_translation([0.0, 0.0, 10.0])
-                .compose(&sc_mesh_core::transform::AffineTransform3D::from_uniform_scale(2.0)),
+            AffineTransform3D::from_translation([0.0, 0.0, 10.0])
+                .compose(&AffineTransform3D::from_uniform_scale(2.0)),
         );
         // Twice the size: the cavity floor is at z = 4 and the underside at 0.
         let exit = floor_underside(&mesh, &scaled, [1.0, 1.0, 4.05]).expect("scaled");
@@ -1661,7 +2080,7 @@ mod tests {
 
     #[test]
     fn a_drain_under_the_floor_points_up_into_the_cavity() {
-        let world = standing(sc_mesh_core::transform::AffineTransform3D::identity());
+        let world = standing(AffineTransform3D::identity());
         let drain = LocalDrain::at([0.3, -0.2, 0.0], [0.0, 0.0, -1.0], 1.5, &world).unwrap();
         assert_eq!(drain.center, [0.3, -0.2, -5.0]);
         assert_eq!(drain.direction, [0.0, 0.0, 1.0]);
@@ -1673,11 +2092,11 @@ mod tests {
             center: [1.0, 0.0, 0.0],
             direction: [-1.0, 0.0, 0.0],
             radius_mm: 1.5,
+            ..LocalDrain::default()
         };
-        let world =
-            Transform3D::Affine(sc_mesh_core::transform::AffineTransform3D::from_rotation_z(
-                std::f64::consts::FRAC_PI_2,
-            ));
+        let world = Transform3D::Affine(AffineTransform3D::from_rotation_z(
+            std::f64::consts::FRAC_PI_2,
+        ));
         let w = drain.to_world(&world);
         assert!((w.center[1] - 1.0).abs() < 1e-5 && w.center[0].abs() < 1e-5);
         assert!((w.direction[1] + 1.0).abs() < 1e-5);
@@ -1717,12 +2136,8 @@ mod tests {
             let leaf = graph
                 .add_leaf(
                     None,
-                    Transform3D::Affine(
-                        sc_mesh_core::transform::AffineTransform3D::from_translation([
-                            50.0, 50.0, 15.0,
-                        ]),
-                    ),
-                    sc_scene::node::LeafPayload::Mesh(Arc::new(cube)),
+                    Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
                 )
                 .unwrap();
             graph.add_root(leaf).unwrap();
@@ -1795,12 +2210,8 @@ mod tests {
             let leaf = graph
                 .add_leaf(
                     None,
-                    Transform3D::Affine(
-                        sc_mesh_core::transform::AffineTransform3D::from_translation([
-                            50.0, 50.0, 15.0,
-                        ]),
-                    ),
-                    sc_scene::node::LeafPayload::Mesh(Arc::new(cube)),
+                    Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
                 )
                 .unwrap();
             graph.add_root(leaf).unwrap();
@@ -1929,12 +2340,8 @@ mod tests {
             let leaf = graph
                 .add_leaf(
                     None,
-                    Transform3D::Affine(
-                        sc_mesh_core::transform::AffineTransform3D::from_translation([
-                            30.0, 35.0, 0.0,
-                        ]),
-                    ),
-                    sc_scene::node::LeafPayload::Mesh(Arc::new(block)),
+                    Transform3D::Affine(AffineTransform3D::from_translation([30.0, 35.0, 0.0])),
+                    LeafPayload::Mesh(Arc::new(block)),
                 )
                 .unwrap();
             graph.add_root(leaf).unwrap();
@@ -2022,12 +2429,8 @@ mod tests {
             let leaf = graph
                 .add_leaf(
                     None,
-                    Transform3D::Affine(
-                        sc_mesh_core::transform::AffineTransform3D::from_translation([
-                            30.0, 35.0, 0.0,
-                        ]),
-                    ),
-                    sc_scene::node::LeafPayload::Mesh(Arc::new(finned_block())),
+                    Transform3D::Affine(AffineTransform3D::from_translation([30.0, 35.0, 0.0])),
+                    LeafPayload::Mesh(Arc::new(finned_block())),
                 )
                 .unwrap();
             graph.add_root(leaf).unwrap();
@@ -2055,13 +2458,7 @@ mod tests {
                     .borrow()
                     .ready
                     .as_ref()
-                    .is_some_and(|(k, _, _)| {
-                        k.options
-                            == HollowOptions {
-                                drain_radius_mm: 0.0,
-                                ..options
-                            }
-                    })
+                    .is_some_and(|(k, _, _)| k.options == options.cavity_only())
             });
             // Into the body's side, 2 mm wall: the engine's depth.
             let (point, normal) = ([70.0, 50.0, 13.0], [1.0, 0.0, 0.0]);
@@ -2071,9 +2468,7 @@ mod tests {
                 on_selected: true,
             }));
             run.tick_preview();
-            let world = Transform3D::Affine(
-                sc_mesh_core::transform::AffineTransform3D::from_translation([30.0, 35.0, 0.0]),
-            );
+            let world = Transform3D::Affine(AffineTransform3D::from_translation([30.0, 35.0, 0.0]));
             let drain = LocalDrain::at(point, normal, options.drain_radius_mm, &world).unwrap();
             let measured = {
                 let preview = run.preview.borrow();
@@ -2129,5 +2524,257 @@ mod tests {
             );
         }
         assert_eq!(with_drains, Some(true));
+    }
+
+    /// The drain tool's shape options (#316, #317, #318) go into the drains
+    /// it places, and on to the engine; clamped as the engine takes them.
+    #[test]
+    fn the_drain_tool_shapes_the_drains_it_places() {
+        let shaped = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let run = HollowRun::install(&window, ctrl.document(), ctrl.dialogs(), ctrl.clone());
+            for (code, value) in [
+                (7, 1.0),
+                (8, 4.5),
+                (9, 1.0),
+                (10, 0.8),
+                (11, 1.0),
+                (12, 0.15),
+            ] {
+                run.on_option(code, value);
+            }
+            let options = *run.options.borrow();
+            let ui = (
+                window.get_hollow_drain_depth_set(),
+                window.get_hollow_drain_depth(),
+                window.get_hollow_drain_cone(),
+                window.get_hollow_drain_inner_radius(),
+                window.get_hollow_drain_plug(),
+                window.get_hollow_plug_clearance(),
+            );
+            run.on_option(12, 5.0);
+            run.on_option(8, 0.0);
+            let clamped = *run.options.borrow();
+            (options, ui, clamped)
+        });
+        let (options, ui, clamped) = shaped;
+        assert_eq!(ui, (true, 4.5, true, 0.8, true, 0.15));
+        let drain = LocalDrain::at(
+            [0.0, 0.0, 5.0],
+            [0.0, 0.0, 1.0],
+            1.5,
+            &Transform3D::Identity,
+        )
+        .unwrap()
+        .shaped(&options);
+        assert_eq!(drain.depth_mm, Some(4.5));
+        assert_eq!(drain.inner_radius_mm, Some(0.8));
+        assert_eq!(drain.plug_clearance_mm, Some(0.15));
+        let world = drain.to_world(&Transform3D::Identity);
+        assert_eq!(world.depth, DrainDepth::Mm(4.5));
+        assert_eq!(world.inner_radius_mm, Some(0.8));
+        assert_eq!(world.plug_clearance_mm, Some(0.15));
+        // Off, each part is gone from new drains, its value kept.
+        let plain = LocalDrain::at([0.0; 3], [0.0, 0.0, 1.0], 1.5, &Transform3D::Identity)
+            .unwrap()
+            .shaped(&HollowOptions::default());
+        assert_eq!(
+            (
+                plain.depth_mm,
+                plain.inner_radius_mm,
+                plain.plug_clearance_mm
+            ),
+            (None, None, None)
+        );
+        assert_eq!(
+            plain.to_world(&Transform3D::Identity).depth,
+            DrainDepth::Auto
+        );
+        assert_eq!(
+            (clamped.plug_clearance_mm, clamped.drain_depth_mm),
+            (1.0, 0.5)
+        );
+        // The drain tool does not change the cavity: the preview's key
+        // leaves it out.
+        assert_eq!(
+            options.cavity_only(),
+            HollowOptions::default().cavity_only()
+        );
+    }
+
+    /// #318: plugs stand beside the model, nearest first, clear of it, of
+    /// the other models and of one another, on the bed; without room, to
+    /// the model's right.
+    #[test]
+    fn plugs_stand_beside_the_model_clear_of_the_others() {
+        let model = ([40.0, 40.0], [70.0, 70.0]);
+        let other = ([72.0, 30.0], [100.0, 80.0]);
+        let bed = ([0.0, 0.0], [120.0, 100.0]);
+        let spots = plug_spots(model, &[other], bed, &[[2.0, 2.0], [2.0, 2.0], [5.0, 3.0]]);
+        let rects: Vec<PlateRect> = spots
+            .iter()
+            .zip([[2.0, 2.0], [2.0, 2.0], [5.0, 3.0]])
+            .map(|(c, h)| ([c[0] - h[0], c[1] - h[1]], [c[0] + h[0], c[1] + h[1]]))
+            .collect();
+        let apart = |a: PlateRect, b: PlateRect| {
+            a.1[0] + PLUG_GAP_MM <= b.0[0]
+                || b.1[0] + PLUG_GAP_MM <= a.0[0]
+                || a.1[1] + PLUG_GAP_MM <= b.0[1]
+                || b.1[1] + PLUG_GAP_MM <= a.0[1]
+        };
+        for (i, &r) in rects.iter().enumerate() {
+            assert!(apart(r, model) && apart(r, other), "{i}: {r:?}");
+            assert!(r.0[0] >= 0.0 && r.0[1] >= 0.0 && r.1[0] <= 120.0 && r.1[1] <= 100.0);
+            for &q in &rects[..i] {
+                assert!(apart(r, q), "{i}: {r:?} on {q:?}");
+            }
+            // Beside the model: within a few gaps of it.
+            let dx = (r.0[0] - model.1[0]).max(model.0[0] - r.1[0]).max(0.0);
+            let dy = (r.0[1] - model.1[1]).max(model.0[1] - r.1[1]).max(0.0);
+            assert!(dx.hypot(dy) < 3.0 * PLUG_GAP_MM, "{i}: {r:?}");
+        }
+        // A full bed: to the model's right.
+        let full = plug_spots(model, &[bed], bed, &[[2.0, 2.0]]);
+        assert_eq!(full, vec![[70.0 + PLUG_GAP_MM + 2.0, 55.0]]);
+    }
+
+    /// The leaves of `document`'s scene: each one's mesh, world box and name.
+    fn leaves_of(
+        document: &SceneDocument,
+    ) -> Vec<(Arc<IndexedMesh>, PlateRect, f32, Option<String>)> {
+        document
+            .with_scene(|spatial| {
+                (0..)
+                    .map_while(|i| spatial.leaf_id_at_index(i))
+                    .filter_map(|id| {
+                        let query = spatial.leaf(id)?;
+                        let b = query.transformed_aabb(query.world_transform())?;
+                        let (lo, hi) = (b.min().coords(), b.max().coords());
+                        let scene = spatial.graph();
+                        Some((
+                            scene.leaf_mesh_arc(id)?.clone(),
+                            ([lo[0], lo[1]], [hi[0], hi[1]]),
+                            lo[2],
+                            scene.node(id)?.meta.as_ref().and_then(|m| m.name.clone()),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// #318 in the tab: a 30 mm cube hollowed with a cone drain that makes
+    /// a plug gets a second model, the plug, standing on the plate beside
+    /// it, in the same undo step; hollowing again with another drain
+    /// replaces the plugs, the first where it stood; making the model solid
+    /// again takes them away, and undo brings each state back. A set depth
+    /// short of the cavity is left out with the usual notice (#316).
+    #[test]
+    fn plugs_come_and_go_with_their_hollow() {
+        use crate::selection::{LeafId, Selection};
+        let (states, notices, plug_shape) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut cube = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut cube.vertices {
+                *v = Vertex::new(v.as_array().map(|c| c * 30.0));
+            }
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([50.0, 50.0, 15.0])),
+                    LeafPayload::Mesh(Arc::new(cube)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph, std::path::PathBuf::from("cube.stl"));
+            document.set_selection(Selection::One(LeafId(leaf)));
+            window.set_workspace_section(WorkspaceSection::Hollow);
+            let dialogs = ctrl.dialogs();
+            let run = HollowRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
+            run.on_option(0, 2.0);
+            run.on_option(9, 1.0);
+            run.on_option(10, 1.0);
+            run.on_option(11, 1.0);
+            let down = [0.0, 0.0, 1.0];
+            let mut states = Vec::new();
+            let mut snapshot = |label: &str| {
+                let leaves = leaves_of(&document);
+                states.push((label.to_owned(), leaves));
+            };
+            // A cone with a plug on top, placed on the solid model.
+            run.on_drain_click([47.3, 52.1, 30.0], down);
+            run.on_apply();
+            land_job(&run);
+            snapshot("hollowed");
+            let plug_shape = document
+                .hollows()
+                .borrow()
+                .last()
+                .map(|h| (h.drains.clone(), h.plugs.len()));
+            document.undo().unwrap();
+            snapshot("undone");
+            document.redo().unwrap();
+            snapshot("redone");
+            // A second drain, set too shallow: left out, nothing changes.
+            run.on_option(7, 1.0);
+            run.on_option(8, 1.0);
+            run.on_drain_click([55.1, 44.2, 30.0], down);
+            land_job(&run);
+            snapshot("shallow");
+            // Deep enough: hollowed again, with two plugs.
+            run.on_option(8, 3.0);
+            run.on_drain_click([55.1, 44.2, 30.0], down);
+            land_job(&run);
+            snapshot("second");
+            run.on_restore();
+            snapshot("solid");
+            document.undo().unwrap();
+            snapshot("hollow again");
+            (states, dialogs.info_headings_for_test(), plug_shape)
+        });
+        let (drains, plugs) = plug_shape.expect("a hollow");
+        assert_eq!(plugs, 1);
+        assert_eq!(drains[0].inner_radius_mm, Some(1.0));
+        assert_eq!(drains[0].plug_clearance_mm, Some(DEFAULT_PLUG_CLEARANCE_MM));
+        assert_eq!(drains[0].depth_mm, None);
+        assert_eq!(notices, vec!["Drain not drilled".to_owned()]);
+        let by = |label: &str| &states.iter().find(|(l, _)| l == label).unwrap().1;
+        let hollowed = by("hollowed");
+        assert_eq!(hollowed.len(), 2, "the model and its plug");
+        let (model, plug) = (&hollowed[0], &hollowed[1]);
+        assert_eq!(plug.3.as_deref(), Some("Drain plug 1"));
+        assert!(plug.2.abs() < 1e-4, "on the plate: {}", plug.2);
+        let apart = model.1.1[0] <= plug.1.0[0]
+            || plug.1.1[0] <= model.1.0[0]
+            || model.1.1[1] <= plug.1.0[1]
+            || plug.1.1[1] <= model.1.0[1];
+        assert!(apart, "beside the model: {:?} {:?}", model.1, plug.1);
+        // As wide as the hole at the surface (1.5 mm) less 0.05 mm, about.
+        let width = plug.1.1[0] - plug.1.0[0];
+        assert!((width - 2.9).abs() < 0.05, "{width}");
+        assert_eq!(by("undone").len(), 1, "undo takes the plug with the hollow");
+        assert!(
+            Arc::ptr_eq(&by("redone")[1].0, &plug.0),
+            "redo brings it back"
+        );
+        assert_eq!(by("shallow").len(), 2, "a drain left out changes nothing");
+        let second = by("second");
+        assert_eq!(second.len(), 3, "two plugs");
+        let first_again = second
+            .iter()
+            .find(|l| l.3.as_deref() == Some("Drain plug 1"))
+            .unwrap();
+        assert_eq!(first_again.1, plug.1, "the first plug stays where it stood");
+        assert!(
+            second
+                .iter()
+                .any(|l| l.3.as_deref() == Some("Drain plug 2"))
+        );
+        assert_eq!(by("solid").len(), 1, "solid again: no plugs");
+        assert_eq!(by("hollow again").len(), 3, "undo brings them back");
     }
 }

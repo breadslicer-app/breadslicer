@@ -644,6 +644,66 @@ export component OrientCard inherits Card {
     }
 }
 
+// The Repair button of the MESH CHECK card; while a run goes, what it is
+// doing, how far it is and Cancel, which discards the run (#253). Under it,
+// when a run left something broken, whether the viewport marks it.
+component RepairControls inherits VerticalLayout {
+    in property <bool> enabled;
+    in property <bool> primary;
+    in property <bool> repairing;
+    in property <string> phase;
+    in property <float> progress;
+    in property <bool> marks-available;
+    in property <bool> marks-shown;
+    callback repair-requested();
+    callback cancel-requested();
+    callback marks-toggled(bool);
+
+    spacing: 6px;
+
+    if !root.repairing: ScButton {
+        text: @tr("Inspector" => "Repair meshes");
+        icon: Icons.repair;
+        kind: root.primary ? ButtonKind.primary : ButtonKind.normal;
+        enabled: root.enabled;
+        clicked => {
+            root.repair-requested();
+        }
+    }
+    if root.repairing: HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            spacing: 4px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.phase == "" ? @tr("Inspector" => "Repairing…") : root.phase;
+                font-size: Theme.font-sm;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            ProgressIndicator {
+                progress: root.progress;
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Cancel");
+            clicked => {
+                root.cancel-requested();
+            }
+        }
+    }
+    if root.marks-available && !root.repairing: CheckBox {
+        text: @tr("Inspector" => "Show what is left on the model");
+        checked: root.marks-shown;
+        toggled => {
+            root.marks-toggled(self.checked);
+        }
+    }
+}
+
 export component TransformInspector inherits VerticalLayout {
     in property <[StandardListViewItem]> objects;
     in property <int> selected-index: -1;
@@ -657,6 +717,12 @@ export component TransformInspector inherits VerticalLayout {
     in property <string> check-text;
     in property <bool> repair-enabled;
     in property <bool> repairing;
+    // A Repair run's step and how far it is (#253).
+    in property <string> repair-phase;
+    in property <float> repair-progress;
+    // Whether the viewport can mark what a run left broken, and does.
+    in property <bool> repair-marks-available;
+    in property <bool> repair-marks-shown;
     // The selected object, in world millimetres and degrees (see
     // `viewport/numeric_transform.rs`); `selection-valid` is false with no
     // selection.
@@ -675,6 +741,8 @@ export component TransformInspector inherits VerticalLayout {
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
     callback repair-requested();
+    callback repair-cancel();
+    callback repair-marks-toggled(bool);
     // A typed value: the field code (NumericEdit::from_ui) and the value.
     callback numeric-edit(int, float);
     // Arrange (#180): the card's settings, whether a run is going, and what
@@ -711,13 +779,22 @@ export component TransformInspector inherits VerticalLayout {
         Note {
             text: root.check-text;
         }
-        ScButton {
-            text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");
-            icon: Icons.repair;
-            kind: ButtonKind.primary;
+        RepairControls {
             enabled: root.repair-enabled;
-            clicked => {
+            primary: true;
+            repairing: root.repairing;
+            phase: root.repair-phase;
+            progress: root.repair-progress;
+            marks-available: root.repair-marks-available;
+            marks-shown: root.repair-marks-shown;
+            repair-requested => {
                 root.repair-requested();
+            }
+            cancel-requested => {
+                root.repair-cancel();
+            }
+            marks-toggled(on) => {
+                root.repair-marks-toggled(on);
             }
         }
     }
@@ -1000,12 +1077,17 @@ export component TransformInspector inherits VerticalLayout {
         collapsible: true;
         expanded: false;
 
-        ScButton {
-            text: root.repairing ? @tr("Inspector" => "Repairing…") : @tr("Inspector" => "Repair meshes");
-            icon: Icons.repair;
+        RepairControls {
             enabled: root.repair-enabled;
-            clicked => {
+            primary: false;
+            repairing: root.repairing;
+            phase: root.repair-phase;
+            progress: root.repair-progress;
+            repair-requested => {
                 root.repair-requested();
+            }
+            cancel-requested => {
+                root.repair-cancel();
             }
         }
     }
@@ -1031,6 +1113,13 @@ export component HollowInspector inherits VerticalLayout {
     in property <float> cell;
     in property <float> beam;
     in property <float> drain-radius;
+    // The drain tool's shape (#316, #317, #318).
+    in property <bool> drain-depth-set;
+    in property <float> drain-depth;
+    in property <bool> drain-cone;
+    in property <float> drain-inner-radius;
+    in property <bool> drain-plug;
+    in property <float> plug-clearance;
     callback apply-requested();
     callback cancel-requested();
     callback restore-requested();
@@ -1207,12 +1296,68 @@ export component HollowInspector inherits VerticalLayout {
             }
         }
         NumberField {
-            label: @tr("Inspector" => "Drain radius");
+            label: root.drain-cone ? @tr("Inspector" => "Radius at the surface") : @tr("Inspector" => "Drain radius");
             unit: "mm";
             value: root.drain-radius;
             committed(v) => {
                 root.option-changed(6, v);
             }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Shape");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Cylinder"), @tr("Inspector" => "Cone")];
+                current: root.drain-cone ? 1 : 0;
+                picked(i) => {
+                    root.option-changed(9, i);
+                }
+            }
+        }
+        if root.drain-cone: NumberField {
+            label: @tr("Inspector" => "Radius at the end");
+            unit: "mm";
+            value: root.drain-inner-radius;
+            committed(v) => {
+                root.option-changed(10, v);
+            }
+        }
+        LabeledRow {
+            label: @tr("Inspector" => "Depth");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Through the wall"), @tr("Inspector" => "Set")];
+                current: root.drain-depth-set ? 1 : 0;
+                picked(i) => {
+                    root.option-changed(7, i);
+                }
+            }
+        }
+        if root.drain-depth-set: NumberField {
+            label: @tr("Inspector" => "Depth from the surface");
+            unit: "mm";
+            value: root.drain-depth;
+            committed(v) => {
+                root.option-changed(8, v);
+            }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Make a plug for each new drain");
+            checked: root.drain-plug;
+            toggled => {
+                root.option-changed(11, self.checked ? 1 : 0);
+            }
+        }
+        if root.drain-plug: NumberField {
+            label: @tr("Inspector" => "Plug clearance (across)");
+            unit: "mm";
+            value: root.plug-clearance;
+            committed(v) => {
+                root.option-changed(12, v);
+            }
+        }
+        Note {
+            text: @tr("Inspector" => "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning.");
         }
         if root.drain-count > 0: ScButton {
             text: @tr("Inspector" => "Remove all drains");
@@ -1258,6 +1403,9 @@ export component SupportsInspector inherits VerticalLayout {
     in property <int> raft-index;
     in property <float> raft-thickness;
     in property <bool> raft-wall;
+    // A zone preset's summary (#360), empty without one: the preset sizes
+    // and spaces the supports itself, so the placement knobs give way to it.
+    in property <string> zone-summary;
     // The raft would take the models' first layers (#131): the warning, empty
     // when it does not, and the label of its lift button.
     in property <string> raft-clash-message;
@@ -1392,65 +1540,72 @@ export component SupportsInspector inherits VerticalLayout {
         title: @tr("Inspector" => "PLACEMENT");
         collapsible: true;
 
-        LabeledRow {
-            label: @tr("Inspector" => "Support size");
-            Segmented {
-                width: 190px;
-                options: [@tr("Inspector" => "Detail"), @tr("Inspector" => "Structure"), @tr("Inspector" => "Anchor")];
-                current: root.sizing-index;
-                picked(i) => {
-                    root.option-changed(0, i);
+        if root.zone-summary != "": Note {
+            text: root.zone-summary;
+        }
+        if root.zone-summary == "": VerticalLayout {
+            spacing: 10px;
+
+            LabeledRow {
+                label: @tr("Inspector" => "Support size");
+                Segmented {
+                    width: 190px;
+                    options: [@tr("Inspector" => "Detail"), @tr("Inspector" => "Structure"), @tr("Inspector" => "Anchor")];
+                    current: root.sizing-index;
+                    picked(i) => {
+                        root.option-changed(0, i);
+                    }
                 }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Area per support");
-            unit: "mm²";
-            decimals: 1;
-            value: root.density;
-            committed(v) => {
-                root.option-changed(1, v);
+            NumberField {
+                label: @tr("Inspector" => "Area per support");
+                unit: "mm²";
+                decimals: 1;
+                value: root.density;
+                committed(v) => {
+                    root.option-changed(1, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Overhang angle");
-            unit: "°";
-            decimals: 0;
-            value: root.angle;
-            committed(v) => {
-                root.option-changed(2, v);
+            NumberField {
+                label: @tr("Inspector" => "Overhang angle");
+                unit: "°";
+                decimals: 0;
+                value: root.angle;
+                committed(v) => {
+                    root.option-changed(2, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Size scale");
-            unit: "×";
-            value: root.size-scale;
-            committed(v) => {
-                root.option-changed(3, v);
+            NumberField {
+                label: @tr("Inspector" => "Size scale");
+                unit: "×";
+                value: root.size-scale;
+                committed(v) => {
+                    root.option-changed(3, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Smallest island");
-            unit: "mm²";
-            value: root.min-island;
-            committed(v) => {
-                root.option-changed(4, v);
+            NumberField {
+                label: @tr("Inspector" => "Smallest island");
+                unit: "mm²";
+                value: root.min-island;
+                committed(v) => {
+                    root.option-changed(4, v);
+                }
             }
-        }
-        NumberField {
-            label: @tr("Inspector" => "Coverage");
-            unit: "%";
-            decimals: 0;
-            value: root.coverage;
-            committed(v) => {
-                root.option-changed(5, v);
+            NumberField {
+                label: @tr("Inspector" => "Coverage");
+                unit: "%";
+                decimals: 0;
+                value: root.coverage;
+                committed(v) => {
+                    root.option-changed(5, v);
+                }
             }
-        }
-        CheckBox {
-            text: @tr("Inspector" => "Stabilize poses on a point or edge");
-            checked: root.stabilization;
-            toggled => {
-                root.option-changed(6, self.checked ? 1 : 0);
+            CheckBox {
+                text: @tr("Inspector" => "Stabilize poses on a point or edge");
+                checked: root.stabilization;
+                toggled => {
+                    root.option-changed(6, self.checked ? 1 : 0);
+                }
             }
         }
         CheckBox {

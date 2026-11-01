@@ -282,6 +282,115 @@ pub fn append_contact_cone_primitive(
     );
 }
 
+/// How far a zone root's neck reaches above its join cone, mm: past where
+/// the shaft's tube is at its full width (SoulCrafted, #360).
+const ROOT_NECK_ABOVE_JOIN_MM: f64 = 1.0;
+
+/// How contact tips are drawn (SoulCrafted, #360). The default is
+/// DragonFruit's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TipDrawing {
+    /// The cone is exactly its contact diameter where it crosses the model
+    /// surface, narrowing along the same slope inside it. DragonFruit starts
+    /// the cone at the contact diameter at the bottom of its penetration, so
+    /// it crosses the surface wider than its number.
+    pub exact_contact: bool,
+    /// Each tip that holds the model sinks by its own profile's penetration
+    /// instead of the run's; a tip resting on the model below keeps at least
+    /// the run's.
+    pub per_support_penetration: bool,
+}
+
+/// A contact cone's ends as drawn: its socket, where its tip ends inside
+/// the model, their radii, and the top of its break-point neck (a cylinder
+/// of the tip radius from the surface up to there) when it has one.
+struct ContactEnds {
+    socket: Vec3,
+    tip: Vec3,
+    r_socket: f64,
+    r_tip: f64,
+    neck: Option<Vec3>,
+}
+
+fn contact_ends(
+    cone: &ContactCone,
+    penetration_mm: f64,
+    tip_scale: f64,
+    drawing: TipDrawing,
+) -> ContactEnds {
+    let socket = get_final_socket_position(cone);
+    let n = cone.surface_normal.unwrap_or(cone.normal);
+    // A tip whose socket stands above it rests on the model below (a
+    // stick's base tip): it keeps the run's sink, or its apex would cure on
+    // nothing. A tip holding the model takes its own (its normal leads to a
+    // socket below it).
+    let penetration = if drawing.per_support_penetration && cone.normal.z <= 0.0 {
+        js_max(0.0, cone.profile.penetration_mm)
+    } else if drawing.per_support_penetration {
+        js_max(penetration_mm, cone.profile.penetration_mm)
+    } else {
+        penetration_mm
+    };
+    let tip = cone.pos.sub(n.multiply_scalar(penetration));
+    let r_socket = js_max(0.05, cone.profile.body_diameter_mm * 0.5);
+    let r_contact = js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale);
+    let mut ends = ContactEnds {
+        socket,
+        tip,
+        r_socket,
+        r_tip: r_contact,
+        neck: None,
+    };
+    let length = cone.pos.distance_to(socket);
+    if !(length > 1e-9) {
+        return ends;
+    }
+    let neck = cone
+        .profile
+        .break_point_mm
+        .filter(|b| *b > 0.0)
+        .map(|b| b.min(length * 0.8));
+    if let Some(neck) = neck {
+        let axis = socket.sub(cone.pos).multiply_scalar(1.0 / length);
+        ends.neck = Some(cone.pos.add(axis.multiply_scalar(neck)));
+    } else if drawing.exact_contact {
+        let slope = (r_socket - r_contact) / length;
+        ends.r_tip = js_max(0.005, r_contact - slope * penetration);
+    }
+    ends
+}
+
+/// [`append_contact_cone_primitive`] drawn as `drawing` says.
+pub fn append_contact_cone_with(
+    sink: &mut TriangleSink,
+    cone: &ContactCone,
+    radial_segments: u32,
+    penetration_mm: f64,
+    tip_scale: f64,
+    drawing: TipDrawing,
+) {
+    if drawing == TipDrawing::default() {
+        append_contact_cone_primitive(sink, cone, radial_segments, penetration_mm, tip_scale);
+        return;
+    }
+    let ends = contact_ends(cone, penetration_mm, tip_scale, drawing);
+    let segments = radial_segments.max(4);
+    match ends.neck {
+        Some(neck) => {
+            append_frustum(sink, ends.tip, neck, ends.r_tip, ends.r_tip, segments);
+            append_frustum(sink, neck, ends.socket, ends.r_tip, ends.r_socket, segments);
+        }
+        None => append_frustum(
+            sink,
+            ends.tip,
+            ends.socket,
+            ends.r_tip,
+            ends.r_socket,
+            segments,
+        ),
+    }
+}
+
 /// `appendContactDiskPrimitive`: a cylinder through the disk plus a sphere.
 pub fn append_contact_disk_primitive(
     sink: &mut TriangleSink,
@@ -333,6 +442,8 @@ pub struct SupportSliceInput<'a> {
     pub support_tip_shrink_percent: f64,
     /// `calculateTipOffset(...)` for the active material and printer, or 0.
     pub tip_penetration_mm: f64,
+    /// How contact tips are drawn (SoulCrafted).
+    pub tip_drawing: TipDrawing,
     /// How shafts and joints are drawn (SoulCrafted's option; the default is
     /// DragonFruit's).
     pub shaft_style: ShaftStyle,
@@ -549,6 +660,36 @@ pub fn build_support_and_raft_world_parts(
             root_radius,
             tessellation.root_radial_segments,
         );
+        // SoulCrafted (#360): a 45° join cone from the shaft out, on the
+        // disk or on the raft's plate when that is higher.
+        if let Some(join) = root.join_cone_mm.filter(|j| *j > 0.0) {
+            let plate_top = if input.raft.bottom_mode == RaftBottomMode::Off {
+                0.0
+            } else {
+                js_max(0.0, input.raft.thickness)
+            };
+            let floor = base.add(Vec3::new(0.0, 0.0, js_max(disk_height, plate_top)));
+            // The shaft's tube only reaches its full width a little above the
+            // root top, which the root's own cone used to cover: a neck of the
+            // shaft's width from the disk up past the join cone does.
+            append_frustum(
+                &mut sink,
+                disk_top,
+                floor.add(Vec3::new(0.0, 0.0, join + ROOT_NECK_ABOVE_JOIN_MM)),
+                top_radius,
+                top_radius,
+                tessellation.root_radial_segments,
+            );
+            append_frustum(
+                &mut sink,
+                floor,
+                floor.add(Vec3::new(0.0, 0.0, join)),
+                top_radius + join,
+                top_radius,
+                tessellation.root_radial_segments,
+            );
+            continue;
+        }
         append_frustum(
             &mut sink,
             disk_top,
@@ -644,7 +785,7 @@ pub fn build_support_and_raft_world_parts(
                     &mut sink,
                     &resolved,
                     (start_cone, end_cone),
-                    (input.tip_penetration_mm, tip_scale),
+                    (input.tip_penetration_mm, tip_scale, input.tip_drawing),
                     &tessellation,
                     &params,
                 ) {
@@ -718,12 +859,13 @@ pub fn build_support_and_raft_world_parts(
                     if joined_cones.contains(&cone.id.as_str()) {
                         continue;
                     }
-                    append_contact_cone_primitive(
+                    append_contact_cone_with(
                         &mut sink,
                         cone,
                         tessellation.contact_cone_radial_segments,
                         input.tip_penetration_mm,
                         tip_scale,
+                        input.tip_drawing,
                     );
                 }
             }
@@ -854,24 +996,15 @@ fn append_smooth_shaft(
         crate::supports::support_primitives::knot::segment_endpoints::SegmentEndpoints,
     )],
     cones: (Option<&ContactCone>, Option<&ContactCone>),
-    (penetration_mm, tip_scale): (f64, f64),
+    (penetration_mm, tip_scale, drawing): (f64, f64, TipDrawing),
     tessellation: &SupportSliceTessellation,
     params: &super::smooth_shafts::SmoothShaftParams,
 ) -> bool {
     if resolved.is_empty() {
         return false;
     }
-    // (socket, tip, radius at the socket, radius at the tip) of a contact.
-    let cone_ends = |cone: &ContactCone| {
-        let n = cone.surface_normal.unwrap_or(cone.normal);
-        let tip = cone.pos.sub(n.multiply_scalar(penetration_mm));
-        (
-            get_final_socket_position(cone),
-            tip,
-            js_max(0.05, cone.profile.body_diameter_mm * 0.5),
-            js_max(0.05, cone.profile.contact_diameter_mm * 0.5 * tip_scale),
-        )
-    };
+    // A contact's ends as drawn.
+    let cone_ends = |cone: &ContactCone| contact_ends(cone, penetration_mm, tip_scale, drawing);
     let mut chains: Vec<Chain> = Vec::new();
     let mut previous: Option<&Segment> = None;
     for &(seg, ep) in resolved {
@@ -928,7 +1061,13 @@ fn append_smooth_shaft(
 
     // The upper contact: on from the last chain through its socket to the tip.
     if let (Some(cone), Some((points, radii))) = (cones.1, chains.last_mut()) {
-        let (socket, tip, r_socket, r_tip) = cone_ends(cone);
+        let ContactEnds {
+            socket,
+            tip,
+            r_socket,
+            r_tip,
+            neck,
+        } = cone_ends(cone);
         let shaft_r = radii.last().map_or(r_socket, |r| r.1);
         if points
             .last()
@@ -940,15 +1079,34 @@ fn append_smooth_shaft(
             });
             radii.push((shaft_r, shaft_r));
         }
-        points.push(ChainPoint {
-            pos: tip,
-            bulge: false,
-        });
-        radii.push((r_socket, r_tip));
+        if let Some(neck) = neck {
+            points.push(ChainPoint {
+                pos: neck,
+                bulge: false,
+            });
+            radii.push((r_socket, r_tip));
+            points.push(ChainPoint {
+                pos: tip,
+                bulge: false,
+            });
+            radii.push((r_tip, r_tip));
+        } else {
+            points.push(ChainPoint {
+                pos: tip,
+                bulge: false,
+            });
+            radii.push((r_socket, r_tip));
+        }
     }
     // The lower contact: from its tip through its socket into the first chain.
     if let (Some(cone), Some((points, radii))) = (cones.0, chains.first_mut()) {
-        let (socket, tip, r_socket, r_tip) = cone_ends(cone);
+        let ContactEnds {
+            socket,
+            tip,
+            r_socket,
+            r_tip,
+            neck,
+        } = cone_ends(cone);
         let shaft_r = radii.first().map_or(r_socket, |r| r.0);
         if points
             .first()
@@ -963,14 +1121,33 @@ fn append_smooth_shaft(
             );
             radii.insert(0, (shaft_r, shaft_r));
         }
-        points.insert(
-            0,
-            ChainPoint {
-                pos: tip,
-                bulge: false,
-            },
-        );
-        radii.insert(0, (r_tip, r_socket));
+        if let Some(neck) = neck {
+            points.insert(
+                0,
+                ChainPoint {
+                    pos: neck,
+                    bulge: false,
+                },
+            );
+            radii.insert(0, (r_tip, r_socket));
+            points.insert(
+                0,
+                ChainPoint {
+                    pos: tip,
+                    bulge: false,
+                },
+            );
+            radii.insert(0, (r_tip, r_tip));
+        } else {
+            points.insert(
+                0,
+                ChainPoint {
+                    pos: tip,
+                    bulge: false,
+                },
+            );
+            radii.insert(0, (r_tip, r_socket));
+        }
     }
 
     for (points, radii) in &chains {

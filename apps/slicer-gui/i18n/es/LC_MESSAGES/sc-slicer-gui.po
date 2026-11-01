@@ -4767,3 +4767,212 @@ msgstr "Pivote propio de cada objeto ({}: común)"
 msgctxt "MeshViewer"
 msgid "Shared pivot ({}: each object's own)"
 msgstr "Pivote común ({}: el propio de cada objeto)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Show what is left on the model"
+msgstr "Mostrar en el modelo lo que quedó"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking the mesh…"
+msgstr "Revisando la malla…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing broken faces…"
+msgstr "Quitando caras rotas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Welding cracks…"
+msgstr "Soldando grietas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing duplicate faces…"
+msgstr "Quitando caras duplicadas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Separating parts that touch…"
+msgstr "Separando piezas que se tocan…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Filling holes…"
+msgstr "Tapando agujeros…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Turning inside-out shells outward…"
+msgstr "Dando vuelta las cáscaras que estaban al revés…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking that nothing was lost…"
+msgstr "Revisando que no se haya perdido nada…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Orienting faces…"
+msgstr "Orientando caras…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Removing slivers…"
+msgstr "Quitando astillas…"
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Checking the result…"
+msgstr "Revisando el resultado…"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{} — {} ({} of {})"
+msgstr "{} — {} ({} de {})"
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Check {}: Repair closed large openings, which may be open on purpose."
+msgstr "Revisá {}: Reparar cerró aberturas grandes, que pueden estar abiertas a propósito."
+
+#: src/repair_report.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Check: the fills cover {} % of its surface. If it is open on purpose (a plate, a relief without a back), it now prints as a thin solid."
+msgstr "Revisá: lo tapado cubre el {} % de su superficie. Si está abierto a propósito (una placa, un relieve sin fondo), ahora se imprime como un sólido fino."
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Minis 30 mm+"
+msgstr "Minis 30 mm+"
+
+#: src/df_support_run.rs
+msgctxt "Inspector"
+msgid "Figures 70 mm+"
+msgstr "Figuras 70 mm+"
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "This preset sets the size and spacing of every support by zone: island first layers, their reinforcement, overhangs past {}° and stabilization."
+msgstr "Este preset elige el tamaño y la separación de cada soporte según la zona: primera capa de las islas, su refuerzo, voladizos de más de {}° y estabilización."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Tips: {} mm."
+msgstr "Puntas: {} mm."
+
+#: src/df_support_run.rs
+#, rust-format
+msgctxt "Inspector"
+msgid "Bracing: {} mm, from {} mm up."
+msgstr "Refuerzos: {} mm, desde {} mm de altura."
+
+#: ui/main-window.slint
+msgctxt "Workspace"
+msgid "At its set depth a drain here would reach the far side of the cavity: it is drilled shorter, as drawn."
+msgstr "Con la profundidad fijada, un drenaje acá llegaría al otro lado de la cavidad: se perfora más corto, como se ve."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Radius at the surface"
+msgstr "Radio en la superficie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Shape"
+msgstr "Forma"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cylinder"
+msgstr "Cilindro"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Cone"
+msgstr "Cono"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Radius at the end"
+msgstr "Radio en el fondo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Depth"
+msgstr "Profundidad"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Through the wall"
+msgstr "Atravesar la pared"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Set"
+msgstr "Fija"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Depth from the surface"
+msgstr "Profundidad desde la superficie"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Make a plug for each new drain"
+msgstr "Hacer un tapón para cada drenaje nuevo"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Plug clearance (across)"
+msgstr "Holgura del tapón (en el diámetro)"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Each drain keeps the shape it was placed with. A plug is a separate part on the plate, as long as the hole and narrower by the clearance: print it with the model and close the hole with it after cleaning."
+msgstr "Cada drenaje conserva la forma con la que lo pusiste. El tapón es una pieza aparte en la cama, del largo del agujero y más angosta por la holgura: imprimilo con el modelo y tapá el agujero con él después de limpiar."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "One drilled shorter than set: deeper, it would reach the far side of the cavity."
+msgid_plural "{n} drilled shorter than set: deeper, they would reach the far side of the cavity."
+msgstr[0] "Uno se perforó más corto que lo fijado: más hondo llegaría al otro lado de la cavidad."
+msgstr[1] "{n} se perforaron más cortos que lo fijado: más hondos llegarían al otro lado de la cavidad."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "One plug placed beside the model."
+msgid_plural "{n} plugs placed beside the model."
+msgstr[0] "Un tapón puesto al lado del modelo."
+msgstr[1] "{n} tapones puestos al lado del modelo."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "Plug not made"
+msgid_plural "{n} plugs not made"
+msgstr[0] "Tapón sin hacer"
+msgstr[1] "{n} tapones sin hacer"
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "The drain was drilled, but its plug did not come out as a closed solid, so it was left out."
+msgid_plural "The drains were drilled, but their plugs did not come out as closed solids, so they were left out."
+msgstr[0] "El drenaje se perforó, pero su tapón no salió como un sólido cerrado, así que quedó afuera."
+msgstr[1] "Los drenajes se perforaron, pero sus tapones no salieron como sólidos cerrados, así que quedaron afuera."
+
+#: src/hollow_run.rs
+#, rust-format
+msgctxt "HollowRun"
+msgid "Drain plug {}"
+msgstr "Tapón de drenaje {}"

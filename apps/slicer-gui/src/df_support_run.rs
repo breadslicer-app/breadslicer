@@ -42,6 +42,7 @@ use std::time::{Duration, Instant};
 
 use sc_geom::JobError;
 use sc_geom::JobHandle;
+use sc_geom::df_supports::zone_presets::{ZonePreset, figures_70, minis_30};
 use sc_geom::df_supports::{
     DfPrescan, DfSupportOptions, DfSupportOutcome, DfSupportRequest, DfSupportSession, EditError,
     EditPreview, RaftMode, ScanCache, start_df_prescan, start_df_supports,
@@ -374,7 +375,8 @@ struct Preset {
     built_in: bool,
 }
 
-/// The presets that ship with SoulCrafted: DragonFruit's three sizing tiers.
+/// The presets that ship with SoulCrafted: DragonFruit's three sizing
+/// tiers, then the two zone presets (#360).
 fn built_in_presets() -> Vec<Preset> {
     let tier = |name: &str, sizing: &str| Preset {
         name: name.to_owned(),
@@ -384,11 +386,75 @@ fn built_in_presets() -> Vec<Preset> {
         },
         built_in: true,
     };
+    let zones = |name: slint::SharedString, zones: ZonePreset| Preset {
+        name: name.to_string(),
+        options: DfSupportOptions {
+            zones: Some(zones),
+            ..Default::default()
+        },
+        built_in: true,
+    };
     vec![
         tier("Structure (default)", "structure"),
         tier("Detail (small miniatures)", "detail"),
         tier("Anchor (heavy parts)", "anchor"),
+        zones(ctr!("Inspector", "Minis 30 mm+"), minis_30()),
+        zones(ctr!("Inspector", "Figures 70 mm+"), figures_70()),
     ]
+}
+
+/// The Supports tab's summary of the zone preset of `options` (#360),
+/// empty without one.
+fn zone_summary(options: &DfSupportOptions) -> slint::SharedString {
+    let Some(zones) = &options.zones else {
+        return slint::SharedString::default();
+    };
+    let rules = &zones.rules;
+    let mut tips: Vec<f64> = rules
+        .first_layer
+        .iter()
+        .filter(|b| b.enabled)
+        .map(|b| b.size.as_str())
+        .chain(
+            rules
+                .reinforcement
+                .iter()
+                .filter(|b| b.enabled)
+                .map(|b| b.size.as_str()),
+        )
+        .chain(
+            rules
+                .overhang
+                .enabled
+                .then_some(rules.overhang.size.as_str()),
+        )
+        .chain(
+            rules
+                .stabilization
+                .enabled
+                .then_some(rules.stabilization.size.as_str()),
+        )
+        .filter_map(|id| rules.size_index(id))
+        .map(|i| rules.sizes[i].tip_diameter_mm)
+        .collect();
+    tips.sort_by(f64::total_cmp);
+    tips.dedup();
+    let tips: Vec<String> = tips.into_iter().map(mm_text).collect();
+    let lines = [
+        ctr!(
+            "Inspector",
+            "This preset sets the size and spacing of every support by zone: island first layers, their reinforcement, overhangs past {}° and stabilization.",
+            mm_text(rules.overhang.angle_deg)
+        ),
+        ctr!("Inspector", "Tips: {} mm.", tips.join(", ")),
+        ctr!(
+            "Inspector",
+            "Bracing: {} mm, from {} mm up.",
+            mm_text(zones.bracing.diameter_mm),
+            mm_text(zones.bracing.start_mm)
+        ),
+    ];
+    lines.join("\n").into()
 }
 
 /// Where the options and presets live: the app's local data folder. Tests
@@ -1031,6 +1097,7 @@ impl DfSupportRun {
         });
         ui.set_support_raft_thickness(o.raft_thickness_mm as f32);
         ui.set_support_raft_wall(o.raft_wall);
+        ui.set_support_zone_summary(zone_summary(&o));
     }
 
     /// Replaces the options, saves them and shows them.
@@ -4288,8 +4355,41 @@ mod hand_edit_tests {
 
     #[test]
     fn supports_saved_as_bread_reopen_editable() {
+        save_and_reopen(DfSupportRequest::default());
+    }
+
+    /// A zone preset (#360) keeps its supports through a save and reopen,
+    /// and its options with them.
+    #[test]
+    fn zone_preset_supports_saved_as_bread_reopen_editable() {
+        let mut request = DfSupportRequest::default();
+        request.options.zones = Some(minis_30());
+        save_and_reopen(request);
+    }
+
+    #[test]
+    fn the_zone_presets_ship_and_round_trip_as_presets() {
+        let presets = on_fresh_slint_thread(built_in_presets);
+        let zoned: Vec<&Preset> = presets
+            .iter()
+            .filter(|p| p.options.zones.is_some())
+            .collect();
+        assert_eq!(zoned.len(), 2);
+        assert_eq!(zoned[0].name, "Minis 30 mm+");
+        assert_eq!(zoned[1].name, "Figures 70 mm+");
+        for preset in zoned {
+            let text = toml::to_string_pretty(&preset.options).expect("a preset saves");
+            let back: DfSupportOptions = toml::from_str(&text).expect("a preset reads back");
+            assert_eq!(back, preset.options);
+            assert_eq!(back.clamped(), preset.options, "inside every bound");
+            assert!(!on_fresh_slint_thread(move || zone_summary(&back)).is_empty());
+        }
+        assert!(zone_summary(&DfSupportOptions::default()).is_empty());
+    }
+
+    fn save_and_reopen(request: DfSupportRequest) {
         let (saved_triangles, reopened, after_add, after_undo, after_remove) =
-            on_fresh_slint_thread(|| {
+            on_fresh_slint_thread(move || {
                 let window =
                     MainWindow::new().expect("the headless platform creates a main window");
                 let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
@@ -4312,9 +4412,8 @@ mod hand_edit_tests {
                     ctrl.dialogs(),
                     ctrl.clone(),
                 );
-                let outcome = start_df_supports(&graph, DfSupportRequest::default())
-                    .unwrap()
-                    .join();
+                let zones = request.options.zones.clone();
+                let outcome = start_df_supports(&graph, request).unwrap().join();
                 *run.started_on.borrow_mut() = Some(document.scene_revision());
                 run.finish(outcome);
                 let (_, saved_mesh) = run.support_leaf().expect("the supports were pasted");
@@ -4358,6 +4457,11 @@ mod hand_edit_tests {
                 document.install_project_graph(scene, target.clone(), project.payload);
                 crate::support_persist::install_sets(&document, restored.sets);
                 let reopened_session = in_force_session(&run).expect("editable");
+                assert_eq!(
+                    reopened_session.options().map(|o| o.zones.clone()),
+                    Some(zones),
+                    "the session keeps the options it ran with"
+                );
                 let (_, mesh) = run.support_leaf().expect("the supports are back");
                 let reopened = mesh.faces() == saved_mesh.faces()
                     && mesh.vertices() == saved_mesh.vertices()

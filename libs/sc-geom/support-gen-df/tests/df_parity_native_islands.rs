@@ -150,7 +150,11 @@ fn native_island_scans_match_dragonfruit() {
             num("overhangPxMm") as f32,
             run["hasRaft"].as_bool().unwrap(),
         );
-        let soup_scan = ipc(&support_gen_df::native::overhang::OverhangScan { regions, stability });
+        let soup_scan = ipc(&support_gen_df::native::overhang::OverhangScan {
+            regions,
+            stability,
+            steep_regions: Vec::new(),
+        });
         assert_same(&soup_scan, &run["soupScan"], &format!("{path}.soupScan"));
     }
 }

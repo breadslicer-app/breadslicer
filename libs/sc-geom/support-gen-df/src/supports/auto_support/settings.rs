@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::constants::MIN_LEAF_FAN_RADIUS_MM;
+use super::zone_rules::ZoneRules;
 use crate::supports::numeric_constraint::{NumericConstraint, clamp_numeric};
 
 /// The seven numbers a run sizes every shaft, tip and root from — a Support
@@ -154,6 +155,12 @@ pub struct AutoSupportSettings {
     pub model_load_factor_cap: f64,
     /// Ceiling of the height factor. **Calibration, not a preference.**
     pub height_factor_cap: f64,
+    /// SoulCrafted (#360): a zone preset. When set, the run picks every
+    /// support's size and spacing by zone and draws each size exactly
+    /// (no model scaling, no tip floor); the density, sizing tier and
+    /// overhang knobs above are not read for placement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_rules: Option<ZoneRules>,
 }
 
 impl Default for AutoSupportSettings {
@@ -234,6 +241,7 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
         debug_skip_auto_bracing: false,
         stabilization_enabled: true,
         minima_reinforcement_enabled: true,
+        zone_rules: None,
     }
 }
 
@@ -293,6 +301,7 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
         debug_skip_auto_bracing: source.debug_skip_auto_bracing,
         stabilization_enabled: source.stabilization_enabled,
         minima_reinforcement_enabled: source.minima_reinforcement_enabled,
+        zone_rules: source.zone_rules.as_ref().map(ZoneRules::clamped),
     }
 }
 

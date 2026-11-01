@@ -1530,6 +1530,10 @@ pub struct OverhangScan {
     pub regions: Vec<OverhangRegion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stability: Option<StabilityReport>,
+    /// SoulCrafted (#360): the down-facing regions up to a steeper angle,
+    /// for the zone rules' stabilization; empty unless asked for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steep_regions: Vec<OverhangRegion>,
 }
 
 #[cfg(test)]

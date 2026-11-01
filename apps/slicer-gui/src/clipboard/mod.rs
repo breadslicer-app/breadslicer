@@ -29,6 +29,10 @@ use crate::scene_document::SceneDocument;
 /// [`Clipboard::new`], and the paste path consumes it.
 pub(crate) struct Clipboard {
     fragment: SceneFragment,
+    /// [`fragment_world_aabb`] of `fragment`, taken once at copy time: the
+    /// fragment never changes, and a walk over the vertices of a heavy mesh
+    /// on every paste is time a repeated `Ctrl+V` cannot spare (#353).
+    world_aabb: Option<Aabb>,
     /// Number of consecutive pastes since the fragment was captured. Bumped by
     /// the paste path; reset to 0 on a fresh copy. The placement function reads
     /// it to space out repeated pastes so stacked copies do not sit on top of
@@ -39,6 +43,7 @@ pub(crate) struct Clipboard {
 impl Clipboard {
     pub(crate) fn new(fragment: SceneFragment) -> Self {
         Self {
+            world_aabb: fragment_world_aabb(&fragment),
             fragment,
             cascade_count: 0,
         }
@@ -46,6 +51,11 @@ impl Clipboard {
 
     pub(crate) fn fragment(&self) -> &SceneFragment {
         &self.fragment
+    }
+
+    /// The fragment's [`fragment_world_aabb`].
+    pub(crate) fn world_aabb(&self) -> Option<Aabb> {
+        self.world_aabb
     }
 
     pub(crate) fn cascade_count(&self) -> u32 {
@@ -289,6 +299,15 @@ mod clipboard_tests {
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
         let cb = Clipboard::new(fragment);
         assert_eq!(cb.cascade_count(), 0);
+    }
+
+    #[test]
+    fn clipboard_keeps_the_fragment_box_taken_at_copy_time() {
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let expected = fragment_world_aabb(&fragment);
+        let cb = Clipboard::new(fragment);
+        assert_eq!(cb.world_aabb(), expected);
+        assert!(cb.world_aabb().is_some());
     }
 
     #[test]

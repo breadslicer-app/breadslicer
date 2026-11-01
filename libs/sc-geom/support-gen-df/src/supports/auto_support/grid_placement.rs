@@ -484,7 +484,7 @@ pub fn should_use_density_grid(island: &DetectedIsland, auto: &AutoSupportSettin
 
 /// World-space normal of one mesh face (BVH-reordered index), or None for a
 /// degenerate face.
-fn face_normal_at(mesh: BvhMesh<'_>, face_index: usize) -> Option<Vec3> {
+pub fn face_normal_at(mesh: BvhMesh<'_>, face_index: usize) -> Option<Vec3> {
     let [i0, i1, i2] = mesh.bvh.face(face_index);
     let a = mesh.bvh.vertex(i0);
     let b = mesh.bvh.vertex(i1);
@@ -580,6 +580,7 @@ pub fn generate_grid_candidates(
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: Some(true),
+                zone_size: None,
             });
         };
 

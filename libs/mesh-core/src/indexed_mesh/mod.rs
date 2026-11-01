@@ -10,6 +10,7 @@ pub mod fix;
 mod half_edges;
 mod mesh;
 pub mod repair;
+pub mod repair_progress;
 pub mod repair_report;
 pub mod sliceable;
 pub mod topology;
@@ -31,6 +32,8 @@ mod tests_fingerprint;
 mod tests_mesh;
 #[cfg(test)]
 mod tests_repair;
+#[cfg(test)]
+mod tests_repair_progress;
 #[cfg(test)]
 mod tests_repair_report;
 #[cfg(test)]

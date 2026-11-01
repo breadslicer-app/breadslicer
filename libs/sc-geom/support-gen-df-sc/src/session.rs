@@ -391,6 +391,12 @@ impl DfSupportSession {
         &self.state
     }
 
+    /// The options the run was made with; `None` for a run given explicit
+    /// settings.
+    pub fn options(&self) -> Option<&crate::DfSupportOptions> {
+        self.recipe.as_deref().map(|r| &r.options)
+    }
+
     /// Whether supports were added or removed by hand since the run: a run
     /// made again would not keep those edits.
     pub fn hand_edited(&self) -> bool {
@@ -651,7 +657,8 @@ impl DfSupportSession {
         let sdf = RefCell::new(pooled.unwrap_or_else(|| {
             SdfCache::new(bvh.clone(), Matrix4::IDENTITY, Some(settings.sdf_cell_mm))
         }));
-        let bands = SizingBands::factory();
+        let bands = SizingBands::factory()
+            .with_zone_sizes(settings.supports.auto_support.zone_rules.as_ref());
         let mut state = std::mem::take(&mut self.state);
         let outcome = {
             let mut new_id = self.id_source();
@@ -679,6 +686,7 @@ impl DfSupportSession {
                 priority: 0.0,
                 tip_diameter_mm: None,
                 grid_point: None,
+                zone_size: None,
             };
             let no_grid_hosts = HashSet::new();
             place_one_candidate(

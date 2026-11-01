@@ -121,6 +121,21 @@ pub(crate) fn summary_message(outcomes: &[SceneRepairOutcome], names: &[String])
             .to_string(),
         );
     }
+    let filled_a_lot: Vec<&str> = with_faces
+        .iter()
+        .filter(|(o, _)| o.details.filled_a_lot())
+        .map(|(_, name)| name.as_str())
+        .collect();
+    if !filled_a_lot.is_empty() {
+        parts.push(
+            ctr!(
+                "RepairDialog",
+                "Check {}: Repair closed large openings, which may be open on purpose.",
+                filled_a_lot.join(", ")
+            )
+            .to_string(),
+        );
+    }
     parts.join(" ")
 }
 
@@ -209,6 +224,18 @@ fn object_block(outcome: &SceneRepairOutcome, name: &str) -> Option<String> {
             }
             for action in repair_actions(&report.fixes) {
                 lines.push(format!("• {}", action_text(&action)));
+            }
+            if details.filled_a_lot()
+                && let Some(fraction) = details.filled_fraction
+            {
+                lines.push(
+                    ctr!(
+                        "RepairDialog",
+                        "Check: the fills cover {} % of its surface. If it is open on purpose (a plate, a relief without a back), it now prints as a thin solid.",
+                        format!("{:.0}", fraction * 100.0)
+                    )
+                    .to_string(),
+                );
             }
             if let Some(leftovers) = &details.leftovers {
                 lines.extend(leftover_texts(leftovers));
@@ -666,6 +693,44 @@ mod repair_report_tests {
         }
     }
 
+    /// Pins the fill warning: a fill over 5 % of the surface asks for a
+    /// check, in the summary and in the object's block; a small one does not.
+    #[test]
+    fn a_large_fill_asks_for_a_check_and_a_small_one_does_not() {
+        let corpus = repair_corpus();
+        let mesh = |name: &str| {
+            corpus
+                .iter()
+                .find(|f| f.name == name)
+                .expect("in the corpus")
+                .mesh()
+        };
+        let (outcomes, names) = repair(scene(vec![
+            ("Bowl", mesh("s03-big-hole-20pct")),
+            ("Cup", mesh("s02-small-hole")),
+        ]));
+        let summary = summary_message(&outcomes, &names);
+        assert!(
+            summary.contains(
+                "Check Bowl: Repair closed large openings, which may be open on purpose."
+            ),
+            "{summary}"
+        );
+        assert!(!summary.contains("Cup:"), "{summary}");
+        let details = details_text(&outcomes, &names, Duration::from_millis(5));
+        let checks: Vec<&str> = details
+            .lines()
+            .filter(|l| l.starts_with("Check: "))
+            .collect();
+        assert_eq!(
+            checks,
+            [
+                "Check: the fills cover 17 % of its surface. If it is open on purpose (a plate, a relief without a back), it now prints as a thin solid."
+            ],
+            "{details}"
+        );
+    }
+
     #[test]
     fn each_corpus_defect_gives_its_line_and_no_line_for_what_changed_nothing() {
         for fixture in repair_corpus() {
@@ -690,9 +755,17 @@ mod repair_report_tests {
                 for stage in ["removing broken faces", "removing slivers"] {
                     assert!(!time.contains(stage), "{}: {time}", fixture.name);
                 }
+                // Fills over 5 % of the surface ask for a check.
+                let check = match fixture.name {
+                    "s03-big-hole-20pct" | "s12-fin-on-edge" | "s14-crack-50um" => format!(
+                        " Check {}: Repair closed large openings, which may be open on purpose.",
+                        fixture.name
+                    ),
+                    _ => String::new(),
+                };
                 assert_eq!(
                     summary_message(&outcomes, &names),
-                    "Repaired 1 object. Everything can be sliced now."
+                    format!("Repaired 1 object. Everything can be sliced now.{check}")
                 );
             }
         }

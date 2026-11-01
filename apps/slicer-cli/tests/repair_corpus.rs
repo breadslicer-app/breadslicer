@@ -87,6 +87,8 @@ struct Row {
     /// For a mesh that passes the gate only once the slicer separates its
     /// touching solids: its layers as opened against its layers after Repair.
     layers: Option<LayerComparison>,
+    /// The share of the surface after Repair that its hole fills cover.
+    filled_fraction: Option<f64>,
 }
 
 /// The layers of a mesh sliced as opened against its layers after Repair.
@@ -275,6 +277,7 @@ fn measure_scene(corpus: &'static str, file: &str, scene: &mut Scene) -> Vec<Row
                     layers: opened
                         .zip(repaired)
                         .map(|(opened, repaired)| compare_layers(&opened, repaired)),
+                    filled_fraction: outcome.details.filled_fraction,
                 }
             },
         )
@@ -417,6 +420,9 @@ fn print_rows(rows: &[Row]) {
                  Repair: {} pixels differ in {} layers, {} with 4x AA in {} layers",
                 l.gate_ms, l.layers, l.binary_pixels, l.binary_layers, l.aa_pixels, l.aa_layers
             );
+        }
+        if let Some(fraction) = row.filled_fraction {
+            println!("      fills cover {:.2} % of the surface", fraction * 100.0);
         }
     }
 }

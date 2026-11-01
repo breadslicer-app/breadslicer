@@ -163,6 +163,7 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
                 plate_clearance_models: &[],
                 support_tip_shrink_percent: 0.0,
                 tip_penetration_mm: 0.0,
+                tip_drawing: Default::default(),
                 shaft_style,
                 robust_raft_geometry: false,
             })
@@ -371,6 +372,7 @@ fn on_dragonfruit_states_no_vertex_flies_off() {
                 plate_clearance_models: &[],
                 support_tip_shrink_percent: 0.0,
                 tip_penetration_mm: 0.0,
+                tip_drawing: Default::default(),
                 shaft_style,
                 robust_raft_geometry: false,
             })

@@ -30,8 +30,9 @@ mod wall;
 
 pub use control::{CancelToken, Cancelled, Control, Stage};
 pub use engine::{
-    DrainDepth, DrainHole, DrainReport, GridInfo, GridRequest, HollowApplied, HollowError,
-    HollowFill, HollowPreview, HollowSettings, HollowStats, ResolutionBound, Session, SolidArea,
+    DrainDepth, DrainHole, DrainPlug, DrainReport, GridInfo, GridRequest, HollowApplied,
+    HollowError, HollowFill, HollowPreview, HollowSettings, HollowStats, ResolutionBound, Session,
+    SolidArea,
 };
 pub use hollowing::InfillMode;
 pub use mesh::{Aabb, IndexedMesh, Vec3};
