@@ -521,6 +521,8 @@ struct HoverAnswer {
 struct HoverWorker {
     asks: std::sync::mpsc::Sender<HoverAsk>,
     answer: Arc<std::sync::Mutex<Option<HoverAnswer>>>,
+    /// Answers done with, let go of off the UI thread.
+    discard: std::sync::mpsc::Sender<HoverAnswer>,
 }
 
 impl HoverWorker {
@@ -557,20 +559,30 @@ impl HoverWorker {
                         Ok(Ok((preview, edited))) => (Some(preview), edited),
                         _ => (None, None),
                     };
-                    if let Ok(mut slot) = out.lock() {
-                        *slot = Some(HoverAnswer {
-                            generation: ask.generation,
-                            from: ask.from,
-                            point: ask.point,
-                            tool: ask.tool,
-                            how: ask.how,
-                            preview,
-                            edited,
-                        });
-                    }
+                    let answer = HoverAnswer {
+                        generation: ask.generation,
+                        from: ask.from,
+                        point: ask.point,
+                        tool: ask.tool,
+                        how: ask.how,
+                        preview,
+                        edited,
+                    };
+                    // An answer never drawn is let go of after the lock: the
+                    // UI thread takes the next one through it.
+                    let unseen = out.lock().ok().and_then(|mut slot| slot.replace(answer));
+                    drop(unseen);
                 }
             });
-        HoverWorker { asks, answer }
+        let (discard, done_with) = std::sync::mpsc::channel::<HoverAnswer>();
+        let _ = std::thread::Builder::new()
+            .name("support-hover-discard".into())
+            .spawn(move || while done_with.recv().is_ok() {});
+        HoverWorker {
+            asks,
+            answer,
+            discard,
+        }
     }
 }
 
@@ -1700,6 +1712,12 @@ impl DfSupportRun {
         if self.hover_worker.asks.send(ask).is_err() {
             return;
         }
+        // Started once: starting a running timer starts its wait over, and a
+        // mouse that moves more often than it fires would never see an
+        // answer drawn until it stopped (#3).
+        if self.hover_poll.running() {
+            return;
+        }
         let weak = Rc::downgrade(self);
         self.hover_poll
             .start(slint::TimerMode::Repeated, HOVER_POLL, move || {
@@ -1818,7 +1836,12 @@ impl DfSupportRun {
         self.show_add_note(line);
         *self.last_ghost.borrow_mut() = piece;
         self.show_hover_overlay();
-        *self.last_preview.borrow_mut() = Some(answer);
+        let older = self.last_preview.borrow_mut().replace(answer);
+        // It holds a whole copy of the supports, slow to let go of on a big
+        // set: a thread of its own does.
+        if let Some(older) = older {
+            let _ = self.hover_worker.discard.send(older);
+        }
     }
 
     /// The worker's last ghost, the only hover overlay.
@@ -5179,6 +5202,85 @@ mod hand_edit_tests {
         });
     }
 
+    /// A big real model (`path`, scaled to `height` mm tall when set) on the
+    /// plate with its supports generated, as the measurements use it: the
+    /// window, the run, and the centre of every face with whether it looks
+    /// down.
+    fn real_model_run(
+        path: &str,
+        height: Option<f32>,
+    ) -> (MainWindow, Rc<DfSupportRun>, Vec<([f32; 3], bool)>) {
+        let bytes = std::fs::read(&path).unwrap();
+        let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+        let leaf = loaded.roots()[0];
+        let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+        let bounds = |mesh: &sc_mesh_core::IndexedMesh| {
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in mesh.vertices() {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(v.as_array()[k]);
+                    hi[k] = hi[k].max(v.as_array()[k]);
+                }
+            }
+            (lo, hi)
+        };
+        if let Some(h) = height {
+            let (lo, hi) = bounds(&mesh);
+            let s = h / (hi[2] - lo[2]);
+            let vertices = mesh
+                .vertices()
+                .iter()
+                .map(|v| sc_mesh_core::Vertex::new(v.as_array().map(|c| c * s)))
+                .collect();
+            mesh = sc_mesh_core::IndexedMesh::new(None, vertices, mesh.faces().to_vec());
+        }
+        let (lo, hi) = bounds(&mesh);
+        let shift = [
+            60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+            40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+            5.0 - f64::from(lo[2]),
+        ];
+        let faces: Vec<([f32; 3], bool)> = mesh
+            .faces()
+            .iter()
+            .filter_map(|f| {
+                let [a, b, c] = f
+                    .vertices
+                    .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let nz = u[0] * w[1] - u[1] * w[0];
+                let len = ((u[1] * w[2] - u[2] * w[1]).powi(2)
+                    + (u[2] * w[0] - u[0] * w[2]).powi(2)
+                    + nz * nz)
+                    .sqrt();
+                (len > 1e-12).then(|| {
+                    let p: [f32; 3] =
+                        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k] as f32);
+                    (p, nz / len < -0.5)
+                })
+            })
+            .collect();
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(None, translation(shift), LeafPayload::Mesh(Arc::new(mesh)))
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+        let run =
+            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        (window, run, faces)
+    }
+
     /// Measurement, not a gate (#3): what a hand click holds the UI thread
     /// for on a big real scene, now that the engine's part runs on a worker:
     /// handing the click over, then putting the edit in the scene.
@@ -5195,73 +5297,12 @@ mod hand_edit_tests {
             .ok()
             .and_then(|h| h.parse().ok());
         on_fresh_slint_thread(move || {
-            let bytes = std::fs::read(&path).unwrap();
-            let (loaded, _) =
-                sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
-            let leaf = loaded.roots()[0];
-            let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
-            let bounds = |mesh: &sc_mesh_core::IndexedMesh| {
-                let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-                for v in mesh.vertices() {
-                    for k in 0..3 {
-                        lo[k] = lo[k].min(v.as_array()[k]);
-                        hi[k] = hi[k].max(v.as_array()[k]);
-                    }
-                }
-                (lo, hi)
-            };
-            if let Some(h) = height {
-                let (lo, hi) = bounds(&mesh);
-                let s = h / (hi[2] - lo[2]);
-                let vertices = mesh
-                    .vertices()
-                    .iter()
-                    .map(|v| sc_mesh_core::Vertex::new(v.as_array().map(|c| c * s)))
-                    .collect();
-                mesh = sc_mesh_core::IndexedMesh::new(None, vertices, mesh.faces().to_vec());
-            }
-            let (lo, hi) = bounds(&mesh);
-            let shift = [
-                60.0 - f64::from(lo[0] + hi[0]) / 2.0,
-                40.0 - f64::from(lo[1] + hi[1]) / 2.0,
-                5.0 - f64::from(lo[2]),
-            ];
-            let points: Vec<[f32; 3]> = mesh
-                .faces()
+            let (window, run, faces) = real_model_run(&path, height);
+            let points: Vec<[f32; 3]> = faces
                 .iter()
-                .filter_map(|f| {
-                    let [a, b, c] = f
-                        .vertices
-                        .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
-                    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                    let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-                    let nz = u[0] * w[1] - u[1] * w[0];
-                    let len = ((u[1] * w[2] - u[2] * w[1]).powi(2)
-                        + (u[2] * w[0] - u[0] * w[2]).powi(2)
-                        + nz * nz)
-                        .sqrt();
-                    (len > 1e-12 && nz / len < -0.5).then(|| {
-                        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k] as f32)
-                    })
-                })
+                .filter(|(_, down)| *down)
+                .map(|(p, _)| *p)
                 .collect();
-            let window = MainWindow::new().expect("the headless platform creates a main window");
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let ctrl = Rc::new(ViewportController::new_for_test());
-            let document = ctrl.document();
-            let mut graph = Scene::new();
-            let leaf = graph
-                .add_leaf(None, translation(shift), LeafPayload::Mesh(Arc::new(mesh)))
-                .unwrap();
-            graph.add_root(leaf).unwrap();
-            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
-            let run =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let outcome = start_df_supports(&graph, DfSupportRequest::default())
-                .unwrap()
-                .join();
-            *run.started_on.borrow_mut() = Some(document.scene_revision());
-            run.finish(outcome);
             window.set_support_tool(1);
             let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
             let (mut hand_over, mut put_in, mut waits) = (Vec::new(), Vec::new(), Vec::new());
@@ -5299,6 +5340,125 @@ mod hand_edit_tests {
             println!("UI thread, the click handed over: {}", stats(&hand_over));
             println!("worker, the edit made: {}", stats(&waits));
             println!("UI thread, the edit put in the scene: {}", stats(&put_in));
+        });
+    }
+
+    /// What a fast hover sweep showed: how many previews were drawn while
+    /// the mouse moved, how far behind the cursor the one drawn was (ms),
+    /// and how long the last point took to show once it stopped.
+    struct Sweep {
+        drawn: usize,
+        moves: usize,
+        lag_ms: Vec<f64>,
+        settle_ms: f64,
+    }
+
+    /// Moves the hover over `points` one every `every`, running the event
+    /// loop's timers in between as the app does, then waits for the last
+    /// point's preview.
+    fn sweep(run: &Rc<DfSupportRun>, points: &[[f32; 3]], every: Duration) -> Sweep {
+        let mut asked_at: Vec<Instant> = Vec::new();
+        let mut drawn = 0;
+        let mut lag_ms = Vec::new();
+        let mut shown = run.hover_shown.get();
+        let first = run.hover_generation.get() + 1;
+        let mut note = |shown_now: u64, asked_at: &[Instant]| {
+            if shown_now > shown {
+                shown = shown_now;
+                drawn += 1;
+                if let Some(at) = asked_at.get((shown_now - first) as usize) {
+                    lag_ms.push(at.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+        };
+        for p in points {
+            asked_at.push(Instant::now());
+            run.on_tool_hover_with(Some(*p), false);
+            let next = Instant::now() + every;
+            while Instant::now() < next {
+                slint::platform::update_timers_and_animations();
+                note(run.hover_shown.get(), &asked_at);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let during = drawn;
+        let stopped = Instant::now();
+        while run.hover_shown.get() < run.hover_generation.get() {
+            assert!(stopped.elapsed() < Duration::from_secs(60), "no answer");
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Sweep {
+            drawn: during,
+            moves: points.len(),
+            lag_ms,
+            settle_ms: stopped.elapsed().as_secs_f64() * 1000.0,
+        }
+    }
+
+    /// A fast mouse (#3): the preview keeps following it while it moves,
+    /// instead of waiting for it to stop.
+    #[test]
+    fn the_preview_follows_a_fast_mouse() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            window.set_support_tool(1);
+            // Under the cube, one point every 5 ms for half a second.
+            let points: Vec<[f32; 3]> = (0..100)
+                .map(|i| {
+                    let a = i as f32 * 0.3;
+                    [20.0 + 0.3 * a.cos(), 20.0 + 0.3 * a.sin(), 7.5]
+                })
+                .collect();
+            let swept = sweep(&run, &points, Duration::from_millis(5));
+            assert!(
+                swept.drawn >= 5,
+                "{} previews drawn over {} moves",
+                swept.drawn,
+                swept.moves
+            );
+        });
+    }
+
+    /// Measurement, not a gate (#3): a fast hover sweep over a big real
+    /// model. `SC_STRESS_STL` is the model (scaled to `SC_STRESS_HEIGHT_MM`
+    /// tall when set). `cargo test --profile quick-release -p sc-slicer-gui
+    /// --lib -- --ignored --nocapture a_fast_sweep_over_a_real_model`.
+    #[test]
+    #[ignore = "needs SC_STRESS_STL"]
+    fn a_fast_sweep_over_a_real_model() {
+        let Ok(path) = std::env::var("SC_STRESS_STL") else {
+            return;
+        };
+        let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+            .ok()
+            .and_then(|h| h.parse().ok());
+        on_fresh_slint_thread(move || {
+            let (window, run, faces) = real_model_run(&path, height);
+            let points: Vec<[f32; 3]> = faces.iter().map(|(p, _)| *p).collect();
+            // Face centres in turn across the model, as a mouse crossing it.
+            let step = (points.len() / 400).max(1);
+            let points: Vec<[f32; 3]> = points.iter().step_by(step).take(400).copied().collect();
+            window.set_support_tool(1);
+            for every in [8, 16] {
+                let swept = sweep(&run, &points, Duration::from_millis(every));
+                let mut lag = swept.lag_ms.clone();
+                lag.sort_by(f64::total_cmp);
+                let at = |q: f64| {
+                    lag.get(((lag.len() as f64 - 1.0) * q) as usize)
+                        .copied()
+                        .unwrap_or(f64::NAN)
+                };
+                println!(
+                    "a move every {every} ms: {} previews drawn over {} moves; behind the cursor median {:.0} ms, p90 {:.0} ms; last point shown {:.0} ms after it stopped",
+                    swept.drawn,
+                    swept.moves,
+                    at(0.5),
+                    at(0.9),
+                    swept.settle_ms
+                );
+            }
         });
     }
 }

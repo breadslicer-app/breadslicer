@@ -526,6 +526,32 @@ fn filtered(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCo
     out
 }
 
+/// The collections with only the entities `keep` says, built from those
+/// alone: [`filtered`]'s result without copying what it would drop.
+fn picked(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCollections {
+    fn pick<T: Clone>(
+        map: &indexmap::IndexMap<String, T>,
+        keep: &impl Fn(&String) -> bool,
+    ) -> indexmap::IndexMap<String, T> {
+        map.iter()
+            .filter(|(id, _)| keep(id))
+            .map(|(id, e)| (id.clone(), e.clone()))
+            .collect()
+    }
+    SupportCollections {
+        roots: pick(&c.roots, &keep),
+        trunks: pick(&c.trunks, &keep),
+        branches: pick(&c.branches, &keep),
+        leaves: pick(&c.leaves, &keep),
+        twigs: pick(&c.twigs, &keep),
+        sticks: pick(&c.sticks, &keep),
+        braces: pick(&c.braces, &keep),
+        stumps: pick(&c.stumps, &keep),
+        kickstands: pick(&c.kickstands, &keep),
+        knots: pick(&c.knots, &keep),
+    }
+}
+
 /// Every string inside a serialized entity.
 fn strings_in(value: &Value, out: &mut HashSet<String>) {
     match value {
@@ -1238,16 +1264,29 @@ impl DfSupportSession {
         })
     }
 
-    /// The entities `keep` names, tessellated without a raft.
+    /// The entities `keep` names, tessellated without a raft. A preview
+    /// draws a few pieces of a big set on every hover: only those are
+    /// copied, and the models go without their geometry, which only a raft
+    /// reads (a 1.9M-face model cost ~8 ms a preview, #3).
     fn mesh_of(&self, keep: impl Fn(&String) -> bool) -> Result<IndexedMesh, EditError> {
         let state = SupportState {
-            collections: filtered(&self.state.collections, keep),
+            collections: picked(&self.state.collections, keep),
             ..SupportState::default()
         };
         let mut settings = (*self.settings).clone();
         settings.rafts.global.bottom_mode = RaftBottomMode::Off;
         settings.rafts.per_model.clear();
-        let sink = support_soup(&state, &self.models, &settings)
+        let models: Vec<ModelInput> = self
+            .models
+            .iter()
+            .map(|m| ModelInput {
+                id: m.id.clone(),
+                geometry: Arc::default(),
+                transform: m.transform,
+                visible: m.visible,
+            })
+            .collect();
+        let sink = support_soup(&state, &models, &settings)
             .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
         weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).ok_or(EditError::NothingThere)
     }
@@ -1598,6 +1637,37 @@ mod session_tests {
         soup.extend(tri(3.0));
         soup.extend([3.0 + 0.6 * tol, 0.0, 0.0, 9.0, 9.0, 9.0, 3.0, 1.0, -5e-5]);
         check(&soup, &[first, second]);
+    }
+
+    /// A preview's pieces are drawn as before #3 drew them: a filtered copy
+    /// of every collection, the models with their geometry.
+    #[test]
+    fn a_preview_draws_its_pieces_as_the_whole_models_do() {
+        let session =
+            crate::start_df_supports(&slab_scene(6.0), crate::DfSupportRequest::default())
+                .unwrap()
+                .join()
+                .unwrap()
+                .sets
+                .remove(0)
+                .session;
+        let c = &session.state.collections;
+        let some: HashSet<String> = all_ids(c).into_iter().step_by(3).collect();
+        assert!(some.len() > 5);
+        let keep = |id: &String| some.contains(id);
+        assert_eq!(picked(c, keep), filtered(c, keep));
+        let state = SupportState {
+            collections: filtered(c, keep),
+            ..SupportState::default()
+        };
+        let mut settings = (*session.settings).clone();
+        settings.rafts.global.bottom_mode = RaftBottomMode::Off;
+        settings.rafts.per_model.clear();
+        let sink = support_soup(&state, &session.models, &settings).unwrap();
+        let before = weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).unwrap();
+        let now = session.mesh_of(keep).unwrap();
+        assert_eq!(now.vertices(), before.vertices());
+        assert_eq!(now.faces(), before.faces());
     }
 
     #[test]
