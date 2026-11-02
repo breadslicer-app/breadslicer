@@ -5954,3 +5954,31 @@ msgstr "Se están editando los soportes; probá de nuevo cuando termine."
 msgctxt "DfSupportDialog"
 msgid "Cancelled; nothing was changed."
 msgstr "Cancelado; no cambió nada."
+
+#: src/slice_run.rs
+msgctxt "ErrorDialog"
+msgid "Repair"
+msgstr "Reparar"
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "“{}” is not a closed mesh: it has holes, cracks or faces that don't line up. Press Repair to fix it and slice again."
+msgstr "“{}” no es una malla cerrada: tiene agujeros, grietas o caras que no encajan. Tocá Reparar para arreglarla y volver a laminar."
+
+#: src/slice_run.rs
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "These objects are not closed meshes: {}. Press Repair to fix them and slice again."
+msgstr "Estos objetos no son mallas cerradas: {}. Tocá Reparar para arreglarlos y volver a laminar."
+
+#: src/repair_run.rs
+msgctxt "RepairDialog"
+msgid "Still can't slice"
+msgstr "Todavía no se puede laminar"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Repair couldn't fix everything, so slicing didn't start again. {}"
+msgstr "La reparación no pudo arreglar todo, así que no se volvió a laminar. {}"
