@@ -684,6 +684,9 @@ struct PendingClick {
     watch: Arc<EditWatch>,
     /// For an edit another panel asked for (Fix All, #390): where it lands.
     landing: Option<Landing>,
+    /// The undo entry it joins, at this revision, instead of one of its
+    /// own: a Fix All run's later passes (#163).
+    join: Option<SceneRevision>,
 }
 
 /// Where an edit made off the UI thread for another panel lands (#390).
@@ -2536,7 +2539,7 @@ impl DfSupportRun {
             self.queued_clicks.borrow_mut().clear();
             return;
         };
-        let _ = self.launch_edit(ui, sets, refused, jobs, tool, how, None);
+        let _ = self.launch_edit(ui, sets, refused, jobs, tool, how, None, None);
     }
 
     /// The edit of a drag (#3) on `drawn`'s set, made off the UI thread as
@@ -2583,6 +2586,7 @@ impl DfSupportRun {
             HandTool::Remove,
             AddOptions::default(),
             None,
+            None,
         );
     }
 
@@ -2603,6 +2607,7 @@ impl DfSupportRun {
         tool: HandTool,
         how: AddOptions,
         landing: Option<Landing>,
+        join: Option<SceneRevision>,
     ) -> Result<Arc<EditWatch>, Refusals> {
         let (send, done) = std::sync::mpsc::channel();
         let watch = Arc::new(EditWatch::default());
@@ -2633,6 +2638,7 @@ impl DfSupportRun {
             done,
             watch: watch.clone(),
             landing,
+            join,
         });
         let weak = Rc::downgrade(self);
         self.document.set_pending_edit(Some(Rc::new(move || {
@@ -2714,7 +2720,7 @@ impl DfSupportRun {
             return;
         }
         let mut refused = pending.refused;
-        let outcome = self.commit_edit(&ui, pending.sets, computed, &mut refused);
+        let outcome = self.commit_edit(&ui, pending.sets, computed, &mut refused, pending.join);
         // The edit is in: its preview would lie over it.
         self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
@@ -2753,10 +2759,12 @@ impl DfSupportRun {
         };
         // The engine stops at its next point: what it makes is not read.
         pending.watch.stop();
+        // Nothing is pending any more when the panel hears it: Fix All takes
+        // its earlier passes back then (#163).
+        self.document.set_pending_edit(None);
         if let Some(landing) = pending.landing {
             landing(PointsEdit::Dropped(reason));
         }
-        self.document.set_pending_edit(None);
         self.last_ghost.borrow_mut().clear();
         self.ctrl.set_preview_overlay(None);
         crate::breadcrumbs::note("supports: click dropped");
@@ -2787,10 +2795,14 @@ impl DfSupportRun {
     /// meanwhile, which it then left as it was. Returns the engine's watch,
     /// or how the edit ended then and there (`landing` is not called), as
     /// [`Self::add_supports_at`] tells: with no set to edit, while supports
-    /// are being generated, or while another edit is being made.
+    /// are being generated, or while another edit is being made. With
+    /// `join`, the edit goes into the newest undo entry, which the scene is
+    /// at (that revision), instead of one of its own: a Fix All run's later
+    /// passes undo with its first (#163).
     pub(crate) fn start_supports_at(
         self: &Rc<Self>,
         points: &[[f32; 3]],
+        join: Option<SceneRevision>,
         landing: impl FnOnce(PointsEdit) + 'static,
     ) -> Result<Arc<EditWatch>, (HandEdit, Refusals)> {
         let Some(ui) = self.ui.upgrade() else {
@@ -2822,16 +2834,25 @@ impl DfSupportRun {
             jobs.len()
         ));
         // Spawning fails only when the system is out of threads.
-        self.launch_edit(&ui, sets, refused, jobs, tool, how, Some(Box::new(landing)))
-            .map_err(|refused| {
-                (
-                    HandEdit::Failed(ctr!(
-                        "DfSupportDialog",
-                        "That edit failed inside the support engine; nothing was changed."
-                    )),
-                    refused,
-                )
-            })
+        self.launch_edit(
+            &ui,
+            sets,
+            refused,
+            jobs,
+            tool,
+            how,
+            Some(Box::new(landing)),
+            join,
+        )
+        .map_err(|refused| {
+            (
+                HandEdit::Failed(ctr!(
+                    "DfSupportDialog",
+                    "That edit failed inside the support engine; nothing was changed."
+                )),
+                refused,
+            )
+        })
     }
 
     /// Whether a hand edit is being made off the UI thread.
@@ -2873,7 +2894,7 @@ impl DfSupportRun {
         let outcome = match self.prepare_edit(ui, tool, points, how, &mut refused) {
             Ok(Prepared { sets, jobs }) => {
                 let computed = compute_edit(jobs, tool, how, &EditWatch::default());
-                self.commit_edit(ui, sets, computed, &mut refused)
+                self.commit_edit(ui, sets, computed, &mut refused, None)
             }
             Err(outcome) => outcome,
         };
@@ -2976,15 +2997,17 @@ impl DfSupportRun {
     }
 
     /// The part of a hand edit made on the UI thread once the engine is
-    /// done: the edited sets go into the scene as one undoable step, and the
-    /// Supports tab's last-run line says how it went. `refused` gains the
-    /// points the engine refused.
+    /// done: the edited sets go into the scene as one undoable step (with
+    /// `join`, into the newest one, at that revision), and the Supports
+    /// tab's last-run line says how it went. `refused` gains the points the
+    /// engine refused.
     fn commit_edit(
         &self,
         ui: &MainWindow,
         sets: Vec<DrawnSet>,
         computed: Computed,
         refused: &mut Refusals,
+        join: Option<SceneRevision>,
     ) -> HandEdit {
         let failed = |message: slint::SharedString| {
             ui.set_supports_last_run(message.clone());
@@ -3040,10 +3063,25 @@ impl DfSupportRun {
         } else {
             SceneEdit::Compound(swaps)
         };
-        match self.document.apply_edit(swap.clone()) {
-            Ok(_) => {
-                crate::breadcrumbs::note("supports: edit applied");
+        // A Fix All run's later pass joins the run's entry (#163). The
+        // scene is still at that revision (the edit is dropped otherwise),
+        // so it joins; should it not, the edit stands as its own step.
+        let joined = match join {
+            Some(revision) => self
+                .document
+                .complete_last_edit(revision, swap.clone(), &[]),
+            None => Ok(false),
+        };
+        let applied = match joined {
+            Ok(true) => Ok(()),
+            Ok(false) => self.document.apply_edit(swap.clone()).map(|()| {
                 self.document.push_edit(swap);
+            }),
+            Err(err) => Err(crate::scene_document::EditNotApplied::Rejected(err)),
+        };
+        match applied {
+            Ok(()) => {
+                crate::breadcrumbs::note("supports: edit applied");
                 let mut roots = 0;
                 for (drawn, edited, _) in edits {
                     roots += edited.state().collections.roots.len();

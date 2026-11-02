@@ -5954,3 +5954,64 @@ msgstr "Se están editando los soportes; probá de nuevo cuando termine."
 msgctxt "DfSupportDialog"
 msgid "Cancelled; nothing was changed."
 msgstr "Cancelado; no cambió nada."
+
+#: ui/workspace/inspectors.slint
+msgctxt "Review"
+msgid "Repeat until clean"
+msgstr "Repetir hasta que quede limpio"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix all: pass {} of {}"
+msgstr "Corregir todo: pasada {} de {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Pass {} of {}"
+msgstr "Pasada {} de {}"
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Pass {} of {}:"
+msgstr "Pasada {} de {}:"
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "The scene changed while Fix All ran; it stopped. What it did before that is one undo step."
+msgstr "La escena cambió mientras corría Corregir todo; se detuvo. Lo que hizo antes de eso se deshace en un solo paso."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Nothing more changed, so Fix All stopped. Each finding left says why it was left."
+msgstr "No cambió nada más, así que Corregir todo se detuvo. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Slice to check the result."
+msgstr "Laminá para revisar el resultado."
+
+#: src/review_panel.rs
+msgctxt "Review"
+msgid "Fix All stopped: the slice did not finish. What it did is one undo step."
+msgstr "Corregir todo se detuvo: el laminado no terminó. Lo que hizo se deshace en un solo paso."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix All is done after {} passes, and nothing is left to fix automatically. Each finding left says why it was left."
+msgstr "Corregir todo terminó tras {} pasadas y no queda nada para corregir automáticamente. Cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "Fix All made {} passes, the most it makes in one press. Press Fix all to go on; each finding left says why it was left."
+msgstr "Corregir todo hizo {} pasadas, lo máximo que hace por vez. Tocá Corregir todo para seguir; cada hallazgo que quedó dice por qué quedó."
+
+#: src/review_panel.rs
+#, rust-format
+msgctxt "Review"
+msgid "No support could be added here: {}. Supports were added since, so Fix All tries it again."
+msgstr "No se pudo agregar un soporte acá: {}. Desde entonces se agregaron soportes, así que Corregir todo lo vuelve a intentar."

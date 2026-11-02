@@ -331,6 +331,61 @@ fn a_model_inside_the_raft_offers_its_lift_and_no_raft() {
     assert_eq!(rows[0].fix, FixKind::None as i32);
 }
 
+/// #163: a row offers "Add support here" exactly when Fix All would add
+/// that support. Before, a row kept the button where Fix All held the
+/// support back (it went in and did not hold, or the engine refused it),
+/// and the button placed the very support that had not held.
+#[test]
+fn a_row_offers_a_support_exactly_when_fix_all_takes_it() {
+    let island = |layer: usize, x: f64| {
+        Finding::new(
+            CheckKind::Island,
+            Severity::Error,
+            layer,
+            layer,
+            PlatePoint::new(x, 2.0, 0.05 * layer as f64),
+            RoleScope::Model,
+            "Island",
+            "Detail.",
+        )
+        .with_fix(SuggestedFix::AddSupport {
+            at: PlatePoint::new(x, 2.0, 0.05 * layer as f64),
+        })
+    };
+    // Never tried, refused, placed and found again.
+    let findings = vec![island(10, 1.0), island(20, 2.0), island(30, 3.0)];
+    let (refused_on, later) = (
+        SceneRevision::from_top_edit_id(Some(4)),
+        SceneRevision::from_top_edit_id(Some(5)),
+    );
+    let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+    marks.refuse(FindingKey::of(&findings[1]), "no way there", refused_on, &7);
+    marks.supported(FindingKey::of(&findings[2]), &7);
+    let hollows = [None; 3];
+    let offered = |now: SceneRevision| {
+        let rows = mark_rows(
+            review_rows(&findings, &hollows, &BTreeSet::new(), true, true),
+            &findings,
+            &RowMarks::of(&findings, &marks, true, false, now),
+        );
+        let by_rows: Vec<usize> = rows
+            .iter()
+            .filter(|row| row.fix == FixKind::AddSupport as i32)
+            .map(|row| row.id as usize)
+            .collect();
+        let plan = plan_fix_all(&findings, &[], &[], &[], |i| {
+            support_held_back(&findings[i], &marks, now)
+        });
+        let by_fix_all: Vec<usize> = plan.supports.iter().map(|(i, _)| *i).collect();
+        (by_rows, by_fix_all)
+    };
+    // On the scene it was refused on, only the support never tried.
+    assert_eq!(offered(refused_on), (vec![0], vec![0]));
+    // Once the scene changed (supports went in), the refused one again;
+    // never the one that went in and did not hold.
+    assert_eq!(offered(later), (vec![0, 1], vec![0, 1]));
+}
+
 mod model_poses {
     use std::sync::Arc;
 
@@ -622,16 +677,27 @@ mod fix_all {
 
     /// Slices the document's scene with what the panel marked, as the Slice
     /// driver does, stores the slice and shows its review.
-    fn slice(document: &SceneDocument, panel: &ReviewPanel, by_fix_all: bool) {
+    fn slice(document: &SceneDocument, panel: &Rc<ReviewPanel>, by_fix_all: bool) {
         slice_with(document, panel, by_fix_all, &profile());
     }
 
     /// [`slice`] with `profile`.
     fn slice_with(
         document: &SceneDocument,
-        panel: &ReviewPanel,
+        panel: &Rc<ReviewPanel>,
         by_fix_all: bool,
         profile: &SliceProfile,
+    ) {
+        slice_with_extra(document, panel, by_fix_all, profile, &[]);
+    }
+
+    /// [`slice_with`], the review given `extra` findings too.
+    fn slice_with_extra(
+        document: &SceneDocument,
+        panel: &Rc<ReviewPanel>,
+        by_fix_all: bool,
+        profile: &SliceProfile,
+        extra: &[Finding],
     ) {
         let scene = document
             .with_scene(|spatial| spatial.graph().clone())
@@ -646,7 +712,10 @@ mod fix_all {
             patches.erasures.iter().map(|e| &**e),
             profile.layer_schedule(),
         );
-        let outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
+        let mut outcome = review_slices(&leaves, filled.as_ref(), erased.as_ref(), profile, None);
+        if let ReviewOutcome::Reviewed { findings, .. } = &mut outcome {
+            findings.extend_from_slice(extra);
+        }
         let stack = merge_stacks(
             leaves
                 .iter()
@@ -656,7 +725,7 @@ mod fix_all {
                 .collect(),
         )
         .expect("one schedule");
-        document.set_slice_result(SliceResult {
+        let replaced = document.set_slice_result(SliceResult {
             contours: PlateContours::new(stack, *profile.layer_schedule()).expect("one schedule"),
             token: "fix-all".to_owned(),
             params: SliceParams {
@@ -668,6 +737,7 @@ mod fix_all {
             },
             layers: None,
         });
+        panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
         panel.show(outcome);
     }
@@ -699,16 +769,30 @@ mod fix_all {
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
             document.install_graph(plate(), PathBuf::from("plate.bread"));
-            let supports =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
             let hollow =
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let panel =
-                ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
             let resliced = Rc::new(Cell::new(0));
             panel.set_reslice({
                 let resliced = resliced.clone();
-                move || resliced.set(resliced.get() + 1)
+                move || {
+                    resliced.set(resliced.get() + 1);
+                    true
+                }
             });
             panel.notes_open.set(true);
             slice(&document, &panel, false);
@@ -773,7 +857,7 @@ mod fix_all {
     /// project's printer and resin, and shows the review.
     fn slice_project(
         document: &SceneDocument,
-        panel: &ReviewPanel,
+        panel: &Rc<ReviewPanel>,
         printer: &PrinterId,
         resin: &MaterialId,
         by_fix_all: bool,
@@ -821,8 +905,8 @@ mod fix_all {
             .merge_with(filled.into_iter().chain(erased))
             .expect("one schedule");
         // What the Slice driver does on the UI thread once a slice is in.
-        let landing = std::time::Instant::now();
-        document.set_slice_result(SliceResult {
+        let landing = Instant::now();
+        let replaced = document.set_slice_result(SliceResult {
             contours,
             token: "hueco".to_owned(),
             params: SliceParams {
@@ -834,6 +918,7 @@ mod fix_all {
             },
             layers: crate::slice_result::LayerValues::resolve(&printer_profile, &material, None),
         });
+        panel.slice_replaced(replaced);
         panel.fills_landed(patches.ids);
         panel.show(outcome);
         eprintln!("slice landing on the UI thread: {:?}", landing.elapsed());
@@ -868,13 +953,24 @@ mod fix_all {
             let document = ctrl.document();
             document.install_graph(project.scene, path.clone());
             crate::support_persist::install_sets(&document, restored.sets);
-            let supports =
-                DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
             let hollow =
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-            let panel =
-                ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
-            panel.set_reslice(|| {});
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            panel.set_reslice(|| true);
             panel.notes_open.set(true);
             slice_project(&document, &panel, &printer, &resin, false);
             let before = held_findings(&panel);
@@ -1026,7 +1122,7 @@ mod fix_all {
             let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let (printer, resin, supports) = match &bread {
                 Some(path) => {
                     let loaded =
@@ -1046,7 +1142,7 @@ mod fix_all {
                     crate::support_persist::install_sets(&document, restored.sets);
                     let supports = DfSupportRun::install(
                         &window,
-                        bus,
+                        bus.clone(),
                         document.clone(),
                         ctrl.dialogs(),
                         ctrl.clone(),
@@ -1057,7 +1153,7 @@ mod fix_all {
                     document.install_graph(minis_plate(&paths), PathBuf::from("minis.bread"));
                     let supports = DfSupportRun::install(
                         &window,
-                        bus,
+                        bus.clone(),
                         document.clone(),
                         ctrl.dialogs(),
                         ctrl.clone(),
@@ -1075,25 +1171,26 @@ mod fix_all {
                 HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
             let panel = ReviewPanel::install(
                 &window,
+                bus.clone(),
                 document.clone(),
                 ctrl.clone(),
                 supports.clone(),
                 hollow,
             );
-            panel.set_reslice(|| {});
-            let t = std::time::Instant::now();
+            panel.set_reslice(|| true);
+            let t = Instant::now();
             slice_project(&document, &panel, &printer, &resin, false);
             eprintln!("slice + review: {:?}", t.elapsed());
             let before = held_findings(&panel);
             let offered = window.get_review_fix_all();
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             window.invoke_review_fix_all_requested();
             let blocked = t.elapsed();
             let landing = wait_fix_all(&panel);
             let total = t.elapsed();
             let message = window.get_review_message().to_string();
             let fingerprint = fix_all_fingerprint(&document, &panel, &message);
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let _ = panel.fills_for_slice();
             let patches_time = t.elapsed();
             slice_project(&document, &panel, &printer, &resin, true);
@@ -1180,23 +1277,46 @@ mod fix_all {
     }
 
     fn island_window() -> IslandWindow {
+        island_window_repeating(false)
+    }
+
+    /// [`island_window`], Fix All repeating until clean or not (#163).
+    fn island_window_repeating(repeat: bool) -> IslandWindow {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            fix_all_repeat: repeat,
+            ..PreferencesSnapshot::for_tests()
+        });
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
         document.install_graph(island_plate(), PathBuf::from("island.bread"));
-        let supports =
-            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let supports = DfSupportRun::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
         supports.generate_now(sc_geom::df_supports::DfSupportOptions {
             min_island_area_mm2: 1.0,
             ..Default::default()
         });
         let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let panel = ReviewPanel::install(&window, document.clone(), ctrl.clone(), supports, hollow);
+        let panel = ReviewPanel::install(
+            &window,
+            bus.clone(),
+            document.clone(),
+            ctrl.clone(),
+            supports,
+            hollow,
+        );
         let resliced = Rc::new(Cell::new(0));
         panel.set_reslice({
             let resliced = resliced.clone();
-            move || resliced.set(resliced.get() + 1)
+            move || {
+                resliced.set(resliced.get() + 1);
+                true
+            }
         });
         slice_with(&document, &panel, false, &island_profile());
         IslandWindow {
@@ -1243,7 +1363,9 @@ mod fix_all {
                 w.resliced.get(),
             );
             let _ = wait_fix_all(&w.panel);
-            assert!(!w.window.get_review_fixing(), "the card shows the run over");
+            // The supports are in; the run waits for the slice it asked for.
+            assert!(w.panel.placing.borrow().is_none(), "the supports are in");
+            assert!(w.window.get_review_fixing(), "the run waits for its slice");
             let background = island_state(&w);
             assert!(w.document.undo().expect("one undo"), "an undo step");
             let undone = fix_all_fingerprint(&w.document, &w.panel, "")
@@ -1355,5 +1477,345 @@ mod fix_all {
                 .collect()
         };
         assert_eq!(unchanged(&before), unchanged(&after));
+    }
+
+    /// A support finding on the underside of the left model's big cube of
+    /// [`island_plate`]: where a support goes in, and Fix All has one more
+    /// support to add in its second pass (#163).
+    fn underside_island() -> Finding {
+        let at = PlatePoint::new(-4.6, 0.6, 3.0);
+        Finding::new(
+            CheckKind::Island,
+            Severity::Error,
+            60,
+            60,
+            at,
+            RoleScope::Model,
+            "Unsupported island",
+            "Injected for the second pass.",
+        )
+        .with_fix(SuggestedFix::AddSupport { at })
+    }
+
+    /// The models' meshes of a window: what Cancel puts back.
+    fn leaves(w: &IslandWindow) -> Vec<String> {
+        fix_all_fingerprint(&w.document, &w.panel, "")
+            .lines()
+            .filter(|l| l.starts_with("leaf"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A Fix All press on [`island_window_repeating`] carried to the point
+    /// where its second pass places its supports: the first pass's supports
+    /// are in and sliced, and the review of that slice has one more support
+    /// to add.
+    fn into_second_pass(w: &IslandWindow) {
+        w.window.invoke_review_fix_all_requested();
+        let _ = wait_fix_all(&w.panel);
+        assert_eq!(w.resliced.get(), 1, "the first pass slices");
+        assert_eq!(
+            w.window.get_slice_fix_pass().as_str(),
+            "Fix all: pass 1 of 3"
+        );
+        slice_with_extra(
+            &w.document,
+            &w.panel,
+            true,
+            &island_profile(),
+            &[underside_island()],
+        );
+        assert!(w.panel.placing.borrow().is_some(), "the second pass places");
+        assert!(
+            w.window.get_review_fix_phase().starts_with("Pass 2 of 3"),
+            "{}",
+            w.window.get_review_fix_phase()
+        );
+    }
+
+    /// #163: with "Repeat until clean", a press goes on while the review
+    /// has something Fix All fixes: here a second pass adds one support and
+    /// slices again; the third has nothing to fix, so the run ends. Both
+    /// passes' supports are one undo step.
+    #[test]
+    fn fix_all_repeats_while_the_review_has_something_to_fix() {
+        let (before, after_one_undo, resliced, fixing, message, undo_left) =
+            on_fresh_slint_thread(|| {
+                let w = island_window_repeating(true);
+                let before = leaves(&w);
+                let undo_before = w.document.can_undo();
+                into_second_pass(&w);
+                let _ = wait_fix_all(&w.panel);
+                assert_eq!(w.resliced.get(), 2, "the second pass slices");
+                slice_with(&w.document, &w.panel, true, &island_profile());
+                let fixing = w.panel.fixing() || w.window.get_review_fixing();
+                let message = w.window.get_review_message().to_string();
+                let resliced = w.resliced.get();
+                assert!(w.document.undo().expect("one undo"));
+                (
+                    before,
+                    leaves(&w),
+                    resliced,
+                    fixing,
+                    message,
+                    w.document.can_undo() == undo_before,
+                )
+            });
+        assert_eq!(resliced, 2, "two passes, two slices");
+        assert!(!fixing, "the run is over");
+        assert!(
+            message.is_empty() || message.contains("after 2 passes"),
+            "{message}"
+        );
+        assert_eq!(before, after_one_undo, "one undo takes both passes back");
+        assert!(undo_left, "and leaves the history as it was");
+    }
+
+    /// The state Cancel or Undo must put back: the models' meshes, the
+    /// marks, the review held and the history.
+    fn before_the_press(w: &IslandWindow) -> String {
+        format!(
+            "{}\nfindings: {:?}\nundo: {} redo: {}",
+            leaves(w).join("\n"),
+            held_findings(&w.panel),
+            w.document.can_undo(),
+            w.document.can_redo(),
+        )
+    }
+
+    /// #163: Cancel while the second pass places its supports ends the run
+    /// and puts everything back as before the press: the first pass's
+    /// supports and marks, the slice and its review; nothing to redo.
+    #[test]
+    fn cancel_in_a_later_pass_puts_everything_back() {
+        let (before, after, message, fixing, slice_back) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            let generation_layers = w.document.slice_layer_count();
+            into_second_pass(&w);
+            w.window.invoke_review_fix_all_cancel();
+            let fixing = w.panel.fixing() || w.window.get_review_fixing();
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            let slice_back = w.document.slice_layer_count() == generation_layers
+                && !w.panel.is_stale()
+                && w.window.get_slice_fix_pass().is_empty();
+            (before, before_the_press(&w), message, fixing, slice_back)
+        });
+        assert!(!fixing, "Cancel ends the run at once");
+        assert!(message.contains("cancelled"), "{message}");
+        assert_eq!(before, after);
+        assert!(slice_back, "the slice of before the press is back, current");
+    }
+
+    /// #163: Undo while a later pass places its supports undoes the whole
+    /// run, as one step.
+    #[test]
+    fn undo_in_a_later_pass_undoes_the_whole_run() {
+        let (before, after, message) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            into_second_pass(&w);
+            assert!(w.document.undo().expect("the undo"));
+            let _ = w.panel.supports.settle_edit();
+            let message = w.window.get_review_message().to_string();
+            (before, before_the_press(&w), message)
+        });
+        assert!(message.contains("undone"), "{message}");
+        assert_eq!(before, after);
+    }
+
+    /// #163: Cancel on the slice a pass asked for cancels Fix All with it,
+    /// as Cancel on the card does.
+    #[test]
+    fn a_cancelled_slice_cancels_fix_all() {
+        let (before, after, message) = on_fresh_slint_thread(|| {
+            let w = island_window_repeating(true);
+            let before = before_the_press(&w);
+            w.window.invoke_review_fix_all_requested();
+            let _ = wait_fix_all(&w.panel);
+            assert_eq!(w.resliced.get(), 1);
+            // What the Slice driver does when its Cancel ends the slice.
+            w.panel.slice_ended_without_result(true);
+            let message = w.window.get_review_message().to_string();
+            (before, before_the_press(&w), message)
+        });
+        assert!(message.contains("cancelled"), "{message}");
+        assert_eq!(before, after);
+    }
+
+    /// #163 on a real project (`BREADSLICER_FIX_ALL_BREAD`: its printer,
+    /// resin and supports): one Fix All press with "Repeat until clean"
+    /// (`BREADSLICER_FIX_ALL_REPEAT=0` for one pass), each pass timed, the
+    /// slices made as the Slice driver makes them. Every support the run
+    /// says it added holds its island (none is found again), a row offers a
+    /// support exactly when Fix All would, and one undo takes the whole run
+    /// back. Prints the findings before and after, and what each pass did.
+    #[test]
+    #[ignore = "needs BREADSLICER_FIX_ALL_BREAD"]
+    fn real_project_fix_all_until_clean() {
+        let Some(path) = std::env::var("BREADSLICER_FIX_ALL_BREAD")
+            .ok()
+            .map(PathBuf::from)
+        else {
+            eprintln!("skipping: BREADSLICER_FIX_ALL_BREAD is not set");
+            return;
+        };
+        let repeat = std::env::var("BREADSLICER_FIX_ALL_REPEAT").map_or(true, |v| v != "0");
+        let report = on_fresh_slint_thread(move || {
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+            let printer = project.payload.printer.clone().expect("a printer");
+            let resin = project.payload.resin.clone().expect("a resin");
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                fix_all_repeat: repeat,
+                ..PreferencesSnapshot::for_tests()
+            });
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_sets(&document, restored.sets);
+            let supports = DfSupportRun::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let hollow =
+                HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let panel = ReviewPanel::install(
+                &window,
+                bus.clone(),
+                document.clone(),
+                ctrl.clone(),
+                supports,
+                hollow,
+            );
+            let resliced = Rc::new(Cell::new(0));
+            panel.set_reslice({
+                let resliced = resliced.clone();
+                move || {
+                    resliced.set(resliced.get() + 1);
+                    true
+                }
+            });
+            panel.notes_open.set(true);
+            slice_project(&document, &panel, &printer, &resin, false);
+            let leaves_before: Vec<String> = fix_all_fingerprint(&document, &panel, "")
+                .lines()
+                .filter(|l| l.starts_with("leaf"))
+                .map(str::to_owned)
+                .collect();
+            let mut lines = vec![format!(
+                "before: {} findings, Fix All offers {}",
+                held_findings(&panel).len(),
+                window.get_review_fix_all()
+            )];
+            for f in held_findings(&panel) {
+                lines.push(format!("  {f:?}"));
+            }
+            let revision_before = document.scene_revision();
+            let press = Instant::now();
+            window.invoke_review_fix_all_requested();
+            let mut pass = 0;
+            while panel.fixing() {
+                pass += 1;
+                let placing = Instant::now();
+                if panel.placing.borrow().is_some() {
+                    let _ = wait_fix_all(&panel);
+                }
+                let placed = placing.elapsed();
+                let message = window.get_review_message().to_string();
+                if !panel.fixing() {
+                    lines.push(format!("pass {pass}: supports {placed:?}; {message}"));
+                    break;
+                }
+                assert_eq!(resliced.get(), pass, "the pass asked for its slice");
+                let slicing = Instant::now();
+                slice_project(&document, &panel, &printer, &resin, true);
+                lines.push(format!(
+                    "pass {pass}: supports {placed:?}, slice and review {:?}; {message}",
+                    slicing.elapsed()
+                ));
+            }
+            lines.push(format!(
+                "press to clean: {:?}, {} slices; {}",
+                press.elapsed(),
+                resliced.get(),
+                window.get_review_message()
+            ));
+            let findings: Vec<Finding> = {
+                let held = panel.held.borrow();
+                let Some(ReviewOutcome::Reviewed { findings, .. }) =
+                    held.as_ref().map(|h| &h.outcome)
+                else {
+                    panic!("reviewed")
+                };
+                findings.clone()
+            };
+            lines.push(format!(
+                "after: {} findings, Fix All offers {}",
+                findings.len(),
+                window.get_review_fix_all()
+            ));
+            let mut unheld = 0;
+            {
+                let marks = panel.marks.borrow();
+                for f in &findings {
+                    let key = FindingKey::of(f);
+                    let state = if let Some(why) = marks.refusal(&key) {
+                        format!("refused ({why})")
+                    } else if marks.was_supported(&key) {
+                        unheld += 1;
+                        "SUPPORTED AND FOUND AGAIN".to_owned()
+                    } else {
+                        String::new()
+                    };
+                    lines.push(format!(
+                        "  {} {}-{} {state}",
+                        f.title,
+                        f.first_layer + 1,
+                        f.last_layer + 1
+                    ));
+                }
+            }
+            // The card's rows offering a support, and Fix All's supports.
+            let rows = window.get_review_rows();
+            let mut by_rows: Vec<i32> = (0..rows.row_count())
+                .filter_map(|i| rows.row_data(i))
+                .filter(|row| row.fix == FixKind::AddSupport as i32)
+                .map(|row| row.id)
+                .collect();
+            by_rows.sort_unstable();
+            let mut by_fix_all: Vec<i32> = panel
+                .fix_all_plan()
+                .supports
+                .iter()
+                .map(|(i, _)| *i as i32)
+                .collect();
+            by_fix_all.sort_unstable();
+            // A run that added no support (marks only) leaves no undo step.
+            let undone = document.scene_revision() == revision_before
+                || document.undo().expect("one undo")
+                    && document.scene_revision() == revision_before
+                    && fix_all_fingerprint(&document, &panel, "")
+                        .lines()
+                        .filter(|l| l.starts_with("leaf"))
+                        .eq(leaves_before.iter().map(String::as_str));
+            (lines.join("\n"), unheld, by_rows, by_fix_all, undone)
+        });
+        let (report, unheld, by_rows, by_fix_all, undone) = report;
+        eprintln!("{report}");
+        assert_eq!(unheld, 0, "every support the run added holds its island");
+        assert_eq!(by_rows, by_fix_all, "a row offers what Fix All takes");
+        assert!(undone, "one undo takes the whole run back");
     }
 }

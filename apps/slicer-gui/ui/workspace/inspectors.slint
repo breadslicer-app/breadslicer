@@ -1825,6 +1825,9 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> review-fixing;
     in property <float> review-fix-progress;
     in property <string> review-fix-phase;
+    // "Repeat until clean" next to Fix all (#163): a setting.
+    in property <bool> review-fix-repeat;
+    callback review-fix-repeat-toggled(bool);
     callback printer-picked(int);
     callback resin-picked(int);
     callback first-layer-height-edited(string);
@@ -2070,11 +2073,23 @@ export component SliceInspector inherits VerticalLayout {
                         root.review-notes-toggled();
                     }
                 }
-                if root.review-state == 1 && root.review-fix-all > 0 && !root.review-fixing: ScButton {
-                    text: @tr("Review" => "Fix all ({})", root.review-fix-all);
-                    icon: Icons.check;
-                    clicked => {
-                        root.review-fix-all-requested();
+                if root.review-state == 1 && root.review-fix-all > 0 && !root.review-fixing: HorizontalLayout {
+                    spacing: 10px;
+
+                    ScButton {
+                        text: @tr("Review" => "Fix all ({})", root.review-fix-all);
+                        icon: Icons.check;
+                        clicked => {
+                            root.review-fix-all-requested();
+                        }
+                    }
+                    CheckBox {
+                        text: @tr("Review" => "Repeat until clean");
+                        checked: root.review-fix-repeat;
+                        horizontal-stretch: 1;
+                        toggled => {
+                            root.review-fix-repeat-toggled(self.checked);
+                        }
                     }
                 }
                 if root.review-fixing: HorizontalLayout {

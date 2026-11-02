@@ -382,6 +382,10 @@ export component MainWindow inherits Window {
     in property <bool> review-fixing;
     in property <float> review-fix-progress;
     in property <string> review-fix-phase;
+    // "Repeat until clean" next to Fix all (#163): the setting, and a click
+    // on its box.
+    in property <bool> review-fix-repeat;
+    callback review-fix-repeat-toggled(bool);
     callback review-finding-clicked(int);
     callback review-fix-requested(int);
     callback review-fill-toggled(int);
@@ -418,6 +422,9 @@ export component MainWindow inherits Window {
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
     in-out property <bool> slicing-in-progress: false;
+    // The Fix All pass a slice is for (#163), under the modal's title;
+    // empty for any other slice.
+    in property <string> slice-fix-pass;
     // Repair run state: set by the Rust driver when a repair starts
     // and cleared on every exit path. Gates the Repair button and
     // undo/redo (an undo landing mid-run would invalidate the
@@ -1692,6 +1699,10 @@ export component MainWindow inherits Window {
                         review-fixing: root.review-fixing;
                         review-fix-progress: root.review-fix-progress;
                         review-fix-phase: root.review-fix-phase;
+                        review-fix-repeat: root.review-fix-repeat;
+                        review-fix-repeat-toggled(on) => {
+                            root.review-fix-repeat-toggled(on);
+                        }
                         review-fix-all-requested => {
                             root.review-fix-all-requested();
                         }
@@ -2542,6 +2553,11 @@ export component MainWindow inherits Window {
                     text: @tr("SlicePanel" => "Slicing...");
                     font-weight: 600;
                     color: Palette.foreground;
+                    horizontal-alignment: center;
+                }
+                if root.slice-fix-pass != "": Text {
+                    text: root.slice-fix-pass;
+                    color: Palette.foreground.transparentize(0.3);
                     horizontal-alignment: center;
                 }
                 Text {

@@ -174,11 +174,8 @@ impl SliceRun {
         {
             // Fix All (#156) slices again on its own: no overwrite to confirm.
             let weak = Rc::downgrade(&run);
-            run.review.set_reslice(move || {
-                if let Some(run) = weak.upgrade() {
-                    run.start_with(true);
-                }
-            });
+            run.review
+                .set_reslice(move || weak.upgrade().is_some_and(|run| run.start_with(true)));
         }
         {
             let run = run.clone();
@@ -204,14 +201,15 @@ impl SliceRun {
     /// [`start`](Self::start), for the Slice button (`by_fix_all` false) or
     /// for the Review card's Fix All, which promised a new slice: a changed
     /// input then launches without asking to overwrite the held slice.
-    fn start_with(self: &Rc<Self>, by_fix_all: bool) {
+    /// Returns whether a slice started.
+    fn start_with(self: &Rc<Self>, by_fix_all: bool) -> bool {
         let Some(ui) = self.ui.upgrade() else {
-            return;
+            return false;
         };
-        // While Fix All places its supports, the slice it promises comes
-        // once they are in (#390).
-        if ui.get_slicing_in_progress() || self.review.fixing() {
-            return;
+        // While Fix All runs, the Slice button waits: the slices of its
+        // passes come from the run itself (#390, #163).
+        if ui.get_slicing_in_progress() || (!by_fix_all && self.review.fixing()) {
+            return false;
         }
         let snapshot = self.bus.snapshot();
         let selection = self
@@ -224,7 +222,7 @@ impl SliceRun {
             self.document.scene_revision(),
         ) else {
             self.dialogs.show_error(missing_selection_texts);
-            return;
+            return false;
         };
 
         let held = self.document.slice_params();
@@ -247,6 +245,7 @@ impl SliceRun {
                 // The held slice already matches the inputs; nothing to
                 // recompute. Surface the transient "up to date" hint.
                 self.show_up_to_date_hint();
+                false
             }
             ReSliceDecision::Changed if by_fix_all => self.launch(current, true),
             ReSliceDecision::Changed => {
@@ -254,6 +253,7 @@ impl SliceRun {
                 self.dialogs.show_slice_overwrite_confirm(move || {
                     this.launch(current, false);
                 });
+                false
             }
         }
     }
@@ -263,9 +263,10 @@ impl SliceRun {
     /// over stale data is confirmed. The scene clone and the geometry marker
     /// are taken together here so the marker recorded with the result matches
     /// the geometry actually sliced.
-    fn launch(self: &Rc<Self>, mut current: SliceParams, by_fix_all: bool) {
+    /// Returns whether the slice started.
+    fn launch(self: &Rc<Self>, mut current: SliceParams, by_fix_all: bool) -> bool {
         let Some(ui) = self.ui.upgrade() else {
-            return;
+            return false;
         };
         let sessions = self.document.support_sessions();
         let Some((scene, supports)) = self.document.with_scene(|spatial| {
@@ -274,7 +275,7 @@ impl SliceRun {
                 support_persist::support_owners(spatial, &sessions),
             )
         }) else {
-            return;
+            return false;
         };
         // A real slice supersedes the "up to date" hint.
         self.hide_up_to_date_hint();
@@ -313,6 +314,7 @@ impl SliceRun {
             },
             cancel,
         );
+        true
     }
 
     /// Spawns the worker: run the projection + slicing, then deposit the result
@@ -438,12 +440,15 @@ impl SliceRun {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
                     let layer_count = completed.contours.schedule().total_layers();
-                    self.document.set_slice_result(SliceResult {
+                    let replaced = self.document.set_slice_result(SliceResult {
                         contours: completed.contours,
                         token: completed.token,
                         params,
                         layers: completed.layers,
                     });
+                    // A Fix All run keeps the slice of before its press, for
+                    // Cancel (#163).
+                    self.review.slice_replaced(replaced);
                     // Size and enable the height slider, parking the selected
                     // layer at the top.
                     if let Some(ui) = self.ui.upgrade() {
@@ -458,8 +463,12 @@ impl SliceRun {
             }
             Ok(SliceRunOutcome::Cancelled) => {
                 // A cancelled run carries no data; any prior result stays.
+                // A Fix All run whose slice this was is cancelled with it
+                // (#163).
+                self.review.slice_ended_without_result(true);
             }
             Err(err) => {
+                self.review.slice_ended_without_result(false);
                 // The objects a failure names, as the object list names them
                 // now.
                 let names = self

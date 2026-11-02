@@ -31,12 +31,16 @@
 //! It also keeps the findings whose support the engine refused, with why
 //! ([`ReviewMarks::refuse`]), and those that got a support
 //! ([`ReviewMarks::supported`]): when the next review still finds one, the
-//! support did not hold it. Either way the row says so, and Fix All does not
-//! offer the same support again while the models stand.
+//! support did not hold it. Either way the row says so. A support that did
+//! not hold is not offered again while the models stand: it would be the
+//! same support. A refused one is, once the scene has changed since it was
+//! refused (#163): it can hang from a support added since.
 
 use std::sync::Arc;
 
 use sc_review::{CavityFill, CheckKind, Finding};
+
+use crate::scene_document::SceneRevision;
 
 /// A finding as the next review of the same scene finds it again: its kind,
 /// its layers and its focus, to the micrometre.
@@ -95,14 +99,15 @@ pub(crate) struct SlicePatches {
 
 /// The marks of the Review card. `P` describes the models the marks were
 /// made on.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ReviewMarks<P> {
     /// The models the marks were made on; `None` while there is no mark.
     models: Option<P>,
     fills: Vec<FillMark>,
     left: Vec<FindingKey>,
-    /// Findings whose support the engine refused, with why.
-    refused: Vec<(FindingKey, String)>,
+    /// Findings whose support the engine refused, with why, and the scene
+    /// it was refused on.
+    refused: Vec<(FindingKey, String, SceneRevision)>,
     /// Findings that got a support.
     supported: Vec<FindingKey>,
     next_id: u64,
@@ -229,18 +234,19 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
     }
 
     /// Records that the engine refused the support of the finding of `key`,
-    /// for `why`, until the models change or a support there takes.
-    pub(crate) fn refuse(&mut self, key: FindingKey, why: &str, models: &P) {
+    /// for `why`, on the scene at `on`, until the models change or a support
+    /// there takes.
+    pub(crate) fn refuse(&mut self, key: FindingKey, why: &str, on: SceneRevision, models: &P) {
         self.adopt(models);
-        self.refused.retain(|(k, _)| k != &key);
-        self.refused.push((key, why.to_owned()));
+        self.refused.retain(|(k, ..)| k != &key);
+        self.refused.push((key, why.to_owned(), on));
     }
 
     /// Records that a support went in at the finding of `key`: a review
     /// that still finds it was not helped by it.
     pub(crate) fn supported(&mut self, key: FindingKey, models: &P) {
         self.adopt(models);
-        self.refused.retain(|(k, _)| k != &key);
+        self.refused.retain(|(k, ..)| k != &key);
         if !self.supported.contains(&key) {
             self.supported.push(key);
         }
@@ -255,8 +261,22 @@ impl<P: PartialEq + Clone> ReviewMarks<P> {
     pub(crate) fn refusal(&self, key: &FindingKey) -> Option<&str> {
         self.refused
             .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, why)| why.as_str())
+            .find(|(k, ..)| k == key)
+            .map(|(_, why, _)| why.as_str())
+    }
+
+    /// Whether the support of the finding of `key` is worth placing on the
+    /// scene at `now`: it was never placed, or it was refused on another
+    /// scene (supports added since may hold it). One that went in and did
+    /// not hold would be the same support again (#163).
+    pub(crate) fn support_offered(&self, key: &FindingKey, now: SceneRevision) -> bool {
+        if self.was_supported(key) {
+            return false;
+        }
+        self.refused
+            .iter()
+            .find(|(k, ..)| k == key)
+            .is_none_or(|(_, _, on)| *on != now)
     }
 
     /// Forgets the models once no mark needs them.
@@ -409,7 +429,12 @@ mod review_marks_tests {
         let mut marks: ReviewMarks<i32> = ReviewMarks::default();
         let refused = FindingKey::of(&trap(2, 1.0));
         let supported = FindingKey::of(&trap(9, 1.0));
-        marks.refuse(refused, "no way there", &7);
+        marks.refuse(
+            refused,
+            "no way there",
+            SceneRevision::from_top_edit_id(None),
+            &7,
+        );
         marks.supported(supported, &7);
         assert_eq!(marks.refusal(&refused), Some("no way there"));
         assert!(marks.was_supported(&supported) && !marks.was_supported(&refused));
@@ -419,6 +444,27 @@ mod review_marks_tests {
         assert!(marks.was_supported(&refused));
         assert!(marks.follow(Some(&8)));
         assert!(!marks.was_supported(&supported));
+    }
+
+    /// #163: a support that went in and did not hold is not offered again;
+    /// a refused one is, once the scene changed since the refusal.
+    #[test]
+    fn a_refused_support_is_offered_again_once_the_scene_changed() {
+        let mut marks: ReviewMarks<i32> = ReviewMarks::default();
+        let (before, after) = (
+            SceneRevision::from_top_edit_id(Some(1)),
+            SceneRevision::from_top_edit_id(Some(2)),
+        );
+        let refused = FindingKey::of(&trap(2, 1.0));
+        let unheld = FindingKey::of(&trap(9, 1.0));
+        let fresh = FindingKey::of(&trap(20, 1.0));
+        marks.refuse(refused, "no way there", before, &7);
+        marks.supported(unheld, &7);
+        assert!(marks.support_offered(&fresh, before));
+        assert!(!marks.support_offered(&refused, before));
+        assert!(marks.support_offered(&refused, after));
+        assert!(!marks.support_offered(&unheld, before));
+        assert!(!marks.support_offered(&unheld, after));
     }
 
     #[test]
