@@ -252,6 +252,14 @@ impl ViewportController {
             .map(|(_, p, _)| [p.x, p.y, p.z])
     }
 
+    /// The support point a ray through `cursor` hits first, as Remove and
+    /// Move tip take it.
+    #[cfg(test)]
+    pub(crate) fn support_hit_for_test(&self, cursor: ScreenPoint) -> Option<[f32; 3]> {
+        self.tab_tool_hit(TabTool::RemoveSupport, cursor)
+            .map(|(_, p, _)| [p.x, p.y, p.z])
+    }
+
     /// Installs a pre-built `Box<dyn MeshRenderer>` into the render-host's
     /// renderer slot, so a test can drive `handle_before_rendering` and the
     /// lifecycle hooks against a `MockRenderer`.

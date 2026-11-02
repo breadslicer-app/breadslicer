@@ -10,7 +10,7 @@ use super::helpers::{
     FanShaftPoint, HostedBranchInput, PlanCtx, branch_collides_with_sdf,
     branch_departure_angle_deg, build_hosted_branch, contact_cone_collides, free_knot_id,
     host_entity_of, is_host_at_attachment_capacity, leaf_path_crosses_supports,
-    member_max_angle_from_vertical_deg, resolve_surface_normal,
+    member_max_angle_from_vertical_deg,
 };
 use crate::supports::auto_support::constants::{
     FAN_LINK_TIP_INSET_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
@@ -264,7 +264,7 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
     } in pool
     {
         let parent_knot = knot_for(sp, free_knot_id(draft, args.knot_id_prefix));
-        let (resolved_point, resolved_normal) = resolve_surface_normal(target, mesh);
+        let (resolved_point, resolved_normal) = ctx.contact_at(target);
         let long_span = dist2.sqrt() > MAX_LEAF_SPAN_BEFORE_BRANCH_MM;
         if let Some(mesh) = mesh {
             let to_tip = Vec3::new(

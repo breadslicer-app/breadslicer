@@ -1570,8 +1570,8 @@ export component SupportsInspector inherits VerticalLayout {
         }
         Note {
             text: root.remove-mode == 1
-                ? @tr("Inspector" => "Paint over the tips to remove; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
-                : @tr("Inspector" => "Drag a box: every tip inside it goes, from the selected supports only. B switches to a brush.");
+                ? @tr("Inspector" => "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box.", Math.round(root.brush-radius))
+                : @tr("Inspector" => "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush.");
         }
         if root.add-note != "": Note {
             text: root.add-note;

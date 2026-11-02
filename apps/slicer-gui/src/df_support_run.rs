@@ -301,6 +301,10 @@ fn note_text(note: AddNote) -> slint::SharedString {
             "the surface there is too steep for a tip"
         ),
         AddNote::CarriesOthers => ctr!("DfSupportDialog", "other supports hang from it"),
+        AddNote::FacesUp => ctr!(
+            "DfSupportDialog",
+            "the surface there faces up; nothing below can reach it"
+        ),
     }
 }
 
@@ -6601,6 +6605,146 @@ mod hand_edit_tests {
                 window.get_supports_last_run()
             );
             assert!(document.undo().unwrap());
+        });
+    }
+
+    /// Where a ray through pixel `at` of the 800 x 600 viewport first meets
+    /// the plane through `p0` with normal `n` (world mm).
+    fn ray_meets_plane(
+        camera: &crate::camera::OrbitCamera,
+        at: [f32; 2],
+        p0: glam::Vec3,
+        n: glam::Vec3,
+    ) -> [f32; 3] {
+        let ray = crate::picking::ray_from_pixel(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            800.0,
+            600.0,
+            at[0],
+            at[1],
+        );
+        let t = (p0 - ray.origin).dot(n) / ray.direction.dot(n);
+        (ray.origin + ray.direction * t).into()
+    }
+
+    fn far(a: [f32; 3], b: [f64; 3]) -> f64 {
+        (0..3)
+            .map(|k| (f64::from(a[k]) - b[k]).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    /// The tip `after` holds that `before` does not.
+    fn tip_added(before: &DfSupportSession, after: &DfSupportSession) -> Option<[f64; 3]> {
+        let old: Vec<String> = before.tips().into_iter().map(|(id, _)| id).collect();
+        after
+            .tips()
+            .into_iter()
+            .find(|(id, _)| !old.contains(id))
+            .map(|(_, t)| t)
+    }
+
+    /// A tip placed by hand lands on the model surface under the cursor
+    /// (#3), to the pixel: the ray through the pixel clicked meets the model
+    /// there first. For Add and for Move tip, on a model turned and tilted,
+    /// through the window's own viewport callbacks.
+    #[test]
+    fn a_tip_lands_on_the_surface_under_the_cursor() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            // The slab turned 0.5 rad about Z and tilted 0.15 rad about X,
+            // its underside corner 12 mm up.
+            let place = AffineTransform3D::from_translation([25.0, 22.0, 12.0])
+                .compose(&AffineTransform3D::from_rotation_z(0.5))
+                .compose(&AffineTransform3D::from_rotation_x(0.15));
+            let local = |p: [f64; 3]| {
+                let v = place.apply_to_vertex(sc_mesh_core::Vertex::new(p.map(|c| c as f32)));
+                glam::Vec3::from(*v.as_array())
+            };
+            let p0 = local([0.0, 0.0, 0.0]);
+            let n = (local([0.0, 0.0, -1.0]) - p0).normalize();
+            let centre = local([10.0, 5.0, 0.0]);
+            let camera = camera_at(centre.into(), 0.7, -0.6, 45.0);
+            assert!(
+                camera.eye().z < centre.z,
+                "the camera looks up at the underside"
+            );
+            let (ctrl, document, run) =
+                wired_slab(&window, Transform3D::Affine(place), camera.clone());
+            // A point of the underside on screen, to the whole pixel.
+            let pixel_of = |p: [f64; 3]| {
+                let at = ctrl.project_for_test(local(p).into()).expect("on screen");
+                [at[0].round(), at[1].round()]
+            };
+
+            // Add, at two pixels.
+            window.set_support_tool(1);
+            for p in [[6.3, 3.1, 0.0], [14.6, 7.2, 0.0]] {
+                let at = pixel_of(p);
+                let aimed = ray_meets_plane(&camera, at, p0, n);
+                let hit = ctrl
+                    .model_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))
+                    .expect("the model under the cursor");
+                assert!(
+                    far(hit, aimed.map(f64::from)) < 0.01,
+                    "picked {hit:?}, ray {aimed:?}"
+                );
+                let before = in_force_session(&run).unwrap();
+                window.invoke_viewport_pointer_down(at[0], at[1], no_keys());
+                window.invoke_viewport_pointer_up(at[0], at[1], no_keys());
+                settle_click(&run);
+                let after = in_force_session(&run).unwrap();
+                let tip = tip_added(&before, &after)
+                    .unwrap_or_else(|| panic!("nothing added: {}", window.get_supports_last_run()));
+                assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
+            }
+
+            // Move tip: the last one added, grabbed by its shaft just below
+            // its tip, dropped on another pixel.
+            window.set_support_tool(3);
+            let session = in_force_session(&run).unwrap();
+            let paths = session.support_paths();
+            let (id, grab) = paths
+                .iter()
+                .filter(|(_, path)| path.len() >= 2)
+                .find_map(|(id, path)| {
+                    let (tip, next) = (path[0], path[1]);
+                    let len = (0..3)
+                        .map(|k| (next[k] - tip[k]).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    let below: [f64; 3] =
+                        std::array::from_fn(|k| tip[k] + (next[k] - tip[k]) * (0.8 / len.max(0.8)));
+                    let at = ctrl.project_for_test(below.map(|c| c as f32))?;
+                    let on =
+                        ctrl.support_hit_for_test(crate::viewport::ScreenPoint::new(at[0], at[1]))?;
+                    (far(on, tip) < 2.0).then(|| (id.clone(), at))
+                })
+                .expect("a tip to grab on screen");
+            let to = pixel_of([10.2, 2.4, 0.0]);
+            let aimed = ray_meets_plane(&camera, to, p0, n);
+            window.invoke_viewport_pointer_down(grab[0], grab[1], no_keys());
+            for k in 1..=8 {
+                let t = k as f32 / 8.0;
+                window.invoke_viewport_pointer_move(
+                    grab[0] + (to[0] - grab[0]) * t,
+                    grab[1] + (to[1] - grab[1]) * t,
+                    no_keys(),
+                );
+            }
+            window.invoke_viewport_pointer_up(to[0], to[1], no_keys());
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            assert!(
+                !moved.tips().iter().any(|(left, _)| *left == id),
+                "the support grabbed moved: {}",
+                window.get_supports_last_run()
+            );
+            let tip = tip_added(&session, &moved).expect("its new tip");
+            assert!(far(aimed, tip) < 0.02, "tip {tip:?}, aimed {aimed:?}");
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &session));
         });
     }
 }

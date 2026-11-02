@@ -33,6 +33,7 @@ use support_gen_df::supports::auto_support::auto_place::place::{
 use support_gen_df::supports::auto_support::parameter_sizing::SizingBands;
 use support_gen_df::supports::auto_support::types::{CandidatePoint, CandidateSource};
 use support_gen_df::supports::auto_support::zone_rules::ZoneRules;
+use support_gen_df::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_gen_df::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use support_gen_df::supports::support_type_registry::{
@@ -214,6 +215,8 @@ pub enum AddNote {
     SteepSurface,
     /// Other supports hang from the support being moved.
     CarriesOthers,
+    /// The surface there faces up: a support from below cannot reach it.
+    FacesUp,
 }
 
 impl AddNote {
@@ -918,6 +921,28 @@ impl DfSupportSession {
         let Some((i, tip, normal)) = self.contact(point) else {
             return Err((EditError::NothingThere, None));
         };
+        // The tip goes exactly where the person points (#3): a face that
+        // looks up is no place for one, and says so, rather than the tip
+        // going to some other surface near it.
+        if normal.z > 0.0 {
+            return Err((
+                EditError::NoRoute("the surface faces up".to_owned()),
+                Some(AddNote::FacesUp),
+            ));
+        }
+        // Nor is a wall: a run keeps its trunks off one, and a tip placed
+        // by hand keeps to the same rule whatever holds it.
+        let tip_settings = &self.settings.supports.tip;
+        if is_side_wall_contact(
+            normal,
+            tip_settings.cone_angle_mode.unwrap_or_default(),
+            tip_settings.adaptive_cone_angle_offset_deg,
+        ) {
+            return Err((
+                EditError::NoRoute(RejectReason::SideWallContact.as_str().to_owned()),
+                Some(AddNote::SteepSurface),
+            ));
+        }
         let bvh = self.bvh(i);
         let mut settings = (*self.settings).clone();
         let zone = hand_settings(&mut settings, how);
@@ -946,6 +971,7 @@ impl DfSupportSession {
                 &mut new_id,
             );
             ctx.set_zone(zone);
+            ctx.set_exact_contact(Some((tip, normal)));
             let candidate = CandidatePoint {
                 id: "manual".to_owned(),
                 tip_pos: tip,
@@ -1338,7 +1364,11 @@ impl DfSupportSession {
         let mut out = Vec::new();
         for (id, t) in &c.trunks {
             let root = c.roots.get(&t.root_id).map(|r| at(r.transform.pos));
-            let points = path(t.contact_cone.as_ref().map(|k| k.pos), joints(&t.segments), root);
+            let points = path(
+                t.contact_cone.as_ref().map(|k| k.pos),
+                joints(&t.segments),
+                root,
+            );
             out.push((id.clone(), points));
         }
         for (id, b) in &c.branches {
@@ -1350,7 +1380,11 @@ impl DfSupportSession {
             out.push((id.clone(), points));
         }
         for (id, l) in &c.leaves {
-            let points = path(Some(l.contact_cone.pos), Vec::new(), knot(&l.parent_knot_id));
+            let points = path(
+                Some(l.contact_cone.pos),
+                Vec::new(),
+                knot(&l.parent_knot_id),
+            );
             out.push((id.clone(), points));
         }
         out
@@ -2231,6 +2265,58 @@ mod session_tests {
                 .is_err()
         );
         assert_eq!(session.state, before);
+    }
+
+    /// The contact tip of the support `edited` holds and `before` does not.
+    fn new_tip(before: &DfSupportSession, edited: &DfSupportSession) -> [f64; 3] {
+        let old: Vec<String> = before.tips().into_iter().map(|(id, _)| id).collect();
+        edited
+            .tips()
+            .into_iter()
+            .find(|(id, _)| !old.contains(id))
+            .expect("a new tip")
+            .1
+    }
+
+    /// A tip placed by hand lands on the very point picked (#3), or the
+    /// placement is refused with why: never on another surface near it.
+    #[test]
+    fn a_hand_placed_tip_lands_on_the_point_picked() {
+        let mut session = slab_with_a_wall(crate::DfSupportRequest::default());
+        // On the underside, where Add and Move tip both put it.
+        for at in [[14.3, 6.1, 25.0], [30.7, 2.2, 25.0]] {
+            let before = session.clone();
+            session.add_trunk_at(at).expect("held");
+            let tip = new_tip(&before, &session);
+            assert!(dist(tip, at) < 0.01, "{tip:?} for {at:?}");
+        }
+        let (id, from) = session.tips().pop().unwrap();
+        let to = [40.4, 7.7, 25.0];
+        let before = session.clone();
+        session.move_tip(&id, to, &AddOptions::default()).unwrap();
+        assert!(dist(new_tip(&before, &session), to) < 0.01);
+        assert!(session.tip_near(from, 0.01).is_none());
+
+        // On the wall: the tip goes there (an adaptive cone leans to hold a
+        // wall), or nowhere. The surface search a run uses cast up from
+        // below and took the slab's underside right above it, 7 mm off.
+        let wall = [11.0, 5.0, 18.0];
+        let (preview, edited) = session
+            .preview_add_with(wall, &AddOptions::default())
+            .expect("a preview");
+        match edited {
+            Some(edited) => {
+                assert!(preview.valid);
+                assert!(dist(new_tip(&session, &edited), wall) < 0.01);
+            }
+            None => assert!(!preview.valid && preview.note.is_some()),
+        }
+        // On top: it looks up.
+        let (top, _) = session
+            .preview_add_with([20.0, 5.0, 27.0], &AddOptions::default())
+            .expect("a preview");
+        assert!(!top.valid);
+        assert_eq!(top.note, Some(AddNote::FacesUp));
     }
 
     #[test]

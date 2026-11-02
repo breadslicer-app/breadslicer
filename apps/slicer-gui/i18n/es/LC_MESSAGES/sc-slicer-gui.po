@@ -5587,13 +5587,13 @@ msgstr "Ajustar"
 
 #: ui/main-window.slint
 msgctxt "Workspace"
-msgid "Click a support to remove it, or paint over tips to remove them; [ ] or the wheel size the brush, B a box. Esc drops it."
-msgstr "Hacé clic en un soporte para quitarlo, o pintá sobre las puntas para quitarlas; [ ] o la rueda cambian el pincel, B pasa a recuadro. Esc lo cancela."
+msgid "Click a support to remove it, or paint over supports to remove them; [ ] or the wheel size the brush, B a box. Esc drops it."
+msgstr "Hacé clic en un soporte para quitarlo, o pintá sobre los soportes para quitarlos; [ ] o la rueda cambian el pincel, B pasa a recuadro. Esc lo cancela."
 
 #: ui/main-window.slint
 msgctxt "Workspace"
-msgid "Click a support to remove it, or drag a box over the tips to remove them; B a brush. Esc drops it."
-msgstr "Hacé clic en un soporte para quitarlo, o arrastrá un recuadro sobre las puntas para quitarlas; B pasa a pincel. Esc lo cancela."
+msgid "Click a support to remove it, or drag a box over supports to remove them; B a brush. Esc drops it."
+msgstr "Hacé clic en un soporte para quitarlo, o arrastrá un recuadro sobre los soportes para quitarlos; B pasa a pincel. Esc lo cancela."
 
 #: ui/main-window.slint
 msgctxt "Workspace"
@@ -5627,13 +5627,13 @@ msgstr "Pincel"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Paint over the tips to remove; [ ] or the mouse wheel size the brush ({} px). B switches to a box."
-msgstr "Pintá sobre las puntas a quitar; [ ] o la rueda del mouse cambian el pincel ({} px). B pasa a recuadro."
+msgid "Paint over the supports to remove, anywhere along them; [ ] or the mouse wheel size the brush ({} px). B switches to a box."
+msgstr "Pintá sobre los soportes a quitar, en cualquier parte de ellos; [ ] o la rueda del mouse cambian el pincel ({} px). B pasa a recuadro."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Drag a box: every tip inside it goes, from the selected supports only. B switches to a brush."
-msgstr "Arrastrá un recuadro: se va cada punta que quede adentro, solo de los soportes seleccionados. B pasa a pincel."
+msgid "Drag a box: every support it touches goes, from the selected supports only. B switches to a brush."
+msgstr "Arrastrá un recuadro: se va cada soporte que toque, solo de los soportes seleccionados. B pasa a pincel."
 
 #: src/df_support_run.rs
 msgctxt "DfSupportDialog"
@@ -5662,3 +5662,8 @@ msgstr "Soportes a quitar: {}."
 msgctxt "DfSupportDialog"
 msgid "Left where it was. {}"
 msgstr "Quedó donde estaba. {}"
+
+#: src/df_support_run.rs
+msgctxt "DfSupportDialog"
+msgid "the surface there faces up; nothing below can reach it"
+msgstr "ahí la superficie mira hacia arriba; nada desde abajo llega"
