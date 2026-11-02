@@ -18,6 +18,8 @@ use std::sync::{Arc, OnceLock};
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
 use support_gen_df::pipeline::{ModelInput, PipelineSettings, support_soup, world_soup};
+use support_gen_df::supports::auto_bracing::auto_brace::brace_new_shaft;
+use support_gen_df::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use support_gen_df::supports::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
 };
@@ -526,6 +528,32 @@ fn filtered(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCo
     out
 }
 
+/// The collections with only the entities `keep` says, built from those
+/// alone: [`filtered`]'s result without copying what it would drop.
+fn picked(c: &SupportCollections, keep: impl Fn(&String) -> bool) -> SupportCollections {
+    fn pick<T: Clone>(
+        map: &indexmap::IndexMap<String, T>,
+        keep: &impl Fn(&String) -> bool,
+    ) -> indexmap::IndexMap<String, T> {
+        map.iter()
+            .filter(|(id, _)| keep(id))
+            .map(|(id, e)| (id.clone(), e.clone()))
+            .collect()
+    }
+    SupportCollections {
+        roots: pick(&c.roots, &keep),
+        trunks: pick(&c.trunks, &keep),
+        branches: pick(&c.branches, &keep),
+        leaves: pick(&c.leaves, &keep),
+        twigs: pick(&c.twigs, &keep),
+        sticks: pick(&c.sticks, &keep),
+        braces: pick(&c.braces, &keep),
+        stumps: pick(&c.stumps, &keep),
+        kickstands: pick(&c.kickstands, &keep),
+        knots: pick(&c.knots, &keep),
+    }
+}
+
 /// Every string inside a serialized entity.
 fn strings_in(value: &Value, out: &mut HashSet<String>) {
     match value {
@@ -979,7 +1007,7 @@ impl DfSupportSession {
         }
         let note = outcome?;
         self.hand_edited = true;
-        let added: HashSet<String> = all_ids(&self.state.collections)
+        let mut added: HashSet<String> = all_ids(&self.state.collections)
             .into_iter()
             .filter(|id| !before.contains(id))
             .collect();
@@ -988,6 +1016,41 @@ impl DfSupportSession {
         let attached = added
             .iter()
             .any(|id| self.state.collections.knots.contains_key(id));
+        // A trunk of its own is braced to its neighbours as a run braces its
+        // trunks, when the run braces at all (#3).
+        let trunk = (!attached)
+            .then(|| {
+                added
+                    .iter()
+                    .find(|id| self.state.collections.trunks.contains_key(*id))
+                    .cloned()
+            })
+            .flatten();
+        if let Some(trunk) = trunk
+            && !settings.supports.auto_support.debug_skip_auto_bracing
+        {
+            let meshes: BraceMeshes<'_> = [(
+                self.models[i].id.clone(),
+                BraceMesh {
+                    bvh: &bvh,
+                    matrix: Matrix4::IDENTITY,
+                },
+            )]
+            .into();
+            let braced = brace_new_shaft(
+                &mut self.state,
+                &trunk,
+                &settings.supports.auto_bracing,
+                &settings.supports,
+                &meshes,
+            );
+            if braced > 0 {
+                added = all_ids(&self.state.collections)
+                    .into_iter()
+                    .filter(|id| !before.contains(id))
+                    .collect();
+            }
+        }
         Ok(Placed {
             added,
             attached,
@@ -1238,16 +1301,29 @@ impl DfSupportSession {
         })
     }
 
-    /// The entities `keep` names, tessellated without a raft.
+    /// The entities `keep` names, tessellated without a raft. A preview
+    /// draws a few pieces of a big set on every hover: only those are
+    /// copied, and the models go without their geometry, which only a raft
+    /// reads (a 1.9M-face model cost ~8 ms a preview, #3).
     fn mesh_of(&self, keep: impl Fn(&String) -> bool) -> Result<IndexedMesh, EditError> {
         let state = SupportState {
-            collections: filtered(&self.state.collections, keep),
+            collections: picked(&self.state.collections, keep),
             ..SupportState::default()
         };
         let mut settings = (*self.settings).clone();
         settings.rafts.global.bottom_mode = RaftBottomMode::Off;
         settings.rafts.per_model.clear();
-        let sink = support_soup(&state, &self.models, &settings)
+        let models: Vec<ModelInput> = self
+            .models
+            .iter()
+            .map(|m| ModelInput {
+                id: m.id.clone(),
+                geometry: Arc::default(),
+                transform: m.transform,
+                visible: m.visible,
+            })
+            .collect();
+        let sink = support_soup(&state, &models, &settings)
             .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
         weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).ok_or(EditError::NothingThere)
     }
@@ -1359,6 +1435,146 @@ mod session_tests {
             .unwrap();
         scene.add_root(leaf).unwrap();
         scene
+    }
+
+    /// A scene of one model made of boxes, each `(min, max)` in world mm.
+    fn boxes_scene(boxes: &[([f32; 3], [f32; 3])]) -> sc_scene::Scene {
+        use sc_mesh_core::{IndexedTriangle, MeshMetadata, Vertex};
+        use sc_scene::{LeafPayload, Scene};
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for (lo, hi) in boxes {
+            let o = vertices.len() as u32;
+            for k in 0..8u32 {
+                let pick = |bit: u32, axis: usize| if k & bit == 0 { lo[axis] } else { hi[axis] };
+                vertices.push(Vertex::new([pick(1, 0), pick(2, 1), pick(4, 2)]));
+            }
+            // Corners by bits x = 1, y = 2, z = 4; each side wound outward.
+            for [a, b, c] in [
+                [0, 2, 1],
+                [1, 2, 3],
+                [4, 5, 6],
+                [5, 7, 6],
+                [0, 1, 4],
+                [1, 5, 4],
+                [2, 6, 3],
+                [3, 6, 7],
+                [0, 4, 2],
+                [2, 4, 6],
+                [1, 3, 5],
+                [3, 7, 5],
+            ] {
+                faces.push(IndexedTriangle::from_raw_indices([o + a, o + b, o + c]));
+            }
+        }
+        let mesh = IndexedMesh::new(Some(MeshMetadata::default()), vertices, faces);
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                sc_mesh_core::transform::Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+        scene
+    }
+
+    /// A slab 50 × 10 mm with its underside 25 mm up and a wall hanging from
+    /// it to 12 mm between x 9 and 11, run with `request`, its supports then
+    /// cleared, and a trunk of its own under `[5, 5]`.
+    fn slab_with_a_wall(request: crate::DfSupportRequest) -> DfSupportSession {
+        let scene = boxes_scene(&[
+            ([0.0, 0.0, 25.0], [50.0, 10.0, 27.0]),
+            ([9.0, 0.0, 12.0], [11.0, 10.0, 25.0]),
+        ]);
+        let mut session = crate::start_df_supports(&scene, request)
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        session.state = SupportState::default();
+        session.removal_index = Arc::default();
+        session.add_trunk_at([5.0, 5.0, 25.0]).expect("a trunk");
+        assert!(session.state.collections.braces.is_empty());
+        session
+    }
+
+    #[test]
+    fn a_trunk_of_its_own_is_braced_to_its_neighbour_clear_of_the_model() {
+        let session = slab_with_a_wall(crate::DfSupportRequest::default());
+        let (preview, edited) = session
+            .preview_add_with([14.0, 5.0, 25.0], &AddOptions::default())
+            .expect("a preview");
+        assert!(
+            preview.valid && !preview.attached,
+            "{:?}",
+            (preview.valid, preview.attached, preview.note)
+        );
+        let edited = edited.expect("the session the click leaves");
+        let c = &edited.state.collections;
+        assert_eq!(c.trunks.len(), 2);
+        assert!(!c.braces.is_empty(), "braced to the trunk beside it");
+        // Each brace joins the two trunks, and none goes through the wall.
+        let owner = |knot: &str| {
+            let shaft = &c.knots[knot].parent_shaft_id;
+            c.trunks
+                .iter()
+                .find(|(_, t)| t.segments.iter().any(|s| &s.id == shaft))
+                .map(|(id, _)| id.clone())
+        };
+        for brace in c.braces.values() {
+            let (a, b) = (owner(&brace.start_knot_id), owner(&brace.end_knot_id));
+            assert!(a.is_some() && b.is_some() && a != b);
+            let (p, q) = (
+                c.knots[&brace.start_knot_id].pos,
+                c.knots[&brace.end_knot_id].pos,
+            );
+            for k in 0..=20 {
+                let t = f64::from(k) / 20.0;
+                let (x, z) = (p.x + (q.x - p.x) * t, p.z + (q.z - p.z) * t);
+                assert!(
+                    !((8.6..=11.4).contains(&x) && z >= 11.6),
+                    "a brace through the wall at x {x:.2}, z {z:.2}"
+                );
+            }
+        }
+        // The braces go with it: a click on it takes them all.
+        let mut removed = edited.clone();
+        removed
+            .remove_near([14.0, 5.0, 24.9])
+            .expect("the new trunk");
+        assert_eq!(removed.state.collections, session.state.collections);
+    }
+
+    #[test]
+    fn a_new_trunk_is_braced_by_the_preset_or_not_at_all() {
+        let braces = |request: crate::DfSupportRequest| {
+            let mut session = slab_with_a_wall(request);
+            session.add_trunk_at([14.0, 5.0, 25.0]).expect("a trunk");
+            session
+                .state
+                .collections
+                .braces
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let mut off = crate::DfSupportRequest::default();
+        off.options.bracing = false;
+        assert!(braces(off).is_empty(), "no bracing, no braces");
+        let mut minis = crate::DfSupportRequest::default();
+        minis.options.zones = Some(crate::zone_presets::minis_30());
+        let zoned = braces(minis);
+        assert!(!zoned.is_empty());
+        let default = braces(crate::DfSupportRequest::default());
+        assert_ne!(
+            zoned.iter().map(|b| b.profile).collect::<Vec<_>>(),
+            default.iter().map(|b| b.profile).collect::<Vec<_>>(),
+            "the preset's own brace"
+        );
     }
 
     /// The slab with one trunk of its own under `[5, 5]`.
@@ -1598,6 +1814,37 @@ mod session_tests {
         soup.extend(tri(3.0));
         soup.extend([3.0 + 0.6 * tol, 0.0, 0.0, 9.0, 9.0, 9.0, 3.0, 1.0, -5e-5]);
         check(&soup, &[first, second]);
+    }
+
+    /// A preview's pieces are drawn as before #3 drew them: a filtered copy
+    /// of every collection, the models with their geometry.
+    #[test]
+    fn a_preview_draws_its_pieces_as_the_whole_models_do() {
+        let session =
+            crate::start_df_supports(&slab_scene(6.0), crate::DfSupportRequest::default())
+                .unwrap()
+                .join()
+                .unwrap()
+                .sets
+                .remove(0)
+                .session;
+        let c = &session.state.collections;
+        let some: HashSet<String> = all_ids(c).into_iter().step_by(3).collect();
+        assert!(some.len() > 5);
+        let keep = |id: &String| some.contains(id);
+        assert_eq!(picked(c, keep), filtered(c, keep));
+        let state = SupportState {
+            collections: filtered(c, keep),
+            ..SupportState::default()
+        };
+        let mut settings = (*session.settings).clone();
+        settings.rafts.global.bottom_mode = RaftBottomMode::Off;
+        settings.rafts.per_model.clear();
+        let sink = support_soup(&state, &session.models, &settings).unwrap();
+        let before = weld_parts(&sink.floats, &sink.parts, DF_SUPPORT_MESH_NAME).unwrap();
+        let now = session.mesh_of(keep).unwrap();
+        assert_eq!(now.vertices(), before.vertices());
+        assert_eq!(now.faces(), before.faces());
     }
 
     #[test]

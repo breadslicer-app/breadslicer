@@ -596,6 +596,140 @@ fn click_cost_on_a_real_model() {
     };
     println!("placed {placed}, hanging {attached}");
     println!("hover preview (worker): {}", stats(&previews));
-    println!("click, preview taken (the set drawn again): {}", stats(&draws));
+    println!(
+        "click, preview taken (the set drawn again): {}",
+        stats(&draws)
+    );
     println!("click, no preview (placed and drawn): {}", stats(&cold));
+}
+
+/// Measurement, not a gate (#3): what a hover preview costs where a fast
+/// mouse goes, every kind of surface (faces that look down, walls, faces
+/// that look up), with and without Shift. `SC_STRESS_STL` is the model
+/// (scaled to `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --release
+/// -p support-gen-df-sc --test df_supports_scene -- --ignored --nocapture
+/// hover_cost_over_every_surface`.
+#[test]
+#[ignore = "needs SC_STRESS_STL"]
+fn hover_cost_over_every_surface() {
+    let Ok(path) = std::env::var("SC_STRESS_STL") else {
+        return;
+    };
+    let height: Option<f32> = std::env::var("SC_STRESS_HEIGHT_MM")
+        .ok()
+        .and_then(|h| h.parse().ok());
+    let bytes = std::fs::read(&path).unwrap();
+    let (loaded, _) = sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+    let leaf = loaded.roots()[0];
+    let mut mesh = (**loaded.leaf_mesh_arc(leaf).unwrap()).clone();
+    let bounds = |mesh: &IndexedMesh| {
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for v in mesh.vertices() {
+            for k in 0..3 {
+                lo[k] = lo[k].min(v.as_array()[k]);
+                hi[k] = hi[k].max(v.as_array()[k]);
+            }
+        }
+        (lo, hi)
+    };
+    if let Some(h) = height {
+        let (lo, hi) = bounds(&mesh);
+        let s = h / (hi[2] - lo[2]);
+        let vertices = mesh
+            .vertices()
+            .iter()
+            .map(|v| Vertex::new(v.as_array().map(|c| c * s)))
+            .collect();
+        mesh = IndexedMesh::new(None, vertices, mesh.faces().to_vec());
+    }
+    let (lo, hi) = bounds(&mesh);
+    let shift = [
+        60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+        40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+        5.0 - f64::from(lo[2]),
+    ];
+    // Face centres, every so many faces, with how their normal leans.
+    let step = (mesh.faces().len() / 120).max(1);
+    let points: Vec<([f64; 3], f64)> = mesh
+        .faces()
+        .iter()
+        .step_by(step)
+        .filter_map(|f| {
+            let [a, b, c] = f.vertices.map(|v| {
+                mesh.vertices()[u32::from(v) as usize]
+                    .as_array()
+                    .map(f64::from)
+            });
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0],
+            ];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            (len > 1e-12).then(|| {
+                (
+                    std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0 + shift[k]),
+                    n[2] / len,
+                )
+            })
+        })
+        .collect();
+    let scene = scene_with(vec![(mesh, shift)]);
+    let session = start_df_supports(&scene, DfSupportRequest::default())
+        .unwrap()
+        .join()
+        .unwrap()
+        .sets
+        .remove(0)
+        .session;
+    for attach in [false, true] {
+        let how = support_gen_df_sc::AddOptions { attach, size: None };
+        let mut by_kind: [Vec<f64>; 3] = Default::default();
+        let mut outcomes = [0usize; 3];
+        for (p, nz) in &points {
+            let t = std::time::Instant::now();
+            let preview = session.preview_add_with(*p, &how);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            let kind = if *nz < -0.3 {
+                0
+            } else if *nz < 0.3 {
+                1
+            } else {
+                2
+            };
+            by_kind[kind].push(ms);
+            outcomes[match preview {
+                Ok((v, _)) if v.valid => 0,
+                Ok(_) => 1,
+                Err(_) => 2,
+            }] += 1;
+        }
+        let stats = |v: &[f64]| {
+            let mut v = v.to_vec();
+            v.sort_by(f64::total_cmp);
+            let at = |q: f64| {
+                v.get(((v.len() as f64 - 1.0) * q) as usize)
+                    .copied()
+                    .unwrap_or(0.0)
+            };
+            format!(
+                "median {:.0} ms, p90 {:.0} ms, max {:.0} ms (n {})",
+                at(0.5),
+                at(0.9),
+                at(1.0),
+                v.len()
+            )
+        };
+        println!(
+            "attach {attach}: valid {} red {} none {}",
+            outcomes[0], outcomes[1], outcomes[2]
+        );
+        for (name, v) in ["down", "wall", "up"].iter().zip(&by_kind) {
+            println!("  {name}: {}", stats(v));
+        }
+        let all: Vec<f64> = by_kind.concat();
+        println!("  all: {}", stats(&all));
+    }
 }
