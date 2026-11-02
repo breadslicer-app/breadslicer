@@ -394,6 +394,8 @@ impl PanelUpdate {
             | PreferencesChange::SliceControlPanel
             | PreferencesChange::SliceViewPanel
             | PreferencesChange::LastOpenDir
+            | PreferencesChange::StartDialog
+            | PreferencesChange::RecentFiles
             | PreferencesChange::PrescanSupports
             | PreferencesChange::SmoothModels
             | PreferencesChange::FrameRate
@@ -459,6 +461,8 @@ mod panel_update_tests {
             (PreferencesChange::SliceControlPanel, None),
             (PreferencesChange::SliceViewPanel, None),
             (PreferencesChange::LastOpenDir, None),
+            (PreferencesChange::StartDialog, None),
+            (PreferencesChange::RecentFiles, None),
             (PreferencesChange::PrescanSupports, None),
             (PreferencesChange::SmoothModels, None),
             (PreferencesChange::FrameRate, None),

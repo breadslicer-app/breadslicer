@@ -19,9 +19,9 @@ use crate::scene_save::SaveBundle;
 /// The most of each log that goes in: its last 5 MiB, where the problem is.
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
-/// The keys of the settings file that name a folder or a file, dropped at
-/// any depth.
-const PATH_KEY_ENDINGS: [&str; 3] = ["_dir", "_path", "_file"];
+/// The keys of the settings file that name a folder or a file, or hold a list
+/// of files (the recent files, #381), dropped at any depth.
+const PATH_KEY_ENDINGS: [&str; 4] = ["_dir", "_path", "_file", "_files"];
 
 /// What goes into a diagnostics file, gathered on the UI thread and written
 /// on a worker.
@@ -149,9 +149,16 @@ fn settings_without_paths(path: &Path) -> Option<String> {
 fn drop_path_keys(table: &mut toml::Table) {
     table.retain(|key, _| !PATH_KEY_ENDINGS.iter().any(|end| key.ends_with(end)));
     for (_, value) in table.iter_mut() {
-        if let toml::Value::Table(inner) = value {
-            drop_path_keys(inner);
-        }
+        drop_path_keys_in(value);
+    }
+}
+
+/// [`drop_path_keys`] in the tables `value` is or holds, in arrays too.
+fn drop_path_keys_in(value: &mut toml::Value) {
+    match value {
+        toml::Value::Table(inner) => drop_path_keys(inner),
+        toml::Value::Array(items) => items.iter_mut().for_each(drop_path_keys_in),
+        _ => {}
     }
 }
 
@@ -258,6 +265,48 @@ mod tests {
         let tail = read_tail(&path).unwrap();
         assert!(tail.starts_with("[the first 8 bytes are left out]\n"));
         assert!(tail.ends_with("the end\n"));
+    }
+
+    #[test]
+    fn the_recent_files_never_reach_the_diagnostics_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut contents = contents_in(dir.path());
+        let settings = dir.path().join("settings.toml");
+        std::fs::write(
+            &settings,
+            "version = 1\nshow_start_dialog = false\n\n[[recent_files]]\npath = 'D:\\Clientes\\Dana\\dragon.bread'\nopened = 1800000000\n\n[[recent_files]]\npath = '/home/dana/minis/hueco.stl'\nopened = 1799999000\n\n[appearance]\ntheme = \"dark\"\n",
+        )
+        .unwrap();
+        contents.settings_file = Some(settings);
+        let (bytes, _) = build(&contents, &dana()).unwrap();
+        let (_, settings) = entries(bytes)
+            .into_iter()
+            .find(|(name, _)| name == "settings.toml")
+            .unwrap();
+        let settings = String::from_utf8(settings).unwrap();
+        assert!(settings.contains("theme = \"dark\""), "{settings}");
+        assert!(settings.contains("show_start_dialog = false"), "{settings}");
+        for leak in [
+            "recent_files",
+            "dragon",
+            "hueco",
+            "Clientes",
+            "minis",
+            "1800000000",
+        ] {
+            assert!(!settings.contains(leak), "{leak} in {settings}");
+        }
+    }
+
+    #[test]
+    fn a_path_key_inside_a_list_of_tables_is_dropped() {
+        let mut table: toml::Table = "[[panels]]\nlog_path = 'y'\nwidth = 2\n".parse().unwrap();
+        drop_path_keys(&mut table);
+        let text = toml::to_string(&table).unwrap();
+        assert!(
+            !text.contains("log_path") && text.contains("width = 2"),
+            "{text}"
+        );
     }
 
     #[test]

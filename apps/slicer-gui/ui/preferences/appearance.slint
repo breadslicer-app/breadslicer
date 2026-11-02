@@ -54,6 +54,10 @@ export component AppearancePreferences inherits PreferencesPage {
     in property <int> silenced-message-count: 0;
     callback show-all-messages-again();
 
+    // Whether the start dialog shows when the app opens with no file (#381).
+    in-out property <bool> show-start-dialog: true;
+    callback show-start-dialog-changed(bool);
+
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
     property <[string]> theme-options: [
@@ -135,6 +139,15 @@ export component AppearancePreferences inherits PreferencesPage {
             text: @tr("AppearancePreferences" => "Hidden messages: {}", root.silenced-message-count);
             vertical-alignment: center;
             color: Palette.foreground.transparentize(0.4);
+        }
+    }
+
+    CheckBox {
+        text: @tr("AppearancePreferences" => "Show the start window when Breadslicer opens");
+        checked: root.show-start-dialog;
+        toggled => {
+            root.show-start-dialog = self.checked;
+            root.show-start-dialog-changed(self.checked);
         }
     }
 

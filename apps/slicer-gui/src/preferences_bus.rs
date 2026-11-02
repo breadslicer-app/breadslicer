@@ -35,6 +35,7 @@ use crate::gizmo::look::DEFAULT_GIZMO_SIZE;
 use crate::gizmo::look::GizmoStyle;
 use crate::language::LanguagePreference;
 use crate::print_selection::PrintDefaults;
+use crate::recent_files::RecentFile;
 use crate::slint_ui::{MenuLayout, ThemePreference};
 
 /// Full read-out of every preference. Listeners receive a reference; clone the
@@ -129,6 +130,12 @@ pub(crate) struct PreferencesSnapshot {
     /// opened file lived in. `None` until the first open; the dialog then falls
     /// back to the home directory. App-wide state.
     pub last_open_dir: Option<PathBuf>,
+    /// Whether the start dialog shows when the app opens with no file
+    /// (#381): its "Don't show at startup" box and Preferences turn it off
+    /// and on.
+    pub show_start_dialog: bool,
+    /// The files last opened or saved, newest first (`recent_files`).
+    pub recent_files: Vec<RecentFile>,
 }
 
 impl From<&PreferencesSnapshot> for PrintDefaults {
@@ -186,6 +193,8 @@ impl PreferencesSnapshot {
             slice_view_height: None,
             slice_view_minimized: false,
             last_open_dir: None,
+            show_start_dialog: true,
+            recent_files: Vec::new(),
         }
     }
 }
@@ -213,6 +222,10 @@ pub(crate) enum PreferencesChange {
     SliceControlPanel,
     SliceViewPanel,
     LastOpenDir,
+    /// Whether the start dialog shows at launch (#381).
+    StartDialog,
+    /// A file was opened or saved, or taken off the recent list (#381).
+    RecentFiles,
     /// A profile was saved, imported or deleted in a library. The snapshot is
     /// unchanged; what the profiles resolve to may not be.
     Profiles,

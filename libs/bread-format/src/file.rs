@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::sync::Arc;
 
 use sc_scene::{NodeKind, Scene};
@@ -35,6 +35,26 @@ pub const SETTINGS_TAG: ChunkTag = ChunkTag(*b"PROJ");
 /// The settings chunk version this build writes and reads. Its payload is
 /// the application's own versioned settings document.
 pub const SETTINGS_VERSION: u16 = 1;
+
+/// The tag of the thumbnail chunk: a small picture of the file, as a PNG
+/// (`SPEC.md`, section 8). Optional; this build reads it and does not write it
+/// yet.
+pub const THUMBNAIL_TAG: ChunkTag = ChunkTag(*b"THMB");
+
+/// The longest thumbnail payload read: a 512 x 512 PNG, the largest the spec
+/// allows, stays well under it.
+const MAX_THUMBNAIL_LEN: u64 = 4 * 1024 * 1024;
+
+/// The thumbnail of a `.bread` file, the PNG's bytes as stored, reading the
+/// chunks' headers and the thumbnail only, never the meshes. `None` when the
+/// file has none, or one too long to be a thumbnail. Decoding the picture is
+/// the caller's.
+pub fn read_thumbnail<R: Read + Seek>(input: R) -> Result<Option<Vec<u8>>, ReadBreadError> {
+    let mut reader = BreadReader::new(input)?;
+    Ok(reader
+        .find_chunk(THUMBNAIL_TAG, MAX_THUMBNAIL_LEN)?
+        .map(|chunk| chunk.payload))
+}
 
 /// What a `.bread` file holds.
 #[derive(Clone, Debug, Default)]

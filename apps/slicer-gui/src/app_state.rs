@@ -52,6 +52,7 @@ use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
 use crate::split_bodies::SplitBodies;
+use crate::start_dialog::{Recovery, StartDialog};
 use crate::support_gen_run::GenSupportRun;
 use crate::ui_language::UiLanguage;
 use crate::viewport::ViewportController;
@@ -284,6 +285,8 @@ pub(crate) struct AppState {
     /// Keeps the UI language equal to the preference. Set when the first window
     /// is created: Slint can select a language only once a component exists.
     ui_language: OnceCell<UiLanguage>,
+    /// The start dialog of the launch window (#381), once it has shown.
+    start_dialog: RefCell<Option<Rc<StartDialog>>>,
     // Bus subscription owned by AppState. It runs on every `bus.update`;
     // dropping it unregisters. Stored here so it lives as long as `AppState`.
     // It holds the only `Sender` clone of the settings saver; dropping it lets
@@ -370,6 +373,8 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_view_height(snap.slice_view_height);
     settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
+    settings.set_show_start_dialog(snap.show_start_dialog);
+    settings.set_recent_files(snap.recent_files.clone());
 }
 
 /// Saves the changes that `snap` makes to `base` into `file`, and returns the
@@ -525,8 +530,12 @@ impl AppState {
             slice_view_height: settings.slice_view_height(),
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
+            show_start_dialog: settings.show_start_dialog(),
+            recent_files: settings.recent_files(),
         };
         let prefs = PreferencesBus::new(snapshot);
+        // Loads and saves put their files in the recent list (#381).
+        crate::recent_files::record_to(&prefs);
 
         // Persistence runs on a dedicated worker thread: the subscription
         // forwards each updated snapshot to it over an `mpsc` channel and the
@@ -558,6 +567,7 @@ impl AppState {
             device_loss,
             autosave: AutosaveStore::platform_root().map(|root| Rc::new(AutosaveStore::new(root))),
             ui_language: OnceCell::new(),
+            start_dialog: RefCell::new(None),
             _settings_sub: settings_sub,
             _settings_saver: settings_saver,
         });
@@ -1160,16 +1170,83 @@ impl AppState {
         Some(window)
     }
 
+    /// At start-up: offers back what earlier runs left unsaved (#18), then,
+    /// once that is answered or when there was nothing to ask, the start
+    /// dialog (#381) in window `free`. Without `free` the launch opened files,
+    /// and there is no start dialog.
+    pub(crate) fn greet(self: &Rc<Self>, free: Option<u64>) {
+        let app = Rc::downgrade(self);
+        self.offer_recovery(free, move |recovery| {
+            if let Some(app) = app.upgrade() {
+                app.offer_start_dialog(free, recovery);
+            }
+        });
+    }
+
+    /// Shows the start dialog in window `free` once the window takes input,
+    /// when this launch calls for it (`start_dialog::shows_at_launch`).
+    fn offer_start_dialog(self: &Rc<Self>, free: Option<u64>, recovery: Recovery) {
+        let show_at_startup = self.prefs.snapshot().show_start_dialog;
+        if !crate::start_dialog::shows_at_launch(free.is_none(), show_at_startup, recovery) {
+            return;
+        }
+        let Some(window_id) = free else {
+            return;
+        };
+        let app = Rc::downgrade(self);
+        crate::startup_timing::when_interactive(move || {
+            if let Some(app) = app.upgrade() {
+                app.show_start_dialog(window_id);
+            }
+        });
+    }
+
+    /// Shows the start dialog in window `window_id`, unless a file got there
+    /// first.
+    fn show_start_dialog(self: &Rc<Self>, window_id: u64) {
+        if !self.is_empty_window(window_id) {
+            return;
+        }
+        let Some(window) = self
+            .main_windows
+            .borrow()
+            .get(&window_id)
+            .map(|w| w.window.clone_strong())
+        else {
+            return;
+        };
+        let app = Rc::downgrade(self);
+        let dialog = StartDialog::install(
+            &window,
+            &self.prefs,
+            Rc::new(move |path| {
+                if let Some(app) = app.upgrade() {
+                    app.open_path_in_window(window_id, path);
+                }
+            }),
+        );
+        dialog.show();
+        *self.start_dialog.borrow_mut() = Some(dialog);
+    }
+
     /// At start-up: offers back the scenes that earlier runs left with
     /// unsaved changes (#18), asking in window `free`, which also takes the
     /// 1st scene recovered while it is still empty. Without `free` (the start
     /// opened files), it asks in the 1st window and recovers into new ones.
-    pub(crate) fn offer_recovery(self: &Rc<Self>, free: Option<u64>) {
+    /// `then` runs once the question is answered, or at once when there is
+    /// nothing to ask.
+    pub(crate) fn offer_recovery(
+        self: &Rc<Self>,
+        free: Option<u64>,
+        then: impl FnOnce(Recovery) + 'static,
+    ) {
         let Some(store) = &self.autosave else {
+            then(Recovery::NothingAsked);
             return;
         };
         let orphans = store.claim_orphans(std::time::SystemTime::now());
         if orphans.is_empty() {
+            then(Recovery::NothingAsked);
             return;
         }
         let host = free.or_else(|| self.main_windows.borrow().keys().min().copied());
@@ -1179,6 +1256,7 @@ impl AppState {
                 .get(&id)
                 .map(|w| w.controller.dialogs())
         }) else {
+            then(Recovery::NothingAsked);
             return;
         };
         let now = std::time::SystemTime::now();
@@ -1188,15 +1266,18 @@ impl AppState {
             .map(|entry| recovery_line(entry, now))
             .collect();
         let app_weak = Rc::downgrade(self);
-        dialogs.show_recovery(scenes, move |choice| match choice {
-            RecoveryChoice::Recover => {
-                if let Some(app) = app_weak.upgrade() {
-                    app.recover(orphans, free);
+        dialogs.show_recovery(scenes, move |choice| {
+            match choice {
+                RecoveryChoice::Recover => {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.recover(orphans, free);
+                    }
                 }
+                RecoveryChoice::Discard => orphans.into_iter().for_each(OrphanRun::discard),
+                // Dropped: their locks go, and the next start offers them again.
+                RecoveryChoice::Later => drop(orphans),
             }
-            RecoveryChoice::Discard => orphans.into_iter().for_each(OrphanRun::discard),
-            // Dropped: their locks go, and the next start offers them again.
-            RecoveryChoice::Later => drop(orphans),
+            then(Recovery::Answered(choice));
         });
     }
 
@@ -2311,6 +2392,8 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::SliceControlPanel,
             PreferencesChange::SliceViewPanel,
             PreferencesChange::LastOpenDir,
+            PreferencesChange::StartDialog,
+            PreferencesChange::RecentFiles,
         ] {
             let build_volume = on_fresh_slint_thread(move || {
                 let subscribed = subscribed_window();
@@ -2505,6 +2588,7 @@ mod window_wiring_tests {
             // nothing.
             _settings_sub: prefs.subscribe(|_, _| {}),
             ui_language: OnceCell::new(),
+            start_dialog: RefCell::new(None),
             prefs,
             catalog,
             default_envelope,
@@ -3017,6 +3101,94 @@ mod window_wiring_tests {
             (before, plate_view(&app, id))
         });
         assert_eq!(after, before);
+    }
+
+    /// Leaves under `root` the autosave of a run that ended without closing
+    /// its scene, as a crash does.
+    fn crashed_run(root: &std::path::Path) {
+        use crate::autosave_store::{MANIFEST_FORMAT, Manifest, unix_seconds};
+
+        let crashed = AutosaveStore::new(root.to_path_buf());
+        let slot = crashed.next_slot(1).expect("a slot");
+        std::fs::write(slot.path(), b"snapshot").expect("the snapshot is written");
+        slot.publish(&Manifest {
+            format: MANIFEST_FORMAT,
+            snapshot: slot.name().to_owned(),
+            source: PathBuf::from("C:/models/hueco.bread"),
+            project: true,
+            saved_at: unix_seconds(std::time::SystemTime::now()),
+        })
+        .expect("the manifest is written");
+    }
+
+    #[test]
+    fn the_start_dialog_waits_for_the_recovery_answer() {
+        let (before, asking, after) = on_fresh_slint_thread(|| {
+            let root = tempfile::tempdir().expect("a temporary folder");
+            crashed_run(root.path());
+            let mut app = test_app(PreferencesSnapshot::for_tests());
+            Rc::get_mut(&mut app).expect("the only handle").autosave =
+                Some(Rc::new(AutosaveStore::new(root.path().to_path_buf())));
+            let id = add_window(&app);
+            let heard = Rc::new(RefCell::new(Vec::new()));
+            let sink = heard.clone();
+            app.offer_recovery(Some(id), move |recovery| sink.borrow_mut().push(recovery));
+            let before = heard.borrow().clone();
+            let asking = window_of(&app, id).get_message_open();
+            controller_of(&app, id)
+                .dialogs()
+                .answer(crate::MessageAnswer::Discard, false);
+            let after = heard.borrow().clone();
+            (before, asking, after)
+        });
+        assert!(before.is_empty(), "nothing goes on before the answer");
+        assert!(asking, "the recovery question shows first");
+        assert_eq!(after, [Recovery::Answered(RecoveryChoice::Discard)]);
+    }
+
+    #[test]
+    fn with_nothing_to_recover_the_start_dialog_goes_on_at_once() {
+        let heard = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let heard = Rc::new(RefCell::new(Vec::new()));
+            let sink = heard.clone();
+            app.offer_recovery(Some(id), move |recovery| sink.borrow_mut().push(recovery));
+            heard.borrow().clone()
+        });
+        assert_eq!(heard, [Recovery::NothingAsked]);
+    }
+
+    #[test]
+    fn the_start_dialog_opens_only_over_an_empty_window() {
+        let (empty, with_scene) = on_fresh_slint_thread(|| {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let empty = add_window(&app);
+            app.show_start_dialog(empty);
+            let loaded = add_window(&app);
+            load_cube(&controller_of(&app, loaded));
+            app.show_start_dialog(loaded);
+            (
+                window_of(&app, empty).get_start_open(),
+                window_of(&app, loaded).get_start_open(),
+            )
+        });
+        assert!(empty, "an empty window shows the dialog");
+        assert!(!with_scene, "a file that got there first wins");
+    }
+
+    #[test]
+    fn the_saver_carries_the_recent_files_and_the_start_dialog() {
+        let mut settings = AppSettings::default();
+        let mut snap = PreferencesSnapshot::for_tests();
+        snap.show_start_dialog = false;
+        snap.recent_files = vec![crate::recent_files::RecentFile {
+            path: PathBuf::from("/models/hueco.bread"),
+            opened: 7,
+        }];
+        apply_snapshot_to_settings(&mut settings, &snap);
+        assert!(!settings.show_start_dialog());
+        assert_eq!(settings.recent_files(), snap.recent_files);
     }
 
     #[test]

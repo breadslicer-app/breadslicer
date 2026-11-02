@@ -55,6 +55,7 @@ impl WindowPreferences for PreferencesWindow {
         self.set_current_aa_index(aa_combo_index(prefs.aa_level));
         self.set_prescan_supports(prefs.prescan_supports);
         self.set_smooth_models(prefs.smooth_models);
+        self.set_show_start_dialog(prefs.show_start_dialog);
         self.set_current_frame_rate_index(prefs.frame_rate.combo_index());
         self.set_current_gizmo_style_index(prefs.gizmo_style.combo_index());
         self.set_current_gizmo_size_index(crate::gizmo::look::size_combo_index(prefs.gizmo_size));

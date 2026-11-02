@@ -105,3 +105,27 @@ fn a_file_without_a_scene_or_with_two_is_refused() {
         Err(ReadProjectError::ChunkCount { count: 2, .. })
     ));
 }
+
+#[test]
+fn a_thumbnail_reads_back_and_a_file_without_one_has_none() {
+    use crate::container::{BreadWriter, ChunkTag};
+    use crate::file::{THUMBNAIL_TAG, read_thumbnail};
+
+    let png = b"\x89PNG\r\n\x1a\n a picture".to_vec();
+    let mut writer = BreadWriter::new(Vec::new()).unwrap();
+    writer.chunk(ChunkTag(*b"SCNE"), 1, &[0; 2048]).unwrap();
+    writer.chunk(THUMBNAIL_TAG, 1, &png).unwrap();
+    let with = writer.finish().unwrap();
+    assert_eq!(
+        read_thumbnail(std::io::Cursor::new(&with)).unwrap(),
+        Some(png)
+    );
+
+    let mut writer = BreadWriter::new(Vec::new()).unwrap();
+    writer.chunk(ChunkTag(*b"SCNE"), 1, &[0; 16]).unwrap();
+    let without = writer.finish().unwrap();
+    assert_eq!(
+        read_thumbnail(std::io::Cursor::new(&without)).unwrap(),
+        None
+    );
+}

@@ -56,6 +56,7 @@ mod profile_view;
 mod project_profiles;
 mod project_versions;
 mod raft_clash;
+mod recent_files;
 mod reloaded_slices;
 mod repair_marks;
 mod repair_report;
@@ -76,6 +77,7 @@ mod slice_result;
 mod slice_run;
 mod slice_selection;
 mod split_bodies;
+mod start_dialog;
 mod startup_token;
 mod support_follow;
 mod support_gen_run;
@@ -94,6 +96,8 @@ mod tests_scene_dirty;
 mod tests_scene_loader;
 #[cfg(test)]
 mod tests_slice_result;
+#[cfg(test)]
+mod tests_start_dialog;
 #[cfg(test)]
 mod tests_tab_translations;
 mod ui_language;
@@ -345,8 +349,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    // Scenes an earlier run left unsaved (#18).
-    app.offer_recovery(empty_window);
+    // Scenes an earlier run left unsaved (#18), then the start dialog (#381)
+    // when the launch opened no file.
+    app.greet(empty_window);
     startup_timing::mark("recovery scan");
 
     #[cfg(target_os = "macos")]
