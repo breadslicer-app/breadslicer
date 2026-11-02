@@ -63,7 +63,7 @@ use crate::mesh_health::MeshVerdicts;
 use crate::mesh_render::{
     AllocationRefusal, DeviceLoss, GpuScene, RenderAllocation, RenderError, StageRefusal,
 };
-use crate::model_import::PreparedModels;
+use crate::model_import::{JoinedModels, PreparedModels};
 use crate::reloaded_slices::ReloadedSlices;
 use crate::support_persist::RestoredSupports;
 
@@ -121,6 +121,10 @@ pub(crate) struct PreparedScene {
     /// The models a `.bread` remembers hollowing in the Hollow tab (#161),
     /// read on the worker against the leaves' meshes.
     pub restored_hollows: RestoredHollows,
+    /// The other models opened together with this file (#391), already in
+    /// `spatial`: their notes, the files that could not be read and where
+    /// they went. Empty for a file opened alone.
+    pub joined: JoinedModels,
 }
 
 /// What a finished load hands the UI thread: a scene to install in place of
@@ -623,6 +627,9 @@ impl SceneLoader {
             Ok(Deposit::Scene(prepared)) => {
                 log_load_warnings(&path, &prepared);
                 self.import_notes.set(Notes::of(&path, &prepared));
+                for file in &prepared.joined.files {
+                    self.import_notes.add(Notes::of_import(file));
+                }
                 self.upload_failures.reset();
                 let failures = &prepared.restored_supports.failures;
                 if !failures.is_empty() {

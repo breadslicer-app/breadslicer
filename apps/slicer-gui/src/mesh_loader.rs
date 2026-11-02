@@ -18,13 +18,16 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
+use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_glue::place_on_plate;
 use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
-    LoadSceneError, LoadedContent, LoadedScene, ProjectContent, SUPPORTED_SCENE_FILE_EXTENSIONS,
+    LoadSceneError, LoadedContent, LoadedScene, PersistedSlices, ProfileRefWarning, ProjectContent,
+    ProjectPayload, ReadProjectWarning, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
 };
+use sc_scene::Scene;
 use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -228,14 +231,39 @@ fn prepare_scene(
     device_token: crate::mesh_render::DeviceToken,
     device_loss: &DeviceLoss,
 ) -> anyhow::Result<PreparedScene> {
+    let opened = opened_scene(parse_source(path, sink)?, build_volume)?;
+    finish_scene(opened, path, sink, device, device_token, device_loss)
+}
+
+/// The scene a window opens on, as read from its file and before it is
+/// checked, primed and uploaded: what models opened with it join (#391).
+pub(crate) struct OpenedScene {
+    pub(crate) scene: Scene,
+    project_payload: Option<ProjectPayload>,
+    warnings: Vec<LoadMeshWarning>,
+    project_warnings: Vec<ReadProjectWarning>,
+    profile_warnings: Vec<ProfileRefWarning>,
+    persisted_slices: Option<PersistedSlices>,
+    restored_supports: RestoredSupports,
+    restored_hollows: RestoredHollows,
+}
+
+/// Turns what was read from a file into the scene a window opens on. A file
+/// without readable project data is dropped onto the plate of
+/// `build_volume`; a project keeps its placement and its supports and
+/// hollows are restored.
+pub(crate) fn opened_scene(
+    loaded: LoadedScene,
+    build_volume: sc_print_primitives::BuildVolume,
+) -> anyhow::Result<OpenedScene> {
     let LoadedScene {
         content,
         mesh_warnings,
         project_warnings,
-    } = parse_source(path, sink)?;
+    } = loaded;
     let mut restored_supports = RestoredSupports::default();
     let mut restored_hollows = RestoredHollows::default();
-    let (scene, project_payload, profile_warnings, reloaded_slices) = match content {
+    let (scene, project_payload, profile_warnings, persisted_slices) = match content {
         LoadedContent::Mesh(mut scene) => {
             // Drop the scene onto the build plate before the GPU upload and
             // cache priming run on it, so both observe the placed world
@@ -265,15 +293,49 @@ fn prepare_scene(
             // libraries here on the worker: the checks probe the filesystem.
             let profile_warnings =
                 profile_ref_warnings(&payload, &ProfileLibraries::platform_default());
-            // Revalidate the persisted slices against the reopened scene on the
-            // worker: resolving the profiles and recomputing the geometry
-            // fingerprint both stay off the event loop. Stale or unresolvable
-            // slices drop here, and the scene opens slice-less.
-            let reloaded_slices = persisted_slices
-                .and_then(|slices| revalidate_persisted_slices(&payload, &scene, slices));
-            (scene, Some(payload), profile_warnings, reloaded_slices)
+            (scene, Some(payload), profile_warnings, persisted_slices)
         }
     };
+    Ok(OpenedScene {
+        scene,
+        project_payload,
+        warnings: mesh_warnings,
+        project_warnings,
+        profile_warnings,
+        persisted_slices,
+        restored_supports,
+        restored_hollows,
+    })
+}
+
+/// Checks, primes and uploads the scene `opened`, read from `path`, for the
+/// window to install. Each phase reports its progress through `sink`.
+pub(crate) fn finish_scene(
+    opened: OpenedScene,
+    path: &Path,
+    sink: &LoadProgressSink,
+    device: &wgpu::Device,
+    device_token: crate::mesh_render::DeviceToken,
+    device_loss: &DeviceLoss,
+) -> anyhow::Result<PreparedScene> {
+    let OpenedScene {
+        scene,
+        project_payload,
+        warnings,
+        project_warnings,
+        profile_warnings,
+        persisted_slices,
+        restored_supports,
+        restored_hollows,
+    } = opened;
+    // Revalidate the persisted slices against the reopened scene on the
+    // worker: resolving the profiles and recomputing the geometry fingerprint
+    // both stay off the event loop. Stale or unresolvable slices drop here,
+    // and the scene opens slice-less.
+    let reloaded_slices = project_payload
+        .as_ref()
+        .zip(persisted_slices)
+        .and_then(|(payload, slices)| revalidate_persisted_slices(payload, &scene, slices));
     // Validate every mesh (faces + manifold) on the worker so the UI thread
     // receives a ready health verdict; the initial workspace section is derived
     // from it. Placement changes only transforms, so the verdict is the same
@@ -296,7 +358,7 @@ fn prepare_scene(
     Ok(PreparedScene {
         spatial,
         gpu_scene,
-        warnings: mesh_warnings,
+        warnings,
         project_payload,
         project_warnings,
         profile_warnings,
@@ -305,6 +367,7 @@ fn prepare_scene(
         mesh_verdicts,
         restored_supports,
         restored_hollows,
+        joined: Default::default(),
     })
 }
 

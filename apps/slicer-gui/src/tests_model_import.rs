@@ -18,6 +18,7 @@ use sc_scene::{LeafPayload, NodeId, Scene};
 
 use crate::build_volume::NO_PRINTER_BUILD_VOLUME;
 use crate::mesh_render::DeviceToken;
+use crate::mesh_render::mock::{MockRenderer, MockRendererState};
 use crate::scene_document::SceneDocument;
 use crate::selection::{LeafId, Selection};
 use crate::test_support::gpu_devices::shared_test_device;
@@ -382,6 +383,149 @@ fn models_opened_without_a_scene_open_one_together() {
         assert_eq!(document.with_source_path(|p| p.to_path_buf()), Some(first));
         assert!(!document.can_undo(), "the opening is not an undo step");
         assert!(!document.is_dirty());
+    });
+}
+
+/// Models opened together without a scene show together (#391): the window
+/// installs one scene holding all of them, built on the worker, and no
+/// model shows before the others; nothing is left to upload on the window's
+/// thread, and they are all selected.
+#[test]
+fn models_opened_without_a_scene_arrive_in_one_install() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = vec![
+            write_box(dir.path(), "a.stl", [10.0, 10.0, 10.0]),
+            write_box(dir.path(), "b.stl", [14.0, 8.0, 6.0]),
+            write_box(dir.path(), "c.stl", [6.0, 6.0, 20.0]),
+        ];
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.register_document_listener();
+        let state = MockRendererState::new_shared();
+        ctrl.set_renderer_for_test(Box::new(MockRenderer::new(state.clone())));
+        ctrl.loader().set_gpu(device, DeviceToken::next(), queue);
+        let document = ctrl.document();
+
+        ctrl.open_models(paths);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut counts = Vec::new();
+        while ctrl.loader().is_busy() {
+            assert!(Instant::now() < deadline, "the load ends within 60 s");
+            std::thread::sleep(Duration::from_millis(5));
+            ctrl.on_scene_load_finished();
+            ctrl.handle_before_rendering();
+            let count = leaves(&document).len();
+            if counts.last() != Some(&count) {
+                counts.push(count);
+            }
+        }
+
+        assert_eq!(counts.last(), Some(&3), "every model is in the scene");
+        assert!(
+            counts.iter().all(|&n| n == 0 || n == 3),
+            "no model shows before the others: {counts:?}"
+        );
+        assert_eq!(state.borrow().install_scene_calls, 1, "one install");
+        assert!(
+            state.borrow().upload_calls.is_empty(),
+            "nothing is uploaded on the window's thread"
+        );
+        let now = leaves(&document);
+        assert_eq!(
+            document.selection(),
+            Selection::of(now.iter().copied().map(LeafId)),
+            "the models opened are selected"
+        );
+        assert!(!document.can_undo(), "the opening is not an undo step");
+        assert!(!document.is_dirty());
+    });
+}
+
+/// Models opened together without a scene stand where they stood when the
+/// first opened the scene alone and the others were imported into it.
+#[test]
+fn models_opened_without_a_scene_are_placed_as_an_import_places_them() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = write_box(dir.path(), "first.stl", [40.0, 30.0, 10.0]);
+        let others = vec![
+            write_box(dir.path(), "goblin.stl", [12.0, 12.0, 20.0]),
+            write_two_object_threemf(dir.path(), "pair.3mf"),
+            write_box(dir.path(), "tower.stl", [8.0, 8.0, 30.0]),
+        ];
+        let together = Rc::new(ViewportController::new_for_test());
+        together
+            .loader()
+            .set_gpu(device.clone(), DeviceToken::next(), queue.clone());
+        let mut paths = vec![first.clone()];
+        paths.extend(others.iter().cloned());
+        together.open_models(paths);
+        finish_loads(&together);
+
+        let apart_ctrl = Rc::new(ViewportController::new_for_test());
+        apart_ctrl
+            .loader()
+            .set_gpu(device, DeviceToken::next(), queue);
+        apart_ctrl.open_models(vec![first]);
+        finish_loads(&apart_ctrl);
+        apart_ctrl.open_models(others);
+        finish_loads(&apart_ctrl);
+
+        let placed = |document: &SceneDocument| -> Vec<(String, Transform3D)> {
+            rows(document)
+                .into_iter()
+                .map(|(name, at, _)| (name, at))
+                .collect()
+        };
+        let together = placed(&together.document());
+        assert_eq!(together.len(), 5);
+        assert_eq!(together, placed(&apart_ctrl.document()));
+    });
+}
+
+/// A first file that cannot be read leaves the scene to the next that can,
+/// with the others joined to it; no file read leaves no scene.
+#[test]
+fn models_opened_without_a_scene_skip_a_file_that_cannot_be_read() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let broken = dir.path().join("broken.obj");
+        std::fs::write(&broken, "this is not a model").expect("written");
+        let good = write_box(dir.path(), "good.stl", [10.0, 10.0, 10.0]);
+        let fine = write_box(dir.path(), "fine.stl", [12.0, 8.0, 10.0]);
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.loader()
+            .set_gpu(device.clone(), DeviceToken::next(), queue.clone());
+        let document = ctrl.document();
+
+        ctrl.open_models(vec![broken.clone(), good.clone(), fine]);
+        finish_loads(&ctrl);
+
+        let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
+        // The scene opened from the good file is named as any opened file.
+        assert_eq!(names, ["Object 1", "fine"]);
+        assert_eq!(document.with_source_path(|p| p.to_path_buf()), Some(good));
+        assert!(!document.is_dirty());
+
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.loader().set_gpu(device, DeviceToken::next(), queue);
+        let other = dir.path().join("other.stl");
+        std::fs::write(&other, "not a model either").expect("written");
+        ctrl.open_models(vec![broken, other]);
+        finish_loads(&ctrl);
+        assert!(!ctrl.document().is_loaded(), "no file read, no scene");
     });
 }
 

@@ -143,6 +143,10 @@ impl MeshRenderer for MockRenderer {
         s.install_scene_returns
     }
 
+    fn adopt_meshes(&mut self, _gpu: GpuScene) -> bool {
+        self.state.borrow().install_scene_returns
+    }
+
     fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
         self.state.borrow().scene_bounds_value
     }
